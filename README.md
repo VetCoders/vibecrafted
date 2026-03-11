@@ -41,6 +41,8 @@ our skills depend on.
 - `vetcoders-hydrate`
 - `vetcoders-decorate`
 - `vetcoders-implement`
+- `vetcoders-partner`
+- `vetcoders-screenscribe`
 - `vetcoders-spawn`
 - `vetcoders-subagents`
 - `vetcoders-ship`
@@ -50,7 +52,7 @@ Together, these define the current VetCoders operating model:
 
 ```text
 init -> workflow -> followup -> marbles -> dou -> hydrate
-                    \-> implement / spawn / subagents
+                    \-> implement / partner / spawn / subagents
 ```
 
 ## Repo Principles

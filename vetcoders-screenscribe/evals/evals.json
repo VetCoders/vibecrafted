@@ -1,0 +1,23 @@
+{
+  "skill_name": "vetcoders-screenscribe",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "mam nagranie /Users/maciejgad/Videos/vista-auth-review.mov gdzie gadam po polsku o bugach w desktop auth. chce z tego normalny ScreenScribe review z sensownym output dir, a na koncu powiedz mi gdzie lezy report json i markdown",
+      "expected_output": "The skill should choose the ScreenScribe review workflow, run it from the repo with a reproducible command, and report the output directory plus the expected JSON/Markdown artifact paths.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "w /Users/maciejgad/hosted/VetCoders/ScreenScribe cos popsulismy w html pro. nie chce zgadywania - sprawdz jak teraz odpala sie analyze/review i napraw to po repoowemu, z gateami",
+      "expected_output": "The skill should treat this as repo work inside ScreenScribe, use repo-native commands and quality gates, and avoid treating it like a plain video-analysis task.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "mam trzy movki ze sprint review i zalezy mi na tym, zeby AI pamietalo kontekst miedzy nimi. nie potrzebuje pelnej wizji, szybciej bedzie lepiej. zrob workflow pod ScreenScribe",
+      "expected_output": "The skill should recognize batch review with shared context, prefer the multi-video review command, and choose a faster mode such as no-vision when appropriate.",
+      "files": []
+    }
+  ]
+}
