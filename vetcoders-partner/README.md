@@ -59,8 +59,14 @@ reasoning in the center.
 `vetcoders-partner` is designed to pair naturally with
 `vetcoders-spawn`:
 
-- planner swarms go out through `codex-plan`, `claude-plan`, `gemini-plan`
-- chosen tracks continue through `codex-resume`, `gemini-resume`, etc.
+- planner swarms go out through the portable spawn scripts with `--mode plan`
+- chosen tracks continue via `*-resume` helpers or fresh implementation agents
+
+> **Note**: `codex-plan`, `claude-plan`, `gemini-plan`, `*-resume` are
+> convenience aliases from private dotfiles. The canonical, machine-portable
+> equivalent is the repo-owned spawn scripts:
+> `bash ~/.codex/skills/vetcoders-spawn/scripts/codex_spawn.sh <plan>.md --mode plan`
+> See `vetcoders-partner/SKILL.md` Spawn Playbook for full details.
 
 During resumed implementation, one important rule now applies:
 

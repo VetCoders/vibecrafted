@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF_USAGE'
-Usage: skills_sync.sh <host> [--source <repo-root>] [--tool <codex|claude|gemini>]... [--dry-run] [--mirror] [--no-verify]
+Usage: skills_sync.sh <host> [--source <repo-root>] [--tool <codex|claude|gemini>]... [--dry-run] [--mirror] [--with-shell] [--no-zshrc] [--no-verify]
 
 Sync canonical skill directories from this repo to another machine's tool homes:
   ~/.codex/skills
@@ -15,6 +15,7 @@ Examples:
   bash vetcoders-spawn/scripts/skills_sync.sh mgbook16 --tool codex --tool claude
   bash vetcoders-spawn/scripts/skills_sync.sh mgbook16 --dry-run
   bash vetcoders-spawn/scripts/skills_sync.sh mgbook16 --mirror
+  bash vetcoders-spawn/scripts/skills_sync.sh mgbook16 --with-shell
 EOF_USAGE
 }
 
@@ -39,6 +40,12 @@ else
   printf "  [missing] loctree-mcp\\n"
   printf "    fix: cargo install loctree-mcp\\n"
 fi
+if command -v prview >/dev/null 2>&1; then
+  printf "  [ok] prview -> %s\\n" "$(command -v prview)"
+else
+  printf "  [optional] prview not found\\n"
+  printf "    fix: cargo install prview\\n"
+fi
 printf "\\n"
 '
 }
@@ -47,6 +54,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 verify=1
 dry_run=0
 mirror=0
+with_shell=0
+shell_no_zshrc=0
 host=""
 declare -a tools=()
 
@@ -71,6 +80,12 @@ while [[ $# -gt 0 ]]; do
     --mirror)
       mirror=1
       ;;
+    --with-shell)
+      with_shell=1
+      ;;
+    --no-zshrc)
+      shell_no_zshrc=1
+      ;;
     --no-verify)
       verify=0
       ;;
@@ -94,6 +109,8 @@ done
   exit 1
 }
 [[ -d "$repo_root" ]] || die "Repo root not found: $repo_root"
+
+source_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vetcoders-skills.zsh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vetcoders-skills.zsh"'
 
 skills=()
 while IFS= read -r skill; do
@@ -135,6 +152,27 @@ for tool in "${tools[@]}"; do
   printf '\n'
 done
 
+if (( with_shell )); then
+  shell_source="$repo_root/vetcoders-spawn/shell/vetcoders.zsh"
+  [[ -f "$shell_source" ]] || die "Shell helper file not found: $shell_source"
+
+  remote_config_dir='${XDG_CONFIG_HOME:-$HOME/.config}/zsh'
+  remote_shell_target="$remote_config_dir/vetcoders-skills.zsh"
+
+  printf 'Syncing optional zsh helper layer to %s\n' "$host"
+  ssh -n "$host" "mkdir -p $remote_config_dir" || die "Could not prepare $remote_config_dir on $host"
+  rsync "${rsync_args[@]}" "$shell_source" "$host:$remote_shell_target"
+
+  if (( shell_no_zshrc )); then
+    printf 'Skipping remote ~/.zshrc update (--no-zshrc).\n'
+  else
+    ssh -n "$host" "touch ~/.zshrc && if ! grep -Fqx '$source_line' ~/.zshrc; then printf '\n# VetCoders shell helpers\n%s\n' '$source_line' >> ~/.zshrc; fi" \
+      || die "Could not update ~/.zshrc on $host"
+  fi
+
+  printf '\n'
+fi
+
 if (( ! verify )); then
   printf 'Sync complete. Verification skipped.\n'
   exit 0
@@ -152,6 +190,14 @@ ssh -n "$host" 'for f in \
     echo "MISSING $f"
   fi
 done'
+
+if (( with_shell )); then
+  ssh -n "$host" 'if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vetcoders-skills.zsh" ]; then
+  echo "OK ${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vetcoders-skills.zsh"
+else
+  echo "MISSING ${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vetcoders-skills.zsh"
+fi'
+fi
 
 remote_foundation_check "$host"
 

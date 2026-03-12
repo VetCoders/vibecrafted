@@ -93,78 +93,71 @@ Living tree note:
 - Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 ```
 
-## Spawn commands (templates)
+## Spawn commands
 
-> **PRIMARY METHOD**: Use `osascript` to spawn agents in fresh Terminal windows.
-> Clean environment (no inherited env hacks), visible progress, stdin works
-> naturally, no nohup/disown needed. Works for both Codex and Claude.
+> **Recommended path**: Use the portable scripts from `vetcoders-spawn/scripts/`.
+> These handle artifact generation, launch mode selection (visible Terminal or
+> headless), and `zsh -ic` environment setup automatically.
 
-### Codex subagent (default) — via osascript
-
-```bash
-osascript -e "
-tell application \"Terminal\"
-  activate
-  do script \"cd '$ROOT' && codex exec -C '$ROOT' \
-    --dangerously-bypass-approvals-and-sandbox \
-    --output-last-message '$REPORT' \
-    - < '$PLAN'\"
-end tell
-"
-```
-
-> Notice: **DO NOT call** `--model` parameter — the Agent uses workspace defaults.
-> Codex has `-C, --cd <DIR>` for working directory.
-
-### Claude subagent — via osascript
+### Codex subagent (default)
 
 ```bash
-osascript -e "
-tell application \"Terminal\"
-  activate
-  do script \"cd '$ROOT' && claude -p \
-    --output-format text \
-    --dangerously-skip-permissions \
-    --model claude-opus-4-6 \
-    \\\"\$(cat '$PLAN')\\\" \
-    > '$REPORT' 2>&1\"
-end tell
-"
+bash vetcoders-spawn/scripts/codex_spawn.sh "$PLAN" --mode implement --runtime terminal
 ```
 
-> **Why osascript?** Claude Code sets `CLAUDECODE` env var that blocks nested
-> `claude` CLI. A fresh Terminal window has clean env — no hacks needed.
-> Claude CLI has **NO** `-C` flag, so `cd "$ROOT"` is required.
+### Claude subagent
 
-### Fallback: nohup (when Terminal.app is unavailable)
+```bash
+bash vetcoders-spawn/scripts/claude_spawn.sh "$PLAN" --mode review --runtime terminal
+```
+
+### Gemini subagent
+
+```bash
+bash vetcoders-spawn/scripts/gemini_spawn.sh "$PLAN" --mode implement --runtime terminal
+```
+
+> The scripts default to visible Terminal mode on macOS and fall back to headless
+> when Terminal automation is unavailable (Linux, CI, SSH sessions).
+> See `vetcoders-spawn` SKILL.md for full options (`--runtime`, `--dry-run`, etc.).
+
+If the optional zsh helper layer is installed, the same intent can be expressed as:
+
+```bash
+codex-implement "$PLAN"
+claude-review "$PLAN"
+gemini-implement "$PLAN"
+```
+
+### Fallback: raw CLI (when portable scripts are unavailable)
 
 <details>
-<summary>Codex via nohup</summary>
+<summary>Codex via zsh -ic</summary>
 
 ```bash
-nohup bash -c 'codex exec -C "'"$ROOT"'" \
+zsh -ic "cd '$ROOT' && codex exec -C '$ROOT' \
   --dangerously-bypass-approvals-and-sandbox \
-  --output-last-message "'"$REPORT"'" \
-  - < "'"$PLAN"'"' \
-  > /tmp/codex-$(basename "$PLAN" .md).log 2>&1 & disown
+  --output-last-message '$REPORT' \
+  - < '$PLAN'"
 ```
 
-> `nohup` redirects stdin to `/dev/null` — must wrap in `bash -c` for `< "$PLAN"` to work.
+> Codex has `-C, --cd <DIR>` for working directory. Do NOT pass `--model`.
 </details>
 
 <details>
-<summary>Claude via nohup</summary>
+<summary>Claude via zsh -ic</summary>
 
 ```bash
-nohup bash -c 'unset CLAUDECODE && cd "'"$ROOT"'" && claude -p \
-  --output-format text --dangerously-skip-permissions \
+zsh -ic "cd '$ROOT' && claude -p \
+  --output-format text \
+  --dangerously-skip-permissions \
   --model claude-opus-4-6 \
-  "$(cat "'"$PLAN"'")" \
-  > "'"$REPORT"'" 2>&1' \
-  > /tmp/claude-$(basename "$PLAN" .md).log 2>&1 & disown
+  \"\$(cat '$PLAN')\" \
+  > '$REPORT' 2>&1"
 ```
 
-> Requires `unset CLAUDECODE` — only needed when spawning from Claude Code Bash tool.
+> Claude CLI has no `-C` flag, so `cd "$ROOT"` is required.
+> If spawning from within Claude Code, `unset CLAUDECODE` before the call.
 </details>
 
 ## Output convention

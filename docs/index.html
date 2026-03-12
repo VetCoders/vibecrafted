@@ -425,7 +425,7 @@
 <!-- Stats -->
 <div class="stats">
   <div class="stat">
-    <div class="stat-number orange">6</div>
+    <div class="stat-number orange">15+</div>
     <div class="stat-label">Skills</div>
   </div>
   <div class="stat">
@@ -498,13 +498,13 @@
         <div class="skill-tagline green">Parallel Delegation</div>
         <h3><span class="mono">vetcoders-subagents</span></h3>
         <p class="skill-desc">
-          Spawn a fleet of subagents with precise plans. Canonical osascript Terminal spawn
-          for clean environments. Plans in <code>.ai-agents/plans/</code>, reports in
-          <code>.ai-agents/reports/</code>. Living tree rule mandatory in every prompt.
+          Spawn a fleet of subagents with precise plans. Portable scripts handle
+          visible or headless launch automatically. Plans in <code>.ai-agents/plans/</code>,
+          reports in <code>.ai-agents/reports/</code>. Living tree rule mandatory in every prompt.
         </p>
         <div class="skill-features">
-          <span class="feature-tag green">osascript spawn</span>
-          <span class="feature-tag green">Codex + Claude CLI</span>
+          <span class="feature-tag green">portable spawn scripts</span>
+          <span class="feature-tag green">Codex + Claude + Gemini CLI</span>
           <span class="feature-tag green">Vibecrafting methodology</span>
           <span class="feature-tag green">living tree rule</span>
         </div>
@@ -616,10 +616,10 @@
 <section class="install-section">
   <h2>Get Started</h2>
   <div class="install-box">
-    <span class="prompt">$</span> <span class="cmd">git clone https://github.com/VetCoders/vetcoders-skills-suite</span>
+    <span class="prompt">$</span> <span class="cmd">bash install.sh --checkout "$HOME/.local/share/vetcoders-skills" --with-shell</span>
   </div>
   <p style="color:var(--mid); margin-top:1rem; font-size:0.9rem;">
-    Copy skills to <code>~/.claude/skills/</code> or install as a Claude Code plugin.
+    Bootstrap the repo, install the skills into Codex/Claude/Gemini homes, and optionally add the repo-owned zsh helper layer.
   </p>
 </section>
 

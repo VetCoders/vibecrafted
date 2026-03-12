@@ -3,10 +3,10 @@ name: vetcoders-implement
 version: 1.0.0
 description: >
   Native Claude subagent delegation skill using Claude's built-in Task tool.
-  Safe, sandboxed alternative to vetcoders-spawn (osascript Terminal method).
+  Safe, sandboxed alternative to vetcoders-spawn (external process method).
   Delegates implementation, research, and audit tracks to Claude subagents
   that run within the same session — no Terminal windows, no --dangerously flags,
-  no osascript. Less robust but universally safe.
+  no external processes. Less robust but universally safe.
   Trigger phrases: "implement with agents", "delegate to subagents", "zaimplementuj",
   "run agents", "parallel tasks", "delegate safely", "native agents",
   "Task tool agents", "implement plan", "uruchom agentów", "subagenty natywne",
@@ -35,7 +35,7 @@ use `vetcoders-spawn` instead.
 
 | Capability | vetcoders-implement | vetcoders-spawn |
 |-----------|-------------------|----------------|
-| **Execution** | Claude Task tool (in-process) | osascript Terminal (out-of-process) |
+| **Execution** | Claude Task tool (in-process) | Portable scripts (out-of-process) |
 | **Safety** | Sandboxed, no dangerous flags | Requires `--dangerously-*` flags |
 | **Agents** | Claude subagents only | Claude + Codex + any CLI agent |
 | **Parallelism** | Multiple Task calls in one message | Multiple Terminal windows |

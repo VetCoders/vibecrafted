@@ -7,8 +7,8 @@ This repo exists so our skills stop drifting across:
 - `~/.claude/skills`
 - `~/.gemini/skills`
 
-The goal is simple: one place to edit, review, version, and ship the skills that
-power the VetCoders workflow.
+The goal is simple: one place to edit, review, version, and ship the skills,
+installers, and shell glue that power the VetCoders workflow.
 
 ## What This Repo Is
 
@@ -24,29 +24,31 @@ This repo is meant to be:
 
 ### Shared foundation skills
 
-- `ai-contexters`
-- `loctree`
-- `bravesearch`
+- `ai-contexters` — session history extraction (wraps `aicx` CLI)
+- `loctree` — structural code mapping (wraps `loctree-mcp`)
+- `bravesearch` — web search via Brave API
+- `pdf` — PDF processing
 
 These are not all "VetCoders-branded", but they are part of the practical stack
 our skills depend on.
 
 ### VetCoders pipeline skills
 
-- `vetcoders-init`
-- `vetcoders-workflow`
-- `vetcoders-followup`
-- `vetcoders-marbles`
-- `vetcoders-dou`
-- `vetcoders-hydrate`
-- `vetcoders-decorate`
-- `vetcoders-implement`
-- `vetcoders-partner`
-- `vetcoders-screenscribe`
-- `vetcoders-spawn`
-- `vetcoders-subagents`
-- `vetcoders-ship`
-- `vetcoders-prune`
+- `vetcoders-init` — session bootstrap (memory + eyes)
+- `vetcoders-workflow` — ERi pipeline (Examine, Research, Implement)
+- `vetcoders-followup` — post-implementation audit
+- `vetcoders-marbles` — convergence loops
+- `vetcoders-dou` — Definition of Undone (product surface audit)
+- `vetcoders-hydrate` — packaging and go-to-market gap fill
+- `vetcoders-decorate` — visual polish and micro-interactions
+- `vetcoders-implement` — in-session implementation (safe alternative to spawn)
+- `vetcoders-partner` — executive debug + agent swarms
+- `vetcoders-screenscribe` — screenshot analysis
+- `vetcoders-spawn` — external agent fleet via portable scripts
+- `vetcoders-subagents` — parallel delegation pattern
+- `vetcoders-ship` — shipping orchestrator
+- `vetcoders-prune` — dead code and runtime cone extraction
+- `vetcoders-prview` — PR review pipeline (wraps `prview` binary)
 
 Together, these define the current VetCoders operating model:
 
@@ -54,6 +56,49 @@ Together, these define the current VetCoders operating model:
 init -> workflow -> followup -> marbles -> dou -> hydrate
                     \-> implement / partner / spawn / subagents
 ```
+
+## Dependency Classification
+
+Not every tool is required for every install. Here is the honest dependency map:
+
+### Hard foundations
+
+These two binaries make the whole skill stack meaningfully better. The installer
+preflights them and tells you how to add them if missing.
+
+| Tool | What it does | Install |
+|------|-------------|---------|
+| `aicx` | Extracts deduplicated timelines from AI sessions | `cargo install aicx` |
+| `loctree-mcp` | Structural code mapping for agents | `cargo install loctree-mcp` |
+
+If they are missing, skills still install and most workflows still run, but
+`vetcoders-init` loses its Memory layer (aicx) and its Eyes layer (loctree).
+
+### Recommended ecosystem tools
+
+| Tool | What it does | When you need it |
+|------|-------------|-----------------|
+| `codex` CLI | OpenAI Codex agent | Spawning Codex subagents |
+| `claude` CLI | Claude Code agent | Spawning Claude subagents |
+| `gemini` CLI | Gemini agent | Spawning Gemini subagents |
+| `semgrep` | Security scanning | Quality gates in followup/spawn |
+| `brave-search` API key | Web search | Research phase of ERi pipeline |
+
+You only need the agent CLIs for the runtimes you actually use.
+
+### Optional specialist tools
+
+| Tool | What it does | When you need it |
+|------|-------------|-----------------|
+| `prview` | PR review artifact generation | `vetcoders-prview` skill only |
+| `loct` CLI | Local loctree without MCP | Fallback when loctree-mcp unavailable |
+
+### System requirements
+
+- `zsh` — spawn scripts use `zsh -ic` for interactive shell with user environment
+- `rsync` — installer and remote sync
+- `git` — clone and update
+- `cargo` — installing Rust-based foundations (aicx, loctree-mcp, prview)
 
 ## Repo Principles
 
@@ -107,7 +152,8 @@ Notes:
 
 ## Installation and Sync
 
-The repo now ships its own portable installer and remote sync helpers.
+The repo now ships its own portable installer, optional zsh helper layer, and
+remote sync helpers.
 
 ### Local install
 
@@ -116,6 +162,21 @@ Install all canonical skills into Codex, Claude, and Gemini:
 ```bash
 bash vetcoders-spawn/scripts/install.sh
 ```
+
+Install skills plus the repo-owned zsh helper layer:
+
+```bash
+bash vetcoders-spawn/scripts/install.sh --with-shell
+```
+
+The helper layer is the distilled, product-worthy part of the founders' zsh
+setup:
+- `codex-implement`, `claude-review`, `gemini-plan`
+- `*-prompt` and `*-observe`
+- `skills-sync`
+- Gemini Keychain helpers for macOS
+
+It does **not** try to copy private shell aesthetics, banners, or unrelated aliases.
 
 Install only selected runtimes:
 
@@ -133,6 +194,12 @@ Canonical 1:1 mirror when you explicitly want deletions inside installed skill d
 
 ```bash
 bash vetcoders-spawn/scripts/install.sh --mirror
+```
+
+Install only the zsh helper layer:
+
+```bash
+bash vetcoders-spawn/scripts/install-shell.sh
 ```
 
 ### Remote sync
@@ -155,6 +222,12 @@ Canonical 1:1 remote mirror when you explicitly want deletions on the target mac
 bash vetcoders-spawn/scripts/skills_sync.sh mgbook16 --mirror
 ```
 
+Sync skills plus the optional shell helper layer to another machine:
+
+```bash
+bash vetcoders-spawn/scripts/skills_sync.sh mgbook16 --with-shell
+```
+
 ### Bootstrap installer
 
 The repo root also ships `install.sh`, which is the future `curl | sh` entrypoint.
@@ -162,22 +235,44 @@ By default the installer is conservative and does not delete extra files inside 
 Once the repo is public, the intended shape is:
 
 ```bash
-curl -fsSL <raw-install-url> | bash
+curl -fsSL <raw-install-url> | bash -s -- --with-shell
 ```
 
 That bootstrap script clones or updates the repo into a local checkout and then
 delegates to `vetcoders-spawn/scripts/install.sh`.
 
-The installer also runs a foundation preflight for:
-- `aicx`
-- `loctree-mcp`
+The installer runs two levels of preflight:
+- runtime commands such as `zsh`, `python3`, and the selected agent CLIs
+- first-party foundations `aicx` and `loctree-mcp`
+- optional specialist tool `prview`
 
-If they are missing, it still installs the skills, but tells the user exactly
-what to add next:
+If the hard foundations are missing, install still proceeds, but the user gets
+the explicit next step:
 
 ```bash
 cargo install aicx loctree-mcp
 ```
+
+For PR review workflows, add:
+
+```bash
+cargo install prview
+```
+
+## Portable Quality Bar
+
+The repo now carries a first portable acceptance harness:
+
+```bash
+bash scripts/check-portable.sh
+```
+
+This checks:
+- shell syntax for installers and spawn runtime
+- install into a clean `HOME`
+- optional zsh helper install
+- headless spawn smoke with fake Codex / Claude / Gemini CLIs
+- docs truth against stale `osascript`-canonical wording
 
 ## Editing Workflow
 

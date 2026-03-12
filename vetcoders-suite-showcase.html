@@ -165,7 +165,7 @@ footer .tagline-footer{font-size:.75rem;color:rgba(176,174,165,.5);font-style:it
     <p style="font-family:var(--font-head);font-size:.82rem;color:var(--mid);margin-bottom:2rem;line-height:1.7">init &rarr; workflow &rarr; followup &rarr; <span style="color:var(--orange)">marbles loop</span> &rarr; dou &rarr; decorate &rarr; hydrate</p>
     <div class="cta-row">
       <a href="#install" class="btn btn-primary">Get Started</a>
-      <a href="https://github.com/VetCoders/vetcoders-skills-suite" class="btn btn-secondary">GitHub &rarr;</a>
+      <a href="https://github.com/VetCoders/vetcoders-skills" class="btn btn-secondary">GitHub &rarr;</a>
     </div>
   </div>
 </section>
@@ -259,8 +259,8 @@ footer .tagline-footer{font-size:.75rem;color:rgba(176,174,165,.5);font-style:it
       <div class="card" style="opacity:.85">
         <div class="card-phase build" style="background:rgba(176,174,165,.12);color:var(--mid)">Internal Tool</div>
         <h3>vetcoders-spawn</h3>
-        <p class="card-desc">External agent fleet via osascript Terminal. Power-user mode &mdash; full filesystem, persistent shells, tmux sessions. When safe isn't enough.</p>
-        <div class="card-tags"><span class="tag">osascript</span><span class="tag">Terminal</span><span class="tag">tmux</span><span class="tag">power-user</span></div>
+        <p class="card-desc">External agent fleet via portable scripts. Visible Terminal or headless mode &mdash; full filesystem, persistent shells, durable artifacts. Process isolation for long-running work.</p>
+        <div class="card-tags"><span class="tag">portable scripts</span><span class="tag">zsh -ic</span><span class="tag">visible + headless</span><span class="tag">durable artifacts</span></div>
         <div class="card-trigger">Used by workflow and marbles internally</div>
       </div>
 
@@ -380,15 +380,15 @@ Step N: Converged &mdash; DoU &lt; threshold = DoD
     <div class="section-label">Get Started</div>
     <h2 class="section-title">Installation</h2>
     <div class="install-block">
-      <h4 style="font-size:1rem;margin-bottom:.5rem;color:var(--light)">As Claude Code Skills</h4>
+      <h4 style="font-size:1rem;margin-bottom:.5rem;color:var(--light)">Bootstrap the Suite</h4>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <code><span class="comment"># Clone the suite</span><br>git clone https://github.com/VetCoders/vetcoders-skills-suite ~/.claude/skills/vetcoders<br><br><span class="comment"># Or install individual skills</span><br>cp -r vetcoders-ship ~/.claude/skills/<br>cp -r vetcoders-init ~/.claude/skills/<br>cp -r vetcoders-workflow ~/.claude/skills/<br>cp -r vetcoders-implement ~/.claude/skills/<br>cp -r vetcoders-spawn ~/.claude/skills/<br>cp -r vetcoders-followup ~/.claude/skills/<br>cp -r vetcoders-marbles ~/.claude/skills/<br>cp -r vetcoders-dou ~/.claude/skills/<br>cp -r vetcoders-decorate ~/.claude/skills/<br>cp -r vetcoders-hydrate ~/.claude/skills/</code>
+        <code><span class="comment"># Bootstrap repo + install skills + helper layer</span><br>bash install.sh --checkout "$HOME/.local/share/vetcoders-skills" --with-shell<br><br><span class="comment"># Or install only the optional zsh helper layer later</span><br>bash vetcoders-spawn/scripts/install-shell.sh</code>
       </div>
 
       <h4 style="font-size:1rem;margin:2rem 0 .5rem;color:var(--light)">Requirements</h4>
       <div class="code-block">
-        <code><span class="comment"># Required &mdash; structural code intelligence</span><br>cargo install loctree<br><br><span class="comment"># Required &mdash; session history extraction</span><br>cargo install ai-contexters<br><br><span class="comment"># Optional &mdash; web research, library docs, security scan</span><br><span class="comment"># Configure brave-search, Context7, semgrep MCP servers</span></code>
+        <code><span class="comment"># Hard foundations</span><br>cargo install aicx loctree-mcp<br><br><span class="comment"># Optional specialist tool for PR review</span><br>cargo install prview<br><br><span class="comment"># Then add the agent CLIs you actually use</span><br># codex, claude, gemini</code>
       </div>
 
       <h4 style="font-size:1rem;margin:2rem 0 .5rem;color:var(--light)">Quick Start</h4>

@@ -91,7 +91,7 @@ Combine brave-search, WebFetch, and Context7 for comprehensive coverage.
 ### Research Sources (priority order)
 
 1. **Context7** (`resolve-library-id` → `query-docs`) — authoritative library docs
-2. **Brave Search** — `python3 ~/.claude/skills/bravesearch/brave_search.py "<query>"`
+2. **Brave Search** — run the `bravesearch/brave_search.py` script from this repo or from an installed skill copy
 3. **WebFetch** — fetch specific URLs found via search
 4. **Codebase grep** — internal patterns and prior art (only after loctree mapping)
 
@@ -158,7 +158,7 @@ Never edit code without mapping it first.
 
 ### Spawn Pattern
 
-Follow vetcoders-spawn skill for spawn commands (osascript preferred).
+Follow vetcoders-spawn skill for spawn commands (portable scripts preferred).
 Plans go to `.ai-agents/pipeline/<slug>/plans/`.
 Reports go to `.ai-agents/pipeline/<slug>/reports/`.
 
@@ -176,7 +176,7 @@ After agents complete:
 |-------|------|--------|
 | Examine | loctree MCP | CONTEXT.md |
 | Research | brave-search + Context7 + WebFetch | RESEARCH.md |
-| Implement | vetcoders-spawn (osascript) | reports/*.md |
+| Implement | vetcoders-spawn (portable scripts) | reports/*.md |
 
 ## Phase Skipping
 
@@ -193,7 +193,7 @@ State which phases apply at pipeline start.
 
 - This skill is mandatory for non-trivial feature work requiring multi-file changes.
 - If loctree MCP is unavailable, see `references/phase-examine.md` for grep-based fallback.
-- Brave Search path assumes bravesearch skill at `~/.claude/skills/bravesearch/`.
+- Brave Search can run from this repo checkout (`python3 bravesearch/brave_search.py "<query>"`) or from an installed skill copy.
 
 ## Anti-Patterns
 

@@ -12,6 +12,12 @@ spawn_require_file() {
   [[ -f "$path" ]] || spawn_die "File not found: $path"
 }
 
+spawn_require_command() {
+  local cmd="${1:-}"
+  [[ -n "$cmd" ]] || spawn_die "Missing required command name."
+  command -v "$cmd" >/dev/null 2>&1 || spawn_die "Required command not found: $cmd"
+}
+
 spawn_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
 }
@@ -67,6 +73,7 @@ payload = {
     "report": report,
     "transcript": transcript,
     "launcher": launcher,
+    "exit_code": None,
 }
 if model != "__NONE__":
     payload["model"] = model
@@ -101,8 +108,15 @@ PY
 spawn_prepare_paths() {
   local agent="$1"
   local prompt_file="$2"
+  local root="${3:-}"
 
-  SPAWN_ROOT="$(spawn_repo_root)"
+  if [[ -n "$root" ]]; then
+    SPAWN_ROOT="$(spawn_abspath "$root")"
+    [[ -d "$SPAWN_ROOT" ]] || spawn_die "Root directory not found: $SPAWN_ROOT"
+  else
+    SPAWN_ROOT="$(spawn_repo_root)"
+  fi
+
   SPAWN_PLAN="$(spawn_abspath "$prompt_file")"
   SPAWN_SLUG="$(spawn_slug_from_path "$prompt_file")"
   SPAWN_TS="$(spawn_timestamp)"
@@ -127,10 +141,119 @@ spawn_build_runtime_prompt() {
 At the end of the task, write your final human-readable report to this exact path:
 $report_path
 
-Keep streaming useful progress to stdout while you work. If you cannot write the
-report file directly, finish normally and let the transcript act as the fallback
+Keep streaming useful progress to stdout while you work. If you cannot write a
+standalone report file, finish normally and let the transcript act as the fallback
 artifact.
 EOF_PROMPT
+}
+
+spawn_gemini_api_key() {
+  local value=""
+
+  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+    printf '%s' "$GEMINI_API_KEY"
+    return 0
+  fi
+
+  command -v security >/dev/null 2>&1 || return 1
+
+  value="$(security find-generic-password -w -s GEMINI_API_KEY -a GEMINI_API_KEY 2>/dev/null || true)"
+  [[ -n "$value" ]] && {
+    printf '%s' "$value"
+    return 0
+  }
+
+  local service_name
+  for service_name in GEMINI_API_KEY gemini-cli google-generative-ai GoogleAIStudio; do
+    value="$(security find-generic-password -w -s "$service_name" 2>/dev/null || true)"
+    [[ -n "$value" ]] && {
+      printf '%s' "$value"
+      return 0
+    }
+  done
+
+  local account_name
+  for account_name in GEMINI_API_KEY gemini-cli gemini google; do
+    value="$(security find-generic-password -w -a "$account_name" 2>/dev/null || true)"
+    [[ -n "$value" ]] && {
+      printf '%s' "$value"
+      return 0
+    }
+  done
+
+  return 1
+}
+
+spawn_generate_launcher() {
+  local launcher="$1"
+  local meta_path="$2"
+  local report_path="$3"
+  local transcript_path="$4"
+  local common_path="$5"
+  local command="$6"
+  local pre_hook="${7:-}"
+  local success_hook="${8:-}"
+  local failure_hook="${9:-}"
+
+  [[ -n "$launcher" ]] || spawn_die "Missing launcher path."
+  [[ -f "$common_path" ]] || spawn_die "common.sh not found: $common_path"
+  [[ -n "$command" ]] || spawn_die "Missing command payload for launcher."
+
+  local q_meta q_report q_transcript q_common q_cmd
+  q_meta="$(printf '%q' "$meta_path")"
+  q_report="$(printf '%q' "$report_path")"
+  q_transcript="$(printf '%q' "$transcript_path")"
+  q_common="$(printf '%q' "$common_path")"
+  q_cmd="$(printf '%q' "$command")"
+
+  cat > "$launcher" <<EOF_LAUNCH
+#!/usr/bin/env bash
+set -euo pipefail
+source $q_common
+
+meta=$q_meta
+report=$q_report
+transcript=$q_transcript
+SPAWN_CMD=$q_cmd
+
+rm -f "\$transcript" "\$report"
+EOF_LAUNCH
+
+  if [[ -n "$pre_hook" ]]; then
+    printf '%s\n' "$pre_hook" >> "$launcher"
+  fi
+
+  cat >> "$launcher" <<'EOF_LAUNCH'
+if zsh -ic "$SPAWN_CMD"; then
+EOF_LAUNCH
+
+  if [[ -n "$success_hook" ]]; then
+    printf '%s\n' "$success_hook" >> "$launcher"
+  fi
+
+  cat >> "$launcher" <<'EOF_LAUNCH'
+  spawn_finish_meta "$meta" "completed" "0"
+else
+  exit_code=$?
+EOF_LAUNCH
+
+  if [[ -n "$failure_hook" ]]; then
+    printf '%s\n' "$failure_hook" >> "$launcher"
+  fi
+
+  cat >> "$launcher" <<'EOF_LAUNCH'
+  spawn_finish_meta "$meta" "failed" "$exit_code"
+  exit "$exit_code"
+fi
+EOF_LAUNCH
+}
+
+spawn_launch_headless() {
+  local launcher="$1"
+  [[ -x "$launcher" ]] || spawn_die "Launcher is not executable: $launcher"
+  nohup "$launcher" >/dev/null 2>&1 &
+  local launcher_pid=$!
+  printf 'Spawned headless launcher (pid=%s): %s\n' "$launcher_pid" "$launcher"
 }
 
 spawn_open_terminal() {
@@ -144,7 +267,7 @@ import shlex
 import sys
 
 launcher = sys.argv[1]
-print(json.dumps("zsh " + shlex.quote(launcher)))
+print(json.dumps("zsh -ic " + shlex.quote(launcher)))
 PY
 )"
 
@@ -156,10 +279,51 @@ PY
 EOF_APPLE
 }
 
+spawn_launch() {
+  local launcher="$1"
+  local runtime="${2:-terminal}"
+  local dry_run="${3:-0}"
+
+  if (( dry_run )); then
+    printf 'Dry run mode: launcher generated only: %s\n' "$launcher"
+    return 0
+  fi
+
+  case "$runtime" in
+    terminal|visible)
+      if command -v osascript >/dev/null 2>&1; then
+        spawn_open_terminal "$launcher"
+      else
+        printf 'Runtime fallback: visible Terminal requested, but osascript is unavailable. Running headless.\n' >&2
+        spawn_launch_headless "$launcher"
+      fi
+      ;;
+    headless|background|detached)
+      spawn_launch_headless "$launcher"
+      ;;
+    *)
+      spawn_die "Unsupported runtime '$runtime'. Use terminal or headless."
+      ;;
+  esac
+}
+
+spawn_validate_runtime() {
+  local runtime="${1:-terminal}"
+  case "$runtime" in
+    terminal|visible|headless|background|detached)
+      return 0
+      ;;
+    *)
+      spawn_die "Invalid runtime '$runtime'. Valid values: terminal, visible, headless, background, detached."
+      ;;
+  esac
+}
+
 spawn_print_launch() {
   local agent="$1"
   local mode="$2"
-  printf 'Spawning %s-%s in Terminal...\n' "$agent" "$mode"
+  local runtime="${3:-terminal}"
+  printf 'Spawning %s-%s with runtime=%s\n' "$agent" "$mode" "$runtime"
   printf '  plan:   %s\n' "$SPAWN_PLAN"
   printf '  report: %s\n' "$SPAWN_REPORT"
   printf '  trace:  %s\n' "$SPAWN_TRANSCRIPT"

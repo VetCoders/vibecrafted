@@ -3,10 +3,11 @@ name: vetcoders-spawn
 version: 1.2.0
 description: >
   Spawn external subagents via the portable scripts shipped in
-  vetcoders-spawn/scripts/. The real trick is zsh -ic: each spawned agent gets
-  a fresh interactive shell, sees the local CLI/runtime exactly as a user
-  would, and writes durable report/transcript/meta artifacts into
-  .ai-agents/. macOS Terminal.app is required for the visible-window path.
+  vetcoders-spawn/scripts/. The real trick is an explicit spawn contract over
+  zsh -ic, so each spawned agent gets a fresh interactive shell, sees the local
+  CLI/runtime exactly as a user would, and writes durable report/transcript/meta
+  artifacts into .ai-agents/. Terminal.app is supported as a visible mode, with
+  headless mode now first-class.
   Trigger phrases: "spawn agents", "terminal agents", "spawn fleet",
   "odpal agentow", "deleguj przez terminal", "codex agents",
   "power spawn".
@@ -33,8 +34,8 @@ visible fleet in Terminal, especially for:
 ## Why this skill exists
 - Your main context stays focused while subagents take bounded slices.
 - The portable scripts remove dependency on one person's private dotfiles.
-- The real runtime magic is `zsh -ic`, which gives each agent a fresh,
-  user-shaped shell instead of a brittle non-interactive subprocess.
+- The contract is explicit: terminal/visible mode is optional, headless mode is
+  supported, and both use the same durable artifact outputs.
 - Repo-owned scripts are easier to install, review, version, and improve.
 
 ## Goal
@@ -93,27 +94,67 @@ The scripts generate:
 - launcher: `.ai-agents/tmp/<timestamp>_<slug>_<agent>_launch.sh`
 
 ## Canonical commands
-If the skill is installed into the default home paths, use:
+From a repo checkout, the cleanest direct path is:
 
 Codex:
 ```bash
-bash ~/.codex/skills/vetcoders-spawn/scripts/codex_spawn.sh .ai-agents/plans/<plan>.md --mode implement
+bash vetcoders-spawn/scripts/codex_spawn.sh .ai-agents/plans/<plan>.md --mode implement --runtime terminal
 ```
 
 Claude:
 ```bash
-bash ~/.claude/skills/vetcoders-spawn/scripts/claude_spawn.sh .ai-agents/plans/<plan>.md --mode review
+bash vetcoders-spawn/scripts/claude_spawn.sh .ai-agents/plans/<plan>.md --mode review --runtime terminal
 ```
 
 Gemini:
 ```bash
-bash ~/.gemini/skills/vetcoders-spawn/scripts/gemini_spawn.sh .ai-agents/plans/<plan>.md --mode implement
+bash vetcoders-spawn/scripts/gemini_spawn.sh .ai-agents/plans/<plan>.md --mode implement --runtime terminal
+```
+
+If the skill is installed into the default home paths, the installed-script path is:
+
+Codex:
+```bash
+bash ~/.codex/skills/vetcoders-spawn/scripts/codex_spawn.sh .ai-agents/plans/<plan>.md --mode implement --runtime terminal
+```
+
+Claude:
+```bash
+bash ~/.claude/skills/vetcoders-spawn/scripts/claude_spawn.sh .ai-agents/plans/<plan>.md --mode review --runtime terminal
+```
+
+Gemini:
+```bash
+bash ~/.gemini/skills/vetcoders-spawn/scripts/gemini_spawn.sh .ai-agents/plans/<plan>.md --mode implement --runtime terminal
 ```
 
 Observe latest Codex run:
 ```bash
 bash ~/.codex/skills/vetcoders-spawn/scripts/observe.sh codex --last
 ```
+
+If you install the optional zsh helper layer, the human-friendly wrappers are:
+
+```bash
+codex-implement .ai-agents/plans/<plan>.md
+claude-review .ai-agents/plans/<plan>.md
+gemini-plan .ai-agents/plans/<plan>.md
+codex-prompt "Review the latest changes"
+skills-sync mgbook16
+skills-sync mgbook16 --with-shell
+```
+
+## Canonical launch modes
+
+All three launchers share:
+
+- `--runtime terminal|visible` (default): launch via visible Terminal.app
+- `--runtime headless|background|detached`: launch as detached background process
+- `--root <path>`: explicit repo root for `cd` and artifact staging
+- `--dry-run`: generate launcher and metadata without executing it
+
+`--runtime terminal` falls back to headless mode when Terminal automation is not
+available in the current environment.
 
 ## The real trick
 The important discovery is not the wrapper name. The important discovery is:
@@ -122,7 +163,8 @@ The important discovery is not the wrapper name. The important discovery is:
 zsh -ic "cd <repo> && <agent-cli> ..."
 ```
 
-That gives the spawned process an interactive shell, so it sees the user's real
+That gives the spawned process an interactive shell in the chosen spawn runtime
+(visible or headless), so it sees the user's real
 `~/.zshrc` environment and CLI setup.
 
 Raw example without helper wrappers:
@@ -148,11 +190,14 @@ strict 1:1 canonical copy.
 The portable path now has three layers:
 - `install.sh` at repo root: bootstrap for the future `curl | sh` flow
 - `vetcoders-spawn/scripts/install.sh`: local install into `~/.{codex,claude,gemini}/skills`
-- `vetcoders-spawn/scripts/skills_sync.sh`: remote sync to another machine's skill homes
+- `vetcoders-spawn/scripts/install-shell.sh`: optional zsh helper install (`codex-implement`, `claude-implement`, `gemini-implement`, `*-prompt`, `*-observe`, `skills-sync`, Gemini Keychain helpers)
+- `vetcoders-spawn/scripts/skills_sync.sh`: remote sync to another machine's skill homes, optionally with the same helper layer
 
 The installer and remote sync now also preflight the two foundation binaries that make the whole stack feel complete:
 - `aicx`
 - `loctree-mcp`
+
+`prview` is treated as a specialist companion tool, not a hard base dependency for every install.
 
 If they are missing, install still proceeds, but the user gets the explicit next step:
 `cargo install aicx loctree-mcp`

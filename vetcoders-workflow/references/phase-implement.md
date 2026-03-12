@@ -120,39 +120,40 @@ Split implementation into independent, parallel-safe units:
 
 ## Spawn Commands
 
+Use the portable scripts from `vetcoders-spawn/scripts/`. These handle artifact
+generation, launch mode selection (visible Terminal or headless), and `zsh -ic`
+environment setup automatically.
+
 ### Codex (default for implementation)
 
 ```bash
-ROOT="$(pwd)"
 SLUG="<pipeline-slug>"
-PLAN="$ROOT/.ai-agents/pipeline/$SLUG/plans/01_task.md"
-REPORT="$ROOT/.ai-agents/pipeline/$SLUG/reports/01_task.md"
+PLAN=".ai-agents/pipeline/$SLUG/plans/01_task.md"
 
-osascript -e "
-tell application \"Terminal\"
-  activate
-  do script \"cd '$ROOT' && codex exec -C '$ROOT' \
-    --dangerously-bypass-approvals-and-sandbox \
-    --output-last-message '$REPORT' \
-    - < '$PLAN'\"
-end tell
-"
+bash vetcoders-spawn/scripts/codex_spawn.sh "$PLAN" --mode implement --runtime terminal
 ```
 
 ### Claude (for complex reasoning tasks)
 
 ```bash
-osascript -e "
-tell application \"Terminal\"
-  activate
-  do script \"cd '$ROOT' && claude -p \
-    --output-format text \
-    --dangerously-skip-permissions \
-    --model claude-opus-4-6 \
-    \\\"\$(cat '$PLAN')\\\" \
-    > '$REPORT' 2>&1\"
-end tell
-"
+bash vetcoders-spawn/scripts/claude_spawn.sh "$PLAN" --mode review --runtime terminal
+```
+
+### Gemini
+
+```bash
+bash vetcoders-spawn/scripts/gemini_spawn.sh "$PLAN" --mode implement --runtime terminal
+```
+
+> The scripts default to visible Terminal mode on macOS and fall back to headless
+> when Terminal automation is unavailable.
+
+If the optional zsh helper layer is installed, the same actions become:
+
+```bash
+codex-implement "$PLAN"
+claude-review "$PLAN"
+gemini-implement "$PLAN"
 ```
 
 ## Review Protocol

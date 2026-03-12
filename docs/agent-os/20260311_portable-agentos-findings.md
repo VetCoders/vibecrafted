@@ -33,3 +33,20 @@ Repo: vetcoders-skills
 - Which parts truly need embedded/notarized binaries, and which are better left as external managed tools?
 - Is `prview` a foundation dependency at the same level as `aicx` and `loctree-mcp`, or a higher-tier optional tool?
 - What is the minimum viable machine-agnostic acceptance matrix we should enforce before calling the repo portable?
+
+## 2026-03-12 delta
+
+- Pulled new upstream metadata into `vetcoders-partner/agents/openai.yaml`, so partner-facing product surface is still evolving.
+- Confirmed current local worktree is now mainly about spawn/runtime hardening, not broad repo ambiguity.
+- Fixed a real launcher bug in repo-owned spawn scripts:
+  - `gemini_spawn.sh` and `claude_spawn.sh` were generating launchers that could explode on `prompt` quoting under `set -u`.
+  - This reinforces the broader finding that spawn is still the sharpest portability/runtime seam in the repo.
+- Decision pressure remains the same:
+  - stabilize portable spawn + preflight + acceptance first
+  - postpone full Agent OS binary until the shell/runtime contract stops moving
+- Extracted a repo-owned zsh helper layer from private dotfiles instead of treating personal shell config as canonical:
+  - installable through `vetcoders-spawn/scripts/install-shell.sh`
+  - sourceable from `~/.zshrc`
+  - carries only product-worthy wrappers and Gemini Keychain ergonomics, not personal banner/theme baggage
+- Tightened the visible spawn contract around `zsh -ic <launcher>` rather than plain `zsh <launcher>`, which matters for real user-shaped runtime and fixes the discovered Gemini auth path on machines where the key lives in Keychain.
+- Added a path to sync the same helper layer to another machine via `skills_sync.sh --with-shell`, so the "best parts of the shell" are now something the repo can install and ship.

@@ -238,32 +238,47 @@ Preserve chronology, corrections, and reversals of interpretation.
 
 ### Planner swarm
 
-Run the same plan through independent planners:
+Run the same plan through independent planners using the portable spawn scripts:
 
 ```bash
-zsh -ic 'codex-plan .ai-agents/plans/<plan>.md'
-zsh -ic 'claude-plan .ai-agents/plans/<plan>.md'
-zsh -ic 'gemini-plan .ai-agents/plans/<plan>.md'
+bash ~/.codex/skills/vetcoders-spawn/scripts/codex_spawn.sh .ai-agents/plans/<plan>.md --mode plan
+bash ~/.claude/skills/vetcoders-spawn/scripts/claude_spawn.sh .ai-agents/plans/<plan>.md --mode plan
+bash ~/.gemini/skills/vetcoders-spawn/scripts/gemini_spawn.sh .ai-agents/plans/<plan>.md --mode plan
 ```
+
+> **Note**: If your environment has `codex-plan`, `claude-plan`, `gemini-plan`
+> shell aliases (from private dotfiles), those are convenience wrappers that call
+> the same portable scripts. The repo-owned scripts above are the canonical path
+> and work on any machine with the skills installed.
 
 For Gemini, make auth explicit before you trust the swarm:
 
 - either `GEMINI_API_KEY` must be available to the spawned launcher
-- or the helper must be able to recover it from macOS Keychain
 - or Gemini CLI must already be authenticated through the Google-account flow
+- the repo-owned launcher can also resolve `GEMINI_API_KEY` from macOS Keychain when available
 
-If none of those are true, the launch can appear successful while the Terminal
-session fails immediately inside the spawned process.
+If none of those are true, the launch can appear successful while the spawned
+process fails immediately.
 
-If `gemini-plan` is unavailable, say so explicitly and continue with the
+If Gemini spawn is unavailable, say so explicitly and continue with the
 available pair.
 
 ### Resume the same sessions into implementation
 
+Resume helpers (`codex-resume`, `gemini-resume`) are environment-specific
+aliases. If they are not available in your environment, start a fresh
+implementation agent carrying the planner report + chosen synthesis as context.
+
 ```bash
+# If resume helpers are available:
 zsh -ic 'codex-resume <session-uuid> "<continuation prompt>"'
 zsh -ic 'gemini-resume <session-uuid> "<continuation prompt>"'
+
+# If not, use portable scripts with the synthesis as the new plan:
+bash ~/.codex/skills/vetcoders-spawn/scripts/codex_spawn.sh .ai-agents/plans/<implementation-plan>.md --mode implement
 ```
+
+Do not pretend continuity exists if the resume helper does not exist.
 
 ### Controlled sub-spawn during implementation
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF_USAGE'
-Usage: install.sh [--source <repo-root>] [--tool <codex|claude|gemini>]... [--dry-run] [--mirror] [--list]
+Usage: install.sh [--source <repo-root>] [--tool <codex|claude|gemini>]... [--dry-run] [--mirror] [--with-shell] [--no-zshrc] [--list]
 
 Install the canonical skill directories from this repo into local tool homes:
   ~/.codex/skills
@@ -15,6 +15,7 @@ Examples:
   bash vetcoders-spawn/scripts/install.sh --tool codex --tool claude
   bash vetcoders-spawn/scripts/install.sh --dry-run
   bash vetcoders-spawn/scripts/install.sh --mirror
+  bash vetcoders-spawn/scripts/install.sh --with-shell
 EOF_USAGE
 }
 
@@ -44,8 +45,52 @@ foundation_preflight() {
     missing=1
   fi
 
+  if command -v prview >/dev/null 2>&1; then
+    printf '  [ok] prview -> %s\n' "$(command -v prview)"
+  else
+    printf '  [optional] prview not found\n'
+    printf '    fix: cargo install prview\n'
+  fi
+
   if (( missing )); then
     printf '\nProceeding with install, but ai-contexters / loctree-backed flows will stay degraded until the missing foundations are installed.\n\n'
+  else
+    printf '\n'
+  fi
+}
+
+runtime_preflight() {
+  local missing=0
+  local tool
+
+  printf 'Runtime preflight:\n'
+
+  for cmd in zsh python3; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+      printf '  [ok] %s -> %s\n' "$cmd" "$(command -v "$cmd")"
+    else
+      printf '  [missing] %s\n' "$cmd"
+      missing=1
+    fi
+  done
+
+  if command -v osascript >/dev/null 2>&1; then
+    printf '  [ok] osascript -> %s\n' "$(command -v osascript)"
+  else
+    printf '  [optional] osascript not found (headless spawn still works)\n'
+  fi
+
+  for tool in "${tools[@]}"; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      printf '  [ok] %s -> %s\n' "$tool" "$(command -v "$tool")"
+    else
+      printf '  [missing] %s\n' "$tool"
+      missing=1
+    fi
+  done
+
+  if (( missing )); then
+    printf '\nProceeding with install, but the selected spawn helpers will stay degraded until the missing runtime commands are installed.\n\n'
   else
     printf '\n'
   fi
@@ -55,6 +100,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 dry_run=0
 mirror=0
 list_only=0
+with_shell=0
+shell_no_zshrc=0
 declare -a tools=()
 
 while [[ $# -gt 0 ]]; do
@@ -77,6 +124,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --mirror)
       mirror=1
+      ;;
+    --with-shell)
+      with_shell=1
+      ;;
+    --no-zshrc)
+      shell_no_zshrc=1
       ;;
     --list)
       list_only=1
@@ -124,7 +177,9 @@ if [[ ${#tools[@]} -eq 0 ]]; then
   tools=(codex claude gemini)
 fi
 
-rsync_args=(-az --exclude '.DS_Store' --exclude '.loctree' -e ssh)
+runtime_preflight
+
+rsync_args=(-az --exclude '.DS_Store' --exclude '.loctree')
 if (( mirror )); then
   rsync_args+=(--delete)
 fi
@@ -146,3 +201,15 @@ for tool in "${tools[@]}"; do
 done
 
 printf 'Install complete.\n'
+
+if (( with_shell )); then
+  shell_args=(--source "$repo_root")
+  if (( dry_run )); then
+    shell_args+=(--dry-run)
+  fi
+  if (( shell_no_zshrc )); then
+    shell_args+=(--no-zshrc)
+  fi
+  printf '\nInstalling optional zsh helper layer...\n'
+  bash "$repo_root/vetcoders-spawn/scripts/install-shell.sh" "${shell_args[@]}"
+fi

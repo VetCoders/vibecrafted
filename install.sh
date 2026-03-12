@@ -10,13 +10,13 @@ portable installer from vetcoders-spawn/scripts/install.sh.
 
 Examples:
   curl -fsSL <raw-install-url> | bash
-  curl -fsSL <raw-install-url> | bash -s -- --tool codex
+  curl -fsSL <raw-install-url> | bash -s -- --tool codex --with-shell
   bash install.sh --checkout "$HOME/.local/share/vetcoders-skills"
 EOF_USAGE
 }
 
 default_checkout="${VETCODERS_SKILLS_HOME:-$HOME/.local/share/vetcoders-skills}"
-default_repo_url="${VETCODERS_SKILLS_REPO_URL:-https://github.com/vetcoders/vetcoders-skills.git}"
+default_repo_url="${VETCODERS_SKILLS_REPO_URL:-https://github.com/VetCoders/vetcoders-skills.git}"
 checkout="$default_checkout"
 repo_url="$default_repo_url"
 declare -a installer_args=()

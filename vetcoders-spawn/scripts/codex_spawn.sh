@@ -7,15 +7,21 @@ source "$SCRIPT_DIR/common.sh"
 
 usage() {
   cat <<EOF_USAGE
-Usage: codex_spawn.sh [--mode <mode>] <plan.md>
+Usage: codex_spawn.sh [--mode <mode>] [--runtime <terminal|visible|headless|background|detached>] [--root <repo-root>] [--dry-run] <plan.md>
 
 Modes are labels for the artifact metadata, e.g. implement, review, or plan.
-The runtime path is always: zsh -ic "... codex exec ..."
+Runtime modes:
+- terminal / visible: launch via Terminal.app
+- headless / background / detached: run launcher as detached background process
+- default: terminal
 EOF_USAGE
 }
 
 mode="implement"
+runtime="terminal"
+root=""
 plan_file=""
+dry_run=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -23,6 +29,19 @@ while [[ $# -gt 0 ]]; do
       shift
       [[ $# -gt 0 ]] || spawn_die "Missing value for --mode"
       mode="$1"
+      ;;
+    --runtime)
+      shift
+      [[ $# -gt 0 ]] || spawn_die "Missing value for --runtime"
+      runtime="$1"
+      ;;
+    --root)
+      shift
+      [[ $# -gt 0 ]] || spawn_die "Missing value for --root"
+      root="$1"
+      ;;
+    --dry-run)
+      dry_run=1
       ;;
     -h|--help)
       usage
@@ -41,59 +60,32 @@ done
   exit 1
 }
 spawn_require_file "$plan_file"
-spawn_prepare_paths codex "$plan_file"
+spawn_validate_runtime "$runtime"
+spawn_prepare_paths codex "$plan_file" "$root"
 spawn_write_meta "$SPAWN_META" "launching" "codex" "$mode" "$SPAWN_ROOT" "$SPAWN_PLAN" "$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$SPAWN_LAUNCHER"
+
+if (( !dry_run )); then
+  spawn_require_command codex
+fi
 
 qroot="$(printf '%q' "$SPAWN_ROOT")"
 qplan="$(printf '%q' "$SPAWN_PLAN")"
 qreport="$(printf '%q' "$SPAWN_REPORT")"
 qtranscript="$(printf '%q' "$SPAWN_TRANSCRIPT")"
-qmeta="$(printf '%q' "$SPAWN_META")"
 
-cat > "$SPAWN_LAUNCHER" <<EOF_LAUNCH
-#!/usr/bin/env bash
-set -euo pipefail
-meta=$qmeta
-report=$qreport
-transcript=$qtranscript
-rm -f "\$transcript" "\$report"
-cmd="set -o pipefail && cd $qroot && codex exec -C $qroot --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qplan 2>&1 | tee -a $qtranscript"
-if zsh -ic "\$cmd"; then
-  python3 - "\$meta" "completed" "0" <<'PY'
-import datetime as dt
-import json
-import sys
-meta_path, status, exit_code = sys.argv[1:4]
-with open(meta_path, 'r', encoding='utf-8') as fh:
-    payload = json.load(fh)
-payload['updated_at'] = dt.datetime.now(dt.timezone.utc).isoformat()
-payload['status'] = status
-payload['exit_code'] = int(exit_code)
-with open(meta_path, 'w', encoding='utf-8') as fh:
-    json.dump(payload, fh, indent=2, ensure_ascii=False)
-    fh.write('\n')
-PY
-else
-  exit_code=\$?
-  python3 - "\$meta" "failed" "\$exit_code" <<'PY'
-import datetime as dt
-import json
-import sys
-meta_path, status, exit_code = sys.argv[1:4]
-with open(meta_path, 'r', encoding='utf-8') as fh:
-    payload = json.load(fh)
-payload['updated_at'] = dt.datetime.now(dt.timezone.utc).isoformat()
-payload['status'] = status
-payload['exit_code'] = int(exit_code)
-with open(meta_path, 'w', encoding='utf-8') as fh:
-    json.dump(payload, fh, indent=2, ensure_ascii=False)
-    fh.write('\n')
-PY
-  exit "\$exit_code"
-fi
-EOF_LAUNCH
+launch_cmd="set -o pipefail && cd $qroot && codex exec -C $qroot --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qplan 2>&1 | tee -a $qtranscript"
+
+spawn_generate_launcher "$SPAWN_LAUNCHER" \
+  "$SPAWN_META" \
+  "$SPAWN_REPORT" \
+  "$SPAWN_TRANSCRIPT" \
+  "$SCRIPT_DIR/common.sh" \
+  "$launch_cmd" \
+  "" \
+  "" \
+  ""
 
 chmod +x "$SPAWN_LAUNCHER"
-spawn_print_launch codex "$mode"
-spawn_open_terminal "$SPAWN_LAUNCHER"
+spawn_print_launch codex "$mode" "$runtime"
+spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run"
 printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"
