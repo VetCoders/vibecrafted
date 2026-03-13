@@ -34,15 +34,15 @@ Grep/rg is for local detail only — after structural mapping.
 Each agent plan should include relevant sections from:
 
 1. **CONTEXT.md** (Examination):
-   - Critical files relevant to agent's scope
-   - Risk map for files agent will touch
-   - Existing symbols to reuse
+    - Critical files relevant to agent's scope
+    - Risk map for files agent will touch
+    - Existing symbols to reuse
 
 2. **RESEARCH.md** (Research):
-   - Implementation guidance section
-   - Code examples from authoritative sources
-   - Dependencies to add
-   - Pitfalls to avoid
+    - Implementation guidance section
+    - Code examples from authoritative sources
+    - Dependencies to add
+    - Pitfalls to avoid
 
 ### Plan Template (ERi-enhanced)
 
@@ -91,12 +91,12 @@ Each agent plan should include relevant sections from:
 
 Split implementation into independent, parallel-safe units:
 
-| Pattern | Split By | Example |
-|---------|----------|---------|
-| Feature layers | core → app → tests | Backend types, UI integration, E2E tests |
-| Independent modules | module boundary | auth changes, API changes separately |
-| Read/Write | research → implement | One agent researches, another implements |
-| Risk levels | safe → risky | Safe refactors first, risky changes second |
+| Pattern             | Split By             | Example                                    |
+|---------------------|----------------------|--------------------------------------------|
+| Feature layers      | core → app → tests   | Backend types, UI integration, E2E tests   |
+| Independent modules | module boundary      | auth changes, API changes separately       |
+| Read/Write          | research → implement | One agent researches, another implements   |
+| Risk levels         | safe → risky         | Safe refactors first, risky changes second |
 
 ### Agent Count Heuristics
 
@@ -161,27 +161,36 @@ gemini-implement "$PLAN"
 After agents complete:
 
 ### 1. Collect Reports
+
 Read all reports from `.ai-agents/pipeline/<slug>/reports/`.
 
 ### 2. Quality Gate
+
 Run repo quality commands:
+
 - Rust: `cargo clippy -- -D warnings && cargo test`
 - General: `make check` or equivalent
 
 ### 3. Structural Verification
+
 For each changed file:
+
 - `slice(file)` — verify no broken consumers
 - `impact(file)` — confirm blast radius acceptable
 - Cross-reference with CONTEXT.md risk map
 
 ### 4. Research Conformance
+
 Verify implementation matches RESEARCH.md decisions:
+
 - Correct API patterns used?
 - Dependencies added as specified?
 - Pitfalls avoided?
 
 ### 5. Present to User
+
 Structured summary:
+
 - Changed files (count + LOC delta)
 - Tests passing / failing
 - Risk items from CONTEXT.md: addressed / remaining
@@ -190,6 +199,7 @@ Structured summary:
 ## Iteration
 
 If review finds issues:
+
 1. Update CONTEXT.md with new findings
 2. Write targeted fix plans
 3. Spawn fix agents with same pipeline context

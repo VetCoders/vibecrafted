@@ -43,6 +43,7 @@ and marbles — they are not pipeline steps the user invokes.
 - When the team wants end-to-end automation without manual phase transitions
 
 When NOT to use:
+
 - The user explicitly wants just one phase (use the individual skill)
 - Mid-pipeline recovery (pick up from the specific skill that failed)
 - Quick exploration with no intent to ship
@@ -205,6 +206,7 @@ wrapper, not a replacement. If the user wants to run just marbles,
 or just dou, or just workflow — they can. Ship just chains them.
 
 This means:
+
 - `/vetcoders-init` still works on its own
 - `/vetcoders-workflow` still works on its own
 - `/vetcoders-followup` still works on its own

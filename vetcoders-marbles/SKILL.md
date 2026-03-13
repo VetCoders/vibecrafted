@@ -162,6 +162,7 @@ Convergence score: X/100
 4. **User says stop** — always respected
 
 **DO NOT STOP when:**
+
 - P0 > 0 or P1 > 0 (unless user explicitly accepts risk)
 - P2 > 0 (the circle is not full — keep iterating)
 - Quality gates failing

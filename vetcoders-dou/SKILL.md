@@ -36,11 +36,11 @@ and "someone can buy this."
 
 Every project is scored on three axes:
 
-| Axis | Question | Tools |
-|------|----------|-------|
-| **Repo Health** | Does the code work? | loctree, cargo/npm, CI |
-| **Web Presence** | Can someone find and understand it? | WebFetch, brave-search, curl |
-| **Commercial Readiness** | Can someone adopt or buy it? | Manual checklist + automated probes |
+| Axis                     | Question                            | Tools                               |
+|--------------------------|-------------------------------------|-------------------------------------|
+| **Repo Health**          | Does the code work?                 | loctree, cargo/npm, CI              |
+| **Web Presence**         | Can someone find and understand it? | WebFetch, brave-search, curl        |
+| **Commercial Readiness** | Can someone adopt or buy it?        | Manual checklist + automated probes |
 
 Scoring: [OK] Production-ready | [PARTIAL] Exists but incomplete | [MISSING] Absent
 
@@ -62,6 +62,7 @@ Required files:
 ```
 
 **Automated checks:**
+
 ```bash
 # File existence
 for f in LICENSE README.md CONTRIBUTING.md CHANGELOG.md SECURITY.md; do
@@ -76,6 +77,7 @@ done
 ```
 
 **Loctree structural check:**
+
 ```
 repo-view(project) → extract:
 - Dead exports count (should be 0 for release)
@@ -114,6 +116,7 @@ For web apps:
 The "can Google find us" test:
 
 **URL Crawl (for each public URL):**
+
 ```
 1. WebFetch(url, "Extract: page title, meta description, h1, main content summary,
    any CTA buttons, pricing info. Report if page appears empty or JS-only.")
@@ -130,6 +133,7 @@ The "can Google find us" test:
 ```
 
 **SEO basics:**
+
 ```
 - [ ] Title tag present and descriptive (not "React App")
 - [ ] Meta description present
@@ -141,6 +145,7 @@ The "can Google find us" test:
 ```
 
 **Search presence:**
+
 ```
 brave-search("<product name>") → check if product appears in top 20
 brave-search("<product name> <category>") → check category ranking
@@ -248,6 +253,7 @@ DoU findings feed directly into `vetcoders-hydrate` as prioritized tasks.
 ## The Plague Diagnostic
 
 If you observe this pattern, the project has the plague:
+
 1. Tests pass [PASS]
 2. Architecture is sound [PASS]
 3. README exists [PASS]

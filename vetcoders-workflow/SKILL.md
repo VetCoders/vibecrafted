@@ -98,6 +98,7 @@ Combine brave-search, WebFetch, and Context7 for comprehensive coverage.
 ### Query Strategy
 
 Formulate queries from Examination findings:
+
 - Unknown API → `"<API name> usage example <year>"`
 - Architecture pattern → `"<pattern> Rust/Swift/etc best practices"`
 - Integration → `"<library> + <library> integration"`
@@ -165,6 +166,7 @@ Reports go to `.ai-agents/pipeline/<slug>/reports/`.
 ### Review
 
 After agents complete:
+
 1. Read all reports
 2. Run quality gate (`make check` or equivalent)
 3. Verify against CONTEXT.md risk map
@@ -172,10 +174,10 @@ After agents complete:
 
 ## Quick Reference
 
-| Phase | Tool | Output |
-|-------|------|--------|
-| Examine | loctree MCP | CONTEXT.md |
-| Research | brave-search + Context7 + WebFetch | RESEARCH.md |
+| Phase     | Tool                               | Output       |
+|-----------|------------------------------------|--------------|
+| Examine   | loctree MCP                        | CONTEXT.md   |
+| Research  | brave-search + Context7 + WebFetch | RESEARCH.md  |
 | Implement | vetcoders-spawn (portable scripts) | reports/*.md |
 
 ## Phase Skipping
@@ -193,7 +195,8 @@ State which phases apply at pipeline start.
 
 - This skill is mandatory for non-trivial feature work requiring multi-file changes.
 - If loctree MCP is unavailable, see `references/phase-examine.md` for grep-based fallback.
-- Brave Search can run from this repo checkout (`python3 bravesearch/brave_search.py "<query>"`) or from an installed skill copy.
+- Brave Search can run from this repo checkout (`python3 bravesearch/brave_search.py "<query>"`) or from an installed
+  skill copy.
 
 ## Anti-Patterns
 
@@ -208,6 +211,7 @@ State which phases apply at pipeline start.
 ### Reference Files
 
 For detailed phase methodology, consult:
+
 - **`references/phase-examine.md`** — Deep loctree examination patterns
 - **`references/phase-research.md`** — Research methodology and source ranking
 - **`references/phase-implement.md`** — Agent delegation with accumulated context

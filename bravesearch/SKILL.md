@@ -8,6 +8,7 @@ description: Search the web using Brave Search API. Use when you need web search
 ## When to Use
 
 Use this skill instead of `WebSearch` when:
+
 - You need web search results for research or current information
 - You want to control result count or language
 - Built-in WebSearch is rate-limited or returning poor results

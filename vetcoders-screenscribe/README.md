@@ -38,11 +38,11 @@ Główne tryby narzędzia:
 Najczęstsze mapowanie:
 
 - pełny actionable review z narracją:
-  - użyj `review`
+    - użyj `review`
 - transcript only:
-  - użyj `transcribe`
+    - użyj `transcribe`
 - tryb interaktywny / serverowy:
-  - użyj `analyze`
+    - użyj `analyze`
 
 ## Canonical run path
 

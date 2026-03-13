@@ -3,6 +3,7 @@
 Canonical source of truth for the reusable VetCoders skill stack.
 
 This repo exists so our skills stop drifting across:
+
 - `~/.codex/skills`
 - `~/.claude/skills`
 - `~/.gemini/skills`
@@ -15,6 +16,7 @@ installers, and shell glue that power the VetCoders workflow.
 This is not a random backup of local skill folders.
 
 This repo is meant to be:
+
 - the canonical home for VetCoders skills
 - the reviewable source for shared agent instructions
 - the sync source for local installs in Codex, Claude, and Gemini
@@ -67,32 +69,32 @@ Not every tool is required for every install. Here is the honest dependency map:
 These two binaries make the whole skill stack meaningfully better. The installer
 preflights them and tells you how to add them if missing.
 
-| Tool | What it does | Install |
-|------|-------------|---------|
-| `aicx` | Extracts deduplicated timelines from AI sessions | `cargo install aicx` |
-| `loctree-mcp` | Structural code mapping for agents | `cargo install loctree-mcp` |
+| Tool          | What it does                                     | Install                     |
+|---------------|--------------------------------------------------|-----------------------------|
+| `aicx`        | Extracts deduplicated timelines from AI sessions | `cargo install aicx`        |
+| `loctree-mcp` | Structural code mapping for agents               | `cargo install loctree-mcp` |
 
 If they are missing, skills still install and most workflows still run, but
 `vetcoders-init` loses its Memory layer (aicx) and its Eyes layer (loctree).
 
 ### Recommended ecosystem tools
 
-| Tool | What it does | When you need it |
-|------|-------------|-----------------|
-| `codex` CLI | OpenAI Codex agent | Spawning Codex subagents |
-| `claude` CLI | Claude Code agent | Spawning Claude subagents |
-| `gemini` CLI | Gemini agent | Spawning Gemini subagents |
-| `semgrep` | Security scanning | Quality gates in followup/spawn |
-| `brave-search` API key | Web search | Research phase of ERi pipeline |
+| Tool                   | What it does       | When you need it                |
+|------------------------|--------------------|---------------------------------|
+| `codex` CLI            | OpenAI Codex agent | Spawning Codex subagents        |
+| `claude` CLI           | Claude Code agent  | Spawning Claude subagents       |
+| `gemini` CLI           | Gemini agent       | Spawning Gemini subagents       |
+| `semgrep`              | Security scanning  | Quality gates in followup/spawn |
+| `brave-search` API key | Web search         | Research phase of ERi pipeline  |
 
 You only need the agent CLIs for the runtimes you actually use.
 
 ### Optional specialist tools
 
-| Tool | What it does | When you need it |
-|------|-------------|-----------------|
-| `prview` | PR review artifact generation | `vetcoders-prview` skill only |
-| `loct` CLI | Local loctree without MCP | Fallback when loctree-mcp unavailable |
+| Tool       | What it does                  | When you need it                      |
+|------------|-------------------------------|---------------------------------------|
+| `prview`   | PR review artifact generation | `vetcoders-prview` skill only         |
+| `loct` CLI | Local loctree without MCP     | Fallback when loctree-mcp unavailable |
 
 ### System requirements
 
@@ -117,12 +119,14 @@ If a skill needs credentials, it must read them from environment variables or a
 local machine config that is outside git.
 
 Example:
+
 - `bravesearch/brave_search.py` now expects `BRAVE_SEARCH_API_KEY` or `BRAVE_API_KEY`
 - hardcoded demo keys are not acceptable here
 
 ### 3. No machine exhaust as canonical content
 
 This repo should not normalize local clutter such as:
+
 - `.DS_Store`
 - `.loctree/`
 - editor junk
@@ -147,6 +151,7 @@ vetcoders-suite-showcase.html
 ```
 
 Notes:
+
 - `docs/`, `pdf/`, and the showcase HTML were inherited from the seed copy.
 - They may stay if they serve real packaging or documentation value.
 - If they are just historical carry-over, they should eventually be pruned.
@@ -172,6 +177,7 @@ bash vetcoders-spawn/scripts/install.sh --with-shell
 
 The helper layer is the distilled, product-worthy part of the founders' zsh
 setup:
+
 - `codex-implement`, `claude-review`, `gemini-plan`
 - `*-prompt` and `*-observe`
 - `skills-sync`
@@ -232,7 +238,8 @@ bash vetcoders-spawn/scripts/skills_sync.sh mgbook16 --with-shell
 ### Bootstrap installer
 
 The repo root also ships `install.sh`, which is the future `curl | sh` entrypoint.
-By default the installer is conservative and does not delete extra files inside already-installed skills; use `--mirror` when you want canonical 1:1 alignment.
+By default the installer is conservative and does not delete extra files inside already-installed skills; use `--mirror`
+when you want canonical 1:1 alignment.
 Once the repo is public, the intended shape is:
 
 ```bash
@@ -243,6 +250,7 @@ That bootstrap script clones or updates the repo into a local checkout and then
 delegates to `vetcoders-spawn/scripts/install.sh`.
 
 The installer runs two levels of preflight:
+
 - runtime commands such as `zsh`, `python3`, and the selected agent CLIs
 - first-party foundations `aicx` and `loctree-mcp`
 - optional specialist tool `prview`
@@ -269,6 +277,7 @@ bash scripts/check-portable.sh
 ```
 
 This checks:
+
 - shell syntax for installers and spawn runtime
 - install into a clean `HOME`
 - optional zsh helper install
@@ -293,10 +302,12 @@ artifact, not just a local file.
 My take: yes, it should probably live on `vetcoders.github.io`.
 
 Good next shapes:
+
 - `https://vetcoders.github.io/skills/`
 - or `https://vetcoders.github.io/vetcoders-skills/`
 
 That gives the skills suite:
+
 - a public landing page
 - a shareable explanation of the pipeline
 - a cleaner bridge between "internal skill repo" and "external product surface"
@@ -308,9 +319,9 @@ The highest-leverage next moves for this repo are:
 1. Decide whether `docs/` and `pdf/` are canonical or seed residue.
 2. Publish and harden the new install/sync path now that the portable spawn runtime is in repo scripts.
 3. Add a lightweight repo quality gate for:
-   - secret scan
-   - malformed `SKILL.md`
-   - accidental junk files
+    - secret scan
+    - malformed `SKILL.md`
+    - accidental junk files
 4. Publish the showcase to GitHub Pages.
 
 ## VetCoders Context
@@ -319,6 +330,7 @@ VetCoders build through Vibecrafting, but that does not mean we should accept
 chaotic skill drift.
 
 This repo is the stonecutting step:
+
 - shared instructions become versioned
 - tool behavior becomes reviewable
 - the stack becomes portable across machines and runtimes

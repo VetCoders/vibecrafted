@@ -33,17 +33,17 @@ use `vetcoders-spawn` instead.
 
 ## Comparison: implement vs spawn
 
-| Capability | vetcoders-implement | vetcoders-spawn |
-|-----------|-------------------|----------------|
-| **Execution** | Claude Task tool (in-process) | Portable scripts (out-of-process) |
-| **Safety** | Sandboxed, no dangerous flags | Requires `--dangerously-*` flags |
-| **Agents** | Claude subagents only | Claude + Codex + any CLI agent |
-| **Parallelism** | Multiple Task calls in one message | Multiple Terminal windows |
-| **Persistence** | Within conversation context | Independent processes |
-| **Visibility** | Results returned to conversation | Must read report files |
-| **Robustness** | Limited by context window | Full agent session per task |
-| **Environment** | Inherits parent env | Clean Terminal env |
-| **Best for** | Research, audit, small impl | Large impl, multi-agent fleets |
+| Capability      | vetcoders-implement                | vetcoders-spawn                   |
+|-----------------|------------------------------------|-----------------------------------|
+| **Execution**   | Claude Task tool (in-process)      | Portable scripts (out-of-process) |
+| **Safety**      | Sandboxed, no dangerous flags      | Requires `--dangerously-*` flags  |
+| **Agents**      | Claude subagents only              | Claude + Codex + any CLI agent    |
+| **Parallelism** | Multiple Task calls in one message | Multiple Terminal windows         |
+| **Persistence** | Within conversation context        | Independent processes             |
+| **Visibility**  | Results returned to conversation   | Must read report files            |
+| **Robustness**  | Limited by context window          | Full agent session per task       |
+| **Environment** | Inherits parent env                | Clean Terminal env                |
+| **Best for**    | Research, audit, small impl        | Large impl, multi-agent fleets    |
 
 ## Standard Workflow
 
@@ -188,13 +188,13 @@ After all agents return, the primary agent (you):
 
 ## Subagent Type Selection Guide
 
-| Task Type | Subagent Type | Why |
-|-----------|--------------|-----|
+| Task Type                     | Subagent Type     | Why                                  |
+|-------------------------------|-------------------|--------------------------------------|
 | Implementation (code changes) | `general-purpose` | Full tool access for read/write/edit |
-| Quick search / symbol lookup | `Explore` | Fast, focused, read-only |
-| Run tests / linters / builds | `Bash` | Direct command execution |
-| Architecture planning | `Plan` | Read-only, design focused |
-| Research (web + docs) | `general-purpose` | Needs WebSearch, WebFetch |
+| Quick search / symbol lookup  | `Explore`         | Fast, focused, read-only             |
+| Run tests / linters / builds  | `Bash`            | Direct command execution             |
+| Architecture planning         | `Plan`            | Read-only, design focused            |
+| Research (web + docs)         | `general-purpose` | Needs WebSearch, WebFetch            |
 
 ## Prompt Engineering for Task Agents
 

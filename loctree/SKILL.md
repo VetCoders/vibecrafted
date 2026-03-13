@@ -26,49 +26,57 @@ Use loctree MCP tools as the default discovery layer — **before reading files 
 ## Standard Workflow (Required)
 
 ### 1) Map repo
+
 - Run `repo-view(project)` once per task.
 - Note: top hubs, dead exports, cycles, twins, health indicators.
 
 ### 2) Constrain scope
+
 - Run `focus(project, directory)` for each target module (1-3 dirs max).
 - Capture external consumers and dependencies.
 
 ### 3) File-level context before edit
+
 - For every file to modify, run `slice(file, consumers=true)`.
 - Record: direct dependencies, direct consumers, likely transitive risk.
 
 ### 4) Change risk check
+
 - For each candidate high-impact file, run `impact(file)`.
 - If risk is high, isolate changes (new variant, scoped class, adapter layer).
 
 ### 5) Symbol check before creating
+
 - Run `find(name)` for new types/functions/components/keys.
 - Supports regex: `find("SymbolA|SymbolB")`.
 - Reuse existing patterns when available.
 
 ### 6) Pursue signals
+
 - Run `follow(scope)` to drill into problems flagged by repo-view.
 - Scopes: `dead`, `cycles`, `twins`, `hotspots`, or `all`.
 - Returns field-level detail with actionable recommendations.
 
 ### 7) Line-level read
+
 - Use `grep`, `rg`, `cat` only after steps 1-6.
 
 ### 8) Validation
+
 - Re-run targeted tests/lint/typecheck.
 - For UI: add visual sanity check across themes/modes.
 
 ## Tools Reference
 
-| Tool | When | What you get |
-|------|------|-------------|
-| `repo-view(project)` | Start of task | Files, LOC, languages, health, top hubs |
-| `slice(file)` | Before modifying | File + dependencies + consumers |
-| `find(name)` | Before creating | Symbol search with regex, multi-query |
-| `impact(file)` | Before deleting | Direct + transitive consumers (blast radius) |
-| `focus(directory)` | Module deep-dive | Files, internal edges, external deps |
-| `tree(project)` | Layout overview | Directory structure with LOC counts |
-| `follow(scope)` | After repo-view | Field-level signals: dead, cycles, twins, hotspots |
+| Tool                 | When             | What you get                                       |
+|----------------------|------------------|----------------------------------------------------|
+| `repo-view(project)` | Start of task    | Files, LOC, languages, health, top hubs            |
+| `slice(file)`        | Before modifying | File + dependencies + consumers                    |
+| `find(name)`         | Before creating  | Symbol search with regex, multi-query              |
+| `impact(file)`       | Before deleting  | Direct + transitive consumers (blast radius)       |
+| `focus(directory)`   | Module deep-dive | Files, internal edges, external deps               |
+| `tree(project)`      | Layout overview  | Directory structure with LOC counts                |
+| `follow(scope)`      | After repo-view  | Field-level signals: dead, cycles, twins, hotspots |
 
 All tools accept `project` parameter (default: current dir).
 First use auto-scans if no snapshot exists. Subsequent calls use cache (instant).
@@ -76,6 +84,7 @@ First use auto-scans if no snapshot exists. Subsequent calls use cache (instant)
 ## Output Contract (for agents)
 
 Before refactor, report:
+
 1. **Repo Summary** (3-5 bullets from `repo-view`)
 2. **Scope** (focused dirs and why)
 3. **Critical Files** (from `slice`)
@@ -83,6 +92,7 @@ Before refactor, report:
 5. **Plan** (ordered phases + rollback points)
 
 After implementation, report:
+
 1. **Changed Files**
 2. **Why**
 3. **Validation**

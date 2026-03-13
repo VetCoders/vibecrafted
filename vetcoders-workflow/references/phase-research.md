@@ -29,6 +29,7 @@ python3 ~/.claude/skills/bravesearch/brave_search.py "query" [-c count] [-l lang
 ```
 
 Query formulation tips:
+
 - Append current year: `"Rust async patterns 2026"`
 - Be specific: `"objc2 NSEvent addLocalMonitor Rust"` not `"event handling"`
 - Use language filter for locale-specific: `-l pl` for Polish results
@@ -59,17 +60,18 @@ Search existing code for prior art (only AFTER loctree mapping):
 
 Each open question from Examination maps to research queries:
 
-| Question Type | Research Approach |
-|--------------|-------------------|
-| "How does API X work?" | Context7 → Brave → WebFetch |
-| "Best pattern for Y?" | Brave ("Y best practices <lang> <year>") → codebase grep |
-| "Is library Z compatible?" | Context7 (library docs) → Brave (compatibility reports) |
-| "Performance of approach A vs B?" | Brave (benchmarks) → WebFetch (detailed comparison) |
-| "macOS API for feature F?" | Brave ("macOS <API> Swift/Rust") → Apple docs via WebFetch |
+| Question Type                     | Research Approach                                          |
+|-----------------------------------|------------------------------------------------------------|
+| "How does API X work?"            | Context7 → Brave → WebFetch                                |
+| "Best pattern for Y?"             | Brave ("Y best practices <lang> <year>") → codebase grep   |
+| "Is library Z compatible?"        | Context7 (library docs) → Brave (compatibility reports)    |
+| "Performance of approach A vs B?" | Brave (benchmarks) → WebFetch (detailed comparison)        |
+| "macOS API for feature F?"        | Brave ("macOS <API> Swift/Rust") → Apple docs via WebFetch |
 
 ### Query Refinement
 
 If initial query returns poor results:
+
 1. Broaden: remove specific terms
 2. Rephrase: different terminology
 3. Language switch: try English if searching in Polish (or vice versa)
@@ -118,30 +120,36 @@ Pipeline: .ai-agents/pipeline/<slug>/
 ---
 
 ### Q2: <question>
+
 ...
 
 ## Architectural Decision Record
 
 ### Decision: <what was decided>
+
 - **Context**: <from CONTEXT.md>
 - **Options considered**:
-  1. <option A> — <pros/cons>
-  2. <option B> — <pros/cons>
+    1. <option A> — <pros/cons>
+    2. <option B> — <pros/cons>
 - **Chosen**: <option> because <reasoning based on findings>
 - **Consequences**: <what this means for implementation>
 
 ## Implementation Guidance (for agents)
 
 ### Must-know for implementers:
+
 - <concrete guidance derived from research>
 - <API patterns to use>
 - <pitfalls to avoid>
 
 ### Dependencies to add:
+
 - <crate/package name> = "<version>"
 
 ### Configuration required:
+
 - <env vars, feature flags, etc.>
+
 ```
 
 ## Common Research Patterns

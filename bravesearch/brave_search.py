@@ -10,9 +10,9 @@ Created by M&K (c)2026 VetCoders
 import json
 import os
 import sys
-import urllib.request
-import urllib.parse
 import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Optional
 
 API_URL = "https://api.search.brave.com/res/v1/web/search"

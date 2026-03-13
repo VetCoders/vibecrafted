@@ -37,6 +37,7 @@ as first-class engineering tasks, not afterthoughts.
 Fix repo governance gaps identified by DoU:
 
 **File Generation:**
+
 ```
 For each missing file, generate contextually appropriate content:
 
@@ -67,6 +68,7 @@ CI Workflows:
 ```
 
 **Version Synchronization:**
+
 ```bash
 # Find all version references and check consistency
 grep -rn "version" Cargo.toml package.json pyproject.toml
@@ -82,6 +84,7 @@ npm view <package-name> version 2>/dev/null
 Make the product installable without a dev toolchain:
 
 **CLI Tools (Rust):**
+
 ```
 - [ ] cargo install <name> works
 - [ ] GitHub Releases with prebuilt binaries (linux-x86_64, macos-arm64, macos-x86_64)
@@ -96,6 +99,7 @@ Generate GitHub Actions release workflow:
 ```
 
 **Desktop Apps (macOS):**
+
 ```
 - [ ] .app bundle with proper Info.plist
 - [ ] DMG with background image and Applications symlink
@@ -113,6 +117,7 @@ Template: create-dmg with:
 ```
 
 **Web Apps:**
+
 ```
 - [ ] Dockerfile for containerized deployment
 - [ ] docker-compose.yml for local preview
@@ -126,6 +131,7 @@ Template: create-dmg with:
 Fix SEO and web presence gaps:
 
 **SSR/Pre-rendering for SPA sites:**
+
 ```
 Problem: JS-rendered sites are invisible to crawlers.
 Solutions (in order of preference):
@@ -141,6 +147,7 @@ For Leptos (WASM) sites:
 ```
 
 **Meta Tags Generator:**
+
 ```html
 <!-- Generate for each public page -->
 <title>{Product} — {Tagline} | {Company}</title>
@@ -166,6 +173,7 @@ Content-Security-Policy: default-src 'self'
 ```
 
 **robots.txt + sitemap.xml:**
+
 ```
 Generate from actual URL structure.
 Ensure no duplicate content across domains.
@@ -177,6 +185,7 @@ Submit to Google Search Console (manual step — flag for user).
 Build the stranger-to-customer path:
 
 **Landing Page Content Generation:**
+
 ```
 Structure:
 1. Hero: {Tagline} + {1-sentence value prop} + {Primary CTA}
@@ -196,6 +205,7 @@ Generate as:
 **Marketplace Listing Generator:**
 
 For Claude Code Skills Marketplace:
+
 ```markdown
 # {Skill Name}
 
@@ -219,6 +229,7 @@ For Claude Code Skills Marketplace:
 ```
 
 For crates.io / npm / PyPI:
+
 ```
 - description: {<250 chars, keyword-rich}
 - keywords: {5 relevant terms}
@@ -260,15 +271,19 @@ For skills/plugins:
 When running a hydration sprint:
 
 ### 1. Ingest DoU Report
+
 Read the DoU report. Extract all P0 and P1 findings.
 Sort by impact (commercial surface > discoverability > repo governance).
 
 ### 2. Triage into Domains
+
 Map each finding to a hydration domain (1-5).
 Some findings map to multiple domains — list all.
 
 ### 3. Generate Artifacts
+
 For each finding, generate the appropriate artifact:
+
 - Missing files → create them
 - Missing meta tags → generate HTML
 - Missing install path → create CI workflow
@@ -276,10 +291,12 @@ For each finding, generate the appropriate artifact:
 - Missing marketplace listing → generate listing
 
 ### 4. Verify via DoU
+
 After hydration, re-run `vetcoders-dou` on affected areas.
 Target: Plague Score reduction of at least 20 points.
 
 ### 5. Present to User
+
 ```
 ## Hydration Report: <project>
 
@@ -327,6 +344,7 @@ Agent 4: Commercial Hydration (landing copy, marketplace listings)
 ```
 
 Use `vetcoders-spawn` spawn pattern. Each agent gets:
+
 - DoU findings for their domain
 - Template artifacts from this skill
 - Living tree preamble (standard)

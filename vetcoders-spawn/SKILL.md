@@ -24,14 +24,17 @@ description: >
 > For the safe in-session alternative, see `vetcoders-implement`.
 
 ## When to use
+
 Trigger when the user wants full isolation, long-running delegated work, or a
 visible fleet in Terminal, especially for:
+
 - parallel implementation or review tracks
 - work that should survive your current context window
 - Codex, Claude, or Gemini in separate processes
 - observation through durable artifacts instead of chat memory
 
 ## Why this skill exists
+
 - Your main context stays focused while subagents take bounded slices.
 - The portable scripts remove dependency on one person's private dotfiles.
 - The contract is explicit: terminal/visible mode is optional, headless mode is
@@ -39,16 +42,19 @@ visible fleet in Terminal, especially for:
 - Repo-owned scripts are easier to install, review, version, and improve.
 
 ## Goal
+
 Create a small fleet of subagents that each get a precise task in
 `.ai-agents/plans/`, then collect their results in `.ai-agents/reports/`.
 
 Delegate:
+
 - exploration
 - research
 - implementation
 - review
 
 ## Standard workflow
+
 1. Clarify scope if the task split is not explicit.
 2. Ensure `.ai-agents/plans/`, `.ai-agents/reports/`, and `.ai-agents/tmp/`
    exist in the repo root.
@@ -58,7 +64,9 @@ Delegate:
 6. Synthesize reports back into the main thread.
 
 ## Mandatory plan rules
+
 Every subagent plan should:
+
 - be high level, decisive, and test-gated
 - include reason/context
 - include a clear checkbox todo list
@@ -67,6 +75,7 @@ Every subagent plan should:
 - end with a short call to action
 
 ## Living tree rule
+
 Always include this exact preamble in every subagent plan or prompt:
 
 ```text
@@ -78,7 +87,9 @@ Run required checks. If something is blocked, report the exact blocker and run t
 Keep this preamble repo-agnostic.
 
 ## Canonical runtime
+
 Portable scripts now live here:
+
 - `vetcoders-spawn/scripts/common.sh`
 - `vetcoders-spawn/scripts/codex_spawn.sh`
 - `vetcoders-spawn/scripts/claude_spawn.sh`
@@ -88,25 +99,30 @@ Portable scripts now live here:
 - `vetcoders-spawn/scripts/skills_sync.sh`
 
 The scripts generate:
+
 - report: `.ai-agents/reports/<timestamp>_<slug>_<agent>.md`
 - transcript: `.ai-agents/reports/<timestamp>_<slug>_<agent>.transcript.log`
 - metadata: `.ai-agents/reports/<timestamp>_<slug>_<agent>.meta.json`
 - launcher: `.ai-agents/tmp/<timestamp>_<slug>_<agent>_launch.sh`
 
 ## Canonical commands
+
 From a repo checkout, the cleanest direct path is:
 
 Codex:
+
 ```bash
 bash vetcoders-spawn/scripts/codex_spawn.sh .ai-agents/plans/<plan>.md --mode implement --runtime terminal
 ```
 
 Claude:
+
 ```bash
 bash vetcoders-spawn/scripts/claude_spawn.sh .ai-agents/plans/<plan>.md --mode review --runtime terminal
 ```
 
 Gemini:
+
 ```bash
 bash vetcoders-spawn/scripts/gemini_spawn.sh .ai-agents/plans/<plan>.md --mode implement --runtime terminal
 ```
@@ -114,21 +130,25 @@ bash vetcoders-spawn/scripts/gemini_spawn.sh .ai-agents/plans/<plan>.md --mode i
 If the skill is installed into the default home paths, the installed-script path is:
 
 Codex:
+
 ```bash
 bash ~/.codex/skills/vetcoders-spawn/scripts/codex_spawn.sh .ai-agents/plans/<plan>.md --mode implement --runtime terminal
 ```
 
 Claude:
+
 ```bash
 bash ~/.claude/skills/vetcoders-spawn/scripts/claude_spawn.sh .ai-agents/plans/<plan>.md --mode review --runtime terminal
 ```
 
 Gemini:
+
 ```bash
 bash ~/.gemini/skills/vetcoders-spawn/scripts/gemini_spawn.sh .ai-agents/plans/<plan>.md --mode implement --runtime terminal
 ```
 
 Observe latest Codex run:
+
 ```bash
 bash ~/.codex/skills/vetcoders-spawn/scripts/observe.sh codex --last
 ```
@@ -157,6 +177,7 @@ All three launchers share:
 available in the current environment.
 
 ## The real trick
+
 The important discovery is not the wrapper name. The important discovery is:
 
 ```bash
@@ -174,7 +195,9 @@ zsh -ic "cd '/path/to/repo' && codex exec -C '/path/to/repo' --dangerously-bypas
 ```
 
 ## Scope note
+
 The repo-owned runtime currently covers:
+
 - spawn
 - artifact generation
 - observe
@@ -187,13 +210,18 @@ extra files inside already-installed skills. Use `--mirror` when you want a
 strict 1:1 canonical copy.
 
 ## Install and distribution
+
 The portable path now has three layers:
+
 - `install.sh` at repo root: bootstrap for the future `curl | sh` flow
 - `vetcoders-spawn/scripts/install.sh`: local install into `~/.{codex,claude,gemini}/skills`
-- `vetcoders-spawn/scripts/install-shell.sh`: optional zsh helper install (`codex-implement`, `claude-implement`, `gemini-implement`, `*-prompt`, `*-observe`, `skills-sync`, Gemini Keychain helpers)
-- `vetcoders-spawn/scripts/skills_sync.sh`: remote sync to another machine's skill homes, optionally with the same helper layer
+- `vetcoders-spawn/scripts/install-shell.sh`: optional zsh helper install (`codex-implement`, `claude-implement`,
+  `gemini-implement`, `*-prompt`, `*-observe`, `skills-sync`, Gemini Keychain helpers)
+- `vetcoders-spawn/scripts/skills_sync.sh`: remote sync to another machine's skill homes, optionally with the same
+  helper layer
 
 The installer and remote sync now also preflight the two foundation binaries that make the whole stack feel complete:
+
 - `aicx`
 - `loctree-mcp`
 
@@ -203,9 +231,11 @@ If they are missing, install still proceeds, but the user gets the explicit next
 `cargo install aicx loctree-mcp`
 
 ## Fallback method
+
 Use raw `osascript` only if the portable scripts are unavailable.
 
 Codex fallback:
+
 ```bash
 osascript -e '
 tell application "Terminal"
@@ -216,7 +246,9 @@ end tell
 ```
 
 ## Quality gate expectations
+
 Keep the standard VetCoders quality bar:
+
 - loctree-mcp first for exploration when available
 - semgrep first for security when available
 - Rust repos: `cargo clippy -- -D warnings`
@@ -225,6 +257,7 @@ Keep the standard VetCoders quality bar:
 - if a gate is blocked, report the exact blocker and run the closest safe equivalent
 
 ## Safety rules
+
 - Do not log secrets or commit `.env` files.
 - Never use `--no-verify` for `commit` or `push`.
 - Do not rewrite git history unless the user explicitly asks.

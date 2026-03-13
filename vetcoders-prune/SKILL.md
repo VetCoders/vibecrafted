@@ -56,14 +56,14 @@ If the user says "bez litosci", "radykalnie", or equivalent, use `radical`.
 
 ## The Pruning Classes
 
-| Class | Meaning | Action |
-|------|---------|--------|
-| `KEEP-RUNTIME` | Participates directly or transitively in app runtime | Keep; refactor separately if ugly |
-| `KEEP-BUILD` | Required to build, package, sign, bundle, or release | Keep; do not delete with runtime cuts |
-| `KEEP-QA` | Required to verify behavior, smoke flows, preview paths, or release confidence | Keep; move later only with replacement proof |
-| `MOVE-ARCHIVE` | Historical but still worth preserving outside main working tree | Move to archive branch, attic repo, or external archive |
-| `DELETE-NOW` | Generated, disposable, reproducible, whole-dead, or clearly unreachable | Delete directly |
-| `VERIFY-FIRST` | Suspicious, possibly dead, but dynamic imports, registries, or configs may still reach it | Prove with impact + grep + gates before removal |
+| Class          | Meaning                                                                                   | Action                                                  |
+|----------------|-------------------------------------------------------------------------------------------|---------------------------------------------------------|
+| `KEEP-RUNTIME` | Participates directly or transitively in app runtime                                      | Keep; refactor separately if ugly                       |
+| `KEEP-BUILD`   | Required to build, package, sign, bundle, or release                                      | Keep; do not delete with runtime cuts                   |
+| `KEEP-QA`      | Required to verify behavior, smoke flows, preview paths, or release confidence            | Keep; move later only with replacement proof            |
+| `MOVE-ARCHIVE` | Historical but still worth preserving outside main working tree                           | Move to archive branch, attic repo, or external archive |
+| `DELETE-NOW`   | Generated, disposable, reproducible, whole-dead, or clearly unreachable                   | Delete directly                                         |
+| `VERIFY-FIRST` | Suspicious, possibly dead, but dynamic imports, registries, or configs may still reach it | Prove with impact + grep + gates before removal         |
 
 ## Workflow
 
@@ -149,10 +149,10 @@ Rules:
 
 - For Vite repos, prefer `dist/assets`, not bare `dist`, as the source map path.
 - Track deltas in:
-  - `dead_exports`
-  - `source_exports`
-  - `bundled_exports`
-  - source map count
+    - `dead_exports`
+    - `source_exports`
+    - `bundled_exports`
+    - source map count
 - Treat the delta as your scoreboard.
 - Never treat a symbol-level dead-export report as deletion proof by itself.
 - Use it to discover dead slices, stale public APIs, barrel bleed, and

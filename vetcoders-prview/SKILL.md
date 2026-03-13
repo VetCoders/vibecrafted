@@ -42,6 +42,7 @@ prview -R --remote-only <branch> <base>
 - `<base>`: defaults to `develop`
 
 Fallback paths:
+
 - `~/Git/prview-rs/target/release/prview -R --remote-only <branch> <base>`
 - `prview --use-bash-full -R --remote-only <branch> <base>` (legacy bridge)
 
@@ -63,40 +64,40 @@ prview --with-tests --with-lint --with-security
 
 ### Other modes
 
-| Command | Purpose |
-|---------|---------|
-| `prview --ci` | CI mode: all checks, no color, exit 1 on failure |
-| `prview --json --quiet` | JSON output for automation / jq piping |
-| `prview --update` | Incremental: only regenerate changed artifacts |
-| `prview --tui` | Interactive terminal UI |
-| `prview feat/x develop main` | Explicit target + base branches |
+| Command                      | Purpose                                          |
+|------------------------------|--------------------------------------------------|
+| `prview --ci`                | CI mode: all checks, no color, exit 1 on failure |
+| `prview --json --quiet`      | JSON output for automation / jq piping           |
+| `prview --update`            | Incremental: only regenerate changed artifacts   |
+| `prview --tui`               | Interactive terminal UI                          |
+| `prview feat/x develop main` | Explicit target + base branches                  |
 
 ### Flag Reference
 
-| Flag | What |
-|------|------|
-| `--quick` | Skip tests/lint/bundle/heuristics |
-| `--deep` | All checks enabled |
-| `--ci` | CI mode (strict exit) |
-| `--pr N` | Analyze GitHub PR #N |
-| `--gh-repo owner/repo` | Explicit repo for --pr |
-| `--with-tests` | Enable test runner |
-| `--with-lint` | Enable linters |
-| `--with-security` | Enable cargo geiger |
-| `--update` | Incremental regeneration |
-| `--json` | JSON output |
-| `-q, --quiet` | Minimal output |
-| `--tui` | Interactive TUI |
-| `--watch` | Monitor + regenerate on changes |
-| `-R, --remote` | Remote branch, no checkout |
-| `--no-fetch` | Skip git fetch |
-| `--no-cache` | Disable check caching |
-| `--no-zip` | Skip ZIP creation |
-| `--soft-exit` | Always exit 0 |
-| `--profile <P>` | Force language profile (rust/js/python/mixed/generic) |
-| `--policy-mode <M>` | Override policy (shadow/warn/block) |
-| `--breaking-change` | Mark PR as breaking |
-| `-v, --verbose` | Verbose output |
+| Flag                   | What                                                  |
+|------------------------|-------------------------------------------------------|
+| `--quick`              | Skip tests/lint/bundle/heuristics                     |
+| `--deep`               | All checks enabled                                    |
+| `--ci`                 | CI mode (strict exit)                                 |
+| `--pr N`               | Analyze GitHub PR #N                                  |
+| `--gh-repo owner/repo` | Explicit repo for --pr                                |
+| `--with-tests`         | Enable test runner                                    |
+| `--with-lint`          | Enable linters                                        |
+| `--with-security`      | Enable cargo geiger                                   |
+| `--update`             | Incremental regeneration                              |
+| `--json`               | JSON output                                           |
+| `-q, --quiet`          | Minimal output                                        |
+| `--tui`                | Interactive TUI                                       |
+| `--watch`              | Monitor + regenerate on changes                       |
+| `-R, --remote`         | Remote branch, no checkout                            |
+| `--no-fetch`           | Skip git fetch                                        |
+| `--no-cache`           | Disable check caching                                 |
+| `--no-zip`             | Skip ZIP creation                                     |
+| `--soft-exit`          | Always exit 0                                         |
+| `--profile <P>`        | Force language profile (rust/js/python/mixed/generic) |
+| `--policy-mode <M>`    | Override policy (shadow/warn/block)                   |
+| `--breaking-change`    | Mark PR as breaking                                   |
+| `-v, --verbose`        | Verbose output                                        |
 
 Shell aliases: `prv` → `--quick`, `prvpr <N>` → `--pr N --quick`, `prvjson` → `--json --quiet`
 
@@ -153,23 +154,25 @@ Tryb: **Findings-max**. Nie kończ na "kilku punktach". Jeśli widać 25 osobnyc
 problemów, wypisz 25. Lepiej 20 celnych findingów niż 5 ogólników.
 
 Każdy finding MUSI mieć:
+
 - **Dowód**: artefakt + ścieżka (najlepiej 1–2 linie z patcha/logu)
 - **Komentarz**: dlaczego to ważne (1 zdanie) + co grozi
 - **Rekomendacja**: co zrobić / jak zweryfikować
 
 Zasady:
+
 - Nie łącz różnych tematów w 1 punkt. Jeden punkt = jeden problem.
 - Jeśli czegoś nie da się potwierdzić z artefaktów: oznacz **[VERIFY]**.
 - Rozdzielaj: **problem w kodzie** vs **problem narzędzia [TOOLING]**.
 
 ### P-Level Scale
 
-| P-level | Definicja | Przykłady |
-|---------|-----------|-----------|
-| **P0** | Blocker merge / security / data loss / failing blocking check | Failing tsc, leaked credentials, missing artifacts |
-| **P1** | Wysoki risk regresji w core flow, niekompatybilne zmiany kontraktu | Breaking API, duże zmiany bez testów, import cycles in critical module |
-| **P2** | Średni risk: edge-cases, a11y, telemetria, częściowy brak testów | Missing i18n keys, hardcoded URLs, no error handling on external call |
-| **P3** | Niskie ryzyko / higiena / drobne niespójności | Empty doc titles, test setup duplication, cosmetic naming |
+| P-level | Definicja                                                          | Przykłady                                                              |
+|---------|--------------------------------------------------------------------|------------------------------------------------------------------------|
+| **P0**  | Blocker merge / security / data loss / failing blocking check      | Failing tsc, leaked credentials, missing artifacts                     |
+| **P1**  | Wysoki risk regresji w core flow, niekompatybilne zmiany kontraktu | Breaking API, duże zmiany bez testów, import cycles in critical module |
+| **P2**  | Średni risk: edge-cases, a11y, telemetria, częściowy brak testów   | Missing i18n keys, hardcoded URLs, no error handling on external call  |
+| **P3**  | Niskie ryzyko / higiena / drobne niespójności                      | Empty doc titles, test setup duplication, cosmetic naming              |
 
 ---
 
@@ -178,9 +181,11 @@ Zasady:
 Read artifacts in this order. For each: what to extract.
 
 ### 1) `AI_INDEX.md` (if exists)
+
 - Verify it points to real paths. Lying index → finding P3 [TOOLING].
 
 ### 2) `report.json` (canonical source of truth)
+
 - `meta`: PR url, branch, base
 - `gate`: allow_merge + policy_mode + reasons
 - `checks[]`: status (PASS/WARN/FAIL/ERROR), log_path, command
@@ -188,17 +193,21 @@ Read artifacts in this order. For each: what to extract.
 - `quality`: breaking / coverage / sarif / heuristics
 
 ### 3) `00_summary/MERGE_GATE.json` + `SANITY.json`
+
 - Cross-check with `report.json`. Inconsistency → finding P2 [TOOLING].
 - Note: "All checks passed" with WARN/INLINE_FINDINGS present = misleading.
 
 ### 4) `00_summary/pr-metadata.txt` + `file-status.txt` + `commit-list.txt`
+
 - Scope: how many files, what categories (A/M/D), commit progression
 - Look for branch drift (infra files not in PR scope)
 
 ### 5) `30_context/INLINE_FINDINGS.sarif`
+
 - Every SARIF result = ready-made finding. Transfer all to findings list.
 
 ### 6) `20_quality/*` (logs + results)
+
 - PASS gates: extract warnings from logs (cargo warns, tsc non-errors)
 - WARN/ERROR/FAIL gates: root cause + recommendation
 - `checks-errors.log`: high-signal filtered errors
@@ -206,9 +215,11 @@ Read artifacts in this order. For each: what to extract.
 - `coverage-delta.txt`: flag critical "NO_TEST_CHANGE" entries
 
 ### 7) `30_context/changed-tests.txt`
+
 - Cross-reference with source changes — untested source files → finding
 
 ### 8) Diffs (selective, not exhaustive)
+
 - `10_diff/per-file-diffs/00-INDEX.txt` → top churn files
 - Per-file patches for hotspots
 - `10_diff/per-commit-diffs/00-SUMMARY.md` → commits of highest impact
@@ -221,6 +232,7 @@ Read artifacts in this order. For each: what to extract.
 In per-file patches and/or `full.patch`, scan for these patterns:
 
 ### Rust
+
 - `.unwrap()`, `.expect(` — unhandled panics
 - `panic!`, `todo!` — incomplete code
 - `unsafe` — review justification
@@ -228,6 +240,7 @@ In per-file patches and/or `full.patch`, scan for these patterns:
 - `#[allow(` — suppressed warnings
 
 ### TypeScript / JavaScript
+
 - `any` — type escape
 - `as unknown as` — double cast (type laundering)
 - `@ts-ignore`, `@ts-expect-error` — type suppression
@@ -238,12 +251,14 @@ In per-file patches and/or `full.patch`, scan for these patterns:
 - `console.log`, `console.warn`, `console.error` — should use secureLogger (Vista)
 
 ### Security / PII
+
 - Logging of tokens, emails, passwords, personal IDs
 - New telemetry events without privacy review
 - New endpoints / command handlers without auth checks
 - Hardcoded URLs, API keys, secrets
 
 ### Data / Performance
+
 - Query in loop (N+1)
 - Missing batching for bulk operations
 - Large payloads without pagination
@@ -269,18 +284,22 @@ To prevent laconic reports:
 ## Special Cases (Tooling)
 
 ### Cargo Geiger panic
+
 `Matching variant not found` = tooling/misconfig (case-sensitive `--output-format`).
 → Finding **P1 [TOOLING]** if it blocks quality signal. Recommend: fix flag or pin/upgrade.
 
 ### Timeouts / "killed"
+
 `killed (>timeout)` for tsc trace / eslint json:
 → Finding **P2 [TOOLING]** (missing quality signal). Recommend: increase timeout or disable with justification.
 
 ### Gate inconsistencies
+
 `MERGE_GATE.json` says "All checks passed" but WARN/findings exist:
 → Finding **P2 [TOOLING]** with recommendation: "All blocking checks passed" vs "Non-blocking issues present".
 
 ### Branch drift
+
 Files changed outside PR scope (CI, infra, unrelated config):
 → Finding **P1** if >10 files. Recommend: rebase on base branch.
 
@@ -347,6 +366,7 @@ checks:
 Override at CLI: `--policy-mode block`
 
 Modes:
+
 - **shadow**: never blocks (observability only)
 - **warn**: blocks on `block` severity failures only
 - **block**: blocks on `block` AND `warn` severity failures
@@ -357,13 +377,13 @@ Modes:
 
 Auto-detected from repo contents. Override: `--profile <PROFILE>`.
 
-| Profile | Detection | Checks |
-|---------|-----------|--------|
-| rust | Cargo.toml | cargo test, clippy, cargo audit, cargo geiger |
-| js | package.json + source files | vitest, eslint, tsc, pnpm build |
-| python | pyproject.toml | pytest, ruff, mypy |
-| mixed | multiple detected | all applicable |
-| generic | fallback | basic file analysis |
+| Profile | Detection                   | Checks                                        |
+|---------|-----------------------------|-----------------------------------------------|
+| rust    | Cargo.toml                  | cargo test, clippy, cargo audit, cargo geiger |
+| js      | package.json + source files | vitest, eslint, tsc, pnpm build               |
+| python  | pyproject.toml              | pytest, ruff, mypy                            |
+| mixed   | multiple detected           | all applicable                                |
+| generic | fallback                    | basic file analysis                           |
 
 ---
 
@@ -398,6 +418,7 @@ prview --json --quiet | jq '.checks[] | select(.status == "Failed")'
 ## Anti-Patterns
 
 ### Tool usage
+
 - Running `--deep` on every PR (slow; use `--quick` for daily, `--deep` for merge)
 - Reading `full.patch` entirely for large PRs (use `per-file-diffs/` for focused review)
 - Ignoring `report.json` and `MERGE_GATE.json` (parse structured data first)
@@ -405,6 +426,7 @@ prview --json --quiet | jq '.checks[] | select(.status == "Failed")'
 - Running without `--no-fetch` on slow networks
 
 ### Analysis
+
 - Stopping at 5 findings when 25 are visible (findings-max means exhaustive)
 - Findings without evidence (every point needs artifact path + code fragment)
 - Mixing separate problems into one finding (one point = one problem)

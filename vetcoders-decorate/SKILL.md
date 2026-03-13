@@ -121,6 +121,7 @@ Theme Mode:        check for prefers-color-scheme or .dark class
 ```
 
 Use the detected values as your working palette. Map them to roles:
+
 - Primary/accent = CTAs, highlights, progress bars
 - Secondary = hover states, borders, subtle effects
 - Background = canvas backgrounds, overlay colors

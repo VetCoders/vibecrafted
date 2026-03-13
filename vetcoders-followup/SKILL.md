@@ -17,6 +17,7 @@ Use this when the team asks for "follow-up check", "czy sa jeszcze luki",
 ## Core Contract
 
 Always run this sequence:
+
 1. `vetcoders-init` (memory + structure baseline)
 2. `vetcoders-workflow` (Examine -> optional Research -> Implement context)
 3. `vetcoders-spawn` or `vetcoders-implement` (parallel delegated audits)
@@ -43,15 +44,20 @@ Do not skip sequence unless user explicitly opts out.
 ## Phase A - Bootstrap (vetcoders-init)
 
 1. Extract context memory:
+
 ```bash
 aicx all -p <project> --incremental
 aicx refs -H 168 -p <project>
 ```
+
 2. Map structure:
+
 - `repo-view(project)`
 - `focus(directory)` for 1-3 target dirs
 - `follow(scope="all")` when risk signals appear
+
 3. Produce situational summary with:
+
 - open signals from memory
 - repo health and top hubs
 - target scope and risks
@@ -59,12 +65,14 @@ aicx refs -H 168 -p <project>
 ## Phase B - Workflow Context (vetcoders-workflow)
 
 Create pipeline artifacts:
+
 - `.ai-agents/pipeline/<slug>/CONTEXT.md`
 - `.ai-agents/pipeline/<slug>/RESEARCH.md`
 - `.ai-agents/pipeline/<slug>/plans/`
 - `.ai-agents/pipeline/<slug>/reports/`
 
 `CONTEXT.md` must include:
+
 - repo health
 - critical files table
 - risk map
@@ -76,6 +84,7 @@ runtime behavior, or production readiness.
 ## Phase C - Delegation (vetcoders-spawn)
 
 Prepare at least 2 audit tracks:
+
 1. Runtime/architecture audit
 2. Hands-on readiness and gate audit
 
@@ -121,9 +130,11 @@ Write plans to `.ai-agents/.../plans/` and reports to `.ai-agents/.../reports/`.
 ## Phase D - Follow-up Synthesis (Primary Agent)
 
 After reports arrive:
+
 1. Validate subagent claims against real code (`slice/find/rg` + file reads).
 2. Re-run mandatory gates on current tree.
 3. Build one consolidated verdict:
+
 - implementation gaps
 - blockers vs caveats
 - readiness score
@@ -147,6 +158,7 @@ Quick win: <one immediate high-impact action>
 ```
 
 Then include:
+
 - Findings list (P0/P1/P2, with file refs)
 - Gate results (pass/fail + command)
 - Hands-on readiness verdict (`GO`, `GO-WITH-CAVEATS`, `NO-GO`)

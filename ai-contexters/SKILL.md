@@ -109,29 +109,31 @@ aicx state --reset -p CodeScribe
 
 ## Command Reference (Quick)
 
-| Command | Purpose | Key Flags |
-|---------|---------|-----------|
-| `all` | Extract from all agents | `-H`, `--incremental`, `--memex`, `-p` |
-| `claude` | Extract Claude Code sessions | `-H`, `-p`, `--incremental`, `--loctree` |
-| `codex` | Extract Codex sessions | `-H`, `-p`, `--incremental` |
-| `extract` | One-shot file extraction | `--format <claude\|codex\|gemini>`, `-o` |
-| `store` | Store + optional memex sync | `-p`, `-a`, `-H`, `--memex` |
-| `memex-sync` | Sync chunks to vector memory | `-n`, `--per-chunk`, `--db-path` |
-| `list` | Discover available sessions | (no flags) |
-| `refs` | List stored context files | `-H`, `-p` |
-| `state` | Manage dedup/watermarks | `--info`, `--reset`, `-p` |
-| `init` | Bootstrap .ai-context/ workspace | `--agent`, `--action`, `--no-run` |
+| Command      | Purpose                          | Key Flags                                |
+|--------------|----------------------------------|------------------------------------------|
+| `all`        | Extract from all agents          | `-H`, `--incremental`, `--memex`, `-p`   |
+| `claude`     | Extract Claude Code sessions     | `-H`, `-p`, `--incremental`, `--loctree` |
+| `codex`      | Extract Codex sessions           | `-H`, `-p`, `--incremental`              |
+| `extract`    | One-shot file extraction         | `--format <claude\|codex\|gemini>`, `-o` |
+| `store`      | Store + optional memex sync      | `-p`, `-a`, `-H`, `--memex`              |
+| `memex-sync` | Sync chunks to vector memory     | `-n`, `--per-chunk`, `--db-path`         |
+| `list`       | Discover available sessions      | (no flags)                               |
+| `refs`       | List stored context files        | `-H`, `-p`                               |
+| `state`      | Manage dedup/watermarks          | `--info`, `--reset`, `-p`                |
+| `init`       | Bootstrap .ai-context/ workspace | `--agent`, `--action`, `--no-run`        |
 
 For detailed flag reference, consult `references/commands.md`.
 
 ## Output Modes
 
 Control stdout output with `--emit`:
+
 - **paths** (default): One file path per line, pipe-friendly
 - **json**: Structured JSON with metadata, entries, store paths
 - **none**: Silent (store only)
 
 Local output with `-o <DIR>`:
+
 - `-f md` — Markdown report
 - `-f json` — JSON report
 - `-f both` — Both formats (default for `all`)
@@ -139,26 +141,32 @@ Local output with `-o <DIR>`:
 ## Key Concepts
 
 ### Store-First Architecture
+
 Every extraction writes to `~/.ai-contexters/<project>/<date>/` before optional
 local output. Central history builds automatically.
 
 ### Incremental Processing
+
 `--incremental` tracks watermarks per agent+project. Re-runs skip already-processed
 entries. Essential for cron / scheduled workflows.
 
 ### Deduplication (Two-Level)
+
 - **Exact**: `(agent, timestamp, message)` hash
 - **Overlap**: `(timestamp_bucket_60s, message)` across agents — catches same prompt
   sent to multiple agents simultaneously
 
 ### Signal Extraction
+
 Chunks include `[signals]...[/signals]` blocks highlighting:
+
 - TODO items (`- [ ]`, `- [x]`)
 - Intent/result lines
 - Tag vicinity: `Ultrathink`, `Insight`, plan mode markers
 - Keywords: `Decision:`, `TODO:`, `Plan:`
 
 ### Secret Redaction
+
 Enabled by default. Redacts API keys, tokens, PEM blocks, auth headers.
 Disable with `--no-redact-secrets` (not recommended).
 
@@ -172,9 +180,11 @@ Disable with `--no-redact-secrets` (not recommended).
 4. Build composite prompt (context + loctree + action + agent-prompt)
 5. Optionally dispatch agent (Terminal.app on macOS, subprocess on Linux)
 
-**Created structure:** `.ai-context/` with `share/artifacts/` (git-tracked) and `local/` (git-ignored). See `references/architecture.md` for full layout.
+**Created structure:** `.ai-context/` with `share/artifacts/` (git-tracked) and `local/` (git-ignored). See
+`references/architecture.md` for full layout.
 
 **Custom prompting:**
+
 ```bash
 aicx init --agent codex --agent-prompt "Focus only on Rust modules" --action "Refactor VAD"
 aicx init --agent claude --agent-prompt-file ./my-prompt.md --no-confirm
@@ -184,8 +194,8 @@ aicx init --agent claude --agent-prompt-file ./my-prompt.md --no-confirm
 
 ## Environment Variables
 
-| Variable | Purpose |
-|----------|---------|
+| Variable   | Purpose                                         |
+|------------|-------------------------------------------------|
 | `LOCT_BIN` | Override path to `loct` binary (used by `init`) |
 
 ## Common Patterns
@@ -219,6 +229,7 @@ aicx extract --format claude /path/to/huge.jsonl -o /tmp/report.md --user-only
 ### Reference Files
 
 For detailed command flags and architecture:
+
 - **`references/commands.md`** — Complete flag reference for all 11 subcommands
 - **`references/architecture.md`** — Module map, data flow, storage layout
 

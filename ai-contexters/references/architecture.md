@@ -18,19 +18,19 @@ Agent Sessions                    ai-contexters                     Outputs
 
 ## Module Map (src/)
 
-| Module | LOC | Purpose | Key Exports |
-|--------|-----|---------|-------------|
-| `main.rs` | ~350 | CLI entry (clap), command dispatch | `Commands` enum, `main()` |
-| `lib.rs` | ~30 | Public library re-exports | All module re-exports |
-| `sources.rs` | ~600 | Per-agent extraction logic | `extract_claude()`, `extract_codex()`, `extract_gemini()`, `TimelineEntry`, `ExtractionConfig` |
-| `state.rs` | ~250 | Dedup hashes + watermarks + run history | `StateManager`, `RunRecord` |
-| `store.rs` | ~300 | Central store layout + indexing | `write_context_chunked()`, `load_index()`, `save_index()` |
-| `chunker.rs` | ~400 | Semantic windowing + signal extraction | `Chunk`, `ChunkerConfig`, `chunk_entries()`, `extract_signals()` |
-| `output.rs` | ~200 | Local report writing + loctree integration | `write_report()`, `write_markdown_report_to_path()` |
-| `memex.rs` | ~150 | rmcp-memex vector sync (shells out) | `sync_new_chunks()`, `MemexConfig`, `MemexSyncState` |
-| `redact.rs` | ~100 | Secret redaction (regex engine) | `redact_secrets()` |
-| `sanitize.rs` | ~50 | Path traversal prevention | `validate_read_path()`, `validate_write_path()` |
-| `init.rs` | ~500 | .ai-context/ bootstrap + agent dispatch | `run_init()`, `InitOptions` |
+| Module        | LOC  | Purpose                                    | Key Exports                                                                                    |
+|---------------|------|--------------------------------------------|------------------------------------------------------------------------------------------------|
+| `main.rs`     | ~350 | CLI entry (clap), command dispatch         | `Commands` enum, `main()`                                                                      |
+| `lib.rs`      | ~30  | Public library re-exports                  | All module re-exports                                                                          |
+| `sources.rs`  | ~600 | Per-agent extraction logic                 | `extract_claude()`, `extract_codex()`, `extract_gemini()`, `TimelineEntry`, `ExtractionConfig` |
+| `state.rs`    | ~250 | Dedup hashes + watermarks + run history    | `StateManager`, `RunRecord`                                                                    |
+| `store.rs`    | ~300 | Central store layout + indexing            | `write_context_chunked()`, `load_index()`, `save_index()`                                      |
+| `chunker.rs`  | ~400 | Semantic windowing + signal extraction     | `Chunk`, `ChunkerConfig`, `chunk_entries()`, `extract_signals()`                               |
+| `output.rs`   | ~200 | Local report writing + loctree integration | `write_report()`, `write_markdown_report_to_path()`                                            |
+| `memex.rs`    | ~150 | rmcp-memex vector sync (shells out)        | `sync_new_chunks()`, `MemexConfig`, `MemexSyncState`                                           |
+| `redact.rs`   | ~100 | Secret redaction (regex engine)            | `redact_secrets()`                                                                             |
+| `sanitize.rs` | ~50  | Path traversal prevention                  | `validate_read_path()`, `validate_write_path()`                                                |
+| `init.rs`     | ~500 | .ai-context/ bootstrap + agent dispatch    | `run_init()`, `InitOptions`                                                                    |
 
 ## Core Data Types
 
@@ -85,6 +85,7 @@ Persisted to `~/.ai-contexters/state.json`.
 ### Claude Code JSONL
 
 Each line = one message exchange. Fields:
+
 - `message` — the text content
 - `timestamp` — ISO 8601
 - `type` — `"user"`, `"assistant"`, `"tool_use"`, `"tool_result"`
@@ -94,12 +95,14 @@ Each line = one message exchange. Fields:
 ### Codex JSONL
 
 `~/.codex/history.jsonl` — one line per entry:
+
 - `session_id`, `text`, `ts`, `role`, `cwd`
 - Per-session grouping during extraction
 
 ### Gemini JSON
 
 `~/.gemini/tmp/<hash>/chats/session-*.json` — array format:
+
 - `messages[].type` — `"user"`, `"model"`
 - `messages[].content` — text
 - `messages[].timestamp`
@@ -109,27 +112,29 @@ Each line = one message exchange. Fields:
 
 Signals highlight important content in chunks:
 
-| Pattern | Type | Example |
-|---------|------|---------|
-| `- [ ]`, `- [x]` | TODO | Task checklist items |
-| `Decision:` | Decision | Architectural decisions |
-| `TODO:`, `FIXME:` | Action | Action items |
-| `Plan:` | Plan | Plan descriptions |
-| `Ultrathink` | Tag | Extended reasoning blocks |
-| `Insight` | Tag | Educational insight blocks |
-| `SMOKE TEST PASSED` | Result | Verification outcomes |
-| Plan mode markers | Context | Plan mode entry/exit |
+| Pattern             | Type     | Example                    |
+|---------------------|----------|----------------------------|
+| `- [ ]`, `- [x]`    | TODO     | Task checklist items       |
+| `Decision:`         | Decision | Architectural decisions    |
+| `TODO:`, `FIXME:`   | Action   | Action items               |
+| `Plan:`             | Plan     | Plan descriptions          |
+| `Ultrathink`        | Tag      | Extended reasoning blocks  |
+| `Insight`           | Tag      | Educational insight blocks |
+| `SMOKE TEST PASSED` | Result   | Verification outcomes      |
+| Plan mode markers   | Context  | Plan mode entry/exit       |
 
 Signals appear in `[signals]...[/signals]` blocks at chunk top.
 
 ## Deduplication Strategy
 
 **Level 1 — Exact dedup:**
+
 - Hash: `blake3(agent + timestamp_iso + message_first_500_chars)`
 - Per-project segregation
 - Prevents same message from appearing twice
 
 **Level 2 — Overlap dedup:**
+
 - Hash: `blake3(timestamp_bucket_60s + message_first_200_chars)`
 - Cross-agent: catches same prompt sent to Claude AND Codex simultaneously
 - 60-second bucket = messages within same minute are overlap candidates

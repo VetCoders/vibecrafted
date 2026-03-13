@@ -66,13 +66,13 @@ Always establish:
 Use this mapping:
 
 - User wants full actionable review from one or more narrated videos:
-  - use `review`
+    - use `review`
 - User wants transcript only:
-  - use `transcribe`
+    - use `transcribe`
 - User wants interactive/reversed flow server:
-  - use `analyze`
+    - use `analyze`
 - User wants to change the tool itself:
-  - work in repo and run repo quality gates
+    - work in repo and run repo quality gates
 
 ## Canonical Run Paths
 

@@ -36,9 +36,9 @@ The default loop is:
 2. split it into `2-3` clean research tracks
 3. write precise exploratory plans
 4. run the same plans through:
-   - `codex-plan`
-   - `claude-plan`
-   - `gemini-plan` when available
+    - `codex-plan`
+    - `claude-plan`
+    - `gemini-plan` when available
 5. synthesize agreements and disagreements
 6. continue the same sessions through `*-resume`
 7. converge with `vetcoders-marbles`

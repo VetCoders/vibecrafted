@@ -14,12 +14,14 @@ description: >-
 # vetcoders-init — Memory + Eyes for AI Agents
 
 Bootstrap an agent session with two layers of context:
+
 - **Memory**: What was done before (ai-contexters — session history extraction)
 - **Eyes**: What the code looks like now (loctree MCP — structural map)
 
 ## When To Use
 
 Execute at the start of every session, **before any implementation work**:
+
 - **Cold start**: First session on a repo (zero prior context)
 - **Resuming after break**: Stale context after 24+ hours away
 - **Subagent delegation**: Agents inherit structured context
@@ -42,6 +44,7 @@ Gemini sessions into `~/.ai-contexters/<project>/`. Incremental mode skips
 already-processed entries.
 
 **If no project name is obvious**, detect from repo:
+
 ```bash
 PROJECT=$(basename "$(git rev-parse --show-toplevel)")
 aicx all -p "$PROJECT" -H 168 --incremental
@@ -59,6 +62,7 @@ aicx refs -H 168 -p <project_name>
 ```
 
 Read the most recent 1-2 context files to understand:
+
 - What was the last task worked on?
 - Are there open TODOs or decisions pending?
 - What signals were extracted (look for `[signals]` blocks)?
@@ -118,13 +122,13 @@ aicx refs -p <project_name> -H 168
 
 ## Quick Reference
 
-| Step | Tool | What It Gives |
-|------|------|--------------|
-| Memory | `aicx all -p X --incremental` | Past decisions, TODOs, signals |
-| Refs | `aicx refs -H 168 -p X` | Paths to stored context chunks |
-| Eyes | `repo-view(project)` | Current structure + health |
-| Focus | `focus(directory)` | Module-level detail |
-| Signals | `follow(scope)` | Dead code, cycles, twins |
+| Step    | Tool                          | What It Gives                  |
+|---------|-------------------------------|--------------------------------|
+| Memory  | `aicx all -p X --incremental` | Past decisions, TODOs, signals |
+| Refs    | `aicx refs -H 168 -p X`       | Paths to stored context chunks |
+| Eyes    | `repo-view(project)`          | Current structure + health     |
+| Focus   | `focus(directory)`            | Module-level detail            |
+| Signals | `follow(scope)`               | Dead code, cycles, twins       |
 
 ## Fallback
 

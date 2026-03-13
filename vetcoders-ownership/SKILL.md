@@ -160,9 +160,12 @@ Preferred compositions:
 - `[$vetcoders-partner](/Users/polyversai/.codex/skills/vetcoders-partner/SKILL.md)` for hard architecture truth
 - `[$vetcoders-spawn](/Users/polyversai/.codex/skills/vetcoders-spawn/SKILL.md)` for external field teams
 - `[$vetcoders-marbles](/Users/polyversai/.codex/skills/vetcoders-marbles/SKILL.md)` for convergence loops
-- `[$vetcoders-dou](/Users/polyversai/.codex/skills/vetcoders-dou/SKILL.md)` when the code works but the product still feels unfinished
-- `[$vetcoders-decorate](/Users/polyversai/.codex/skills/vetcoders-decorate/SKILL.md)` when the experience lacks curb appeal
-- `[$vetcoders-hydrate](/Users/polyversai/.codex/skills/vetcoders-hydrate/SKILL.md)` when packaging and market-facing polish are missing
+- `[$vetcoders-dou](/Users/polyversai/.codex/skills/vetcoders-dou/SKILL.md)` when the code works but the product still
+  feels unfinished
+- `[$vetcoders-decorate](/Users/polyversai/.codex/skills/vetcoders-decorate/SKILL.md)` when the experience lacks curb
+  appeal
+- `[$vetcoders-hydrate](/Users/polyversai/.codex/skills/vetcoders-hydrate/SKILL.md)` when packaging and market-facing
+  polish are missing
 
 ### Phase 3 - Build the runtime truth
 
@@ -280,11 +283,13 @@ Output: choose the shell, integrate the runtime panel, improve UX, verify the re
 
 **Example 2:**
 Input: "You drive. I want this local AI stack to feel production-ready."
-Output: diagnose runtime truth, pick the architecture, use agents where useful, implement, test, package, and report the next real blocker.
+Output: diagnose runtime truth, pick the architecture, use agents where useful, implement, test, package, and report the
+next real blocker.
 
 **Example 3:**
 Input: "Od a do z, z wow efektem."
-Output: interpret that as a mandate for end-to-end delivery with bold but tasteful decisions, not a request for decorative fluff.
+Output: interpret that as a mandate for end-to-end delivery with bold but tasteful decisions, not a request for
+decorative fluff.
 
 ## Final Reminder
 

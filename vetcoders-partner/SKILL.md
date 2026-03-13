@@ -53,9 +53,9 @@ Default posture:
 2. You split it into `2-3` components or research questions.
 3. You write precise exploratory plans for those components.
 4. You send each plan to `3` independent planner agents:
-   - `codex-plan`
-   - `claude-plan`
-   - `gemini-plan` when available
+    - `codex-plan`
+    - `claude-plan`
+    - `gemini-plan` when available
 5. You synthesize the three independent expertises into the best execution path.
 6. You send the **same sessions** forward via `*-resume` into implementation.
 7. You use `vetcoders-marbles` for convergence loops.

@@ -2,14 +2,14 @@
 
 ## Quick Reference
 
-| Command | Purpose | Speed |
-|---------|---------|-------|
-| `loct --for-ai` | Codebase overview | ~500ms |
-| `loct find <sym>` | Symbol search | ~280ms |
-| `loct impact <file>` | Change impact | ~50ms |
-| `loct slice <file>` | Dependency slice | ~80ms |
-| `loct health` | Health report | ~370ms |
-| `loct focus <dir>` | Directory analysis | ~60ms |
+| Command              | Purpose            | Speed  |
+|----------------------|--------------------|--------|
+| `loct --for-ai`      | Codebase overview  | ~500ms |
+| `loct find <sym>`    | Symbol search      | ~280ms |
+| `loct impact <file>` | Change impact      | ~50ms  |
+| `loct slice <file>`  | Dependency slice   | ~80ms  |
+| `loct health`        | Health report      | ~370ms |
+| `loct focus <dir>`   | Directory analysis | ~60ms  |
 
 ## Detailed Commands
 
@@ -22,6 +22,7 @@ loct --for-ai
 ```
 
 **Output includes:**
+
 - Project structure
 - Entry points
 - Key modules
@@ -38,6 +39,7 @@ loct find "handle.*Click"      # Pattern (transformed to multi-query)
 ```
 
 **Options:**
+
 - `--limit N` - Limit results (default: 50)
 - `--json` - JSON output
 
@@ -51,6 +53,7 @@ loct impact src/api/             # Directory impact
 ```
 
 **Output:**
+
 - Direct dependents
 - Transitive dependents
 - Risk assessment
@@ -64,6 +67,7 @@ loct slice src/components/Button.tsx
 ```
 
 **Output:**
+
 - Direct imports
 - Transitive imports
 - Suggested reading order
@@ -78,6 +82,7 @@ loct health --json              # JSON output
 ```
 
 **Detects:**
+
 - Dead exports (unused code)
 - Circular dependencies
 - Duplicate exports (twins)
@@ -114,6 +119,7 @@ loct commands --unused           # Find unused commands
 ## Output Formats
 
 Most commands support:
+
 - Default: Human-readable
 - `--json`: JSON output
 - `--for-ai`: AI-optimized format
