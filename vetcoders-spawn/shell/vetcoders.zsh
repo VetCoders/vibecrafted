@@ -111,6 +111,18 @@ gemini-implement() {
   _vetcoders_spawn_plan gemini implement "$1" --runtime "$(_vetcoders_default_runtime)"
 }
 
+codex-research() {
+  _vetcoders_spawn_plan codex research "$1" --runtime "$(_vetcoders_default_runtime)"
+}
+
+claude-research() {
+  _vetcoders_spawn_plan claude research "$1" --runtime "$(_vetcoders_default_runtime)"
+}
+
+gemini-research() {
+  _vetcoders_spawn_plan gemini research "$1" --runtime "$(_vetcoders_default_runtime)"
+}
+
 codex-prompt() {
   _vetcoders_prompt codex implement "$@"
 }

@@ -1,3 +1,14 @@
 .DS_Store
 **/.DS_Store
 .ai-agents/
+
+# AI Context
+.ai-context/*
+!.ai-context/share/
+!.ai-context/share/artifacts/
+!.ai-context/share/artifacts/SUMMARY.md
+!.ai-context/share/artifacts/TIMELINE.md
+!.ai-context/share/artifacts/TRIAGE.md
+!.ai-context/share/artifacts/prompts/
+!.ai-context/share/artifacts/prompts/*.md
+/.claude
