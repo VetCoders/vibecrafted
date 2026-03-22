@@ -153,25 +153,50 @@ Notes:
 
 ## Installation and Sync
 
-The repo now ships its own portable installer, optional zsh helper layer, and
+The repo ships a Smart Installer (Python), optional zsh helper layer, and
 remote sync helpers.
 
-### Local install
+### Smart Installer
 
-Install all canonical skills into `~/.agents/skills` and create symlink views for Codex, Claude, and Gemini:
+The installer is interactive when run in a terminal, non-interactive for
+CI/scripting. It auto-detects system deps, agent CLIs, and foundations,
+then offers to install missing components with consent.
 
 ```bash
+# Interactive install (full bundle, all runtimes)
 bash vetcoders-agents/scripts/install.sh
+
+# With zsh shell helpers
+bash vetcoders-agents/scripts/install.sh --with-shell
+
+# Limit to specific runtimes
+bash vetcoders-agents/scripts/install.sh --tool codex --tool claude
+
+# Install specific skills only
+bash vetcoders-agents/scripts/install.sh --skill vetcoders-init --skill loctree
+
+# Dry-run preview
+bash vetcoders-agents/scripts/install.sh --dry-run
+
+# Canonical mirror (deletes extra files in installed dirs)
+bash vetcoders-agents/scripts/install.sh --mirror
+
+# Non-interactive (CI/scripts)
+bash vetcoders-agents/scripts/install.sh --non-interactive --with-shell
 ```
 
-Install skills plus the repo-owned zsh helper layer:
+Or call the Python installer directly:
 
 ```bash
-bash vetcoders-agents/scripts/install.sh --with-shell
+python3 scripts/vetcoders_install.py install [flags]
+python3 scripts/vetcoders_install.py doctor
+python3 scripts/vetcoders_install.py list
 ```
 
-The helper layer is the distilled, product-worthy part of the founders' zsh
-setup:
+The `doctor` subcommand verifies installation health: shared store, symlink
+views, stale copies, foundations, and shell helpers.
+
+The shell helper layer provides:
 
 - `codex-implement`, `claude-review`, `gemini-plan`
 - `*-prompt` and `*-observe`
@@ -179,24 +204,6 @@ setup:
 - Gemini Keychain helpers for macOS
 
 It does **not** try to copy private shell aesthetics, banners, or unrelated aliases.
-
-Install only selected runtimes:
-
-```bash
-bash vetcoders-agents/scripts/install.sh --tool codex --tool claude
-```
-
-Dry-run the install:
-
-```bash
-bash vetcoders-agents/scripts/install.sh --dry-run
-```
-
-Canonical 1:1 mirror when you explicitly want deletions inside installed skill dirs:
-
-```bash
-bash vetcoders-agents/scripts/install.sh --mirror
-```
 
 Install only the zsh helper layer:
 
@@ -210,58 +217,30 @@ Sync the canonical skills to another machine without copying private dotfiles:
 
 ```bash
 bash vetcoders-agents/scripts/skills_sync.sh mgbook16
-```
-
-Dry-run remote sync:
-
-```bash
 bash vetcoders-agents/scripts/skills_sync.sh mgbook16 --dry-run
-```
-
-Canonical 1:1 remote mirror when you explicitly want deletions on the target machine:
-
-```bash
 bash vetcoders-agents/scripts/skills_sync.sh mgbook16 --mirror
-```
-
-Sync skills plus the optional shell helper layer to another machine:
-
-```bash
 bash vetcoders-agents/scripts/skills_sync.sh mgbook16 --with-shell
 ```
 
 ### Bootstrap installer
 
-The repo root also ships `install.sh`, which is the future `curl | sh` entrypoint.
-By default the installer is conservative and does not delete extra files inside already-installed skills; use `--mirror`
-when you want canonical 1:1 alignment.
-Once the repo is public, the intended shape is:
+The repo root ships `install.sh`, the `curl | sh` entrypoint:
 
 ```bash
 curl -fsSL <raw-install-url> | bash -s -- --with-shell
 ```
 
 That bootstrap script clones or updates the repo into a local checkout and then
-delegates to `vetcoders-agents/scripts/install.sh`.
-
-The installer runs two levels of preflight:
-
-- runtime commands such as `zsh`, `python3`, and the selected agent CLIs
-- first-party foundations `aicx` and `loctree-mcp`
-- optional specialist tool `prview`
-
-If the hard foundations are missing, install still proceeds, but the user gets
-the explicit next step:
+delegates to the Smart Installer. It also supports `doctor` and `list`:
 
 ```bash
-cargo install aicx loctree-mcp
+bash install.sh doctor
+bash install.sh list
 ```
 
-For PR review workflows, add:
-
-```bash
-cargo install prview
-```
+If hard foundations (`aicx`, `loctree-mcp`) are missing, the interactive
+installer offers to install them via `cargo install`. In non-interactive
+mode it reports what's missing and continues.
 
 ## Portable Quality Bar
 

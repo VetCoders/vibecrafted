@@ -1,22 +1,25 @@
 ---
 name: vetcoders-init
-version: "1.0"
+version: "2.0"
 description: >-
   This skill should be used when the user asks to "init", "initialize session",
   "give context to agent", "prepare agent", "bootstrap agent", "daj kontekst",
   "zainicjuj", "przygotuj agenta", "init session", "start fresh with context",
   or when starting work on a repo and the agent needs situational awareness.
-  Combines ai-contexters (session history extraction) with loctree MCP
-  (codebase structure mapping) to equip the agent with memory and visibility
-  before implementation work.
+  Fuses three layers — Memory (ai-contexters), Eyes (loctree MCP + cross-tool
+  config absorption), and Verify (ground-truth quality gate check) — to equip
+  the agent with consciousness before implementation work.
 ---
 
-# vetcoders-init — Memory + Eyes for AI Agents
+# vetcoders-init — Memory + Eyes + Verify
 
-Bootstrap an agent session with two layers of context:
+Bootstrap an agent session with three layers of context:
 
 - **Memory**: What was done before (ai-contexters — session history extraction)
-- **Eyes**: What the code looks like now (loctree MCP — structural map)
+- **Eyes**: What the code looks like now (loctree MCP — structural map + existing agent configs)
+- **Verify**: Whether what you see is actually true (run quality gates, confirm commands work)
+
+No layer is optional by default. Skip only when a tool is genuinely unavailable.
 
 ## When To Use
 
@@ -31,34 +34,23 @@ Running init is a forcing function: it prevents blind coding.
 
 ## Init Sequence
 
-### Step 1: Extract Memory
+### Step 1: Memory — What Was Done Before
 
 Pull historical context from previous AI sessions for this project:
-
-```bash
-aicx all -p <project_name> --incremental
-```
-
-This extracts deduplicated, chunked timelines from Claude Code, Codex, and
-Gemini sessions into `~/.ai-contexters/<project>/`. Incremental mode skips
-already-processed entries.
-
-**If no project name is obvious**, detect from repo:
 
 ```bash
 PROJECT=$(basename "$(git rev-parse --show-toplevel)")
 aicx all -p "$PROJECT" -H 168 --incremental
 ```
 
-**If aicx is not installed**, skip this step and note the gap.
-Memory is valuable but not blocking.
+This extracts deduplicated, chunked timelines from Claude Code, Codex, and
+Gemini sessions into `~/.ai-contexters/<project>/`. Incremental mode skips
+already-processed entries.
 
-### Step 2: Read Recent Context
-
-Check what memory was extracted:
+Then read what was extracted:
 
 ```bash
-aicx refs -H 168 -p <project_name>
+aicx refs -H 168 -p "$PROJECT"
 ```
 
 Read the most recent 1-2 context files to understand:
@@ -67,42 +59,184 @@ Read the most recent 1-2 context files to understand:
 - Are there open TODOs or decisions pending?
 - What signals were extracted (look for `[signals]` blocks)?
 
-### Step 3: Open Eyes (loctree MCP)
+**If aicx is not installed**: skip this step and note the gap in the report.
+Memory is valuable but not blocking.
 
-Map the current state of the codebase. Run in this order:
+### Step 2: Eyes — What the Code Looks Like Now
+
+Three sub-steps, in order.
+
+#### 2a. Structural Map (loctree MCP)
 
 1. **`repo-view(project)`** — health, hubs, languages, LOC, dead exports, cycles
 2. **`focus(directory)`** — for the target module(s) relevant to the task (1-3 dirs)
-3. **`follow(scope)`** — if repo-view flagged signals (dead, cycles, twins, hotspots)
+3. **`follow(scope)`** — only if repo-view flagged signals (dead, cycles, twins, hotspots)
 
 This gives the agent structural awareness: what files matter, what depends
 on what, where the risk is.
 
+#### 2b. Absorb Existing Agent Configs
+
+Check for and read `.ai-agents/GUIDELINES.md` — the canonical cross-tool
+reference. If it exists, use it as starting context but verify against code.
+
+Also glob for any other agent config files that may exist in the repo
+(tool-specific instruction files, rule directories, etc.). Read what you
+find — it may contain project conventions not yet captured in GUIDELINES.md.
+
+Do NOT blindly trust any config file as source of truth. They may be outdated.
+Cross-reference against what loctree and git show you. If a config file
+claims a command or convention that contradicts the current code, trust the code.
+
+#### 2c. Derive Conventions from Git History
+
+```bash
+git log --oneline -20       # recent commit message patterns
+git log --format="%an" | sort -u | head -10  # active contributors
+```
+
+Observe actual commit style (conventional commits? prefixes? Polish/English?).
+Do not invent conventions — read what the team actually does.
+
+### Step 3: Verify — Is What You See Actually True
+
+**This step is mandatory.** Do not skip it. Do not assume commands work.
+
+Locate the project's quality gate commands. Common sources:
+- `pyproject.toml` `[tool.pytest]`, `[tool.ruff]`, `[tool.mypy]`
+- `Makefile` / `justfile` / `package.json` scripts
+- `.ai-agents/GUIDELINES.md` or other agent config files
+- README.md "Testing" or "Development" sections
+
+Run each quality gate command and record the result:
+
+```bash
+# Example for a Python project:
+uv run pytest tests/ -q --tb=no 2>&1 | tail -3
+uv run mypy <src_dir>/ --exclude build/ 2>&1 | tail -3
+uv run ruff check <src_dir>/ tests/ 2>&1 | tail -3
+```
+
+Rules:
+- **Run the commands.** Do not write "run pytest" in a report without running it.
+- Record pass/fail and any unexpected output.
+- If a command fails, note it as a known issue — do not fix it during init.
+- If a command does not exist (e.g., no mypy config), note absence, don't fabricate.
+- Use `--tb=no` or `tail` to keep output concise — this is a health check, not a debug session.
+
 ### Step 4: Produce Situational Report (Required)
 
-After steps 1-3, produce this situational report to stdout:
+After steps 1-3, produce two outputs:
+
+**A. Stdout report** — ephemeral, for this session's context.
+Keep it tight — Codex-level conciseness. No padding, no filler.
+Omit sections that produced no signal.
+
+**B. `.ai-agents/GUIDELINES.md`** — durable, for all future agents.
+See the "Canonical Reference File" section below for format and guardrails.
+Generate on first init, update on subsequent inits if stale. Always ask before writing.
 
 ```
 ## Session Init: <project>
 
-### Memory (ai-contexters)
-- Last activity: <date from refs>
-- Open signals: <TODOs, decisions from context files>
-- Sessions extracted: <count>
+### Memory
+- Last activity: <date>
+- Open signals: <TODOs, pending decisions — or "none">
+- Sessions: <count> entries across <agents>
 
-### Structure (loctree)
-- Files: <N>, LOC: <N>, Languages: <list>
-- Health: <cycles, dead exports, twins>
+### Structure
+- Files: <N> | LOC: <N> | Languages: <list>
+- Health: <cycles, dead exports, twins — or "clean">
 - Top hubs: <top 3 files by importers>
-- Target scope: <focused dirs>
+- GUIDELINES.md: <current / stale / missing>
+
+### Verify
+- pytest: <pass N / fail N / not configured>
+- mypy: <pass / N errors / not configured>
+- lint: <pass / N warnings / not configured>
 
 ### Ready
-Agent has memory and eyes. Proceeding with task.
+Agent has memory, eyes, and verified ground truth.
 ```
+
+**Audience note (from Junie):** The people reading this report may be
+domain experts (veterinarians, scientists, designers) who code through
+AI collaboration — not necessarily seasoned programmers. Be explicit
+about what matters. Don't hide behind jargon.
+
+## .ai-agents/GUIDELINES.md — Canonical Reference File
+
+After init completes, generate (or update) `.ai-agents/GUIDELINES.md` in the repo.
+This is the **single canonical reference** that all AI agents — Claude, Codex, Gemini,
+Cursor, Copilot — can read regardless of which tool-specific config format they prefer.
+
+Tool-specific config files may exist alongside it and link back here,
+but GUIDELINES.md is the source of truth. This skill does not generate
+or manage tool-specific files — only the canonical reference.
+
+### When to generate
+
+- **First init on a repo**: always generate (ask user first)
+- **Subsequent inits**: compare current file against what you observe. If stale, offer to update.
+- **Never silently overwrite**: always show diff or summary of changes and ask.
+
+### Structure
+
+Adapt sections to what the repo actually has. Omit sections with no signal.
+Target: 200-600 words. Concise beats complete.
+
+```markdown
+# Repository Guidelines
+
+## Product
+<What this is, who it's for, one paragraph max.>
+
+## Architecture
+<Big-picture pipeline or data flow that requires reading multiple files to understand.
+Not a file listing — only structural relationships an agent needs to avoid mistakes.
+Include critical hub files with blast radius from loctree analysis.>
+
+## Quality Gates (verified <date>)
+<Commands that were actually run and confirmed working during init.
+Mark each with pass/fail status. Never include unverified commands.>
+
+## Conventions
+<Derived from code analysis and git history, not from assumptions.
+Language version, style tools, dataclass vs Pydantic, commit message patterns.
+Only what's non-obvious or project-specific.>
+
+## Critical Files
+<Files with high import count or blast radius. Always run impact analysis before
+modifying these.>
+
+## Known Issues
+<Quality gate failures, pre-existing lint/security findings, known gaps.
+Things an agent should know about but not try to fix during unrelated work.>
+```
+
+### Guardrails
+
+**Do:**
+- Derive from code analysis and verified commands, not from docs alone
+- Include quality gate commands that you confirmed actually work in Step 3
+- Focus on big-picture architecture that requires reading multiple files
+- Merge relevant findings from other agent config files found in 2b
+- Note critical files with high blast radius (from loctree hub analysis)
+- Date the "verified" timestamp so staleness is visible
+
+**Do NOT:**
+- Repeat information easily discoverable by reading files
+- Include generic advice ("write tests", "use meaningful names", "handle errors")
+- Fabricate sections like "Common Development Tasks" or "Tips" unless grounded in evidence
+- List every file or component — only what an agent needs to avoid mistakes
+- Include test commands you did not verify in Step 3
+- Exceed 600 words — if you need more, the architecture section is too detailed
+- Reference or generate tool-specific config files (CLAUDE.md, AGENTS.md, GEMINI.md, etc.)
 
 ## For Subagent Prompts
 
-When delegating to subagents via vetcoders-agents, include this preamble:
+When delegating to subagents via vetcoders-spawn or vetcoders-implement,
+include this preamble:
 
 ```
 ## Context Bootstrap
@@ -113,28 +247,37 @@ Use loctree MCP tools as the primary exploration layer:
 - find(name) before creating new symbols
 - impact(file) before deleting
 
-Historical context from previous sessions is available at:
-~/.ai-contexters/<project_name>/
+Derive truth from code, not from docs. If a doc says X and code says Y, trust Y.
 
-List available context files with:
+Historical context from previous sessions:
+~/.ai-contexters/<project_name>/
 aicx refs -p <project_name> -H 168
+
+Before creating new implementations, search for existing ones:
+- find(name) for symbols
+- Grep for patterns
+- Do not duplicate what already exists.
 ```
 
 ## Quick Reference
 
-| Step    | Tool                          | What It Gives                  |
-|---------|-------------------------------|--------------------------------|
-| Memory  | `aicx all -p X --incremental` | Past decisions, TODOs, signals |
+| Step    | Tool                           | What It Gives                  |
+|---------|--------------------------------|--------------------------------|
+| Memory  | `aicx all -p X --incremental`  | Past decisions, TODOs, signals |
 | Refs    | `aicx refs -H 168 -p X`       | Paths to stored context chunks |
-| Eyes    | `repo-view(project)`          | Current structure + health     |
-| Focus   | `focus(directory)`            | Module-level detail            |
-| Signals | `follow(scope)`               | Dead code, cycles, twins       |
+| Eyes    | `repo-view(project)`           | Current structure + health     |
+| Focus   | `focus(directory)`             | Module-level detail            |
+| Signals | `follow(scope)`                | Dead code, cycles, twins       |
+| Configs | Read `.ai-agents/GUIDELINES.md` + glob others | Cross-tool instructions |
+| Git     | `git log --oneline -20`        | Actual commit conventions      |
+| Verify  | Run quality gate commands      | Ground truth on test/lint/type |
 
 ## Fallback
 
-If **aicx** unavailable: skip memory steps, proceed with loctree only.
+If **aicx** unavailable: skip memory steps, proceed with eyes + verify.
 If **loctree MCP** unavailable: fall back to `loct --for-ai` CLI, then `rg --files`.
-If **both** unavailable: read CLAUDE.md + README.md + recent git log. Announce gaps.
+If **both** unavailable: read `.ai-agents/GUIDELINES.md` + README.md + `git log -20`. Run quality gates. Announce gaps.
+Quality gate verification has **no fallback** — always attempt it.
 
 ## Anti-Patterns
 
@@ -142,6 +285,12 @@ If **both** unavailable: read CLAUDE.md + README.md + recent git log. Announce g
 - Running loctree but skipping ai-contexters (no memory of past work)
 - Reading every context file (context bloat) — read only the 1-2 most recent
 - Skipping repo-view and jumping to grep (no structural map)
+- Trusting any config file or README without cross-referencing code (doc rot)
+- Writing "run pytest" in a report without actually running pytest (unverified claims)
+- Generating GUIDELINES.md with commands you never tested (hallucinated instructions)
+- Including generic developer advice that any senior knows (noise)
+- Inventing commit conventions instead of reading `git log` (fabrication)
+- Ignoring existing agent configs from other tools (lost context)
 
 ---
 

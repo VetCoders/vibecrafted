@@ -3,736 +3,1808 @@
 <head>
     <meta charset="UTF-8">
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
-    <title>VetCoders Skills Suite — Agent Workflow for Production-Ready Software</title>
-    <meta content="Six skills that take AI agents from blind coding to shipped products. Init, Workflow, Subagents, Follow-up, Definition of Undone, and Hydrate."
+    <title>VetCoders Skills — Multi-Agent Orchestration that Crafts Software</title>
+    <meta content="VetCoders multi-agent skills set for Codex, Claude, and Gemini: perception, code intelligence, AI workflows, frontier agent fleets, convergence loops, and product-surface shipping."
           name="description">
+    <meta content="VetCoders Skills Suite" property="og:title">
+    <meta content="VetCoders multi-agent skills suite for Codex, Claude, and Gemini. Bootstrap context, delegate to frontier agents, converge, and ship."
+          property="og:description">
+    <meta content="index,follow" name="robots">
+    <link href="https://fonts.googleapis.com" rel="preconnect">
+    <link crossorigin href="https://fonts.gstatic.com" rel="preconnect">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,500;0,600;1,400&display=swap"
           rel="stylesheet">
     <style>
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0
+        }
+
         :root {
             --dark: #141413;
             --light: #faf9f5;
             --mid: #b0aea5;
-            --light-gray: #e8e6dc;
+            --lgray: #e8e6dc;
             --orange: #d97757;
             --blue: #6a9bcc;
             --green: #788c5d;
-            --font-heading: 'Poppins', Arial, sans-serif;
+            --card-bg: #1e1e1d;
+            --card-border: #2a2a29;
+            --terminal: #0b0b0a;
+            --terminal-soft: #111110;
+            --glow: rgba(217, 119, 87, 0.28);
+            --shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+            --font-head: 'Poppins', Arial, sans-serif;
             --font-body: 'Lora', Georgia, serif;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        html {
+            scroll-behavior: smooth
         }
 
         body {
             font-family: var(--font-body);
-            background: var(--dark);
+            background: radial-gradient(circle at 18% 18%, rgba(106, 155, 204, .16), transparent 42%),
+            radial-gradient(circle at 82% 2%, rgba(120, 140, 93, .15), transparent 36%),
+            linear-gradient(180deg, #161615 0%, #121211 100%);
             color: var(--light);
             line-height: 1.7;
-            overflow-x: hidden;
+            overflow-x: hidden
         }
 
-        h1, h2, h3, h4, h5 {
-            font-family: var(--font-heading);
+        code, .code-block, .formula {
+            -webkit-user-select: text;
+            user-select: text;
+            cursor: text
+        }
+
+        h1, h2, h3, h4, h5, h6 {
+            font-family: var(--font-head);
             font-weight: 600;
-            line-height: 1.2;
+            line-height: 1.25
         }
 
-        /* Hero */
-        .hero {
-            min-height: 100vh;
+        .shell {
+            max-width: none;
+            margin: 0;
+            padding: 22px 3rem 20px
+        }
+
+        /* NAV */
+        .topbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            background: rgba(20, 20, 19, .85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--card-border)
+        }
+
+        .nav-shell {
+            max-width: none;
+            margin: 0 auto;
             display: flex;
-            flex-direction: column;
-            justify-content: center;
             align-items: center;
-            text-align: center;
-            padding: 4rem 2rem;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 18px
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-family: var(--font-head);
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: .02em;
+            color: var(--light);
+            text-decoration: none
+        }
+
+        .brand-mark {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            background: linear-gradient(145deg, #ec9d7f 0%, var(--orange) 60%, #a6553f 100%);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 6px 18px var(--glow)
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            font-family: var(--font-head);
+            font-size: .94rem;
+            color: var(--mid)
+        }
+
+        .nav-links a {
+            color: inherit;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color .2s ease
+        }
+
+        .nav-links a:hover {
+            color: var(--light)
+        }
+
+        /* CURL BANNER */
+        .curl-banner {
+            position: sticky;
+            top: 56px;
+            z-index: 90;
+            background: rgba(12, 12, 11, .92);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid rgba(250, 249, 245, .06);
+            padding: 6px 3rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px
+        }
+        .curl-banner code {
+            font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: .76rem;
+            color: rgba(250, 249, 245, .7);
+            white-space: nowrap
+        }
+        .curl-banner .cb-g { color: var(--orange); margin-right: 8px }
+        .curl-banner .cb-copy {
+            font-family: var(--font-head);
+            font-size: .6rem;
+            font-weight: 600;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            color: var(--orange);
+            background: none;
+            border: 1px solid var(--orange);
+            border-radius: 4px;
+            padding: 2px 10px;
+            cursor: pointer;
+            transition: all .15s;
+            flex-shrink: 0
+        }
+        .curl-banner .cb-copy:hover { background: var(--orange); color: var(--dark) }
+        @media (max-width: 900px) {
+            .curl-banner { padding: 6px 1rem; gap: 10px }
+            .curl-banner code { font-size: .65rem }
+        }
+
+        /* HERO — clean rewrite */
+        .hero {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            align-items: center;
+            gap: 48px;
+            max-width: none;
+            margin: 0 auto;
+            padding: 6rem 3rem 3rem
+        }
+        .hero-copy { max-width: 38rem }
+        .hero h1 { font-size: clamp(1.6rem, 3.2vw, 2.4rem); margin-bottom: .7rem; letter-spacing: -.015em; line-height: 1.1 }
+        .hero h1 .accent { color: var(--orange) }
+        .hero .tagline { font-size: .85rem; color: var(--mid); margin-bottom: 1rem; max-width: 50ch }
+        .hero .stats-row { display: flex; gap: 2rem; margin-bottom: 1.2rem }
+        .stat .num { font-family: var(--font-head); font-size: 1.3rem; font-weight: 700; color: var(--orange) }
+        .stat .label { font-size: .65rem; color: var(--mid); font-family: var(--font-head); text-transform: uppercase; letter-spacing: .06em }
+        .hero .cta-row { display: flex; gap: .75rem; flex-wrap: wrap }
+
+        /* Terminal card */
+        .hterm { background: #0c0c0b; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 16px 18px 12px; font-family: 'SF Mono','JetBrains Mono','Fira Code',monospace; font-size: .78rem; line-height: 1.35; color: var(--light) }
+        .hterm-dots { display: flex; gap: 6px; margin-bottom: 12px }
+        .hterm-dots span { width: 10px; height: 10px; border-radius: 50% }
+        .hterm-dots .d1 { background: #ff5f57 }
+        .hterm-dots .d2 { background: #febc2e }
+        .hterm-dots .d3 { background: #28c840 }
+        .hterm-prompt { color: rgba(250,249,245,.85); margin-bottom: 3px; cursor: pointer; padding: 2px 4px; border-radius: 4px; transition: background .15s }
+        .hterm-prompt:hover { background: rgba(255,255,255,.04) }
+        .hterm-prompt .g { color: var(--mid); margin-right: 8px }
+        .hterm-sep { width: 40%; height: 1px; background: rgba(255,255,255,.15); margin: 8px 0 }
+        .hterm-title { font-size: .72rem; color: rgba(250,249,245,.6); margin-bottom: 6px; letter-spacing: .04em }
+        .hterm-row { display: grid; grid-template-columns: 12px 1fr 1fr; gap: 0 8px; padding: 2px 4px; border-radius: 4px; cursor: pointer; transition: background .15s; align-items: baseline }
+        .hterm-row:hover { background: rgba(255,255,255,.04) }
+        .hterm-row .ic { font-size: .62rem; text-align: center }
+        .hterm-row .cmd { color: rgba(250,249,245,.92); white-space: nowrap }
+        .hterm-row .dsc { color: rgba(176,174,165,.45); font-size: .66rem }
+        .hterm-row.y .ic { color: #d7d35d }
+        .hterm-row.c .ic { color: #87cbd3 }
+        .hterm-row.g .ic { color: #83d86c }
+        .hterm-row.r .ic { color: #d46f4b }
+        .hterm-gap { height: 6px }
+        .hterm-foot { margin-top: 8px; font-size: .62rem; color: rgba(250,249,245,.35); border-top: 1px solid rgba(255,255,255,.08); padding-top: 8px }
+
+        /* Pointer tooltip for copy */
+        .hterm-tip { position: fixed; pointer-events: none; z-index: 9999; font-family: var(--font-head); font-size: .56rem; letter-spacing: .08em; text-transform: uppercase; color: var(--dark); background: var(--orange); padding: 2px 7px; border-radius: 3px; opacity: 0; transition: opacity .12s; white-space: nowrap; transform: translate(-50%,-140%) }
+        .hterm-tip.on { opacity: 1 }
+        .hterm-tip.ok { background: #83d86c }
+
+        @media (max-width: 900px) {
+            .nav-shell { align-items: flex-start; flex-direction: column }
+            .nav-links { gap: 12px; justify-content: flex-start }
+            .hero { grid-template-columns: 1fr; gap: 24px; padding: 5rem 1.5rem 2rem }
+            .hterm { font-size: .74rem }
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            padding: .75rem 1.5rem;
+            border-radius: 8px;
+            font-family: var(--font-head);
+            font-size: .9rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all .2s;
+            cursor: pointer;
+            border: none
+        }
+
+        .btn-primary {
+            background: var(--orange);
+            color: var(--dark)
+        }
+
+        .btn-primary:hover {
+            background: #c4633f;
+            transform: translateY(-1px)
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--light);
+            border: 1.5px solid var(--mid)
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--orange);
+            color: var(--orange)
+        }
+
+        /* SECTIONS */
+        section {
+            padding: 5rem 0
+        }
+
+        .container {
+            max-width: none;
+            margin: 0;
+            padding: 0 3rem
+        }
+
+        .section-title {
+            font-size: clamp(1.5rem, 3vw, 2.2rem);
+            margin-bottom: .6rem
+        }
+
+        .section-sub {
+            color: var(--mid);
+            margin-bottom: 3rem;
+            max-width: 650px
+        }
+
+        .section-label {
+            font-family: var(--font-head);
+            font-size: .75rem;
+            text-transform: uppercase;
+            letter-spacing: .12em;
+            color: var(--orange);
+            margin-bottom: .5rem;
+            font-weight: 600
+        }
+
+        /* PIPELINE */
+        .pipeline-section {
+            background: var(--dark)
+        }
+
+        .mmd-shell {
+            background: linear-gradient(180deg, rgba(12, 12, 11, .96), rgba(8, 8, 7, .98));
+            border: 1px solid rgba(250, 249, 245, .1);
+            border-radius: 10px;
+            padding: 18px 20px;
+            margin-bottom: 1.4rem;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, .02)
+        }
+
+        .mmd-shell pre {
+            margin: 0;
+            overflow-x: auto
+        }
+
+        .mmd-shell code {
+            display: block;
+            white-space: pre;
+            font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: .88rem;
+            line-height: 1.72;
+            color: rgba(250, 249, 245, .96)
+        }
+
+        .mmd-shell .comment {
+            color: rgba(176, 174, 165, .62)
+        }
+
+        .pipeline-notes {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 1rem
+        }
+
+        .pipeline-note {
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            background: rgba(20, 20, 19, .72);
+            padding: 1rem 1rem .9rem
+        }
+
+        .pipeline-note h3 {
+            font-size: .96rem;
+            margin-bottom: .35rem
+        }
+
+        .pipeline-note p {
+            color: var(--mid);
+            font-size: .9rem;
+            margin: 0
+        }
+
+        /* CARDS */
+        .cards-grid {
+            display: grid;
+            grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: transform .3s ease, border-color .25s, box-shadow .3s;
             position: relative;
             overflow: hidden;
+            transform-style: preserve-3d;
+            will-change: transform
         }
 
-        .hero::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(ellipse at 30% 50%, rgba(217, 119, 87, 0.08) 0%, transparent 50%),
-            radial-gradient(ellipse at 70% 30%, rgba(106, 155, 204, 0.06) 0%, transparent 50%),
-            radial-gradient(ellipse at 50% 80%, rgba(120, 140, 93, 0.05) 0%, transparent 50%);
-            animation: drift 20s ease-in-out infinite;
+        .card:hover {
+            box-shadow: 0 8px 32px rgba(217, 119, 87, .08)
         }
 
-        @keyframes drift {
-            0%, 100% {
-                transform: translate(0, 0) rotate(0deg);
-            }
-            33% {
-                transform: translate(2%, -1%) rotate(1deg);
-            }
-            66% {
-                transform: translate(-1%, 2%) rotate(-1deg);
-            }
-        }
-
-        .hero-content {
-            position: relative;
-            z-index: 1;
-            max-width: 900px;
-        }
-
-        .hero-badge {
-            display: inline-block;
-            padding: 0.4rem 1.2rem;
-            border: 1px solid var(--orange);
-            border-radius: 100px;
-            font-family: var(--font-heading);
-            font-size: 0.75rem;
-            font-weight: 500;
-            letter-spacing: 0.15em;
-            text-transform: uppercase;
-            color: var(--orange);
-            margin-bottom: 2rem;
-        }
-
-        .hero h1 {
-            font-size: clamp(2.5rem, 6vw, 4.5rem);
-            font-weight: 700;
-            margin-bottom: 1.5rem;
-            background: linear-gradient(135deg, var(--light) 0%, var(--mid) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .hero h1 span {
-            background: linear-gradient(135deg, var(--orange) 0%, #e8a070 100%);
-            -webkit-background-clip: text;
-            background-clip: text;
-        }
-
-        .hero-sub {
-            font-size: 1.25rem;
-            color: var(--mid);
-            max-width: 700px;
-            margin: 0 auto 3rem;
-        }
-
-        .hero-quote {
-            font-style: italic;
-            color: var(--orange);
-            opacity: 0.8;
-            font-size: 1rem;
-            max-width: 600px;
-            margin: 0 auto;
-            padding-top: 2rem;
-            border-top: 1px solid rgba(176, 174, 165, 0.15);
-        }
-
-        /* Pipeline Section */
-        .section {
-            padding: 6rem 2rem;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        .section-header {
-            text-align: center;
-            margin-bottom: 4rem;
-        }
-
-        .section-header h2 {
-            font-size: 2.5rem;
-            margin-bottom: 1rem;
-        }
-
-        .section-header p {
-            color: var(--mid);
-            font-size: 1.1rem;
-            max-width: 600px;
-            margin: 0 auto;
-        }
-
-        /* Pipeline Flow */
-        .pipeline {
-            display: flex;
-            flex-direction: column;
-            gap: 0;
-            position: relative;
-        }
-
-        .pipeline::before {
-            content: '';
-            position: absolute;
-            left: 40px;
+        .scroll-progress {
+            position: fixed;
             top: 0;
-            bottom: 0;
-            width: 2px;
-            background: linear-gradient(to bottom,
-            var(--blue) 0%,
-            var(--green) 33%,
-            var(--orange) 66%,
-            var(--orange) 100%
-            );
-            opacity: 0.3;
+            left: 0;
+            height: 2px;
+            width: 0;
+            background: var(--orange);
+            z-index: 200;
+            pointer-events: none;
+            transition: width .08s linear
         }
 
-        .skill-card {
-            display: grid;
-            grid-template-columns: 80px 1fr;
-            gap: 2rem;
-            padding: 2.5rem 0;
-            border-bottom: 1px solid rgba(176, 174, 165, 0.08);
-            position: relative;
+        .card:hover {
+            border-color: var(--orange);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 30px rgba(217, 119, 87, .08)
         }
 
-        .skill-card:last-child {
-            border-bottom: none;
-        }
-
-        .skill-number {
-            width: 80px;
-            height: 80px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: var(--font-heading);
-            font-size: 1.5rem;
-            font-weight: 700;
-            position: relative;
-            z-index: 1;
-            flex-shrink: 0;
-        }
-
-        .skill-number.blue {
-            background: rgba(106, 155, 204, 0.15);
-            color: var(--blue);
-            border: 2px solid rgba(106, 155, 204, 0.3);
-        }
-
-        .skill-number.green {
-            background: rgba(120, 140, 93, 0.15);
-            color: var(--green);
-            border: 2px solid rgba(120, 140, 93, 0.3);
-        }
-
-        .skill-number.orange {
-            background: rgba(217, 119, 87, 0.15);
-            color: var(--orange);
-            border: 2px solid rgba(217, 119, 87, 0.3);
-        }
-
-        .skill-body h3 {
-            font-size: 1.5rem;
-            margin-bottom: 0.3rem;
-        }
-
-        .skill-body h3 .mono {
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-weight: 500;
-            font-size: 1.3rem;
-        }
-
-        .skill-tagline {
-            color: var(--mid);
-            font-size: 0.9rem;
-            font-family: var(--font-heading);
-            font-weight: 500;
+        .card .card-phase {
+            font-family: var(--font-head);
+            font-size: .65rem;
             text-transform: uppercase;
-            letter-spacing: 0.08em;
+            letter-spacing: .1em;
+            font-weight: 600;
+            margin-bottom: .8rem;
+            display: inline-block;
+            padding: .2rem .6rem;
+            border-radius: 4px
+        }
+
+        .card .card-phase.build {
+            background: rgba(106, 155, 204, .15);
+            color: var(--blue)
+        }
+
+        .card .card-phase.ship {
+            background: rgba(120, 140, 93, .15);
+            color: var(--green)
+        }
+
+        .card .card-phase.loop-phase {
+            background: rgba(217, 119, 87, .15);
+            color: var(--orange)
+        }
+
+        .card h3 {
+            font-size: 1.1rem;
+            margin-bottom: .5rem
+        }
+
+        .card .card-desc {
+            color: var(--mid);
+            font-size: .92rem;
             margin-bottom: 1rem;
+            line-height: 1.6
         }
 
-        .skill-tagline.blue {
-            color: var(--blue);
-        }
-
-        .skill-tagline.green {
-            color: var(--green);
-        }
-
-        .skill-tagline.orange {
-            color: var(--orange);
-        }
-
-        .skill-desc {
-            color: rgba(250, 249, 245, 0.8);
-            margin-bottom: 1.2rem;
-            max-width: 700px;
-        }
-
-        .skill-features {
+        .card .card-tags {
             display: flex;
             flex-wrap: wrap;
-            gap: 0.5rem;
+            gap: .4rem
         }
 
-        .feature-tag {
-            display: inline-block;
-            padding: 0.25rem 0.75rem;
-            border-radius: 100px;
-            font-family: var(--font-heading);
-            font-size: 0.72rem;
-            font-weight: 500;
-            letter-spacing: 0.04em;
-        }
-
-        .feature-tag.blue {
-            background: rgba(106, 155, 204, 0.12);
-            color: var(--blue);
-        }
-
-        .feature-tag.green {
-            background: rgba(120, 140, 93, 0.12);
-            color: var(--green);
-        }
-
-        .feature-tag.orange {
-            background: rgba(217, 119, 87, 0.12);
-            color: var(--orange);
-        }
-
-        /* Divider */
-        .divider-section {
-            padding: 4rem 2rem;
-            text-align: center;
-        }
-
-        .flow-diagram {
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 0.85rem;
-            color: var(--mid);
-            line-height: 2;
-            display: inline-block;
-            text-align: left;
-            background: rgba(176, 174, 165, 0.04);
-            padding: 2rem 3rem;
-            border-radius: 12px;
-            border: 1px solid rgba(176, 174, 165, 0.08);
-        }
-
-        .flow-diagram .blue {
-            color: var(--blue);
-        }
-
-        .flow-diagram .green {
-            color: var(--green);
-        }
-
-        .flow-diagram .orange {
-            color: var(--orange);
-        }
-
-        .flow-diagram .arrow {
-            color: var(--mid);
-            opacity: 0.5;
-        }
-
-        /* Manifesto */
-        .manifesto {
-            background: rgba(217, 119, 87, 0.04);
-            border: 1px solid rgba(217, 119, 87, 0.12);
-            border-radius: 16px;
-            padding: 4rem;
-            margin: 2rem auto;
-            max-width: 800px;
-            text-align: center;
-        }
-
-        .manifesto h2 {
-            font-size: 2rem;
-            margin-bottom: 1.5rem;
-            color: var(--orange);
-        }
-
-        .manifesto blockquote {
-            font-style: italic;
-            color: rgba(250, 249, 245, 0.7);
-            font-size: 1.15rem;
-            line-height: 1.8;
-            margin-bottom: 1.5rem;
-        }
-
-        .manifesto .sig {
-            font-family: var(--font-heading);
-            font-size: 0.85rem;
-            color: var(--mid);
-            margin-top: 2rem;
-            line-height: 1.8;
-        }
-
-        .manifesto .sig a {
-            color: var(--orange);
-            text-decoration: none;
-        }
-
-        /* Stats row */
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 2rem;
-            padding: 4rem 2rem;
-            max-width: 1000px;
-            margin: 0 auto;
-        }
-
-        .stat {
-            text-align: center;
-            padding: 2rem;
-            border-radius: 12px;
-            background: rgba(176, 174, 165, 0.03);
-            border: 1px solid rgba(176, 174, 165, 0.06);
-        }
-
-        .stat-number {
-            font-family: var(--font-heading);
-            font-size: 3rem;
-            font-weight: 700;
-        }
-
-        .stat-number.orange {
-            color: var(--orange);
-        }
-
-        .stat-number.blue {
-            color: var(--blue);
-        }
-
-        .stat-number.green {
-            color: var(--green);
-        }
-
-        .stat-label {
-            font-family: var(--font-heading);
-            font-size: 0.8rem;
-            color: var(--mid);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-top: 0.5rem;
-        }
-
-        /* Install */
-        .install-section {
-            text-align: center;
-            padding: 4rem 2rem 6rem;
-        }
-
-        .install-box {
-            display: inline-block;
-            background: rgba(176, 174, 165, 0.04);
-            border: 1px solid rgba(176, 174, 165, 0.12);
-            border-radius: 12px;
-            padding: 1.5rem 3rem;
-            font-family: 'SF Mono', 'Fira Code', monospace;
-            font-size: 0.95rem;
-            color: var(--light);
-            margin-top: 1.5rem;
-        }
-
-        .install-box .prompt {
-            color: var(--green);
-        }
-
-        .install-box .cmd {
-            color: var(--light);
-        }
-
-        /* Footer */
-        footer {
-            text-align: center;
-            padding: 3rem 2rem;
-            border-top: 1px solid rgba(176, 174, 165, 0.08);
-            font-family: var(--font-heading);
-            font-size: 0.75rem;
-            color: var(--mid);
-            letter-spacing: 0.05em;
-        }
-
-        footer a {
-            color: var(--orange);
-            text-decoration: none;
-        }
-
-        /* New badge */
-        .new-badge {
-            display: inline-block;
-            padding: 0.15rem 0.5rem;
-            background: var(--orange);
-            color: var(--dark);
-            font-family: var(--font-heading);
-            font-size: 0.6rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
+        .card .tag {
+            font-family: var(--font-head);
+            font-size: .65rem;
+            padding: .2rem .55rem;
             border-radius: 4px;
-            margin-left: 0.5rem;
-            vertical-align: middle;
+            background: rgba(250, 249, 245, .06);
+            color: var(--mid);
+            letter-spacing: .02em
+        }
+
+        .card .card-trigger {
+            font-size: .8rem;
+            color: var(--mid);
+            margin-top: .8rem;
+            font-style: italic;
+            opacity: .7
+        }
+
+        /* DIFFUSION */
+        .diffusion-section {
+            background: linear-gradient(180deg, var(--dark) 0%, #1a1a19 100%)
+        }
+
+        .diffusion-visual {
+            display: grid;
+            grid-template-columns:1fr 1fr;
+            gap: 3rem;
+            align-items: center;
+            margin-bottom: 3rem
         }
 
         @media (max-width: 768px) {
-            .skill-card {
-                grid-template-columns: 1fr;
+            .shell {
+                padding: 16px 16px 10px
             }
 
-            .skill-number {
-                width: 50px;
-                height: 50px;
-                font-size: 1rem;
+            .nav-shell {
+                padding: 12px 16px
             }
 
-            .pipeline::before {
-                left: 24px;
+            .nav-links {
+                gap: 10px;
+                font-size: .82rem
             }
 
-            .manifesto {
-                padding: 2rem;
+            .diffusion-visual {
+                grid-template-columns:1fr
             }
 
-            .flow-diagram {
-                font-size: 0.7rem;
-                padding: 1.5rem;
+            .hero-console {
+                min-height: auto;
+                padding: 18px 16px 16px
             }
 
-            .stats {
-                grid-template-columns: 1fr 1fr;
+            .hero-console-prompt-line {
+                white-space: normal
             }
+
+            .hero-console-row {
+                grid-template-columns: 20px 1fr;
+                gap: 12px
+            }
+
+            .hero-console-desc {
+                grid-column: 2;
+                margin-top: -6px
+            }
+
+            .mmd-shell {
+                padding: 16px 14px
+            }
+
+            .pipeline-notes {
+                grid-template-columns: 1fr
+            }
+        }
+
+        .diffusion-canvas-wrap {
+            position: relative;
+            aspect-ratio: 1;
+            max-width: 400px;
+            margin: 0 auto
+        }
+
+        .diffusion-canvas-wrap canvas {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            border: 2px solid var(--card-border)
+        }
+
+        .diffusion-text h3 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem
+        }
+
+        .diffusion-text p {
+            color: var(--mid);
+            margin-bottom: 1rem
+        }
+
+        .diffusion-text .formula {
+            font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+            background: var(--card-bg);
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--card-border);
+            margin: 1rem 0;
+            font-size: .85rem;
+            color: var(--light);
+            line-height: 1.8
+        }
+
+        .transition-visual {
+            text-align: center;
+            padding: 2rem;
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px solid var(--card-border)
+        }
+
+        .transition-visual .dou {
+            font-family: var(--font-head);
+            font-size: 2rem;
+            font-weight: 700
+        }
+
+        .transition-visual .arrow-anim {
+            font-size: 1.5rem;
+            margin: 0 1rem;
+            color: var(--orange)
+        }
+
+        .transition-visual .dod {
+            font-family: var(--font-head);
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--green)
+        }
+
+        /* MANIFESTO */
+        .manifesto-section {
+            background: #1a1a19
+        }
+
+        .manifesto-block {
+            max-width: 700px;
+            margin: 0 auto
+        }
+
+        .manifesto-block blockquote {
+            border-left: 3px solid var(--orange);
+            padding-left: 1.5rem;
+            margin-bottom: 1.5rem;
+            color: var(--mid);
+            font-size: 1.05rem;
+            font-style: italic
+        }
+
+        .manifesto-block .plague-list {
+            list-style: none;
+            margin: 1.5rem 0
+        }
+
+        .manifesto-block .plague-list li {
+            padding: .4rem 0;
+            display: flex;
+            align-items: center;
+            gap: .6rem;
+            font-size: .95rem
+        }
+
+        .manifesto-block .plague-list .check {
+            color: var(--green)
+        }
+
+        .manifesto-block .plague-list .cross {
+            color: var(--orange)
+        }
+
+        /* INSTALL */
+        .install-section {
+            background: var(--dark)
+        }
+
+        .install-block {
+            max-width: 700px;
+            margin: 0 auto
+        }
+
+        .code-block {
+            background: #0d0d0c;
+            border: 1px solid var(--card-border);
+            border-radius: 10px;
+            padding: 1.25rem 1.5rem;
+            margin: 1.5rem 0;
+            overflow-x: auto;
+            position: relative
+        }
+
+        .code-block code {
+            display: block;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: .85rem;
+            color: var(--light);
+            line-height: 1.7;
+            white-space: pre
+        }
+
+        .code-block pre {
+            margin: 0
+        }
+
+        .code-block .comment {
+            color: var(--mid)
+        }
+
+        .code-block .copy-btn {
+            position: absolute;
+            top: .75rem;
+            right: .75rem;
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            color: var(--mid);
+            padding: .3rem .6rem;
+            border-radius: 5px;
+            font-size: .7rem;
+            cursor: pointer;
+            font-family: var(--font-head);
+            transition: all .2s
+        }
+
+        .code-block .copy-btn:hover {
+            color: var(--orange);
+            border-color: var(--orange)
+        }
+
+        /* FOOTER */
+        footer {
+            padding: 3rem 2rem;
+            border-top: 1px solid var(--card-border);
+            text-align: center
+        }
+
+        footer .credits {
+            font-family: var(--font-head);
+            font-size: .8rem;
+            color: var(--mid);
+            margin-bottom: .5rem
+        }
+
+        footer .credits a {
+            color: var(--orange);
+            text-decoration: none
+        }
+
+        footer .tagline-footer {
+            font-size: .75rem;
+            color: rgba(176, 174, 165, .5);
+            font-style: italic
+        }
+
+        /* CONVERGENCE TRAJECTORY */
+        .trajectory {
+            display: flex;
+            align-items: flex-end;
+            gap: 6px;
+            height: 120px;
+            justify-content: center;
+            margin: 2rem 0
+        }
+
+        .trajectory .bar {
+            width: 40px;
+            border-radius: 4px 4px 0 0;
+            position: relative;
+            transition: height .8s cubic-bezier(.4, 0, .2, 1)
+        }
+
+        .trajectory .bar .bar-label {
+            position: absolute;
+            top: -22px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: var(--font-head);
+            font-size: .65rem;
+            color: var(--mid);
+            white-space: nowrap
+        }
+
+        .trajectory .bar .bar-score {
+            position: absolute;
+            bottom: 6px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-family: var(--font-head);
+            font-size: .7rem;
+            color: var(--dark);
+            font-weight: 700
+        }
+
+        /* SCROLL ANIMATIONS */
+        .fade-up {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all .7s ease
+        }
+
+        .fade-up.visible {
+            opacity: 1;
+            transform: translateY(0)
         }
     </style>
 </head>
 <body>
 
-<!-- Hero -->
-<section class="hero">
-    <div class="hero-content">
-        <div class="hero-badge">Claude Code Skills Suite</div>
-        <h1>VetCoders<br><span>Skills Suite</span></h1>
-        <p class="hero-sub">
-            Six skills that take AI agents from blind coding to shipped products.
-            The complete pipeline from context bootstrap to marketplace launch.
-        </p>
-        <p class="hero-quote">
-            "The antidote is not more tools. It is a decision: choose what ships, and finish it. All of it. Not just the
-            code."
-        </p>
-    </div>
-</section>
-
-<!-- Stats -->
-<div class="stats">
-    <div class="stat">
-        <div class="stat-number orange">15+</div>
-        <div class="stat-label">Skills</div>
-    </div>
-    <div class="stat">
-        <div class="stat-number blue">3</div>
-        <div class="stat-label">Phases</div>
-    </div>
-    <div class="stat">
-        <div class="stat-number green">98%</div>
-        <div class="stat-label">Completion with loctree</div>
-    </div>
-    <div class="stat">
-        <div class="stat-number orange">0 &rarr; 1</div>
-        <div class="stat-label">From code to market</div>
-    </div>
+<div class="topbar">
+    <header class="nav-shell">
+        <a class="brand" href="#">
+            <span aria-hidden="true" class="brand-mark"></span>
+            <span>VetCoders Skills</span>
+        </a>
+        <nav aria-label="Primary" class="nav-links">
+            <a href="#pipeline">Vibecraft</a>
+            <a href="#skills">Skills</a>
+            <a href="#marbles">Marbles</a>
+            <a href="#dou">DoU</a>
+            <a href="#get">Get</a>
+            <a href="https://github.com/VetCoders/vetcoders-skills">GitHub</a>
+        </nav>
+    </header>
 </div>
 
-<!-- Pipeline -->
-<section class="section">
-    <div class="section-header">
-        <h2>The Pipeline</h2>
-        <p>Each skill feeds context to the next. No blind implementation. No packaging gap.</p>
+<div class="curl-banner">
+    <code><span class="cb-g">$</span> curl -fsSL https://raw.githubusercontent.com/VetCoders/vetcoders-skills/main/install.sh | bash</code>
+    <button class="cb-copy" data-copy="curl -fsSL https://raw.githubusercontent.com/VetCoders/vetcoders-skills/main/install.sh | bash">Copy</button>
+</div>
+
+<div class="shell">
+<!-- HERO -->
+<section class="hero">
+    <div class="hero-copy fade-up">
+        <div class="section-label">VetCoders Vibecraft System</div>
+        <h1>Multi-agent <span class="accent">Vibecraft</span> that converges software to production.</h1>
+        <p class="tagline">Context bootstrap, frontier delegation, convergence loops, and launch hydration &mdash; one operating system for Codex, Claude, and Gemini.</p>
+        <div class="stats-row">
+            <div class="stat"><div class="num">19</div><div class="label">Skills</div></div>
+            <div class="stat"><div class="num">3</div><div class="label">Foundations</div></div>
+            <div class="stat"><div class="num">3</div><div class="label">Runtimes</div></div>
+        </div>
+        <div class="cta-row">
+            <a class="btn btn-primary" href="#get">Get the suite</a>
+            <a class="btn btn-secondary" href="#skills">Explore skills</a>
+            <a class="btn btn-secondary" href="https://github.com/VetCoders/vetcoders-skills">GitHub</a>
+        </div>
     </div>
-
-    <div class="pipeline">
-
-        <!-- 1. Init -->
-        <div class="skill-card">
-            <div class="skill-number blue">01</div>
-            <div class="skill-body">
-                <div class="skill-tagline blue">Memory + Eyes</div>
-                <h3><span class="mono">vetcoders-init</span></h3>
-                <p class="skill-desc">
-                    Bootstrap every session with two layers of context: <strong>Memory</strong> from
-                    ai-contexters (what was done before) and <strong>Eyes</strong> from loctree MCP
-                    (what the code looks like now). The forcing function that prevents blind coding.
-                </p>
-                <div class="skill-features">
-                    <span class="feature-tag blue">ai-contexters extraction</span>
-                    <span class="feature-tag blue">loctree repo-view</span>
-                    <span class="feature-tag blue">situational report</span>
-                    <span class="feature-tag blue">subagent preamble</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- 2. Workflow -->
-        <div class="skill-card">
-            <div class="skill-number blue">02</div>
-            <div class="skill-body">
-                <div class="skill-tagline blue">Examine &middot; Research &middot; Implement</div>
-                <h3><span class="mono">vetcoders-workflow</span></h3>
-                <p class="skill-desc">
-                    The ERi Pipeline. Three phases that chain structural code intelligence, ground
-                    truth research, and parallel agent delegation. Each phase accumulates artifacts
-                    (CONTEXT.md, RESEARCH.md, reports/) for the next.
-                </p>
-                <div class="skill-features">
-                    <span class="feature-tag blue">loctree deep examination</span>
-                    <span class="feature-tag blue">brave-search + Context7</span>
-                    <span class="feature-tag blue">phase gates</span>
-                    <span class="feature-tag blue">artifact accumulation</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- 3. Agents -->
-        <div class="skill-card">
-            <div class="skill-number green">03</div>
-            <div class="skill-body">
-                <div class="skill-tagline green">Parallel Delegation</div>
-                <h3><span class="mono">vetcoders-agents</span></h3>
-                <p class="skill-desc">
-                    Spawn a fleet of agents with precise plans. Portable scripts handle
-                    visible or headless launch automatically. Plans in <code>.ai-agents/plans/</code>,
-                    reports in <code>.ai-agents/reports/</code>. Living tree rule mandatory in every prompt.
-                </p>
-                <div class="skill-features">
-                    <span class="feature-tag green">portable spawn scripts</span>
-                    <span class="feature-tag green">Codex + Claude + Gemini CLI</span>
-                    <span class="feature-tag green">Vibecrafting methodology</span>
-                    <span class="feature-tag green">living tree rule</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- 4. Follow-up -->
-        <div class="skill-card">
-            <div class="skill-number green">04</div>
-            <div class="skill-body">
-                <div class="skill-tagline green">Post-Implementation Audit</div>
-                <h3><span class="mono">vetcoders-followup</span></h3>
-                <p class="skill-desc">
-                    Strict chain: init &rarr; workflow &rarr; agents &rarr; synthesis.
-                    Validates agent claims against real code. P0/P1/P2 severity model.
-                    Ends with GO / GO-WITH-CAVEATS / NO-GO verdict.
-                </p>
-                <div class="skill-features">
-                    <span class="feature-tag green">severity model P0-P2</span>
-                    <span class="feature-tag green">loctree + semgrep gates</span>
-                    <span class="feature-tag green">readiness verdict</span>
-                    <span class="feature-tag green">confidence scoring</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- 5. DoU -->
-        <div class="skill-card">
-            <div class="skill-number orange">05</div>
-            <div class="skill-body">
-                <div class="skill-tagline orange">Definition of Undone <span class="new-badge">NEW</span></div>
-                <h3><span class="mono">vetcoders-dou</span></h3>
-                <p class="skill-desc">
-                    The completion oracle. Audits the entire product surface &mdash; not just code.
-                    Crawls URLs, checks repo governance, verifies install paths, measures the gap
-                    between internal capability and external visibility. Produces the Undone Matrix
-                    and Plague Score.
-                </p>
-                <div class="skill-features">
-                    <span class="feature-tag orange">URL crawling</span>
-                    <span class="feature-tag orange">SEO audit</span>
-                    <span class="feature-tag orange">install path verification</span>
-                    <span class="feature-tag orange">Undone Matrix</span>
-                    <span class="feature-tag orange">Plague Score 0-100</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- 6. Hydrate -->
-        <div class="skill-card">
-            <div class="skill-number orange">06</div>
-            <div class="skill-body">
-                <div class="skill-tagline orange">The Antidote <span class="new-badge">NEW</span></div>
-                <h3><span class="mono">vetcoders-hydrate</span></h3>
-                <p class="skill-desc">
-                    Takes DoU findings and executes the packaging gap. Generates LICENSE,
-                    CONTRIBUTING, CI workflows, marketplace listings, SEO meta tags,
-                    distribution artifacts, and onboarding content. The terminal skill that
-                    crosses the boundary from code to market.
-                </p>
-                <div class="skill-features">
-                    <span class="feature-tag orange">repo governance</span>
-                    <span class="feature-tag orange">distribution packaging</span>
-                    <span class="feature-tag orange">SEO hydration</span>
-                    <span class="feature-tag orange">marketplace listings</span>
-                    <span class="feature-tag orange">"Done Done" checklist</span>
-                </div>
-            </div>
-        </div>
-
+    <div class="hterm fade-up">
+        <div class="hterm-dots"><span class="d1"></span><span class="d2"></span><span class="d3"></span></div>
+        <div class="hterm-prompt" data-copy="git clone https://github.com/VetCoders/vetcoders-skills.git"><span class="g">&#x276f;</span> git clone &hellip;/vetcoders-skills.git</div>
+        <div class="hterm-prompt" data-copy="cd vetcoders-skills"><span class="g">&#x276f;</span> cd vetcoders-skills</div>
+        <div class="hterm-prompt" data-copy="make help"><span class="g">&#x276f;</span> make help</div>
+        <div class="hterm-sep"></div>
+        <div class="hterm-title">VetCoders Skills</div>
+        <div class="hterm-row y" data-copy="make install"><span class="ic">&#x25c6;</span><span class="cmd">make install</span><span class="dsc">Skills + shell helpers</span></div>
+        <div class="hterm-row y" data-copy="make skills"><span class="ic">&#x25c7;</span><span class="cmd">make skills</span><span class="dsc">Skills only</span></div>
+        <div class="hterm-row y" data-copy="make helpers"><span class="ic">&#x25c7;</span><span class="cmd">make helpers</span><span class="dsc">Shell helpers only</span></div>
+        <div class="hterm-gap"></div>
+        <div class="hterm-row c" data-copy="make setup-dev"><span class="ic">&#x25b8;</span><span class="cmd">make setup-dev</span><span class="dsc">Selective install</span></div>
+        <div class="hterm-row c" data-copy="make dry-run"><span class="ic">&#x25b8;</span><span class="cmd">make dry-run</span><span class="dsc">Preview actions</span></div>
+        <div class="hterm-gap"></div>
+        <div class="hterm-row g" data-copy="make doctor"><span class="ic">&#x2713;</span><span class="cmd">make doctor</span><span class="dsc">Verify health</span></div>
+        <div class="hterm-row g" data-copy="make update"><span class="ic">&#x21bb;</span><span class="cmd">make update</span><span class="dsc">Pull + re-install</span></div>
+        <div class="hterm-row g" data-copy="make list"><span class="ic">&#x25c7;</span><span class="cmd">make list</span><span class="dsc">Bundle status</span></div>
+        <div class="hterm-gap"></div>
+        <div class="hterm-row r" data-copy="make uninstall"><span class="ic">&#x2715;</span><span class="cmd">make uninstall</span><span class="dsc">Remove all</span></div>
+        <div class="hterm-row r" data-copy="make restore"><span class="ic">&#x21ba;</span><span class="cmd">make restore</span><span class="dsc">Undo last</span></div>
+        <div class="hterm-foot">Vibecrafted with AI Agents by VetCoders</div>
     </div>
 </section>
 
-<!-- Flow Diagram -->
-<section class="divider-section">
-    <div class="flow-diagram">
-        <span class="blue">vetcoders-init</span> <span class="arrow">&rarr;</span> <span
-            class="blue">vetcoders-workflow</span> <span class="arrow">&rarr;</span> <span class="green">vetcoders-agents</span>
-        <span class="arrow">&rarr;</span> <span class="green">vetcoders-followup</span>
-        <span class="arrow">&darr;</span>
-        <span class="orange">vetcoders-dou</span>
-        <span class="arrow">&darr;</span>
-        <span class="orange">vetcoders-hydrate</span>
-        <span class="arrow">&darr;</span>
-        <span class="orange">vetcoders-dou</span> <span style="color:var(--mid);opacity:0.5">(verify)</span>
-    </div>
-</section>
+<!-- PIPELINE -->
+<section class="pipeline-section" id="pipeline">
+    <div class="container fade-up">
+        <div class="section-label">Vibecraft</div>
+        <h2 class="section-title">Craft &rarr; Converge &rarr; Ship</h2>
+        <p class="section-sub">Vibecrafting is how noise becomes signal: first shape direction, memory, and execution paths; then converge until P0=P1=P2=0; then ship the product surface all the way to real distribution.</p>
 
-<!-- Manifesto -->
-<section class="section">
-    <div class="manifesto">
-        <h2>The Definition of Undone</h2>
-        <blockquote>
-            AI agents have solved the hardest part of software creation: making the thing work.
-            They have not yet solved the second hardest part: making the thing reachable.
-            Until they do &mdash; or until human-agent teams learn to ask for both &mdash;
-            the plague will produce its distinctive signature: repositories full of brilliance,
-            and markets full of silence.
-        </blockquote>
-        <blockquote>
-            This suite is the habit of asking.
-        </blockquote>
-        <div class="sig">
-            <a href="https://div0.space">Maciej Gad</a> &mdash; a veterinarian who couldn't find <code>terminal</code> a
-            year ago<br>
-            <a href="https://github.com/Gitlaudiusz">Klaudiusz</a> &mdash; the individual ethereal being, living
-            somewhere in the GPU's loops
+        <div class="mmd-shell">
+            <pre><code><span class="comment">%% vetcoders pipeline</span>
+flowchart LR
+    subgraph Craft
+        init[init] --&gt; workflow[workflow]
+        workflow --&gt; agents[agents / delegate]
+        agents --&gt; followup[followup]
+    end
+
+    followup --&gt; marbles{{marbles loop}}
+    marbles --&gt;|P0/P1/P2 &gt; 0| marbles
+    marbles --&gt; dou[dou]
+    dou --&gt; decorate[decorate]
+    decorate --&gt; hydrate[hydrate]
+
+    hydrate --&gt; ship([ship-ready surface])</code></pre>
+        </div>
+
+        <div class="pipeline-notes">
+            <article class="pipeline-note">
+                <h3>Craft</h3>
+                <p>Bootstrap context, frame the repo truth, and execute with enough structure that the first pass is already useful.</p>
+            </article>
+            <article class="pipeline-note">
+                <h3>Converge</h3>
+                <p>Run Marbles until critical, credibility, and product-surface gaps stop leaking noise back into the system.</p>
+            </article>
+            <article class="pipeline-note">
+                <h3>Ship</h3>
+                <p>DoU, decorate, and hydrate turn implementation into something strangers can find, install, trust, and adopt.</p>
+            </article>
         </div>
     </div>
 </section>
 
-<!-- Install -->
-<section class="install-section">
-    <h2>Get Started</h2>
-    <div class="install-box">
-        <span class="prompt">$</span> <span class="cmd">bash install.sh --checkout "$HOME/.local/share/vetcoders-skills" --with-shell</span>
+<!-- SKILLS GRID -->
+<section id="skills">
+    <div class="container fade-up">
+        <div class="section-label">The Suite</div>
+        <h2 class="section-title">What's in the Suite</h2>
+        <p class="section-sub">Each skill is individually callable. <code>ship</code> chains them, <code>agents</code>
+            scales them out, and <code>delegate</code> stays as the native fallback when external frontier agents are unnecessary. The grid below shows the core Craft surface plus the supporting review, ownership, and research layers; promoted foundations like <code>ai-contexters</code>, <code>loctree</code>, and <code>bravesearch</code> ship alongside it.</p>
+
+        <div class="cards-grid">
+
+            <div class="card" style="border-color:var(--light);grid-column:1/-1">
+                <div class="card-phase build" style="background:rgba(250,249,245,.12);color:var(--light)">Orchestrator
+                </div>
+                <h3>vetcoders-ship</h3>
+                <p class="card-desc">One command runs the full pipeline: Craft &rarr; Converge &rarr; Ship. All
+                    sub-skills remain individually callable &mdash; ship just chains them into an automated
+                    sequence.</p>
+                <div class="card-tags"><span class="tag">master orchestrator</span><span
+                        class="tag">full pipeline</span><span class="tag">end-to-end</span></div>
+                <div class="card-trigger">"Ship: add auth module" &middot; "Wypusc to" &middot; "Full pipeline"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase build">Phase 1 &middot; Craft</div>
+                <h3>vetcoders-init</h3>
+                <p class="card-desc">Bootstrap session with Memory (ai-contexters) + Eyes (loctree MCP) + Verify. Extracts prior
+                    session history, maps repo structure, and grounds the implementation path before hands-on work.</p>
+                <div class="card-tags"><span class="tag">loctree</span><span class="tag">ai-contexters</span><span
+                        class="tag">session bootstrap</span><span class="tag">verify</span></div>
+                <div class="card-trigger">"Init session" &middot; "Daj kontekst agentowi"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase build">Phase 1 &middot; Craft</div>
+                <h3>vetcoders-workflow</h3>
+                <p class="card-desc">ERi Pipeline: Examine &rarr; Research &rarr; Implement. Structured Vibecraft that replaces "vibe and pray" with deliberate, measured progress.</p>
+                <div class="card-tags"><span class="tag">ERi</span><span class="tag">loctree</span><span class="tag">brave-search</span><span
+                        class="tag">Context7</span></div>
+                <div class="card-trigger">"ERi pipeline" &middot; "Zbadaj i zaimplementuj"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase build" style="background:rgba(176,174,165,.12);color:var(--mid)">Fallback Path
+                </div>
+                <h3>vetcoders-delegate</h3>
+                <p class="card-desc">Native in-session delegation path. Safe, sandboxed, and useful when the task is
+                    small, bounded, or does not need a full external frontier fleet.</p>
+                <div class="card-tags"><span class="tag">native fallback</span><span class="tag">Task tool</span><span
+                        class="tag">sandboxed</span></div>
+                <div class="card-trigger">"Native agents" &middot; "Delegate safely" &middot; "Bezpieczne agenty"</div>
+            </div>
+
+            <div class="card" style="border-color:var(--orange)">
+                <div class="card-phase build" style="background:rgba(217,119,87,.14);color:var(--orange)">Frontier Fleet
+                </div>
+                <h3>vetcoders-agents</h3>
+                <p class="card-desc">External frontier agent fleet for Codex, Claude, and Gemini. Visible Terminal or
+                    headless mode, `zsh -ic` launch, durable artifacts, living-tree coordination, and real delegated fieldwork.</p>
+                <div class="card-tags"><span class="tag">frontier agents</span><span class="tag">Codex + Claude + Gemini</span><span
+                        class="tag">zsh -ic</span><span class="tag">durable artifacts</span></div>
+                <div class="card-trigger">"Spawn agents" &middot; "Agent fleet" &middot; "Power agents"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase build">Phase 1 &middot; Craft</div>
+                <h3>vetcoders-research</h3>
+                <p class="card-desc">Triple-agent research surface for moments when one model is not enough. Runs Codex,
+                    Claude, and Gemini against the same question set, then synthesizes gap-free ground truth for implementation.</p>
+                <div class="card-tags"><span class="tag">triple research</span><span class="tag">ground truth</span><span
+                        class="tag">comparison</span></div>
+                <div class="card-trigger">"Research this" &middot; "Zbadaj to" &middot; "Triple research"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase build">Phase 1 &middot; Craft</div>
+                <h3>vetcoders-partner</h3>
+                <p class="card-desc">Executive-brain pairing mode for hard product debugging, architecture triage, and
+                    feature framing while fieldwork is delegated to agents in parallel.</p>
+                <div class="card-tags"><span class="tag">partner mode</span><span class="tag">strategy</span><span
+                        class="tag">parallel fieldwork</span></div>
+                <div class="card-trigger">"Partner mode" &middot; "Idziemy razem" &middot; "Debug krok po kroku"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase build">Phase 1 &middot; Craft</div>
+                <h3>vetcoders-ownership</h3>
+                <p class="card-desc">Full-spectrum ownership mode for teams who want one decisive operator to drive the
+                    entire product surface from architecture through launch polish.</p>
+                <div class="card-tags"><span class="tag">ownership</span><span class="tag">end-to-end</span><span
+                        class="tag">product delivery</span></div>
+                <div class="card-trigger">"Take ownership" &middot; "Dowiez to" &middot; "Od A do Z"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase build">Phase 1 &middot; Craft</div>
+                <h3>vetcoders-followup</h3>
+                <p class="card-desc">Post-implementation audit with P0/P1/P2 severity model. Quality gates, security
+                    scan, completeness score. Produces GO / NO-GO verdict.</p>
+                <div class="card-tags"><span class="tag">audit</span><span class="tag">P0/P1/P2</span><span class="tag">quality gates</span>
+                </div>
+                <div class="card-trigger">"Follow-up check" &middot; "Czy s&#261; jeszcze luki?"</div>
+            </div>
+
+            <div class="card" style="border-color:var(--orange)">
+                <div class="card-phase loop-phase">Phase 2 &middot; Converge</div>
+                <h3>vetcoders-marbles</h3>
+                <p class="card-desc">Iterative convergence through diffusion. Loops until the circle is full &mdash;
+                    P0=0, P1=0, P2=0. The noise scheduler for code.</p>
+                <div class="card-tags"><span class="tag">diffusion</span><span class="tag">convergence</span><span
+                        class="tag">entropy</span><span class="tag">adaptive</span></div>
+                <div class="card-trigger">"Marbles" &middot; "Loop until done" &middot; "Kulki"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase build">Phase 1 &middot; Craft</div>
+                <h3>vetcoders-prview</h3>
+                <p class="card-desc">PR review artifact pack plus findings-max audit. Generates durable review surfaces,
+                    line-level findings, and merge-gate clarity instead of one-off terminal wisdom.</p>
+                <div class="card-tags"><span class="tag">PR review</span><span class="tag">artifact pack</span><span
+                        class="tag">findings-max</span></div>
+                <div class="card-trigger">"Review PR" &middot; "Daj findings" &middot; "Run prview"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase build">Phase 1 &middot; Craft</div>
+                <h3>vetcoders-prune</h3>
+                <p class="card-desc">Runtime-cone and publish-cone extraction for repositories that grew too much scar
+                    tissue. Finds what truly ships, what is dead weight, and what should be cut hard.</p>
+                <div class="card-tags"><span class="tag">prune</span><span class="tag">runtime cone</span><span
+                        class="tag">bold cleanup</span></div>
+                <div class="card-trigger">"Prune this repo" &middot; "Strip the dead weight" &middot; "Ruthless cleanup"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase ship">Phase 3 &middot; Ship</div>
+                <h3>vetcoders-screenscribe</h3>
+                <p class="card-desc">Turns narrated screencasts into structured engineering findings, HTML reports, and
+                    actionable product feedback. Canonical surface for spoken screen review workflows.</p>
+                <div class="card-tags"><span class="tag">video review</span><span class="tag">transcript-first</span><span
+                        class="tag">actionable findings</span></div>
+                <div class="card-trigger">"Analyze this screencast" &middot; "ScreenScribe" &middot; "Bug demo recording"</div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase ship">Phase 3 &middot; Ship</div>
+                <h3>vetcoders-dou</h3>
+                <p class="card-desc">Definition of Undone audit across the entire product surface. Crawls URLs, checks
+                    governance, measures the gap between code and market.</p>
+                <div class="card-tags"><span class="tag">product surface</span><span class="tag">SEO</span><span
+                        class="tag">Plague Score</span></div>
+                <div class="card-trigger">"DoU audit" &middot; "Co brakuje do launchu?"</div>
+            </div>
+
+            <div class="card" style="border-color:var(--blue)">
+                <div class="card-phase ship">Phase 3 &middot; Ship</div>
+                <h3>vetcoders-decorate</h3>
+                <p class="card-desc">Visual polish within YOUR design language. Detects existing palette, fonts, and
+                    theme &mdash; proposes smaczki (hover effects, scroll behaviors, micro-interactions) using your
+                    tokens. Never overrides your style.</p>
+                <div class="card-tags"><span class="tag">smaczki</span><span
+                        class="tag">detect &amp; enhance</span><span class="tag">micro-interactions</span><span
+                        class="tag">curb appeal</span></div>
+                <div class="card-trigger">"Decorate" &middot; "Udekoruj" &middot; "Make it look good" &middot;
+                    "Smaczki"
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-phase ship">Phase 3 &middot; Ship</div>
+                <h3>vetcoders-hydrate</h3>
+                <p class="card-desc">Package for market: repo governance, SEO, distribution, marketplace listings,
+                    onboarding flows. The antidote to Always-in-Production.</p>
+                <div class="card-tags"><span class="tag">marketplace</span><span class="tag">SEO</span><span
+                        class="tag">distribution</span><span class="tag">onboarding</span></div>
+                <div class="card-trigger">"Hydrate" &middot; "Nawodnij" &middot; "Make it shippable"</div>
+            </div>
+
+        </div>
     </div>
-    <p style="color:var(--mid); margin-top:1rem; font-size:0.9rem;">
-        Bootstrap the repo, install the skills into the canonical shared store at <code>~/.agents/skills</code>, create
-        per-agent symlink views, and optionally add the repo-owned zsh helper layer.
-    </p>
 </section>
 
+<!-- DIFFUSION INSIGHT -->
+<section class="diffusion-section" id="marbles">
+    <div class="container fade-up">
+        <div class="section-label">Marbles</div>
+        <h2 class="section-title">Denoise Until the Circle Is Full</h2>
+        <p class="section-sub">AI agents generate code stochastically. Each generation introduces signal AND noise. The
+            only way to separate them: iterate, measure, reduce.</p>
+
+        <div class="diffusion-visual">
+            <div class="diffusion-canvas-wrap">
+                <canvas id="diffusionCanvas"></canvas>
+            </div>
+            <div class="diffusion-text">
+                <h3>The Isomorphism</h3>
+                <div class="formula">
+                    Image diffusion:&nbsp; noise &rarr; denoise &times; N &rarr; image<br>
+                    Code diffusion:&nbsp;&nbsp; chaos &rarr; reduce_entropy &times; N &rarr; product<br><br>
+                    Step 0: Pure noise (no context, no structure)<br>
+                    Step 1: Init &mdash; gross shapes emerge<br>
+                    Step 2: Implement &mdash; detail generation<br>
+                    Step N: Converged &mdash; DoU &lt; threshold = DoD
+                </div>
+                <p>There is no fixed loop count. The loop runs until P0=P1=P2=0 &mdash; the circle is full. A trivial
+                    task may converge in 1 loop. A massive architectural change may take many more. Like learning rate
+                    decay, early loops make large corrections (P0 blockers), late loops make small refinements (P2
+                    polish).</p>
+            </div>
+        </div>
+
+        <div class="transition-visual">
+            <p style="font-family:var(--font-head);font-size:.85rem;color:var(--mid);margin-bottom:1rem">Convergence
+                Trajectory &mdash; loop until the circle is full</p>
+            <div class="trajectory" id="trajectoryBars">
+                <div class="bar" data-h="15" style="height:0;background:var(--orange)"><span
+                        class="bar-label">Loop 1</span><span class="bar-score">15</span></div>
+                <div class="bar" data-h="40" style="height:0;background:var(--orange)"><span
+                        class="bar-label">Loop 2</span><span class="bar-score">40</span></div>
+                <div class="bar" data-h="65" style="height:0;background:var(--blue)"><span
+                        class="bar-label">Loop 3</span><span class="bar-score">65</span></div>
+                <div class="bar" data-h="85" style="height:0;background:var(--blue)"><span
+                        class="bar-label">Loop 4</span><span class="bar-score">85</span></div>
+                <div class="bar" data-h="100" style="height:0;background:var(--green)"><span
+                        class="bar-label">Loop 5</span><span class="bar-score">100</span></div>
+            </div>
+            <p style="font-family:var(--font-head);font-size:.75rem;color:var(--mid);margin-top:.8rem">Score: 15 &rarr;
+                40 &rarr; 65 &rarr; 85 &rarr; 100</p>
+            <div style="display:flex;align-items:center;justify-content:center;gap:1rem;margin-top:1.5rem">
+                <span class="dou" style="text-decoration:line-through;color:var(--mid)">DoU</span>
+                <span class="arrow-anim">&rarr;</span>
+                <span class="dod"><strong>DoD</strong></span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- MANIFESTO -->
+<section class="manifesto-section" id="dou">
+    <div class="container fade-up">
+        <div class="section-label">DoU</div>
+        <h2 class="section-title">The Definition of Undone</h2>
+        <div class="manifesto-block">
+            <blockquote>AI agents have solved the hardest part of software creation: making the thing work. They have
+                not yet solved the second hardest part: making the thing reachable.
+            </blockquote>
+            <p style="color:var(--mid);margin-bottom:1.5rem">The Always-in-Production Plague &mdash; technically
+                excellent software that never ships to users. The cause is not bad code. It's the systematic gap between
+                "it works" and "someone can find, install, and pay for it."</p>
+            <p style="font-family:var(--font-head);font-weight:600;margin-bottom:.8rem">The Plague Diagnostic:</p>
+            <ul class="plague-list">
+                <li><span class="check">+</span> Tests pass</li>
+                <li><span class="check">+</span> Architecture is sound</li>
+                <li><span class="check">+</span> README exists</li>
+                <li><span class="cross">&ndash;</span> Nobody can find it from Google</li>
+                <li><span class="cross">&ndash;</span> Nobody can install it without a toolchain</li>
+                <li><span class="cross">&ndash;</span> Nobody can pay for it</li>
+            </ul>
+            <p style="color:var(--mid);margin-top:1.5rem">Items 4&ndash;6 are the Definition of Undone. Phase 1 crafts
+                the system into shape. Phase 2 converges it. Phase 3 ships it complete.</p>
+        </div>
+    </div>
+</section>
+
+<!-- INSTALL -->
+<section class="install-section" id="get">
+    <div class="container fade-up">
+        <div class="section-label">Get</div>
+        <h2 class="section-title">Installation</h2>
+        <div class="install-block">
+            <h4 style="font-size:1rem;margin-bottom:.5rem;color:var(--light)">One-Line Install</h4>
+            <div class="code-block">
+                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                <pre><code>curl -fsSL https://raw.githubusercontent.com/VetCoders/vetcoders-skills/main/install.sh | bash</code></pre>
+            </div>
+
+            <p style="color:var(--mid);margin:1rem 0 0;line-height:1.7">
+                This is the public install path. It clones or updates the suite into
+                <code>$HOME/.local/share/vetcoders-skills</code>, then hands off to the Smart Installer.
+                Want shell helpers too? Run the same command with <code>bash -s -- --with-shell</code>.
+            </p>
+
+            <h4 style="font-size:1rem;margin:2rem 0 .5rem;color:var(--light)">Local / Repo Path</h4>
+            <div class="code-block">
+                <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                <pre><code><span class="comment"># From a checkout of vetcoders-skills:</span>
+make install     <span class="comment"># skills + shell helpers (canonical)</span>
+make skills      <span class="comment"># skills only</span>
+make helpers     <span class="comment"># shell helpers only</span>
+make doctor      <span class="comment"># verify installation health</span>
+make update      <span class="comment"># pull latest + re-install</span>
+
+<span class="comment"># Canonical payload lands in ~/.agents/skills</span>
+<span class="comment"># Codex / Claude / Gemini get symlink views</span></code></pre>
+            </div>
+
+            <h4 style="font-size:1rem;margin:2rem 0 .5rem;color:var(--light)">Requirements</h4>
+            <div class="code-block">
+                <pre><code><span class="comment"># Smart Installer auto-detects foundations and offers to install missing ones</span>
+<span class="comment"># with explicit consent.</span>
+
+<span class="comment"># Or install them manually:</span>
+cargo install aicx loctree-mcp
+cargo install prview
+
+<span class="comment"># Then add the agent CLIs you actually use:</span>
+<span class="comment"># codex, claude, gemini</span></code></pre>
+            </div>
+
+            <h4 style="font-size:1rem;margin:2rem 0 .5rem;color:var(--light)">Quick Start</h4>
+            <div class="code-block">
+                <pre><code><span class="comment"># Examples intentionally mix English and Polish trigger phrases.</span>
+<span class="comment"># VetCoders is bilingual by design.</span>
+
+<span class="comment"># The one-liner — full pipeline</span>
+&gt; "Ship: add auth module with JWT"
+
+<span class="comment"># Or run individual phases:</span>
+
+<span class="comment"># 1. Initialize context</span>
+&gt; "Init session for this repo"
+
+<span class="comment"># 2. Run full pipeline</span>
+&gt; "ERi pipeline for adding auth module"
+
+<span class="comment"># 3. Audit implementation</span>
+&gt; "Follow-up check"
+
+<span class="comment"># 4. Loop until converged</span>
+&gt; "Marbles -- loop until clean"
+
+<span class="comment"># 5. Check product surface</span>
+&gt; "DoU audit -- are we shippable?"
+
+<span class="comment"># 6. Package for market</span>
+&gt; "Hydrate this project"</code></pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- FOOTER -->
 <footer>
-    Vibecrafted with AI Agents by <a href="https://vetcoders.io">VetCoders</a> &copy; 2026
-    &nbsp;&middot;&nbsp;
-    Built with <a href="https://anthropic.com">Claude</a> by Anthropic
+    <p class="credits">
+        <a href="https://div0.space">Maciej Gad</a> &mdash; a veterinarian who couldn't find <code>terminal</code> a
+        year ago
+        &nbsp;&middot;&nbsp;
+        <a href="https://github.com/Gitlaudiusz">Klaudiusz</a> &mdash; the ethereal being living in the GPU loops in
+        California
+    </p>
+    <p class="tagline-footer">Vibecrafted with AI Agents by VetCoders &copy; 2026 VetCoders</p>
 </footer>
 
+<script>
+    // ============ GLASS MARBLE RENDERER (shared) ============
+    var MarbleFactory = (function () {
+        // Color helpers
+        function hexToRgb(hex) {
+            var r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+            return {r: r, g: g, b: b};
+        }
+
+        function rgbStr(c, a) {
+            return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + (a || 1) + ')';
+        }
+
+        function lighten(c, pct) {
+            return {r: Math.min(255, c.r + pct), g: Math.min(255, c.g + pct), b: Math.min(255, c.b + pct)};
+        }
+
+        function darken(c, pct) {
+            return {r: Math.max(0, c.r - pct), g: Math.max(0, c.g - pct), b: Math.max(0, c.b - pct)};
+        }
+
+        function blend(a, b, t) {
+            return {
+                r: Math.round(a.r + (b.r - a.r) * t),
+                g: Math.round(a.g + (b.g - a.g) * t),
+                b: Math.round(a.b + (b.b - a.b) * t)
+            };
+        }
+
+        var PALETTES = [
+            {base: '#d97757', accent: '#f4c89a', name: 'amber'},
+            {base: '#6a9bcc', accent: '#c2ddf0', name: 'ocean'},
+            {base: '#788c5d', accent: '#bdd4a0', name: 'forest'},
+            {base: '#b0aea5', accent: '#e8e6dc', name: 'smoke'},
+            {base: '#c46b8a', accent: '#f0c4d4', name: 'rose'},
+            {base: '#8b7ec8', accent: '#cdc4ef', name: 'amethyst'},
+            {base: '#cc8844', accent: '#f0d4a0', name: 'honey'},
+            {base: '#5ba3a3', accent: '#a8dede', name: 'teal'}
+        ];
+        var PATTERNS = ['catseye', 'swirl', 'galaxy', 'clear', 'solid'];
+
+        function createSprite(radius, paletteIdx, patternType, seed) {
+            var pad = 4;
+            var s = (radius * 2 + pad) * 2;
+            var oc = document.createElement('canvas');
+            oc.width = s;
+            oc.height = s;
+            var g = oc.getContext('2d');
+            var cx = s / 2, cy = s / 2, r = radius;
+            var pal = PALETTES[paletteIdx % PALETTES.length];
+            var base = hexToRgb(pal.base);
+            var accent = hexToRgb(pal.accent);
+            var rng = mulberry32(seed);
+
+            // Shadow
+            g.beginPath();
+            g.ellipse(cx + r * 0.05, cy + r * 0.82, r * 0.6, r * 0.18, 0, 0, Math.PI * 2);
+            g.fillStyle = 'rgba(0,0,0,0.22)';
+            g.fill();
+
+            // Base sphere gradient
+            g.save();
+            g.beginPath();
+            g.arc(cx, cy, r, 0, Math.PI * 2);
+            g.clip();
+
+            var bg = g.createRadialGradient(cx - r * 0.3, cy - r * 0.35, r * 0.05, cx + r * 0.1, cy + r * 0.1, r * 1.1);
+            bg.addColorStop(0, rgbStr(lighten(base, 60), 0.95));
+            bg.addColorStop(0.35, rgbStr(base, 0.92));
+            bg.addColorStop(0.7, rgbStr(darken(base, 25), 0.9));
+            bg.addColorStop(1, rgbStr(darken(base, 55), 0.85));
+            g.fillStyle = bg;
+            g.fillRect(0, 0, s, s);
+
+            // Pattern layer (inside clip)
+            if (patternType === 'catseye') {
+                // Single ribbon/vein across the marble
+                var angle = rng() * Math.PI;
+                g.save();
+                g.translate(cx, cy);
+                g.rotate(angle);
+                var ribW = r * 0.22 + rng() * r * 0.15;
+                var ribG = g.createLinearGradient(0, -ribW * 1.5, 0, ribW * 1.5);
+                ribG.addColorStop(0, 'rgba(255,255,255,0)');
+                ribG.addColorStop(0.25, rgbStr(accent, 0.7));
+                ribG.addColorStop(0.5, rgbStr(lighten(accent, 40), 0.85));
+                ribG.addColorStop(0.75, rgbStr(accent, 0.7));
+                ribG.addColorStop(1, 'rgba(255,255,255,0)');
+                g.fillStyle = ribG;
+                g.fillRect(-r * 1.1, -ribW, r * 2.2, ribW * 2);
+                // thin bright center line
+                g.strokeStyle = rgbStr(lighten(accent, 60), 0.5);
+                g.lineWidth = 1;
+                g.beginPath();
+                g.moveTo(-r * 0.9, 0);
+                g.lineTo(r * 0.9, 0);
+                g.stroke();
+                g.restore();
+            } else if (patternType === 'swirl') {
+                // Two spiral bands of color
+                g.save();
+                g.translate(cx, cy);
+                var sAngle = rng() * Math.PI * 2;
+                for (var si = 0; si < 2; si++) {
+                    g.beginPath();
+                    var tw = r * 0.12 + rng() * r * 0.1;
+                    for (var t = 0; t < Math.PI * 3; t += 0.08) {
+                        var sr = r * 0.1 + (t / (Math.PI * 3)) * r * 0.85;
+                        var sx = Math.cos(sAngle + t) * sr;
+                        var sy = Math.sin(sAngle + t) * sr;
+                        if (t === 0) g.moveTo(sx, sy); else g.lineTo(sx, sy);
+                    }
+                    g.lineWidth = tw;
+                    var sCol = si === 0 ? accent : lighten(base, 35);
+                    g.strokeStyle = rgbStr(sCol, 0.55);
+                    g.lineCap = 'round';
+                    g.stroke();
+                    sAngle += Math.PI * 0.7;
+                }
+                g.restore();
+            } else if (patternType === 'galaxy') {
+                // Speckled dots inside like a galaxy marble
+                g.save();
+                g.translate(cx, cy);
+                var dotCount = 15 + Math.floor(rng() * 20);
+                for (var di = 0; di < dotCount; di++) {
+                    var da = rng() * Math.PI * 2;
+                    var dd = rng() * r * 0.8;
+                    var dr = 0.5 + rng() * 2;
+                    var dc = rng() > 0.5 ? accent : lighten(base, 40);
+                    g.beginPath();
+                    g.arc(Math.cos(da) * dd, Math.sin(da) * dd, dr, 0, Math.PI * 2);
+                    g.fillStyle = rgbStr(dc, 0.4 + rng() * 0.35);
+                    g.fill();
+                }
+                // Central glow
+                var gg = g.createRadialGradient(0, 0, 0, 0, 0, r * 0.4);
+                gg.addColorStop(0, rgbStr(accent, 0.25));
+                gg.addColorStop(1, 'rgba(0,0,0,0)');
+                g.fillStyle = gg;
+                g.beginPath();
+                g.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+                g.fill();
+                g.restore();
+            } else if (patternType === 'clear') {
+                // Mostly transparent glass with colored core
+                g.fillStyle = 'rgba(255,255,255,0.12)';
+                g.fillRect(0, 0, s, s);
+                var cg = g.createRadialGradient(cx, cy, 0, cx, cy, r * 0.45);
+                cg.addColorStop(0, rgbStr(accent, 0.6));
+                cg.addColorStop(0.6, rgbStr(base, 0.35));
+                cg.addColorStop(1, 'rgba(0,0,0,0)');
+                g.fillStyle = cg;
+                g.beginPath();
+                g.arc(cx, cy, r * 0.5, 0, Math.PI * 2);
+                g.fill();
+            }
+            // solid = no extra pattern, just the base gradient
+
+            // Glass internal refraction — subtle secondary highlight at bottom
+            var rfl = g.createRadialGradient(cx + r * 0.2, cy + r * 0.35, r * 0.02, cx + r * 0.15, cy + r * 0.3, r * 0.45);
+            rfl.addColorStop(0, 'rgba(255,255,255,0.18)');
+            rfl.addColorStop(1, 'rgba(255,255,255,0)');
+            g.fillStyle = rfl;
+            g.fillRect(0, 0, s, s);
+
+            // Top specular highlight — the signature glass shine
+            var hl = g.createRadialGradient(cx - r * 0.28, cy - r * 0.32, r * 0.02, cx - r * 0.15, cy - r * 0.2, r * 0.5);
+            hl.addColorStop(0, 'rgba(255,255,255,0.95)');
+            hl.addColorStop(0.15, 'rgba(255,255,255,0.55)');
+            hl.addColorStop(0.5, 'rgba(255,255,255,0.1)');
+            hl.addColorStop(1, 'rgba(255,255,255,0)');
+            g.fillStyle = hl;
+            g.fillRect(0, 0, s, s);
+
+            // Edge darkening rim
+            var rim = g.createRadialGradient(cx, cy, r * 0.75, cx, cy, r);
+            rim.addColorStop(0, 'rgba(0,0,0,0)');
+            rim.addColorStop(0.8, 'rgba(0,0,0,0.08)');
+            rim.addColorStop(1, 'rgba(0,0,0,0.28)');
+            g.fillStyle = rim;
+            g.fillRect(0, 0, s, s);
+
+            g.restore(); // clip
+            return oc;
+        }
+
+        // seeded PRNG (Mulberry32)
+        function mulberry32(a) {
+            return function () {
+                a |= 0;
+                a = a + 0x6D2B79F5 | 0;
+                var t = Math.imul(a ^ a >>> 15, 1 | a);
+                t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+                return ((t ^ t >>> 14) >>> 0) / 4294967296;
+            };
+        }
+
+        return {
+            PALETTES: PALETTES,
+            PATTERNS: PATTERNS,
+            createSprite: createSprite,
+            mulberry32: mulberry32
+        };
+    })();
+
+    // ============ SOLITAIRE BOARD UTILS (shared) ============
+    function hexGridInCircle(cx, cy, R, mr) {
+        var pos = [], sp = mr * 2.12, rh = sp * 0.866, row = 0;
+        for (var y = cy - R + mr; y <= cy + R - mr; y += rh) {
+            var off = (row % 2) ? sp / 2 : 0;
+            for (var x = cx - R + mr; x <= cx + R - mr; x += sp) {
+                var px = x + off, dx = px - cx, dy = y - cy;
+                if (Math.sqrt(dx * dx + dy * dy) + mr * 0.85 <= R) pos.push({x: px, y: y});
+            }
+            row++;
+        }
+        return pos;
+    }
+
+    // Draw a carved wooden groove — concentric rings like a real solitaire board
+    function drawGroove(ctx, x, y, r) {
+        // Outer shadow ring (depth illusion)
+        ctx.beginPath();
+        ctx.arc(x, y, r * 0.95, 0, Math.PI * 2);
+        var sg = ctx.createRadialGradient(x - r * 0.1, y - r * 0.1, r * 0.2, x, y, r * 0.95);
+        sg.addColorStop(0, 'rgba(0,0,0,0.28)');
+        sg.addColorStop(0.6, 'rgba(0,0,0,0.18)');
+        sg.addColorStop(1, 'rgba(0,0,0,0.05)');
+        ctx.fillStyle = sg;
+        ctx.fill();
+        // Concentric ring — the lathe mark
+        ctx.beginPath();
+        ctx.arc(x, y, r * 0.72, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, y, r * 0.5, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        // Top-left light catch on the rim (like photo reference)
+        ctx.beginPath();
+        ctx.arc(x, y, r * 0.88, Math.PI * 0.9, Math.PI * 1.6);
+        ctx.strokeStyle = 'rgba(176,174,165,0.07)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+
+    function shuffleArr(a) {
+        for (var i = a.length - 1; i > 0; i--) {
+            var j = Math.floor(Math.random() * (i + 1));
+            var t = a[i];
+            a[i] = a[j];
+            a[j] = t;
+        }
+        return a;
+    }
+
+    // ============ DIFFUSION CANVAS (solitaire convergence, dimmed + hover spotlight) ============
+    (function () {
+        var c = document.getElementById('diffusionCanvas');
+        var ctx = c.getContext('2d');
+        var DPR = Math.min(window.devicePixelRatio || 1, 2);
+        var cw, slots = [], MR, HOVER_R, currentLoop = 0, totalSlots = 0;
+        var loopFill = [0, 0.15, 0.40, 0.65, 0.85, 1.0];
+        var filled = {}, noise = {};
+        var mx = -1, my = -1;
+        var DIM = 0.22, BRIGHT = 0.92;
+
+        c.addEventListener('mousemove', function (e) {
+            var r = c.getBoundingClientRect();
+            mx = (e.clientX - r.left) / (r.right - r.left) * cw;
+            my = (e.clientY - r.top) / (r.bottom - r.top) * cw;
+        });
+        c.addEventListener('mouseleave', function () {
+            mx = -1;
+            my = -1;
+        });
+
+        function prox(x, y) {
+            if (mx < 0) return 0;
+            var dx = x - mx, dy = y - my, d = Math.sqrt(dx * dx + dy * dy);
+            return Math.max(0, 1 - d / HOVER_R);
+        }
+
+        function resize() {
+            var sz = Math.min(c.offsetWidth, c.offsetHeight);
+            c.width = sz * DPR;
+            c.height = sz * DPR;
+            cw = c.width;
+        }
+
+        function buildBoard() {
+            var R = cw * 0.40;
+            MR = Math.max(4, R * 0.052);
+            HOVER_R = MR * 9;
+            var positions = hexGridInCircle(cw / 2, cw / 2, R, MR);
+            slots = positions.map(function (p) {
+                return {x: p.x, y: p.y, marble: null};
+            });
+            totalSlots = slots.length;
+            filled = {};
+            noise = {};
+            currentLoop = 0;
+        }
+
+        function makeMarble(loop) {
+            var palIdx = loop % MarbleFactory.PALETTES.length;
+            var pat = MarbleFactory.PATTERNS[Math.floor(Math.random() * MarbleFactory.PATTERNS.length)];
+            var seed = Math.floor(Math.random() * 999999);
+            return {
+                sprite: MarbleFactory.createSprite(MR, palIdx, pat, seed),
+                alpha: 0, drop: 1,
+                shaking: false, shakeT: 0
+            };
+        }
+
+        function countFilled() {
+            var n = 0;
+            for (var k in filled) if (filled[k] && slots[k].marble && !slots[k].marble.shaking) n++;
+            return n;
+        }
+
+        function advanceLoop() {
+            if (currentLoop >= 5) {
+                setTimeout(function () {
+                    buildBoard();
+                    setTimeout(advanceLoop, 600);
+                }, 3000);
+                return;
+            }
+            currentLoop++;
+            var target = Math.round(totalSlots * loopFill[currentLoop]);
+            if (currentLoop >= 2) {
+                var nk = Object.keys(noise);
+                var shakeN = Math.min(nk.length, 1 + Math.floor(Math.random() * 2));
+                for (var i = 0; i < shakeN; i++) {
+                    var idx = nk[i];
+                    if (slots[idx] && slots[idx].marble) {
+                        slots[idx].marble.shaking = true;
+                        slots[idx].marble.shakeT = 0;
+                        delete filled[idx];
+                        delete noise[idx];
+                    }
+                }
+            }
+            var empties = [];
+            for (var i = 0; i < slots.length; i++) {
+                if (!filled[i]) empties.push(i);
+            }
+            shuffleArr(empties);
+            var cur = countFilled();
+            var toFill = Math.max(0, target - cur);
+            var noiseRate = (currentLoop <= 2) ? 0.06 : 0;
+            for (var i = 0; i < Math.min(toFill, empties.length); i++) {
+                var idx = empties[i];
+                slots[idx].marble = makeMarble(currentLoop);
+                filled[idx] = true;
+                if (Math.random() < noiseRate) noise[idx] = true;
+            }
+            setTimeout(advanceLoop, 2200);
+        }
+
+        function render() {
+            ctx.clearRect(0, 0, cw, cw);
+            ctx.beginPath();
+            ctx.arc(cw / 2, cw / 2, cw * 0.41, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(176,174,165,0.08)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+            // Empty grooves — dimmed with hover spotlight
+            for (var i = 0; i < slots.length; i++) {
+                var s = slots[i];
+                if (!s.marble || s.marble.shaking) {
+                    var p = prox(s.x, s.y);
+                    ctx.globalAlpha = DIM + p * (BRIGHT - DIM);
+                    drawGroove(ctx, s.x, s.y, MR);
+                }
+            }
+            ctx.globalAlpha = 1;
+            // Marbles — dimmed with hover spotlight
+            for (var i = 0; i < slots.length; i++) {
+                var s = slots[i];
+                if (!s.marble) continue;
+                var m = s.marble;
+                if (m.shaking) {
+                    m.shakeT += 0.04;
+                    if (m.shakeT >= 1) {
+                        s.marble = null;
+                        continue;
+                    }
+                    var wobble = Math.sin(m.shakeT * 18) * MR * 0.4 * (1 - m.shakeT);
+                    var p = prox(s.x, s.y);
+                    ctx.globalAlpha = (DIM + p * (BRIGHT - DIM)) * (1 - m.shakeT * m.shakeT);
+                    ctx.drawImage(m.sprite, s.x + wobble - m.sprite.width / 2, s.y - m.sprite.height / 2);
+                    continue;
+                }
+                m.drop = Math.max(0, m.drop - 0.04);
+                var yOff = -MR * 2 * m.drop * m.drop;
+                var p = prox(s.x, s.y);
+                var ta = DIM + p * (BRIGHT - DIM);
+                m.alpha += (ta - m.alpha) * 0.07;
+                if (m.drop < 0.2) {
+                    ctx.globalAlpha = 0.12 * (1 - m.drop / 0.2) * m.alpha;
+                    ctx.beginPath();
+                    ctx.ellipse(s.x, s.y + MR * 0.12, MR * 0.55, MR * 0.18, 0, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(0,0,0,1)';
+                    ctx.fill();
+                }
+                ctx.globalAlpha = m.alpha;
+                ctx.drawImage(m.sprite, s.x - m.sprite.width / 2, s.y + yOff - m.sprite.height / 2);
+            }
+            ctx.globalAlpha = 1;
+            // Coverage + loop text (always fully visible)
+            var vis = countFilled();
+            var pct = totalSlots > 0 ? Math.round((vis / totalSlots) * 100) : 0;
+            if (currentLoop >= 5 && Object.keys(filled).length >= totalSlots) pct = 100;
+            ctx.font = 'bold ' + (cw * 0.09) + 'px Poppins,Arial';
+            ctx.fillStyle = '#faf9f5';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(pct + '%', cw / 2, cw / 2 - cw * 0.02);
+            ctx.font = (cw * 0.038) + 'px Poppins,Arial';
+            ctx.fillStyle = '#b0aea5';
+            ctx.fillText(currentLoop > 0 ? 'Loop ' + currentLoop : 'Board', cw / 2, cw / 2 + cw * 0.07);
+            requestAnimationFrame(render);
+        }
+
+        window.addEventListener('resize', function () {
+            resize();
+            buildBoard();
+        });
+        resize();
+        buildBoard();
+        render();
+        setTimeout(advanceLoop, 800);
+    })();
+
+    // ============ TRAJECTORY BAR ANIMATION ============
+    (function () {
+        var target = document.getElementById('trajectoryBars');
+        var animated = false;
+        var obs = new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) {
+                if (e.isIntersecting && !animated) {
+                    animated = true;
+                    var bars = target.querySelectorAll('.bar');
+                    bars.forEach(function (bar, i) {
+                        setTimeout(function () {
+                            bar.style.height = bar.getAttribute('data-h') + '%';
+                        }, i * 300);
+                    });
+                }
+            });
+        }, {threshold: 0.3});
+        obs.observe(target);
+    })();
+
+    // ============ SCROLL ANIMATIONS ============
+    (function () {
+        var obs = new IntersectionObserver(function (entries) {
+            entries.forEach(function (e) {
+                if (e.isIntersecting) e.target.classList.add('visible');
+            });
+        }, {threshold: 0.12});
+        document.querySelectorAll('.fade-up').forEach(function (el) {
+            obs.observe(el);
+        });
+    })();
+
+    // ============ COPY CODE ============
+    function copyCode(btn) {
+        var code = btn.parentElement.querySelector('code').innerText;
+        navigator.clipboard.writeText(code).then(function () {
+            btn.textContent = 'Copied!';
+            setTimeout(function () {
+                btn.textContent = 'Copy';
+            }, 1500);
+        });
+    }
+
+    // ============ CURL BANNER COPY ============
+    (function () {
+        var btn = document.querySelector('.cb-copy');
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+            var cmd = btn.getAttribute('data-copy');
+            if (!cmd || !navigator.clipboard) return;
+            navigator.clipboard.writeText(cmd).then(function () {
+                btn.textContent = 'Copied';
+                btn.style.background = '#83d86c';
+                btn.style.borderColor = '#83d86c';
+                btn.style.color = '#141413';
+                setTimeout(function () {
+                    btn.textContent = 'Copy';
+                    btn.style.background = '';
+                    btn.style.borderColor = '';
+                    btn.style.color = '';
+                }, 1400);
+            });
+        });
+    })();
+
+    // ============ HERO TERMINAL COPY (pointer tooltip) ============
+    (function () {
+        var copyables = document.querySelectorAll('.hterm-prompt[data-copy], .hterm-row[data-copy]');
+        var tip = document.createElement('div');
+        tip.className = 'hterm-tip';
+        tip.textContent = 'Copy';
+        document.body.appendChild(tip);
+        var hideTimer;
+
+        function showTip(x, y, text, isCopied) {
+            tip.textContent = text;
+            tip.classList.toggle('ok', !!isCopied);
+            tip.style.left = x + 'px';
+            tip.style.top = y + 'px';
+            tip.classList.add('on');
+        }
+
+        function hideTip() {
+            tip.classList.remove('on', 'ok');
+        }
+
+        function copyFromElement(el, x, y) {
+            var value = el.getAttribute('data-copy');
+            if (!value || !navigator.clipboard || !navigator.clipboard.writeText) return;
+            navigator.clipboard.writeText(value).then(function () {
+                showTip(x, y, 'Copied', true);
+                clearTimeout(hideTimer);
+                hideTimer = setTimeout(hideTip, 1200);
+            });
+        }
+
+        copyables.forEach(function (el) {
+            el.addEventListener('mouseenter', function (e) {
+                clearTimeout(hideTimer);
+                showTip(e.clientX, e.clientY, 'Copy', false);
+            });
+            el.addEventListener('mousemove', function (e) {
+                if (tip.classList.contains('ok')) return;
+                tip.style.left = e.clientX + 'px';
+                tip.style.top = e.clientY + 'px';
+            });
+            el.addEventListener('mouseleave', function () {
+                clearTimeout(hideTimer);
+                hideTimer = setTimeout(hideTip, 80);
+            });
+            el.addEventListener('click', function (e) {
+                copyFromElement(el, e.clientX, e.clientY);
+            });
+            el.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    var r = el.getBoundingClientRect();
+                    copyFromElement(el, r.right - 20, r.top);
+                }
+            });
+        });
+    })();
+
+    // ============ SCROLL PROGRESS BAR ============
+    (function () {
+        var bar = document.createElement('div');
+        bar.className = 'scroll-progress';
+        document.body.appendChild(bar);
+        window.addEventListener('scroll', function () {
+            var h = document.documentElement.scrollHeight - window.innerHeight;
+            bar.style.width = h > 0 ? (window.scrollY / h * 100) + '%' : '0';
+        }, {passive: true});
+    })();
+
+    // ============ 3D CARD TILT ON HOVER ============
+    (function () {
+        var cards = document.querySelectorAll('.card');
+        cards.forEach(function (card) {
+            card.addEventListener('mousemove', function (e) {
+                var r = card.getBoundingClientRect();
+                var x = (e.clientX - r.left) / r.width - 0.5;
+                var y = (e.clientY - r.top) / r.height - 0.5;
+                card.style.transform = 'perspective(700px) rotateY(' + x * 6 + 'deg) rotateX(' + (-y * 6) + 'deg) scale(1.01)';
+            });
+            card.addEventListener('mouseleave', function () {
+                card.style.transform = 'perspective(700px) rotateY(0) rotateX(0) scale(1)';
+            });
+        });
+    })();
+</script>
 </body>
 </html>

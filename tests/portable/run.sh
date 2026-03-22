@@ -56,6 +56,7 @@ assert_contains() {
 assert_not_contains() {
   local file="$1"
   local pattern="$2"
+  [[ -f "$file" ]] || die "assert_not_contains: file not found: $file"
   if grep -Fq "$pattern" "$file"; then
     die "Did not expect '$pattern' in $file"
   fi
@@ -218,7 +219,6 @@ assert_not_contains "$repo_root/vetcoders-followup/SKILL.md" 'Use canonical Term
 assert_not_contains "$repo_root/vetcoders-workflow/SKILL.md" 'osascript preferred'
 [[ ! -e "$repo_root/vetcoders-subagents/SKILL.md" ]] || die 'vetcoders-subagents should not exist'
 assert_not_contains "$repo_root/docs/index.html" 'Canonical osascript Terminal spawn'
-assert_not_contains "$repo_root/vetcoders-suite-showcase.html" 'External agent fleet via osascript Terminal'
-assert_not_contains "$repo_root/vetcoders-suite-showcase.html" 'vetcoders-skills-suite'
+[[ -e "$repo_root/vetcoders-suite-showcase.html" ]] && die 'vetcoders-suite-showcase.html should not exist (was mv to docs/index.html)'
 
 log "portable checks passed"

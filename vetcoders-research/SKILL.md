@@ -1,6 +1,6 @@
 ---
 name: vetcoders-research
-version: 1.0.0
+version: 1.2.0
 description: >
   Standalone triple-agent research skill. Co-define the problem with the user,
   write a research plan, then spawn claude + codex + gemini simultaneously on the
@@ -117,19 +117,33 @@ gets ALL plans — they are independent researchers, not specialists.
 
 ### Step 3 — Spawn triple research swarm
 
-Launch three agents simultaneously on the same plan:
+Runtime truth beats repo spec. Always use the helper surface that actually
+exists in the user's interactive shell, and always launch through `zsh -ic`.
+
+Canonical path when `*-research` helpers exist:
 
 ```bash
-claude-research .ai-agents/pipeline/<slug>/plans/research-plan.md
-codex-research  .ai-agents/pipeline/<slug>/plans/research-plan.md
-gemini-research .ai-agents/pipeline/<slug>/plans/research-plan.md
+zsh -ic 'claude-research .ai-agents/pipeline/<slug>/plans/research-plan.md'
+zsh -ic 'codex-research  .ai-agents/pipeline/<slug>/plans/research-plan.md'
+zsh -ic 'gemini-research .ai-agents/pipeline/<slug>/plans/research-plan.md'
 ```
 
-If `{agent}-research` helpers are not available, fall back to:
+Quick verification if needed:
+
 ```bash
-bash ~/.{claude,codex,gemini}/skills/vetcoders-agents/scripts/{agent}_spawn.sh \
-  --mode research .ai-agents/pipeline/<slug>/plans/research-plan.md
+zsh -ic 'for c in claude-research codex-research gemini-research; do command -v "$c" >/dev/null 2>&1 && echo "OK $c" || echo "MISSING $c"; done'
 ```
+
+Compatibility fallback when the shell exposes only `*-implement` helpers:
+
+```bash
+zsh -ic 'claude-implement .ai-agents/pipeline/<slug>/plans/research-plan.md'
+zsh -ic 'codex-implement  .ai-agents/pipeline/<slug>/plans/research-plan.md'
+zsh -ic 'gemini-implement .ai-agents/pipeline/<slug>/plans/research-plan.md'
+```
+
+Raw `*_spawn.sh` is last-resort plumbing only. Reach for it only when neither
+`*-research` nor `*-implement` helpers exist in `zsh -ic`.
 
 All three get the same plan. All three work independently. This is intentional —
 divergence between reports reveals blind spots.
@@ -143,7 +157,13 @@ Reports land in:
 .ai-agents/reports/<ts>_research-plan_gemini.md
 ```
 
-Wait for all three. Use `{agent}-observe --last` to check progress.
+Wait for all three. Use `{agent}-observe --last` through `zsh -ic`:
+
+```bash
+zsh -ic 'claude-observe --last'
+zsh -ic 'codex-observe --last'
+zsh -ic 'gemini-observe --last'
+```
 
 ### Step 5 — Synthesize
 
@@ -231,6 +251,8 @@ research │                         │
 - Writing the research plan without the user (Step 1 is collaborative)
 - Trusting blog posts over official documentation
 - Letting agents research without loctree context (they ask wrong questions)
+- Jumping straight to raw `*_spawn.sh` invocations when `*-research` already
+  exists in the real shell helper surface
 
 ---
 
