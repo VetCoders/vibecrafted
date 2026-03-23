@@ -2876,7 +2876,7 @@ cargo install prview</code></pre>
                 ctx.font = (cw * 0.038) + 'px Poppins,Arial';
                 ctx.fillStyle = '#b0aea5';
                 ctx.fillText(currentLoop > 0 ? 'Loop ' + currentLoop : 'Board', cw / 2, cw / 2 + cw * 0.07);
-                if (!prefersReducedMotion) requestAnimationFrame(render);
+                requestAnimationFrame(render);
             }
 
             window.addEventListener('resize', function () {
@@ -2889,11 +2889,6 @@ cargo install prview</code></pre>
             });
             resize();
             buildBoard();
-            if (prefersReducedMotion) {
-                fillBoardFully();
-                render();
-                return;
-            }
             render();
             setTimeout(advanceLoop, 800);
         })();
