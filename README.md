@@ -26,7 +26,7 @@ This repo is meant to be:
 
 ### VetCoders pipeline skills
 
-- `vetcoders-init` — session bootstrap (AICX MCP memory + loctree eyes + verify)
+- `vetcoders-init` — session bootstrap (AICX MCP history index + loctree eyes + verify)
 - `vetcoders-workflow` — ERi pipeline (Examine, Research, Implement)
 - `vetcoders-followup` — post-implementation audit
 - `vetcoders-marbles` — convergence loops
@@ -60,13 +60,13 @@ them, offers to install them, and reports clearly when they are missing.
 
 | Tool          | What it does                                     | Install                     |
 |---------------|--------------------------------------------------|-----------------------------|
-| `aicx-mcp`    | AICX MCP memory + session history recovery       | `cargo install ai-contexters` |
+| `aicx-mcp`    | AICX MCP history index + session recovery        | `cargo install ai-contexters` |
 | `loctree-mcp` | Structural code mapping for agents               | `cargo install loctree-mcp` |
 | `prview`      | Durable PR review artifacts and merge clarity    | `cargo install prview`      |
 
 If they are missing, skills still install, but the suite loses real substance:
 
-- `vetcoders-init` loses Memory (`aicx-mcp`) and Eyes (`loctree-mcp`)
+- `vetcoders-init` loses History (`aicx-mcp`) and Eyes (`loctree-mcp`)
 - review surfaces lose durable artifact generation (`prview`)
 - the system becomes less truthful, less inspectable, and less reusable
 

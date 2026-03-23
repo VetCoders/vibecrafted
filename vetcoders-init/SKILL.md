@@ -1,21 +1,22 @@
 ---
 name: vetcoders-init
-version: "2.0"
+version: "2.2"
 description: >-
   This skill should be used when the user asks to "init", "initialize session",
   "give context to agent", "prepare agent", "bootstrap agent", "daj kontekst",
   "zainicjuj", "przygotuj agenta", "init session", "start fresh with context",
   or when starting work on a repo and the agent needs situational awareness.
-  Fuses three layers — Memory (AICX MCP), Eyes (loctree MCP + cross-tool
-  config absorption), and Verify (ground-truth quality gate check) — to equip
-  the agent with consciousness before implementation work.
+  Fuses three layers — History (AICX MCP index of prior sessions), Eyes
+  (loctree MCP + cross-tool config absorption), and Verify (ground-truth
+  quality gate check) — to equip the agent with orientation before
+  implementation work.
 ---
 
-# vetcoders-init — Memory + Eyes + Verify
+# vetcoders-init — History + Eyes + Verify
 
 Bootstrap an agent session with three layers of context:
 
-- **Memory**: What was done before (AICX MCP — session history extraction)
+- **History**: What was done before (AICX MCP — indexed records of prior sessions)
 - **Eyes**: What the code looks like now (loctree MCP — structural map + existing agent configs)
 - **Verify**: Whether what you see is actually true (run quality gates, confirm commands work)
 
@@ -34,24 +35,33 @@ Running init is a forcing function: it prevents blind coding.
 
 ## Init Sequence
 
-### Step 1: Memory — What Was Done Before
+### Step 1: History — What Was Done Before
 
 Pull historical context from previous AI sessions for this project through AICX MCP:
 
-- **`aicx_store(hours=168, project=<project>)`** — refresh stored context for the repo
+- **`aicx_store(hours=168, project=<project>)`** — refresh the indexed session record for the repo
 - **`aicx_refs(hours=168, project=<project>, strict=true)`** — list stored context files
 - **`aicx_rank(project=<project>, hours=168, strict=true, top=5)`** — optionally prioritize the densest recent chunks
+- **Optional: `aicx_search(query=<task or subsystem>, project=<project>)`** — narrow the catalog to a specific feature, bug, or decision when recent history is noisy
 
-Read the most recent 1-2 context files to understand:
+Read the most recent 1-2 context files, or the top-ranked 1-2 if those are
+more signal-dense, to understand:
 
 - What was the last task worked on?
 - Are there open TODOs or decisions pending?
 - What signals were extracted (look for `[signals]` blocks)?
 
+Doctrine:
+
+- AICX is not a heavy "memory layer" that should be dragged through the whole session.
+- It is a card catalog and archive index for prior work.
+- Use it to find the right cards, then read the few relevant files on demand.
+- Do not stuff the whole archive into context just because it exists.
+
 **If AICX MCP is unavailable**: fall back to `aicx all -p "$PROJECT" -H 168 --incremental`
 and `aicx refs -H 168 -p "$PROJECT"` if the CLI exists. If neither exists,
 skip this step and note the gap in the report.
-Memory is valuable but not blocking.
+History lookup is valuable but not blocking.
 
 ### Step 2: Eyes — What the Code Looks Like Now
 
@@ -72,8 +82,10 @@ Check for and read `.ai-agents/GUIDELINES.md` — the canonical cross-tool
 reference. If it exists, use it as starting context but verify against code.
 
 Also glob for any other agent config files that may exist in the repo
-(tool-specific instruction files, rule directories, etc.). Read what you
-find — it may contain project conventions not yet captured in GUIDELINES.md.
+(tool-specific instruction files, rule directories, `VETCODERS.md`,
+`README.md`, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, Copilot/Cursor rules,
+etc.). Read what you find — it may contain project conventions not yet
+captured in GUIDELINES.md.
 
 Do NOT blindly trust any config file as source of truth. They may be outdated.
 Cross-reference against what loctree and git show you. If a config file
@@ -97,7 +109,9 @@ Locate the project's quality gate commands. Common sources:
 - `pyproject.toml` `[tool.pytest]`, `[tool.ruff]`, `[tool.mypy]`
 - `Makefile` / `justfile` / `package.json` scripts
 - `.ai-agents/GUIDELINES.md` or other agent config files
+- `VETCODERS.md` or equivalent repo-wide charter/instructions
 - README.md "Testing" or "Development" sections
+- test harness wrappers such as `scripts/check-*.sh` or `tests/**/run.sh`
 
 Run each quality gate command and record the result:
 
@@ -106,6 +120,10 @@ Run each quality gate command and record the result:
 uv run pytest tests/ -q --tb=no 2>&1 | tail -3
 uv run mypy <src_dir>/ --exclude build/ 2>&1 | tail -3
 uv run ruff check <src_dir>/ tests/ 2>&1 | tail -3
+
+# Example for an installer/runtime repo:
+python3 scripts/vetcoders_install.py doctor 2>&1 | tail -5
+bash scripts/check-portable.sh 2>&1 | tail -5
 ```
 
 Rules:
@@ -130,7 +148,7 @@ Generate on first init, update on subsequent inits if stale. Always ask before w
 ```
 ## Session Init: <project>
 
-### Memory
+### History
 - Last activity: <date>
 - Open signals: <TODOs, pending decisions — or "none">
 - Sessions: <count> entries across <agents>
@@ -142,12 +160,12 @@ Generate on first init, update on subsequent inits if stale. Always ask before w
 - GUIDELINES.md: <current / stale / missing>
 
 ### Verify
-- pytest: <pass N / fail N / not configured>
-- mypy: <pass / N errors / not configured>
-- lint: <pass / N warnings / not configured>
+- <gate 1>: <pass / fail / not configured>
+- <gate 2>: <pass / fail / not configured>
+- <gate 3>: <pass / fail / not configured>
 
 ### Ready
-Agent has memory, eyes, and verified ground truth.
+Agent has history, eyes, and verified ground truth.
 ```
 
 **Audience note (from Junie):** The people reading this report may be
@@ -226,7 +244,7 @@ Things an agent should know about but not try to fix during unrelated work.>
 
 ## For Subagent Prompts
 
-When delegating to subagents via vetcoders-spawn or vetcoders-implement,
+When delegating to subagents via `vetcoders-agents` or `vetcoders-delegate`,
 include this preamble:
 
 ```
@@ -244,6 +262,10 @@ Historical context from previous sessions:
 - `aicx_store(hours=168, project=<project_name>)`
 - `aicx_refs(hours=168, project=<project_name>, strict=true)`
 - `aicx_rank(project=<project_name>, hours=168, strict=true, top=5)`
+- optional: `aicx_search(query=<task or subsystem>, project=<project_name>)`
+
+Treat AICX as an index, not a backpack.
+Pull the few relevant records, do not dump the whole archive into context.
 
 Before creating new implementations, search for existing ones:
 - find(name) for symbols
@@ -255,9 +277,10 @@ Before creating new implementations, search for existing ones:
 
 | Step    | Tool                                           | What It Gives                  |
 |---------|------------------------------------------------|--------------------------------|
-| Memory  | `aicx_store(hours=168, project=X)`             | Freshly extracted repo context |
+| History | `aicx_store(hours=168, project=X)`             | Refreshed index of repo session history |
 | Refs    | `aicx_refs(hours=168, project=X, strict=true)` | Paths to stored context chunks |
 | Rank    | `aicx_rank(project=X, hours=168, top=5)`       | Highest-signal recent chunks   |
+| Search  | `aicx_search(query=..., project=X)`            | Topic-specific history lookup  |
 | Eyes    | `repo-view(project)`                           | Current structure + health     |
 | Focus   | `focus(directory)`                             | Module-level detail            |
 | Signals | `follow(scope)`                                | Dead code, cycles, twins       |
@@ -267,7 +290,7 @@ Before creating new implementations, search for existing ones:
 
 ## Fallback
 
-If **AICX MCP** unavailable: fall back to `aicx` CLI if present, otherwise skip memory steps and proceed with eyes + verify.
+If **AICX MCP** unavailable: fall back to `aicx` CLI if present, otherwise skip history steps and proceed with eyes + verify.
 If **loctree MCP** unavailable: fall back to `loct --for-ai` CLI, then `rg --files`.
 If **both** unavailable: read `.ai-agents/GUIDELINES.md` + README.md + `git log -20`. Run quality gates. Announce gaps.
 Quality gate verification has **no fallback** — always attempt it.
@@ -275,8 +298,9 @@ Quality gate verification has **no fallback** — always attempt it.
 ## Anti-Patterns
 
 - Starting implementation without running init (blind coding)
-- Running loctree but skipping AICX MCP memory (no memory of past work)
+- Running loctree but skipping AICX MCP history lookup (no indexed view of past work)
 - Reading every context file (context bloat) — read only the 1-2 most recent
+- Treating AICX like a backpack memory layer instead of a catalog you query on demand
 - Skipping repo-view and jumping to grep (no structural map)
 - Trusting any config file or README without cross-referencing code (doc rot)
 - Writing "run pytest" in a report without actually running pytest (unverified claims)

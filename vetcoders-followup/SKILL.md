@@ -18,7 +18,7 @@ Use this when the team asks for "follow-up check", "czy sa jeszcze luki",
 
 Always run this sequence:
 
-1. `vetcoders-init` (memory + structure baseline)
+1. `vetcoders-init` (history + structure baseline)
 2. `vetcoders-workflow` (Examine -> optional Research -> Implement context)
 3. `vetcoders-agents` first; use `vetcoders-delegate` only for small or model-agnostic delegated audits
 4. Final synthesis by primary agent (you)
@@ -43,7 +43,7 @@ Do not skip sequence unless user explicitly opts out.
 
 ## Phase A - Bootstrap (vetcoders-init)
 
-1. Extract context memory:
+1. Refresh history index:
 
 - `aicx_store(hours=168, project=<project>)`
 - `aicx_refs(hours=168, project=<project>, strict=true)`
@@ -59,7 +59,7 @@ If AICX MCP is unavailable, fall back to the `aicx` CLI if present.
 
 3. Produce situational summary with:
 
-- open signals from memory
+- open signals from indexed history
 - repo health and top hubs
 - target scope and risks
 

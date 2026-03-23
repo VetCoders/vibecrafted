@@ -39,7 +39,7 @@ Image diffusion:  noise → denoise × N → image
 Code diffusion:   chaos → reduce_entropy × N → product
 
 Step 0:  Pure noise (no context, no structure)
-Step 1:  Init — gross shapes emerge (memory + eyes)
+Step 1:  Init — gross shapes emerge (history + eyes)
 Step 2:  Implement — detail generation (new noise enters!)
 Step 3:  Followup — denoising (measure residual entropy)
 Step N:  Converged — DoU score below threshold = DoD

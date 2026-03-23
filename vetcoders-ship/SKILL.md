@@ -58,7 +58,7 @@ Run these three skills in order. Each one feeds the next.
 
 Read and execute `vetcoders-init/SKILL.md`.
 
-This bootstraps context: extracts session history via AICX MCP,
+This bootstraps context: indexes session history via AICX MCP,
 maps repo structure via loctree MCP, produces a situational report.
 
 The output is the foundation for everything that follows. If init fails

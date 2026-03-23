@@ -460,7 +460,7 @@ Use this flow for major cleanup:
 vetcoders-init -> vetcoders-agents -> vetcoders-prune -> vetcoders-followup -> vetcoders-marbles
 ```
 
-- `vetcoders-init` gives memory plus structure
+- `vetcoders-init` gives history plus structure
 - `vetcoders-agents` is the default first move for non-trivial prune work
 - `vetcoders-prune` defines the cone and removes non-runtime or non-publish
   surface

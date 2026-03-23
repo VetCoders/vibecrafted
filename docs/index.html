@@ -814,9 +814,9 @@
         <p class="tagline">Context bootstrap, frontier delegation, convergence loops, and launch hydration &mdash; one operating system for Codex, Claude, and Gemini.</p>
         <div class="hero-foundations">
             <div class="hero-foundations-label">Runtime Foundations</div>
-            <p class="hero-foundations-copy">The suite is the callable surface. These three binaries are the substrate underneath it: memory, structural mapping, and durable review artifacts.</p>
+            <p class="hero-foundations-copy">The suite is the callable surface. These three binaries are the substrate underneath it: history indexing, structural mapping, and durable review artifacts.</p>
             <div class="foundation-strip-tags">
-                <span class="tag">aicx-mcp = memory</span>
+                <span class="tag">aicx-mcp = history index</span>
                 <span class="tag">loctree-mcp = structure</span>
                 <span class="tag">prview = review artifacts</span>
             </div>
@@ -851,7 +851,7 @@
     <div class="container fade-up">
         <div class="section-label">Vibecraft</div>
         <h2 class="section-title">Craft &rarr; Converge &rarr; Ship</h2>
-        <p class="section-sub">Vibecrafting is how noise becomes signal: first shape direction, memory, and execution paths; then converge until P0=P1=P2=0; then ship the product surface all the way to real distribution.</p>
+        <p class="section-sub">Vibecrafting is how noise becomes signal: first shape direction, history awareness, and execution paths; then converge until P0=P1=P2=0; then ship the product surface all the way to real distribution.</p>
 
         <div class="mmd-shell">
             <pre><code><span class="comment">%% vetcoders pipeline</span>
@@ -894,7 +894,7 @@ flowchart LR
         <div class="section-label">The Suite</div>
         <h2 class="section-title">What's in the Suite</h2>
         <p class="section-sub">Each skill is individually callable. <code>ship</code> chains them, <code>agents</code>
-            scales them out, and <code>delegate</code> stays as the native fallback when external frontier agents are unnecessary. The grid below shows the callable VetCoders surface. Underneath it sits the runtime substrate: <code>aicx-mcp</code> for memory, <code>loctree-mcp</code> for structure, and <code>prview</code> for durable review artifacts.</p>
+            scales them out, and <code>delegate</code> stays as the native fallback when external frontier agents are unnecessary. The grid below shows the callable VetCoders surface. Underneath it sits the runtime substrate: <code>aicx-mcp</code> for history lookup and session recovery, <code>loctree-mcp</code> for structure, and <code>prview</code> for durable review artifacts.</p>
 
         <div class="foundation-strip">
             <div>
@@ -902,7 +902,7 @@ flowchart LR
                 <p>Not standalone skills. Not optional garnish. These are the shared runtime primitives that make the suite sharper, more truthful, and more durable.</p>
             </div>
             <div class="foundation-strip-tags">
-                <span class="tag">aicx-mcp &middot; session memory + recovery</span>
+                <span class="tag">aicx-mcp &middot; history index + recovery</span>
                 <span class="tag">loctree-mcp &middot; repo structure + impact mapping</span>
                 <span class="tag">prview &middot; review artifact packs + merge clarity</span>
             </div>
@@ -925,8 +925,8 @@ flowchart LR
             <div class="card">
                 <div class="card-phase build">Phase 1 &middot; Craft</div>
                 <h3>vetcoders-init</h3>
-                <p class="card-desc">Bootstrap session with Memory (AICX MCP) + Eyes (loctree MCP) + Verify. Extracts prior
-                    session history, maps repo structure, and grounds the implementation path before hands-on work.</p>
+                <p class="card-desc">Bootstrap session with History (AICX MCP) + Eyes (loctree MCP) + Verify. Indexes prior
+                    session records, maps repo structure, and grounds the implementation path before hands-on work.</p>
                 <div class="card-tags"><span class="tag">loctree</span><span class="tag">aicx-mcp</span><span
                         class="tag">session bootstrap</span><span class="tag">verify</span></div>
                 <div class="card-trigger">"Init session" &middot; "Daj kontekst agentowi"</div>
@@ -1198,7 +1198,7 @@ make update      <span class="comment"># pull latest + re-install</span>
             <h4 style="font-size:1rem;margin:2rem 0 .5rem;color:var(--light)">Runtime Foundations</h4>
             <p style="color:var(--mid);margin:0 0 .9rem;line-height:1.7">
                 The suite can install without them, but it should not pretend to be whole without them.
-                <code>aicx-mcp</code> carries memory, <code>loctree-mcp</code> carries structure, and
+                <code>aicx-mcp</code> carries indexed history and recovery, <code>loctree-mcp</code> carries structure, and
                 <code>prview</code> carries durable review surfaces.
             </p>
             <div class="code-block">
