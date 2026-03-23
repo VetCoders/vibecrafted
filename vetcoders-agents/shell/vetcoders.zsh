@@ -5,7 +5,8 @@
 
 _vetcoders_spawn_home() {
   local tool="$1"
-  printf '%s/.%s/skills/vetcoders-agents' "$HOME" "$tool"
+  # We now resolve directly to the canonical store to avoid symlink duplication issues
+  printf '%s/.agents/skills/vetcoders-agents' "$HOME"
 }
 
 _vetcoders_spawn_script() {
@@ -153,81 +154,3 @@ skills-sync() {
   script="$(_vetcoders_spawn_script codex skills_sync.sh)" || return 1
   bash "$script" "$@"
 }
-
-_vetcoders_gemini_keychain_api_key() {
-  local value=""
-
-  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
-    printf '%s' "$GEMINI_API_KEY"
-    return 0
-  fi
-
-  command -v security >/dev/null 2>&1 || return 1
-
-  value="$(security find-generic-password -w -s GEMINI_API_KEY -a GEMINI_API_KEY 2>/dev/null || true)"
-  [[ -n "$value" ]] && {
-    printf '%s' "$value"
-    return 0
-  }
-
-  local service_name
-  for service_name in GEMINI_API_KEY gemini-cli google-generative-ai GoogleAIStudio; do
-    value="$(security find-generic-password -w -s "$service_name" 2>/dev/null || true)"
-    [[ -n "$value" ]] && {
-      printf '%s' "$value"
-      return 0
-    }
-  done
-
-  local account_name
-  for account_name in GEMINI_API_KEY gemini-cli gemini google; do
-    value="$(security find-generic-password -w -a "$account_name" 2>/dev/null || true)"
-    [[ -n "$value" ]] && {
-      printf '%s' "$value"
-      return 0
-    }
-  done
-
-  return 1
-}
-
-gemini-keychain-set() {
-  local key="${1:-${GEMINI_API_KEY:-}}"
-  if [[ -z "$key" ]]; then
-    echo "Usage: gemini-keychain-set <api-key>"
-    echo "   or: GEMINI_API_KEY=... gemini-keychain-set"
-    return 1
-  fi
-
-  command -v security >/dev/null 2>&1 || {
-    echo "security CLI not available on this system"
-    return 1
-  }
-
-  security add-generic-password -U -s GEMINI_API_KEY -a GEMINI_API_KEY -l GEMINI_API_KEY -w "$key"
-  echo "Saved GEMINI_API_KEY to macOS Keychain (service/account: GEMINI_API_KEY)."
-}
-
-gemini-keychain-get() {
-  if _vetcoders_gemini_keychain_api_key >/dev/null; then
-    _vetcoders_gemini_keychain_api_key
-    printf '\n'
-    return 0
-  fi
-  echo "No GEMINI_API_KEY found in env or Keychain."
-  return 1
-}
-
-gemini-keychain-clear() {
-  command -v security >/dev/null 2>&1 || {
-    echo "security CLI not available on this system"
-    return 1
-  }
-
-  security delete-generic-password -s GEMINI_API_KEY -a GEMINI_API_KEY >/dev/null 2>&1 || true
-  echo "Removed GEMINI_API_KEY from macOS Keychain (if it existed)."
-}
-
-if [[ -z "${GEMINI_API_KEY:-}" ]]; then
-  _vetcoders_gemini_keychain_api_key >/dev/null 2>&1 && export GEMINI_API_KEY="$(_vetcoders_gemini_keychain_api_key)"
-fi
