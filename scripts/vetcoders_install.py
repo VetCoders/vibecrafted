@@ -443,23 +443,23 @@ def ask_choice(prompt: str, options: List[str], default: int = 0) -> int:
     # Interactive mode
     import termios
     import tty
-    
+
     current_idx = default
     print(bold(prompt))
     print(dim("  (Use UP/DOWN to navigate, ENTER to confirm, or type number)"))
-    
+
     for _ in options:
         print()
-        
+
     def render():
         sys.stdout.write(f"\033[{len(options)}A")
         for i, opt in enumerate(options):
             marker = cyan(">") if i == current_idx else " "
             sys.stdout.write(f"\033[2K\r  {marker} {i + 1}. {opt}\n")
         sys.stdout.flush()
-        
+
     render()
-    
+
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
@@ -487,7 +487,7 @@ def ask_choice(prompt: str, options: List[str], default: int = 0) -> int:
         return default
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        
+
     return current_idx
 
 
@@ -541,16 +541,16 @@ def ask_multi(prompt: str, options: List[str], defaults: List[bool]) -> List[boo
     # Interactive mode
     import termios
     import tty
-    
+
     selected = list(defaults)
     current_idx = 0
-    
+
     print(bold(prompt))
     print(dim("  (Use UP/DOWN to navigate, SPACE or number to toggle, ENTER to confirm)"))
-    
+
     for _ in options:
         print()
-        
+
     def render():
         sys.stdout.write(f"\033[{len(options)}A")
         for i, opt in enumerate(options):
@@ -558,9 +558,9 @@ def ask_multi(prompt: str, options: List[str], defaults: List[bool]) -> List[boo
             cursor = cyan(">") if i == current_idx else " "
             sys.stdout.write(f"\033[2K\r  {cursor} {marker} {i + 1}. {opt}\n")
         sys.stdout.flush()
-        
+
     render()
-    
+
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
@@ -592,7 +592,7 @@ def ask_multi(prompt: str, options: List[str], defaults: List[bool]) -> List[boo
         return defaults
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        
+
     return selected
 
 
@@ -1157,14 +1157,14 @@ def cmd_install(args: argparse.Namespace) -> int:
                             print(f"  {OK} {cmd} -> {dim(path)}")
                         else:
                             print(f"  {MISS} {cmd}")
-                
+
                     osascript = detect_osascript()
                     if osascript:
                         print(f"  {OK} osascript -> {dim(osascript)}")
                     else:
                         print(f"  {OPT} osascript {dim('(visible Terminal automation unavailable; non-visible fallback exists)')}")
                     print()
-                
+
                     missing_critical = [cmd for cmd in ("zsh", "python3", "git", "rsync") if not sys_deps.get(cmd)]
                     if missing_critical:
                         print(red(f"Missing critical dependencies: {', '.join(missing_critical)}"))
@@ -1233,7 +1233,7 @@ def cmd_install(args: argparse.Namespace) -> int:
 
                 missing_foundations = args._missing_foundations
                 has_cargo = detect_cargo()
-                
+
                 if missing_foundations and has_cargo and interactive:
                     for f in missing_foundations:
                         if "crates" in f.channels:
@@ -1254,7 +1254,7 @@ def cmd_install(args: argparse.Namespace) -> int:
                         print(yellow("cargo not found — cannot auto-install foundations."))
                         print(dim("Install cargo (rustup) first, or install foundations manually."))
                         args._fnd_warn_done = True
-                
+
                 step += 1
 
             elif step == 4:
@@ -1262,7 +1262,7 @@ def cmd_install(args: argparse.Namespace) -> int:
                 if not cli_with_shell and interactive:
                     install_shell = ask_yn("Install zsh shell helpers (codex-implement, claude-plan, etc.)?", default=install_shell)
                     print()
-                
+
                 if install_shell:
                     conflicts = scan_helper_conflicts()
                     if conflicts:
@@ -1270,7 +1270,7 @@ def cmd_install(args: argparse.Namespace) -> int:
                         if not should_proceed:
                             install_shell = False
                 step += 1
-                
+
             elif step == 5:
                 # Post-wizard setup
                 for f in FOUNDATIONS:
