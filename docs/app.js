@@ -330,8 +330,8 @@ function shuffleArr(a) {
     return a;
 }
 
-// ============ HERO MARBLE SHOWCASE (PHYSICS CONVERGENCE) ============(
-function () {
+// ============ HERO MARBLE SHOWCASE (PHYSICS CONVERGENCE) ============
+(function () {
     var canvas = document.getElementById('marbleCanvas');
     if (!canvas || !canvas.getContext) return;
     var ctx = canvas.getContext('2d');
@@ -346,14 +346,8 @@ function () {
     var lastAt = performance.now();
     var loopTimer = 0;
     
-    var statsDiv = document.querySelector('.stats');
-    var loopCounter, coverageCounter;
-    if (statsDiv) {
-        statsDiv.style.display = 'flex';
-        statsDiv.innerHTML = '<div style="display:flex; flex-direction:column; align-items:flex-end;"><span>Loop: <strong id="loopCounter" style="color:var(--orange)">0</strong></span><span>Coverage: <strong id="coverageCounter" style="color:var(--green)">0%</strong></span></div>';
-        loopCounter = document.getElementById('loopCounter');
-        coverageCounter = document.getElementById('coverageCounter');
-    }
+    var loopCounter = document.getElementById('loopCounter');
+    var coverageCounter = document.getElementById('coverageCounter');
     
     function buildBoard() {
         slots = hexGridInCircle(board.x, board.y, board.radius, marbleRadius);

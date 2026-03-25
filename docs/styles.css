@@ -5,23 +5,41 @@
 }
 
 :root {
+    /* Palette */
     --dark: #1b1b1a;
     --light: #f2efdd;
     --mid: #9b9a95;
     --lgray: #e8e6dc;
     --orange: #d46b3f;
+    --orange-hover: #e57d51;
     --blue: #5b87a8;
     --green: #7d8e57;
+
+    /* Surfaces */
     --card-bg: rgba(30, 30, 28, 0.6);
     --card-border: rgba(242, 239, 221, 0.1);
+    --surface-glass: rgba(27, 27, 26, 0.7);
+    --surface-overlay: rgba(15, 15, 14, 0.85);
     --terminal: #0b0b0a;
     --terminal-soft: #111110;
+
+    /* Effects */
     --glow: rgba(212, 107, 63, 0.35);
     --shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    --blur: blur(16px);
+    --radius-sm: 6px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+
+    /* Type */
     --font-head: 'Poppins', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-body: 'Lora', Georgia, serif;
+    --font-mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+
+    /* Layout */
     --chrome-offset: 108px;
     --page-shell: min(1240px, calc(100% - 8vw));
+    --gap-section: clamp(2.5rem, 5vh, 4rem);
 }
 
 html {
@@ -249,43 +267,118 @@ h1, h2, h3, h4, h5, h6 {
     }
 }
 
-/* PURE TYPOGRAPHY MANIFESTO LAYER */
+/* MANIFESTO */
 .founder-manifesto {
-    width: 100%;
-    max-width: 900px;
+    width: var(--page-shell);
     margin: 0 auto;
-    padding: 6rem 2rem;
+    padding: var(--gap-section) 0;
     font-family: var(--font-body);
 }
 
-.manifesto-header {
-    text-align: center;
-    margin-bottom: 5rem;
+/* HERO SPLIT — copy left, canvas right */
+.hero-split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    align-items: center;
+    min-height: calc(100svh - var(--chrome-offset));
+    padding: clamp(1.5rem, 3vh, 2.5rem) 0;
+}
+
+.hero-canvas {
+    position: relative;
+    aspect-ratio: 1;
+    max-height: calc(100svh - var(--chrome-offset) - 4rem);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: radial-gradient(circle at 50% 40%, rgba(33,33,32,.9), var(--terminal) 78%);
+    border: 1px solid var(--card-border);
+    box-shadow: var(--shadow);
+}
+
+.hero-canvas canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.hero-canvas-stats {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    font-family: var(--font-head);
+    font-size: .72rem;
+    color: var(--mid);
+    background: rgba(15, 15, 14, .7);
+    backdrop-filter: blur(4px);
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--card-border);
+}
+
+.hero-canvas-stats strong {
+    color: var(--light);
+    font-size: .88rem;
+}
+
+.hero-copy {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 
 .manifesto-title {
-    font-size: clamp(2.5rem, 8vw, 4.5rem);
+    font-size: clamp(2.2rem, 5vw, 3.6rem);
     font-family: var(--font-head);
     font-weight: 700;
     line-height: 1.05;
     letter-spacing: -0.03em;
     color: var(--light);
-    margin-bottom: 1.5rem;
-    text-shadow: 0 4px 25px rgba(0,0,0,0.4);
+    margin-bottom: 1.25rem;
+}
+
+.manifesto-title .accent {
+    color: var(--orange);
 }
 
 .manifesto-lead {
-    font-size: clamp(1.2rem, 2vw, 1.4rem);
-    color: #a0a0a0;
-    line-height: 1.6;
-    max-width: 600px;
-    margin: 0 auto 3rem;
+    font-size: clamp(1rem, 1.5vw, 1.15rem);
+    color: var(--mid);
+    line-height: 1.65;
+    margin-bottom: 2rem;
+    max-width: 480px;
 }
 
 .manifesto-actions {
     display: flex;
-    gap: 16px;
-    justify-content: center;
+    gap: 14px;
+}
+
+@media (max-width: 900px) {
+    .hero-split {
+        grid-template-columns: 1fr;
+        gap: 24px;
+        min-height: auto;
+    }
+    .hero-copy {
+        text-align: center;
+    }
+    .manifesto-lead {
+        margin-left: auto;
+        margin-right: auto;
+    }
+    .manifesto-actions {
+        justify-content: center;
+    }
+    .hero-canvas {
+        max-height: 360px;
+        aspect-ratio: auto;
+        height: 320px;
+    }
 }
 
 .btn-solid {
@@ -305,7 +398,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-solid:hover {
-    background: #e57d51;
+    background: var(--orange-hover);
     transform: translateY(-2px);
     box-shadow: 0 6px 20px var(--glow);
 }
@@ -327,23 +420,10 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .btn-outline:hover {
-    border-color: #fff;
+    border-color: var(--light);
 }
 
-.manifesto-canvas-container {
-    width: 100%;
-    height: 350px;
-    margin: 4rem 0 6rem;
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.manifesto-canvas-container canvas {
-    max-width: 100%;
-    max-height: 100%;
-}
+/* legacy .manifesto-canvas-container removed — replaced by .hero-canvas */
 
 .manifesto-body {
     max-width: 650px;
@@ -364,14 +444,14 @@ h1, h2, h3, h4, h5, h6 {
     font-size: 2.5rem;
     font-weight: 700;
     letter-spacing: -0.02em;
-    color: #fff;
+    color: var(--light);
     margin-bottom: 1.5rem;
     line-height: 1.1;
 }
 
 .manifesto-prose p {
     font-size: 1.15rem;
-    color: #a0a0a0;
+    color: var(--mid);
     line-height: 1.7;
 }
 
@@ -389,12 +469,12 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .evidence-item:hover {
-    border-left-color: #d97757;
+    border-left-color: var(--orange);
 }
 
 .evidence-num {
-    font-family: monospace;
-    color: #d97757;
+    font-family: var(--font-mono);
+    color: var(--orange);
     font-size: 0.9rem;
     display: block;
     margin-bottom: 0.5rem;
@@ -403,7 +483,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .evidence-item h3 {
     font-size: 1.5rem;
-    color: #fff;
+    color: var(--light);
     margin-bottom: 0.75rem;
     font-weight: 600;
     letter-spacing: -0.01em;
@@ -411,7 +491,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .evidence-item p {
     font-size: 1.05rem;
-    color: #888;
+    color: var(--mid);
     line-height: 1.6;
 }
 
@@ -423,8 +503,8 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .manifesto-origin .origin-eyebrow {
-    font-family: monospace;
-    color: #788c5d;
+    font-family: var(--font-mono);
+    color: var(--green);
     font-size: 1rem;
     display: block;
     margin-bottom: 1rem;
@@ -432,17 +512,17 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .manifesto-origin h2 {
-    font-family: "Georgia", "Lora", serif;
+    font-family: var(--font-body);
     font-size: 3rem;
     font-style: italic;
-    color: #fff;
+    color: var(--light);
     line-height: 1.1;
     margin-bottom: 2rem;
 }
 
 .manifesto-origin p {
     font-size: 1.15rem;
-    color: #a0a0a0;
+    color: var(--mid);
     line-height: 1.7;
     margin-bottom: 1.5rem;
 }
