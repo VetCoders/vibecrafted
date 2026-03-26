@@ -3,16 +3,19 @@ import os
 import sys
 import shutil
 
+_IS_TTY = sys.stdout.isatty() and sys.stdin.isatty()
+
 class Colors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+    _on = sys.stdout.isatty()
+    HEADER = '\033[95m' if _on else ''
+    OKBLUE = '\033[94m' if _on else ''
+    OKCYAN = '\033[96m' if _on else ''
+    OKGREEN = '\033[92m' if _on else ''
+    WARNING = '\033[93m' if _on else ''
+    FAIL = '\033[91m' if _on else ''
+    ENDC = '\033[0m' if _on else ''
+    BOLD = '\033[1m' if _on else ''
+    UNDERLINE = '\033[4m' if _on else ''
 
 def print_step(msg):
     print(f"\n{Colors.OKBLUE}=>{Colors.ENDC} {Colors.BOLD}{msg}{Colors.ENDC}")
@@ -26,16 +29,18 @@ def print_success(msg):
 def print_warning(msg):
     print(f"{Colors.WARNING}WARNING:{Colors.ENDC} {msg}")
 
-def ask_yes_no(question):
-    while True:
-        sys.stdout.write(f"\n{Colors.OKCYAN}?{Colors.ENDC} {Colors.BOLD}{question}{Colors.ENDC} [y/N]: ")
+def ask_yes_no(question, default=True):
+    if not _IS_TTY:
+        return default
+    try:
+        sys.stdout.write(f"\n{Colors.OKCYAN}?{Colors.ENDC} {Colors.BOLD}{question}{Colors.ENDC} [Y/n]: ")
         choice = input().lower().strip()
-        if choice in ['y', 'yes']:
-            return True
-        elif choice in ['n', 'no', '']:
-            return False
-        else:
-            print("Please respond with 'y' or 'n'.")
+        if not choice:
+            return default
+        return choice in ['y', 'yes']
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default
 
 def get_shell_rc():
     shell = os.environ.get("SHELL", "")
@@ -96,11 +101,26 @@ def main():
         print_info(f"{shell_rc} does not exist. We will create it.")
         open(shell_rc, 'w').close()
 
+    # Check if file is writable (respects uchg/immutable flags)
+    try:
+        with open(shell_rc, 'a'):
+            pass
+        writable = True
+    except OSError:
+        writable = False
+
     with open(shell_rc, "r") as f:
         content = f.read()
 
     if marker_start in content:
         print_info("VibeCraft is already installed in your shell config.")
+    elif not writable:
+        print_warning(f"{shell_rc} is locked (immutable). Skipping shell config.")
+        print_info("Add these lines manually:")
+        print_info(f"  {marker_start}")
+        print_info(f"  export VIBECRAFT_ROOT=\"{repo_dir}\"")
+        print_info(f"  {source_line}")
+        print_info(f"  {marker_end}")
     else:
         print_info("Adding VibeCraft configuration...")
         with open(shell_rc, "a") as f:
