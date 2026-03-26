@@ -1129,6 +1129,29 @@ function shuffleArr(a) {
     }
 })();
 
+// ============ DYNAMIC TAGLINE ============
+(function() {
+    var taglines = [
+        "Vibecrafted through stochastic pain.",
+        "Hardened by the officers from Ministry of Silly Exports.",
+        "Forced to eat code spaghetti.",
+        "Chased by outdated dependencies.",
+        "In the endless exotic forests with dead parrots.",
+        "Suffering from ai-mnesia and cutoff-flu."
+    ];
+    var el = document.getElementById('footerTagline');
+    if(!el) return;
+    var idx = 0;
+    setInterval(function() {
+        el.style.opacity = 0;
+        setTimeout(function() {
+            idx = (idx + 1) % taglines.length;
+            el.textContent = taglines[idx];
+            el.style.opacity = 1;
+        }, 500); 
+    }, 8000);
+})();
+
 // ============ HOVER CURL BANNER ============ 
 (function () {
     var curlTimeout = null;
