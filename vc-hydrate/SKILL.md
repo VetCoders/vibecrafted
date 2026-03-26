@@ -5,7 +5,8 @@ description: >
   Packaging and go-to-market hydration skill. Takes DoU audit findings and
   executes the non-code work that bridges the gap between "it works" and
   "someone can buy this." Generates marketplace listings, SEO fixes,
-  distribution artifacts, onboarding flows, and landing page content.
+  distribution artifacts, onboarding flows, landing page content, and
+  representation surfaces for products that do not naturally have a public web UI.
   Trigger phrases: "hydrate", "package for market", "prepare for launch",
   "przygotuj do launchu", "fix the packaging gap", "marketplace listing",
   "nawodnij", "make it shippable", "go-to-market", "distribution",
@@ -21,6 +22,21 @@ description: >
 The Hydrate skill is the packaging agent that DoU called for.
 It treats "create a DMG installer" and "write SEO-friendly copy"
 as first-class engineering tasks, not afterthoughts.
+
+One canonical rule:
+
+**Every serious product needs a presentation surface, even if it is not itself a web product.**
+
+Desktop apps, CLI tools, MCP servers, local runtimes, and internal systems still
+need an external face that lets a stranger:
+
+- discover the product
+- understand what it does
+- see how it works
+- evaluate whether it matters
+- and know how to install, try, or adopt it
+
+Hydrate should scaffold that layer when it is missing.
 
 ## When To Use
 
@@ -200,6 +216,41 @@ Generate as:
 - Markdown (for static site generators)
 - HTML (for direct use)
 - Copy document (for designer handoff)
+
+**Representation Surface Scaffolding (mandatory when missing):**
+
+If the product is not a web app, Hydrate should still scaffold a presentation surface.
+
+Choose the format that matches the product:
+
+For desktop apps:
+- landing page or showcase page
+- screenshots / product shots
+- "how it works" section
+- install path (DMG / MSI / AppImage / Homebrew cask)
+- trust signals (security, local-first, offline, privacy, etc.)
+
+For CLI tools:
+- landing page or docs-style one-pager
+- command examples
+- install command
+- sample output
+- who it is for / where it fits
+
+For MCP servers / infra tools:
+- explainer page
+- architecture diagram
+- workflow examples
+- install + connection path
+- real-world use cases
+
+For internal or hybrid products:
+- founder-facing showcase page
+- capability summary
+- screenshots, diagrams, or mocks
+- explanation of the runtime surface vs presentation surface
+
+Hydrate should never assume "no website needed" means "no representation needed."
 ```
 
 **Marketplace Listing Generator:**
@@ -266,6 +317,39 @@ For skills/plugins:
 4. Customization options
 ```
 
+### Domain 6: Representation Layer Hydration
+
+This domain exists specifically for products that are real, usable, and valuable,
+but currently invisible from the outside.
+
+Goal:
+
+Build the minimum intentional external-facing surface required for the product to
+be legible to strangers.
+
+Possible artifacts:
+
+- `docs/index.html` landing page
+- one-page static showcase
+- product one-pager in Markdown / HTML
+- feature explainer
+- screenshots / diagram pack
+- social preview image
+- concise product positioning copy
+- CTA layer ("install", "try", "request access", "contact")
+
+Recommended structure for a minimal representation surface:
+
+1. Product name + one-line value proposition
+2. What it is
+3. Who it is for
+4. Why it exists
+5. How it works
+6. How to try / install / access it
+7. Visual proof (screenshots, diagrams, examples)
+
+This is not optional garnish. It is the product's public face.
+
 ## Hydration Sprint Protocol
 
 When running a hydration sprint:
@@ -288,6 +372,7 @@ For each finding, generate the appropriate artifact:
 - Missing meta tags → generate HTML
 - Missing install path → create CI workflow
 - Missing landing content → write copy
+- Missing representation surface → scaffold one appropriate to the product type
 - Missing marketplace listing → generate listing
 
 ### 4. Verify via DoU
@@ -354,6 +439,7 @@ Use `vc-agents` spawn pattern. Each agent gets:
 - Hydrating without a DoU audit first (fixing what you assume, not what's measured)
 - Generating files without repo context (LICENSE type must match project intent)
 - Writing marketing copy without understanding the product (run vc-init first)
+- Assuming desktop / CLI / MCP / local products do not need a representation layer
 - Treating hydration as one-off (it's a recurring sprint, like refactoring)
 - Hydrating everything at once (prioritize: P0 commercial gaps first)
 - Forgetting to re-run DoU after hydration (verify the fix)
@@ -365,6 +451,7 @@ A project is hydrated — truly "Done Done" — when:
 ```
 [DONE] A stranger can DISCOVER it (search engines, marketplace, word of mouth)
 [DONE] A stranger can UNDERSTAND it (landing page, README, value prop clear in 30s)
+[DONE] A stranger can SEE it (representation surface exists, even if product is not web-native)
 [DONE] A stranger can INSTALL it (one command, no dev toolchain, < 5 minutes)
 [DONE] A stranger can USE it (onboarding, quick win within 60 seconds)
 [DONE] A stranger can PAY for it (pricing, signup, trial — if commercial)

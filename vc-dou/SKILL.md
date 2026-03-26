@@ -4,8 +4,9 @@ version: 1.0.0
 description: >
   Definition of Undone audit skill. Runs a systematic gap analysis across the
   ENTIRE product surface — not just code. Crawls public URLs, audits repo
-  governance, verifies install paths, checks SEO/discoverability, and measures
-  the gap between internal capability and external visibility.
+  governance, verifies install paths, checks SEO/discoverability, audits
+  representation surfaces for non-web products, and measures the gap between
+  internal capability and external visibility.
   Trigger phrases: "definition of undone", "dou audit", "co jest niedokończone",
   "what's undone", "product surface audit", "completion audit", "plague check",
   "hydration check", "are we shippable", "czy jesteśmy gotowi", "gap analysis",
@@ -24,6 +25,23 @@ This is the completion oracle described in the DoU manifesto — not a one-off r
 but a structured, repeatable audit that measures the gap between "it runs on my machine"
 and "someone can buy this."
 
+One critical rule:
+
+**A product does not need to be a web app to need a public face.**
+
+Desktop apps, local tools, agents, CLI products, MCP servers, internal runtimes,
+and hybrid systems still need a representation surface:
+
+- a landing page
+- a showcase page
+- a one-pager
+- a product explainer
+- screenshots / diagrams / demos
+- or another deliberate external-facing presentation layer
+
+If a product can only be understood by opening the repo or talking to its creators,
+that is Definition of Undone.
+
 ## When To Use
 
 - Before any launch, marketplace submission, or PR announcement
@@ -39,7 +57,7 @@ Every project is scored on three axes:
 | Axis                     | Question                            | Tools                               |
 |--------------------------|-------------------------------------|-------------------------------------|
 | **Repo Health**          | Does the code work?                 | loctree, cargo/npm, CI              |
-| **Web Presence**         | Can someone find and understand it? | WebFetch, brave-search, curl        |
+| **Presence / Representation** | Can someone find and understand it? | WebFetch, brave-search, curl, manual review |
 | **Commercial Readiness** | Can someone adopt or buy it?        | Manual checklist + automated probes |
 
 Scoring: [OK] Production-ready | [PARTIAL] Exists but incomplete | [MISSING] Absent
@@ -111,9 +129,11 @@ For web apps:
 - [ ] Mobile responsive
 ```
 
-### Phase 3: Discoverability Audit
+### Phase 3: Presence and Discoverability Audit
 
 The "can Google find us" test:
+
+**If the product has a public web surface, audit it directly.**
 
 **URL Crawl (for each public URL):**
 
@@ -152,6 +172,21 @@ brave-search("<product name> <category>") → check category ranking
 brave-search("site:<domain>") → check indexed page count
 ```
 
+**If the product does NOT have a public web app or website, run a representation audit instead:**
+
+```
+Representation Surface Audit:
+- [ ] Is there a public-facing landing page, showcase page, or one-pager?
+- [ ] Is there a clear explanation of what the product is within 30 seconds?
+- [ ] Are there screenshots, diagrams, mockups, or demos?
+- [ ] Is there a visible install / access path?
+- [ ] Is there a product narrative that does not require repo access?
+- [ ] Can a stranger understand the use case without talking to the founders?
+
+If all answers are "no", the product is commercially and communicatively invisible.
+Mark as [MISSING] Presence / Representation.
+```
+
 ### Phase 4: Commercial Surface Audit
 
 The "stranger to customer" path test:
@@ -168,6 +203,16 @@ For each stage, verify:
 - [ ] Payment: Pricing page exists (if commercial)
 
 Missing stages = holes in the funnel. Report each gap.
+
+For non-web or non-public-app products, "Landing" means:
+
+- a landing page
+- a showcase page
+- a docs-style explainer
+- or another explicit representation layer
+
+If no such layer exists, the funnel is considered broken at Landing/Understanding,
+even if the product itself is technically functional.
 ```
 
 ### Phase 5: Marketplace Readiness (if targeting Claude/AI ecosystem)
@@ -246,6 +291,7 @@ DoU findings feed directly into `vc-hydrate` as prioritized tasks.
 - Running DoU only on code (it's a PRODUCT surface audit, not a code audit)
 - Treating [OK] repo health as proof of readiness (the whole point of DoU)
 - Auditing without actually crawling URLs (trust no assumption)
+- Assuming non-web products do not need a representation surface
 - Skipping the install path test ("it works on my machine" is the plague)
 - Reporting without severity ranking (everything feels equally important)
 - Not re-running after hydration (verify the fix)
