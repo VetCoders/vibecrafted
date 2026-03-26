@@ -21,3 +21,4 @@
 /output
 *.audit*.md
 /.playwright-mcp
+*.out

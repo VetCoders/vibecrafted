@@ -1,5 +1,5 @@
 ---
-name: vc-prview
+name: vc-review
 description: >
   Full PR review pipeline: generate prview-rs artifacts then produce a findings-max
   audit. Use when the user asks to "review PR", "analyze branch", "run prview",
@@ -10,15 +10,15 @@ metadata:
   short-description: "Generate + audit PR artifacts, findings-max (v1)"
 ---
 
-# vc-prview — PR Review Pipeline (Generate + Audit)
+# vc-review — Code Review Pipeline (Generate + Audit)
 
 Two-phase skill: **Phase 1** generates structured artifacts with prview-rs,
 **Phase 2** squeezes maximum findings from them. Output: P-leveled findings
 with evidence + before-merge TODO checklist.
 
-Binary: `prview` (installed at `~/.cargo/bin/prview`)
-Source: `https://github.com/LibraxisAI/prview-rs`
-Author: Monika (@m-szymanska) — LibraxisAI
+Binary: `prview` (resolve via `command -v prview`; do not assume cargo path)
+Source: `https://github.com/VetCoders/prview-rs`
+Author: Monika (@m-szymanska) — VetCoders
 
 ---
 
@@ -40,11 +40,6 @@ prview -R --remote-only <branch> <base>
 
 - `<branch>`: name without `origin/` (e.g. `feat/x`)
 - `<base>`: defaults to `develop`
-
-Fallback paths:
-
-- `~/Git/prview-rs/target/release/prview -R --remote-only <branch> <base>`
-- `prview --use-bash-full -R --remote-only <branch> <base>` (legacy bridge)
 
 ### GitHub PR by number
 
@@ -110,13 +105,13 @@ the quick aliases for review-quality output.
 
 ## Artifact Pack Layout
 
-Output: `.tools/pr-artifacts/<branch>/<timestamp>/`
-Symlink: `.tools/pr-artifacts/<branch>/latest`
+Output: `~/.prview/pr-artifacts/<branch>/<timestamp>/`
+Symlink: `~/.prview/pr-artifacts/<branch>/latest`
 
 Always select the **newest** `<timestamp>`. Empty or missing directory → **P0**.
 
 ```
-.tools/pr-artifacts/<branch>/<timestamp>/
+~/.prview/pr-artifacts/<branch>/<timestamp>/
 ├── dashboard.html                # Interactive HTML report
 ├── AI_INDEX.md                   # Artifact map + suggested reading order
 ├── report.json                   # Canonical structured report (PARSE FIRST)
@@ -398,14 +393,14 @@ Auto-detected from repo contents. Override: `--profile <PROFILE>`.
 
 ```bash
 prview --pr $PR_NUMBER --with-tests --with-lint
-ARTIFACTS=".tools/pr-artifacts/<branch>/latest"
+ARTIFACTS="~/.prview/pr-artifacts/<branch>/latest"
 ```
 
 ### Subagent delegation context
 
 ```
 ## Context Bootstrap
-- prview artifacts at: .tools/pr-artifacts/<branch>/latest/
+- prview artifacts at: ~/.prview/pr-artifacts/<branch>/latest/
 - Parse report.json first (canonical)
 - Read 00_summary/MERGE_GATE.json for quick verdict
 - Read 20_quality/checks-errors.log for error details

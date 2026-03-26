@@ -40,17 +40,18 @@ while [[ $# -gt 0 ]]; do
 done
 
 root="$(spawn_repo_root)"
+store_dir="$(spawn_store_dir "$root")/reports"
 meta=""
 report=""
 transcript=""
 
 if [[ "$target" == "--last" ]]; then
   if [[ -n "$agent" ]]; then
-    meta="$(find "$root/.ai-agents/reports" -maxdepth 1 -type f -name "*_${agent}.meta.json" 2>/dev/null | sort | tail -n 1)"
-    [[ -z "$meta" ]] && transcript="$(find "$root/.ai-agents/reports" -maxdepth 1 -type f -name "*_${agent}.transcript.log" 2>/dev/null | sort | tail -n 1)"
+    meta="$(find "$store_dir" -maxdepth 1 -type f -name "*_${agent}.meta.json" 2>/dev/null | sort | tail -n 1)"
+    [[ -z "$meta" ]] && transcript="$(find "$store_dir" -maxdepth 1 -type f -name "*_${agent}.transcript.log" 2>/dev/null | sort | tail -n 1)"
   else
-    meta="$(find "$root/.ai-agents/reports" -maxdepth 1 -type f -name '*.meta.json' 2>/dev/null | sort | tail -n 1)"
-    [[ -z "$meta" ]] && transcript="$(find "$root/.ai-agents/reports" -maxdepth 1 -type f -name '*.transcript.log' 2>/dev/null | sort | tail -n 1)"
+    meta="$(find "$store_dir" -maxdepth 1 -type f -name '*.meta.json' 2>/dev/null | sort | tail -n 1)"
+    [[ -z "$meta" ]] && transcript="$(find "$store_dir" -maxdepth 1 -type f -name '*.transcript.log' 2>/dev/null | sort | tail -n 1)"
   fi
 elif [[ -f "$target" ]]; then
   case "$target" in

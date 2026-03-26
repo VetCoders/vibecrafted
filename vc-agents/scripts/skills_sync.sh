@@ -35,19 +35,19 @@ if command -v aicx >/dev/null 2>&1; then
   printf "  [ok] aicx -> %s\\n" "$(command -v aicx)"
 else
   printf "  [missing] aicx\\n"
-  printf "    fix: cargo install aicx\\n"
+  printf "    fix: prefer GitHub Releases, fallback cargo install ai-contexters\\n"
 fi
 if command -v loctree-mcp >/dev/null 2>&1; then
   printf "  [ok] loctree-mcp -> %s\\n" "$(command -v loctree-mcp)"
 else
   printf "  [missing] loctree-mcp\\n"
-  printf "    fix: cargo install loctree-mcp\\n"
+  printf "    fix: prefer GitHub Releases, fallback cargo install loctree-mcp\\n"
 fi
 if command -v prview >/dev/null 2>&1; then
   printf "  [ok] prview -> %s\\n" "$(command -v prview)"
 else
   printf "  [optional] prview not found\\n"
-  printf "    fix: cargo install prview\\n"
+  printf "    fix: prefer GitHub Releases, fallback cargo install prview\\n"
 fi
 printf "\\n"
 '

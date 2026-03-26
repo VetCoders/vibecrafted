@@ -230,6 +230,7 @@ def _is_writable(path: Path) -> bool:
         return False
 
 AGENT_RUNTIMES = ["codex", "claude", "gemini"]
+SYMLINK_TARGETS = ["codex", "claude", "agents"]  # agents = ~/.agents/skills/ (shared industry dir)
 
 # ---------------------------------------------------------------------------
 # Install state
@@ -1118,7 +1119,7 @@ def cmd_install(args: argparse.Namespace) -> int:
     # --- Interactive Wizard ---
     step = 0
     selected_skills = list(skill_names)
-    all_runtimes = [rt for rt in AGENT_RUNTIMES if rt != "gemini"]
+    all_runtimes = [rt for rt in SYMLINK_TARGETS]
     install_shell = cli_with_shell
     installed_foundations: Dict[str, Dict] = {}
 
@@ -1306,7 +1307,7 @@ def cmd_install(args: argparse.Namespace) -> int:
                 print(dim("  (Cannot go back further)"))
 
     # --- Confirm ---
-    shared_home = Path(os.environ.get("VETCODERS_AGENTS_HOME", Path.home() / ".agents"))
+    shared_home = Path(os.environ.get("VIBECRAFTED_HOME", Path.home() / ".vibecrafted"))
     store_path = shared_home / "skills"
 
     print(bold("Install plan:"))
@@ -1443,7 +1444,7 @@ def _known_bundle_names() -> List[str]:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    shared_home = Path(os.environ.get("VETCODERS_AGENTS_HOME", Path.home() / ".agents"))
+    shared_home = Path(os.environ.get("VIBECRAFTED_HOME", Path.home() / ".vibecrafted"))
     store_path = shared_home / "skills"
     state = InstallState.load(store_path)
     has_manifest = bool(state.skills)
@@ -1546,7 +1547,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
-    shared_home = Path(os.environ.get("VETCODERS_AGENTS_HOME", Path.home() / ".agents"))
+    shared_home = Path(os.environ.get("VIBECRAFTED_HOME", Path.home() / ".vibecrafted"))
     store_path = shared_home / "skills"
     state = InstallState.load(store_path)
     dry_run = args.dry_run
@@ -1665,7 +1666,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 def cmd_restore(args: argparse.Namespace) -> int:
-    shared_home = Path(os.environ.get("VETCODERS_AGENTS_HOME", Path.home() / ".agents"))
+    shared_home = Path(os.environ.get("VIBECRAFTED_HOME", Path.home() / ".vibecrafted"))
     store_path = shared_home / "skills"
     dry_run = args.dry_run
     backup_root = _backup_root(store_path)

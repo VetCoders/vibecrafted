@@ -22,6 +22,25 @@ spawn_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
 }
 
+# Central artifact store: ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
+# Override with VIBECRAFTED_HOME env var for custom location
+# Falls back to <repo>/.ai-agents/ if git remote unavailable
+VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+
+spawn_store_dir() {
+  local root="${1:-$(spawn_repo_root)}"
+  local org_repo=""
+  org_repo="$(cd "$root" && git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+)/([^/.]+)(\.git)?$|\1/\2|' || true)"
+  if [[ -n "$org_repo" ]]; then
+    local date_dir
+    date_dir="$(date +%Y_%m%d)"
+    printf '%s/artifacts/%s/%s' "$VIBECRAFTED_HOME" "$org_repo" "$date_dir"
+  else
+    # Fallback: per-repo
+    printf '%s/.ai-agents' "$root"
+  fi
+}
+
 spawn_abspath() {
   local path="$1"
   if [[ "$path" == /* ]]; then
@@ -120,14 +139,31 @@ spawn_prepare_paths() {
   SPAWN_PLAN="$(spawn_abspath "$prompt_file")"
   SPAWN_SLUG="$(spawn_slug_from_path "$prompt_file")"
   SPAWN_TS="$(spawn_timestamp)"
-  SPAWN_REPORT_DIR="$SPAWN_ROOT/.ai-agents/reports"
-  SPAWN_TMP_DIR="$SPAWN_ROOT/.ai-agents/tmp"
+
+  # Central store path (falls back to per-repo if no git remote)
+  local store_base
+  store_base="$(spawn_store_dir "$SPAWN_ROOT")"
+
+  SPAWN_REPORT_DIR="$store_base/reports"
+  SPAWN_TMP_DIR="$store_base/tmp"
   SPAWN_BASE="$SPAWN_REPORT_DIR/${SPAWN_TS}_${SPAWN_SLUG}_${agent}"
   SPAWN_REPORT="${SPAWN_BASE}.md"
   SPAWN_TRANSCRIPT="${SPAWN_BASE}.transcript.log"
   SPAWN_META="${SPAWN_BASE}.meta.json"
   SPAWN_LAUNCHER="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_SLUG}_${agent}_launch.sh"
   mkdir -p "$SPAWN_REPORT_DIR" "$SPAWN_TMP_DIR"
+
+  # Backward compat: symlink from repo .ai-agents/reports → central store
+  local repo_reports="$SPAWN_ROOT/.ai-agents/reports"
+  if [[ "$store_base" != "$SPAWN_ROOT/.ai-agents" ]] && [[ ! -L "$repo_reports" ]]; then
+    mkdir -p "$SPAWN_ROOT/.ai-agents"
+    if [[ -d "$repo_reports" ]] && [[ ! -L "$repo_reports" ]]; then
+      # Existing dir with content — leave it, don't break
+      true
+    else
+      ln -sfn "$SPAWN_REPORT_DIR" "$repo_reports" 2>/dev/null || true
+    fi
+  fi
 }
 
 spawn_build_runtime_prompt() {

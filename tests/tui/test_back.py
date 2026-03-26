@@ -124,7 +124,7 @@ FOUNDATIONS: List[Foundation] = [
     Foundation(
         name="aicx-mcp",
         description="AICX MCP server for session history and memory recovery",
-        channels=["crates", "github"],
+        channels=["github", "crates"],
         packages={
             "crates": "ai-contexters",
             "github": "https://github.com/VetCoders/ai-contexters/releases",
@@ -134,21 +134,20 @@ FOUNDATIONS: List[Foundation] = [
     Foundation(
         name="loctree-mcp",
         description="Structural code mapping MCP server",
-        channels=["crates", "npm", "github"],
+        channels=["github", "crates"],
         packages={
             "crates": "loctree-mcp",
-            "npm": "loctree-mcp",
-            "github": "https://github.com/Loctree-Repos/loctree/releases",
+            "github": "https://github.com/Loctree/loctree-mcp/releases",
         },
         verify_cmd="loctree-mcp --version",
     ),
     Foundation(
         name="prview",
         description="PR review artifact generator",
-        channels=["crates", "github"],
+        channels=["github", "crates"],
         packages={
             "crates": "prview",
-            "github": "https://github.com/VetCoders/prview/releases",
+            "github": "https://github.com/VetCoders/prview-rs/releases",
         },
         verify_cmd="prview --version",
         required=False,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "VibeCraft Review"
+  short_description: "Code and PR review pipeline with findings"
+  default_prompt: "Use $vc-review to generate `prview` artifacts and produce a findings-max audit with P-level severity."

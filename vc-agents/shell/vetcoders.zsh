@@ -29,6 +29,24 @@ _vetcoders_default_runtime() {
   printf '%s\n' "${VETCODERS_SPAWN_RUNTIME:-terminal}"
 }
 
+_vetcoders_frontier_root() {
+  local repo_root
+  repo_root="$(_vetcoders_repo_root)"
+  if [[ -d "$repo_root/config/atuin" && -f "$repo_root/config/starship.toml" ]]; then
+    printf '%s/config' "$repo_root"
+    return 0
+  fi
+
+  local sidecar="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier"
+  if [[ -d "$sidecar" ]]; then
+    printf '%s' "$sidecar"
+    return 0
+  fi
+
+  echo "VetCoders frontier config not found. Run vc-frontier-install from the repo checkout." >&2
+  return 1
+}
+
 _vetcoders_prompt_file() {
   local agent="$1"
   shift
@@ -149,8 +167,52 @@ gemini-observe() {
   _vetcoders_observe gemini "$@"
 }
 
+_vetcoders_skill() {
+  local tool="$1"
+  local skill="$2"
+  shift 2
+  local extra="$*"
+  local prompt="Perform the vc-${skill} skill on this repository.${extra:+ }${extra}"
+  _vetcoders_prompt "$tool" implement "$prompt"
+}
+
+codex-dou() { _vetcoders_skill codex dou "$@"; }
+claude-dou() { _vetcoders_skill claude dou "$@"; }
+gemini-dou() { _vetcoders_skill gemini dou "$@"; }
+
+codex-hydrate() { _vetcoders_skill codex hydrate "$@"; }
+claude-hydrate() { _vetcoders_skill claude hydrate "$@"; }
+gemini-hydrate() { _vetcoders_skill gemini hydrate "$@"; }
+
+codex-marbles() { _vetcoders_skill codex marbles "$@"; }
+claude-marbles() { _vetcoders_skill claude marbles "$@"; }
+gemini-marbles() { _vetcoders_skill gemini marbles "$@"; }
+
+codex-decorate() { _vetcoders_skill codex decorate "$@"; }
+claude-decorate() { _vetcoders_skill claude decorate "$@"; }
+gemini-decorate() { _vetcoders_skill gemini decorate "$@"; }
+
 skills-sync() {
   local script
   script="$(_vetcoders_spawn_script codex skills_sync.sh)" || return 1
   bash "$script" "$@"
+}
+
+vc-frontier-paths() {
+  local root
+  root="$(_vetcoders_frontier_root)" || return 1
+  printf 'STARSHIP_CONFIG=%s/starship.toml\n' "$root"
+  printf 'ATUIN_CONFIG=%s/atuin/config.toml\n' "$root"
+  printf 'ZELLIJ_CONFIG=%s/zellij/config.kdl\n' "$root"
+}
+
+vc-frontier-install() {
+  local repo_root script
+  repo_root="$(_vetcoders_repo_root)"
+  script="$repo_root/vc-agents/scripts/install-frontier-config.sh"
+  [[ -f "$script" ]] || {
+    echo "Frontier installer not found in current repo checkout: $script" >&2
+    return 1
+  }
+  bash "$script" --source "$repo_root" "$@"
 }

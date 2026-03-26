@@ -1,4 +1,0 @@
-interface:
-  display_name: "VibeCraft PRview"
-  short_description: "PR review pipeline with findings"
-  default_prompt: "Use $vc-prview to generate prview artifacts and produce a findings-max audit with P-level severity."
