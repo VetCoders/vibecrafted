@@ -88,59 +88,24 @@ def main():
         sys.exit(0)
 
     repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    shell_rc = get_shell_rc()
-    vetcoders_zsh_path = os.path.join(repo_dir, "skills", "vc-agents", "shell", "vetcoders.zsh")
+    vibecrafted_home = os.environ.get("VIBECRAFTED_HOME", os.path.join(os.path.expanduser("~"), ".vibecrafted"))
 
-    source_line = f'source "{vetcoders_zsh_path}"'
-    marker_start = "# >>> VibeCraft Framework >>>"
-    marker_end = "# <<< VibeCraft Framework <<<"
-
-    print_step(f"Injecting into {shell_rc}")
-    
-    if not os.path.exists(shell_rc):
-        print_info(f"{shell_rc} does not exist. We will create it.")
-        open(shell_rc, 'w').close()
-
-    # Check if file is writable (respects uchg/immutable flags)
-    try:
-        with open(shell_rc, 'a'):
-            pass
-        writable = True
-    except OSError:
-        writable = False
-
-    with open(shell_rc, "r") as f:
-        content = f.read()
-
-    if marker_start in content:
-        print_info("VibeCraft is already installed in your shell config.")
-    elif not writable:
-        print_warning(f"{shell_rc} is locked (immutable). Skipping shell config.")
-        print_info("Add these lines manually:")
-        print_info(f"  {marker_start}")
-        print_info(f"  export VIBECRAFT_ROOT=\"{repo_dir}\"")
-        print_info(f"  {source_line}")
-        print_info(f"  {marker_end}")
-    else:
-        print_info("Adding VibeCraft configuration...")
-        with open(shell_rc, "a") as f:
-            f.write(f"\n{marker_start}\n")
-            f.write(f"export VIBECRAFT_ROOT=\"{repo_dir}\"\n")
-            f.write(f"{source_line}\n")
-            f.write(f"{marker_end}\n")
-        print_info("Configuration added successfully.")
-
-    print_step("Applying internal path fixes (Sidecars)")
-    print_info("We rely on sidecar configs. Your global configs are safe.")
-    
+    # Step 1: Run core installer — copies skills to ~/.vibecrafted/skills/,
+    # creates symlinks, installs shell helpers to ~/.config/zsh/vc-skills.zsh
+    print_step("Installing skills and shell helpers to ~/.vibecrafted/")
+    print_info(f"What: Copy 16 VibeCraft skills to {vibecrafted_home}/skills/")
+    print_info("Why:  Your AI agents (Claude, Codex, Gemini) read skills from here")
+    print_info("Safe: Everything reversible with 'make uninstall'")
     run_underlying_installer(repo_dir)
-    
+
     print_success("Installation Complete!")
-    print(f"\n{Colors.BOLD}To reverse this installation at any time:{Colors.ENDC}")
-    print(f"Simply open {shell_rc} and delete the lines between the VibeCraft markers.")
-    print(f"\n{Colors.BOLD}Next steps:{Colors.ENDC}")
-    print("Restart your terminal or run:")
-    print(f"  source {shell_rc}")
+    print_info(f"Skills:  {vibecrafted_home}/skills/")
+    print_info(f"Helpers: ~/.config/zsh/vc-skills.zsh")
+    print_info("Symlinks: ~/.claude/skills/, ~/.codex/skills/, ~/.agents/skills/")
+    print()
+    print(f"{Colors.BOLD}To reverse:{Colors.ENDC} make uninstall")
+    print(f"{Colors.BOLD}To verify:{Colors.ENDC}  make doctor")
+    print(f"{Colors.BOLD}To start:{Colors.ENDC}   source ~/.zshrc (or open new terminal)")
 
 if __name__ == "__main__":
     main()
