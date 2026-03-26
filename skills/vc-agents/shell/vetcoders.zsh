@@ -1,12 +1,12 @@
 # VetCoders shell helpers
-# Source this from ~/.zshrc to get consistent wrapper commands for the repo-owned
-# spawn runtime installed canonically under ~/.agents/skills and exposed through
-# ~/.{codex,claude,gemini}/skills symlink views.
+# Source this from your ~/.zshrc to get consistent wrapper commands for the VibeCraft
+# framework installed under your local repository path.
 
 _vetcoders_spawn_home() {
   local tool="$1"
-  # We now resolve directly to the canonical store to avoid symlink duplication issues
-  printf '%s/.agents/skills/vc-agents' "$HOME"
+  # We now resolve directly to the canonical store in VIBECRAFT_ROOT
+  local v_root="${VIBECRAFT_ROOT:-$HOME/Libraxis/vetcoders-skills}"
+  printf '%s/skills/vc-agents' "$v_root"
 }
 
 _vetcoders_spawn_script() {
@@ -192,27 +192,4 @@ codex-decorate() { _vetcoders_skill codex decorate "$@"; }
 claude-decorate() { _vetcoders_skill claude decorate "$@"; }
 gemini-decorate() { _vetcoders_skill gemini decorate "$@"; }
 
-skills-sync() {
-  local script
-  script="$(_vetcoders_spawn_script codex skills_sync.sh)" || return 1
-  bash "$script" "$@"
-}
 
-vc-frontier-paths() {
-  local root
-  root="$(_vetcoders_frontier_root)" || return 1
-  printf 'STARSHIP_CONFIG=%s/starship.toml\n' "$root"
-  printf 'ATUIN_CONFIG=%s/atuin/config.toml\n' "$root"
-  printf 'ZELLIJ_CONFIG=%s/zellij/config.kdl\n' "$root"
-}
-
-vc-frontier-install() {
-  local repo_root script
-  repo_root="$(_vetcoders_repo_root)"
-  script="$repo_root/vc-agents/scripts/install-frontier-config.sh"
-  [[ -f "$script" ]] || {
-    echo "Frontier installer not found in current repo checkout: $script" >&2
-    return 1
-  }
-  bash "$script" --source "$repo_root" "$@"
-}

@@ -191,7 +191,7 @@ Observe progress through durable artifacts in `.ai-agents/reports/`.
 If your environment exposes the observer helper, the standard check is:
 
 ```bash
-bash ~/.codex/skills/vc-agents/scripts/observe.sh codex --last
+bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/observe.sh codex --last
 ```
 
 Use the equivalent agent observer when needed.

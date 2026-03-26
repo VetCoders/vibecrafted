@@ -1,56 +1,24 @@
-# Contributing to VibeCraft Skills
+# Contributing to VibeCraft
 
-## License
+Welcome! We build tools for AI agents to build tools.
 
-This project is licensed under the [Business Source License 1.1](LICENSE).
-By contributing, you agree that your contributions will be licensed under the same terms.
+## The Living Tree Rule
 
-## How to Contribute
+VibeCraft operates on the principle that the codebase is alive. When contributing:
+- Always assume concurrent changes are possible.
+- Re-read files before editing if time has passed.
+- Use the provided tools (`loctree`) to understand impact before making structural changes.
 
-### Reporting Issues
+## Adding a New Skill
 
-Open an issue on GitHub. Include:
+1. Create a new directory in `./skills/`. Name it `vc-<your-skill-name>`.
+2. Provide a `SKILL.md` file that defines the skill's purpose, triggers, and execution strategy.
+3. Update any internal pathing to ensure your skill interacts correctly with the rest of the VibeCraft framework (using the `skills/` path).
 
-- Which skill is affected
-- What you expected vs what happened
-- Your environment (OS, agent CLI versions)
+## Pull Requests
 
-### Proposing Changes
+1. **Be decisive.** If a rewrite is cheaper than a rescue, do it.
+2. **DoU is Law.** Green tests are necessary, but not sufficient. Ensure the product surface is finished, documented, and ready for end-users.
+3. **Run your own audits.** Use `vc-dou` on your changes before submitting.
 
-1. Fork the repo.
-2. Create a branch from `main`.
-3. Make your changes — one skill per PR when possible.
-4. Run `bash scripts/check-portable.sh` to verify nothing breaks.
-5. Open a PR with a clear description of what changed and why.
-
-### Skill Conventions
-
-Every skill lives in its own `vc-<name>/` directory with a `SKILL.md` file.
-
-SKILL.md requirements:
-
-- YAML frontmatter with `name`, `version` (semver), and `description`
-- `description` must include trigger phrases in English and Polish
-- No hardcoded absolute paths — use `$ROOT` or relative paths
-- No secrets, no `.env` files, no machine-specific state
-
-### Quality Bar
-
-- `bash scripts/check-portable.sh` must pass
-- No `.DS_Store`, editor junk, or local clutter
-- Skills must work without optional dependencies (graceful fallback)
-- If your change touches spawn scripts, test on both macOS and Linux
-
-### Commit Style
-
-Short imperative subject line. Body explains why, not what.
-No `--no-verify`. No force push to main.
-
-## Code of Conduct
-
-Be direct, be honest, be constructive. VetCoders was built by veterinarians
-learning to code — we value clarity over cleverness and respect over ceremony.
-
----
-
-*VibeCrafted with AI Agents (c)2026 VetCoders*
+We value aggressive simplification and bold moves over timid preservation. If it feels right, and it works, we ship it.

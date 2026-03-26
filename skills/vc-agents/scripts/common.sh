@@ -228,6 +228,9 @@ EOF_LAUNCH
   fi
 
   cat >> "$launcher" <<'EOF_LAUNCH'
+export STARSHIP_CONFIG="${VIBECRAFT_ROOT:-$HOME/Libraxis/vetcoders-skills}/config/starship.toml"
+export ZELLIJ_CONFIG_DIR="${VIBECRAFT_ROOT:-$HOME/Libraxis/vetcoders-skills}/config/zellij"
+
 if zsh -ic "$SPAWN_CMD"; then
 EOF_LAUNCH
 
