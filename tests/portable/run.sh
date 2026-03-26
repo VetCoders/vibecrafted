@@ -65,15 +65,15 @@ assert_not_contains() {
 log "syntax checks"
 bash -n \
   "$repo_root/install.sh" \
-  "$repo_root/vc-agents/scripts/install.sh" \
-  "$repo_root/vc-agents/scripts/install-shell.sh" \
-  "$repo_root/vc-agents/scripts/skills_sync.sh" \
-  "$repo_root/vc-agents/scripts/observe.sh" \
-  "$repo_root/vc-agents/scripts/common.sh" \
-  "$repo_root/vc-agents/scripts/codex_spawn.sh" \
-  "$repo_root/vc-agents/scripts/claude_spawn.sh" \
-  "$repo_root/vc-agents/scripts/gemini_spawn.sh"
-zsh -n "$repo_root/vc-agents/shell/vetcoders.zsh"
+  "$repo_root/skills/vc-agents/scripts/install.sh" \
+  "$repo_root/skills/vc-agents/scripts/install-shell.sh" \
+  "$repo_root/skills/vc-agents/scripts/skills_sync.sh" \
+  "$repo_root/skills/vc-agents/scripts/observe.sh" \
+  "$repo_root/skills/vc-agents/scripts/common.sh" \
+  "$repo_root/skills/vc-agents/scripts/codex_spawn.sh" \
+  "$repo_root/skills/vc-agents/scripts/claude_spawn.sh" \
+  "$repo_root/skills/vc-agents/scripts/gemini_spawn.sh"
+zsh -n "$repo_root/skills/vc-agents/shell/vetcoders.zsh"
 
 workspace="$(mktemp -d)"
 trap 'rm -rf "$workspace"' EXIT
@@ -85,7 +85,7 @@ mkdir -p "$home_dir" "$config_dir" "$work_repo" "$fake_bin"
 
 log "install smoke into clean HOME"
 HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
-  bash "$repo_root/vc-agents/scripts/install.sh" \
+  bash "$repo_root/skills/vc-agents/scripts/install.sh" \
   --source "$repo_root" \
   --tool codex --tool claude --tool gemini \
   --with-shell
@@ -209,16 +209,16 @@ echo rsync "$@"
 EOF_RSYNC
 chmod +x "$fake_bin/rsync"
 
-sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/vc-agents/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
+sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/skills/vc-agents/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
 echo "$sync_output" | grep -q "Syncing skills from" || die "Sync dry-run failed to start"
 echo "$sync_output" | grep -q "rsync .* --dry-run" || die "Sync dry-run didn't pass dry-run to rsync"
 echo "$sync_output" | grep -q "~/.agents/skills" || die "Sync dry-run didn't target the shared canonical skill store"
 
 log "docs truth checks"
-assert_not_contains "$repo_root/vc-followup/SKILL.md" 'Use canonical Terminal spawn (`osascript`)'
-assert_not_contains "$repo_root/vc-workflow/SKILL.md" 'osascript preferred'
-[[ ! -e "$repo_root/vc-subagents/SKILL.md" ]] || die 'vc-subagents should not exist'
+assert_not_contains "$repo_root/skills/vc-followup/SKILL.md" 'Use canonical Terminal spawn (`osascript`)'
+assert_not_contains "$repo_root/skills/vc-workflow/SKILL.md" 'osascript preferred'
+[[ ! -e "$repo_root/skills/vc-subagents/SKILL.md" ]] || die 'vc-subagents should not exist'
 assert_not_contains "$repo_root/docs/index.html" 'Canonical osascript Terminal spawn'
-[[ -e "$repo_root/vc-suite-showcase.html" ]] && die 'vc-suite-showcase.html should not exist (was mv to docs/index.html)'
+[[ -e "$repo_root/skills/vc-suite-showcase.html" ]] && die 'vc-suite-showcase.html should not exist (was mv to docs/index.html)'
 
 log "portable checks passed"

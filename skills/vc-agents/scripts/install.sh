@@ -16,7 +16,7 @@ set -euo pipefail
 #   --mirror            Delete extra files in installed dirs
 #   --list              Show available skills (redirects to list subcommand)
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 installer="$repo_root/scripts/vetcoders_install.py"
 
 if [[ ! -f "$installer" ]]; then
