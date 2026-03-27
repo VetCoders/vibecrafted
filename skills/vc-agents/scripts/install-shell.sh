@@ -3,11 +3,11 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF_USAGE'
-Usage: install-shell.sh [--source <repo-root>] [--dry-run] [--no-zshrc]
+Usage: install-shell.sh [--source <repo-root>] [--dry-run] [--no-zshrc] [--no-bashrc]
 
-Install the optional VetCoders zsh helper layer. This does not copy a whole
-personal shell config or banner/theme; it installs the distilled repo-owned
-helper file and, unless --no-zshrc is used, sources it from ~/.zshrc.
+Install the VetCoders shell helper layer. The helpers work in both bash and zsh.
+By default, sources the helper from ~/.bashrc and ~/.zshrc for shells that are
+available. Use --no-zshrc or --no-bashrc to skip a shell.
 EOF_USAGE
 }
 
@@ -19,6 +19,7 @@ die() {
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 dry_run=0
 update_zshrc=1
+update_bashrc=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,6 +34,9 @@ while [[ $# -gt 0 ]]; do
     --no-zshrc)
       update_zshrc=0
       ;;
+    --no-bashrc)
+      update_bashrc=0
+      ;;
     --help|-h)
       usage
       exit 0
@@ -44,53 +48,76 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-source_file="$repo_root/skills/vc-agents/shell/vetcoders.zsh"
-# Fallback for old layout
+# Find source file (new name first, then legacy)
+source_file="$repo_root/skills/vc-agents/shell/vetcoders.sh"
+[[ -f "$source_file" ]] || source_file="$repo_root/skills/vc-agents/shell/vetcoders.zsh"
 [[ -f "$source_file" ]] || source_file="$repo_root/vc-agents/shell/vetcoders.zsh"
-[[ -f "$source_file" ]] || die "Helper file not found: $source_file"
+[[ -f "$source_file" ]] || die "Helper file not found"
 
-config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/zsh"
-target_file="$config_dir/vc-skills.zsh"
-zshrc_file="$HOME/.zshrc"
-source_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"'
+# Canonical install location (shell-agnostic)
+config_base="${XDG_CONFIG_HOME:-$HOME/.config}"
+target_dir="$config_base/vetcoders"
+target_file="$target_dir/vc-skills.sh"
 
-printf 'Installing VetCoders zsh helpers\n'
+# Legacy compat location for existing zsh installs
+legacy_dir="$config_base/zsh"
+legacy_file="$legacy_dir/vc-skills.zsh"
+
+# Source line — same syntax works in both bash and zsh
+source_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"'
+
+printf 'Installing VetCoders shell helpers\n'
 printf '  source: %s\n' "$source_file"
 printf '  target: %s\n' "$target_file"
 
 if (( dry_run )); then
-  printf 'Dry run: would copy helper file to %s\n' "$target_file"
+  printf '  (dry run)\n'
 else
-  mkdir -p "$config_dir"
+  mkdir -p "$target_dir"
   cp "$source_file" "$target_file"
+  # Legacy compat symlink so old .zshrc source lines still work
+  mkdir -p "$legacy_dir"
+  ln -sfn "$target_file" "$legacy_file"
 fi
 
-if (( ! update_zshrc )); then
-  printf 'Skipping ~/.zshrc update (--no-zshrc).\n'
-  exit 0
+_update_rcfile() {
+  local rcfile="$1"
+  local shell_name="$2"
+
+  # Already present — nothing to do
+  if [[ -f "$rcfile" ]] && grep -Fq "vetcoders/vc-skills.sh" "$rcfile"; then
+    printf '  %s: already sourced\n' "$rcfile"
+    return 0
+  fi
+
+  # Respect locked/immutable files
+  if [[ -f "$rcfile" ]] && ! touch -c "$rcfile" 2>/dev/null; then
+    printf '\033[33m[warn]\033[0m %s is locked — add manually:\n' "$rcfile"
+    printf '       %s\n' "$source_line"
+    return 0
+  fi
+
+  if (( dry_run )); then
+    printf '  %s: would add source line\n' "$rcfile"
+    return 0
+  fi
+
+  {
+    printf '\n# VetCoders shell helpers\n'
+    printf '%s\n' "$source_line"
+  } >> "$rcfile"
+
+  printf '  %s: updated\n' "$rcfile"
+}
+
+if (( update_zshrc )); then
+  if command -v zsh >/dev/null 2>&1 || [[ -f "$HOME/.zshrc" ]]; then
+    _update_rcfile "$HOME/.zshrc" "zsh"
+  fi
 fi
 
-if [[ -f "$zshrc_file" ]] && grep -Fq "$source_line" "$zshrc_file"; then
-  printf 'Helper source line already present in %s\n' "$zshrc_file"
-  exit 0
+if (( update_bashrc )); then
+  if [[ -f "$HOME/.bashrc" ]] || [[ "${SHELL##*/}" == "bash" ]]; then
+    _update_rcfile "$HOME/.bashrc" "bash"
+  fi
 fi
-
-# Respect locked/immutable files — never write without permission
-if [[ -f "$zshrc_file" ]] && ! touch -c "$zshrc_file" 2>/dev/null; then
-  printf '\033[33m[warn]\033[0m %s is locked (uchg/immutable) — skipping .zshrc update\n' "$zshrc_file"
-  printf '       Add this line manually:\n'
-  printf '       %s\n' "$source_line"
-  exit 0
-fi
-
-if (( dry_run )); then
-  printf 'Dry run: would append helper source line to %s\n' "$zshrc_file"
-  exit 0
-fi
-
-{
-  printf '\n# VetCoders shell helpers\n'
-  printf '%s\n' "$source_line"
-} >> "$zshrc_file"
-
-printf 'Updated %s\n' "$zshrc_file"

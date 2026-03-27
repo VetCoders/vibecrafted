@@ -214,7 +214,7 @@ FOUNDATIONS: List[Foundation] = [
 ]
 
 RUNTIME_DEPS = ["python3", "git", "rsync"]
-OPTIONAL_DEPS = ["zsh"]  # shell helpers need zsh; core install works without it
+OPTIONAL_DEPS = ["zsh"]  # helpers work in bash and zsh; core install works without either
 
 OLD_SKILL_PREFIX = "vetcoders-"
 OLD_HELPER_NAME = "vetcoders-skills.zsh"
@@ -732,16 +732,17 @@ def create_backup(store_path: Path, runtimes: List[str], bundle_names: List[str]
             shutil.copy2(helper_file, dst)
         anything_backed = True
 
-    # Back up .zshrc
-    zshrc = Path.home() / ".zshrc"
-    if zshrc.exists():
-        dst = backup_dir / "helpers" / ".zshrc"
-        if dry_run:
-            print(f"  {dim('backup')} {zshrc} -> {dst}")
-        else:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(zshrc, dst)
-        anything_backed = True
+    # Back up RC files
+    for rcname in (".zshrc", ".bashrc"):
+        rcfile = Path.home() / rcname
+        if rcfile.exists():
+            dst = backup_dir / "helpers" / rcname
+            if dry_run:
+                print(f"  {dim('backup')} {rcfile} -> {dst}")
+            else:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(rcfile, dst)
+            anything_backed = True
 
     if anything_backed and not dry_run:
         # Write a "latest" pointer
@@ -754,11 +755,21 @@ def create_backup(store_path: Path, runtimes: List[str], bundle_names: List[str]
 
 
 def _helper_target_path() -> Path:
+    config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "vetcoders"
+    return config_dir / "vc-skills.sh"
+
+
+def _helper_legacy_path() -> Path:
     config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "zsh"
     return config_dir / "vc-skills.zsh"
 
 
-def _zshrc_source_line() -> str:
+def _shell_source_line() -> str:
+    """Source line works in both bash and zsh."""
+    return '[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"'
+
+
+def _old_zshrc_source_line() -> str:
     return '[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"'
 
 
@@ -791,16 +802,20 @@ def scan_helper_conflicts() -> Dict[Path, List[HelperConflict]]:
     conflicts: Dict[Path, List[HelperConflict]] = {}
 
     search_dirs = []
-    config_zsh = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "zsh"
-    if config_zsh.is_dir():
-        search_dirs.append(config_zsh)
+    config_base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    for subdir in ("vetcoders", "zsh"):
+        candidate = config_base / subdir
+        if candidate.is_dir():
+            search_dirs.append(candidate)
 
     files_to_scan: List[Path] = []
     for d in search_dirs:
+        files_to_scan.extend(d.glob("*.sh"))
         files_to_scan.extend(d.glob("*.zsh"))
-    zshrc = Path.home() / ".zshrc"
-    if zshrc.exists():
-        files_to_scan.append(zshrc)
+    for rcfile in (".zshrc", ".bashrc"):
+        rc = Path.home() / rcfile
+        if rc.exists():
+            files_to_scan.append(rc)
 
     for fpath in files_to_scan:
         if fpath.resolve() == canonical.resolve():
@@ -1138,9 +1153,12 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
 
     # 6. Shell helpers
-    helper_file = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "zsh" / "vc-skills.zsh"
+    helper_file = _helper_target_path()
+    legacy_file = _helper_legacy_path()
     if helper_file.exists():
         findings.append(DoctorFinding("ok", "shell-helpers", str(helper_file)))
+    elif legacy_file.exists():
+        findings.append(DoctorFinding("warn", "shell-helpers", f"legacy location only: {legacy_file} — re-run install"))
     elif state.shell_helpers:
         findings.append(DoctorFinding("warn", "shell-helpers", "marked as installed but file missing"))
     else:
@@ -1326,9 +1344,7 @@ def cmd_install(args: argparse.Namespace) -> int:
                         print("Install them before continuing.")
                         return 1
                     if not sys_deps.get("zsh"):
-                        print(f"  {WARN} zsh not found — shell helpers will not be installed")
-                        print(f"       Skills, doctor, and agent spawns still work via bash.")
-                        cli_with_shell = False
+                        print(f"  {OPT} zsh {dim('(not found — helpers will use bash only)')}")
                     args._sys_checked = True
                 step += 1
 
@@ -1419,7 +1435,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             elif step == 4:
                 # Shell helpers
                 if not cli_with_shell and interactive:
-                    install_shell = ask_yn("Enable the optional zsh helper layer?", default=install_shell)
+                    install_shell = ask_yn("Enable the shell helper layer (bash + zsh)?", default=install_shell)
                     print()
 
                 if install_shell:
@@ -1595,7 +1611,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         print(dim("  Next:"))
         print(dim(f"    \u25b8 make -C {control_plane_cmd} doctor      \u2500 verify health"))
         print(dim(f"    \u25b8 make -C {control_plane_cmd} uninstall   \u2500 reverse everything"))
-        print(dim("    \u25b8 source ~/.zshrc  \u2500 or open a new terminal"))
+        print(dim("    \u25b8 source ~/.bashrc   \u2500 or source ~/.zshrc \u2500 or open a new terminal"))
     else:
         control_plane_cmd = shlex.quote(str(repo_root))
         print(green(bold("Ready.")))
@@ -1832,30 +1848,40 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
     # Remove shell helpers
     helper_file = _helper_target_path()
-    if helper_file.exists():
-        print(bold("Removing shell helper..."))
-        if dry_run:
-            print(f"  {dim('rm')} {helper_file}")
-        else:
-            helper_file.unlink()
-            print(f"  {dim('-')} {helper_file}")
-
-        # Remove source line from .zshrc
-        zshrc = Path.home() / ".zshrc"
-        source_line = _zshrc_source_line()
-        if zshrc.exists():
-            content = zshrc.read_text()
-            if source_line in content:
-                if not _is_writable(zshrc):
-                    print(f"  {WARN} {zshrc} is locked — cannot remove source line")
-                    print(f"       {dim('Remove manually: line referencing vc-skills.zsh')}")
-                elif dry_run:
-                    print(f"  {dim('remove source line from')} {zshrc}")
+    legacy_file = _helper_legacy_path()
+    any_helper = helper_file.exists() or legacy_file.exists()
+    if any_helper:
+        print(bold("Removing shell helpers..."))
+        for hf in (helper_file, legacy_file):
+            if hf.exists():
+                if dry_run:
+                    print(f"  {dim('rm')} {hf}")
                 else:
-                    new_content = content.replace(f"\n# VetCoders shell helpers\n{source_line}\n", "\n")
-                    new_content = new_content.replace(source_line, "")
-                    zshrc.write_text(new_content)
-                    print(f"  {dim('-')} source line from {zshrc}")
+                    hf.unlink()
+                    print(f"  {dim('-')} {hf}")
+
+        # Remove source lines from both .zshrc and .bashrc
+        source_lines = [_shell_source_line(), _old_zshrc_source_line()]
+        for rcname in (".zshrc", ".bashrc"):
+            rcfile = Path.home() / rcname
+            if not rcfile.exists():
+                continue
+            content = rcfile.read_text()
+            changed = False
+            for sl in source_lines:
+                if sl in content:
+                    if not _is_writable(rcfile):
+                        print(f"  {WARN} {rcfile} is locked — cannot remove source line")
+                        break
+                    elif dry_run:
+                        print(f"  {dim('remove source line from')} {rcfile}")
+                    else:
+                        content = content.replace(f"\n# VetCoders shell helpers\n{sl}\n", "\n")
+                        content = content.replace(sl, "")
+                        changed = True
+            if changed and not dry_run:
+                rcfile.write_text(content)
+                print(f"  {dim('-')} source line from {rcfile}")
         print()
 
     # Remove manifest
@@ -1946,7 +1972,10 @@ def cmd_restore(args: argparse.Namespace) -> int:
     if helper_backup.is_dir():
         print(bold("Restoring helpers..."))
         # Helper file
-        backed_helper = helper_backup / "vc-skills.zsh"
+        # Try new name first, then legacy
+        backed_helper = helper_backup / "vc-skills.sh"
+        if not backed_helper.exists():
+            backed_helper = helper_backup / "vc-skills.zsh"
         if backed_helper.exists():
             dst = _helper_target_path()
             if dry_run:
@@ -1957,16 +1986,17 @@ def cmd_restore(args: argparse.Namespace) -> int:
                 print(f"  {OK} {dst}")
             restored += 1
 
-        # .zshrc
-        backed_zshrc = helper_backup / ".zshrc"
-        if backed_zshrc.exists():
-            dst = Path.home() / ".zshrc"
-            if dry_run:
-                print(f"  {dim('restore')} .zshrc")
-            else:
-                shutil.copy2(backed_zshrc, dst)
-                print(f"  {OK} .zshrc")
-            restored += 1
+        # RC files
+        for rcname in (".zshrc", ".bashrc"):
+            backed_rc = helper_backup / rcname
+            if backed_rc.exists():
+                dst = Path.home() / rcname
+                if dry_run:
+                    print(f"  {dim('restore')} {rcname}")
+                else:
+                    shutil.copy2(backed_rc, dst)
+                    print(f"  {OK} {rcname}")
+                restored += 1
         print()
 
     # Remove manifest (since we're reverting to pre-install state)

@@ -111,12 +111,12 @@ def main():
     print_success("VibeCraft is ready.")
     print_info(f"Control plane: {control_plane}")
     print_info(f"Shared skills: {vibecrafted_home}/skills/")
-    print_info("Shell helper: ~/.config/zsh/vc-skills.zsh")
+    print_info("Shell helper: ~/.config/vetcoders/vc-skills.sh")
     print_info("Agent views: ~/.claude/skills/, ~/.codex/skills/, ~/.agents/skills/")
     print()
     print(f"{Colors.BOLD}Reverse:{Colors.ENDC} make -C {control_plane} uninstall")
     print(f"{Colors.BOLD}Verify:{Colors.ENDC}  make -C {control_plane} doctor")
-    print(f"{Colors.BOLD}Start:{Colors.ENDC}   source ~/.zshrc (or open a new terminal)")
+    print(f"{Colors.BOLD}Start:{Colors.ENDC}   source ~/.bashrc  (or source ~/.zshrc, or open a new terminal)")
 
 if __name__ == "__main__":
     main()

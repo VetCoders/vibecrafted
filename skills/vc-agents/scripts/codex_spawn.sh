@@ -75,7 +75,7 @@ qtranscript="$(printf '%q' "$SPAWN_TRANSCRIPT")"
 
 # Codex output is clean text but has massive search result dumps. Filter those, keep errors.
 qfilter="$(printf '%q' "$SCRIPT_DIR/codex_stream_filter.sh")"
-launch_cmd="set -o pipefail && cd $qroot && codex exec -C $qroot --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qplan 2>&1 | bash $qfilter | tee -a $qtranscript ; echo ; grep -o 'session id: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$3}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'"
+launch_cmd="set -o pipefail && cd $qroot && codex exec -C $qroot --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qplan 2>&1 | bash $qfilter | tee -a $qtranscript ; echo ; { grep -o 'session id: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$3}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true"
 
 spawn_generate_launcher "$SPAWN_LAUNCHER" \
   "$SPAWN_META" \

@@ -274,7 +274,7 @@ EOF_LAUNCH
   cat >> "$launcher" <<'EOF_LAUNCH'
 spawn_export_frontier_sidecars
 
-if zsh -ic "$SPAWN_CMD"; then
+if eval "$SPAWN_CMD"; then
 EOF_LAUNCH
 
   if [[ -n "$success_hook" ]]; then
@@ -317,7 +317,7 @@ import shlex
 import sys
 
 launcher = sys.argv[1]
-print(json.dumps("zsh -ic " + shlex.quote(launcher)))
+print(json.dumps("bash " + shlex.quote(launcher)))
 PY
 )"
 
