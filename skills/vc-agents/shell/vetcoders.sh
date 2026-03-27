@@ -218,8 +218,10 @@ _vetcoders_skill() {
   local skill="$2"
   shift 2
   local extra="$*"
+  local code="${skill:0:4}"
+  local loop_nr="${VIBECRAFT_LOOP_NR:-0}"
   local prompt="Perform the vc-${skill} skill on this repository.${extra:+ }${extra}"
-  _vetcoders_prompt "$tool" implement "$prompt"
+  VIBECRAFT_SKILL_CODE="$code" VIBECRAFT_LOOP_NR="$loop_nr" _vetcoders_prompt "$tool" implement "$prompt"
 }
 
 codex-dou() { _vetcoders_skill codex dou "$@"; }
@@ -293,6 +295,7 @@ Spawn helpers (× claude, codex, gemini):
 Utilities:
   repo-full                      Full git context dump
   skills-sync                    Sync skills to agents
+  vc-dashboard                   Open Mission Control zellij dashboard
   vc-frontier-paths              Show frontier config paths
   vc-frontier-install            Install starship/atuin/zellij presets
   vc-help                        This help
@@ -483,6 +486,31 @@ vc-frontier-paths() {
   printf 'STARSHIP_CONFIG=%s/starship.toml\n' "$root"
   printf 'ATUIN_CONFIG=%s/atuin/config.toml\n' "$root"
   printf 'ZELLIJ_CONFIG_DIR=%s/zellij\n' "$root"
+}
+
+vc-dashboard() {
+  command -v zellij >/dev/null 2>&1 || {
+    echo "zellij is not installed or not on PATH." >&2
+    return 1
+  }
+
+  local layout repo_root
+  repo_root="${VIBECRAFT_ROOT:-$(_vetcoders_repo_root)}"
+  layout="$(_vetcoders_frontier_root 2>/dev/null)/zellij/layouts/mission-control.kdl"
+  [[ -f "$layout" ]] || layout="$repo_root/config/zellij/layouts/mission-control.kdl"
+  [[ -f "$layout" ]] || {
+    echo "Mission control layout not found. Run vc-frontier-install first." >&2
+    return 1
+  }
+
+  if [[ -d "$repo_root/.git" || -d "$repo_root/skills/vc-agents" ]]; then
+    (
+      cd "$repo_root" || exit 1
+      zellij --layout "$layout" --session vibecraft-mc
+    )
+  else
+    zellij --layout "$layout" --session vibecraft-mc
+  fi
 }
 
 vc-frontier-install() {

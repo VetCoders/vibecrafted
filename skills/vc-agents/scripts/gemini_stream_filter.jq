@@ -2,8 +2,11 @@
 # Converts --output-format stream-json events to readable terminal output
 # Event types: init, message, tool_use, tool_result, error, result
 
+def stamp: (now | strftime("%H:%M:%S"));
+def tool_tag($name): "\u001b[36m[" + stamp + " " + $name + "]\u001b[0m ";
+
 if .type == "init" then
-  "\u001b[33msession: " + (.session_id // .id // "?") + "\u001b[0m"
+  "\u001b[33m[" + stamp + "] session: " + (.session_id // .id // "?") + "\u001b[0m"
   + (if .model then " (" + .model + ")" else "" end) + "\n"
 
 elif .type == "message" then
@@ -21,7 +24,7 @@ elif .type == "message" then
   else empty end
 
 elif .type == "tool_use" then
-  "\n\u001b[36m[" + (.name // .tool // "?") + "]\u001b[0m "
+  "\n" + tool_tag(.name // .tool // "?")
 
 elif .type == "tool_result" then
   (.output // .content // .text // "") as $out |
@@ -35,12 +38,12 @@ elif .type == "tool_result" then
   else empty end
 
 elif .type == "error" then
-  "\u001b[31m[error] " + (.message // .error // .text // "unknown error") + "\u001b[0m\n"
+  "\u001b[31m[" + stamp + " error] " + (.message // .error // .text // "unknown error") + "\u001b[0m\n"
 
 elif .type == "result" then
-  "\n\u001b[32m" + (.text // .result // "done") + "\u001b[0m\n"
+  "\n\u001b[32m[" + stamp + "] " + (.text // .result // "done") + "\u001b[0m\n"
   + (if .usage then
-      "\u001b[2mtokens: " + ((.usage.input_tokens // .usage.prompt_tokens // 0) | tostring) + " in"
+      "\u001b[2m[" + stamp + "] tokens: " + ((.usage.input_tokens // .usage.prompt_tokens // 0) | tostring) + " in"
       + " / " + ((.usage.output_tokens // .usage.completion_tokens // 0) | tostring) + " out\u001b[0m\n"
     else "" end)
 

@@ -20,6 +20,13 @@ Three-phase pipeline that chains structural code intelligence, ground truth rese
 and parallel agent delegation into a single disciplined workflow.
 Each phase accumulates context for the next — no blind implementation.
 
+## Repo Pipeline Position
+
+```
+scaffold → init → [WORKFLOW] → followup → marbles → dou → decorate → hydrate → release
+                  ^^^^^^^^^^
+```
+
 ## Pipeline Overview
 
 ```

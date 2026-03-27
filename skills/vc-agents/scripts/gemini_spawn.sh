@@ -64,8 +64,9 @@ done
 spawn_require_file "$plan_file"
 spawn_validate_runtime "$runtime"
 spawn_prepare_paths gemini "$plan_file" "$root"
+spawn_scan_active "$SPAWN_REPORT_DIR"
 runtime_input="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_SLUG}_gemini_prompt.md"
-spawn_build_runtime_prompt "$SPAWN_PLAN" "$runtime_input" "$SPAWN_REPORT"
+spawn_build_runtime_prompt "$SPAWN_PLAN" "$runtime_input" "$SPAWN_REPORT" gemini
 spawn_write_meta "$SPAWN_META" "launching" "gemini" "$mode" "$SPAWN_ROOT" "$SPAWN_PLAN" "$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$SPAWN_LAUNCHER" "$model"
 
 if (( !dry_run )); then
@@ -91,8 +92,9 @@ gemini_failure_hook='
 model_flag=""
 [[ -n "$model" ]] && model_flag="--model $qmodel"
 qfilter="$(printf '%q' "$SCRIPT_DIR/gemini_stream_filter.jq")"
-# Gemini stream-json emits structured JSONL events. jq filter extracts readable text + tool tags.
-launch_cmd="set -o pipefail && cd $qroot && prompt=\$(cat $qruntime) && gemini -p \"\$prompt\" -y $model_flag -o stream-json 2>&1 | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript"
+# Gemini emits non-JSON noise (YOLO banner, MCP bootstrap) before JSONL.
+# grep '^{' strips non-JSON lines so jq doesn't choke.
+launch_cmd="set -o pipefail && cd $qroot && prompt=\$(cat $qruntime) && gemini -p \"\$prompt\" -y $model_flag -o stream-json 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript"
 
 spawn_generate_launcher "$SPAWN_LAUNCHER" \
   "$SPAWN_META" \

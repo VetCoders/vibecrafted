@@ -38,6 +38,13 @@ need an external face that lets a stranger:
 
 Hydrate should scaffold that layer when it is missing.
 
+## Pipeline Position
+
+```
+scaffold → init → workflow → followup → marbles → dou → decorate → [HYDRATE] → release
+                                                                   ^^^^^^^^^
+```
+
 ## When To Use
 
 - After a `vc-dou` audit identifies packaging gaps

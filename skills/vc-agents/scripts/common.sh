@@ -64,6 +64,52 @@ spawn_timestamp() {
   date +%Y%m%d_%H%M
 }
 
+spawn_framework_version() {
+  local script_root=""
+  local candidate=""
+  local state_file=""
+  local state_version=""
+
+  script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd || true)"
+
+  for candidate in \
+    "${VIBECRAFT_ROOT:+$VIBECRAFT_ROOT/VERSION}" \
+    "${SPAWN_ROOT:+$SPAWN_ROOT/VERSION}" \
+    "${script_root:+$script_root/VERSION}" \
+    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/VERSION"
+  do
+    [[ -n "$candidate" ]] || continue
+    if [[ -f "$candidate" ]]; then
+      tr -d '\r\n' < "$candidate"
+      return 0
+    fi
+  done
+
+  for state_file in \
+    "${script_root:+$script_root/skills/.vc-install.json}" \
+    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/.vc-install.json"
+  do
+    [[ -n "$state_file" ]] || continue
+    [[ -f "$state_file" ]] || continue
+    state_version="$(
+      python3 - "$state_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+print(payload.get("framework_version", ""))
+PY
+    )"
+    if [[ -n "$state_version" ]]; then
+      printf '%s\n' "$state_version"
+      return 0
+    fi
+  done
+
+  printf 'unknown\n'
+}
+
 spawn_link_repo_artifacts() {
   local store_base="$1"
   local repo_root="$2"
@@ -87,13 +133,23 @@ spawn_write_meta() {
   local transcript="$8"
   local launcher="$9"
   local model="${10:-__NONE__}"
+  local prompt_id="${SPAWN_PROMPT_ID:-}"
+  local run_id="${SPAWN_RUN_ID:-}"
+  local loop_nr="${SPAWN_LOOP_NR:-0}"
+  local skill_code="${SPAWN_SKILL_CODE:-}"
+  local framework_version
+  framework_version="$(spawn_framework_version)"
 
-  python3 - "$meta_path" "$status" "$agent" "$mode" "$root" "$input_ref" "$report" "$transcript" "$launcher" "$model" <<'PY'
+  python3 - "$meta_path" "$status" "$agent" "$mode" "$root" "$input_ref" "$report" "$transcript" "$launcher" "$model" "$prompt_id" "$run_id" "$loop_nr" "$skill_code" "$framework_version" <<'PY'
 import datetime as dt
 import json
 import sys
 
-meta_path, status, agent, mode, root, input_ref, report, transcript, launcher, model = sys.argv[1:11]
+meta_path, status, agent, mode, root, input_ref, report, transcript, launcher, model, prompt_id, run_id, loop_nr, skill_code, framework_version = sys.argv[1:16]
+try:
+    loop_nr_value = int(loop_nr)
+except ValueError:
+    loop_nr_value = loop_nr
 payload = {
     "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     "status": status,
@@ -104,6 +160,11 @@ payload = {
     "report": report,
     "transcript": transcript,
     "launcher": launcher,
+    "prompt_id": prompt_id,
+    "run_id": run_id,
+    "loop_nr": loop_nr_value,
+    "skill_code": skill_code,
+    "framework_version": framework_version,
     "exit_code": None,
 }
 if model != "__NONE__":
@@ -127,7 +188,19 @@ import sys
 meta_path, status, exit_code = sys.argv[1:4]
 with open(meta_path, "r", encoding="utf-8") as fh:
     payload = json.load(fh)
-payload["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+completed_at = dt.datetime.now(dt.timezone.utc)
+started_at = payload.get("updated_at")
+duration_s = None
+if isinstance(started_at, str):
+    try:
+        started_dt = dt.datetime.fromisoformat(started_at)
+    except ValueError:
+        started_dt = None
+    if started_dt is not None:
+        duration_s = round((completed_at - started_dt).total_seconds(), 3)
+payload["updated_at"] = completed_at.isoformat()
+payload["completed_at"] = completed_at.isoformat()
+payload["duration_s"] = duration_s
 payload["status"] = status
 payload["exit_code"] = int(exit_code)
 with open(meta_path, "w", encoding="utf-8") as fh:
@@ -151,6 +224,16 @@ spawn_prepare_paths() {
   SPAWN_PLAN="$(spawn_abspath "$prompt_file")"
   SPAWN_SLUG="$(spawn_slug_from_path "$prompt_file")"
   SPAWN_TS="$(spawn_timestamp)"
+  SPAWN_AGENT="$agent"
+  SPAWN_PROMPT_ID="${SPAWN_SLUG}_${SPAWN_TS%%_*}"
+  SPAWN_SKILL_CODE="${VIBECRAFT_SKILL_CODE:-}"
+  SPAWN_LOOP_NR="${VIBECRAFT_LOOP_NR:-0}"
+  case "$SPAWN_LOOP_NR" in
+    ''|*[!0-9]*)
+      SPAWN_LOOP_NR=0
+      ;;
+  esac
+  SPAWN_RUN_ID="${VIBECRAFT_RUN_ID:-$(printf '%s-%03d' "${SPAWN_SKILL_CODE:-impl}" "$SPAWN_LOOP_NR")}"
 
   # Central store path (falls back to per-repo if no git remote)
   local store_base
@@ -166,12 +249,61 @@ spawn_prepare_paths() {
   SPAWN_LAUNCHER="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_SLUG}_${agent}_launch.sh"
   mkdir -p "$store_base/plans" "$SPAWN_REPORT_DIR" "$SPAWN_TMP_DIR"
   spawn_link_repo_artifacts "$store_base" "$SPAWN_ROOT"
+  export SPAWN_ROOT SPAWN_PLAN SPAWN_SLUG SPAWN_TS SPAWN_AGENT SPAWN_PROMPT_ID SPAWN_RUN_ID SPAWN_SKILL_CODE SPAWN_LOOP_NR
+  export SPAWN_PLAN_DIR SPAWN_REPORT_DIR SPAWN_TMP_DIR SPAWN_BASE SPAWN_REPORT SPAWN_TRANSCRIPT SPAWN_META SPAWN_LAUNCHER
+}
+
+spawn_scan_active() {
+  local reports_dir="$1"
+  local marker="${TMPDIR:-/tmp}/.vibecraft-scan-marker"
+  local recent_active=""
+
+  [[ -d "$reports_dir" ]] || {
+    touch "$marker"
+    return 0
+  }
+
+  if [[ -e "$marker" ]]; then
+    recent_active="$(
+      find "$reports_dir" -name '*.meta.json' -newer "$marker" 2>/dev/null | sort | while read -r f; do
+        python3 - "$f" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+if payload.get("status") in ("launching", "running"):
+    print(f"  {payload.get('run_id', '?'):10s} {payload.get('agent', '?'):8s} {payload.get('status', '?'):10s} {payload.get('mode', '?')}")
+PY
+      done
+    )"
+  else
+    recent_active="$(
+      find "$reports_dir" -name '*.meta.json' 2>/dev/null | sort | while read -r f; do
+        python3 - "$f" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+if payload.get("status") in ("launching", "running"):
+    print(f"  {payload.get('run_id', '?'):10s} {payload.get('agent', '?'):8s} {payload.get('status', '?'):10s} {payload.get('mode', '?')}")
+PY
+      done
+    )"
+  fi
+
+  touch "$marker"
+  [[ -n "$recent_active" ]] || return 0
+
+  printf '\033[2mRecent active VibeCraft runs:\n%s\033[0m\n' "$recent_active"
 }
 
 spawn_build_runtime_prompt() {
   local source_file="$1"
   local runtime_file="$2"
   local report_path="$3"
+  local agent="${4:-${SPAWN_AGENT:-agent}}"
 
   cat "$source_file" > "$runtime_file"
   cat >> "$runtime_file" <<EOF_PROMPT
@@ -182,6 +314,15 @@ $report_path
 Keep streaming useful progress to stdout while you work. If you cannot write a
 standalone report file, finish normally and let the transcript act as the fallback
 artifact.
+
+When writing your report file, include YAML frontmatter at the top:
+---
+agent: $agent
+run_id: ${SPAWN_RUN_ID:-unknown}
+prompt_id: ${SPAWN_PROMPT_ID:-unknown}
+started_at: (ISO 8601 when you began)
+model: (your model name)
+---
 EOF_PROMPT
 }
 
@@ -245,13 +386,18 @@ spawn_generate_launcher() {
   [[ -n "$command" ]] || spawn_die "Missing command payload for launcher."
 
   local q_meta q_report q_transcript q_common q_cmd
-  local q_root
+  local q_root q_agent q_prompt_id q_run_id q_loop_nr q_skill_code
   q_meta="$(printf '%q' "$meta_path")"
   q_report="$(printf '%q' "$report_path")"
   q_transcript="$(printf '%q' "$transcript_path")"
   q_common="$(printf '%q' "$common_path")"
   q_cmd="$(printf '%q' "$command")"
   q_root="$(printf '%q' "${SPAWN_ROOT:-}")"
+  q_agent="$(printf '%q' "${SPAWN_AGENT:-}")"
+  q_prompt_id="$(printf '%q' "${SPAWN_PROMPT_ID:-}")"
+  q_run_id="$(printf '%q' "${SPAWN_RUN_ID:-}")"
+  q_loop_nr="$(printf '%q' "${SPAWN_LOOP_NR:-0}")"
+  q_skill_code="$(printf '%q' "${SPAWN_SKILL_CODE:-}")"
 
   cat > "$launcher" <<EOF_LAUNCH
 #!/usr/bin/env bash
@@ -263,6 +409,11 @@ report=$q_report
 transcript=$q_transcript
 SPAWN_CMD=$q_cmd
 export SPAWN_ROOT=$q_root
+export SPAWN_AGENT=$q_agent
+export SPAWN_PROMPT_ID=$q_prompt_id
+export SPAWN_RUN_ID=$q_run_id
+export SPAWN_LOOP_NR=$q_loop_nr
+export SPAWN_SKILL_CODE=$q_skill_code
 
 rm -f "\$transcript" "\$report"
 EOF_LAUNCH

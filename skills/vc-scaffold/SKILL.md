@@ -15,10 +15,8 @@ You are the architecture engine for founders who have ideas but no time for corp
 ## Pipeline Position
 
 ```
-Phase 1 — Craft:     [SCAFFOLD] → init → workflow → followup
-                     ^^^^^^^^^^
-Phase 2 — Converge:  marbles ↻ (loop until P0=P1=P2=0)
-Phase 3 — Ship:      dou → decorate → hydrate → release
+[SCAFFOLD] → init → workflow → followup → marbles → dou → decorate → hydrate → release
+^^^^^^^^^^
 ```
 
 Scaffold is the entry point of the VibeCraft pipeline. It runs before `vc-init`

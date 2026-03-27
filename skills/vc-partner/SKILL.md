@@ -591,8 +591,8 @@ implementation agent carrying the planner report + chosen synthesis as context.
 
 ```bash
 # If resume helpers are available:
-zsh -ic 'codex-resume <session-uuid> "<continuation prompt>"'
-zsh -ic 'gemini-resume <session-uuid> "<continuation prompt>"'
+eval 'codex-resume <session-uuid> "<continuation prompt>"'
+eval 'gemini-resume <session-uuid> "<continuation prompt>"'
 
 # If not, use portable scripts with the synthesis as the new plan:
 bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement

@@ -64,8 +64,9 @@ done
 spawn_require_file "$plan_file"
 spawn_validate_runtime "$runtime"
 spawn_prepare_paths claude "$plan_file" "$root"
+spawn_scan_active "$SPAWN_REPORT_DIR"
 runtime_input="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_SLUG}_claude_prompt.md"
-spawn_build_runtime_prompt "$SPAWN_PLAN" "$runtime_input" "$SPAWN_REPORT"
+spawn_build_runtime_prompt "$SPAWN_PLAN" "$runtime_input" "$SPAWN_REPORT" claude
 spawn_write_meta "$SPAWN_META" "launching" "claude" "$mode" "$SPAWN_ROOT" "$SPAWN_PLAN" "$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$SPAWN_LAUNCHER" "$model"
 
 if (( !dry_run )); then

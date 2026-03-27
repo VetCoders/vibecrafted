@@ -1,6 +1,6 @@
 ---
 name: vc-release
-version: "0.1.0"
+version: 0.1.0
 description: >
   Ship code to market: release mechanics, financial awareness, legal basics,
   deployment reality. Trigger phrases: "release", "ship to market", "publish",
@@ -15,10 +15,8 @@ This is where "done in the repo" meets "done in the world." You're moving code f
 ## Pipeline Position
 
 ```
-Phase 1 — Craft:     scaffold → init → workflow → followup
-Phase 2 — Converge:  marbles ↻ (loop until P0=P1=P2=0)
-Phase 3 — Ship:      dou → decorate → hydrate → [RELEASE]
-                                                 ^^^^^^^^^
+scaffold → init → workflow → followup → marbles → dou → decorate → hydrate → [RELEASE]
+                                                                             ^^^^^^^^^
 ```
 
 Release is the final skill in the VibeCraft pipeline. It executes after:

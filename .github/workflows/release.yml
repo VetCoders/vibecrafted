@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          file_version="$(cat VERSION 2>/dev/null || echo unknown)"
+          if [[ "$tag" != "$file_version" ]]; then
+            echo "::warning::Tag ($tag) does not match VERSION file ($file_version)"
+          fi
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build release archive
+        run: |
+          archive_name="vibecrafted-${{ steps.version.outputs.version }}"
+          mkdir -p dist
+          tar -czf "dist/${archive_name}.tar.gz" \
+            --exclude='./presence' \
+            --exclude='./.github' \
+            --exclude='./.git' \
+            --exclude='./node_modules' \
+            --exclude='./output' \
+            --exclude='./.vibecrafted' \
+            --exclude='./.DS_Store' \
+            -C . .
+          cd dist
+          sha256sum "${archive_name}.tar.gz" > "${archive_name}.sha256"
+          echo "archive=${archive_name}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog entry
+        id: changelog
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          if [[ -f CHANGELOG.md ]]; then
+            # Extract section between this version header and the next
+            body="$(awk "/^## .*${version//./\\.}/{found=1; next} /^## /{if(found) exit} found{print}" CHANGELOG.md)"
+          fi
+          if [[ -z "${body:-}" ]]; then
+            body="Release ${version}"
+          fi
+          # Write multiline body to output
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "$body"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: VibeCraft ${{ steps.version.outputs.tag }}
+          body: ${{ steps.changelog.outputs.body }}
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}

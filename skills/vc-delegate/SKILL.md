@@ -320,10 +320,8 @@ Switch to `vc-agents` when:
 ## Integration with VibeCraft Pipeline
 
 ```
-Phase 1 — Craft:     scaffold → init → workflow → followup
+scaffold → init → workflow → followup → marbles → dou → decorate → hydrate → release
                                   (uses vc-delegate or vc-agents)
-Phase 2 — Converge:  marbles ↻ (loop until P0=P1=P2=0)
-Phase 3 — Ship:      dou → decorate → hydrate → release
 ```
 
 The pipeline accepts both skills, but they are not equal defaults.

@@ -223,10 +223,8 @@ Run gates:
 ## Pipeline Position
 
 ```
-Phase 1 — Craft:     scaffold → init → workflow → [FOLLOWUP]
-                                                   ^^^^^^^^^^
-Phase 2 — Converge:  marbles ↻ (loop until P0=P1=P2=0)
-Phase 3 — Ship:      dou → decorate → hydrate → release
+scaffold → init → workflow → [FOLLOWUP] → marbles → dou → decorate → hydrate → release
+                             ^^^^^^^^^^
 ```
 
 Followup sits at the end of the Craft phase. Its findings determine whether

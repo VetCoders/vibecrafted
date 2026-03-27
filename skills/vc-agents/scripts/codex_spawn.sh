@@ -62,6 +62,9 @@ done
 spawn_require_file "$plan_file"
 spawn_validate_runtime "$runtime"
 spawn_prepare_paths codex "$plan_file" "$root"
+spawn_scan_active "$SPAWN_REPORT_DIR"
+runtime_input="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_SLUG}_codex_prompt.md"
+spawn_build_runtime_prompt "$SPAWN_PLAN" "$runtime_input" "$SPAWN_REPORT" codex
 spawn_write_meta "$SPAWN_META" "launching" "codex" "$mode" "$SPAWN_ROOT" "$SPAWN_PLAN" "$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$SPAWN_LAUNCHER"
 
 if (( !dry_run )); then
@@ -69,13 +72,13 @@ if (( !dry_run )); then
 fi
 
 qroot="$(printf '%q' "$SPAWN_ROOT")"
-qplan="$(printf '%q' "$SPAWN_PLAN")"
+qruntime="$(printf '%q' "$runtime_input")"
 qreport="$(printf '%q' "$SPAWN_REPORT")"
 qtranscript="$(printf '%q' "$SPAWN_TRANSCRIPT")"
 
 # Codex --json emits JSONL events. jq filter extracts readable text + tool tags + session ID.
 qfilter="$(printf '%q' "$SCRIPT_DIR/codex_stream_filter.jq")"
-launch_cmd="set -o pipefail && cd $qroot && codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qplan 2>&1 | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript ; echo ; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true"
+launch_cmd="set -o pipefail && cd $qroot && codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript ; echo ; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true"
 
 spawn_generate_launcher "$SPAWN_LAUNCHER" \
   "$SPAWN_META" \

@@ -74,7 +74,7 @@ If repo-view flagged issues (dead exports, cycles, twins, hotspots):
 ```markdown
 # Examination: <slug>
 Date: <YYYY-MM-DD>
-Pipeline: .ai-agents/pipeline/<slug>/
+Pipeline: .vibecrafted/pipeline/<slug>/
 
 ## Repo Health
 - Files: N | LOC: N | Languages: Rust, Swift, ...

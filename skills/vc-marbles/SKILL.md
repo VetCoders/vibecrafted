@@ -364,11 +364,8 @@ At this point, DoU transforms into DoD:
 ## Integration with VibeCraft Pipeline
 
 ```
-Phase 1 — Craft:     scaffold → init → workflow → followup
-                                                     ↓
-Phase 2 — Converge:                              marbles ↻ (loop until P0=P1=P2=0)
-                                                     ↓
-Phase 3 — Ship:                                  dou → decorate → hydrate → release
+scaffold → init → workflow → followup → [MARBLES] ↻ → dou → decorate → hydrate → release
+                                         ^^^^^^^^^^^^^
 ```
 
 Marbles is the gate between building and shipping.

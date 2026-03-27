@@ -42,6 +42,13 @@ and hybrid systems still need a representation surface:
 If a product can only be understood by opening the repo or talking to its creators,
 that is Definition of Undone.
 
+## Pipeline Position
+
+```
+scaffold → init → workflow → followup → marbles → [DOU] → decorate → hydrate → release
+                                                  ^^^^^
+```
+
 ## When To Use
 
 - Before any launch, marketplace submission, or PR announcement

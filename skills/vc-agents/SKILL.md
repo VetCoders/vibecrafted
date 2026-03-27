@@ -3,7 +3,7 @@ name: vc-agents
 version: 1.4.1
 description: >
   Spawn external subagents via the VibeCraft method using the operator-facing
-  helper launchers in an interactive `zsh -ic` shell. Use when the user wants
+  helper launchers in an interactive `eval` shell. Use when the user wants
   full isolation, visible Terminal agents, durable artifacts in the canonical
   `~/.vibecrafted/artifacts/` store,
   and real delegated implementation instead of in-thread analysis. Trigger
@@ -70,7 +70,7 @@ Then collect their results in `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>
    - Give a clear `[ ]` todo list.
    - Include acceptance criteria and required checks.
    - End with a short call to action.
-4. Spawn subagents through the helper launchers in an interactive `zsh -ic` shell.
+4. Spawn subagents through the helper launchers in an interactive `eval` shell.
 5. Observe progress through artifacts and transcripts.
 6. Synthesize results back into the main thread.
 
@@ -158,28 +158,28 @@ Living tree note:
 
 ## Spawn commands
 
-The only correct operator-facing launch path is an interactive shell helper invocation via `zsh -ic`.
+The only correct operator-facing launch path is an eval helper invocation via `eval`.
 This guarantees the user's real shell environment, aliases, and helper wrappers are loaded.
 
 ### Codex
 
 ```bash
 PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-zsh -ic "codex-implement $PLAN"
+eval "codex-implement $PLAN"
 ```
 
 ### Claude
 
 ```bash
 PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-zsh -ic "claude-implement $PLAN"
+eval "claude-implement $PLAN"
 ```
 
 ### Gemini
 
 ```bash
 PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-zsh -ic "gemini-implement $PLAN"
+eval "gemini-implement $PLAN"
 ```
 
 If these helper wrappers are unavailable, stop pretending spawn is correctly configured and say so explicitly.
@@ -227,3 +227,4 @@ Keep the standard VibeCraft quality bar:
 Spawn is not for outsourcing thought.
 Spawn is for deploying equally capable front-line agents through a strict, canonical launch path.
 Use them to implement, not merely to comment on implementation.
+lementation.

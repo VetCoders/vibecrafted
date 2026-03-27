@@ -53,6 +53,12 @@ assert_contains() {
   grep -Fq "$pattern" "$file" || die "Expected '$pattern' in $file"
 }
 
+assert_matches() {
+  local file="$1"
+  local pattern="$2"
+  grep -Eq "$pattern" "$file" || die "Expected regex '$pattern' in $file"
+}
+
 assert_not_contains() {
   local file="$1"
   local pattern="$2"
@@ -162,6 +168,8 @@ done
 cat >/dev/null || true
 if (( json_mode )); then
   printf '{"type":"thread.started","thread_id":"fake-session-001"}\n'
+  printf '{"type":"item.started","item":{"type":"command_execution","command":"ls"}}\n'
+  printf '{"type":"item.completed","item":{"type":"command_execution","output":"alpha\\nbeta\\n"}}\n'
   printf '{"type":"turn.started"}\n'
   printf '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex Report: spawn ok"}}\n'
   printf '{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":10}}\n'
@@ -169,14 +177,28 @@ else
   echo 'fake codex stdout'
 fi
 if [[ -n "$report" ]]; then
-  printf '# Fake Codex Report\n\nspawn ok\n' > "$report"
+  cat > "$report" <<EOF_REPORT
+---
+agent: codex
+run_id: ${SPAWN_RUN_ID:-missing-run-id}
+prompt_id: ${SPAWN_PROMPT_ID:-missing-prompt-id}
+started_at: 2026-03-27T17:47:00Z
+model: fake-codex
+---
+
+# Fake Codex Report
+
+spawn ok
+EOF_REPORT
 fi
 EOF_CODEX
 
 cat > "$fake_bin/claude" <<'EOF_CLAUDE'
 #!/usr/bin/env bash
 set -euo pipefail
-echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fake claude stream"}]}}'
+echo '{"type":"system","subtype":"init","session_id":"fake-claude-001"}'
+echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read"},{"type":"text","text":"fake claude stream"}]}}'
+echo '{"type":"result","result":"done"}'
 EOF_CLAUDE
 
 cat > "$fake_bin/gemini" <<'EOF_GEMINI'
@@ -191,6 +213,7 @@ while [[ $# -gt 0 ]]; do
 done
 if [[ "$output_format" == "stream-json" ]]; then
   printf '{"type":"init","session_id":"fake-gemini-001","model":"fake-model"}\n'
+  printf '{"type":"tool_use","name":"Read"}\n'
   printf '{"type":"message","content":[{"type":"text","text":"fake gemini stdout"}]}\n'
   printf '{"type":"result","text":"done","usage":{"input_tokens":50,"output_tokens":5}}\n'
 else
@@ -237,18 +260,64 @@ with open(sys.argv[1], 'r', encoding='utf-8') as fh:
     print(json.load(fh)['report'])
 PY
 )"
+codex_transcript="$(python3 - "$codex_meta" <<'PY'
+import json, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as fh:
+    print(json.load(fh)['transcript'])
+PY
+)"
+claude_transcript="$(python3 - "$claude_meta" <<'PY'
+import json, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as fh:
+    print(json.load(fh)['transcript'])
+PY
+)"
+gemini_transcript="$(python3 - "$gemini_meta" <<'PY'
+import json, sys
+with open(sys.argv[1], 'r', encoding='utf-8') as fh:
+    print(json.load(fh)['transcript'])
+PY
+)"
 
 require_file "$codex_report"
 require_file "$claude_report"
 require_file "$gemini_report"
+require_file "$codex_transcript"
+require_file "$claude_transcript"
+require_file "$gemini_transcript"
 assert_contains "$codex_report" 'Fake Codex Report'
+assert_contains "$codex_report" 'run_id: impl-000'
+assert_contains "$codex_report" 'prompt_id: test_20260327'
 assert_contains "$claude_report" 'Claude completed without writing a standalone report file.'
 assert_contains "$gemini_report" 'fake gemini'
+assert_matches "$codex_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} \$ ls\]'
+assert_matches "$codex_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] tokens: 100 in / 10 out'
+assert_matches "$claude_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] session: fake-claude-001'
+assert_matches "$claude_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} Read\]'
+assert_matches "$gemini_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] session: fake-gemini-001'
+assert_matches "$gemini_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} Read\]'
+
+jq -e '.prompt_id == "test_20260327"' "$codex_meta" >/dev/null || die "codex meta missing prompt_id"
+jq -e '.run_id == "impl-000"' "$codex_meta" >/dev/null || die "codex meta missing default run_id"
+jq -e '.loop_nr == 0' "$codex_meta" >/dev/null || die "codex meta missing loop_nr"
+jq -e '.framework_version == "1.0.2"' "$codex_meta" >/dev/null || die "codex meta missing framework_version"
+jq -e '.completed_at != null and .duration_s != null' "$codex_meta" >/dev/null || die "codex meta missing completion telemetry"
 
 log "helper bash smoke"
 env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" \
   bash -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
   | grep -Fq 'helper-ok' || die 'bash helper layer not loaded'
+
+log "skill helper telemetry smoke"
+skill_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" VETCODERS_SPAWN_RUNTIME=headless \
+  bash -c 'cd "$1"; source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; codex-marbles telemetry smoke' _ "$work_repo")"
+skill_report="$(printf '%s\n' "$skill_output" | sed -n 's/^Agent launched\. Report will land at: //p' | tail -n 1)"
+[[ -n "$skill_report" ]] || die "skill helper did not report output path"
+skill_meta="${skill_report%.md}.meta.json"
+require_file "$skill_meta"
+[[ "$(wait_for_meta "$skill_meta")" == "completed" ]] || die "skill helper spawn did not complete"
+jq -e '.skill_code == "marb"' "$skill_meta" >/dev/null || die "skill helper did not wire skill_code"
+jq -e '.run_id == "marb-000"' "$skill_meta" >/dev/null || die "skill helper did not wire run_id"
 
 # If zsh is available, also smoke test zsh loading via legacy compat symlink
 if command -v zsh >/dev/null 2>&1; then

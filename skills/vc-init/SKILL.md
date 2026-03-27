@@ -1,6 +1,6 @@
 ---
 name: vc-init
-version: "2.2.0"
+version: 2.2.0
 description: >-
   This skill should be used when the user asks to "init", "initialize session",
   "give context to agent", "prepare agent", "bootstrap agent", "daj kontekst",
@@ -21,6 +21,13 @@ Bootstrap an agent session with three layers of context:
 - **Verify**: Whether what you see is actually true (run quality gates, confirm commands work)
 
 No layer is optional by default. Skip only when a tool is genuinely unavailable.
+
+## Pipeline Position
+
+```
+scaffold → [INIT] → workflow → followup → marbles → dou → decorate → hydrate → release
+           ^^^^^^
+```
 
 ## When To Use
 

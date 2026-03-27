@@ -2,19 +2,22 @@
 # Converts structured --json events to readable terminal output
 # Event types: thread.started, turn.started/completed/failed, item.started/completed
 
+def stamp: (now | strftime("%H:%M:%S"));
+def tool_tag($name): "\u001b[36m[" + stamp + " " + $name + "]\u001b[0m";
+
 if .type == "thread.started" then
-  "\u001b[33msession: " + (.thread_id // "?") + "\u001b[0m\n"
+  "\u001b[33m[" + stamp + "] session: " + (.thread_id // "?") + "\u001b[0m\n"
 
 elif .type == "item.started" then
   (.item // {}) as $i |
   if $i.type == "command_execution" then
-    "\n\u001b[36m[$ " + ($i.command // "cmd") + "]\u001b[0m\n"
+    "\n" + tool_tag("$ " + ($i.command // "cmd")) + "\n"
   elif $i.type == "mcp_tool_call" then
-    "\u001b[36m[mcp:" + ($i.name // "?") + "]\u001b[0m "
+    tool_tag("mcp:" + ($i.name // "?")) + " "
   elif $i.type == "web_search" then
-    "\u001b[36m[search]\u001b[0m "
+    tool_tag("search") + " "
   elif $i.type == "plan_update" then
-    "\u001b[35m[plan]\u001b[0m "
+    "\u001b[35m[" + stamp + " plan]\u001b[0m "
   else empty end
 
 elif .type == "item.completed" then
@@ -34,18 +37,18 @@ elif .type == "item.completed" then
       end
     else empty end
   elif $i.type == "file_changes" then
-    "\u001b[32m[write: " + ($i.path // "?") + "]\u001b[0m\n"
+    "\u001b[32m[" + stamp + " write: " + ($i.path // "?") + "]\u001b[0m\n"
   else empty end
 
 elif .type == "turn.completed" then
   (.usage // {}) |
   if .input_tokens then
-    "\n\u001b[2mtokens: " + (.input_tokens | tostring) + " in"
+    "\n\u001b[2m[" + stamp + "] tokens: " + (.input_tokens | tostring) + " in"
     + (if .cached_input_tokens then " (" + (.cached_input_tokens | tostring) + " cached)" else "" end)
     + " / " + (.output_tokens | tostring) + " out\u001b[0m\n"
   else empty end
 
 elif .type == "turn.failed" then
-  "\n\u001b[31m[error] " + (.error // .message // "turn failed") + "\u001b[0m\n"
+  "\n\u001b[31m[" + stamp + " error] " + (.error // .message // "turn failed") + "\u001b[0m\n"
 
 else empty end

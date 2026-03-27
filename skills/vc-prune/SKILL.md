@@ -457,6 +457,10 @@ Then include:
 
 ## Integration with VibeCraft Pipeline
 
+```
+scaffold → init → workflow → followup → marbles → dou → decorate → hydrate → release
+```
+
 Use this flow for major cleanup:
 
 ```text
