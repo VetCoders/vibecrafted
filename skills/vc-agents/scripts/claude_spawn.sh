@@ -15,7 +15,7 @@ EOF_USAGE
 
 mode="implement"
 runtime="terminal"
-model="${CLAUDE_SPAWN_MODEL:-claude-opus-4-6}"
+model="${CLAUDE_SPAWN_MODEL:-}"
 root=""
 plan_file=""
 dry_run=0
@@ -96,7 +96,9 @@ $transcript
 TXT
   fi'
 
-launch_cmd="set -o pipefail && cd $qroot && prompt=\$(cat $qruntime) && claude -p --output-format stream-json --include-partial-messages --verbose --dangerously-skip-permissions --model $qmodel \"\$prompt\" 2>&1 | tee -a $qtranscript"
+model_flag=""
+[[ -n "$model" ]] && model_flag="--model $qmodel"
+launch_cmd="set -o pipefail && cd $qroot && prompt=\$(cat $qruntime) && claude -p --output-format stream-json --include-partial-messages --verbose --dangerously-skip-permissions $model_flag \"\$prompt\" 2>&1 | tee -a $qtranscript"
 
 spawn_generate_launcher "$SPAWN_LAUNCHER" \
   "$SPAWN_META" \
@@ -110,6 +112,6 @@ spawn_generate_launcher "$SPAWN_LAUNCHER" \
 
 chmod +x "$SPAWN_LAUNCHER"
 spawn_print_launch claude "$mode" "$runtime"
-printf '  model:  %s\n' "$model"
+[[ -n "$model" ]] && printf '  model:  %s\n' "$model" || printf '  model:  (CLI default)\n'
 spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run"
 printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"

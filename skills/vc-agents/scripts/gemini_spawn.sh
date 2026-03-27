@@ -15,7 +15,7 @@ EOF_USAGE
 
 mode="implement"
 runtime="terminal"
-model="${GEMINI_MODEL:-gemini-3.1-pro-preview}"
+model="${GEMINI_MODEL:-}"
 root=""
 plan_file=""
 dry_run=0
@@ -78,13 +78,6 @@ qreport="$(printf '%q' "$SPAWN_REPORT")"
 qtranscript="$(printf '%q' "$SPAWN_TRANSCRIPT")"
 qmodel="$(printf '%q' "$model")"
 
-gemini_pre_hook='
-  if [[ -n "${GEMINI_API_KEY:-}" ]]; then
-    printf "%s\n" "[INFO] GEMINI_API_KEY from env." | tee -a "$transcript"
-  else
-    printf "%s\n" "[INFO] Using Gemini CLI account auth." | tee -a "$transcript"
-  fi'
-
 gemini_success_hook='
   if [[ ! -s "$report" && -s "$transcript" ]]; then
     cp "$transcript" "$report"
@@ -95,7 +88,9 @@ gemini_failure_hook='
     cp "$transcript" "$report"
   fi'
 
-launch_cmd="set -o pipefail && cd $qroot && prompt=\$(cat $qruntime) && gemini -p \"\$prompt\" -y --model $qmodel -o text 2>&1 | tee -a $qtranscript"
+model_flag=""
+[[ -n "$model" ]] && model_flag="--model $qmodel"
+launch_cmd="set -o pipefail && cd $qroot && prompt=\$(cat $qruntime) && gemini -p \"\$prompt\" -y $model_flag -o text 2>&1 | tee -a $qtranscript"
 
 spawn_generate_launcher "$SPAWN_LAUNCHER" \
   "$SPAWN_META" \
@@ -109,6 +104,6 @@ spawn_generate_launcher "$SPAWN_LAUNCHER" \
 
 chmod +x "$SPAWN_LAUNCHER"
 spawn_print_launch gemini "$mode" "$runtime"
-printf '  model:  %s\n' "$model"
+[[ -n "$model" ]] && printf '  model:  %s\n' "$model" || printf '  model:  (CLI default)\n'
 spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run"
 printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"

@@ -55,6 +55,26 @@ From the founder's idea + the codebase reality, ask yourself:
 
 Write these down. They shape everything.
 
+### Step 2.5: Define Product Identity
+
+Before breaking down tasks, establish how the product LOOKS and FEELS.
+This is an architectural decision, not a decoration afterthought.
+
+Define:
+- **Material metaphor**: What physical materials represent this product? (steel=precision, wood=craft, stone=foundation, copper=warmth, glass=transparency)
+- **Color strategy**: 3-5 semantic roles (accent, surface, text, muted, success/warning/error)
+- **Typography strategy**: Mono for tools/chrome, serif for narrative/craft, sans for apps/dashboards
+- **Tone**: Surowy? Ciepły? Techniczny? Przyjazny? Clinical?
+- **Dark/light**: Based on product context (dev tools → dark, consumer → light, both → auto)
+
+This feeds into:
+- DoU presence generation (if no representation surface exists)
+- Decorate coherence audit (what IS the system to audit against?)
+- Hydrate marketplace packaging (consistent brand across surfaces)
+
+Output: Add a "Visual Identity" section to SCAFFOLD.md with the above decisions.
+Do NOT design the UI. Define the LANGUAGE the UI speaks.
+
 ### Step 3: Propose Architecture
 
 Architecture is about **boundaries** and **decisions**:

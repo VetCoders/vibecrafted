@@ -108,5 +108,6 @@ install_one "$repo_root/config/atuin/config.toml" "${XDG_CONFIG_HOME:-$HOME/.con
 install_one "$repo_root/config/zellij/config.kdl" "${XDG_CONFIG_HOME:-$HOME/.config}/zellij/config.kdl"
 install_one "$repo_root/config/zellij/layouts/research-grid.kdl" "${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts/research-grid.kdl"
 install_one "$repo_root/config/zellij/layouts/implement-dual.kdl" "${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts/implement-dual.kdl"
+install_one "$repo_root/config/zellij/layouts/vibecraft.kdl" "${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts/vibecraft.kdl"
 
 printf 'Done.\n'

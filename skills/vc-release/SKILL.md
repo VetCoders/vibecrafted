@@ -120,6 +120,13 @@ This is where most people get lost. Let's be concrete.
 - API docs generated? Rebuild them. Broken examples are reputation damage.
 - Quickstart example: Run it cold. If it fails, fix it or update it.
 
+**Brand coherence check:**
+- Does the product look like a product or like a repo?
+- Is there a representation surface (./presence/, landing page, or equivalent)?
+- Do all public surfaces use consistent palette, fonts, tone?
+- Does the install experience match the product's visual identity?
+- If the product appears in another product's navbar (like loctree), does it visually belong?
+
 **Users can actually onboard:**
 - One person outside your team: ask them to use your product cold.
 - Where do they get stuck? That's your fix list.

@@ -1,36 +1,34 @@
 [tools]
-# Keep the substrate small and explicit. Agent CLIs remain external for now,
-# but repo tasks and helpers should run against a predictable Python/Node base.
 python = "3.12"
-node = "22"
+node = "lts"
 
 [env]
-VETCODERS_INSTALLER = "scripts/vetcoders_install.py"
+VIBECRAFTED_HOME = "{{env.HOME}}/.vibecrafted"
 
 [tasks.install]
-description = "Install skills plus shell helpers"
-run = "python3 \"$MISE_PROJECT_ROOT/$VETCODERS_INSTALLER\" install --source \"$MISE_PROJECT_ROOT\" --with-shell"
+description = "Run VibeCraft interactive installer"
+run = "python3 \"$MISE_PROJECT_ROOT/scripts/setup_vibecraft.py\""
 
 [tasks.skills]
-description = "Install skills without shell helpers"
-run = "python3 \"$MISE_PROJECT_ROOT/$VETCODERS_INSTALLER\" install --source \"$MISE_PROJECT_ROOT\""
+description = "Install skills only"
+run = "python3 \"$MISE_PROJECT_ROOT/scripts/vetcoders_install.py\" install --source \"$MISE_PROJECT_ROOT\""
 
 [tasks.doctor]
-description = "Verify install health, shell helpers, and zsh -ic smoke path"
-run = "python3 \"$MISE_PROJECT_ROOT/$VETCODERS_INSTALLER\" doctor"
+description = "Run VibeCraft health check"
+run = "python3 \"$MISE_PROJECT_ROOT/scripts/vetcoders_install.py\" doctor"
 
 [tasks.list]
 description = "List bundle contents and runtime foundations"
-run = "python3 \"$MISE_PROJECT_ROOT/$VETCODERS_INSTALLER\" list --source \"$MISE_PROJECT_ROOT\""
+run = "python3 \"$MISE_PROJECT_ROOT/scripts/vetcoders_install.py\" list --source \"$MISE_PROJECT_ROOT\""
 
 [tasks.helpers]
 description = "Install only the optional zsh helper layer"
-run = "bash \"$MISE_PROJECT_ROOT/vc-agents/scripts/install-shell.sh\" --source \"$MISE_PROJECT_ROOT\""
+run = "bash \"$MISE_PROJECT_ROOT/skills/vc-agents/scripts/install-shell.sh\" --source \"$MISE_PROJECT_ROOT\""
 
 [tasks.frontier-config]
 description = "Install repo-owned Starship, Atuin, and Zellij presets"
-run = "bash \"$MISE_PROJECT_ROOT/vc-agents/scripts/install-frontier-config.sh\" --source \"$MISE_PROJECT_ROOT\""
+run = "bash \"$MISE_PROJECT_ROOT/skills/vc-agents/scripts/install-frontier-config.sh\" --source \"$MISE_PROJECT_ROOT\""
 
 [tasks.frontier-config-dry-run]
 description = "Preview frontier config installation"
-run = "bash \"$MISE_PROJECT_ROOT/vc-agents/scripts/install-frontier-config.sh\" --source \"$MISE_PROJECT_ROOT\" --dry-run"
+run = "bash \"$MISE_PROJECT_ROOT/skills/vc-agents/scripts/install-frontier-config.sh\" --source \"$MISE_PROJECT_ROOT\" --dry-run"

@@ -187,6 +187,26 @@ If all answers are "no", the product is commercially and communicatively invisib
 Mark as [MISSING] Presence / Representation.
 ```
 
+**If [MISSING] Presence / Representation — GENERATE a minimal presence:**
+
+Do NOT just mark it missing and move on. A product without a face is invisible.
+
+Generate `./presence/` with three files:
+- `index.html` — product name, one-line description, what it does, install command, key features (3-5), links (GitHub, docs, crates.io/npm/pypi)
+- `styles.css` — dark theme, monospace chrome, clean typography, material palette if defined in scaffold, otherwise neutral steel/stone
+- `app.js` — copy button for install command, smooth scroll, fade-up observer. Nothing more.
+
+Design rules:
+- Minimal but not poor. A business card that earns trust.
+- No frameworks, no build step. Raw HTML+CSS+JS.
+- Must look professional next to any navbar it might sit in.
+- Must be deployable as GitHub Pages with zero configuration.
+- Must have: meta tags (OG, Twitter), favicon, robots.txt, sitemap.xml
+- Must NOT have: animations beyond fade-up, particle effects, gradients, glow
+
+This is how ./presence/ directories are born. DoU creates them when nothing exists.
+Decorate polishes them later. Hydrate packages them for distribution.
+
 ### Phase 4: Commercial Surface Audit
 
 The "stranger to customer" path test:

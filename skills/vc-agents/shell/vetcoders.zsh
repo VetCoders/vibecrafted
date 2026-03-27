@@ -48,15 +48,28 @@ _vetcoders_default_runtime() {
 }
 
 _vetcoders_frontier_root() {
+  local root
+  root="${VIBECRAFT_ROOT:-}"
+  if [[ -n "$root" && -d "$root/config/atuin" && -d "$root/config/zellij" && -f "$root/config/starship.toml" ]]; then
+    printf '%s/config' "$root"
+    return 0
+  fi
+
   local repo_root
   repo_root="$(_vetcoders_repo_root)"
-  if [[ -d "$repo_root/config/atuin" && -f "$repo_root/config/starship.toml" ]]; then
+  if [[ -d "$repo_root/config/atuin" && -d "$repo_root/config/zellij" && -f "$repo_root/config/starship.toml" ]]; then
     printf '%s/config' "$repo_root"
     return 0
   fi
 
+  local crafted_sidecar="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/config"
+  if [[ -d "$crafted_sidecar/atuin" && -d "$crafted_sidecar/zellij" && -f "$crafted_sidecar/starship.toml" ]]; then
+    printf '%s' "$crafted_sidecar"
+    return 0
+  fi
+
   local sidecar="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier"
-  if [[ -d "$sidecar" ]]; then
+  if [[ -d "$sidecar/atuin" && -d "$sidecar/zellij" && -f "$sidecar/starship.toml" ]]; then
     printf '%s' "$sidecar"
     return 0
   fi
@@ -64,6 +77,21 @@ _vetcoders_frontier_root() {
   echo "VetCoders frontier config not found. Run vc-frontier-install from the repo checkout." >&2
   return 1
 }
+
+_vetcoders_load_frontier_sidecars() {
+  local root
+  root="$(_vetcoders_frontier_root 2>/dev/null)" || return 0
+
+  if [[ -z "${STARSHIP_CONFIG:-}" ]] && command -v starship >/dev/null 2>&1 && [[ -f "$root/starship.toml" ]]; then
+    export STARSHIP_CONFIG="$root/starship.toml"
+  fi
+
+  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]] && command -v zellij >/dev/null 2>&1 && [[ -d "$root/zellij" ]]; then
+    export ZELLIJ_CONFIG_DIR="$root/zellij"
+  fi
+}
+
+_vetcoders_load_frontier_sidecars
 
 _vetcoders_prompt_file() {
   local agent="$1"
@@ -388,7 +416,7 @@ vc-frontier-paths() {
   root="$(_vetcoders_frontier_root)" || return 1
   printf 'STARSHIP_CONFIG=%s/starship.toml\n' "$root"
   printf 'ATUIN_CONFIG=%s/atuin/config.toml\n' "$root"
-  printf 'ZELLIJ_CONFIG=%s/zellij/config.kdl\n' "$root"
+  printf 'ZELLIJ_CONFIG_DIR=%s/zellij\n' "$root"
 }
 
 vc-frontier-install() {

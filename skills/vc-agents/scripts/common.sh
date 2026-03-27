@@ -185,6 +185,45 @@ artifact.
 EOF_PROMPT
 }
 
+spawn_frontier_root() {
+  local candidate script_root
+  script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd || true)"
+
+  for candidate in \
+    "${VIBECRAFT_ROOT:-}" \
+    "${SPAWN_ROOT:-}" \
+    "$script_root" \
+    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current"
+  do
+    [[ -n "$candidate" ]] || continue
+    if [[ -d "$candidate/config/atuin" && -d "$candidate/config/zellij" && -f "$candidate/config/starship.toml" ]]; then
+      printf '%s/config\n' "$candidate"
+      return 0
+    fi
+  done
+
+  candidate="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier"
+  if [[ -d "$candidate/atuin" && -d "$candidate/zellij" && -f "$candidate/starship.toml" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+
+  return 1
+}
+
+spawn_export_frontier_sidecars() {
+  local root
+  root="$(spawn_frontier_root)" || return 0
+
+  if [[ -z "${STARSHIP_CONFIG:-}" ]] && command -v starship >/dev/null 2>&1 && [[ -f "$root/starship.toml" ]]; then
+    export STARSHIP_CONFIG="$root/starship.toml"
+  fi
+
+  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]] && command -v zellij >/dev/null 2>&1 && [[ -d "$root/zellij" ]]; then
+    export ZELLIJ_CONFIG_DIR="$root/zellij"
+  fi
+}
+
 # spawn_gemini_api_key — REMOVED
 # Gemini CLI handles its own auth (OAuth or GEMINI_API_KEY from env).
 # The keychain prober was overriding OAuth sessions and causing auth failures.
@@ -206,11 +245,13 @@ spawn_generate_launcher() {
   [[ -n "$command" ]] || spawn_die "Missing command payload for launcher."
 
   local q_meta q_report q_transcript q_common q_cmd
+  local q_root
   q_meta="$(printf '%q' "$meta_path")"
   q_report="$(printf '%q' "$report_path")"
   q_transcript="$(printf '%q' "$transcript_path")"
   q_common="$(printf '%q' "$common_path")"
   q_cmd="$(printf '%q' "$command")"
+  q_root="$(printf '%q' "${SPAWN_ROOT:-}")"
 
   cat > "$launcher" <<EOF_LAUNCH
 #!/usr/bin/env bash
@@ -221,6 +262,7 @@ meta=$q_meta
 report=$q_report
 transcript=$q_transcript
 SPAWN_CMD=$q_cmd
+export SPAWN_ROOT=$q_root
 
 rm -f "\$transcript" "\$report"
 EOF_LAUNCH
@@ -230,8 +272,7 @@ EOF_LAUNCH
   fi
 
   cat >> "$launcher" <<'EOF_LAUNCH'
-export STARSHIP_CONFIG="${VIBECRAFT_ROOT:-$HOME/Libraxis/vetcoders-skills}/config/starship.toml"
-export ZELLIJ_CONFIG_DIR="${VIBECRAFT_ROOT:-$HOME/Libraxis/vetcoders-skills}/config/zellij"
+spawn_export_frontier_sidecars
 
 if zsh -ic "$SPAWN_CMD"; then
 EOF_LAUNCH
@@ -288,10 +329,26 @@ PY
 EOF_APPLE
 }
 
+spawn_in_zellij_pane() {
+  local launcher="$1"
+  local pane_name="${2:-agent}"
+  if [[ -n "${ZELLIJ:-}" ]] && command -v zellij >/dev/null 2>&1; then
+    zellij run --name "$pane_name" -- bash "$launcher"
+    return 0
+  fi
+  return 1
+}
+
 spawn_launch() {
   local launcher="$1"
   local runtime="${2:-terminal}"
   local dry_run="${3:-0}"
+  local pane_name="${4:-$(basename "$launcher" .sh)}"
+
+  pane_name="$(printf '%s' "$pane_name" | tr ' ' '-' | tr -cs '[:alnum:]._-' '-')"
+  pane_name="${pane_name#-}"
+  pane_name="${pane_name%-}"
+  [[ -n "$pane_name" ]] || pane_name="agent"
 
   if (( dry_run )); then
     printf 'Dry run mode: launcher generated only: %s\n' "$launcher"
@@ -300,7 +357,9 @@ spawn_launch() {
 
   case "$runtime" in
     terminal|visible)
-      if command -v osascript >/dev/null 2>&1; then
+      if spawn_in_zellij_pane "$launcher" "$pane_name"; then
+        :
+      elif command -v osascript >/dev/null 2>&1; then
         spawn_open_terminal "$launcher"
       else
         printf 'Runtime fallback: visible Terminal requested, but osascript is unavailable. Running headless.\n' >&2
