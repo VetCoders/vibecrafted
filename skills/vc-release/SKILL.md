@@ -12,9 +12,26 @@ triggers:
 version: "0.1.0"
 ---
 
-# vc-release: Phase 5 — Actual Shipping
+# vc-release: Ship to Market
 
 This is where "done in the repo" meets "done in the world." You're moving code from your machine to people's machines. That's not abstract—it's financial, legal, and operational reality.
+
+## Pipeline Position
+
+```
+Phase 1 — Craft:     scaffold → init → workflow → followup
+Phase 2 — Converge:  marbles ↻ (loop until P0=P1=P2=0)
+Phase 3 — Ship:      dou → decorate → hydrate → [RELEASE]
+                                                 ^^^^^^^^^
+```
+
+Release is the final skill in the VibeCraft pipeline. It executes after:
+- `vc-dou` has verified the product surface is complete
+- `vc-decorate` has ensured visual coherence
+- `vc-hydrate` has packaged distribution artifacts, SEO, and onboarding
+
+Release takes those hydrated artifacts and pushes them into the world:
+tags, changelogs, registry publishes, deployment, and go-to-market.
 
 ## Release Mechanics: The Real Work
 
@@ -160,3 +177,18 @@ This is where most people get lost. Let's be concrete.
 Release is not the end. It's the beginning of learning from real users. But the mechanics above—tags, changelogs, legal clarity, deployment reality—separate projects that sustain from projects that die.
 
 Ship it clean. Ship it documented. Ship it with a plan for what comes next.
+
+## Anti-Patterns
+
+- Publishing without running `vc-dou` first (shipping an incomplete product surface)
+- Skipping `vc-hydrate` artifacts (no install path, no SEO, no onboarding)
+- Tagging without a changelog (users cannot evaluate the upgrade)
+- Deploying without post-release verification (install path test is mandatory)
+- Treating release as a one-time event (it is a repeatable process)
+- Running release on a dirty tree or unmerged branch without explicit user approval
+
+---
+
+*"The code is done. The packaging is done. Now ship it to people."*
+
+*Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders*

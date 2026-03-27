@@ -1038,6 +1038,28 @@ class DoctorFinding:
     message: str
 
 
+KNOWN_ZSH_SESSION_NOISE = {
+    "Saving session...",
+    "...copying shared history...",
+    "...saving history...truncating history files...",
+    "...completed.",
+    "Deleting expired sessions...none found.",
+}
+
+
+def is_benign_zsh_session_noise(stderr: str) -> bool:
+    """Return True when stderr only contains macOS shell session housekeeping."""
+    normalized = " ".join(line.strip() for line in stderr.splitlines() if line.strip())
+    if not normalized:
+        return False
+
+    remainder = normalized
+    for fragment in sorted(KNOWN_ZSH_SESSION_NOISE, key=len, reverse=True):
+        remainder = remainder.replace(fragment, "")
+
+    return not remainder.strip()
+
+
 def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     """Run full installation health check."""
     findings: List[DoctorFinding] = []
@@ -1133,7 +1155,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             text=True,
         )
         stderr = (smoke.stderr or "").strip()
-        if smoke.returncode == 0 and not stderr:
+        if smoke.returncode == 0 and (not stderr or is_benign_zsh_session_noise(stderr)):
             findings.append(DoctorFinding("ok", "shell:dumb-terminal", "zsh -ic stays quiet"))
         elif smoke.returncode == 0:
             findings.append(

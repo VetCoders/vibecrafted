@@ -48,15 +48,19 @@ Just do: add user authentication with JWT
 That's it. `vc-justdo` chains the entire pipeline:
 - **Craft** — examines the repo, researches the approach, implements
 - **Converge** — runs marbles loops until P0/P1/P2 are all zero
-- **Ship** — checks product surface, decorates, hydrates for market
+- **Ship** — checks product surface, decorates, hydrates, releases to market
 
 You can also run phases individually:
 
 ```
+Scaffold this                           (vc-scaffold — architecture planning)
+Init session                            (vc-init — context bootstrap)
 ERi pipeline for adding auth module     (vc-workflow)
 Follow-up check                         (vc-followup)
 Marbles -- loop until clean             (vc-marbles)
 DoU audit -- are we shippable?          (vc-dou)
+Decorate                                (vc-decorate — visual coherence)
+Hydrate                                 (vc-hydrate — packaging & SEO)
 Release prep -- launch/deploy path      (vc-release)
 ```
 

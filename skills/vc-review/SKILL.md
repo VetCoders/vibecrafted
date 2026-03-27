@@ -1,5 +1,6 @@
 ---
 name: vc-review
+version: 1.0.0
 description: >
   Full PR review pipeline: generate prview-rs artifacts then produce a findings-max
   audit. Use when the user asks to "review PR", "analyze branch", "run prview",

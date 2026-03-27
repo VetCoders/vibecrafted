@@ -8,14 +8,14 @@ Created by M&K (c)2026 VetCoders
 """
 
 import json
+import http.client
 import os
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
 from typing import Optional
 
-API_URL = "https://api.search.brave.com/res/v1/web/search"
+API_HOST = "api.search.brave.com"
+API_PATH = "/res/v1/web/search"
 
 
 def search(query: str, count: int = 8, lang: Optional[str] = None) -> dict:
@@ -32,20 +32,25 @@ def search(query: str, count: int = 8, lang: Optional[str] = None) -> dict:
     if lang:
         params["search_lang"] = lang
 
-    url = f"{API_URL}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers={
+    path = f"{API_PATH}?{urllib.parse.urlencode(params)}"
+    conn = http.client.HTTPSConnection(API_HOST, timeout=15)
+    headers = {
         "Accept": "application/json",
         "Accept-Encoding": "identity",
         "X-Subscription-Token": api_key,
-    })
+    }
 
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        return {"error": f"HTTP {e.code}: {e.reason}"}
+        conn.request("GET", path, headers=headers)
+        resp = conn.getresponse()
+        body = resp.read().decode()
+        if resp.status >= 400:
+            return {"error": f"HTTP {resp.status}: {resp.reason}"}
+        return json.loads(body)
     except Exception as e:
         return {"error": str(e)}
+    finally:
+        conn.close()
 
 
 def format_results(data: dict) -> str:

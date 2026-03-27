@@ -297,14 +297,15 @@ Discovery → Landing → Understanding → Trial → Adoption → Payment
 ## Integration with VibeCraft Pipeline
 
 ```
-Phase 1 — Build:     init → workflow → followup
-                                         ↓
-Phase 2 — Converge:                  marbles ↻ (loop until P0=P1=P2=0)
-                                         ↓
-Phase 3 — Ship:                      dou → hydrate
+Phase 1 — Craft:     scaffold → init → workflow → followup
+                                                     ↓
+Phase 2 — Converge:                              marbles ↻ (loop until P0=P1=P2=0)
+                                                     ↓
+Phase 3 — Ship:                                  dou → decorate → hydrate → release
 ```
 
-DoU findings feed directly into `vc-hydrate` as prioritized tasks.
+DoU findings feed into `vc-decorate` (coherence fixes) and `vc-hydrate` (packaging gaps) as prioritized tasks.
+After hydration, `vc-release` handles actual deployment and market launch.
 
 ## Anti-Patterns
 

@@ -238,6 +238,70 @@ codex-decorate() { _vetcoders_skill codex decorate "$@"; }
 claude-decorate() { _vetcoders_skill claude decorate "$@"; }
 gemini-decorate() { _vetcoders_skill gemini decorate "$@"; }
 
+codex-followup() { _vetcoders_skill codex followup "$@"; }
+claude-followup() { _vetcoders_skill claude followup "$@"; }
+gemini-followup() { _vetcoders_skill gemini followup "$@"; }
+
+codex-prune() { _vetcoders_skill codex prune "$@"; }
+claude-prune() { _vetcoders_skill claude prune "$@"; }
+gemini-prune() { _vetcoders_skill gemini prune "$@"; }
+
+codex-scaffold() { _vetcoders_skill codex scaffold "$@"; }
+claude-scaffold() { _vetcoders_skill claude scaffold "$@"; }
+gemini-scaffold() { _vetcoders_skill gemini scaffold "$@"; }
+
+codex-release() { _vetcoders_skill codex release "$@"; }
+claude-release() { _vetcoders_skill claude release "$@"; }
+gemini-release() { _vetcoders_skill gemini release "$@"; }
+
+codex-justdo() { _vetcoders_skill codex justdo "$@"; }
+claude-justdo() { _vetcoders_skill claude justdo "$@"; }
+gemini-justdo() { _vetcoders_skill gemini justdo "$@"; }
+
+codex-partner() { _vetcoders_skill codex partner "$@"; }
+claude-partner() { _vetcoders_skill claude partner "$@"; }
+gemini-partner() { _vetcoders_skill gemini partner "$@"; }
+
+vc-help() {
+  local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+  cat <<'HELP'
+VibeCraft Framework — Skills & Helpers
+
+Pipeline:  scaffold → init → workflow → followup → marbles → dou → decorate → hydrate → release
+Modes:     partner (collaborative) | justdo (autonomous)
+Research:  research (triple-agent) | delegate (in-session)
+Quality:   review | prune | screenscribe
+
+Spawn helpers (× claude, codex, gemini):
+  <agent>-implement <plan.md>    Full implementation from plan
+  <agent>-research <plan.md>     Research swarm
+  <agent>-review <plan.md>       PR review
+  <agent>-plan <plan.md>         Planning only
+  <agent>-prompt "text"          Quick one-shot prompt
+  <agent>-scaffold                Architecture planning
+  <agent>-followup               Post-implementation audit
+  <agent>-dou                    Definition of Undone audit
+  <agent>-hydrate                Market packaging
+  <agent>-marbles                Convergence loop
+  <agent>-decorate               Visual polish
+  <agent>-release                Ship to market
+  <agent>-prune                  Repo pruning
+  <agent>-justdo                 Autonomous e2e implementation
+  <agent>-partner                Collaborative partner mode
+  <agent>-observe --last         Check last report
+
+Utilities:
+  repo-full                      Full git context dump
+  skills-sync                    Sync skills to agents
+  vc-frontier-paths              Show frontier config paths
+  vc-frontier-install            Install starship/atuin/zellij presets
+  vc-help                        This help
+HELP
+  printf '\nInbox:     %s/inbox/\n' "$crafted_home"
+  printf 'Artifacts: %s/artifacts/<org>/<repo>/<YYYY_MMDD>/\n' "$crafted_home"
+  printf 'Skills:    %s/skills/ (17 installed)\n' "$crafted_home"
+}
+
 skills-sync() {
   local script
   script="$(_vetcoders_spawn_script codex skills_sync.sh)" || return 1

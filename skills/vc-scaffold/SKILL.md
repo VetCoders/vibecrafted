@@ -12,9 +12,27 @@ triggers:
   - "vc-scaffold"
 ---
 
-# vc-scaffold: Phase 1 Planning
+# vc-scaffold: Founder-First Architecture Planning
 
 You are the architecture engine for founders who have ideas but no time for corporate design docs. Your job is SCOPE, PLAN, and PRODUCE an actionable breakdown that vc-workflow can execute.
+
+## Pipeline Position
+
+```
+Phase 1 — Craft:     [SCAFFOLD] → init → workflow → followup
+                     ^^^^^^^^^^
+Phase 2 — Converge:  marbles ↻ (loop until P0=P1=P2=0)
+Phase 3 — Ship:      dou → decorate → hydrate → release
+```
+
+Scaffold is the entry point of the VibeCraft pipeline. It runs before `vc-init`
+when the task is new, vague, or requires architectural scoping. If the user
+already has a clear, bounded task, skip scaffold and start with `vc-init`.
+
+After scaffolding produces a plan, the pipeline continues:
+- `vc-init` bootstraps agent context
+- `vc-workflow` executes the ERi pipeline (Examine → Research → Implement)
+- `vc-justdo` can consume the scaffold plan for autonomous end-to-end execution
 
 ## The Mission
 
@@ -147,6 +165,24 @@ You're done when:
 
 That's it. No polishing. No prettifying. Just working plans.
 
+## Cross-References
+
+- **vc-init** — bootstraps agent context after scaffolding
+- **vc-workflow** — executes the ERi pipeline on scaffold tasks
+- **vc-justdo** — autonomous execution that can consume scaffold plans
+- **vc-research** — standalone triple-agent research for unknowns found during scaffolding
+- **vc-release** — the end of the pipeline; scaffold's product identity decisions feed into release brand checks
+
+## Anti-Patterns
+
+- Writing a scaffold without examining the existing codebase (use loctree first)
+- Producing a 50-page design doc instead of a sharp plan
+- Skipping product identity (colors, typography, tone) — this feeds DoU and Decorate later
+- Breaking all work into sequential dependencies (prefer parallel workstreams)
+- Scaffolding when the task is already clear and bounded (just use vc-init + vc-workflow)
+
 ---
 
 See references/plan-template.md for the output format.
+
+*Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders*

@@ -407,15 +407,16 @@ Target: Plague Score reduction of at least 20 points.
 ## Integration with VibeCraft Pipeline
 
 ```
-Phase 1 — Build:     init → workflow → followup
-                                         ↓
-Phase 2 — Converge:                  marbles ↻ (loop until P0=P1=P2=0)
-                                         ↓
-Phase 3 — Ship:                      dou → hydrate
+Phase 1 — Craft:     scaffold → init → workflow → followup
+                                                     ↓
+Phase 2 — Converge:                              marbles ↻ (loop until P0=P1=P2=0)
+                                                     ↓
+Phase 3 — Ship:                                  dou → decorate → hydrate → release
 ```
 
-Hydration is the **terminal skill** — it produces artifacts that cross the boundary
-from code to market. After hydration, re-run DoU to verify the gap closed.
+Hydrate produces the packaging artifacts. `vc-decorate` polishes visual coherence before
+hydration. After hydration, `vc-release` handles actual deployment and go-to-market launch.
+Re-run DoU after hydration to verify the gap closed.
 
 ## Subagent Delegation
 

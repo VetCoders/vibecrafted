@@ -62,6 +62,10 @@ Read the user's request. If it is clear enough to act on, act.
 If it is genuinely ambiguous (two plausible interpretations that lead to
 different architectures), ask ONE clarifying question. Not three. One.
 
+If the task is vague enough to need architectural scoping (new product,
+greenfield feature, "I have an idea"), use `vc-scaffold` first to produce
+a plan, then execute it. JustDo can consume scaffold plans directly.
+
 If the user said "I'm tired" or anything suggesting low energy, do not
 ask questions at all. Make the reasonable call and go.
 

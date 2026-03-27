@@ -6,7 +6,7 @@ SHELL_INSTALLER := skills/vc-agents/scripts/install-shell.sh
 SOURCE   := $(CURDIR)
 BRANCH   ?= main
 
-.PHONY: help vibecrafted vibecraft check install skills helpers setup-dev dry-run doctor list update uninstall restore
+.PHONY: help vibecrafted vibecraft check install skills helpers setup-dev dry-run doctor list update uninstall restore migrate
 
 help:
 	@printf "\n"
@@ -26,6 +26,9 @@ help:
 	@printf "  \033[32m↻\033[0m  make update        \033[2mPull latest + re-install\033[0m\n"
 	@printf "  \033[32m◇\033[0m  make list          \033[2mShow bundle + runtime foundations\033[0m\n"
 	@printf "  \033[32m✓\033[0m  make check         \033[2mRun basic linters on shell scripts\033[0m\n"
+	@printf "\n"
+	@printf "  \033[33m◆\033[0m  make migrate       \033[2mMigrate .ai-agents/ to ~/.vibecrafted/artifacts/\033[0m\n"
+	@printf "  \033[33m◇\033[0m  make migrate-dry   \033[2mPreview migration (dry run)\033[0m\n"
 	@printf "\n"
 	@printf "  \033[31m✕\033[0m  make uninstall     \033[2mRemove skills + helpers\033[0m\n"
 	@printf "  \033[31m↺\033[0m  make restore       \033[2mUndo last install/uninstall\033[0m\n"
@@ -74,6 +77,12 @@ uninstall:
 
 restore:
 	@$(PYTHON) $(INSTALLER) restore
+
+migrate:
+	@bash scripts/migrate_agents_workspace.sh
+
+migrate-dry:
+	@bash scripts/migrate_agents_workspace.sh --dry-run
 
 check:
 	@echo "Checking shell scripts..."

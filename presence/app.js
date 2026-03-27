@@ -1075,13 +1075,47 @@ function shuffleArr(a) {
     if (!toggleBtn || !shell || !codeBlock || !previewPane) return;
     
     var mermaidInitialized = false;
+
+    function renderMermaidPreview(svgMarkup) {
+        var parser = new DOMParser();
+        var parsed = parser.parseFromString(svgMarkup, 'image/svg+xml');
+        var svg = parsed.documentElement;
+
+        if (parsed.querySelector('parsererror') || !svg || svg.nodeName.toLowerCase() !== 'svg') {
+            previewPane.textContent = 'Preview unavailable.';
+            return;
+        }
+
+        Array.prototype.forEach.call(
+            svg.querySelectorAll('script, foreignObject'),
+            function (node) {
+                node.remove();
+            }
+        );
+
+        Array.prototype.forEach.call(svg.querySelectorAll('*'), function (node) {
+            Array.prototype.forEach.call(node.attributes || [], function (attr) {
+                var name = attr.name.toLowerCase();
+                var value = (attr.value || '').trim().toLowerCase();
+                if (
+                    name.indexOf('on') === 0 ||
+                    ((name === 'href' || name === 'xlink:href') && value.indexOf('javascript:') === 0)
+                ) {
+                    node.removeAttribute(attr.name);
+                }
+            });
+        });
+
+        previewPane.textContent = '';
+        previewPane.appendChild(document.importNode(svg, true));
+    }
     
     function initMermaid() {
         if (!mermaidInitialized && window.mermaid) {
             mermaid.initialize({ startOnLoad: false, theme: 'dark' });
             var rawText = codeBlock.innerText || codeBlock.textContent;
             mermaid.render('mermaid-graph-1', rawText).then(function(result) {
-                previewPane.innerHTML = result.svg;
+                renderMermaidPreview(result.svg);
             });
             mermaidInitialized = true;
         }

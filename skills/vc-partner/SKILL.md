@@ -425,12 +425,14 @@ Decide whether this is:
 
 Preferred compositions:
 
+- `vc-scaffold` for architecture planning when the shape is unclear
 - `vc-partner` (Mode A) for hard architecture truth
 - `vc-agents` for external field teams
 - `vc-marbles` for convergence loops
 - `vc-dou` when the code works but the product still feels unfinished
 - `vc-decorate` when the experience lacks curb appeal
 - `vc-hydrate` when packaging and market-facing polish are missing
+- `vc-release` when deployment and go-to-market mechanics are needed
 
 #### Phase 3 — Build the runtime truth
 

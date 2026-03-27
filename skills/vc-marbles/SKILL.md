@@ -339,7 +339,7 @@ Score: 15 → 40 → 65 → 85 → 100
 ## Verdict
 DoU → DoD transition: COMPLETE
 Plague Score before: XX → after: XX
-Ready for: Phase 3 (dou → hydrate)
+Ready for: Phase 3 (dou → decorate → hydrate → release)
 ```
 
 ## The DoU → DoD Transition
@@ -364,16 +364,60 @@ At this point, DoU transforms into DoD:
 ## Integration with VibeCraft Pipeline
 
 ```
-Phase 1 — Build:     init → workflow → followup
-                                         ↓
-Phase 2 — Converge:                  marbles ↻ (loop until P0=P1=P2=0)
-                                         ↓
-Phase 3 — Ship:                      dou → hydrate
+Phase 1 — Craft:     scaffold → init → workflow → followup
+                                                     ↓
+Phase 2 — Converge:                              marbles ↻ (loop until P0=P1=P2=0)
+                                                     ↓
+Phase 3 — Ship:                                  dou → decorate → hydrate → release
 ```
 
 Marbles is the gate between building and shipping.
 It does not loop back to workflow. It loops itself.
 implement/spawn are internal execution tools used by workflow and marbles.
+
+## In-Session Execution (Plugin Infrastructure)
+
+Marbles has a plugin infrastructure in `references/` that enables in-session
+self-referential loops through Claude Code's Stop hook API:
+
+- **`/marbles` command** (`references/commands/marbles-loop.md`) — slash command
+  that starts a loop in the current session
+- **`/cancel-marbles` command** (`references/commands/cancel-marbles.md`) — cancels
+  the active loop
+- **Stop hook** (`references/hooks/stop-hook.sh`) — intercepts session exit,
+  reads the last assistant message, checks for completion promise or iteration
+  limit, and feeds the same prompt back if the loop should continue
+- **Setup script** (`references/scripts/setup-marbles-loop.sh`) — creates the
+  `.claude/marbles.local.md` state file with frontmatter (iteration count,
+  max iterations, completion promise, session ID)
+
+### How It Works
+
+1. User runs `/marbles <prompt> --completion-promise 'DONE' --max-iterations 20`
+2. Setup script writes `.claude/marbles.local.md` with the prompt and settings
+3. Agent works on the task and tries to exit
+4. Stop hook fires, reads the state file and transcript
+5. If completion promise found in output OR max iterations reached → allow exit
+6. Otherwise → block exit and inject the same prompt as new input
+7. Agent sees its previous work in files/git, iterates on the same task
+
+This is the in-session counterpart to the Supervisor / Watchdog mode described
+above. Supervisor mode uses external observation; the plugin infrastructure
+uses Claude Code's own hook API for zero-overhead self-referential iteration.
+
+### Background Marbles (Ghost Mode)
+
+The plugin infrastructure enables a pattern where marbles runs as a background
+process. The Stop hook keeps the session alive while the agent iterates. This
+is useful when:
+
+- the user wants to walk away and let the agent converge
+- external agents are not needed (single-session task)
+- the task fits in one context window
+
+Ghost mode is not a separate feature — it is the natural consequence of running
+`/marbles` with `--max-iterations` or `--completion-promise` and letting the
+hook do its job.
 
 ## Anti-Patterns
 

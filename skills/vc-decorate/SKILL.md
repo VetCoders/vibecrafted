@@ -89,9 +89,10 @@ In the VibeCraft pipeline, Decorate belongs **after clarity and before packaging
 ## Pipeline Position
 
 ```text
-Phase 1 (Build)      Phase 2 (Converge)      Phase 3 (Ship)
-init -> workflow ->   marbles loop ->         dou -> [DECORATE] -> hydrate
-followup                                            ^^^^^^^^^^^
+Phase 1 — Craft:     scaffold → init → workflow → followup
+Phase 2 — Converge:  marbles ↻ (loop until P0=P1=P2=0)
+Phase 3 — Ship:      dou → [DECORATE] → hydrate → release
+                            ^^^^^^^^^^^
 ```
 
 Decorate does **not** replace `dou`.
@@ -741,5 +742,5 @@ They should feel that the product finally became itself.
 
 ---
 
-*Phase 3 -- Ship (dou -> decorate -> hydrate)*
+*Phase 3 — Ship (dou → decorate → hydrate → release)*
 *Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders*
