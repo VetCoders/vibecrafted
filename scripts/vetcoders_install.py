@@ -18,12 +18,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -69,6 +71,52 @@ MISS = red("[missing]")
 WARN = yellow("[warn]")
 OPT = dim("[optional]")
 SKIP = dim("[skip]")
+
+# ---------------------------------------------------------------------------
+# Compact-mode output: TeeLogger + helpers
+# ---------------------------------------------------------------------------
+
+
+class TeeLogger:
+    """Captures print output to a log file while optionally suppressing stdout."""
+
+    def __init__(self, log_path: Path, quiet: bool = False):
+        self.log = open(log_path, "w")
+        self.quiet = quiet
+        self._real_stdout = sys.__stdout__
+
+    def write(self, text: str) -> int:
+        self.log.write(text)
+        if not self.quiet:
+            self._real_stdout.write(text)
+        return len(text)
+
+    def flush(self) -> None:
+        self.log.flush()
+        if not self.quiet:
+            self._real_stdout.flush()
+
+    def close(self) -> None:
+        self.log.close()
+
+
+@contextmanager
+def compact_logging(log_path: Path, quiet: bool = True):
+    """Context manager: redirects stdout to log, keeps real stdout for compact lines."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    tee = TeeLogger(log_path, quiet=quiet)
+    real_stdout = sys.stdout
+    sys.stdout = tee  # type: ignore[assignment]
+    try:
+        yield real_stdout  # caller prints compact lines to this
+    finally:
+        sys.stdout = real_stdout
+        tee.close()
+
+
+def _compact_line(out, icon: str, label: str, value: str) -> None:
+    """Print one compact status line to the real stdout."""
+    out.write(f"  {icon} {label:13s} {value}\n")
 
 # ---------------------------------------------------------------------------
 # Component manifest
@@ -1271,12 +1319,8 @@ class GoBack(Exception):
     pass
 
 
-def cmd_install(args: argparse.Namespace) -> int:
-    repo_root = Path(args.source).resolve()
-    if not repo_root.is_dir():
-        print(red(f"Error: repo root not found: {repo_root}"))
-        return 1
-
+def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
+    """Original verbose install flow — used when --compact is NOT set."""
     interactive = _IS_TTY and not args.non_interactive
     dry_run = args.dry_run
     advanced = args.advanced
@@ -1594,25 +1638,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         print()
 
     # --- Execute: vibecraft launcher ---
-    launcher_src = repo_root / "scripts" / "vibecraft"
-    launcher_bin_dir = Path(os.environ.get("VIBECRAFTED_HOME", Path.home() / ".vibecrafted")) / "bin"
-    launcher_dst = launcher_bin_dir / "vibecraft"
-    if launcher_src.exists():
-        if not dry_run:
-            launcher_bin_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(launcher_src, launcher_dst)
-            launcher_dst.chmod(0o755)
-        # Ensure ~/.vibecrafted/bin is in PATH via shell rc files
-        path_line = f'export PATH="${{VIBECRAFTED_HOME:-$HOME/.vibecrafted}}/bin:$PATH"'
-        for rcname in (".bashrc", ".zshrc"):
-            rcfile = Path.home() / rcname
-            if rcfile.exists():
-                content = rcfile.read_text()
-                if "vibecrafted/bin" not in content and ".vibecrafted/bin" not in content:
-                    if not dry_run:
-                        with rcfile.open("a") as f:
-                            f.write(f"\n# VibeCraft launcher\n{path_line}\n")
-        print()
+    _install_launcher(repo_root, dry_run)
 
     # --- Save state ---
     now = datetime.now(timezone.utc).isoformat()
@@ -1652,6 +1678,37 @@ def cmd_install(args: argparse.Namespace) -> int:
     print()
 
     # --- Done: compact one-screen summary ---
+    _print_unicode_summary(repo_root, store_path, skills)
+    return 0
+
+
+def _install_launcher(repo_root: Path, dry_run: bool) -> None:
+    """Install vibecraft launcher to ~/.vibecrafted/bin/."""
+    launcher_src = repo_root / "scripts" / "vibecraft"
+    launcher_bin_dir = Path(os.environ.get("VIBECRAFTED_HOME", Path.home() / ".vibecrafted")) / "bin"
+    launcher_dst = launcher_bin_dir / "vibecraft"
+    if launcher_src.exists():
+        if not dry_run:
+            launcher_bin_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(launcher_src, launcher_dst)
+            launcher_dst.chmod(0o755)
+        # Ensure ~/.vibecrafted/bin is in PATH via shell rc files
+        path_line = f'export PATH="${{VIBECRAFTED_HOME:-$HOME/.vibecrafted}}/bin:$PATH"'
+        for rcname in (".bashrc", ".zshrc"):
+            rcfile = Path.home() / rcname
+            if rcfile.exists():
+                content = rcfile.read_text()
+                if "vibecrafted/bin" not in content and ".vibecrafted/bin" not in content:
+                    if not dry_run:
+                        with rcfile.open("a") as f:
+                            f.write(f"\n# VibeCraft launcher\n{path_line}\n")
+        print()
+
+
+def _print_unicode_summary(repo_root: Path, store_path: Path,
+                           skills: List[Path], out=None) -> None:
+    """Print the unicode summary box. If out is given, write there instead of stdout."""
+    _out = out or sys.stdout
     fw_ver_display = get_framework_version(repo_root)
     skill_count = len(skills)
     agent_list = " \u00b7 ".join(
@@ -1704,20 +1761,256 @@ def cmd_install(args: argparse.Namespace) -> int:
         f"  {sq_framework}",
     ]
 
-    print()
+    _out.write("\n")
     for line in lines:
-        print(f"  {line}")
-    print()
+        _out.write(f"  {line}\n")
+    _out.write("\n")
 
     missing_fnd = [f for f in FOUNDATIONS if f.required and not f.is_installed()]
     if missing_fnd:
+        _out.write("\n")
+        _out.write(yellow("  Foundations still missing:") + "\n")
+        for f in missing_fnd:
+            _out.write(f"    {f.name}: {f.install_hint()}\n")
+    _out.write("\n")
+    _out.flush()
+
+
+def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
+    """Compact install — one screen of output, details to log."""
+    dry_run = args.dry_run
+    mirror = args.mirror
+    cli_with_shell = args.with_shell
+    fw_ver = get_framework_version(repo_root)
+
+    shared_home = Path(os.environ.get("VIBECRAFTED_HOME", Path.home() / ".vibecrafted"))
+    store_path = shared_home / "skills"
+    log_path = shared_home / "install.log"
+
+    # --- Discover skills (before redirecting stdout) ---
+    skills = discover_skills(repo_root)
+    if not skills:
+        print(red("No skills found in repo."))
+        return 1
+
+    skill_names = [s.name for s in skills]
+    selected_skills = list(skill_names)
+    all_runtimes = list(SYMLINK_TARGETS)
+    install_shell = cli_with_shell
+    installed_foundations: Dict[str, Dict] = {}
+
+    # --- System check (critical deps — must fail visibly) ---
+    sys_deps = detect_system_deps()
+    missing_critical = [cmd for cmd in ("python3", "git", "rsync") if not sys_deps.get(cmd)]
+    if missing_critical:
+        print(red(f"  Missing critical dependencies: {', '.join(missing_critical)}"))
+        print("  Install them before continuing.")
+        return 1
+
+    # --- All verbose output goes to log; compact lines go to real stdout ---
+    with compact_logging(log_path, quiet=True) as out:
+        # Log header
+        print(f"VibeCraft Installer v{fw_ver} — compact mode")
+        print(f"Source: {repo_root}")
+        print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
         print()
+
+        # Log system deps
+        print("System check:")
+        for cmd, path in sys_deps.items():
+            print(f"  {cmd}: {path or 'MISSING'}")
+        print()
+
+        # Log agent runtimes
+        available_runtimes = detect_agent_runtimes()
+        print("Agent runtimes:")
+        for rt, path in available_runtimes.items():
+            print(f"  {rt}: {path or 'not installed'}")
+        print()
+
+        # Log foundations
+        print("Runtime Foundations:")
+        for f in FOUNDATIONS:
+            path = f.is_installed()
+            installed_foundations[f.name] = {
+                "channel": "pre-existing" if path else "not-installed",
+                "path": path or "",
+            }
+            print(f"  {f.name}: {path or 'not installed'} {'(required)' if f.required else '(optional)'}")
+        print()
+
+        # Backup
+        print("Backup:")
+        orphaned_entries = collect_orphaned_skills(store_path, all_runtimes, set(selected_skills))
+        backup_ts = create_backup(
+            store_path, all_runtimes, selected_skills,
+            orphaned_entries=orphaned_entries, dry_run=dry_run,
+        )
+        if backup_ts:
+            print(f"  Saved: {_backup_root(store_path) / backup_ts}")
+        else:
+            print("  Fresh install, nothing to back up")
+        print()
+
+        # Install skills
+        print("Installing skills:")
+        if not dry_run:
+            store_path.mkdir(parents=True, exist_ok=True)
+        skills_dir = repo_root / "skills" if (repo_root / "skills").is_dir() else repo_root
+        for name in selected_skills:
+            src = skills_dir / name
+            dst = store_path / name
+            print(f"  -> {name}")
+            rsync_skill(src, dst, dry_run=dry_run, mirror=mirror)
+        print()
+
+        # Compact status lines on real stdout
+        _compact_line(out, green("\u2713"), "Skills", f"{len(selected_skills)} installed")
+
+        # Symlink views
+        print("Linking agent views:")
+        for rt in all_runtimes:
+            rt_skills = Path.home() / f".{rt}" / "skills"
+            if not dry_run:
+                rt_skills.mkdir(parents=True, exist_ok=True)
+            print(f"  {rt} -> {rt_skills}")
+            for name in selected_skills:
+                canonical = store_path / name
+                link = rt_skills / name
+                create_symlink(canonical, link, dry_run=dry_run)
+        print()
+
+        # Compact line: agents
+        agent_names = [rt for rt in ("claude", "codex", "gemini") if available_runtimes.get(rt)]
+        _compact_line(out, green("\u2713"), "Agents", " \u00b7 ".join(agent_names) if agent_names else "none detected")
+
+        # Prune (logged only)
+        prune_orphaned_skills(
+            store_path, all_runtimes, set(selected_skills),
+            dry_run=dry_run, orphaned_entries=orphaned_entries, interactive=False,
+        )
+        prune_legacy_skills(store_path, all_runtimes, dry_run=dry_run, interactive=False)
+
+        # Shell helpers
+        if install_shell:
+            print("Installing shell helper:")
+            shell_script = repo_root / "skills" / "vc-agents" / "scripts" / "install-shell.sh"
+            if shell_script.exists():
+                cmd = ["bash", str(shell_script), "--source", str(repo_root)]
+                if dry_run:
+                    cmd.append("--dry-run")
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                # Log the shell installer output
+                if result.stdout:
+                    print(result.stdout)
+                if result.stderr:
+                    print(result.stderr)
+            else:
+                print(f"  Shell installer not found: {shell_script}")
+            print()
+
+        shell_list = []
+        if (Path.home() / ".bashrc").exists():
+            shell_list.append("bash")
+        if (Path.home() / ".zshrc").exists():
+            shell_list.append("zsh")
+        _compact_line(out, green("\u2713"), "Helpers", " + ".join(shell_list) if shell_list else "manual")
+
+        # Foundations compact line
+        fnd_ok = [f.name for f in FOUNDATIONS if f.is_installed()]
+        fnd_str = " \u00b7 ".join(fnd_ok[:3]) if fnd_ok else "none"
+        if len(fnd_ok) > 3:
+            fnd_str += f" +{len(fnd_ok) - 3}"
+        _compact_line(out, green("\u2713"), "Foundations", fnd_str)
+
+        # Store path
+        store_display = str(store_path).replace(str(Path.home()), "~")
+        _compact_line(out, green("\u2713"), "Store", store_display)
+
+        # Launcher
+        _install_launcher(repo_root, dry_run)
+
+        # Save state
+        now = datetime.now(timezone.utc).isoformat()
+        state = InstallState(
+            installed_at=now,
+            updated_at=now,
+            framework_version=fw_ver,
+            repo_commit=get_repo_commit(repo_root),
+            repo_url=get_repo_url(repo_root),
+            skills=selected_skills,
+            runtimes=all_runtimes,
+            foundations=installed_foundations,
+            shell_helpers=install_shell,
+            install_path=str(store_path),
+        )
+        if not dry_run:
+            state.save(store_path)
+            print(f"Manifest saved: {store_path / STATE_FILE}")
+        print()
+
+        # Doctor (logged)
+        if not dry_run:
+            print("Verification:")
+            findings = run_doctor(store_path, state)
+            issues = [f for f in findings if f.level != "ok"]
+            if issues:
+                for f in issues:
+                    print(f"  [{f.level}] {f.component}: {f.message}")
+                # Surface critical issues on compact output too
+                critical = [f for f in issues if f.level == "fail"]
+                if critical:
+                    out.write(f"\n  {red('Issues found')} — check {log_path}\n")
+            else:
+                print("  All checks passed")
+        print()
+
+    # --- Compact footer: header + commands (no repeated status lines) ---
+    fw_ver_display = get_framework_version(repo_root)
+    vapor_header = "\uFF36\uFF49\uFF42\uFF45\uFF23\uFF52\uFF41\uFF46\uFF54\uFF45\uFF44"  # ＶｉｂｅＣｒａｆｔｅｄ
+    mono_sub = "\U0001D69F\U0001D692\U0001D68B\U0001D68E\U0001D68C\U0001D69B\U0001D68A\U0001D68F\U0001D69D"  # 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝
+    mono_cli = "\U0001D69F\U0001D68C-\U0001D68C\U0001D695\U0001D692"  # 𝚟𝚌-𝚌𝚕𝚒
+    sq_framework = (
+        "\U0001F175\u00b7\U0001F141\u00b7\U0001F130\u00b7\U0001F13C"
+        "\u00b7\U0001F134\u00b7\U0001F146\u00b7\U0001F15E\u00b7\U0001F161\u00b7\U0001F17A"
+    )
+    sep = "\u2500" * 37
+
+    print()
+    print(f"  \u2692 {vapor_header} \u2692")
+    print()
+    print(f"  {mono_sub} ({mono_cli}) \U0001D69F{fw_ver_display}")
+    print(f"  {sep}")
+    print(f"    Start        vibecraft help")
+    print(f"    Verify       vibecraft doctor")
+    print(f"    Reverse      vibecraft uninstall")
+    print()
+    print(f"    {sq_framework}")
+    print()
+
+    # Surface missing required foundations
+    missing_fnd = [f for f in FOUNDATIONS if f.required and not f.is_installed()]
+    if missing_fnd:
         print(yellow("  Foundations still missing:"))
         for f in missing_fnd:
             print(f"    {f.name}: {f.install_hint()}")
-    print()
+        print()
 
     return 0
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    repo_root = Path(args.source).resolve()
+    if not repo_root.is_dir():
+        print(red(f"Error: repo root not found: {repo_root}"))
+        return 1
+
+    compact = getattr(args, "compact", False)
+
+    if compact:
+        return _cmd_install_compact(args, repo_root)
+    else:
+        return _cmd_install_verbose(args, repo_root)
 
 
 # ---------------------------------------------------------------------------
@@ -2144,6 +2437,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Install only these skills (repeatable, default: full bundle)",
     )
     p_install.add_argument("--mirror", action="store_true", help="Delete extra files in installed skill dirs (rsync --delete)")
+    p_install.add_argument("--compact", action="store_true", help="Compact output — one screen, details to log")
 
     # doctor
     sub.add_parser("doctor", help="Verify installation health")

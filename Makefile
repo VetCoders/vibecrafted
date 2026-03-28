@@ -39,7 +39,6 @@ help:
 	@printf "\n"
 
 vibecrafted:
-	@echo "Starting VibeCraft Orchestrator..."
 	@$(PYTHON) scripts/setup_vibecraft.py
 
 vibecraft: vibecrafted
