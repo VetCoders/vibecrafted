@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width, initial-scale=1.0" name="viewport">
+    <title>VibeCraft Skills — The VibeCraft Framework for Founders</title>
+    <meta content="An operating system for AI agents (Codex, Claude, Gemini) built by founders to survive the 'Always-in-Production' plague and actually ship software."
+          name="description">
+    <meta content="VibeCraft Skills: The VibeCraft Framework" property="og:title">
+    <meta content="A framework for shipping software with AI agents. Built because we needed it."
+          property="og:description">
+    <meta content="https://vetcoders.github.io/vibecrafted/og-image.png" property="og:image">
+    <meta content="1536" property="og:image:width">
+    <meta content="1024" property="og:image:height">
+    <meta content="website" property="og:type">
+    <meta content="https://vetcoders.github.io/vibecrafted/" property="og:url">
+    <meta content="summary_large_image" name="twitter:card">
+    <meta content="VibeCraft Skills: The VibeCraft Framework" name="twitter:title">
+    <meta content="A framework for shipping software with AI agents. Built because we needed it." name="twitter:description">
+    <meta content="https://vetcoders.github.io/vibecrafted/og-image.png" name="twitter:image">
+    <meta content="T5B-vRPBGSbPiROhDSZPMplZ6bA5yCgT_3egIGQ8kIE" name="google-site-verification">
+    <meta content="index,follow" name="robots">
+    <link href="favicon.ico" rel="icon" sizes="32x32">
+    <link href="logo-64.png" rel="icon" sizes="64x64" type="image/png">
+    <link href="logo-128.png" rel="apple-touch-icon">
+    <link href="https://fonts.googleapis.com" rel="preconnect">
+    <link crossorigin href="https://fonts.gstatic.com" rel="preconnect">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&amp;family=Lora:ital,wght@0,400;0,500;0,600;1,400&amp;display=swap"
+          rel="stylesheet">
+    <link href="styles.css?v=20260327" rel="stylesheet">
+    <script crossorigin="anonymous"
+            integrity="sha384-7Q8XaCgFJlm82NdMNnX7AIyZbdTjUre2eR4TpKK1Pko3zKXorgTIGVpnnLho+UAe"
+            src="https://cdn.jsdelivr.net/npm/mermaid@10.8.0/dist/mermaid.min.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<div class="topbar">
+    <header class="nav-shell">
+        <a class="brand" href="#main-content">
+            <span class="brand-wordmark">vibecraft</span>
+            <img alt="" aria-hidden="true" class="brand-logo" height="24" src="./logo-32.png">
+        </a>
+        <nav aria-label="Primary" class="nav-links">
+            <a href="#pipeline">VibeCraft</a>
+            <a href="#skills">Skills</a>
+            <a href="#marbles">Marbles</a>
+            <a href="#dou">DoU</a>
+            <div class="nav-get-zone">
+                <a href="#get" id="nav-get-link">Get</a>
+                <a aria-label="GitHub" class="nav-icon-link" href="https://github.com/VetCoders/vibecrafted">
+                    <svg aria-hidden="true" class="nav-icon" viewBox="0 0 24 24">
+                        <path d="M12 1.5a10.5 10.5 0 0 0-3.32 20.46c.53.1.72-.23.72-.51v-1.81c-2.94.64-3.56-1.24-3.56-1.24-.48-1.22-1.16-1.55-1.16-1.55-.95-.65.07-.63.07-.63 1.05.07 1.6 1.08 1.6 1.08.94 1.6 2.45 1.14 3.04.87.09-.68.37-1.14.66-1.4-2.35-.27-4.82-1.18-4.82-5.25 0-1.16.41-2.1 1.08-2.84-.11-.27-.47-1.36.1-2.83 0 0 .88-.28 2.89 1.08a10.08 10.08 0 0 1 5.26 0c2-1.36 2.88-1.08 2.88-1.08.58 1.47.22 2.56.11 2.83.67.74 1.08 1.68 1.08 2.84 0 4.08-2.48 4.97-4.85 5.23.38.33.72.97.72 1.95v2.89c0 .28.19.62.73.51A10.5 10.5 0 0 0 12 1.5Z"></path>
+                    </svg>
+                </a>
+            </div>
+        </nav>
+    </header>
+</div>
+
+<div class="curl-banner" id="get">
+    <code><span class="cb-g">$</span> curl -fsSLO
+        https://raw.githubusercontent.com/VetCoders/vibecrafted/main/install.sh &amp;&amp; bash install.sh</code>
+    <button class="cb-copy"
+            data-copy="curl -fsSLO https://raw.githubusercontent.com/VetCoders/vibecrafted/main/install.sh &amp;&amp; bash install.sh"
+            type="button">
+        Copy
+    </button>
+</div>
+
+<main class="shell" id="main-content">
+    <article class="founder-manifesto">
+        <section class="hero-split fade-up">
+            <header class="hero-copy">
+                <h1 class="manifesto-title">The <span class="accent">VibeCraft</span> Framework<br>for Founders.</h1>
+                <p class="manifesto-lead">
+                    VibeCraft gives founders a&nbsp;real system for shipping with AI agents.
+                </p>
+                <div class="manifesto-actions">
+                    <a href="#evidence" class="btn-solid">See the Evidence</a>
+                    <a href="https://github.com/VetCoders/vibecrafted" class="btn-outline">View on GitHub</a>
+                </div>
+            </header>
+            <figure class="hero-canvas" id="showcase">
+                <canvas id="marbleCanvas" aria-hidden="true"></canvas>
+                <div class="hero-canvas-stats" aria-hidden="true">
+                    <span>Loop <strong id="loopCounter">0</strong></span>
+                    <span>Coverage <strong id="coverageCounter">0%</strong></span>
+                </div>
+            </figure>
+        </section>
+    </article>
+
+    <section class="science-view view" id="evidence">
+        <div class="container">
+            <div class="science-prose fade-up">
+                <h2>It is not magic.<br>It is Computer Science.</h2>
+                <p>The vocabulary is vivid because it comes from real founder workflows. Underneath it is a formal substrate that translates VibeCraft language into concrete systems engineering.</p>
+            </div>
+
+            <div class="evidence-grid fade-up">
+                <div class="evidence-item">
+                    <span class="evidence-num">01</span>
+                    <h3>AST-Augmented Context</h3>
+                    <p>LLMs fail when they code blind. By externalizing architectural memory into AST-augmented mappings, VibeCraft keeps frontier models oriented precisely inside your repository.</p>
+                </div>
+                <div class="evidence-item">
+                    <span class="evidence-num">02</span>
+                    <h3>Stochastic Convergence</h3>
+                    <p>Code generation is stochastic. The Marbles loop uses priority-weighted denoising loops to relentlessly reduce variance, forcing the system into a shippable state.</p>
+                </div>
+                <div class="evidence-item">
+                    <span class="evidence-num">03</span>
+                    <h3>Vibecrafting (SHACE)</h3>
+                    <p>Structured Human-AI Collaborative Engineering. We wrap deterministic human checkpoints around stochastic generation. The result is a system you control and understand.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="runtime-view">
+        <div class="container fade-up">
+            <div class="section-label">Runtime Foundations</div>
+            <h2 class="section-title">The substrate underneath the framework.</h2>
+            <p class="section-sub">Hard guardrails that keep frontier agents from coding blind.</p>
+            <div class="foundation-grid">
+                <a class="foundation-card" href="https://loct.io">
+                    <div class="foundation-icon foundation-icon--steel">01</div>
+                    <h3>loctree</h3>
+                    <p class="foundation-role">Perception Engine</p>
+                    <p>AST-augmented architectural memory. The eyes for every agent &mdash; forces LLMs to see the full repo structure before modifying a single file.</p>
+                    <span class="foundation-link">loct.io</span>
+                </a>
+                <a class="foundation-card" href="https://github.com/VetCoders/ai-contexters">
+                    <div class="foundation-icon foundation-icon--copper">02</div>
+                    <h3>aicx-mcp</h3>
+                    <p class="foundation-role">History Retrieval</p>
+                    <p>Indexes decisions, intents, and outcomes from every AI session. Agents retrieve what was decided and why, ensuring session-to-session continuity.</p>
+                    <span class="foundation-link">github.com/VetCoders/ai-contexters</span>
+                </a>
+                <a class="foundation-card" href="https://github.com/VetCoders/prview">
+                    <div class="foundation-icon foundation-icon--patina">03</div>
+                    <h3>prview</h3>
+                    <p class="foundation-role">Audit &amp; Quality Gate</p>
+                    <p>Generates durable PR review packs with line-level findings. The merge gate that turns terminal dumps into actual artifacts.</p>
+                    <span class="foundation-link">github.com/VetCoders/prview</span>
+                </a>
+                <a class="foundation-card" href="https://github.com/VetCoders/screenscribe">
+                    <div class="foundation-icon foundation-icon--muted">04</div>
+                    <h3>ScreenScribe</h3>
+                    <p class="foundation-role">Visual Reviewer</p>
+                    <p>Turns narrated screencasts into structured engineering findings. The orchestrator's eye on the real product surface.</p>
+                    <span class="foundation-link">github.com/VetCoders/screenscribe</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <section class="pipeline-section" id="pipeline">
+        <div class="container fade-up">
+            <div class="section-label">VibeCraft Pipeline</div>
+            <h2 class="section-title">Craft &rarr; Converge &rarr; Ship</h2>
+            <p class="section-sub">Standardize the path from idea to production. Stop guessing, start measuring.</p>
+
+            <div class="mmd-shell" data-mode="code">
+                <button class="mmd-split" type="button">Split</button>
+                <button class="mmd-toggle" type="button">Preview</button>
+                <button class="mmd-copy" type="button">Copy</button>
+                <div class="mmd-code">
+            <pre><code><span class="comment">%% VibeCraft Pipeline v1.0.2</span>
+flowchart LR
+    subgraph Craft
+        scaffold[scaffold] --&gt; init[init]
+        init --&gt; workflow[workflow]
+        workflow --&gt; followup[followup]
+    end
+
+    followup --&gt; marbles{{marbles loop}}
+    marbles --&gt;|P0/P1/P2 &gt; 0| marbles
+    marbles --&gt; dou[dou]
+
+    subgraph Ship
+        dou --&gt; decorate[decorate]
+        decorate --&gt; hydrate[hydrate]
+        hydrate --&gt; release([release])
+    end</code></pre>
+                </div>
+                <div class="mmd-preview"></div>
+            </div>
+
+            <div class="pipeline-notes">
+                <article class="pipeline-note">
+                    <h3>Craft</h3>
+                    <p>Scaffold the architecture, init the context, and run the ERi workflow. Force agents to respect the AST and history.</p>
+                </article>
+                <article class="pipeline-note">
+                    <h3>Converge</h3>
+                    <p>Systematically reduce entropy through Marbles loops until all P0, P1, and P2 issues are resolved.</p>
+                </article>
+                <article class="pipeline-note">
+                    <h3>Ship</h3>
+                    <p>Audit the product surface with DoU, polish with Decorate, and package with Hydrate before final Release.</p>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    <section id="skills">
+        <div class="container fade-up">
+            <div class="section-label">Skill Suite</div>
+            <h2 class="section-title">16 Specialized Workflows</h2>
+            <p class="section-sub">Hard-coded procedures born from pain. Powered by frontier models and Rust-based structural intelligence.</p>
+
+            <div class="framework-strip-wrap">
+                <button class="strip-arrow strip-arrow--left" aria-label="Scroll left" type="button">&#8249;</button>
+                <div class="framework-strip">
+
+                <div class="card card--accent-steel">
+                    <div class="card-phase build">Phase 1 &middot; Craft</div>
+                    <h3>vc-scaffold</h3>
+                    <p class="card-desc">Founder-first architecture planning. Maps the landscape and produces a scoped build plan for agents to execute.</p>
+                    <div class="card-tags"><span class="tag">architecture</span><span class="tag">scoping</span><span class="tag">MVP</span></div>
+                    <div class="card-trigger">"Scaffold: real-time dashboard" &middot; "Zaplanuj to"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase build">Phase 1 &middot; Craft</div>
+                    <h3>vc-init</h3>
+                    <p class="card-desc">Bootstrap the agent session. Forces models to index history (AICX), read the AST (Loctree), and verify quality gates.</p>
+                    <div class="card-tags"><span class="tag">bootstrap</span><span class="tag">context</span><span class="tag">ground truth</span></div>
+                    <div class="card-trigger">"Init session" &middot; "Zainicjuj" &middot; "Daj kontekst"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase build">Phase 1 &middot; Craft</div>
+                    <h3>vc-workflow</h3>
+                    <p class="card-desc">The ERi Pipeline: Examine &rarr; Research &rarr; Implement. Structured implementation with cumulative context feeding.</p>
+                    <div class="card-tags"><span class="tag">ERi</span><span class="tag">loctree</span><span class="tag">research</span></div>
+                    <div class="card-trigger">"Workflow" &middot; "Zbadaj i zaimplementuj" &middot; "ERi"</div>
+                </div>
+
+                <div class="card card--accent-copper">
+                    <div class="card-phase build card-phase--copper">Frontier Fleet</div>
+                    <h3>vc-agents</h3>
+                    <p class="card-desc">Spawn external fleet (Codex, Claude, Gemini) in real terminals with isolated context and durable artifacts.</p>
+                    <div class="card-tags"><span class="tag">frontier</span><span class="tag">isolated</span><span class="tag">eval</span></div>
+                    <div class="card-trigger">"Spawn agents" &middot; "Agent fleet" &middot; "Odpal agentów"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase build">Phase 1 &middot; Craft</div>
+                    <h3>vc-research</h3>
+                    <p class="card-desc">Triple-agent triangulation. Throw all three models at the same problem and synthesize a gap-free research document.</p>
+                    <div class="card-tags"><span class="tag">triangulation</span><span class="tag">SoTA</span><span class="tag">truth</span></div>
+                    <div class="card-trigger">"Research this" &middot; "Zbadaj to" &middot; "Triple research"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase build">Phase 1 &middot; Craft</div>
+                    <h3>vc-partner</h3>
+                    <p class="card-desc">Executive pairing. Shared brain mode for strategic debugging and architectural triage with delegated fieldwork.</p>
+                    <div class="card-tags"><span class="tag">partner</span><span class="tag">strategy</span><span class="tag">ownership</span></div>
+                    <div class="card-trigger">"Partner mode" &middot; "Idziemy razem" &middot; "You drive"</div>
+                </div>
+
+                <div class="card card--accent-steel">
+                    <div class="card-phase build card-phase--light">E2E Delivery</div>
+                    <h3>vc-justdo</h3>
+                    <p class="card-desc">Autonomous delivery. Takes a mandate, decides, implements, verifies, and packages without ceremony.</p>
+                    <div class="card-tags"><span class="tag">autonomous</span><span class="tag">delivery</span><span class="tag">wow effect</span></div>
+                    <div class="card-trigger">"Just do it" &middot; "Zrób to" &middot; "Dowieź to"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase build">Phase 1 &middot; Craft</div>
+                    <h3>vc-followup</h3>
+                    <p class="card-desc">The reality check. Post-implementation audit that gives a brutal GO / NO-GO verdict based on quality gates.</p>
+                    <div class="card-tags"><span class="tag">audit</span><span class="tag">severity</span><span class="tag">readiness</span></div>
+                    <div class="card-trigger">"Follow-up check" &middot; "Czy są jeszcze luki?"</div>
+                </div>
+
+                <div class="card card--accent-copper">
+                    <div class="card-phase loop-phase">Phase 2 &middot; Converge</div>
+                    <h3>vc-marbles</h3>
+                    <p class="card-desc">Iterative convergence. Loop until entropy is crushed (P0=0, P1=0, P2=0). Adaptive denoising for code.</p>
+                    <div class="card-tags"><span class="tag">diffusion</span><span class="tag">convergence</span><span class="tag">entropy</span></div>
+                    <div class="card-trigger">"Marbles" &middot; "Kulki" &middot; "Loop until done"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase build">Phase 1 &middot; Craft</div>
+                    <h3>vc-review</h3>
+                    <p class="card-desc">PR review pipeline. Generates prview artifacts and squeezes maximum findings with line-level evidence.</p>
+                    <div class="card-tags"><span class="tag">review</span><span class="tag">prview</span><span class="tag">findings</span></div>
+                    <div class="card-trigger">"Review PR" &middot; "Daj findings" &middot; "Run prview"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase build">Phase 1 &middot; Craft</div>
+                    <h3>vc-prune</h3>
+                    <p class="card-desc">Ruthless cleanup. Defines the runtime cone and cuts dead weight, experiments, and scar tissue without mercy.</p>
+                    <div class="card-tags"><span class="tag">prune</span><span class="tag">clean</span><span class="tag">runtime cone</span></div>
+                    <div class="card-trigger">"Prune repo" &middot; "Strip dead code" &middot; "Wyczyść repo"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase build card-phase--muted">Fallback</div>
+                    <h3>vc-delegate</h3>
+                    <p class="card-desc">Safe native delegation using Claude's Task tool. In-session parallelization for small, bounded tasks.</p>
+                    <div class="card-tags"><span class="tag">native</span><span class="tag">Task tool</span><span class="tag">sandboxed</span></div>
+                    <div class="card-trigger">"Delegate safely" &middot; "Native agents"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase ship">Phase 3 &middot; Ship</div>
+                    <h3>vc-dou</h3>
+                    <p class="card-desc">Definition of Undone. Audits product surface, install paths, and SEO. Measures the gap to launch.</p>
+                    <div class="card-tags"><span class="tag">DoU</span><span class="tag">Plague Score</span><span class="tag">funnel</span></div>
+                    <div class="card-trigger">"DoU audit" &middot; "Are we shippable?"</div>
+                </div>
+
+                <div class="card card--accent-steel">
+                    <div class="card-phase ship">Phase 3 &middot; Ship</div>
+                    <h3>vc-decorate</h3>
+                    <p class="card-desc">Visual coherence. Detects brand tokens and upgrades weak patterns into a premium interaction language.</p>
+                    <div class="card-tags"><span class="tag">smaczki</span><span class="tag">polish</span><span class="tag">intentional</span></div>
+                    <div class="card-trigger">"Decorate" &middot; "Udekoruj" &middot; "Make it look good"</div>
+                </div>
+
+                <div class="card">
+                    <div class="card-phase ship">Phase 3 &middot; Ship</div>
+                    <h3>vc-hydrate</h3>
+                    <p class="card-desc">Market packaging. Executes the non-code work: marketplace listings, SEO fixes, and onboarding flows.</p>
+                    <div class="card-tags"><span class="tag">package</span><span class="tag">SEO</span><span class="tag">onboarding</span></div>
+                    <div class="card-trigger">"Hydrate" &middot; "Make it shippable" &middot; "Nawodnij"</div>
+                </div>
+
+                <div class="card card--accent-patina">
+                    <div class="card-phase ship card-phase--patina">Final Step</div>
+                    <h3>vc-release</h3>
+                    <p class="card-desc">Final milestone. Tags, changelogs, registry publishing, and go-to-market mechanics. Ship it to people.</p>
+                    <div class="card-tags"><span class="tag">ship</span><span class="tag">publish</span><span class="tag">market</span></div>
+                    <div class="card-trigger">"Release" &middot; "Ship to market" &middot; "Wypuść wersję"</div>
+                </div>
+
+                </div>
+                <button class="strip-arrow strip-arrow--right" aria-label="Scroll right" type="button">&#8250;</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="diffusion-section" id="marbles">
+        <div class="container fade-up">
+            <div class="section-label">Marbles</div>
+            <h2 class="section-title">Denoise Until the Circle Is Full</h2>
+            <p class="section-sub">AI agents are stochastic parrots. Every generation introduces noise. You cannot prompt your way out of it. You iterate.</p>
+
+            <div class="diffusion-visual">
+                <div class="diffusion-canvas-wrap">
+                    <canvas id="diffusionCanvas"></canvas>
+                </div>
+                <div class="diffusion-text">
+                    <h3>The Isomorphism</h3>
+                    <div class="formula">
+                        Image diffusion:&nbsp; noise &rarr; denoise &times; N &rarr; image<br>
+                        Code diffusion:&nbsp;&nbsp; chaos &rarr; reduce_entropy &times; N &rarr; product<br><br>
+                        Step 0: Pure noise (no context, no structure)<br>
+                        Step 1: Init &mdash; gross shapes emerge<br>
+                        Step 2: Implement &mdash; detail generation<br>
+                        Step N: Converged &mdash; DoU &lt; threshold = DoD
+                    </div>
+                    <p>There is no fixed loop count. The loop runs until P0=P1=P2=0 &mdash; the circle is full. Early loops make large structural corrections; late loops make small refinements.</p>
+                </div>
+            </div>
+
+            <div class="transition-visual">
+                <p class="transition-caption">Convergence Trajectory &mdash; loop until the circle is full</p>
+                <div class="trajectory" id="trajectoryBars">
+                    <div class="bar bar--copper" data-h="24"><span class="bar-label">Loop 1</span><span class="bar-score">15</span></div>
+                    <div class="bar bar--copper" data-h="40"><span class="bar-label">Loop 2</span><span class="bar-score">40</span></div>
+                    <div class="bar bar--steel" data-h="65"><span class="bar-label">Loop 3</span><span class="bar-score">65</span></div>
+                    <div class="bar bar--steel" data-h="85"><span class="bar-label">Loop 4</span><span class="bar-score">85</span></div>
+                    <div class="bar bar--patina" data-h="100"><span class="bar-label">Loop 5</span><span class="bar-score">100</span></div>
+                </div>
+                <p class="transition-scoreline">Score: 15 &rarr; 40 &rarr; 65 &rarr; 85 &rarr; 100</p>
+                <div class="transition-status">
+                    <span class="dou">DoU</span>
+                    <span class="arrow-anim">&rarr;</span>
+                    <span class="dod"><strong>DoD</strong></span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="manifesto-section" id="dou">
+        <div class="container fade-up">
+            <div class="section-label">DoU</div>
+            <h2 class="section-title">The Definition of Undone</h2>
+            <div class="manifesto-block">
+                <blockquote>AI agents have solved the hardest part of software creation: making the thing work. They have not yet solved the second hardest part: making the thing reachable.</blockquote>
+                <p class="manifesto-lead">The Always-in-Production Plague &mdash; technically excellent software that never ships. The cause is the systematic gap between "it works" and "someone can find, install, and pay for it."</p>
+                <p class="manifesto-diagnostic-label">The Plague Diagnostic:</p>
+                <ul class="plague-list">
+                    <li><span class="check">+</span> Tests pass</li>
+                    <li><span class="check">+</span> Architecture is sound</li>
+                    <li><span class="check">+</span> README exists</li>
+                    <li><span class="cross">&ndash;</span> Nobody can find it from Google</li>
+                    <li><span class="cross">&ndash;</span> Nobody can install it without a toolchain</li>
+                    <li><span class="cross">&ndash;</span> Nobody can pay for it</li>
+                </ul>
+                <p class="manifesto-summary">Items 4&ndash;6 are the Definition of Undone. Phase 3 forces the system into the market.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="references-section">
+        <div class="container fade-up">
+            <div class="section-label">References</div>
+            <h2 class="section-title">Ground Truth &amp; Influences</h2>
+            <p class="section-sub">The bibliography below follows the explicit influence list from VIBECRAFT.md.</p>
+            <ol class="references-list">
+                <li class="reference-item">
+                    <p class="reference-citation">Morris, K.; B&ouml;ckeler, B. (2026). <em>Humans and Agents in Software Engineering Loops</em>. Thoughtworks / Martin Fowler.</p>
+                </li>
+                <li class="reference-item">
+                    <p class="reference-citation">Gong, L.; Elhoushi, M.; Cheung, A. (2024). <em>AST-T5: Structure-Aware Pretraining for Code Generation</em>.</p>
+                </li>
+                <li class="reference-item">
+                    <p class="reference-citation">Fowler, M. (2009). <em>Technical debt</em> and the later debt literature.</p>
+                </li>
+                <li class="reference-item">
+                    <p class="reference-citation">VetCoders (2026). <em>The VibeCraft Manifesto</em>.</p>
+                </li>
+            </ol>
+        </div>
+    </section>
+</main>
+
+    <footer>
+        <div class="footer-brand">
+            <img src="./logo-32.png" alt="" class="footer-logo" width="24" height="24">
+            <span class="footer-title">VIBECRAFT</span>
+        </div>
+        <p class="footer-tagline">Forged by veterinarians. Shipped by agents. Proven in production.</p>
+        <nav class="footer-links" aria-label="Footer links">
+            <a href="https://github.com/VetCoders/vibecrafted">GitHub</a>
+            <a href="#get">Install</a>
+            <a href="#pipeline">Pipeline</a>
+            <a href="#skills">Skills</a>
+            <a href="https://loct.io">Loctree</a>
+        </nav>
+        <p class="footer-copyright">&copy; 2025-2026 VetCoders. Built by Maciej Gad &amp; Monika Szymańska.</p>
+    </footer>
+
+    <script src="app.js?v=20260327"></script>
+</body>
+</html>
