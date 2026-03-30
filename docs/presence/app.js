@@ -370,57 +370,126 @@ function shuffleArr(a) {
     
     // Shape generators — your app is a canvas, you define the shape, agents fill the gaps
     var shapeIndex = 0;
+
+    function buildPredicateShape(cx, cy, R, mr, predicate) {
+        return hexGridInCircle(cx, cy, R, mr).filter(function (point) {
+            var nx = (point.x - cx) / R;
+            var ny = (point.y - cy) / R;
+            return predicate(nx, ny, point);
+        });
+    }
+
+    function circleDistance(nx, ny) {
+        return Math.sqrt(nx * nx + ny * ny);
+    }
+
+    function inRoundedCross(nx, ny, armHalfWidth, armReach) {
+        return (
+            (Math.abs(nx) <= armHalfWidth && Math.abs(ny) <= armReach) ||
+            (Math.abs(ny) <= armHalfWidth && Math.abs(nx) <= armReach)
+        );
+    }
+
+    function pickNextShapeIndex(current) {
+        if (SHAPES.length <= 1) return current;
+        var next = current;
+        while (next === current) {
+            next = Math.floor(Math.random() * SHAPES.length);
+        }
+        return next;
+    }
+
     var SHAPES = [
-        // Circle (default solitaire)
-        function(cx, cy, R, mr) { return hexGridInCircle(cx, cy, R, mr); },
-        // Triangle
-        function(cx, cy, R, mr) {
-            var pos = [], sp = mr * 2.12, rh = sp * 0.866;
-            var h = R * 1.6, base = R * 1.8;
-            var topY = cy - h * 0.45;
-            for (var y = topY; y <= topY + h; y += rh) {
-                var progress = (y - topY) / h;
-                var rowW = progress * base;
-                for (var x = cx - rowW / 2; x <= cx + rowW / 2; x += sp) {
-                    pos.push({x: x, y: y});
-                }
+        {
+            name: 'circle',
+            build: function (cx, cy, R, mr) {
+                return hexGridInCircle(cx, cy, R, mr);
             }
-            return pos;
         },
-        // Diamond
-        function(cx, cy, R, mr) {
-            var pos = [], sp = mr * 2.12, rh = sp * 0.866;
-            for (var y = cy - R; y <= cy + R; y += rh) {
-                var dy = Math.abs(y - cy) / R;
-                var rowW = R * (1 - dy) * 1.6;
-                for (var x = cx - rowW / 2; x <= cx + rowW / 2; x += sp) {
-                    pos.push({x: x, y: y});
-                }
+        {
+            name: 'ring',
+            build: function (cx, cy, R, mr) {
+                return buildPredicateShape(cx, cy, R, mr, function (nx, ny) {
+                    var d = circleDistance(nx, ny);
+                    return d >= 0.46 && d <= 0.9;
+                });
             }
-            return pos;
         },
-        // Star (5-point, fill inside)
-        function(cx, cy, R, mr) {
-            var pos = [], sp = mr * 2.12;
-            function inStar(px, py) {
-                var dx = px - cx, dy = py - cy;
-                var a = Math.atan2(dy, dx), d = Math.sqrt(dx * dx + dy * dy);
-                var r = R * 0.9 * (0.45 + 0.55 * Math.pow(Math.abs(Math.cos(2.5 * a - Math.PI / 2)), 0.6));
-                return d <= r;
-            }
-            for (var y = cy - R; y <= cy + R; y += sp * 0.866) {
-                var off = (Math.round((y - cy) / (sp * 0.866)) % 2) ? sp / 2 : 0;
-                for (var x = cx - R; x <= cx + R; x += sp) {
-                    if (inStar(x + off, y)) pos.push({x: x + off, y: y});
+        {
+            name: 'triangle',
+            build: function (cx, cy, R, mr) {
+                var pos = [], sp = mr * 2.12, rh = sp * 0.866;
+                var h = R * 1.6, base = R * 1.8;
+                var topY = cy - h * 0.45;
+                for (var y = topY; y <= topY + h; y += rh) {
+                    var progress = (y - topY) / h;
+                    var rowW = progress * base;
+                    for (var x = cx - rowW / 2; x <= cx + rowW / 2; x += sp) {
+                        pos.push({x: x, y: y});
+                    }
                 }
+                return pos;
             }
-            return pos;
+        },
+        {
+            name: 'diamond',
+            build: function (cx, cy, R, mr) {
+                return buildPredicateShape(cx, cy, R, mr, function (nx, ny) {
+                    return (Math.abs(nx) + Math.abs(ny) * 0.92) <= 0.98;
+                });
+            }
+        },
+        {
+            name: 'star',
+            build: function (cx, cy, R, mr) {
+                return buildPredicateShape(cx, cy, R, mr, function (nx, ny) {
+                    var a = Math.atan2(ny, nx);
+                    var d = circleDistance(nx, ny);
+                    var r = 0.86 * (0.45 + 0.55 * Math.pow(Math.abs(Math.cos(2.5 * a - Math.PI / 2)), 0.6));
+                    return d <= r;
+                });
+            }
+        },
+        {
+            name: 'red-cross',
+            build: function (cx, cy, R, mr) {
+                return buildPredicateShape(cx, cy, R, mr, function (nx, ny) {
+                    return inRoundedCross(nx, ny, 0.16, 0.74);
+                });
+            }
+        },
+        {
+            name: 'cross-in-circle',
+            build: function (cx, cy, R, mr) {
+                return buildPredicateShape(cx, cy, R, mr, function (nx, ny) {
+                    var d = circleDistance(nx, ny);
+                    return (d >= 0.66 && d <= 0.9) || inRoundedCross(nx, ny, 0.12, 0.58);
+                });
+            }
+        },
+        {
+            name: 'hexagon',
+            build: function (cx, cy, R, mr) {
+                return buildPredicateShape(cx, cy, R, mr, function (nx, ny) {
+                    return (Math.abs(nx) * 0.9 + Math.abs(ny) * 0.58) <= 0.92;
+                });
+            }
+        },
+        {
+            name: 'crescent',
+            build: function (cx, cy, R, mr) {
+                return buildPredicateShape(cx, cy, R, mr, function (nx, ny) {
+                    var outer = circleDistance(nx + 0.12, ny);
+                    var inner = circleDistance(nx - 0.22, ny);
+                    return outer <= 0.88 && inner >= 0.54;
+                });
+            }
         }
     ];
 
     function buildBoard() {
-        var shapeFn = SHAPES[shapeIndex % SHAPES.length];
-        slots = shapeFn(board.x, board.y, board.radius, marbleRadius);
+        var shapeDef = SHAPES[shapeIndex % SHAPES.length];
+        slots = shapeDef.build(board.x, board.y, board.radius, marbleRadius);
         slots.forEach(s => s.assigned = false);
         marbles = [];
         currentLoop = 0;
@@ -508,7 +577,7 @@ function shuffleArr(a) {
             if (fadeOutAlpha <= 0) {
                 clearInterval(fadeInterval);
                 fadeOutAlpha = 1;
-                shapeIndex++;
+                shapeIndex = pickNextShapeIndex(shapeIndex);
                 morphing = false;
                 buildBoard();
             }
