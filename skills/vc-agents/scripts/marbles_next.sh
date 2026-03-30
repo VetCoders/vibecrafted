@@ -22,9 +22,9 @@ root_dir="$6"
 runtime="$7"
 scripts_dir="$8"
 session_lock="$9"
+store="${10:-$(spawn_marbles_store_dir "$root_dir")}"
 
 next=$((current + 1))
-store="$(spawn_store_dir "$root_dir")"
 plan_slug="$(spawn_slug_from_path "$original_plan")"
 
 # ── Update lock ───────────────────────────────────────────────────────
@@ -118,9 +118,10 @@ q_root="$(printf '%q' "$root_dir")"
 q_runtime="$(printf '%q' "$runtime")"
 q_scripts="$(printf '%q' "$scripts_dir")"
 q_lock="$(printf '%q' "$session_lock")"
+q_store="$(printf '%q' "$store")"
 
-success_hook="bash $q_scripts/marbles_next.sh $q_agent $q_plan $total_count $next $run_id $q_root $q_runtime $q_scripts $q_lock"
-failure_hook="bash $q_scripts/marbles_next.sh --failed $q_agent $q_plan $total_count $next $run_id $q_root $q_runtime $q_scripts $q_lock"
+success_hook="bash $q_scripts/marbles_next.sh $q_agent $q_plan $total_count $next $run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
+failure_hook="bash $q_scripts/marbles_next.sh --failed $q_agent $q_plan $total_count $next $run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
 
 # Set env for next iteration
 export VIBECRAFT_LOOP_NR=$next
@@ -135,4 +136,4 @@ spawn_args=(
   --failure-hook "$failure_hook"
 )
 
-bash "$scripts_dir/${agent}_spawn.sh" "${spawn_args[@]}" "$ln_plan"
+VIBECRAFT_STORE_DIR="$store" bash "$scripts_dir/${agent}_spawn.sh" "${spawn_args[@]}" "$ln_plan"

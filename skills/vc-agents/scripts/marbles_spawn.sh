@@ -60,8 +60,11 @@ sources=0
 
 # ── Resolve root & store ──────────────────────────────────────────────
 root_dir="${root:-$(spawn_repo_root)}"
-store="$(spawn_store_dir "$root_dir")"
+store="$(spawn_marbles_store_dir "$root_dir")"
 mkdir -p "$store/plans" "$store/reports"
+
+# ── Marbles session ───────────────────────────────────────────────────
+marbles_run_id="marb-$(date +%H%M%S)"
 
 # ── Resolve plan file ─────────────────────────────────────────────────
 if [[ -n "$task" ]]; then
@@ -72,13 +75,21 @@ elif [[ -n "$prompt" ]]; then
   slug="$(printf '%s' "$prompt" | tr '\n' ' ' | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//' | cut -c1-48)"
   [[ -n "$slug" ]] || slug="marbles-prompt"
   original_plan="$store/plans/${ts}_marbles-${slug}.md"
-  printf '%s\n' "$prompt" > "$original_plan"
-elif [[ -n "$depth" ]]; then
-  original_plan="$(bash "$SCRIPT_DIR/marbles_plan.sh" --depth "$depth" --root "$root_dir")"
-fi
+  prompt_id="marbles-${slug}_${ts%%_*}"
+  cat > "$original_plan" <<EOF_PROMPT
+---
+agent: $agent
+run_id: $marbles_run_id
+prompt_id: $prompt_id
+started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+model: pending
+---
 
-# ── Marbles session ───────────────────────────────────────────────────
-marbles_run_id="marb-$(date +%H%M%S)"
+$prompt
+EOF_PROMPT
+elif [[ -n "$depth" ]]; then
+  original_plan="$(VIBECRAFT_STORE_DIR="$store" bash "$SCRIPT_DIR/marbles_plan.sh" --agent "$agent" --run-id "$marbles_run_id" --depth "$depth" --root "$root_dir")"
+fi
 
 org_repo=""
 if cd "$root_dir" && git remote get-url origin >/dev/null 2>&1; then
@@ -123,9 +134,10 @@ q_root="$(printf '%q' "$root_dir")"
 q_runtime="$(printf '%q' "$runtime")"
 q_scripts="$(printf '%q' "$SCRIPT_DIR")"
 q_lock="$(printf '%q' "$session_lock")"
+q_store="$(printf '%q' "$store")"
 
-success_hook="bash $q_scripts/marbles_next.sh $q_agent $q_plan $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock"
-failure_hook="bash $q_scripts/marbles_next.sh --failed $q_agent $q_plan $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock"
+success_hook="bash $q_scripts/marbles_next.sh $q_agent $q_plan $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
+failure_hook="bash $q_scripts/marbles_next.sh --failed $q_agent $q_plan $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
 
 # ── Spawn first iteration ────────────────────────────────────────────
 export VIBECRAFT_LOOP_NR=1
@@ -140,4 +152,4 @@ spawn_args=(
 )
 [[ -z "$root" ]] || spawn_args+=(--root "$root_dir")
 
-bash "$SCRIPT_DIR/${agent}_spawn.sh" "${spawn_args[@]}" "$l1_plan"
+VIBECRAFT_STORE_DIR="$store" bash "$SCRIPT_DIR/${agent}_spawn.sh" "${spawn_args[@]}" "$l1_plan"

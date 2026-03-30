@@ -229,42 +229,83 @@
         return oc;
     }
 
+    function phaseCommand(phaseDef) {
+        switch (phaseDef.name) {
+        case 'init':
+            return 'vc-init';
+        case 'workflow':
+            return 'vc-workflow';
+        case 'agents':
+            return 'vc-agents';
+        case 'marbles':
+            return 'vc-marbles';
+        case 'overflow':
+        case 'error':
+        case 'followup':
+            return 'vc-followup';
+        case 'prune':
+            return 'vc-prune';
+        case 'hydrate':
+            return 'vc-hydrate';
+        case 'decorate':
+            return 'vc-decorate';
+        case 'ship':
+            return 'vc-release';
+        default:
+            return 'vibecrafted';
+        }
+    }
+
+    function phaseHint(phaseDef) {
+        if (phaseDef.name === 'marbles') {
+            return 'Click Marbles again to throw another batch into the board.';
+        }
+        if (phaseDef.name === 'init') {
+            return 'The command line starts here. Context comes before motion.';
+        }
+        return phaseDef.description;
+    }
+
     function buildShowcaseMarkup(layout) {
         var headerTitle = layout === 'standalone'
-            ? 'Walk the convergence cycle phase by phase'
+            ? 'Command the board phase by phase'
             : 'A phase-by-phase board of the convergence loop';
 
         return [
             '<div class="framework-playground framework-playground--' + layout + '">',
             '  <div class="framework-playground__meta">',
-            '    <div>',
-            '      <p class="framework-playground__kicker">Framework Showcase</p>',
+            '    <div class="framework-playground__meta-copy">',
+            '      <p class="framework-playground__kicker">Framework Playground</p>',
             '      <h3 class="framework-playground__heading">' + headerTitle + '</h3>',
+            '      <p class="framework-playground__lede">Board-first, manual-only. Choose a phase, read the grooves, and let the board explain the loop.</p>',
             '    </div>',
             '  </div>',
-            '  <div class="framework-playground__surface">',
-            '    <div class="framework-playground__stage">',
+            '  <div class="framework-playground__body">',
+            '    <section class="framework-playground__board-column">',
+            '      <p class="framework-playground__pressline">',
+            '        <span class="framework-playground__press-kicker" data-framework-phase-eyebrow>Phase 0 · Craft</span>',
+            '        <span class="framework-playground__press-copy" data-framework-phase-press>Strike the board into reality.</span>',
+            '      </p>',
+            '      <div class="framework-playground__stage">',
             '      <canvas class="framework-playground__canvas" aria-hidden="true"></canvas>',
             '      <div class="framework-playground__overlay" aria-hidden="true">',
             '        <span>Phase <strong data-framework-phase-label>Init</strong></span>',
             '        <span>Converge <strong data-framework-coverage>0%</strong></span>',
             '        <span>Marbles <strong data-framework-marbles>0</strong></span>',
             '      </div>',
-            '    </div>',
-            '  </div>',
-            '  <div class="framework-playground__toolbar">',
-            '    <p class="framework-playground__pressline">',
-            '      <span class="framework-playground__press-kicker" data-framework-phase-eyebrow>Phase 0 · Craft</span>',
-            '      <span class="framework-playground__press-copy" data-framework-phase-press>Strike the board into reality.</span>',
-            '    </p>',
-            '    <div class="framework-playground__controls">',
-            '      <button class="framework-playground__button" data-framework-prev type="button">Prev</button>',
-            '      <button class="framework-playground__button framework-playground__button--accent" data-framework-reset type="button">Reset</button>',
-            '      <button class="framework-playground__button" data-framework-next type="button">Next</button>',
-            '    </div>',
-            '  </div>',
-            '  <div class="framework-playground__rail-shell">',
-            '    <div class="framework-playground__rail" data-framework-rail></div>',
+            '        <p class="framework-playground__prompt" aria-hidden="true">',
+            '          <span class="framework-playground__prompt-mark">$ &gt;</span>',
+            '          <span class="framework-playground__prompt-command" data-framework-command>vc-init</span>',
+            '        </p>',
+            '      </div>',
+            '    </section>',
+            '    <aside class="framework-playground__side-column">',
+            '      <p class="framework-playground__side-kicker">Phase Rail</p>',
+            '      <p class="framework-playground__side-copy" data-framework-phase-hint>Click a phase to inspect the board. Click Marbles again to throw another batch.</p>',
+            '      <div class="framework-playground__rail-shell">',
+            '        <div class="framework-playground__rail framework-playground__rail--stack" data-framework-rail></div>',
+            '      </div>',
+            '    </aside>',
             '  </div>',
             '</div>'
         ].join('');
@@ -291,9 +332,8 @@
         var marblesEl = root.querySelector('[data-framework-marbles]');
         var eyebrowEl = root.querySelector('[data-framework-phase-eyebrow]');
         var pressEl = root.querySelector('[data-framework-phase-press]');
-        var prevBtn = root.querySelector('[data-framework-prev]');
-        var nextBtn = root.querySelector('[data-framework-next]');
-        var resetBtn = root.querySelector('[data-framework-reset]');
+        var commandEl = root.querySelector('[data-framework-command]');
+        var hintEl = root.querySelector('[data-framework-phase-hint]');
         var rail = root.querySelector('[data-framework-rail]');
 
         var phaseButtons = [];
@@ -468,10 +508,10 @@
             marblesEl.textContent = marbles.length + overflowMarbles.length;
             eyebrowEl.textContent = phaseDef.eyebrow;
             pressEl.textContent = phaseDef.title + '.';
+            commandEl.textContent = phaseCommand(phaseDef);
+            hintEl.textContent = phaseHint(phaseDef);
             coverageEl.classList.toggle('is-hot', coveragePct > 100);
-            prevBtn.disabled = phase === 0;
-            nextBtn.disabled = phase === PHASES.length - 1;
-            resetBtn.disabled = phase === 0;
+            commandEl.classList.toggle('is-live', phaseDef.name === 'marbles');
             syncRail(scrollToActive);
         }
 
@@ -718,6 +758,83 @@
             }
         }
 
+        function hasMovingBodies() {
+            var all = marbles.concat(overflowMarbles);
+            for (var i = 0; i < all.length; i++) {
+                if (!all[i].settled && all[i].alpha > 0.01) return true;
+            }
+            return false;
+        }
+
+        function advanceMotion(ms) {
+            var steps = Math.max(1, Math.round(ms / 16));
+            for (var step = 0; step < steps; step++) {
+                var all = marbles.concat(overflowMarbles);
+                for (var i = 0; i < all.length; i++) updateMarble(all[i], 1);
+            }
+            render();
+            updateUi(false);
+        }
+
+        function startMotionLoop() {
+            if (!hasMovingBodies()) {
+                frameHandle = 0;
+                lastFrameTs = 0;
+                return;
+            }
+
+            function tick(ts) {
+                if (!lastFrameTs) lastFrameTs = ts;
+                var dt = Math.min(32, ts - lastFrameTs);
+                lastFrameTs = ts;
+                if (dt > 0) advanceMotion(dt);
+                if (hasMovingBodies()) {
+                    frameHandle = window.requestAnimationFrame(tick);
+                } else {
+                    frameHandle = 0;
+                    lastFrameTs = 0;
+                }
+            }
+
+            if (frameHandle) window.cancelAnimationFrame(frameHandle);
+            frameHandle = window.requestAnimationFrame(tick);
+        }
+
+        function throwManualBatch() {
+            if (PHASES[phase].name !== 'marbles') return;
+
+            var empty = slots.filter(function (slot) {
+                return slot.visible && !slot.filled;
+            });
+            var visible = slots.filter(function (slot) {
+                return slot.visible;
+            }).length;
+            var filled = slots.filter(function (slot) {
+                return slot.filled;
+            }).length;
+            var fillRatio = visible > 0 ? filled / visible : 0;
+            var batchSize = Math.max(5, Math.min(12, Math.round(6 + fillRatio * 7)));
+
+            for (var i = 0; i < batchSize; i++) {
+                if (empty.length > 0) {
+                    var idx = Math.floor(Math.random() * empty.length);
+                    marbles.push(spawnMarble(empty[idx], 0.42 + fillRatio * 0.4));
+                    empty.splice(idx, 1);
+                } else {
+                    overflowMarbles.push(spawnOverflow());
+                }
+            }
+
+            if (fillRatio > 0.68) {
+                overflowMarbles.push(spawnOverflow());
+            }
+
+            updateCoverage();
+            render();
+            updateUi(false);
+            startMotionLoop();
+        }
+
         function showPhase(target) {
             target = Math.max(0, Math.min(PHASES.length - 1, target));
             resetCycle();
@@ -731,6 +848,7 @@
             phase = target;
             render();
             updateUi(true);
+            startMotionLoop();
         }
 
         function renderToText() {
@@ -738,6 +856,7 @@
             return JSON.stringify({
                 phase: PHASES[phase].name,
                 phaseIndex: phase,
+                command: phaseCommand(PHASES[phase]),
                 converge: coveragePct,
                 marbles: marbles.length,
                 overflow: overflowMarbles.length,
@@ -768,28 +887,6 @@
             showPhase(currentPhase);
         }
 
-        function startAnimation() {
-            function tick(ts) {
-                if (!lastFrameTs) lastFrameTs = ts;
-                var dt = Math.min(32, ts - lastFrameTs);
-                lastFrameTs = ts;
-                if (dt > 0) {
-                    advanceSimulation(dt);
-                    if (phaseTime >= PHASES[phase].duration * 1.12) {
-                        showPhase(phase);
-                        lastFrameTs = ts;
-                    } else {
-                        render();
-                        updateUi(false);
-                    }
-                }
-                frameHandle = window.requestAnimationFrame(tick);
-            }
-
-            if (frameHandle) window.cancelAnimationFrame(frameHandle);
-            frameHandle = window.requestAnimationFrame(tick);
-        }
-
         PHASES.forEach(function (phaseDef, index) {
             var button = document.createElement('button');
             button.className = 'framework-playground__chip';
@@ -798,41 +895,30 @@
             button.setAttribute('aria-label', phaseDef.label + '. ' + phaseDef.title + '. ' + phaseDef.description);
             button.innerHTML = '<span class="framework-playground__chip-label">' + phaseDef.label + '</span>';
             button.addEventListener('click', function () {
+                if (index === phase && phaseDef.name === 'marbles') {
+                    throwManualBatch();
+                    return;
+                }
                 showPhase(index);
-                lastFrameTs = 0;
             });
             rail.appendChild(button);
             phaseButtons.push(button);
-        });
-
-        prevBtn.addEventListener('click', function () {
-            showPhase(phase - 1);
-            lastFrameTs = 0;
-        });
-
-        nextBtn.addEventListener('click', function () {
-            showPhase(phase + 1);
-            lastFrameTs = 0;
-        });
-
-        resetBtn.addEventListener('click', function () {
-            showPhase(phase);
-            lastFrameTs = 0;
         });
 
         window.addEventListener('resize', resize);
         phase = resolvePhaseIndex(startPhaseName);
         resize();
         updateUi(true);
-        startAnimation();
 
         root.renderFrameworkToText = renderToText;
         if (!window.render_framework_showcase_to_text) {
             window.render_framework_showcase_to_text = renderToText;
             window.advance_framework_showcase = function (ms) {
-                advanceSimulation(ms || 1000);
-                render();
-                updateUi(false);
+                advanceMotion(ms || 1000);
+            };
+            window.render_game_to_text = renderToText;
+            window.advanceTime = function (ms) {
+                advanceMotion(ms || 1000);
             };
         }
         root.dataset.frameworkInstance = String(rootIndex);

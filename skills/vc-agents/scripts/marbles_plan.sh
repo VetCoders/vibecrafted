@@ -10,12 +10,16 @@ source "$SCRIPT_DIR/common.sh"
 
 depth=""
 root=""
+agent="marbles"
+run_id=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --agent) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --agent"; agent="$1" ;;
+    --run-id) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --run-id"; run_id="$1" ;;
     --depth) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --depth"; depth="$1" ;;
     --root)  shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --root";  root="$1" ;;
-    -h|--help) printf 'Usage: marbles_plan.sh --depth <n> [--root <dir>]\n'; exit 0 ;;
+    -h|--help) printf 'Usage: marbles_plan.sh --depth <n> [--root <dir>] [--agent <name>] [--run-id <id>]\n'; exit 0 ;;
     *) spawn_die "Unknown argument: $1" ;;
   esac
   shift
@@ -23,8 +27,9 @@ done
 
 [[ -n "$depth" ]] || spawn_die "Missing --depth"
 root_dir="${root:-$(spawn_repo_root)}"
-store="$(spawn_store_dir "$root_dir")"
-artifacts_parent="$(dirname "$store")"
+day_store="$(spawn_store_dir "$root_dir")"
+store="${VIBECRAFT_STORE_DIR:-$(spawn_marbles_store_dir "$root_dir")}"
+artifacts_parent="$(dirname "$day_store")"
 
 # Scan recent reports across today and previous days
 reports=()
@@ -35,7 +40,7 @@ while IFS= read -r day_dir; do
     reports+=("$rpt")
     [[ ${#reports[@]} -ge $depth ]] && break
   done < <(find "$day_dir/reports" -name '*.md' \
-    ! -name '*.meta.json' ! -name '*.transcript.log' ! -name '*CONVERGENCE*' \
+    ! -name '*.meta.json' ! -name '*.transcript.log' ! -name '*CONVERGENCE*' ! -name '*_marbles-*' \
     2>/dev/null | sort -r)
   [[ ${#reports[@]} -ge $depth ]] && break
 done < <(find "$artifacts_parent" -maxdepth 1 -type d -name '20*' 2>/dev/null | sort -r)
@@ -43,9 +48,20 @@ done < <(find "$artifacts_parent" -maxdepth 1 -type d -name '20*' 2>/dev/null | 
 # Build plan file
 ts="$(spawn_timestamp)"
 plan_file="$store/plans/${ts}_marbles-depth-${depth}.md"
+prompt_id="marbles-depth-${depth}_${ts%%_*}"
 mkdir -p "$store/plans"
 
 {
+  cat <<EOF_FRONTMATTER
+---
+agent: $agent
+run_id: ${run_id:-marb-000000}
+prompt_id: $prompt_id
+started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+model: pending
+---
+
+EOF_FRONTMATTER
   printf '# Marbles Convergence — Depth Crawl (%s sessions)\n\n' "$depth"
 
   if [[ ${#reports[@]} -eq 0 ]]; then

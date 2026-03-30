@@ -10,10 +10,34 @@ import subprocess
 import sys
 import termios
 import threading
+import textwrap
 import tty
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+
+try:
+    from installer_brand import (
+        FOOTER_BRANDING,
+        FRAMEWORK_STAMP,
+        PRODUCT_LINE,
+        TAGLINE,
+        VAPOR_HEADER,
+        separator as brand_separator,
+        version_line as brand_version_line,
+    )
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - module import path depends on entrypoint
+    from scripts.installer_brand import (
+        FOOTER_BRANDING,
+        FRAMEWORK_STAMP,
+        PRODUCT_LINE,
+        TAGLINE,
+        VAPOR_HEADER,
+        separator as brand_separator,
+        version_line as brand_version_line,
+    )
 
 STEP_MIN = 0
 STEP_MAX = 5
@@ -46,6 +70,7 @@ AGENT_COMMANDS = ("claude", "codex", "gemini")
 ADDITIONAL_TOOL_COMMANDS = ("zellij", "mise", "starship", "atuin", "zoxide")
 INSTALL_OUTPUT_TAIL = 18
 READ_KEY_TIMEOUT = 0.1
+DEFAULT_RENDER_WIDTH = 57
 
 
 def default_source_dir() -> str:
@@ -72,6 +97,10 @@ def framework_store_dir() -> Path:
 
 def helper_layer_path() -> Path:
     return xdg_config_home() / "vetcoders" / "vc-skills.sh"
+
+
+def install_log_path() -> Path:
+    return Path.home() / ".vibecrafted" / "install.log"
 
 
 def runtime_skill_views() -> dict[str, Path]:
@@ -573,37 +602,337 @@ def make_console() -> Any:
     return Console()
 
 
-# === RENDER SECTION (Gemini fills this) ===
-def render(state: InstallerState, console: Any) -> None:
-    """Placeholder renderer.
+def _render_width() -> int:
+    width = shutil.get_terminal_size((DEFAULT_RENDER_WIDTH, 32)).columns
+    return max(DEFAULT_RENDER_WIDTH, min(width - 2, 96))
 
-    Gemini owns the visual layer. This stub keeps the mechanics runnable and
-    exposes the state shape for the richer render pass.
-    """
-    if hasattr(console, "clear"):
-        console.clear()
 
-    lines = [
-        f"VibeCrafted installer v{state.version}",
-        f"Step {state.step}/{STEP_MAX} [{state.step_label}]",
-        f"Diagnostics: {'ready' if state.diagnostics_ran else 'pending'}",
-        f"Consent: {'yes' if state.consent_given else 'no'}",
-        f"Install: {'running' if state.install_running else 'idle'}",
-    ]
-
-    if state.status_message:
-        lines.append(state.status_message)
-
-    if state.step >= DIAGNOSTICS_STEP and state.needs_install:
-        missing = ", ".join(state.missing_items[:5])
-        lines.append(f"Missing: {missing}")
-
-    if state.install_output:
-        lines.append("Recent installer output:")
-        lines.extend(f"  {line}" for line in state.current_install_tail)
-
+def _print_wrapped(
+    console: Any,
+    text: str,
+    width: int,
+    *,
+    indent: str = "  ",
+    subsequent_indent: str | None = None,
+) -> None:
+    available = max(16, width - len(indent))
+    lines = textwrap.wrap(
+        text,
+        width=available,
+        initial_indent=indent,
+        subsequent_indent=subsequent_indent or indent,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    if not lines:
+        console.print(indent.rstrip())
+        return
     for line in lines:
         console.print(line)
+
+
+def _print_block(console: Any, width: int, lines: list[str]) -> None:
+    for line in lines:
+        _print_wrapped(console, line, width)
+
+
+def _status_icon(found: bool) -> str:
+    return "✔" if found else "𐄂"
+
+
+def _trim_home(path: str) -> str:
+    return path.replace(str(Path.home()), "~")
+
+
+def _category_counts(state: InstallerState, category: str) -> tuple[int, int]:
+    entries = list(state.diagnostics.get(category, {}).values())
+    found = sum(1 for entry in entries if entry.get("found"))
+    return found, len(entries)
+
+
+def _render_box(console: Any, width: int, title: str, lines: list[str]) -> None:
+    inner_width = max(24, width - 6)
+    console.print(f"  ╔{'═' * inner_width}╗")
+    title_line = f" {title}"[:inner_width]
+    console.print(f"  ║{title_line.ljust(inner_width)}║")
+    for raw in lines:
+        wrapped = textwrap.wrap(
+            raw,
+            width=inner_width,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ) or [""]
+        for line in wrapped:
+            console.print(f"  ║{line.ljust(inner_width)}║")
+    console.print(f"  ╚{'═' * inner_width}╝")
+
+
+def _render_hero(console: Any, state: InstallerState, width: int) -> None:
+    sep = brand_separator(width)
+    console.print(sep)
+    console.print(f"⚒ {VAPOR_HEADER} ⚒".center(width))
+    console.print(brand_version_line(state.version).center(width))
+    console.print(TAGLINE.center(width))
+    console.print(sep)
+
+
+def _render_footer(console: Any, width: int) -> None:
+    sep = brand_separator(width)
+    console.print(sep)
+    console.print("⇅ Nav | ⏎ Next | ⌫ Back | ⇥ View | ⎋ Quit".center(width))
+    console.print(FRAMEWORK_STAMP.center(width))
+    console.print(sep)
+
+
+def _render_welcome(console: Any, state: InstallerState, width: int) -> None:
+    console.print("  Welcome")
+    console.print("")
+    _print_block(
+        console,
+        width,
+        [
+            f"{PRODUCT_LINE} This setup stages VibeCrafted inside ~/.vibecrafted and prepares the framework for daily work with agent CLIs.",
+            "Nothing outside your VibeCrafted home changes until you approve the install step.",
+            "Each screen shows what changes, why it matters, and what stays reversible before we touch your shell or runtime views.",
+            "If you need product context instead of setup context, the public surface lives at https://vibecrafted.io.",
+        ],
+    )
+
+
+def _render_explain(console: Any, state: InstallerState, width: int) -> None:
+    console.print("  How this setup works")
+    console.print("")
+    _print_block(
+        console,
+        width,
+        [
+            "The framework keeps its control plane in ~/.vibecrafted so the install stays isolated from the rest of your machine.",
+            "If you enable shell helpers, we add one source line to your rc file. Frontier configs load as sidecars, not as a takeover of your personal prompt or session manager.",
+            "This installer is here to be clear and predictable. It will not lecture you, but it will tell you what it is doing.",
+        ],
+    )
+    console.print("")
+    for key, meaning in (
+        ("⇅", "Move between screens"),
+        ("⏎", "Proceed"),
+        ("⌫", "Go back"),
+        ("⇥", "Toggle summary/details"),
+        ("⎋", "Quit"),
+    ):
+        _print_wrapped(console, f"{key}  {meaning}", width, indent="    ")
+
+
+def _render_listing(console: Any, state: InstallerState, width: int) -> None:
+    console.print("  Install plan")
+    console.print("")
+    for idx, (title, detail) in enumerate(
+        [
+            (
+                "Diagnostics",
+                "Check the framework surface, required foundations, toolchains, agent CLIs, and optional sidecars.",
+            ),
+            (
+                "Install",
+                "Stage skills, helper layer, launchers, runtime views, and shell integration if you enable it.",
+            ),
+            (
+                "Verify",
+                "Run doctor, save the manifest, and leave a readable install trail.",
+            ),
+            (
+                "Recover",
+                "Keep the log, backups, and uninstall path obvious from the first run.",
+            ),
+        ],
+        start=1,
+    ):
+        _print_wrapped(console, f"{idx}. {title}", width)
+        _print_wrapped(
+            console, detail, width, indent="     ", subsequent_indent="     "
+        )
+
+
+def _render_diagnostics(console: Any, state: InstallerState, width: int) -> None:
+    console.print("  Diagnostics")
+    console.print("")
+    progress_lines = []
+    for category in CATEGORY_ORDER:
+        found, total = _category_counts(state, category)
+        progress_lines.append(
+            f"{CATEGORY_LABELS[category]:<17} {found}/{total} present"
+        )
+    if state.status_message:
+        progress_lines.append("")
+        progress_lines.append(state.status_message)
+    _render_box(console, width, "Environment scan", progress_lines)
+    console.print("")
+    for category in CATEGORY_ORDER:
+        console.print(f"  {CATEGORY_LABELS[category]}:")
+        entries = list(state.diagnostics.get(category, {}).values())
+        if state.details_view:
+            for entry in entries:
+                label = entry.get("label", "?")
+                detail = _trim_home(str(entry.get("detail", "")))
+                _print_wrapped(
+                    console,
+                    f"{_status_icon(bool(entry.get('found')))} {label} — {detail}",
+                    width,
+                    indent="    ",
+                    subsequent_indent="      ",
+                )
+        else:
+            summary = " · ".join(
+                f"{_status_icon(bool(entry.get('found')))} {entry.get('label', '?')}"
+                for entry in entries
+            )
+            _print_wrapped(
+                console, summary, width, indent="    ", subsequent_indent="    "
+            )
+        console.print("")
+
+
+def _group_items(items: list[str]) -> list[str]:
+    return sorted(items, key=lambda item: (item.split(":", 1)[0], item))
+
+
+def _render_item_section(
+    console: Any, width: int, title: str, items: list[str], *, icon: str, limit: int
+) -> None:
+    console.print(f"  {title}")
+    shown = items if limit < 0 else items[:limit]
+    if not shown:
+        _print_wrapped(console, f"{icon} Nothing in this group.", width, indent="    ")
+        return
+    for item in _group_items(shown):
+        _print_wrapped(
+            console, f"{icon} {item}", width, indent="    ", subsequent_indent="      "
+        )
+    if limit >= 0 and len(items) > limit:
+        _print_wrapped(
+            console,
+            f"... {len(items) - limit} more items hidden. Press ⇥ for full detail.",
+            width,
+            indent="    ",
+            subsequent_indent="    ",
+        )
+
+
+def _render_checklist(console: Any, state: InstallerState, width: int) -> None:
+    console.print("  Checklist")
+    console.print("")
+    _print_block(
+        console,
+        width,
+        [
+            "This is the last summary before we touch the install path. Found items stay as they are; missing items are what the install will stage or wire up now."
+        ],
+    )
+    console.print("")
+    limit = -1 if state.details_view else 8
+    _render_item_section(
+        console,
+        width,
+        "Already present",
+        state.found_items,
+        icon="✔",
+        limit=limit,
+    )
+    console.print("")
+    _render_item_section(
+        console,
+        width,
+        "Install now",
+        state.missing_items,
+        icon="𐄂",
+        limit=limit,
+    )
+
+
+def _render_installation(console: Any, state: InstallerState, width: int) -> None:
+    console.print("  Installation")
+    console.print("")
+    header = "Live progress" if state.install_running else "Install status"
+    progress_lines = [line for line in state.current_install_tail if line.strip()]
+    if not progress_lines:
+        if state.install_completed and state.install_exit_code == 0:
+            progress_lines = [
+                "Install finished cleanly.",
+                state.status_message or "Ready.",
+            ]
+        elif state.install_error:
+            progress_lines = [state.install_error]
+        else:
+            progress_lines = [state.status_message or "Waiting to start the installer."]
+    _render_box(console, width, header, progress_lines)
+    console.print("")
+    _print_wrapped(
+        console,
+        f"Log: {_trim_home(str(install_log_path()))}",
+        width,
+        indent="  ",
+        subsequent_indent="       ",
+    )
+    console.print("")
+    pending = state.missing_items[:10]
+    if pending and not state.install_completed:
+        _render_item_section(
+            console,
+            width,
+            "Install target",
+            pending,
+            icon="𐄂",
+            limit=-1 if state.details_view else 10,
+        )
+    elif state.install_completed and state.install_exit_code == 0:
+        _print_block(
+            console,
+            width,
+            [
+                "The installer finished. The manifest, backup state, and doctor output are already on disk.",
+                "Use vibecrafted help for the command deck, vibecrafted doctor to verify again, and vibecrafted uninstall to reverse the install.",
+            ],
+        )
+
+
+def _render_body(console: Any, state: InstallerState, width: int) -> None:
+    {
+        0: _render_welcome,
+        1: _render_explain,
+        2: _render_listing,
+        3: _render_diagnostics,
+        4: _render_checklist,
+        5: _render_installation,
+    }[state.step](console, state, width)
+
+
+def _render_action(console: Any, state: InstallerState, width: int) -> None:
+    if state.step == 0:
+        action = "Press ⏎ Enter to proceed or ⎋ Esc to leave."
+    elif state.step == CHECKLIST_STEP:
+        action = "⏎ Install  |  ⌫ Back  |  ⇥ Details  |  ⎋ Quit"
+    elif state.step == INSTALL_STEP and state.install_running:
+        action = "Install running — wait for completion. Quit is disabled while files are changing."
+    elif state.step == INSTALL_STEP and state.install_completed:
+        action = "Installation complete. Press ⏎ to close."
+    elif state.step == INSTALL_STEP:
+        action = "⏎ Start install  |  ⌫ Back  |  ⇥ Details  |  ⎋ Quit"
+    else:
+        action = "⏎ Proceed  |  ⌫ Back  |  ⇥ Details  |  ⎋ Quit"
+    console.print(brand_separator(width))
+    _print_wrapped(console, action, width)
+    if state.status_message and state.step != INSTALL_STEP:
+        _print_wrapped(console, f"Status: {state.status_message}", width)
+
+
+def render(state: InstallerState, console: Any) -> None:
+    if hasattr(console, "clear"):
+        console.clear()
+    width = _render_width()
+    _render_hero(console, state, width)
+    _render_body(console, state, width)
+    _render_action(console, state, width)
+    console.print(FOOTER_BRANDING.center(width))
+    _render_footer(console, width)
 
 
 def main_loop(
@@ -618,6 +947,7 @@ def main_loop(
         refresh_diagnostics(state)
 
     dirty = True
+    rendered = False
     with raw_terminal_mode(interactive):
         while not state.should_quit:
             if pump_install_output(state):
@@ -626,6 +956,7 @@ def main_loop(
             if dirty:
                 render(state, console)
                 dirty = False
+                rendered = True
 
             key = read_key(READ_KEY_TIMEOUT if interactive else 0.0)
             if key is None:
@@ -636,7 +967,7 @@ def main_loop(
             handle_key(state, key)
             dirty = True
 
-    if not interactive:
+    if not interactive and (dirty or not rendered):
         render(state, console)
     return state
 

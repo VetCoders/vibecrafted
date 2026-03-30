@@ -41,6 +41,20 @@ spawn_store_dir() {
   fi
 }
 
+spawn_effective_store_dir() {
+  local root="${1:-$(spawn_repo_root)}"
+  if [[ -n "${VIBECRAFT_STORE_DIR:-}" ]]; then
+    spawn_abspath "$VIBECRAFT_STORE_DIR"
+    return 0
+  fi
+  spawn_store_dir "$root"
+}
+
+spawn_marbles_store_dir() {
+  local root="${1:-$(spawn_repo_root)}"
+  printf '%s/marbles\n' "$(spawn_store_dir "$root")"
+}
+
 spawn_abspath() {
   local path="$1"
   if [[ "$path" == /* ]]; then
@@ -237,7 +251,7 @@ spawn_prepare_paths() {
 
   # Central store path (falls back to per-repo if no git remote)
   local store_base
-  store_base="$(spawn_store_dir "$SPAWN_ROOT")"
+  store_base="$(spawn_effective_store_dir "$SPAWN_ROOT")"
 
   SPAWN_PLAN_DIR="$store_base/plans"
   SPAWN_REPORT_DIR="$store_base/reports"

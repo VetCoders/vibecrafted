@@ -30,6 +30,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
+try:
+    from installer_brand import (
+        FOOTER_BRANDING,
+        FRAMEWORK_STAMP,
+        PRODUCT_LINE,
+        TAGLINE,
+        VAPOR_HEADER,
+        separator as brand_separator,
+        version_line as brand_version_line,
+    )
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - module import path depends on entrypoint
+    from scripts.installer_brand import (
+        FOOTER_BRANDING,
+        FRAMEWORK_STAMP,
+        PRODUCT_LINE,
+        TAGLINE,
+        VAPOR_HEADER,
+        separator as brand_separator,
+        version_line as brand_version_line,
+    )
+
 # ---------------------------------------------------------------------------
 # ANSI helpers
 # ---------------------------------------------------------------------------
@@ -1489,17 +1512,16 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     cli_skill_filter = args.skill_filter  # None = all, list = subset
 
     # --- Header ---
+    sep = brand_separator(33)
     print()
-    print(bold("  \u2692  VibeCrafted Installer"))
-    print(
-        dim(
-            "  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
-        )
-    )
     fw_ver = get_framework_version(repo_root)
-    print(dim(f"  Source: {repo_root}"))
-    if fw_ver != "unknown":
-        print(dim(f"  Version: {fw_ver}"))
+    print(f"  \u2692 {VAPOR_HEADER} \u2692")
+    print()
+    print(f"  {brand_version_line(fw_ver)}")
+    print(f"  {TAGLINE}")
+    print(f"  {PRODUCT_LINE}")
+    print(f"  {sep}")
+    print(f"  Source: {repo_root}")
     print()
 
     # --- Discover skills ---
@@ -1512,14 +1534,23 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     skill_names = [s.name for s in skills]
 
     # --- Show bundle ---
-    print(bold("Bundle contents:"))
-    for cat_key in ("pipeline", "specialist"):
-        cat = SKILL_CATEGORIES[cat_key]
-        names = cats[cat_key]
-        if names:
-            print(f"  {cyan(cat['label'])} ({len(names)})")
-            for n in names:
-                print(f"    - {n}")
+    print(bold("Framework bundle:"))
+    print(f"  Pipeline skills   {len(cats['pipeline'])}")
+    if cats["specialist"]:
+        print(f"  Specialist skills {len(cats['specialist'])}")
+    if advanced:
+        print()
+        for cat_key in ("pipeline", "specialist"):
+            cat = SKILL_CATEGORIES[cat_key]
+            names = cats[cat_key]
+            if names:
+                print(f"  {cyan(cat['label'])} ({len(names)})")
+                for n in names:
+                    print(f"    - {n}")
+    else:
+        print(
+            f"  Use {cyan('--advanced')} to choose skills and runtimes interactively."
+        )
     print()
 
     # --- Interactive Wizard ---
@@ -1626,7 +1657,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                         )
                     )
                     create_all = ask_yn(
-                        "Create the default skill views for agents, claude, and codex?",
+                        "Create the standard skill views for agents, claude, and codex?",
                         default=True,
                     )
                     if not create_all:
@@ -1726,7 +1757,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                 # Shell helpers
                 if not cli_with_shell and interactive:
                     install_shell = ask_yn(
-                        "Enable the shell helper layer (bash + zsh)?",
+                        "Install the shell helper layer?",
                         default=install_shell,
                     )
                     print()
@@ -1779,15 +1810,15 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
 
     print(bold("Plan:"))
     print(f"  Skills:    {len(selected_skills)} -> {cyan(str(store_path))}")
-    print(f"  Runtimes:  {', '.join(all_runtimes)} {dim('(symlink views)')}")
-    print(f"  Shell:     {'yes' if install_shell else 'no'}")
+    print(f"  Runtimes:  {', '.join(all_runtimes)} {dim('(skill views)')}")
+    print(f"  Shell:     {'enabled' if install_shell else 'skipped'}")
     if dry_run:
         print(f"  Mode:      {yellow('DRY RUN')}")
     print()
 
     if interactive:
-        if not ask_yn("Install this plan?", default=True):
-            print("Install cancelled.")
+        if not ask_yn("Start install?", default=True):
+            print("Install stopped. No changes were made.")
             return 0
         print()
 
@@ -1965,24 +1996,14 @@ def _print_unicode_summary(
         fnd_str += f" +{len(fnd_ok) - 3}"
     store_display = str(store_path).replace(str(Path.home()), "~")
 
-    # Pure unicode summary — zero ANSI escape codes, renders everywhere.
-    # All unicode text generated via unicode-puzzles-mcp, verified code points.
-    # Styles: vaporwave (header), monospace (subheader), squared (footer stamp).
-
-    # Unicode literals — MCP-verified
-    vapor_header = "\uff36\uff49\uff42\uff45\uff23\uff52\uff41\uff46\uff54\uff45\uff44"  # ＶｉｂｅＣｒａｆｔｅｄ
-    mono_sub = "\U0001d69f\U0001d692\U0001d68b\U0001d68e\U0001d68c\U0001d69b\U0001d68a\U0001d68f\U0001d69d"  # 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝
-    mono_cli = "\U0001d69f\U0001d68c-\U0001d68c\U0001d695\U0001d692"  # 𝚟𝚌-𝚌𝚕𝚒
-    sq_framework = (  # 🅵·🅁·🄰·🄼·🄴·🅆·🅞·🅡·🅺
-        "\U0001f175\u00b7\U0001f141\u00b7\U0001f130\u00b7\U0001f13c"
-        "\u00b7\U0001f134\u00b7\U0001f146\u00b7\U0001f15e\u00b7\U0001f161\u00b7\U0001f17a"
-    )
-    sep = "\u2500" * 37
+    sep = brand_separator(37)
 
     lines = [
-        f"\u2692 {vapor_header} \u2692",
+        f"\u2692 {VAPOR_HEADER} \u2692",
         "",
-        f"{mono_sub} ({mono_cli}) \U0001d69f{fw_ver_display}",
+        brand_version_line(fw_ver_display),
+        TAGLINE,
+        PRODUCT_LINE,
         sep,
         "",
         f"\u2713 Skills       {skill_count} installed",
@@ -1996,7 +2017,8 @@ def _print_unicode_summary(
         "  Verify       vibecrafted doctor",
         "  Reverse      vibecrafted uninstall",
         "",
-        f"  {sq_framework}",
+        f"  {FOOTER_BRANDING}",
+        f"  {FRAMEWORK_STAMP}",
     ]
 
     _out.write("\n")
@@ -2007,9 +2029,9 @@ def _print_unicode_summary(
     missing_fnd = [f for f in FOUNDATIONS if f.required and not f.is_installed()]
     if missing_fnd:
         _out.write("\n")
-        _out.write(yellow("  Foundations still missing:") + "\n")
+        _out.write("  Foundations still missing:\n")
         for f in missing_fnd:
-            _out.write(f"    {f.name}: {f.install_hint()}\n")
+            _out.write(f"    - {f.name}: {f.install_hint()}\n")
     _out.write("\n")
     _out.flush()
 
@@ -2241,34 +2263,30 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 
     # --- Compact footer: header + commands (no repeated status lines) ---
     fw_ver_display = get_framework_version(repo_root)
-    vapor_header = "\uff36\uff49\uff42\uff45\uff23\uff52\uff41\uff46\uff54\uff45\uff44"  # ＶｉｂｅＣｒａｆｔｅｄ
-    mono_sub = "\U0001d69f\U0001d692\U0001d68b\U0001d68e\U0001d68c\U0001d69b\U0001d68a\U0001d68f\U0001d69d"  # 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝
-    mono_cli = "\U0001d69f\U0001d68c-\U0001d68c\U0001d695\U0001d692"  # 𝚟𝚌-𝚌𝚕𝚒
-    sq_framework = (
-        "\U0001f175\u00b7\U0001f141\u00b7\U0001f130\u00b7\U0001f13c"
-        "\u00b7\U0001f134\u00b7\U0001f146\u00b7\U0001f15e\u00b7\U0001f161\u00b7\U0001f17a"
-    )
-    sep = "\u2500" * 37
+    sep = brand_separator(37)
+    log_display = str(log_path).replace(str(Path.home()), "~")
+    missing_fnd = [f for f in FOUNDATIONS if f.required and not f.is_installed()]
 
     print()
-    print(f"  \u2692 {vapor_header} \u2692")
+    print(f"  \u2692 {VAPOR_HEADER} \u2692")
     print()
-    print(f"  {mono_sub} ({mono_cli}) \U0001d69f{fw_ver_display}")
+    print(f"  {brand_version_line(fw_ver_display)}")
+    print(f"  {TAGLINE}")
+    print(f"  {PRODUCT_LINE}")
     print(f"  {sep}")
     print("    Start        vibecrafted help")
     print("    Verify       vibecrafted doctor")
     print("    Reverse      vibecrafted uninstall")
-    print()
-    print(f"    {sq_framework}")
-    print()
-
-    # Surface missing required foundations
-    missing_fnd = [f for f in FOUNDATIONS if f.required and not f.is_installed()]
+    print(f"    Log          {log_display}")
     if missing_fnd:
-        print(yellow("  Foundations still missing:"))
-        for f in missing_fnd:
-            print(f"    {f.name}: {f.install_hint()}")
         print()
+        print("    Foundations  still missing")
+        for f in missing_fnd:
+            print(f"      - {f.name}: {f.install_hint()}")
+    print()
+    print(f"    {FOOTER_BRANDING}")
+    print(f"    {FRAMEWORK_STAMP}")
+    print()
 
     return 0
 
@@ -2715,12 +2733,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="vc-install",
-        description="VetCoders Skills Installer v2 — manifest-driven, multi-channel, interactive.",
+        description="VibeCrafted installer — the founders' framework for shipping software with AI agents.",
     )
     sub = parser.add_subparsers(dest="command")
 
     # install
-    p_install = sub.add_parser("install", help="Install the VetCoders skill bundle")
+    p_install = sub.add_parser(
+        "install", help="Install the VibeCrafted framework bundle"
+    )
     p_install.add_argument(
         "--source", default=default_source, help="Repo root (default: auto-detect)"
     )
@@ -2731,10 +2751,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--non-interactive", action="store_true", help="Skip all prompts, use defaults"
     )
     p_install.add_argument(
-        "--advanced", action="store_true", help="Enable selective skill/runtime install"
+        "--advanced", action="store_true", help="Open the selective install wizard"
     )
     p_install.add_argument(
-        "--with-shell", action="store_true", help="Install zsh shell helpers"
+        "--with-shell", action="store_true", help="Install the shell helper layer"
     )
     p_install.add_argument(
         "--tool",
@@ -2766,7 +2786,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # list
     p_list = sub.add_parser(
         "list",
-        help="Show available VetCoders skills and the runtime substrate beneath them",
+        help="Show available VibeCrafted skills and the runtime substrate beneath them",
     )
     p_list.add_argument(
         "--source", default=default_source, help="Repo root (default: auto-detect)"
@@ -2774,7 +2794,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # uninstall
     p_uninstall = sub.add_parser(
-        "uninstall", help="Remove VetCoders skills, symlinks, and helpers"
+        "uninstall", help="Remove VibeCrafted skills, views, and helpers"
     )
     p_uninstall.add_argument(
         "--dry-run", "-n", action="store_true", help="Show what would be done"
