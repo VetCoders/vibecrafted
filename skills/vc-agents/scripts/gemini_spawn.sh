@@ -109,7 +109,7 @@ qfilter="$(printf '%q' "$SCRIPT_DIR/gemini_stream_filter.jq")"
 # grep '^{' strips non-JSON lines so jq doesn't choke.
 vibecrafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
 qvhome="$(printf '%q' "$vibecrafted_home")"
-launch_cmd="set -o pipefail && cd $qroot && prompt=\$(cat $qruntime) && gemini -p \"\$prompt\" -y $model_flag --include-directories $qvhome -o stream-json 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript"
+launch_cmd="set -o pipefail && cd $qroot && GEMINI_FORCE_FILE_STORAGE=true gemini -p '' -y $model_flag --include-directories $qvhome -o stream-json < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript"
 
 # Combine built-in hooks with caller-provided hooks (marbles chain, etc.)
 combined_success="${gemini_success_hook}${success_hook_extra:+
