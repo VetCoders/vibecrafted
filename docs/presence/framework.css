@@ -174,26 +174,46 @@ body.framework-page.framework-page--playground {
 .framework-playground__body {
     min-height: 0;
     height: 100%;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(164px, 188px);
-    gap: 0.8rem;
-    align-items: stretch;
+    display: flex;
+    gap: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    padding: 0 1rem;
 }
 
 .framework-playground__board-column {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 0.65rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
     min-width: 0;
     height: 100%;
+    justify-content: center;
 }
 
 .framework-playground__side-column {
-    display: grid;
-    align-content: start;
-    gap: 0.55rem;
+    width: 280px;
+    height: auto;
+    max-height: 90%;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 1.2rem;
     min-width: 0;
-    padding-left: 0.15rem;
+    overflow-y: auto;
+    padding: 1.5rem 1rem 1.5rem 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--card-border) transparent;
+}
+
+.framework-playground__side-column::-webkit-scrollbar {
+    width: 4px;
+}
+
+.framework-playground__side-column::-webkit-scrollbar-thumb {
+    background: var(--card-border);
+    border-radius: 10px;
 }
 
 .framework-playground__press-kicker {
@@ -229,10 +249,16 @@ body.framework-page.framework-page--playground {
     width: 100%;
     height: 100%;
     min-height: 0;
-    border-radius: calc(var(--radius-lg) - 4px);
+    border-radius: var(--radius-lg);
     border: 1px solid var(--card-border);
-    background: radial-gradient(circle at 50% 50%, rgba(34, 34, 31, 0.68) 0%, rgba(12, 12, 13, 0.96) 100%);
+    background-image: 
+        radial-gradient(circle at 50% 50%, rgba(34, 34, 31, 0.4) 0%, rgba(12, 12, 13, 0.85) 100%),
+        url('background-stone.webp');
+    background-size: cover;
+    background-position: center;
+    background-blend-mode: multiply;
     overflow: hidden;
+    box-shadow: inset 0 0 60px rgba(0,0,0,0.5);
 }
 
 .framework-playground__canvas {
@@ -243,22 +269,23 @@ body.framework-page.framework-page--playground {
 
 .framework-playground__overlay {
     position: absolute;
-    top: 1.1rem;
-    right: 1.1rem;
+    top: 1.5rem;
+    left: 1.5rem;
     display: grid;
-    gap: 0.35rem;
-    min-width: 148px;
-    padding: 0.8rem 0.88rem;
-    border: 1px solid rgba(163, 184, 199, 0.14);
-    border-radius: 16px;
-    background: rgba(8, 9, 11, 0.8);
+    gap: 0.45rem;
+    min-width: 164px;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-md);
+    background: rgba(8, 9, 11, 0.82);
     backdrop-filter: var(--blur);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.28);
+    box-shadow: var(--shadow);
+    z-index: 5;
 }
 
 .framework-playground__overlay span,
 .framework-playground__overlay strong {
-    font-family: 'IBM Plex Mono', 'JetBrains Mono', 'SF Mono', monospace;
+    font-family: var(--font-mono);
     text-transform: uppercase;
     letter-spacing: 0.08em;
 }
@@ -268,16 +295,22 @@ body.framework-page.framework-page--playground {
     justify-content: space-between;
     gap: 1rem;
     color: var(--steel);
-    font-size: 0.72rem;
+    font-size: 0.7rem;
 }
 
 .framework-playground__overlay strong {
     color: var(--stone-light);
-    font-size: 0.9rem;
+    font-size: 0.88rem;
 }
 
 .framework-playground__overlay .is-hot {
     color: #e17d6e;
+    animation: hot-pulse 1s infinite alternate;
+}
+
+@keyframes hot-pulse {
+    from { text-shadow: 0 0 2px rgba(225, 125, 110, 0); }
+    to { text-shadow: 0 0 12px rgba(225, 125, 110, 0.8); }
 }
 
 .framework-playground__side-kicker {
@@ -297,23 +330,24 @@ body.framework-page.framework-page--playground {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.8rem;
-    height: 1.8rem;
+    width: 2rem;
+    height: 2rem;
     padding: 0;
-    border: 1px solid rgba(163, 184, 199, 0.16);
-    border-radius: 6px;
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
     background: rgba(163, 184, 199, 0.05);
     color: var(--stone-light);
     font-family: var(--font-mono);
-    font-size: 0.8rem;
+    font-size: 0.85rem;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .framework-playground__control-btn:hover {
     border-color: var(--copper-bright);
-    background: rgba(184, 115, 51, 0.12);
+    background: rgba(184, 115, 51, 0.15);
     color: var(--copper-bright);
+    box-shadow: 0 0 15px rgba(184, 115, 51, 0.2);
 }
 
 .framework-playground__action-btn {
@@ -321,44 +355,54 @@ body.framework-page.framework-page--playground {
     align-items: center;
     justify-content: center;
     width: 100%;
-    padding: 0.65rem 0.8rem;
-    border: 1px solid rgba(184, 115, 51, 0.3);
-    border-radius: 10px;
-    background: rgba(184, 115, 51, 0.08);
+    padding: 0.75rem 1rem;
+    border: 1px solid rgba(184, 115, 51, 0.4);
+    border-radius: var(--radius-md);
+    background: rgba(184, 115, 51, 0.1);
     color: var(--copper-bright);
     font-family: var(--font-mono);
-    font-size: 0.72rem;
+    font-size: 0.74rem;
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
     cursor: pointer;
     transition: all 0.2s ease;
+    margin-top: 0.5rem;
 }
 
 .framework-playground__action-btn:hover {
     border-color: var(--copper-bright);
-    background: rgba(184, 115, 51, 0.18);
+    background: rgba(184, 115, 51, 0.2);
     transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(184, 115, 51, 0.2);
 }
 
 .framework-playground__controls-inner input[type="range"] {
     -webkit-appearance: none;
     width: 100%;
-    height: 3px;
-    background: rgba(163, 184, 199, 0.14);
+    height: 4px;
+    background: linear-gradient(to right, var(--copper-bright) 0%, var(--copper-bright) var(--range-pct, 0%), rgba(163, 184, 199, 0.14) var(--range-pct, 0%), rgba(163, 184, 199, 0.14) 100%);
     border-radius: 999px;
     outline: none;
-    margin: 0.45rem 0;
+    margin: 0.6rem 0;
+    cursor: pointer;
 }
 
 .framework-playground__controls-inner input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 12px;
-    height: 12px;
-    background: var(--copper-bright);
+    width: 16px;
+    height: 16px;
+    background: var(--stone-light);
+    border: 3px solid var(--copper-bright);
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 0 10px rgba(184, 115, 51, 0.4);
+    box-shadow: 0 0 15px rgba(184, 115, 51, 0.6);
+    transition: transform 0.1s ease;
+}
+
+.framework-playground__controls-inner input[type="range"]:active::-webkit-slider-thumb {
+    transform: scale(1.2);
 }
 
 .framework-playground__controls-inner input[type="range"]::-moz-range-thumb {
@@ -441,18 +485,17 @@ body.framework-page.framework-page--playground {
 .framework-playground__chip::after {
     content: attr(data-framework-tooltip);
     position: absolute;
-    left: 0;
-    right: 1rem;
-    bottom: calc(100% + 0.7rem);
-    transform: translate(0, 0.35rem);
-    width: auto;
+    right: calc(100% + 0.8rem);
+    top: 50%;
+    transform: translate(0.35rem, -50%);
+    width: 240px;
     padding: 0.72rem 0.82rem;
     border: 1px solid rgba(163, 184, 199, 0.16);
     border-radius: 14px;
-    background: rgba(9, 10, 13, 0.76);
+    background: rgba(9, 10, 13, 0.88);
     backdrop-filter: blur(18px);
     -webkit-backdrop-filter: blur(18px);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.28);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
     color: var(--stone-light);
     font-family: var(--font-head);
     font-size: 0.82rem;
@@ -463,14 +506,14 @@ body.framework-page.framework-page--playground {
     text-align: left;
     opacity: 0;
     pointer-events: none;
-    z-index: 4;
+    z-index: 10;
     transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
 .framework-playground__chip:hover::after,
 .framework-playground__chip:focus-visible::after {
     opacity: 1;
-    transform: translate(0, 0);
+    transform: translate(0, -50%);
 }
 
 .framework-playground__prompt {

@@ -373,6 +373,7 @@
         var errorFlash = 0;
         var frameHandle = 0;
         var lastFrameTs = 0;
+        var pings = [];
 
         var boardShape = 0; // index in SHAPES
         var boardDensity = 1.0;
@@ -442,6 +443,7 @@
             for (var i = 0; i < slots.length; i++) slots[i].revealOrder = i;
             marbles = [];
             overflowMarbles = [];
+            pings = [];
         }
 
         function drawGroove(x, y, r, alpha) {
@@ -460,6 +462,20 @@
             ctx.lineWidth = 0.8;
             ctx.stroke();
             ctx.globalAlpha = 1;
+        }
+
+        function drawPing(p, dt) {
+            p.life -= dt * 0.002;
+            if (p.life <= 0) return false;
+            ctx.save();
+            ctx.globalAlpha = p.life * 0.6;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, marbleRadius * (1 + (1 - p.life) * 1.5), 0, Math.PI * 2);
+            ctx.strokeStyle = p.color || 'rgba(244, 200, 154, 0.8)';
+            ctx.lineWidth = 2 * p.life;
+            ctx.stroke();
+            ctx.restore();
+            return true;
         }
 
         function spawnMarble(targetSlot, chaos, palKey) {
@@ -504,18 +520,28 @@
             var dx = tx - m.x;
             var dy = ty - m.y;
             var dist = Math.sqrt(dx * dx + dy * dy);
-            var attract = 0.012 + (m.target ? 0.008 : 0.004);
-            m.vx += dx * attract;
-            m.vy += dy * attract;
-            m.vx *= 0.87;
-            m.vy *= 0.87;
+            
+            // Magnetic pull: stronger as it gets closer
+            var pullMagnitude = m.target ? (dist < 40 ? 0.04 : 0.015) : 0.008;
+            m.vx += dx * pullMagnitude;
+            m.vy += dy * pullMagnitude;
+            
+            // Damping increases as it gets closer to target
+            var damping = m.target && dist < 10 ? 0.75 : 0.88;
+            m.vx *= damping;
+            m.vy *= damping;
+            
             m.x += m.vx * dt;
             m.y += m.vy * dt;
-            if (dist < 2 && Math.abs(m.vx) < 0.8 && Math.abs(m.vy) < 0.8) {
+            
+            if (dist < 1.5 && Math.abs(m.vx) < 0.5 && Math.abs(m.vy) < 0.5) {
                 m.settled = true;
                 m.x = tx;
                 m.y = ty;
-                if (m.target) m.target.filled = true;
+                if (m.target) {
+                    m.target.filled = true;
+                    pings.push({x: tx, y: ty, life: 1, color: PAL[m.pal].light});
+                }
             }
         }
 
@@ -610,8 +636,10 @@
                 densitySlider.max = '2.0';
                 densitySlider.step = '0.1';
                 densitySlider.value = boardDensity;
+                densitySlider.style.setProperty('--range-pct', ((boardDensity - 0.5) / 1.5 * 100) + '%');
                 densitySlider.oninput = function() {
                     boardDensity = parseFloat(this.value);
+                    this.style.setProperty('--range-pct', ((boardDensity - 0.5) / 1.5 * 100) + '%');
                     buildSlots();
                     render();
                     renderPhaseControls(phaseIdx);
@@ -634,8 +662,10 @@
                 agentSlider.min = '1';
                 agentSlider.max = '10';
                 agentSlider.value = agentBatchSize;
+                agentSlider.style.setProperty('--range-pct', ((agentBatchSize - 1) / 9 * 100) + '%');
                 agentSlider.oninput = function() {
                     agentBatchSize = parseInt(this.value);
+                    this.style.setProperty('--range-pct', ((agentBatchSize - 1) / 9 * 100) + '%');
                     renderPhaseControls(phaseIdx);
                 };
                 agentBatchRow.appendChild(agentSlider);
@@ -671,8 +701,10 @@
                 batchSlider.min = '1';
                 batchSlider.max = '30';
                 batchSlider.value = marbleBatchSize;
+                batchSlider.style.setProperty('--range-pct', ((marbleBatchSize - 1) / 29 * 100) + '%');
                 batchSlider.oninput = function() {
                     marbleBatchSize = parseInt(this.value);
+                    this.style.setProperty('--range-pct', ((marbleBatchSize - 1) / 29 * 100) + '%');
                     renderPhaseControls(phaseIdx);
                 };
                 batchRow.appendChild(batchSlider);
@@ -688,8 +720,10 @@
                 powerSlider.max = '3.0';
                 powerSlider.step = '0.1';
                 powerSlider.value = marblePower;
+                powerSlider.style.setProperty('--range-pct', ((marblePower - 0.5) / 2.5 * 100) + '%');
                 powerSlider.oninput = function() {
                     marblePower = parseFloat(this.value);
+                    this.style.setProperty('--range-pct', ((marblePower - 0.5) / 2.5 * 100) + '%');
                     renderPhaseControls(phaseIdx);
                 };
                 powerRow.appendChild(powerSlider);
@@ -715,7 +749,12 @@
                 var hydroSlider = document.createElement('input');
                 hydroSlider.type = 'range'; hydroSlider.min = '1'; hydroSlider.max = '10';
                 hydroSlider.value = hydrateBatchSize;
-                hydroSlider.oninput = function() { hydrateBatchSize = parseInt(this.value); renderPhaseControls(phaseIdx); };
+                hydroSlider.style.setProperty('--range-pct', ((hydrateBatchSize - 1) / 9 * 100) + '%');
+                hydroSlider.oninput = function() { 
+                    this.style.setProperty('--range-pct', ((this.value - 1) / 9 * 100) + '%');
+                    hydrateBatchSize = parseInt(this.value); 
+                    renderPhaseControls(phaseIdx); 
+                };
                 hydroBatchRow.appendChild(hydroSlider);
                 wrap.appendChild(hydroBatchRow);
 
@@ -745,8 +784,10 @@
                 var polishSlider = document.createElement('input');
                 polishSlider.type = 'range'; polishSlider.min = '0'; polishSlider.max = '1'; polishSlider.step = '0.01';
                 polishSlider.value = polishIntensity;
+                polishSlider.style.setProperty('--range-pct', (polishIntensity * 100) + '%');
                 polishSlider.oninput = function() { 
                     polishIntensity = parseFloat(this.value); 
+                    this.style.setProperty('--range-pct', (polishIntensity * 100) + '%');
                     marbles.forEach(function(m) { if(m.settled) m.saturation = 0.6 + polishIntensity * 0.4; });
                     render();
                     renderPhaseControls(phaseIdx); 
@@ -769,7 +810,7 @@
                 launchBtn.onclick = function() { 
                     shipGlow = 1.0;
                     startMotionLoop();
-                    setTimeout(function() { showPhase(0); }, 2000);
+                    setTimeout(function() { showPhase(0, true); }, 2000);
                 };
                 wrap.appendChild(launchBtn);
             } else {
@@ -799,22 +840,59 @@
             renderPhaseControls(phase);
         }
 
-        function resetCycle() {
+        function triggerPhaseAction() {
+            var p = PHASES[phase];
+            if (p.name === 'agents') {
+                var empty = slots.filter(function (s) { return s.visible && !s.filled; });
+                if (empty.length > 0) {
+                    for (var i = 0; i < Math.min(agentBatchSize, empty.length); i++) {
+                        var idx = Math.floor(Math.random() * empty.length);
+                        marbles.push(spawnMarble(empty[idx], 0.1, 'ocean'));
+                        empty.splice(idx, 1);
+                    }
+                    startMotionLoop();
+                }
+            } else if (p.name === 'marbles') {
+                throwManualBatch();
+            } else if (p.name === 'hydrate') {
+                var gaps = slots.filter(function (s) { return s.visible && !s.filled; });
+                if (gaps.length > 0) {
+                    for (var i = 0; i < Math.min(hydrateBatchSize, gaps.length); i++) {
+                        marbles.push(spawnMarble(gaps[i], 0.05, 'forest'));
+                    }
+                    startMotionLoop();
+                }
+            } else if (p.name === 'scaffold' || p.name === 'workflow' || p.name === 'decorate') {
+                showPhase(phase + 1);
+            } else if (p.name === 'ship') {
+                shipGlow = 1.0;
+                startMotionLoop();
+                setTimeout(function() { showPhase(0, true); }, 2000);
+            }
+        }
+
+        function resetCycle(hardReset) {
             phaseTime = 0;
             throwTimer = 0;
-            grooveRevealProgress = 0;
-            boardAlpha = 0;
-            shakeX = 0;
-            shakeY = 0;
-            coveragePct = 0;
             errorFlash = 0;
-            buildSlots();
+            shipGlow = 0;
+            pings = [];
+            if (hardReset) {
+                grooveRevealProgress = 0;
+                boardAlpha = 0;
+                shakeX = 0;
+                shakeY = 0;
+                coveragePct = 0;
+                marbles = [];
+                overflowMarbles = [];
+                buildSlots();
+            }
         }
 
         function syncSlotVisibility() {
             var visibleCount = Math.floor(grooveRevealProgress * slots.length);
             for (var i = 0; i < slots.length; i++) {
-                slots[i].visible = slots[i].revealOrder < visibleCount;
+                slots[i].visible = slots[i].revealOrder < visibleCount || phase > resolvePhaseIndex('workflow');
             }
         }
 
@@ -975,31 +1053,47 @@
             ctx.translate(shakeX, shakeY);
 
             if (boardAlpha > 0) {
-                ctx.globalAlpha = boardAlpha;
-                ctx.beginPath();
-                var shape = SHAPES[boardShape];
-                if (shape === 'circle') {
-                    ctx.arc(centerX, centerY, boardRadius * 1.05, 0, Math.PI * 2);
-                } else if (shape === 'square') {
-                    ctx.rect(centerX - boardRadius * 1.05, centerY - boardRadius * 1.05, boardRadius * 2.1, boardRadius * 2.1);
-                } else if (shape === 'hexagon') {
-                    for (var i = 0; i < 6; i++) {
-                        var angle = (i * Math.PI) / 3;
-                        var hx = centerX + boardRadius * 1.1 * Math.cos(angle);
-                        var hy = centerY + boardRadius * 1.1 * Math.sin(angle);
-                        if (i === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
+                // High coverage glow
+                if (coveragePct > 90) {
+                    var shape = SHAPES[boardShape];
+                    ctx.save();
+                    ctx.globalAlpha = (coveragePct - 90) / 10 * 0.3 * boardAlpha;
+                    ctx.beginPath();
+                    if (shape === 'circle') ctx.arc(centerX, centerY, boardRadius * 1.05, 0, Math.PI * 2);
+                    else if (shape === 'square') ctx.rect(centerX - boardRadius * 1.05, centerY - boardRadius * 1.05, boardRadius * 2.1, boardRadius * 2.1);
+                    else if (shape === 'hexagon') {
+                        for (var i = 0; i < 6; i++) {
+                            var angle = (i * Math.PI) / 3;
+                            var hx = centerX + boardRadius * 1.1 * Math.cos(angle);
+                            var hy = centerY + boardRadius * 1.1 * Math.sin(angle);
+                            if (i === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
+                        }
+                        ctx.closePath();
                     }
-                    ctx.closePath();
+                    ctx.strokeStyle = 'rgba(184, 115, 51, 0.4)';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    ctx.restore();
                 }
-                
-                var bg = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, boardRadius * 1.05);
-                bg.addColorStop(0, 'rgba(40,40,38,0.7)');
-                bg.addColorStop(1, 'rgba(20,20,18,0.9)');
-                ctx.fillStyle = bg;
-                ctx.fill();
-                ctx.strokeStyle = 'rgba(242,239,221,0.06)';
-                ctx.lineWidth = 1.5;
-                ctx.stroke();
+            }
+                    ctx.beginPath();
+                    if (shape === 'circle') ctx.arc(centerX, centerY, boardRadius * 1.05, 0, Math.PI * 2);
+                    else if (shape === 'square') ctx.rect(centerX - boardRadius * 1.05, centerY - boardRadius * 1.05, boardRadius * 2.1, boardRadius * 2.1);
+                    else if (shape === 'hexagon') {
+                        for (var i = 0; i < 6; i++) {
+                            var angle = (i * Math.PI) / 3;
+                            var hx = centerX + boardRadius * 1.1 * Math.cos(angle);
+                            var hy = centerY + boardRadius * 1.1 * Math.sin(angle);
+                            if (i === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
+                        }
+                        ctx.closePath();
+                    }
+                    ctx.strokeStyle = 'rgba(184, 115, 51, 0.4)';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
                 ctx.globalAlpha = 1;
             }
 
@@ -1007,6 +1101,13 @@
                 var slot = slots[i];
                 if (slot.visible && boardAlpha > 0) {
                     drawGroove(slot.x, slot.y, marbleRadius, boardAlpha * 0.8);
+                }
+            }
+
+            // Draw pings
+            for (var p = pings.length - 1; p >= 0; p--) {
+                if (!drawPing(pings[p], 0)) {
+                    pings.splice(p, 1);
                 }
             }
 
@@ -1070,6 +1171,10 @@
             for (var step = 0; step < steps; step++) {
                 var all = marbles.concat(overflowMarbles);
                 for (var i = 0; i < all.length; i++) updateMarble(all[i], 1);
+                for (var p = pings.length - 1; p >= 0; p--) {
+                    pings[p].life -= 16 * 0.002;
+                    if (pings[p].life <= 0) pings.splice(p, 1);
+                }
                 updatePhase(16, true);
             }
         }
@@ -1078,6 +1183,7 @@
             var p = PHASES[phase];
             if (phaseTime < p.duration) return true;
             if (p.name === 'error') return true;
+            if (pings.length > 0) return true;
             var all = marbles.concat(overflowMarbles);
             for (var i = 0; i < all.length; i++) {
                 if (!all[i].settled && all[i].alpha > 0.01) return true;
@@ -1090,6 +1196,10 @@
             for (var step = 0; step < steps; step++) {
                 var all = marbles.concat(overflowMarbles);
                 for (var i = 0; i < all.length; i++) updateMarble(all[i], 1);
+                for (var p = pings.length - 1; p >= 0; p--) {
+                    pings[p].life -= 16 * 0.002;
+                    if (pings[p].life <= 0) pings.splice(p, 1);
+                }
                 updatePhase(16, false);
             }
             render();
@@ -1155,16 +1265,20 @@
             startMotionLoop();
         }
 
-        function showPhase(target) {
+        function showPhase(target, hardReset) {
             target = Math.max(0, Math.min(PHASES.length - 1, target));
-            resetCycle();
-            for (var i = 0; i <= target; i++) {
-                phase = i;
-                phaseTime = 0;
-                throwTimer = 0;
-                errorFlash = 0;
-                advanceSimulation(PHASES[i].duration * (i === target ? (PHASES[i].snapshotRatio || 0.55) : 1));
+            resetCycle(hardReset);
+            
+            if (hardReset) {
+                for (var i = 0; i <= target; i++) {
+                    phase = i;
+                    phaseTime = 0;
+                    throwTimer = 0;
+                    errorFlash = 0;
+                    advanceSimulation(PHASES[i].duration * (i === target ? (PHASES[i].snapshotRatio || 0.55) : 1));
+                }
             }
+            
             phase = target;
             render();
             updateUi(true);
@@ -1228,6 +1342,10 @@
         });
 
         window.addEventListener('resize', resize);
+        stage.addEventListener('click', function(e) {
+            e.preventDefault();
+            triggerPhaseAction();
+        });
         phase = resolvePhaseIndex(startPhaseName);
         resize();
         updateUi(true);
