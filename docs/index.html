@@ -28,7 +28,7 @@
     <link crossorigin href="https://fonts.gstatic.com" rel="preconnect">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&amp;family=Lora:ital,wght@0,400;0,500;0,600;1,400&amp;display=swap"
           rel="stylesheet">
-    <link href="presence/styles.css?v=20260330" rel="stylesheet">
+    <link href="presence/styles.css?v=20260330j" rel="stylesheet">
     <script crossorigin="anonymous"
             integrity="sha384-7Q8XaCgFJlm82NdMNnX7AIyZbdTjUre2eR4TpKK1Pko3zKXorgTIGVpnnLho+UAe"
             src="https://cdn.jsdelivr.net/npm/mermaid@10.8.0/dist/mermaid.min.js"></script>
@@ -85,8 +85,8 @@
             <figure class="hero-canvas" id="showcase">
                 <canvas id="marbleCanvas" aria-hidden="true"></canvas>
                 <div class="hero-canvas-stats" aria-hidden="true">
-                    <span>Loop <strong id="loopCounter">0</strong></span>
-                    <span>Coverage <strong id="coverageCounter">0%</strong></span>
+                    <span>Marbles <strong id="loopCounter">0</strong></span>
+                    <span>Converge <strong id="coverageCounter">0%</strong></span>
                 </div>
             </figure>
         </section>
@@ -374,6 +374,20 @@ flowchart LR
                 </div>
             </div>
 
+            <div class="framework-playground-shell">
+                <div class="framework-playground-shell__intro">
+                    <div>
+                        <p class="framework-playground-shell__kicker">Phase Showcase</p>
+                        <h3>See the same board survive every stage of the cycle</h3>
+                    </div>
+                    <div class="framework-playground-shell__copy">
+                        <p>The old experimental playground now carries real explanatory weight inside the site. This is the board-level story of why Marbles is not a slogan but a measurable sequence of states.</p>
+                        <a class="framework-playground-shell__link" href="presence/framework.html">Open standalone playground</a>
+                    </div>
+                </div>
+                <div data-framework-autoplay="false" data-framework-layout="inline" data-framework-playground></div>
+            </div>
+
             <div class="transition-visual">
                 <p class="transition-caption">Convergence Trajectory &mdash; loop until the circle is full</p>
                 <div class="trajectory" id="trajectoryBars">
@@ -504,6 +518,7 @@ vibecrafted doctor</code></pre>
         <p class="footer-copyright">&copy; 2025-2026 VetCoders. Built by Maciej Gad &amp; Monika Szymańska.</p>
     </footer>
 
-    <script src="presence/app.js?v=20260330"></script>
+    <script src="presence/framework.js?v=20260330i"></script>
+    <script src="presence/app.js?v=20260330f"></script>
 </body>
 </html>

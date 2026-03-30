@@ -670,7 +670,7 @@ function shuffleArr(a) {
     }
     
     function updateCounters() {
-        if(loopCounter) loopCounter.textContent = currentLoop;
+        if(loopCounter) loopCounter.textContent = marbles.length;
         if(coverageCounter) {
             var pct = slots.length ? Math.round(displayCoverageRatio() * 100) : 0;
             coverageCounter.textContent = pct + '%';
