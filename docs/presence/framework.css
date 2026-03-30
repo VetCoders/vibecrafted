@@ -4,17 +4,18 @@ body.framework-page {
 
 body.framework-page.framework-page--playground {
     overflow-x: hidden;
+    overflow-y: hidden;
 }
 
 .framework-page-shell {
-    width: min(1500px, calc(100vw - 3rem));
-    min-height: 100svh;
+    width: min(1880px, calc(100vw - 0.5rem));
+    height: 100svh;
     margin: 0 auto;
-    padding: clamp(1rem, 2vw, 1.8rem) 0;
+    padding: calc(var(--nav-height) + 0.35rem) 0.25rem 0.25rem;
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
-    gap: 1rem;
-    align-content: stretch;
+    grid-template-rows: minmax(0, 1fr);
+    gap: 0;
+    align-content: start;
 }
 
 .framework-page__masthead {
@@ -103,34 +104,23 @@ body.framework-page.framework-page--playground {
     color: var(--copper-bright);
 }
 
-.framework-page__hero {
+.framework-page__intro {
     display: grid;
-    gap: 0.7rem;
-}
-
-.framework-page__eyebrow {
-    display: flex;
     align-items: center;
-    justify-content: space-between;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 1rem;
-    flex-wrap: wrap;
 }
 
-.framework-page__copy {
+.framework-page__intro-copy {
     display: grid;
-    gap: 0.45rem;
-    width: min(740px, 100%);
+    gap: 0.28rem;
+    max-width: 72ch;
 }
 
-.framework-page__copy h1 {
-    font-size: clamp(1.65rem, 3vw, 2.5rem);
-    line-height: 1.02;
-}
-
-.framework-page__copy p {
+.framework-page__intro-line {
     color: var(--steel-dark);
-    font-size: 0.98rem;
-    max-width: 62ch;
+    font-size: 0.95rem;
+    line-height: 1.45;
 }
 
 .framework-playground__kicker {
@@ -147,14 +137,14 @@ body.framework-page.framework-page--playground {
     min-width: 0;
     border: 1px solid var(--card-border);
     border-radius: var(--radius-lg);
-    padding: clamp(1.15rem, 1.8vw, 1.6rem);
+    padding: clamp(0.9rem, 1.3vw, 1.15rem);
     background:
         radial-gradient(circle at 20% 18%, rgba(184, 115, 51, 0.08), transparent 26%),
         radial-gradient(circle at 82% 12%, rgba(163, 184, 199, 0.08), transparent 24%),
         linear-gradient(180deg, rgba(18, 19, 23, 0.94) 0%, rgba(10, 10, 12, 0.96) 100%);
     box-shadow: var(--shadow);
     display: grid;
-    gap: 1rem;
+    gap: 0.85rem;
     height: 100%;
     min-height: 0;
 }
@@ -183,25 +173,27 @@ body.framework-page.framework-page--playground {
 
 .framework-playground__body {
     min-height: 0;
+    height: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1.5fr) minmax(250px, 310px);
-    gap: 1.25rem;
+    grid-template-columns: minmax(0, 1fr) minmax(164px, 188px);
+    gap: 0.8rem;
     align-items: stretch;
 }
 
 .framework-playground__board-column {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 0.9rem;
+    gap: 0.65rem;
     min-width: 0;
+    height: 100%;
 }
 
 .framework-playground__side-column {
     display: grid;
     align-content: start;
-    gap: 0.8rem;
+    gap: 0.55rem;
     min-width: 0;
-    padding-left: 0.4rem;
+    padding-left: 0.15rem;
 }
 
 .framework-playground__press-kicker {
@@ -215,14 +207,15 @@ body.framework-page.framework-page--playground {
 .framework-playground__pressline {
     display: flex;
     align-items: center;
-    gap: 0.7rem;
+    gap: 0.55rem;
     min-width: 0;
-    flex: 1 1 420px;
-    font-family: var(--font-head);
+    font-family: var(--font-mono);
     color: var(--steel-dark);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    font-size: 0.82rem;
+    letter-spacing: 0.06em;
 }
 
 .framework-playground__press-copy {
@@ -233,9 +226,9 @@ body.framework-page.framework-page--playground {
 
 .framework-playground__stage {
     position: relative;
-    aspect-ratio: 1.5 / 1;
     width: 100%;
-    min-height: clamp(540px, 74vh, 860px);
+    height: 100%;
+    min-height: 0;
     border-radius: calc(var(--radius-lg) - 4px);
     border: 1px solid var(--card-border);
     background: radial-gradient(circle at 50% 50%, rgba(34, 34, 31, 0.68) 0%, rgba(12, 12, 13, 0.96) 100%);
@@ -297,8 +290,8 @@ body.framework-page.framework-page--playground {
 
 .framework-playground__side-copy {
     color: var(--steel-dark);
-    font-size: 0.95rem;
-    line-height: 1.55;
+    font-size: 0.84rem;
+    line-height: 1.45;
 }
 
 .framework-playground__rail-shell {
@@ -355,7 +348,7 @@ body.framework-page.framework-page--playground {
 
 .framework-playground__chip-label {
     font-family: 'IBM Plex Mono', 'JetBrains Mono', 'SF Mono', monospace;
-    font-size: 0.82rem;
+    font-size: 0.76rem;
     letter-spacing: 0.08em;
     line-height: 1;
     text-transform: uppercase;
@@ -436,13 +429,31 @@ body.framework-page.framework-page--playground {
     color: var(--copper-bright);
 }
 
+.framework-page--playground .framework-playground {
+    height: 100%;
+    min-height: 0;
+}
+
+.framework-page--playground .framework-playground__meta {
+    display: none;
+}
+
+.framework-page--playground .framework-playground__stage {
+    height: 100%;
+    min-height: 0;
+}
+
 @media (max-width: 960px) {
     .framework-page-shell {
-        width: min(100vw - 1.4rem, 1500px);
+        width: min(100vw - 0.5rem, 1880px);
+        height: auto;
+        min-height: 100svh;
+        padding: calc(var(--nav-height) + 0.35rem) 0.25rem 0.5rem;
     }
 
-    .framework-page__eyebrow {
-        align-items: flex-start;
+    .framework-page__intro {
+        grid-template-columns: 1fr;
+        align-items: start;
     }
 
     .framework-playground__body {
@@ -450,7 +461,8 @@ body.framework-page.framework-page--playground {
     }
 
     .framework-playground__stage {
-        min-height: clamp(420px, 62vh, 720px);
+        height: auto;
+        min-height: clamp(500px, 64vh, 760px);
     }
 
     .framework-playground__side-column {
@@ -496,8 +508,8 @@ body.framework-page.framework-page--playground {
 
 @media (max-width: 640px) {
     .framework-page-shell {
-        width: min(100vw - 1rem, 1500px);
-        padding: 0.85rem 0;
+        width: min(100vw - 0.4rem, 1880px);
+        padding: calc(var(--nav-height) + 0.25rem) 0.2rem 0.35rem;
     }
 
     .framework-page__masthead {
@@ -513,8 +525,8 @@ body.framework-page.framework-page--playground {
         flex: 1 1 calc(50% - 0.45rem);
     }
 
-    .framework-page__copy h1 {
-        font-size: clamp(1.5rem, 8vw, 2.2rem);
+    .framework-page__intro {
+        gap: 0.7rem;
     }
 
     .framework-playground__overlay {

@@ -113,9 +113,11 @@ TXT
 model_flag=""
 [[ -n "$model" ]] && model_flag="--model $qmodel"
 qfilter="$(printf '%q' "$SCRIPT_DIR/claude_stream_filter.jq")"
-# Stream-json → jq (external filter file) → clean text to terminal AND transcript
+# Claude sometimes emits non-JSON noise before the JSONL stream.
+# Keep only JSON object lines so jq never chokes on banners, warnings, or status text.
+# Stream-json → grep JSON objects → jq (external filter file) → clean text to terminal AND transcript
 # Raw JSONL lives in ~/.claude/projects/ — aicx ingests from there, not from us
-launch_cmd="set -o pipefail && cd $qroot && prompt=\$(cat $qruntime) && claude -p --output-format stream-json --verbose --dangerously-skip-permissions $model_flag \"\$prompt\" 2>&1 | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript ; echo ; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true"
+launch_cmd="set -o pipefail && cd $qroot && prompt=\$(cat $qruntime) && claude -p --output-format stream-json --verbose --dangerously-skip-permissions $model_flag \"\$prompt\" 2>&1 | grep --line-buffered '^[[:space:]]*{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript ; echo ; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true"
 
 # Combine built-in hooks with caller-provided hooks (marbles chain, etc.)
 combined_success="${claude_success_hook}${success_hook_extra:+

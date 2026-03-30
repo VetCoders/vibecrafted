@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Marbles plan builder for --depth mode.
-# Scans recent session reports and builds a convergence plan.
+# Scans recent plan files and builds a convergence plan without leaking old loop reports.
 # Outputs the plan file path to stdout.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,18 +31,19 @@ day_store="$(spawn_store_dir "$root_dir")"
 store="${VIBECRAFT_STORE_DIR:-$(spawn_marbles_store_dir "$root_dir")}"
 artifacts_parent="$(dirname "$day_store")"
 
-# Scan recent reports across today and previous days
-reports=()
+# Scan recent plan files across today and previous days.
+# Marbles loops must not ingest prior loop reports; they only crawl prior plans.
+plans=()
 while IFS= read -r day_dir; do
-  [[ -d "$day_dir/reports" ]] || continue
-  while IFS= read -r rpt; do
-    [[ -n "$rpt" ]] || continue
-    reports+=("$rpt")
-    [[ ${#reports[@]} -ge $depth ]] && break
-  done < <(find "$day_dir/reports" -name '*.md' \
-    ! -name '*.meta.json' ! -name '*.transcript.log' ! -name '*CONVERGENCE*' ! -name '*_marbles-*' \
+  [[ -d "$day_dir/plans" ]] || continue
+  while IFS= read -r plan; do
+    [[ -n "$plan" ]] || continue
+    plans+=("$plan")
+    [[ ${#plans[@]} -ge $depth ]] && break
+  done < <(find "$day_dir/plans" -name '*.md' \
+    ! -name '*_marbles-*' ! -name 'marbles-*' \
     2>/dev/null | sort -r)
-  [[ ${#reports[@]} -ge $depth ]] && break
+  [[ ${#plans[@]} -ge $depth ]] && break
 done < <(find "$artifacts_parent" -maxdepth 1 -type d -name '20*' 2>/dev/null | sort -r)
 
 # Build plan file
@@ -62,13 +63,13 @@ model: pending
 ---
 
 EOF_FRONTMATTER
-  printf '# Marbles Convergence — Depth Crawl (%s sessions)\n\n' "$depth"
+  printf '# Marbles Convergence — Depth Crawl (%s plans)\n\n' "$depth"
 
-  if [[ ${#reports[@]} -eq 0 ]]; then
+  if [[ ${#plans[@]} -eq 0 ]]; then
     cat <<'EMPTY'
 ## Context
 
-No recent session reports found. Starting from clean state.
+No recent plan files found. Starting from clean state.
 
 ## Task
 
@@ -76,10 +77,10 @@ Run quality gates on the current repository state.
 Fix any issues found. Report what you fixed and what remains.
 EMPTY
   else
-    printf '## Context: Recent Sessions\n'
-    for rpt in "${reports[@]}"; do
-      printf '\n### %s\n\n' "$(basename "$rpt")"
-      head -50 "$rpt" 2>/dev/null || printf '(not readable)\n'
+    printf '## Context: Recent Plans\n'
+    for plan in "${plans[@]}"; do
+      printf '\n### %s\n\n' "$(basename "$plan")"
+      head -80 "$plan" 2>/dev/null || printf '(not readable)\n'
       printf '\n---\n'
     done
 
@@ -87,7 +88,7 @@ EMPTY
 
 ## Task
 
-Review the above session history. Identify:
+Review the above prior plans. Identify:
 - Unfinished work (started but not completed)
 - Quality regressions (things that were working and broke)
 - Convergence gaps (things that need polish to ship)

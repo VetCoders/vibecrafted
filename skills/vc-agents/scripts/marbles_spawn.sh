@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 usage() {
   cat <<EOF
-Usage: marbles_spawn.sh --agent <agent> [--depth <n>|--task <file>|--prompt <text>] [--count <n>] [--runtime <rt>] [--root <dir>]
+Usage: marbles_spawn.sh --agent <agent> [--depth <n>|--file <file>|--prompt <text>] [--count <n>] [--runtime <rt>] [--root <dir>]
 
 Marbles convergence loop orchestrator.
 Runs <agent> in a loop of <count> iterations against the same plan.
@@ -15,8 +15,8 @@ Convergence happens through code state, not report chaining.
 
 Options:
   --agent <name>      claude, codex, or gemini (required)
-  --depth <n>         Crawl last n sessions as context
-  --task <file>       Use specific plan file
+  --depth <n>         Crawl last n plan files as context (default: 3 when no source is given)
+  --file <file>       Use specific plan/input file
   --prompt <text>     Inline prompt string
   --count <n>         Number of loops (default: 3)
   --runtime <rt>      terminal, headless (default: terminal)
@@ -36,8 +36,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent)   shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --agent";   agent="$1" ;;
     --depth)   shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --depth";   depth="$1" ;;
-    --task)    shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --task";    task="$1" ;;
-    --prompt)  shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --prompt";  prompt="$1" ;;
+    --task|--file|-f) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --file"; task="$1" ;;
+    --prompt|-p) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --prompt"; prompt="$1" ;;
     --count)   shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --count";   count="$1" ;;
     --runtime) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --runtime"; runtime="$1" ;;
     --root)    shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --root";    root="$1" ;;
@@ -51,12 +51,17 @@ done
 [[ -n "$agent" ]] || spawn_die "Missing --agent"
 [[ "$agent" =~ ^(claude|codex|gemini)$ ]] || spawn_die "Invalid agent: $agent"
 spawn_validate_runtime "$runtime"
+spawn_require_positive_int "$count" "--count"
+[[ -z "$depth" ]] || spawn_require_positive_int "$depth" "--depth"
 
 sources=0
 [[ -n "$depth" ]]  && ((sources++)) || true
 [[ -n "$task" ]]   && ((sources++)) || true
 [[ -n "$prompt" ]] && ((sources++)) || true
-[[ $sources -eq 1 ]] || spawn_die "Exactly one of --depth, --task, or --prompt is required"
+[[ $sources -le 1 ]] || spawn_die "Use at most one source: --depth, --file, or --prompt"
+if [[ $sources -eq 0 ]]; then
+  depth=3
+fi
 
 # ── Resolve root & store ──────────────────────────────────────────────
 root_dir="${root:-$(spawn_repo_root)}"

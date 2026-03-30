@@ -267,6 +267,40 @@
     }
 
     function buildShowcaseMarkup(layout) {
+        if (layout === 'standalone') {
+            return [
+                '<div class="framework-playground framework-playground--standalone">',
+                '  <div class="framework-playground__body">',
+                '    <section class="framework-playground__board-column">',
+                '      <p class="framework-playground__pressline">',
+                '        <span class="framework-playground__press-kicker" data-framework-phase-eyebrow>Phase 2 · Converge</span>',
+                '        <span class="framework-playground__press-copy" data-framework-phase-press>Add force, accept variance.</span>',
+                '      </p>',
+                '      <div class="framework-playground__stage">',
+                '      <canvas class="framework-playground__canvas" aria-hidden="true"></canvas>',
+                '      <div class="framework-playground__overlay" aria-hidden="true">',
+                '        <span>Phase <strong data-framework-phase-label>Marbles</strong></span>',
+                '        <span>Converge <strong data-framework-coverage>0%</strong></span>',
+                '        <span>Marbles <strong data-framework-marbles>0</strong></span>',
+                '      </div>',
+                '        <p class="framework-playground__prompt" aria-hidden="true">',
+                '          <span class="framework-playground__prompt-mark">$ &gt;</span>',
+                '          <span class="framework-playground__prompt-command" data-framework-command>vc-marbles</span>',
+                '        </p>',
+                '      </div>',
+                '    </section>',
+                '    <aside class="framework-playground__side-column">',
+                '      <p class="framework-playground__side-kicker">Choose Phase</p>',
+                '      <p class="framework-playground__side-copy" data-framework-phase-hint>Manual teaching surface. Click a phase to inspect the board and click Marbles again to throw another batch.</p>',
+                '      <div class="framework-playground__rail-shell">',
+                '        <div class="framework-playground__rail framework-playground__rail--stack" data-framework-rail></div>',
+                '      </div>',
+                '    </aside>',
+                '  </div>',
+                '</div>'
+            ].join('');
+        }
+
         var headerTitle = layout === 'standalone'
             ? 'Command the board phase by phase'
             : 'A phase-by-phase board of the convergence loop';
@@ -316,7 +350,7 @@
         root.dataset.frameworkReady = 'true';
 
         var layout = root.getAttribute('data-framework-layout') || 'inline';
-        var startPhaseName = root.getAttribute('data-framework-start') || (layout === 'inline' ? 'marbles' : 'init');
+        var startPhaseName = root.getAttribute('data-framework-start') || 'marbles';
         root.classList.add('framework-playground');
         root.classList.toggle('framework-playground--standalone', layout === 'standalone');
 
@@ -881,8 +915,8 @@
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             centerX = width / 2;
             centerY = height / 2;
-            boardRadius = Math.min(width, height) * (layout === 'standalone' ? 0.36 : 0.38);
-            marbleRadius = Math.max(6, boardRadius * 0.065);
+            boardRadius = Math.min(width, height) * (layout === 'standalone' ? 0.43 : 0.38);
+            marbleRadius = Math.max(6, boardRadius * (layout === 'standalone' ? 0.056 : 0.065));
             var currentPhase = phase;
             showPhase(currentPhase);
         }

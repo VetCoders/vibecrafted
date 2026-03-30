@@ -101,21 +101,31 @@ cmd_help() {
   printf '%bFront door:%b\n' "$_bold" "$_reset"
   printf '  %bvibecrafted help%b                      Show the command deck\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted init%b [agent]              Start an interactive init session\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted%b <skill> <agent> [args]    Run a framework skill\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted%b <skill> <agent> [flags]   Run a framework skill\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b <agent> <mode> [args]     Use plan/research/review helpers\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted doctor%b                    Verify installation health\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard%b                 Open mission control\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
   printf '\n'
-  printf '%bSkill wrappers:%b\n' "$_bold" "$_reset"
-  printf '  vc-init claude\n'
-  printf '  vc-workflow claude "Plan and implement auth"\n'
-  printf '  vc-research codex "Evaluate caching options"\n'
-  printf '  vc-marbles codex --count 4 --depth 4\n'
-  printf '  vc-justdo codex "Ship the feature"\n'
-  printf '  vc-dou claude\n'
-  printf '  vc-hydrate codex\n'
-  printf '  vc-release codex\n'
+  printf '%bExamples (preferred front door):%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted init claude\n'
+  printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
+  printf '  vibecrafted workflow claude --file /path/to/brief.md\n'
+  printf '  vibecrafted marbles codex\n'
+  printf '  vibecrafted marbles codex --count 4 --depth 4\n'
+  printf '  vibecrafted resume claude --session <id> --prompt "Continue the fix"\n'
+  printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
+  printf '  vibecrafted dou claude\n'
+  printf '  vibecrafted hydrate codex\n'
+  printf '  vibecrafted release codex\n'
+  printf '\n'
+  printf '%bSkill flags (uniform contract):%b\n' "$_bold" "$_reset"
+  printf '  -p, --prompt <text>            Inline prompt\n'
+  printf '  -f, --file <path.md>           Input file as prompt context\n'
+  printf '  --count <n>                    Marbles loop count (default: 3)\n'
+  printf '  --depth <n>                    Marbles plan crawl depth (default: 3)\n'
+  printf '  --session <id>                 Session ID for vibecrafted resume\n'
   printf '\n'
   printf '%bInfrastructure:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
@@ -200,6 +210,21 @@ cmd_agents() {
   printf '\n'
 }
 
+cmd_resume() {
+  local agent="${1:-}"
+  [[ -n "$agent" ]] || {
+    printf '%b[error]%b Usage: vibecrafted resume <claude|codex|gemini> --session <session_id> [--prompt <text>] [--file <path>]\n' "$_red" "$_reset" >&2
+    return 1
+  }
+  shift || true
+  _has_agent "$agent" || {
+    printf '%b[error]%b Unknown agent: %s\n' "$_red" "$_reset" "$agent" >&2
+    return 1
+  }
+  _ensure_helpers_loaded || return 1
+  _run_helper vc-resume "$agent" "$@"
+}
+
 run_mode() {
   local agent="$1"
   local mode="$2"
@@ -239,6 +264,10 @@ run_wrapper() {
     cmd_init "$@"
     return
   fi
+  if [[ "$wrapper" == "vc-resume" ]]; then
+    cmd_resume "$@"
+    return
+  fi
   if [[ "$wrapper" == "vc-agents" ]]; then
     cmd_agents "$@"
     return
@@ -273,6 +302,7 @@ main() {
   case "$cmd" in
     help|-h|--help) cmd_help ;;
     init) cmd_init "$@" ;;
+    resume) cmd_resume "$@" ;;
     doctor|check) cmd_doctor ;;
     dashboard|mc|mission-control) cmd_dashboard ;;
     stats|status) cmd_stats ;;

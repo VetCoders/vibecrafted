@@ -18,6 +18,12 @@ spawn_require_command() {
   command -v "$cmd" >/dev/null 2>&1 || spawn_die "Required command not found: $cmd"
 }
 
+spawn_require_positive_int() {
+  local value="${1:-}"
+  local flag_name="${2:-value}"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || spawn_die "${flag_name} must be a positive integer"
+}
+
 spawn_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
 }

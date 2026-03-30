@@ -118,6 +118,151 @@ _vetcoders_prompt_file() {
   printf '%s\n' "$prompt_file"
 }
 
+_vetcoders_contract_reset() {
+  _vetcoders_contract_prompt=""
+  _vetcoders_contract_file=""
+  _vetcoders_contract_session=""
+  _vetcoders_contract_count=""
+  _vetcoders_contract_depth=""
+  _vetcoders_contract_runtime=""
+  _vetcoders_contract_root=""
+  _vetcoders_contract_tail=""
+}
+
+_vetcoders_append_tail() {
+  local piece="${1:-}"
+  [[ -n "$piece" ]] || return 0
+  if [[ -n "$_vetcoders_contract_tail" ]]; then
+    _vetcoders_contract_tail+=" "
+  fi
+  _vetcoders_contract_tail+="$piece"
+}
+
+_vetcoders_parse_contract() {
+  _vetcoders_contract_reset
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -p|--prompt)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value for --prompt" >&2; return 1; }
+        _vetcoders_contract_prompt="$1"
+        ;;
+      -f|--file|--task)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value for --file" >&2; return 1; }
+        _vetcoders_contract_file="$1"
+        ;;
+      --session)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value for --session" >&2; return 1; }
+        _vetcoders_contract_session="$1"
+        ;;
+      --count)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value for --count" >&2; return 1; }
+        _vetcoders_contract_count="$1"
+        ;;
+      --depth)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value for --depth" >&2; return 1; }
+        _vetcoders_contract_depth="$1"
+        ;;
+      --runtime)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value for --runtime" >&2; return 1; }
+        _vetcoders_contract_runtime="$1"
+        ;;
+      --root)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value for --root" >&2; return 1; }
+        _vetcoders_contract_root="$1"
+        ;;
+      --)
+        shift
+        while [[ $# -gt 0 ]]; do
+          _vetcoders_append_tail "$1"
+          shift
+        done
+        break
+        ;;
+      *)
+        _vetcoders_append_tail "$1"
+        ;;
+    esac
+    shift
+  done
+
+  if [[ -z "$_vetcoders_contract_prompt" && -n "$_vetcoders_contract_tail" ]]; then
+    _vetcoders_contract_prompt="$_vetcoders_contract_tail"
+  fi
+}
+
+_vetcoders_effective_runtime() {
+  if [[ -n "$_vetcoders_contract_runtime" ]]; then
+    printf '%s\n' "$_vetcoders_contract_runtime"
+  else
+    _vetcoders_default_runtime
+  fi
+}
+
+_vetcoders_require_positive_int() {
+  local value="${1:-}"
+  local flag_name="${2:-value}"
+  [[ "$value" =~ ^[1-9][0-9]*$ ]] || {
+    echo "${flag_name} must be a positive integer." >&2
+    return 1
+  }
+}
+
+_vetcoders_require_file() {
+  local file_path="${1:-}"
+  [[ -n "$file_path" ]] || {
+    echo "Missing file path." >&2
+    return 1
+  }
+  [[ -f "$file_path" ]] || {
+    echo "Input file not found: $file_path" >&2
+    return 1
+  }
+}
+
+_vetcoders_compose_input_context() {
+  local prompt_text="${1:-}"
+  local file_path="${2:-}"
+  local combined="$prompt_text"
+
+  if [[ -n "$file_path" ]]; then
+    _vetcoders_require_file "$file_path" || return 1
+    local abs_file
+    abs_file="$(cd "$(dirname "$file_path")" && pwd)/$(basename "$file_path")"
+    local file_body
+    file_body="$(cat "$file_path")"
+    if [[ -n "$combined" ]]; then
+      combined+=$'\n\n'
+    fi
+    combined+="Primary input file: $abs_file"
+    combined+=$'\n\n```md\n'
+    combined+="$file_body"
+    combined+=$'\n```'
+  fi
+
+  printf '%s' "$combined"
+}
+
+_vetcoders_compose_skill_prompt() {
+  local skill="$1"
+  local prompt_text="${2:-}"
+  local file_path="${3:-}"
+  local base="Perform the vc-${skill} skill on this repository."
+  local extra
+  extra="$(_vetcoders_compose_input_context "$prompt_text" "$file_path")" || return 1
+  if [[ -n "$extra" ]]; then
+    base+=$'\n\n'
+    base+="$extra"
+  fi
+  printf '%s\n' "$base"
+}
+
 _vetcoders_spawn_plan() {
   local tool="$1"
   local mode="$2"
@@ -126,6 +271,16 @@ _vetcoders_spawn_plan() {
   local script
   script="$(_vetcoders_spawn_script "$tool" "${tool}_spawn.sh")" || return 1
   bash "$script" --mode "$mode" "$plan_file" "$@"
+}
+
+_vetcoders_prompt_text() {
+  local tool="$1"
+  local mode="$2"
+  local prompt_text="$3"
+  shift 3
+  local prompt_file
+  prompt_file="$(_vetcoders_prompt_file "$tool" "$prompt_text")" || return 1
+  _vetcoders_spawn_plan "$tool" "$mode" "$prompt_file" "$@"
 }
 
 _vetcoders_prompt() {
@@ -221,11 +376,26 @@ _vetcoders_skill() {
   local tool="$1"
   local skill="$2"
   shift 2
-  local extra="$*"
   local code="${skill:0:4}"
   local loop_nr="${VIBECRAFT_LOOP_NR:-0}"
-  local prompt="Perform the vc-${skill} skill on this repository.${extra:+ }${extra}"
-  VIBECRAFT_SKILL_CODE="$code" VIBECRAFT_LOOP_NR="$loop_nr" _vetcoders_prompt "$tool" implement "$prompt"
+  _vetcoders_parse_contract "$@" || return 1
+  [[ -z "$_vetcoders_contract_count" ]] || {
+    echo "--count is only supported by vibecrafted marbles." >&2
+    return 1
+  }
+  [[ -z "$_vetcoders_contract_depth" ]] || {
+    echo "--depth is only supported by vibecrafted marbles." >&2
+    return 1
+  }
+  [[ -z "$_vetcoders_contract_session" ]] || {
+    echo "--session is only supported by vibecrafted resume." >&2
+    return 1
+  }
+  local prompt
+  prompt="$(_vetcoders_compose_skill_prompt "$skill" "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1
+  local spawn_args=(--runtime "$(_vetcoders_effective_runtime)")
+  [[ -n "$_vetcoders_contract_root" ]] && spawn_args+=(--root "$_vetcoders_contract_root")
+  VIBECRAFT_SKILL_CODE="$code" VIBECRAFT_LOOP_NR="$loop_nr" _vetcoders_prompt_text "$tool" implement "$prompt" "${spawn_args[@]}"
 }
 
 _vetcoders_skill_entry() {
@@ -248,7 +418,95 @@ _vetcoders_marbles() {
   shift
   local script
   script="$(_vetcoders_spawn_script "$tool" "marbles_spawn.sh")" || return 1
-  bash "$script" --agent "$tool" "$@" --runtime "$(_vetcoders_default_runtime)"
+  _vetcoders_parse_contract "$@" || return 1
+  [[ -z "$_vetcoders_contract_session" ]] || {
+    echo "--session is only supported by vibecrafted resume." >&2
+    return 1
+  }
+
+  local source_count=0
+  [[ -n "$_vetcoders_contract_depth" ]] && ((source_count+=1))
+  [[ -n "$_vetcoders_contract_file" ]] && ((source_count+=1))
+  [[ -n "$_vetcoders_contract_prompt" ]] && ((source_count+=1))
+  [[ $source_count -le 1 ]] || {
+    echo "Marbles accepts one source at a time: use exactly one of --depth, --file, or --prompt." >&2
+    return 1
+  }
+  [[ -z "$_vetcoders_contract_count" ]] || _vetcoders_require_positive_int "$_vetcoders_contract_count" "--count" || return 1
+  [[ -z "$_vetcoders_contract_depth" ]] || _vetcoders_require_positive_int "$_vetcoders_contract_depth" "--depth" || return 1
+
+  local marbles_args=(--agent "$tool" --runtime "$(_vetcoders_effective_runtime)")
+  [[ -n "$_vetcoders_contract_root" ]] && marbles_args+=(--root "$_vetcoders_contract_root")
+  [[ -n "$_vetcoders_contract_count" ]] && marbles_args+=(--count "$_vetcoders_contract_count")
+
+  if [[ -n "$_vetcoders_contract_file" ]]; then
+    marbles_args+=(--file "$_vetcoders_contract_file")
+  elif [[ -n "$_vetcoders_contract_prompt" ]]; then
+    marbles_args+=(--prompt "$_vetcoders_contract_prompt")
+  else
+    marbles_args+=(--depth "${_vetcoders_contract_depth:-3}")
+  fi
+
+  bash "$script" "${marbles_args[@]}"
+}
+
+_vetcoders_resume_agent() {
+  local tool="$1"
+  shift
+  _vetcoders_parse_contract "$@" || return 1
+  [[ -n "$_vetcoders_contract_session" ]] || {
+    echo "Usage: vibecrafted resume <claude|codex|gemini> --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    return 1
+  }
+  [[ -z "$_vetcoders_contract_count" ]] || {
+    echo "--count is only supported by vibecrafted marbles." >&2
+    return 1
+  }
+  [[ -z "$_vetcoders_contract_depth" ]] || {
+    echo "--depth is only supported by vibecrafted marbles." >&2
+    return 1
+  }
+
+  local resume_prompt
+  resume_prompt="$(_vetcoders_compose_input_context "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1
+
+  case "$tool" in
+    claude)
+      if [[ -n "$resume_prompt" ]]; then
+        claude --resume "$_vetcoders_contract_session" "$resume_prompt"
+      else
+        claude --resume "$_vetcoders_contract_session"
+      fi
+      ;;
+    codex)
+      if [[ -n "$resume_prompt" ]]; then
+        codex resume "$_vetcoders_contract_session" "$resume_prompt"
+      else
+        codex resume "$_vetcoders_contract_session"
+      fi
+      ;;
+    gemini)
+      if [[ -n "$resume_prompt" ]]; then
+        gemini --resume "$_vetcoders_contract_session" "$resume_prompt"
+      else
+        gemini --resume "$_vetcoders_contract_session"
+      fi
+      ;;
+    *)
+      echo "Unknown agent for resume: $tool" >&2
+      return 1
+      ;;
+  esac
+}
+
+vc-resume() {
+  local tool="${1:-}"
+  [[ -n "$tool" ]] || {
+    echo "Usage: vibecrafted resume <claude|codex|gemini> --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    return 1
+  }
+  shift || true
+  _vetcoders_resume_agent "$tool" "$@"
 }
 
 codex-marbles() { _vetcoders_marbles codex "$@"; }
@@ -379,8 +637,17 @@ Spawn helpers (× claude, codex, gemini):
 Command deck:
   vibecrafted help               Main command surface
   vibecrafted <skill> <agent>    Run a repo skill via the launcher
-  vc-marbles codex --count 4     Skill wrapper example
-  vc-init claude                 First-context entrypoint
+  vibecrafted resume <agent>     Resume a previous session
+  vibecrafted workflow claude -p "Plan and implement auth"
+  vibecrafted marbles codex --count 4 --depth 4
+  vibecrafted init claude        First-context entrypoint
+
+Uniform skill flags:
+  -p, --prompt <text>            Inline prompt
+  -f, --file <path.md>           Input file as prompt context
+  --count <n>                    Marbles loop count (default: 3)
+  --depth <n>                    Marbles plan crawl depth (default: 3)
+  --session <id>                 Resume session id
 
 Utilities:
   repo-full                      Full git context dump
