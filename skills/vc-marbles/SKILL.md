@@ -1,92 +1,139 @@
 ---
 name: vc-marbles
-version: 1.1.0
+version: 2.0.0
 description: >
-  Iterative convergence skill — the noise scheduler for code.
-  Runs adaptive denoising loops until the product surface converges from
-  chaos to completeness: P0=0, P1=0, P2=0 — the circle is full.
-  Each loop reduces entropy: implement → followup → measure → repeat.
-  Based on the insight that agent-generated code follows diffusion dynamics:
-  start from noise, iteratively denoise, converge to signal.
+  Counterexample-guided convergence — the loop that makes code healthier.
+  Runs adaptive loops that ask one question: "what is still wrong?"
+  Each fix eliminates a counterexample to health — and reveals the next one.
+  The system cannot get worse, only better. Monotonic entropy reduction.
+  No target needed. No plan needed. Just repeated pressure against wrongness.
+  Stop when nothing is wrong. The circle is full.
   Trigger phrases: "marbles", "loop until done", "fill the gaps", "kulki",
-  "iteruj aż będzie gotowe", "convergence loop", "denoise", "dyfuzja",
-  "noise schedule", "adaptive loops", "keep going until clean",
-  "wypełnij okrąg", "entropy reduction", "denoising sprint".
+  "iteruj aż będzie gotowe", "convergence loop", "counterexample",
+  "what is still wrong", "adaptive loops", "keep going until clean",
+  "wypełnij okrąg", "entropy reduction", "konwergencja".
 ---
 
-# vc-marbles — Iterative Convergence Through Diffusion
+# vc-marbles — Convergence Through Counterexample
 
-> Code is noise until proven signal.
+> Not "is it correct?" — that cannot be proven.
+> Only "what is still wrong?" — and eliminate it.
 > Each loop removes entropy. Stop when the circle is full.
 
-## The Metaphor (and the Math)
+## The Mechanism
 
-Imagine a circle of radius 10. You throw balls of diameter 1.
-First throw: ~60% coverage. Random placement, big gaps.
-Second pass: target the gaps. ~80%.
-Third: ~90%. Fourth: ~95%.
+Traditional quality asks: _is this correct?_ and tries to prove yes.
+That question has no finite answer for a living codebase.
 
-This is not failure. This is **convergence**.
+Marbles asks a different question: **what is still wrong?**
 
-AI agents generate code stochastically — next-token prediction
-produces an approximation, not a proof. Each generation introduces
-signal AND noise. The only way to separate them: iterate, measure, reduce.
+Each loop inspects the current state and finds **counterexamples** —
+concrete things that contradict health. A dead export in `utils.ts:42`.
+A circular import between `auth/` and `api/`. A twin export `Button`
+living in two files. These are not abstract noise. They are specific,
+named, located violations of health.
 
-This is isomorphic to diffusion models:
+Each fix is small. But each fix **changes the landscape** for the next
+loop, exposing issues that were previously hidden beneath worse ones.
+
+This is counterexample-guided convergence — CEGIS applied to code:
 
 ```
-Image diffusion:  noise → denoise × N → image
-Code diffusion:   chaos → reduce_entropy × N → product
+hypothesis:      "this codebase is healthy"
+counterexample:  sniff finds dead export `formatDate` in utils.ts:42
+correction:      remove dead export
+new landscape:   utils.ts is now empty → new counterexample revealed
+correction:      remove empty file
+new landscape:   import in api.ts pointed to utils.ts → broken import revealed
+correction:      fix import
+new landscape:   cycle between api.ts and auth.ts disappeared → health score jumps
 
-Step 0:  Pure noise (no context, no structure)
-Step 1:  Init — gross shapes emerge (history + eyes)
-Step 2:  Implement — detail generation (new noise enters!)
-Step 3:  Followup — denoising (measure residual entropy)
-Step N:  Converged — DoU score below threshold = DoD
+No single loop understood the whole.
+Each loop only answered: "what is still wrong?"
+The convergence was emergent.
 ```
+
+### The Cascade Effect
+
+Findings are not a flat list to check off. They form a **directed graph**
+where fixing one reveals the next. This is the primary convergence driver:
+
+- Dead export removed → file becomes empty → empty file is new finding
+- Empty file removed → import breaks → broken import is new finding
+- Import fixed → cycle disappears → health score jumps
+- Health score jump → previously-masked P2 findings become visible
+
+Each fix **irreversibly narrows** the space of possible bugs.
+You cannot go backwards. Entropy drops monotonically.
+
+This is why a drunk developer sleeping on the Return key can wake up
+to a healthier repo. The agent had no plan. It had no target. It only
+had the ability to find what was wrong and a key that said "again."
+
+### Dual-Source Truth
+
+Convergence becomes stronger with **multiple independent sources of
+truth** that can counterexample each other:
+
+```
+sniff says: "exportFoo is dead"     → hypothesis
+dist says:  "exportFoo is in bundle" → counterexample to sniff
+agent checks: dynamic import         → hypothesis corrected
+sniff learns: skip dynamic imports   → error class eliminated permanently
+```
+
+When two tools agree — confidence is high.
+When they disagree — the disagreement IS the counterexample.
+Cross-validation between sources is a convergence accelerator.
 
 ## When To Use
 
 - After first implementation pass leaves known gaps
-- When followup reveals P1/P2 findings that need iterative fixing
+- When followup reveals findings that need iterative fixing
 - When the team says "keep going until it's clean"
 - When Plague Score > 20 after first hydration
 - Anytime the answer to "is it done?" is "almost"
 - When you need adaptive iteration count (not fixed 2 loops)
 
-## The Noise Schedule
+## The Loop Schedule
 
 ### No Fixed Loop Count
 
 There is no fixed number of iterations. The loop runs until the circle
-is full: P0=0, P1=0, P2=0. A trivial task may converge in 1 loop.
+is full — nothing wrong remains. A trivial task may converge in 1 loop.
 A massive architectural change may take 12. The schedule is driven by
 measurement, not prediction.
 
 ```
-The loop count is determined by residual entropy, not upfront estimation.
-After each loop, measure what remains. If P0+P1+P2 > 0, loop again.
+The loop count is determined by what remains wrong, not upfront estimation.
+After each loop, ask: "what is still wrong?" If something → loop again.
 
 Factors that affect how many loops a task needs:
 - LOC changed in first pass
 - Number of files touched
-- Number of P0+P1+P2 from first followup
+- Cascade depth (how many layers of hidden issues exist)
 - Blast radius from loctree impact()
 ```
 
-### Step Size (Learning Rate Analogy)
+### Step Size (Natural Priority)
 
-Early loops: large steps (fix P0 blockers, structural issues).
-Late loops: small steps (P2 polish, edge cases, naming).
+The agent fixes what it finds. In practice, severe issues surface first
+because they are the most visible. As severe issues clear, subtler ones
+emerge from underneath.
 
 ```
-Early loops:  Fix P0 and P1 — big structural corrections
-Middle loops: Fix remaining P1 and high-impact P2
-Late loops:   Polish P2 — edge cases, error handling, naming, docs
+Early loops:  Severe issues surface naturally — structural breaks, P0 blockers
+Middle loops: Medium issues emerge from under the severe ones
+Late loops:   Polish issues become visible — naming, edge cases, docs
 ```
 
-Do NOT spend early loops on P2 polish.
-Do NOT spend late loops on structural changes (that's a new diffusion run).
+This ordering is **emergent**, not prescribed. The agent does not need
+to categorize findings into P0/P1/P2 before fixing them. It fixes what
+it finds. The cascade handles priority naturally — severe issues block
+visibility of subtle ones, so they get fixed first by construction.
+
+P0/P1/P2 labels remain useful for **reporting** convergence trajectory,
+not for steering which findings to fix.
 
 ## Convergence Protocol
 
@@ -96,26 +143,28 @@ Do NOT spend late loops on structural changes (that's a new diffusion run).
 ┌─────────────────────────────────────────────────────────┐
 │  LOOP N                                                  │
 │                                                          │
-│  1. MEASURE residual entropy                             │
+│  1. ASK: "what is still wrong?"                          │
 │     └─ Read previous loop's findings                     │
-│     └─ Run quality gates                                 │
-│     └─ Count: P0 remaining, P1 remaining, P2 remaining  │
+│     └─ Run quality gates (multiple independent sources)  │
+│     └─ List concrete counterexamples to health           │
 │                                                          │
-│  2. TARGET the gaps (not random — guided by findings)    │
+│  2. TARGET the most prominent counterexamples            │
 │     └─ Write focused fix plan for TOP findings only      │
 │     └─ Max 3-5 items per loop (don't boil the ocean)     │
+│     └─ Expect cascades: fixing these will reveal more    │
 │                                                          │
-│  3. IMPLEMENT fixes                                      │
-│     └─ vc-agents (first choice) or vc-delegate (small fallback) │
-│     └─ Each fix is a marble thrown at a known gap         │
+│  3. ELIMINATE counterexamples                             │
+│     └─ vc-agents (first choice) or vc-delegate (small)   │
+│     └─ Each fix narrows the space of possible bugs       │
 │                                                          │
-│  4. DENOISE (followup on this loop's changes)            │
-│     └─ Run gates on changed files                        │
-│     └─ Verify fixes didn't introduce new noise           │
-│     └─ Update findings list                              │
+│  4. OBSERVE the new landscape                            │
+│     └─ Run gates on the changed codebase                 │
+│     └─ Note: NEW findings may appear (cascade effect)    │
+│     └─ This is expected and good — hidden issues exposed │
 │                                                          │
 │  5. SCORE                                                │
 │     └─ Calculate convergence metrics                     │
+│     └─ Distinguish cascade from divergence               │
 │     └─ Decide: continue or converged?                    │
 │                                                          │
 └─────────────────────────────────────────────────────────┘
@@ -128,11 +177,12 @@ After each loop, calculate:
 ```markdown
 ## Loop N Convergence Report
 
-Entropy remaining:
+What is still wrong:
 
 - P0 count: X (must be 0 to converge)
 - P1 count: X (must be 0 to converge)
 - P2 count: X (must be 0 to converge — full circle fill)
+- Cascade findings: X (new issues revealed by fixes — expected)
 
 Quality gates:
 
@@ -141,48 +191,64 @@ Quality gates:
 - Tests: X/Y passing
 - Security: pass/fail
 
-Coverage delta:
+Counterexample trajectory:
 
-- New code covered by tests: X%
+- Findings from previous loop resolved: N
+- New findings revealed by fixes (cascade): N
+- Net counterexamples remaining: N
 - Files touched this loop: N
 - Net LOC delta: +X / -Y
 
 Convergence score: X/100
 
-- 0-30: heavy noise, continue with large steps
-- 30-60: converging, continue with medium steps
-- 60-85: nearly converged, small polish steps
-- 85-99: close — keep going, resolve remaining P2
-- 100: converged — circle is full, stop iterating
+- 0-30: deep issues, large cascade potential
+- 30-60: converging, cascades settling
+- 60-85: nearly converged, only shallow issues remain
+- 85-99: close — remaining items are isolated, no cascades
+- 100: nothing wrong remains — circle is full
 ```
 
 ### Stopping Criteria
 
 **STOP iterating when ANY of these are true:**
 
-1. **P0 = 0 AND P1 = 0 AND P2 = 0** — the circle is full
+1. **Nothing is wrong** — no counterexamples remain at any priority
 2. **Convergence score = 100** — all findings resolved
-3. **Two consecutive loops with zero delta** — plateaued (reassess remaining items)
+3. **Two consecutive loops with zero delta** — plateaued (reassess)
 4. **User says stop** — always respected
 
 **DO NOT STOP when:**
 
-- P0 > 0 or P1 > 0 (unless user explicitly accepts risk)
-- P2 > 0 (the circle is not full — keep iterating)
+- Counterexamples remain (unless user explicitly accepts risk)
 - Quality gates failing
-- Last loop introduced more findings than it fixed (diverging!)
+- Divergence detected (stop iterating, but investigate — don't ship)
 
-### Divergence Detection
+### Cascade vs Divergence
 
-If loop N has MORE findings than loop N-1:
+When loop N has MORE findings than loop N-1, distinguish:
+
+**Cascade (healthy):** Previous findings are RESOLVED, but new ones
+appeared because fixes revealed hidden issues.
 
 ```
-WARNING: DIVERGENCE DETECTED
+Loop N-1: 3 findings (A, B, C)
+Loop N:   4 findings (D, E, F, G) — A, B, C are gone
 
-Loop N-1: 3 P1, 5 P2
-Loop N:   4 P1, 7 P2  ← entropy increased!
+This is cascade. Entropy decreased even though count increased.
+The new findings are shallower than the old ones.
+Continue iterating — the cascade will settle.
+```
 
-This means fixes are introducing new noise faster than removing old noise.
+**Divergence (unhealthy):** Previous findings are STILL PRESENT,
+and new ones appeared on top.
+
+```
+Loop N-1: 3 findings (A, B, C)
+Loop N:   5 findings (A, B, C, D, E) — originals still there!
+
+This is divergence. Fixes are introducing new problems without
+solving old ones. Entropy increased.
+
 Possible causes:
 1. Scope too broad — narrow the fix scope
 2. Wrong abstraction — step back and re-examine
@@ -238,21 +304,21 @@ prefer combining it with `marbles` rather than replacing `marbles` with it:
 ```
 
 The timer provides cadence.
-`marbles` provides convergence logic, entropy scoring, and stop conditions.
+`marbles` provides convergence logic, counterexample tracking, and stop conditions.
 
 Supervisor mode must still:
 
-- track P0/P1/P2 trajectory
-- detect divergence
+- track counterexample trajectory
+- distinguish cascade from divergence
 - escalate when agents plateau
-- stop when the circle is full
+- stop when nothing is wrong
 
 ### Using vc-delegate (native, small-task fallback)
 
 ```
 For each loop:
   1. Read previous findings
-  2. Select top 3-5 actionable items
+  2. Select top 3-5 actionable counterexamples
   3. Launch parallel Task agents:
 
      Task("Fix: <finding-1>", prompt=<focused fix plan>)
@@ -287,20 +353,21 @@ For each loop:
 Date: <YYYY-MM-DD>
 Duration: <time>
 
-## Entropy Before
+## What Was Wrong (before)
 
 - P0: X | P1: X | P2: X
 - Convergence score: X/100
 
-## Marbles Thrown (fixes applied)
+## Counterexamples Eliminated
 
 1. [P1] <finding> → <fix applied> → <result>
 2. [P2] <finding> → <fix applied> → <result>
 3. [P1] <finding> → <fix applied> → <result>
 
-## Entropy After
+## What Is Still Wrong (after)
 
 - P0: X | P1: X | P2: X
+- Cascade findings revealed: X
 - Convergence score: X/100
 
 ## Gate Results
@@ -312,14 +379,14 @@ Duration: <time>
 
 ## Delta
 
-- Findings fixed: N
-- Findings introduced: N
-- Net entropy change: -N (negative = good)
+- Counterexamples eliminated: N
+- Cascade findings revealed: N
+- Net change: -N (negative = converging)
 
 ## Decision
 
-- [ ] Continue → Loop N+1 (reason: <what remains>)
-- [ ] Converged → proceed to DoU
+- [ ] Continue → Loop N+1 (reason: <what remains wrong>)
+- [ ] Converged → nothing wrong, proceed to DoU
 - [ ] Diverging → stop and re-examine
 ```
 
@@ -334,13 +401,13 @@ Total duration: <time>
 
 ## Trajectory
 
-| Loop | P0  | P1  | P2  | Score | Delta |
-| ---- | --- | --- | --- | ----- | ----- |
-| 1    | 2   | 5   | 8   | 15    | —     |
-| 2    | 0   | 3   | 6   | 40    | +25   |
-| 3    | 0   | 1   | 4   | 65    | +25   |
-| 4    | 0   | 0   | 2   | 85    | +20   |
-| 5    | 0   | 0   | 0   | 100   | +15   |
+| Loop | P0  | P1  | P2  | Cascade | Score | Delta |
+| ---- | --- | --- | --- | ------- | ----- | ----- |
+| 1    | 2   | 5   | 8   | —       | 15    | —     |
+| 2    | 0   | 3   | 6   | +2      | 40    | +25   |
+| 3    | 0   | 1   | 4   | +1      | 65    | +25   |
+| 4    | 0   | 0   | 2   | 0       | 85    | +20   |
+| 5    | 0   | 0   | 0   | 0       | 100   | +15   |
 
 ## Convergence Curve
 
@@ -349,10 +416,9 @@ Score: 15 → 40 → 65 → 85 → 100
 
 ## Final State
 
-- All P0: resolved
-- All P1: resolved
-- All P2: resolved
+- Nothing wrong remains
 - Quality gates: all passing
+- Cascade: settled (no new findings in final loop)
 - Circle: full
 
 ## Verdict
@@ -367,17 +433,17 @@ Ready for: Phase 3 (dou → decorate → hydrate → release)
 This is the moment the circle is full:
 
 ```
-DoU (Definition of Undone) = measuring remaining noise
-DoD (Definition of Done)   = circle is full, no noise remains
+DoU (Definition of Undone) = measuring what is still wrong
+DoD (Definition of Done)   = nothing is wrong, circle is full
 
 The transition happens when:
-- P0 = 0, P1 = 0, P2 = 0
-- Convergence score = 100
+- No counterexamples remain at any priority
 - Quality gates pass
+- Cascade has settled (last loop revealed nothing new)
 - Stranger test passes (someone unfamiliar can use it)
 
 At this point, DoU transforms into DoD:
-  "What remains incomplete?" → "Nothing."
+  "What is still wrong?" → "Nothing."
   ~~DoU~~ → **DoD**
 ```
 
@@ -438,35 +504,38 @@ hook do its job.
 
 ## Anti-Patterns
 
-- Fixed loop count ("always run 4 loops") — defeats adaptive scheduling
-- Looping without measuring (no convergence score = blind iteration)
-- Fixing P2 before all P0 are resolved (wrong step size)
-- Continuing past convergence (overfit — introduces new noise)
-- Looping without writing reports (no convergence trajectory = no learning)
-- Ignoring divergence detection (if entropy increases, STOP)
-- Single marble per loop (too slow — throw 3-5 per loop)
+- Fixed loop count ("always run 4 loops") — defeats adaptive convergence
+- Looping without asking "what is still wrong?" — blind iteration
+- Rigid P0→P1→P2 ordering as steering — cascades don't respect categories
+- Continuing past convergence (overfit — introduces new problems)
+- Looping without writing reports (no trajectory = no learning)
+- Confusing cascade with divergence (new findings after fixes can be healthy)
+- Ignoring actual divergence (old findings still present + new ones = stop)
+- Single counterexample per loop (too slow — target 3-5 per loop)
 - Entire codebase per loop (too broad — scope to affected area)
+- Treating P0/P1/P2 as steering mechanism instead of reporting labels
 
-## The Diffusion Insight
+## Why This Works
 
-Why this works:
+1. **Agents generate approximations** — next-token prediction always introduces gaps
+2. **Gaps are findable** — quality gates, structural analysis, and runtime checks can locate specific counterexamples
+3. **Counterexamples are eliminable** — each one is a concrete, actionable thing to fix
+4. **Fixes change the landscape** — removing one issue reveals the next (cascade effect)
+5. **Entropy drops monotonically** — the system cannot get worse through counterexample elimination
+6. **No target needed** — the agent doesn't need to know what "healthy" looks like, only what "wrong" looks like
+7. **Convergence is emergent** — the destination reveals itself only after you arrive
+8. **Multiple truth sources accelerate** — when `sniff` and `dist` disagree, the disagreement IS the counterexample
+9. **Divergence is detectable** — if old problems persist while new ones appear, stop
 
-1. **Next-token prediction is stochastic** — agents will always produce noise
-2. **Noise is not failure** — it's a natural property of the generation process
-3. **Denoising is the skill** — measuring and removing noise iteratively
-4. **Convergence is achievable** — each loop provably reduces entropy
-5. **The schedule matters** — too few loops = noisy output, too many = wasted time
-6. **Divergence is real** — detect it early, don't iterate blindly
-
-The marbles fill the circle. Not "enough." All the way.
-P0=0. P1=0. P2=0. Quality gates pass. The circle is full.
+The circle fills. Not "enough." All the way.
+Nothing wrong remains. Quality gates pass. The circle is full.
 
 That's DoD. Not "good enough." Done.
 
 ---
 
-_"Code is noise until proven signal._
-_Each loop removes entropy._
+_"Not 'is it correct?' — that cannot be proven._
+_Only 'what is still wrong?' — and eliminate it._
 _Stop when the circle is full."_
 
 _Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
