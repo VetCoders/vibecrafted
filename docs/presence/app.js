@@ -1279,11 +1279,57 @@ function shuffleArr(a) {
     var splitBtn = document.querySelector('.mmd-split');
     var shell = document.querySelector('.mmd-shell');
     var codeBlock = shell ? shell.querySelector('code') : null;
+    var codePane = shell ? shell.querySelector('.mmd-code') : null;
     var previewPane = shell ? shell.querySelector('.mmd-preview') : null;
     
-    if (!toggleBtn || !shell || !codeBlock || !previewPane) return;
+    if (!toggleBtn || !shell || !codeBlock || !codePane || !previewPane) return;
     
     var mermaidInitialized = false;
+    var switchTimer = null;
+
+    function measurePaneHeight(pane, paneWidth) {
+        var prevDisplay = pane.style.display;
+        var prevPosition = pane.style.position;
+        var prevVisibility = pane.style.visibility;
+        var prevPointerEvents = pane.style.pointerEvents;
+        var prevInset = pane.style.inset;
+        var prevWidth = pane.style.width;
+        var prevMaxWidth = pane.style.maxWidth;
+
+        pane.style.display = 'block';
+        pane.style.position = 'absolute';
+        pane.style.visibility = 'hidden';
+        pane.style.pointerEvents = 'none';
+        pane.style.inset = '0 auto auto 0';
+        pane.style.width = Math.max(0, paneWidth) + 'px';
+        pane.style.maxWidth = Math.max(0, paneWidth) + 'px';
+
+        var measured = Math.ceil(pane.scrollHeight || pane.getBoundingClientRect().height || 0);
+
+        pane.style.display = prevDisplay;
+        pane.style.position = prevPosition;
+        pane.style.visibility = prevVisibility;
+        pane.style.pointerEvents = prevPointerEvents;
+        pane.style.inset = prevInset;
+        pane.style.width = prevWidth;
+        pane.style.maxWidth = prevMaxWidth;
+
+        return measured;
+    }
+
+    function lockMermaidShellHeight() {
+        var shellStyles = window.getComputedStyle(shell);
+        var shellInnerWidth = shell.clientWidth
+            - parseFloat(shellStyles.paddingLeft || 0)
+            - parseFloat(shellStyles.paddingRight || 0);
+        var shellExtra = parseFloat(shellStyles.paddingTop || 0) + parseFloat(shellStyles.paddingBottom || 0);
+        var codeHeight = measurePaneHeight(codePane, shellInnerWidth);
+        var previewHeight = measurePaneHeight(previewPane, shellInnerWidth);
+        var stableHeight = Math.max(codeHeight, previewHeight);
+        if (stableHeight > 0) {
+            shell.style.minHeight = (stableHeight + shellExtra) + 'px';
+        }
+    }
 
     function renderMermaidPreview(svgMarkup) {
         var parser = new DOMParser();
@@ -1292,6 +1338,7 @@ function shuffleArr(a) {
 
         if (parsed.querySelector('parsererror') || !svg || svg.nodeName.toLowerCase() !== 'svg') {
             previewPane.textContent = 'Preview unavailable.';
+            lockMermaidShellHeight();
             return;
         }
 
@@ -1317,6 +1364,7 @@ function shuffleArr(a) {
 
         previewPane.textContent = '';
         previewPane.appendChild(document.importNode(svg, true));
+        requestAnimationFrame(lockMermaidShellHeight);
     }
     
     function initMermaid() {
@@ -1364,19 +1412,36 @@ function shuffleArr(a) {
                 splitBtn.style.borderColor = '';
             }
         }
+        requestAnimationFrame(lockMermaidShellHeight);
+    }
+
+    function animateModeChange(newMode) {
+        clearTimeout(switchTimer);
+        shell.classList.add('is-switching');
+        switchTimer = setTimeout(function () {
+            setMode(newMode);
+            requestAnimationFrame(function () {
+                shell.classList.remove('is-switching');
+            });
+        }, 120);
     }
 
     toggleBtn.addEventListener('click', function() {
         var mode = shell.getAttribute('data-mode');
-        setMode(mode === 'preview' ? 'code' : 'preview');
+        animateModeChange(mode === 'preview' ? 'code' : 'preview');
     });
 
     if(splitBtn) {
         splitBtn.addEventListener('click', function() {
             var mode = shell.getAttribute('data-mode');
-            setMode(mode === 'split' ? 'code' : 'split');
+            animateModeChange(mode === 'split' ? 'code' : 'split');
         });
     }
+
+    lockMermaidShellHeight();
+    window.addEventListener('resize', function () {
+        requestAnimationFrame(lockMermaidShellHeight);
+    });
 })();
 
 // ============ HOVER CURL BANNER ============ 

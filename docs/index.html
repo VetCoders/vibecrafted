@@ -28,7 +28,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Allura&amp;family=Poppins:wght@400;500;600;700&amp;family=Lora:ital,wght@0,400;0,500;0,600;1,400&amp;display=swap"
         rel="stylesheet">
-    <link href="presence/styles.css?v=20260331s" rel="stylesheet">
+    <link href="presence/styles.css?v=20260331w" rel="stylesheet">
     <script crossorigin="anonymous" integrity="sha384-7Q8XaCgFJlm82NdMNnX7AIyZbdTjUre2eR4TpKK1Pko3zKXorgTIGVpnnLho+UAe"
         src="https://cdn.jsdelivr.net/npm/mermaid@10.8.0/dist/mermaid.min.js"></script>
 </head>
@@ -79,7 +79,8 @@
                     <h1 class="manifesto-title">
                         <span class="manifesto-title__script">VibeCrafted</span>
                         <span class="manifesto-title__rule" aria-hidden="true"></span>
-                        <span class="manifesto-title__framework">The <span class="manifesto-title__framework-accent">Founders'</span> Framework</span>
+                        <span class="manifesto-title__framework">The <span
+                                class="manifesto-title__framework-accent">Founders'</span> Framework</span>
                     </h1>
                     <p class="manifesto-lead">
                         A convergence-driven system for shipping software with AI agents.
@@ -184,7 +185,7 @@
                     <button class="mmd-toggle" type="button">Preview</button>
                     <button class="mmd-copy" type="button">Copy</button>
                     <div class="mmd-code">
-                        <pre><code><span class="comment">%% VibeCrafted Pipeline v1.0.4</span>
+                        <pre><code><span class="comment">%% VibeCrafted Pipeline v1.2.1</span>
 flowchart LR
     subgraph "Craft"
         scaffold["Scaffold"] --&gt; init["Init"]
@@ -447,27 +448,6 @@ flowchart LR
                     </div>
                 </div>
 
-                <div class="transition-visual">
-                    <p class="transition-caption">Convergence Trajectory &mdash; loop until the circle is full</p>
-                    <div class="trajectory" id="trajectoryBars">
-                        <div class="bar bar--copper" data-h="24"><span class="bar-label">Loop 1</span><span
-                                class="bar-score">15</span></div>
-                        <div class="bar bar--copper" data-h="40"><span class="bar-label">Loop 2</span><span
-                                class="bar-score">40</span></div>
-                        <div class="bar bar--steel" data-h="65"><span class="bar-label">Loop 3</span><span
-                                class="bar-score">65</span></div>
-                        <div class="bar bar--steel" data-h="85"><span class="bar-label">Loop 4</span><span
-                                class="bar-score">85</span></div>
-                        <div class="bar bar--patina" data-h="100"><span class="bar-label">Loop 5</span><span
-                                class="bar-score">100</span></div>
-                    </div>
-                    <p class="transition-scoreline">Score: 15 &rarr; 40 &rarr; 65 &rarr; 85 &rarr; 100</p>
-                    <div class="transition-status">
-                        <span class="dou">DoU</span>
-                        <span class="arrow-anim">&rarr;</span>
-                        <span class="dod"><strong>DoD</strong></span>
-                    </div>
-                </div>
             </div>
         </section>
 
@@ -475,22 +455,41 @@ flowchart LR
             <div class="container fade-up">
                 <div class="section-label">DoU</div>
                 <h2 class="section-title">The Definition of Undone</h2>
-                <div class="manifesto-block">
-                    <blockquote>AI agents have solved the hardest part of software creation: making the thing work. They
-                        have not yet solved the second hardest part: making the thing reachable.</blockquote>
-                    <p class="manifesto-lead">The gap is rarely code quality. It is the space between a working system
-                        and a product that people can discover, install, trust, and buy.</p>
-                    <p class="manifesto-diagnostic-label">The Plague Diagnostic:</p>
-                    <ul class="plague-list">
-                        <li><span class="check">+</span> Tests pass</li>
-                        <li><span class="check">+</span> Architecture is sound</li>
-                        <li><span class="check">+</span> README exists</li>
-                        <li><span class="cross">&ndash;</span> Nobody can find it from Google</li>
-                        <li><span class="cross">&ndash;</span> Nobody can install it without a toolchain</li>
-                        <li><span class="cross">&ndash;</span> Nobody can pay for it</li>
-                    </ul>
-                    <p class="manifesto-summary">Items 4&ndash;6 are the Definition of Undone. Phase 3 forces the system
-                        into the market.</p>
+                <div class="manifesto-layout">
+                    <div class="manifesto-block">
+                        <blockquote>AI agents have solved the hardest part of software creation: making the thing work. They
+                            have not yet solved the second hardest part: making the thing reachable.</blockquote>
+                        <p class="manifesto-lead">The gap is rarely code quality. It is the space between a working system
+                            and a product that people can discover, install, trust, and buy.</p>
+                        <p class="manifesto-diagnostic-label">The Plague Diagnostic:</p>
+                        <ul class="plague-list">
+                            <li><span class="check">+</span> Tests pass</li>
+                            <li><span class="check">+</span> Architecture is sound</li>
+                            <li><span class="check">+</span> README exists</li>
+                            <li><span class="cross">&ndash;</span> Nobody can find it from Google</li>
+                            <li><span class="cross">&ndash;</span> Nobody can install it without a toolchain</li>
+                            <li><span class="cross">&ndash;</span> Nobody can pay for it</li>
+                        </ul>
+                        <p class="manifesto-summary">Items 4&ndash;6 are the Definition of Undone. Phase 3 forces the system
+                            into the market.</p>
+                    </div>
+
+                    <div class="transition-visual transition-visual--dou">
+                        <p class="transition-caption">Convergence Trajectory &mdash; loop until the circle is full</p>
+                        <div class="trajectory" id="trajectoryBars">
+                            <div class="bar bar--copper" data-h="24"><span class="bar-label">Loop 1</span><span
+                                    class="bar-score">15</span></div>
+                            <div class="bar bar--copper" data-h="40"><span class="bar-label">Loop 2</span><span
+                                    class="bar-score">40</span></div>
+                            <div class="bar bar--steel" data-h="65"><span class="bar-label">Loop 3</span><span
+                                    class="bar-score">65</span></div>
+                            <div class="bar bar--steel" data-h="85"><span class="bar-label">Loop 4</span><span
+                                    class="bar-score">85</span></div>
+                            <div class="bar bar--patina" data-h="100"><span class="bar-label">Loop 5</span><span
+                                    class="bar-score">100</span></div>
+                        </div>
+                        <p class="transition-scoreline">Score: 15 &rarr; 40 &rarr; 65 &rarr; 85 &rarr; 100</p>
+                    </div>
                 </div>
             </div>
         </section>
@@ -592,7 +591,7 @@ vibecrafted doctor</code></pre>
         <p class="footer-copyright">&copy; 2025-2026 VetCoders. Built by Maciej Gad &amp; Monika Szymańska.</p>
     </footer>
 
-    <script src="presence/app.js?v=20260331g"></script>
+    <script src="presence/app.js?v=20260331i"></script>
 </body>
 
 </html>
