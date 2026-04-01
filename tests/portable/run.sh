@@ -362,6 +362,7 @@ log "docs truth checks"
 # shellcheck disable=SC2016 # backticks are literal content we're matching, not command substitution
 assert_not_contains "$repo_root/skills/vc-followup/SKILL.md" 'Use canonical Terminal spawn (`osascript`)'
 assert_not_contains "$repo_root/skills/vc-workflow/SKILL.md" 'osascript preferred'
+assert_not_contains "$repo_root/docs/FRONTIER.md" 'vetcoders.zsh'
 [[ ! -e "$repo_root/skills/vc-subagents/SKILL.md" ]] || die 'vc-subagents should not exist'
 if [[ -e "$repo_root/docs/index.html" ]]; then
   assert_not_contains "$repo_root/docs/index.html" 'Canonical osascript Terminal spawn'

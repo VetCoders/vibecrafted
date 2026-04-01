@@ -22,8 +22,8 @@ mise trust
 mise install
 mise run doctor
 
-# 4. Source the VibeCrafted shell (if not already in your .zshrc)
-#    The vetcoders.zsh sidecar auto-detects frontier tools on load.
+# 4. Source the VibeCrafted shell (if not already in your .bashrc or .zshrc)
+#    The canonical helper lives at ~/.config/vetcoders/vc-skills.sh and auto-detects frontier tools on load.
 
 # 5. Launch the cockpit
 zellij --layout vibecrafted
@@ -106,7 +106,7 @@ When Zellij is not running, agents fall back to Terminal.app (macOS) or backgrou
 
 ### How it loads
 
-The `vetcoders.zsh` sidecar auto-detects Starship on shell init. If installed, it sets `STARSHIP_CONFIG` to `config/starship.toml`. No manual config needed.
+The canonical `vc-skills.sh` helper auto-detects Starship on shell init. If installed, it sets `STARSHIP_CONFIG` to `config/starship.toml`. No manual config needed.
 
 ### What you see in the prompt
 
@@ -138,7 +138,7 @@ Edit this file to adjust prompt format, colors, or module visibility. Changes ta
 
 ### How it loads
 
-Like Starship, auto-detected by `vetcoders.zsh`. Config lives at `config/atuin/config.toml`.
+Like Starship, auto-detected by the canonical `vc-skills.sh` helper. Config lives at `config/atuin/config.toml`.
 
 ### Daily use
 

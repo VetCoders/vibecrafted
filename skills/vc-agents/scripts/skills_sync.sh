@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF_USAGE'
-Usage: skills_sync.sh <host> [--source <repo-root>] [--tool <codex|claude|gemini>]... [--dry-run] [--mirror] [--with-shell] [--no-zshrc] [--no-verify]
+Usage: skills_sync.sh <host> [--source <repo-root>] [--tool <codex|claude|gemini>]... [--dry-run] [--mirror] [--with-shell] [--no-zshrc] [--no-bashrc] [--no-verify]
 
 Sync canonical skill directories from this repo to another machine's shared store:
   ~/.vibecrafted/skills
@@ -59,6 +59,7 @@ dry_run=0
 mirror=0
 with_shell=0
 shell_no_zshrc=0
+shell_no_bashrc=0
 host=""
 declare -a tools=()
 
@@ -89,6 +90,9 @@ while [[ $# -gt 0 ]]; do
     --no-zshrc)
       shell_no_zshrc=1
       ;;
+    --no-bashrc)
+      shell_no_bashrc=1
+      ;;
     --no-verify)
       verify=0
       ;;
@@ -114,7 +118,7 @@ done
 [[ -d "$repo_root" ]] || die "Repo root not found: $repo_root"
 
 # shellcheck disable=SC2016
-source_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"'
+source_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"'
 
 skills=()
 skills_root="$repo_root"
@@ -189,23 +193,40 @@ for tool in "${tools[@]}"; do
 done
 
 if (( with_shell )); then
-  shell_source="$repo_root/skills/vc-agents/shell/vetcoders.zsh"
-  [[ -f "$shell_source" ]] || shell_source="$repo_root/vc-agents/shell/vetcoders.zsh"
+  shell_source="$repo_root/skills/vc-agents/shell/vetcoders.sh"
+  [[ -f "$shell_source" ]] || shell_source="$repo_root/skills/vc-agents/shell/vetcoders.zsh"
+  [[ -f "$shell_source" ]] || shell_source="$repo_root/vc-agents/shell/vetcoders.sh"
   [[ -f "$shell_source" ]] || die "Shell helper file not found: $shell_source"
 
   # shellcheck disable=SC2016
-  remote_config_dir='${XDG_CONFIG_HOME:-$HOME/.config}/zsh'
-  remote_shell_target="$remote_config_dir/vc-skills.zsh"
+  remote_config_root='${XDG_CONFIG_HOME:-$HOME/.config}'
+  remote_helper_dir="$remote_config_root/vetcoders"
+  remote_shell_target="$remote_helper_dir/vc-skills.sh"
+  remote_legacy_dir="$remote_config_root/zsh"
+  remote_legacy_target="$remote_legacy_dir/vc-skills.zsh"
 
-  printf 'Syncing optional zsh helper layer to %s\n' "$host"
-  ssh -n "$host" "mkdir -p $remote_config_dir" || die "Could not prepare $remote_config_dir on $host"
+  printf 'Syncing optional shell helper layer to %s\n' "$host"
+  ssh -n "$host" "mkdir -p $remote_helper_dir $remote_legacy_dir" || die "Could not prepare helper dirs on $host"
   rsync "${rsync_args[@]}" "$shell_source" "$host:$remote_shell_target"
+  if (( dry_run )); then
+    printf '  ssh %s ln -sfn %s %s\n' "$host" "$remote_shell_target" "$remote_legacy_target"
+  else
+    ssh -n "$host" "ln -sfn $remote_shell_target $remote_legacy_target" \
+      || die "Could not link legacy helper path $remote_legacy_target on $host"
+  fi
 
   if (( shell_no_zshrc )); then
     printf 'Skipping remote ~/.zshrc update (--no-zshrc).\n'
   else
     ssh -n "$host" "touch ~/.zshrc && if ! grep -Fqx '$source_line' ~/.zshrc; then printf '\n# VetCoders shell helpers\n%s\n' '$source_line' >> ~/.zshrc; fi" \
       || die "Could not update ~/.zshrc on $host"
+  fi
+
+  if (( shell_no_bashrc )); then
+    printf 'Skipping remote ~/.bashrc update (--no-bashrc).\n'
+  else
+    ssh -n "$host" "touch ~/.bashrc && if ! grep -Fqx '$source_line' ~/.bashrc; then printf '\n# VetCoders shell helpers\n%s\n' '$source_line' >> ~/.bashrc; fi" \
+      || die "Could not update ~/.bashrc on $host"
   fi
 
   printf '\n'
@@ -235,10 +256,10 @@ for tool in "${tools[@]}"; do
 done
 
 if (( with_shell )); then
-  ssh -n "$host" 'if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh" ]; then
-  echo "OK ${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"
+  ssh -n "$host" 'if [ -f "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" ]; then
+  echo "OK ${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"
 else
-  echo "MISSING ${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"
+  echo "MISSING ${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"
 fi'
 fi
 
