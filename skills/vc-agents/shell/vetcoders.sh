@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# VetCoders shell helpers (bash/zsh compatible)
+# VibeCrafted shell helpers (bash/zsh compatible)
 # Source this from your ~/.bashrc or ~/.zshrc to get consistent wrapper commands
 # for the VibeCrafted framework installed under your local repository path.
 # These are shell functions, not standalone binaries. Non-interactive callers
@@ -37,7 +37,7 @@ _vetcoders_spawn_script() {
   local base
   base="$(_vetcoders_spawn_home "$tool")"
   [[ -f "$base/scripts/$script_name" ]] || {
-    echo "VetCoders spawn script not found: $base/scripts/$script_name" >&2
+    echo "VibeCrafted spawn script not found: $base/scripts/$script_name" >&2
     return 1
   }
   printf '%s/scripts/%s' "$base" "$script_name"
@@ -78,7 +78,7 @@ _vetcoders_frontier_root() {
     return 0
   fi
 
-  echo "VetCoders frontier config not found. Run vc-frontier-install from the repo checkout." >&2
+  echo "VibeCrafted frontier config not found. Run vc-frontier-install from the repo checkout." >&2
   return 1
 }
 

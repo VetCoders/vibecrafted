@@ -137,6 +137,8 @@ require_file "$home_dir/.gemini/skills/vc-agents/scripts/gemini_spawn.sh"
 require_file "$config_dir/vetcoders/vc-skills.sh"
 require_file "$config_dir/zsh/vc-skills.zsh"
 assert_contains "$config_dir/vetcoders/vc-skills.sh" 'VibeCrafted helper shim'
+bad_helper_candidate="\${VIBECRAFT_ROOT:-}/skills/vc-agents/shell/vetcoders.sh"
+assert_not_contains "$config_dir/vetcoders/vc-skills.sh" "$bad_helper_candidate"
 # At least one rcfile must have the source line (depends on SHELL/platform)
 rc_found=0
 for rcfile in "$home_dir/.zshrc" "$home_dir/.bashrc"; do

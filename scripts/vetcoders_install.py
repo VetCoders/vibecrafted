@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""VetCoders Smart Installer v2 — manifest-driven, multi-channel, interactive.
+"""VibeCrafted Smart Installer v2 — manifest-driven, multi-channel, interactive.
 
 Subcommands:
-    install         Install the VetCoders skill bundle
+    install         Install the VibeCrafted skill bundle
     doctor          Verify installation health
-    list            Show available VetCoders skills and the runtime substrate beneath them
-    uninstall       Remove VetCoders skills, symlinks, and helpers
+    list            Show available VibeCrafted skills and the runtime substrate beneath them
+    uninstall       Remove VibeCrafted skills, symlinks, and helpers
     restore         Restore pre-install state from backup
 
 Usage:
@@ -157,7 +157,7 @@ def _compact_line(out, icon: str, label: str, value: str) -> None:
 
 SKILL_CATEGORIES = {
     "pipeline": {
-        "label": "VetCoders Pipeline",
+        "label": "VibeCrafted Pipeline",
         "description": "Core workflow skills: init, workflow, followup, marbles, dou, hydrate, release",
         "prefix": "vc-",
     },
@@ -448,7 +448,7 @@ def get_repo_url(repo_root: Path) -> str:
 
 
 def discover_skills(repo_root: Path) -> List[Path]:
-    """Find all canonical VetCoders skill directories."""
+    """Find all canonical VibeCrafted skill directories."""
     skills = []
     skills_dir = repo_root / "skills"
     if not skills_dir.exists() or not skills_dir.is_dir():
@@ -918,6 +918,36 @@ def _launcher_path_line() -> str:
     return 'export PATH="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/bin:$PATH"'
 
 
+def _run_smoke_command(
+    command: Sequence[str],
+    *,
+    env: Optional[Dict[str, str]] = None,
+    expected_text: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Run a small runtime smoke command and capture a concise result."""
+    try:
+        result = subprocess.run(
+            command,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return False, str(exc)
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    detail = stdout or stderr or f"exit {result.returncode}"
+
+    if result.returncode != 0:
+        return False, detail
+
+    if expected_text and expected_text not in stdout:
+        return False, f"missing expected text: {expected_text}"
+
+    return True, detail
+
+
 def _strip_rc_entry(
     content: str, line: str, comment: Optional[str] = None
 ) -> Tuple[str, int]:
@@ -1081,7 +1111,7 @@ def report_helper_conflicts(
     print()
     print(
         yellow(
-            "  These files already contain non-VetCoders content — installer will NOT edit them."
+            "  These files already contain non-VibeCrafted content — installer will NOT edit them."
         )
     )
 
@@ -1527,6 +1557,28 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             DoctorFinding("ok", "shell-helpers", "not installed (optional)")
         )
 
+    if helper_file.exists():
+        helper_ok, helper_detail = _run_smoke_command(
+            [
+                "bash",
+                "-c",
+                'source "$1"; command -v vc-help >/dev/null && command -v codex-implement >/dev/null && command -v codex-marbles >/dev/null && command -v skills-sync >/dev/null && printf "helper-ok\\n"',
+                "_",
+                str(helper_file),
+            ],
+            env=os.environ.copy(),
+            expected_text="helper-ok",
+        )
+        findings.append(
+            DoctorFinding(
+                "ok" if helper_ok else "fail",
+                "shell-helper-runtime",
+                "helper shim sources and exports commands"
+                if helper_ok
+                else helper_detail,
+            )
+        )
+
     launcher_bin_dir = vibecrafted_home() / "bin"
     missing_wrappers = [
         name for name in LAUNCHER_WRAPPERS if not (launcher_bin_dir / name).exists()
@@ -1543,6 +1595,29 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         )
     else:
         findings.append(DoctorFinding("ok", "launcher-wrappers", str(launcher_bin_dir)))
+
+    launcher = launcher_bin_dir / "vibecrafted"
+    wrapper = launcher_bin_dir / "vc-help"
+    if launcher.exists() and wrapper.exists():
+        launcher_ok, launcher_detail = _run_smoke_command(
+            ["bash", str(launcher), "help"],
+            env=os.environ.copy(),
+            expected_text="VibeCrafted",
+        )
+        wrapper_ok, wrapper_detail = _run_smoke_command(
+            ["bash", str(wrapper)],
+            env=os.environ.copy(),
+            expected_text="VibeCrafted",
+        )
+        findings.append(
+            DoctorFinding(
+                "ok" if launcher_ok and wrapper_ok else "fail",
+                "launcher-runtime",
+                "vibecrafted help + vc-help smoke passed"
+                if launcher_ok and wrapper_ok
+                else f"launcher={launcher_detail}; wrapper={wrapper_detail}",
+            )
+        )
 
     # 7. Shell smoke check: non-interactive zsh should stay quiet under TERM=dumb
     zsh_path = shutil.which("zsh")
@@ -2573,7 +2648,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     skills = discover_skills(repo_root)
     cats = categorize_all(skills)
 
-    print(f"\n{bold('VetCoders Skills Bundle')}")
+    print(f"\n{bold('VibeCrafted Skills Bundle')}")
     print(dim(f"Source: {repo_root}\n"))
 
     for cat_key in ("pipeline", "specialist"):
@@ -2620,7 +2695,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         else [rt for rt in SYMLINK_TARGET_CHOICES if runtime_skills_dir(rt).exists()]
     )
 
-    print(f"\n{bold('VetCoders Uninstall')}\n")
+    print(f"\n{bold('VibeCrafted Uninstall')}\n")
 
     if not skill_names:
         print(dim("Nothing to uninstall — no manifest and no known skills found."))
@@ -2693,7 +2768,9 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
         # Remove source lines from both .zshrc and .bashrc
         source_entries = [
+            (_shell_source_line(), "VibeCrafted shell helpers"),
             (_shell_source_line(), "VetCoders shell helpers"),
+            (_old_zshrc_source_line(), "VibeCrafted shell helpers"),
             (_old_zshrc_source_line(), "VetCoders shell helpers"),
             (_launcher_path_line(), "VibeCrafted launcher"),
         ]
@@ -2748,7 +2825,7 @@ def cmd_restore(args: argparse.Namespace) -> int:
     dry_run = args.dry_run
     backup_root = _backup_root(store_path)
 
-    print(f"\n{bold('VetCoders Restore')}\n")
+    print(f"\n{bold('VibeCrafted Restore')}\n")
 
     # Find latest backup
     latest_file = backup_root / "latest"

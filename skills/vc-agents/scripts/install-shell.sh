@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF_USAGE'
 Usage: install-shell.sh [--source <repo-root>] [--dry-run] [--no-zshrc] [--no-bashrc]
 
-Install the VetCoders shell helper layer. The helpers work in both bash and zsh.
+Install the VibeCrafted shell helper layer. The helpers work in both bash and zsh.
 By default, sources the helper from ~/.bashrc and ~/.zshrc for shells that are
 available. Use --no-zshrc or --no-bashrc to skip a shell.
 EOF_USAGE
@@ -67,7 +67,7 @@ legacy_file="$legacy_dir/vc-skills.zsh"
 # shellcheck disable=SC2016
 source_line='[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"'
 
-printf 'Installing VetCoders shell helpers\n'
+printf 'Installing VibeCrafted shell helpers\n'
 printf '  source: %s\n' "$source_file"
 printf '  target: %s\n' "$target_file"
 
@@ -79,7 +79,7 @@ write_helper_shim() {
 _vibecrafted_helper_candidates() {
   local crafted_home="\${VIBECRAFTED_HOME:-\$HOME/.vibecrafted}"
   printf '%s\n' \
-    "\${VIBECRAFT_ROOT:-}/skills/vc-agents/shell/vetcoders.sh" \
+    "\${VIBECRAFT_ROOT:+\$VIBECRAFT_ROOT/skills/vc-agents/shell/vetcoders.sh}" \
     "$repo_root/skills/vc-agents/shell/vetcoders.sh" \
     "\$crafted_home/skills/vc-agents/shell/vetcoders.sh" \
     "\$crafted_home/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh"
@@ -137,21 +137,31 @@ _update_rcfile() {
   fi
 
   {
-    printf '\n# VetCoders shell helpers\n'
+    printf '\n# VibeCrafted shell helpers\n'
     printf '%s\n' "$source_line"
   } >> "$rcfile"
 
   printf '  %s: updated\n' "$rcfile"
 }
 
+rcfile_touched=0
+
 if (( update_zshrc )); then
   if command -v zsh >/dev/null 2>&1 || [[ -f "$HOME/.zshrc" ]]; then
     _update_rcfile "$HOME/.zshrc" "zsh"
+    rcfile_touched=1
   fi
 fi
 
 if (( update_bashrc )); then
   if [[ -f "$HOME/.bashrc" ]] || [[ "${SHELL##*/}" == "bash" ]]; then
     _update_rcfile "$HOME/.bashrc" "bash"
+    rcfile_touched=1
   fi
+fi
+
+if (( ! rcfile_touched )); then
+  printf '\033[33m[warn]\033[0m No shell rc file was updated automatically.\n'
+  printf '       Add this line manually to the rc file you actually use:\n'
+  printf '       %s\n' "$source_line"
 fi
