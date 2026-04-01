@@ -129,12 +129,12 @@ return verified, consistent characters from the same Unicode block.
 | ---------- | --------------------- | -------------------------------- |
 | Box frames | `╭─╮│╰─╯`             | Box Drawing block                |
 | Separators | `·` `─` `━` `┄`       | Box Drawing, General Punctuation |
-| Checkmarks | `✓` `✗` `⚠`          | Dingbats                         |
-| Bullets    | `▸` `▪` `◆` `›`      | Geometric Shapes                 |
+| Checkmarks | `✓` `✗` `⚠`           | Dingbats                         |
+| Bullets    | `▸` `▪` `◆` `›`       | Geometric Shapes                 |
 | Progress   | `⣿⣶⣤⣀` `█▓▒░`         | Braille Patterns, Block Elements |
 | Sparklines | `⣀⣤⣶⣿` (8px per cell) | Braille Patterns (256 combos)    |
 | Arrows     | `→` `←` `↑` `↓` `⟶`   | Arrows block                     |
-| Status     | `⚒` `⚡` `⚙` `⟳`    | Misc Symbols                     |
+| Status     | `⚒` `⚡` `⚙` `⟳`      | Misc Symbols                     |
 | Brands     | `🄵·🅁·🄰·🄼·🄴·🅆·🄾·🅁·🄺`   | Enclosed Alphanumerics           |
 
 **Braille sparklines** deserve special attention. A single Braille character

@@ -52,7 +52,6 @@ Answers from the trenches. This is the truth as of March 2026.
   Context drift and "lazy" generation. If an agent isn't anchored by structural truth (loctree) or is overwhelmed by a 200k token history, it starts hallucinating. VibeCrafted's `vc-init` and `vc-workflow` combat this by providing surgical, high-signal context rather than a history dump.
 
 - **How does `vc-followup` decide between P0, P1, and P2 severity?**
-
   - **P0**: Blocker. Code doesn't compile, critical security leak, or core feature is fundamentally broken.
   - **P1**: High Risk. Regression likely, edge cases unhandled, or architectural mismatch.
   - **P2**: Polish/Gap. Missing tests, suboptimal naming, observability gaps, or minor UI jank.
@@ -75,7 +74,6 @@ Answers from the trenches. This is the truth as of March 2026.
   To prevent "skill drift." If every project has its own version of `vc-workflow`, updates become impossible. Central storage allows you to improve your agent's "brain" once and have it apply across all your repos.
 
 - **What is the relationship between `~/.vibecrafted/skills/`, `~/.claude/skills/`, and `~/.agents/skills/`?**
-
   - `~/.vibecrafted/skills/`: The **Central Store** (Source of Truth).
   - `~/.claude/skills/`, `~/.agents/skills/`: **Symlink Views**. These are portals that let specific agent CLIs find the skills. They point back to the Central Store.
 
@@ -120,7 +118,6 @@ Answers from the trenches. This is the truth as of March 2026.
 ## Workflow
 
 - **What does "Craft, Converge, Ship" actually mean in practice?**
-
   - **Craft**: Research, scaffold, and implement the initial "noise" (rough code).
   - **Converge**: Run Marbles loops to denoise the code, fix bugs, and fill gaps until P0/P1/P2 = 0.
   - **Ship**: Run `vc-dou`, hydrate the product (docs, SEO), and push to market.
@@ -155,7 +152,6 @@ Answers from the trenches. This is the truth as of March 2026.
   We started the same way everyone starts — playing with AI toys, pasting prompts, hoping. The framework exists because hoping didn't scale. Trust it or don't — the code is open, the methodology is documented, the results are measurable.
 
 - **What makes VibeCrafted different from AutoGPT/CrewAI/LangChain agents?**
-
   - **AutoGPT**: May be too chaotic; some claims that it lacks structural anchoring.
   - **CrewAI**: Great for roles, but lacks the "denoising" rigor of the Marbles loop.
   - **LangChain**: A library for building tools, not a workflow for shipping products.

@@ -44,11 +44,11 @@ Meta-recursive. Every commit is evidence.
 
 VibeCrafted has three typographic signatures — one for each layer of craft:
 
-| Mark                        | Layer              | When to use                              |
-| --------------------------- | ------------------ | ---------------------------------------- |
+| Mark                       | Layer              | When to use                              |
+| -------------------------- | ------------------ | ---------------------------------------- |
 | `⚒🅅·🄸·🄱·🄴·🄲·🅡·🄰·🄵·🅃·🄴·🄳·؞` | **Produced with**  | Full product built through the framework |
-| `𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭؞`              | **Designed with**  | Design, UI, visual identity, brand work  |
-| `// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞`           | **Developed with** | Source code, engineering, infrastructure |
+| `𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭؞`             | **Designed with**  | Design, UI, visual identity, brand work  |
+| `// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞`          | **Developed with** | Source code, engineering, infrastructure |
 
 The `؞` is not decoration. It is the mark.
 
