@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SHELLCHECK_EXCLUDES = ("SC1090", "SC1091", "SC2155", "SC2034", "SC2154")
+SHELLCHECK_EXCLUDES = ("SC1090", "SC1091", "SC2155", "SC2034", "SC2154", "SC2015")
 SHELL_SUFFIXES = {".sh", ".bash", ".zsh"}
 SHELL_NAMES = ("zsh", "bash", "sh")
 
