@@ -105,10 +105,10 @@ bash install.sh</code></pre>
                         <div class="code-block">
                             <button class="copy-btn" type="button">Copy</button>
                             <pre><code>cd ~/your-project
-vc-init claude</code></pre>
+vibecrafted init claude</code></pre>
                         </div>
-                        <p class="docs-note"><code>vc-init</code> reads history, maps structure, and runs quality gates
-                            before implementation starts.</p>
+                        <p class="docs-note"><code>vibecrafted init</code> is the main front door. It reads history,
+                            maps structure, and runs quality gates before implementation starts.</p>
                     </article>
 
                     <article class="docs-card">
@@ -118,14 +118,14 @@ vc-init claude</code></pre>
                             how much control you want.</p>
                         <div class="code-block">
                             <button class="copy-btn" type="button">Copy</button>
-                            <pre><code>vc-justdo codex "Add user authentication with JWT"</code></pre>
+                            <pre><code>vibecrafted justdo codex --prompt "Add user authentication with JWT"</code></pre>
                         </div>
                         <div class="code-block">
                             <button class="copy-btn" type="button">Copy</button>
-                            <pre><code>vc-workflow claude "Plan and implement auth module"</code></pre>
+                            <pre><code>vibecrafted workflow claude --prompt "Plan and implement auth module"</code></pre>
                         </div>
-                        <p class="docs-note">Use <code>Just do</code> for end-to-end ownership. Use
-                            <code>vc-workflow</code> when you want explicit Examine -> Research -> Implement structure.
+                        <p class="docs-note">Use <code>vibecrafted justdo</code> for end-to-end ownership. Use
+                            <code>vibecrafted workflow</code> when you want explicit Examine -> Research -> Implement structure.
                         </p>
                     </article>
 
@@ -148,9 +148,9 @@ vibecrafted gemini implement .vibecrafted/plans/my-plan.md</code></pre>
                         <p>Shipping in VibeCrafted means code quality, product-surface truth, and packaging truth.</p>
                         <div class="code-block">
                             <button class="copy-btn" type="button">Copy</button>
-                            <pre><code>vc-dou claude
-vc-hydrate codex
-vc-release codex</code></pre>
+                            <pre><code>vibecrafted dou claude --prompt "Audit launch readiness"
+vibecrafted hydrate codex --prompt "Package the product"
+vibecrafted release codex --prompt "Prepare release steps"</code></pre>
                         </div>
                         <p class="docs-note">The framework is complete when a stranger can discover, understand,
                             install, and trust the thing, not when your tests stop yelling.</p>

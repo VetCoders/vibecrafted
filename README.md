@@ -106,25 +106,29 @@ make -C ~/.vibecrafted/tools/vibecrafted-current uninstall
 
 ```bash
 cd ~/your-project
+vibecrafted init claude
+vibecrafted justdo codex --prompt "Add JWT authentication"
 ```
 
-Open a Claude Code session:
+The `vibecrafted` launcher is the main front door. The legacy `vc-*` wrappers
+still work as shortcuts once shell helpers are loaded.
 
 ```
-Init session                    # vc-init — memory, sight, ground truth
-Just do: add JWT authentication # vc-justdo — full pipeline to done
+vibecrafted workflow claude --prompt "Plan and implement auth module"
+vibecrafted marbles codex --count 3 --depth 3
 ```
 
 Or run phases individually:
 
 ```
-Scaffold this                   # architecture planning
-ERi pipeline for auth module    # vc-workflow — examine, research, implement
-Follow-up check                 # vc-followup — what went wrong
-Fill the gaps                   # vc-marbles — convergence loop
+vibecrafted scaffold claude --prompt "Map the architecture"
+vibecrafted workflow claude --prompt "Plan and implement auth module"
+vibecrafted followup codex --prompt "Audit the recent implementation"
+vibecrafted marbles codex --count 3 --depth 3
 ```
 
-Type `vc-` and hit tab for the full list.
+Type `vibecrafted help` for the command deck, or `vc-` and hit tab once the
+shell helpers are installed.
 
 ---
 

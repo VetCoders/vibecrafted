@@ -34,15 +34,11 @@ Go to any git repo:
 
 ```bash
 cd ~/your-project
+vibecrafted init claude
 ```
 
-Start a Claude Code session and say:
-
-```
-Init session
-```
-
-This runs `vc-init` — your agent gets three things before touching anything:
+This runs `vibecrafted init claude` — the command-deck front door for `vc-init`.
+Your agent gets three things before touching anything:
 
 - **Memory** — what was done before (indexed session history)
 - **Sight** — what the code looks like now (structural map via loctree)
@@ -52,11 +48,11 @@ Your agent now has orientation instead of assumptions.
 
 ## 4. Build something
 
-```
-Just do: add user authentication with JWT
+```bash
+vibecrafted justdo codex --prompt "Add user authentication with JWT"
 ```
 
-`vc-justdo` chains the entire pipeline:
+`vibecrafted justdo` chains the entire pipeline through `vc-justdo`:
 
 - **Craft** — examines the repo, researches the approach, implements
 - **Converge** — runs marbles loops: _"what is still wrong?"_ → fix → repeat
@@ -64,16 +60,16 @@ Just do: add user authentication with JWT
 
 ## 5. Run phases individually
 
-```
-Scaffold this                           # vc-scaffold — architecture planning
-Init session                            # vc-init — context bootstrap
-ERi pipeline for adding auth module     # vc-workflow — examine, research, implement
-Follow-up check                         # vc-followup — what went wrong
-Fill the gaps                           # vc-marbles — convergence until circle is full
-Run a Definition of Undone audit        # vc-dou — is it actually ready to ship?
-Decorate this                           # vc-decorate — brand, UI, visual polish
-Hydrate the product                     # vc-hydrate — packaging, docs, discoverability
-Release this                            # vc-release — deployment, distribution
+```bash
+vibecrafted scaffold claude --prompt "Plan the auth architecture"   # vc-scaffold
+vibecrafted init claude                                             # vc-init
+vibecrafted workflow claude --prompt "Plan and implement auth"      # vc-workflow
+vibecrafted followup codex --prompt "Audit the auth changes"        # vc-followup
+vibecrafted marbles codex --count 3 --depth 3                       # vc-marbles
+vibecrafted dou claude --prompt "Audit launch readiness"            # vc-dou
+vibecrafted decorate codex --prompt "Polish the surface"            # vc-decorate
+vibecrafted hydrate codex --prompt "Package the product"            # vc-hydrate
+vibecrafted release codex --prompt "Prepare release steps"          # vc-release
 ```
 
 ## 6. Multi-agent research
@@ -92,8 +88,8 @@ winning agent into implementation.
 
 When the code is close but not done:
 
-```
-Marbles: fill the circle on the auth module
+```bash
+vibecrafted marbles codex --prompt "Fill the gaps on the auth module" --count 3
 ```
 
 The agent enters a convergence loop — tools find what is wrong, agent fixes it,
@@ -102,7 +98,8 @@ remaining accusation.
 
 ## The tab trick
 
-Type `vc-` and hit tab. Everything is discoverable from the terminal.
+Type `vibecrafted help` for the command deck. Once shell helpers are loaded,
+`vc-` wrappers stay available as shortcuts.
 
 ---
 

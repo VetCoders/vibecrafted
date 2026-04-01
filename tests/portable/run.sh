@@ -367,7 +367,16 @@ assert_not_contains "$repo_root/docs/FAQ-ANSWERED.md" 'truth as of March 2026'
 [[ ! -e "$repo_root/skills/vc-subagents/SKILL.md" ]] || die 'vc-subagents should not exist'
 if [[ -e "$repo_root/docs/index.html" ]]; then
   assert_not_contains "$repo_root/docs/index.html" 'Canonical osascript Terminal spawn'
+  assert_contains "$repo_root/docs/index.html" 'vibecrafted init claude'
+  assert_contains "$repo_root/docs/index.html" 'vibecrafted workflow claude --prompt "Plan and implement auth module"'
+  assert_contains "$repo_root/docs/index.html" 'vibecrafted marbles codex --count 3 --depth 3'
+  assert_not_contains "$repo_root/docs/index.html" 'vc-init claude'
 fi
+assert_contains "$repo_root/docs/QUICK_START.md" 'vibecrafted init claude'
+assert_contains "$repo_root/docs/QUICK_START.md" 'vibecrafted justdo codex --prompt "Add user authentication with JWT"'
+assert_contains "$repo_root/docs/presence/quickstart.html" 'vibecrafted init claude'
+assert_contains "$repo_root/docs/presence/quickstart.html" 'vibecrafted workflow claude --prompt "Plan and implement auth module"'
+assert_not_contains "$repo_root/docs/presence/quickstart.html" 'vc-init claude'
 [[ -e "$repo_root/skills/vc-suite-showcase.html" ]] && die 'vc-suite-showcase.html should not exist (was mv to docs/index.html)'
 
 log "portable checks passed"
