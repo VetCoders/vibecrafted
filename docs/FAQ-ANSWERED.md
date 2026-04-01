@@ -1,6 +1,6 @@
 # VibeCrafted FAQ — ANSWERED
 
-Answers from the trenches. This is the truth as of March 2026.
+Answers from the trenches. This is the truth as of April 2026.
 
 ## Installation
 
@@ -29,10 +29,10 @@ Answers from the trenches. This is the truth as of March 2026.
   It verifies: 1) Central store integrity, 2) Symlink health (no broken links), 3) Foundation binaries (aicx, loctree, prview, etc.), 4) Shell helper availability, and 5) "Dumb terminal" quietness — ensuring your interactive shell doesn't leak noise that breaks agent parsers.
 
 - **How do I completely remove VibeCrafted from my system?**
-  `make uninstall`. It uses the install manifest to reverse symlinks, remove the central store, and clean up the shell helper source line in your `.zshrc`. It even offers to restore the pre-install backup.
+  `make uninstall`. It uses the install manifest to reverse symlinks, remove the central store, and clean up the shell helper source lines in your `.bashrc` or `.zshrc`. It even offers to restore the pre-install backup.
 
 - **Why does the installer back up my existing state before every install?**
-  Because things break. We snapshot your `~/.zshrc`, existing skills, and symlinks into `~/.vibecrafted/skills/.backup/` before touching anything. Safety over speed.
+  Because things break. We snapshot your shell rc files, existing skills, and symlinks into `~/.vibecrafted/skills/.backup/` before touching anything. Safety over speed.
 
 ## Skills & Agents
 
