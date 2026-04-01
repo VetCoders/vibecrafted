@@ -52,6 +52,7 @@ jobs:
           tar -czf "dist/${archive_name}.tar.gz" \
             --exclude='./dist' \
             --exclude='./vibecraft-framework.plugin' \
+            --exclude='./vibecrafted-framework.plugin' \
             --exclude='./.pytest_cache' \
             --exclude='./presence' \
             --exclude='./.github' \
