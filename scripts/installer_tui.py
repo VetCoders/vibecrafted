@@ -76,7 +76,7 @@ CATEGORY_ORDER = tuple(CATEGORY_LABELS)
 FOUNDATION_COMMANDS = ("loctree-mcp", "aicx-mcp", "prview", "screenscribe")
 TOOLCHAIN_COMMANDS = ("python3", "node", "git", "rsync")
 AGENT_COMMANDS = ("claude", "codex", "gemini")
-ADDITIONAL_TOOL_COMMANDS = ("zellij", "mise", "starship", "atuin", "zoxide")
+ADDITIONAL_TOOL_COMMANDS = ("mise", "starship", "atuin", "zoxide")
 INSTALL_OUTPUT_TAIL = 18
 READ_KEY_TIMEOUT = 0.1
 DEFAULT_RENDER_WIDTH = 57
@@ -730,7 +730,7 @@ def _render_listing(console: Any, state: InstallerState, width: int) -> None:
         [
             (
                 "Diagnostics",
-                "Check the framework surface, required foundations, toolchains, agent CLIs, and optional sidecars.",
+                "Check the framework surface, required foundations, toolchains, agent CLIs, and the prompt/history sidecars that ship with core 1.2.1.",
             ),
             (
                 "Install",

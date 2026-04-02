@@ -51,51 +51,146 @@ _vetcoders_default_runtime() {
   printf '%s\n' "${VETCODERS_SPAWN_RUNTIME:-terminal}"
 }
 
-_vetcoders_frontier_root() {
-  local root
-  root="${VIBECRAFT_ROOT:-}"
-  if [[ -n "$root" && -d "$root/config/atuin" && -d "$root/config/zellij" && -f "$root/config/starship.toml" ]]; then
-    printf '%s/config' "$root"
-    return 0
-  fi
-
-  local repo_root
+_vetcoders_frontier_candidates() {
+  local repo_root crafted_sidecar candidate seen=""
   repo_root="$(_vetcoders_repo_root)"
-  if [[ -d "$repo_root/config/atuin" && -d "$repo_root/config/zellij" && -f "$repo_root/config/starship.toml" ]]; then
-    printf '%s/config' "$repo_root"
-    return 0
-  fi
+  crafted_sidecar="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/config"
 
-  local crafted_sidecar="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/config"
-  if [[ -d "$crafted_sidecar/atuin" && -d "$crafted_sidecar/zellij" && -f "$crafted_sidecar/starship.toml" ]]; then
-    printf '%s' "$crafted_sidecar"
-    return 0
-  fi
+  for candidate in \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier" \
+    "$crafted_sidecar" \
+    "${VIBECRAFT_ROOT:+$VIBECRAFT_ROOT/config}" \
+    "$repo_root/config"
+  do
+    [[ -n "$candidate" && -d "$candidate" ]] || continue
+    case ":$seen:" in
+      *":$candidate:"*) continue ;;
+    esac
+    seen="${seen:+$seen:}$candidate"
+    printf '%s\n' "$candidate"
+  done
+}
 
-  local sidecar="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier"
-  if [[ -d "$sidecar/atuin" && -d "$sidecar/zellij" && -f "$sidecar/starship.toml" ]]; then
-    printf '%s' "$sidecar"
-    return 0
-  fi
+_vetcoders_frontier_root() {
+  local candidate
+  while IFS= read -r candidate; do
+    if [[ -f "$candidate/starship.toml" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done < <(_vetcoders_frontier_candidates)
 
   echo "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. frontier config not found. Run vc-frontier-install from the repo checkout." >&2
   return 1
 }
 
-_vetcoders_load_frontier_sidecars() {
-  local root
-  root="$(_vetcoders_frontier_root 2>/dev/null)" || return 0
+# Resolve each frontier asset independently so repo-owned prompt/history presets
+# can coexist with an external session companion repo.
+_vetcoders_frontier_file() {
+  local relative_path="$1"
+  local candidate
+  while IFS= read -r candidate; do
+    if [[ -f "$candidate/$relative_path" ]]; then
+      printf '%s/%s\n' "$candidate" "$relative_path"
+      return 0
+    fi
+  done < <(_vetcoders_frontier_candidates)
+  return 1
+}
 
-  if [[ -z "${STARSHIP_CONFIG:-}" ]] && command -v starship >/dev/null 2>&1 && [[ -f "$root/starship.toml" ]]; then
-    export STARSHIP_CONFIG="$root/starship.toml"
+_vetcoders_frontier_source_root() {
+  local repo_root crafted_root candidate seen=""
+  repo_root="$(_vetcoders_repo_root)"
+  crafted_root="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current"
+
+  for candidate in \
+    "${VIBECRAFT_ROOT:-}" \
+    "$repo_root" \
+    "$crafted_root"
+  do
+    [[ -n "$candidate" ]] || continue
+    case ":$seen:" in
+      *":$candidate:"*) continue ;;
+    esac
+    seen="${seen:+$seen:}$candidate"
+    if [[ -f "$candidate/config/starship.toml" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+_vetcoders_load_frontier_sidecars() {
+  local starship_config atuin_config zellij_config zellij_config_dir
+  starship_config="$(_vetcoders_frontier_file "starship.toml" 2>/dev/null || true)"
+  atuin_config="$(_vetcoders_frontier_file "atuin/config.toml" 2>/dev/null || true)"
+  zellij_config="$(_vetcoders_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
+
+  if [[ -z "${STARSHIP_CONFIG:-}" ]] && command -v starship >/dev/null 2>&1 && [[ -n "$starship_config" ]]; then
+    export STARSHIP_CONFIG="$starship_config"
   fi
 
-  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]] && command -v zellij >/dev/null 2>&1 && [[ -d "$root/zellij" ]]; then
-    export ZELLIJ_CONFIG_DIR="$root/zellij"
+  if [[ -z "${ATUIN_CONFIG:-}" ]] && command -v atuin >/dev/null 2>&1 && [[ -n "$atuin_config" ]]; then
+    export ATUIN_CONFIG="$atuin_config"
+  fi
+
+  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]] && command -v zellij >/dev/null 2>&1 && [[ -n "$zellij_config" ]]; then
+    zellij_config_dir="$(dirname "$zellij_config")"
+    export ZELLIJ_CONFIG_DIR="$zellij_config_dir"
   fi
 }
 
 _vetcoders_load_frontier_sidecars
+
+_vetcoders_dashboard_layout_name() {
+  local requested="${1:-vc-dashboard}"
+  case "$requested" in
+    ""|dashboard|mc|mission-control|vc-dashboard) printf 'vc-dashboard\n' ;;
+    marbles|vc-marbles) printf 'vc-marbles\n' ;;
+    workflow|vc-workflow) printf 'vc-workflow\n' ;;
+    research|vc-research) printf 'vc-research\n' ;;
+    vibecrafted) printf 'vibecrafted\n' ;;
+    *) printf '%s\n' "$requested" ;;
+  esac
+}
+
+_vetcoders_dashboard_layout_file() {
+  local layout_name
+  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  _vetcoders_frontier_file "zellij/layouts/${layout_name}.kdl"
+}
+
+_vetcoders_dashboard_session_name() {
+  local layout_name slug
+  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  slug="${layout_name#vc-}"
+  printf 'vibecrafted-%s\n' "$slug"
+}
+
+_vetcoders_launch_dashboard() {
+  local layout_name layout_file session_name
+  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  shift || true
+
+  command -v zellij >/dev/null 2>&1 || {
+    echo "zellij is required for vibecrafted dashboard." >&2
+    return 1
+  }
+
+  _vetcoders_load_frontier_sidecars
+
+  layout_file="$(_vetcoders_dashboard_layout_file "$layout_name" 2>/dev/null || true)"
+  [[ -n "$layout_file" ]] || {
+    echo "Dashboard layout not found for: $layout_name" >&2
+    echo "Expected zellij/layouts/${layout_name}.kdl in the active frontier config roots." >&2
+    return 1
+  }
+
+  session_name="$(_vetcoders_dashboard_session_name "$layout_name")"
+  zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+}
 
 _vetcoders_prompt_file() {
   local agent="$1"
@@ -376,22 +471,6 @@ _vetcoders_skill() {
   local tool="$1"
   local skill="$2"
   shift 2
-  # Route "dashboard" to zellij layout for this skill
-  if [[ "$tool" == "dashboard" ]]; then
-    vc-dashboard "vc-${skill}" "$@"
-    return
-  fi
-  # Auto-wrap in zellij if outside a session
-  if [[ -z "${ZELLIJ:-}" ]] && command -v zellij >/dev/null 2>&1; then
-    local _layouts="${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts"
-    local _layout=""
-    [[ -f "${_layouts}/vc-${skill}.kdl" ]] && _layout="${_layouts}/vc-${skill}.kdl"
-    [[ -n "$_layout" ]] || { [[ -f "${_layouts}/vibecrafted.kdl" ]] && _layout="${_layouts}/vibecrafted.kdl"; }
-    if [[ -n "$_layout" ]]; then
-      zellij --layout "$_layout"
-      return
-    fi
-  fi
   local code="${skill:0:4}"
   local loop_nr="${VIBECRAFT_LOOP_NR:-0}"
   _vetcoders_parse_contract "$@" || return 1
@@ -432,11 +511,6 @@ gemini-hydrate() { _vetcoders_skill gemini hydrate "$@"; }
 _vetcoders_marbles() {
   local tool="$1"
   shift
-  # Route "dashboard" to zellij layout
-  if [[ "$tool" == "dashboard" ]]; then
-    vc-dashboard vc-marbles "$@"
-    return
-  fi
   local script
   script="$(_vetcoders_spawn_script "$tool" "marbles_spawn.sh")" || return 1
   _vetcoders_parse_contract "$@" || return 1
@@ -468,21 +542,12 @@ _vetcoders_marbles() {
     marbles_args+=(--depth "${_vetcoders_contract_depth:-3}")
   fi
 
-  # Auto-launch zellij if not inside a session and zellij is available
-  if [[ -z "${ZELLIJ:-}" ]] && command -v zellij >/dev/null 2>&1; then
-    local layout_file="${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts/vc-marbles.kdl"
-    if [[ -f "$layout_file" ]]; then
-      printf '\033[38;5;173m ⚒  Launching marbles workspace in zellij...\033[0m\n'
-      # Re-invoke ourselves inside zellij
-      local self_cmd="bash $(printf '%q' "$script") ${marbles_args[*]}"
-      zellij --layout vc-marbles action new-pane -- bash -lc "$self_cmd" 2>/dev/null \
-        || zellij --layout vc-marbles 2>/dev/null \
-        || bash "$script" "${marbles_args[@]}"
-      return $?
-    fi
+  # Inside zellij: run marbles orchestrator in a pane below, keep operator free
+  if [[ -n "${ZELLIJ:-}" ]] && command -v zellij >/dev/null 2>&1; then
+    zellij run --name "marbles" --direction down -- /bin/zsh -l -c "bash '$script' ${marbles_args[*]}"
+  else
+    bash "$script" "${marbles_args[@]}"
   fi
-
-  bash "$script" "${marbles_args[@]}"
 }
 
 _vetcoders_resume_agent() {
@@ -682,7 +747,6 @@ Command deck:
   vibecrafted resume <agent>     Resume a previous session
   vibecrafted workflow claude -p "Plan and implement auth"
   vibecrafted marbles codex --count 3 --depth 3
-  vibecrafted dashboard --layout vc-marbles
   vibecrafted init claude        First-context entrypoint
 
 Uniform skill flags:
@@ -695,12 +759,11 @@ Uniform skill flags:
 Utilities:
   repo-full                      Full git context dump
   skills-sync                    Sync skills to agents
-  vc-dashboard [--layout name]   Zellij workspace (vc-marbles, vc-research, vc-workflow)
   vc-frontier-paths              Show frontier config paths
-  vc-frontier-install            Install starship/atuin/zellij presets
+  vc-frontier-install            Install frontier presets (starship/atuin/zellij)
   vc-help                        This help
 
-Frontier docs:  docs/FRONTIER.md (mise, zellij, starship, atuin quickstart)
+Frontier docs:  docs/FRONTIER.md (starship, atuin, optional zellij)
 HELP
   printf '\nInbox:     %s/inbox/\n' "$crafted_home"
   printf 'Artifacts: %s/artifacts/<org>/<repo>/<YYYY_MMDD>/\n' "$crafted_home"
@@ -883,73 +946,27 @@ repo-full() {
 }
 
 vc-frontier-paths() {
-  local root
-  root="$(_vetcoders_frontier_root)" || return 1
-  printf 'STARSHIP_CONFIG=%s/starship.toml\n' "$root"
-  printf 'ATUIN_CONFIG=%s/atuin/config.toml\n' "$root"
-  printf 'ZELLIJ_CONFIG_DIR=%s/zellij\n' "$root"
+  local starship_config atuin_config zellij_config
+  starship_config="$(_vetcoders_frontier_file "starship.toml")" || return 1
+  atuin_config="$(_vetcoders_frontier_file "atuin/config.toml" 2>/dev/null || true)"
+  zellij_config="$(_vetcoders_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
+
+  printf 'STARSHIP_CONFIG=%s\n' "$starship_config"
+  [[ -n "$atuin_config" ]] && printf 'ATUIN_CONFIG=%s\n' "$atuin_config"
+  [[ -n "$zellij_config" ]] && printf 'ZELLIJ_CONFIG_DIR=%s\n' "$(dirname "$zellij_config")"
+  return 0
 }
 
 vc-dashboard() {
-  command -v zellij >/dev/null 2>&1 || {
-    echo "zellij is not installed or not on PATH." >&2
-    return 1
-  }
-
-  local config="" layout="" layouts_dir repo_root session_name
-  repo_root="${VIBECRAFT_ROOT:-$(_vetcoders_repo_root)}"
-
-  # Parse --layout <name-or-path>  (--config kept for compat)
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --layout|--config) shift; config="${1:-}" ;;
-      *) config="$1" ;;
-    esac
-    shift
-  done
-
-  # Resolve layouts directory
-  layouts_dir="$(_vetcoders_frontier_root 2>/dev/null)/zellij/layouts"
-  [[ -d "$layouts_dir" ]] || layouts_dir="$repo_root/config/zellij/layouts"
-
-  if [[ -n "$config" ]]; then
-    # Resolve: full path, exact name, or vc-* name (with or without .kdl)
-    if [[ -f "$config" ]]; then
-      layout="$config"
-    elif [[ -f "${layouts_dir}/${config}.kdl" ]]; then
-      layout="${layouts_dir}/${config}.kdl"
-    elif [[ -f "${layouts_dir}/${config}" ]]; then
-      layout="${layouts_dir}/${config}"
-    else
-      printf 'Layout "%s" not found.\nAvailable:\n' "$config" >&2
-      for f in "$layouts_dir"/*.kdl; do
-        [[ -f "$f" ]] && printf '  %s\n' "$(basename "$f" .kdl)" >&2
-      done
-      return 1
-    fi
-  else
-    # Default: vc-dashboard
-    layout="${layouts_dir}/vc-dashboard.kdl"
-    [[ -f "$layout" ]] || {
-      echo "Dashboard layout not found. Run vc-frontier-install first." >&2
-      return 1
-    }
-  fi
-
-  # Launch: new tab if inside zellij, new session otherwise
-  if [[ -n "${ZELLIJ:-}" ]]; then
-    zellij action new-tab --layout "$layout" --name "$session_name"
-  elif [[ -d "$repo_root/.git" || -d "$repo_root/skills/vc-agents" ]]; then
-    ( cd "$repo_root" || exit 1; zellij --layout "$layout" )
-  else
-    zellij --layout "$layout"
-  fi
+  _vetcoders_launch_dashboard "$@"
 }
 
 vc-frontier-install() {
-  local frontier_root repo_root script base
-  frontier_root="$(_vetcoders_frontier_root)" || return 1
-  repo_root="$(dirname "$frontier_root")"
+  local repo_root script base
+  repo_root="$(_vetcoders_frontier_source_root)" || {
+    echo "Repo-owned frontier source not found." >&2
+    return 1
+  }
   base="$(_vetcoders_spawn_home "vc-agents")"
   script="$base/scripts/install-frontier-config.sh"
   

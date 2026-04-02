@@ -131,8 +131,6 @@ Runtime Foundations:
        Shell history recall with optional encrypted sync
   [ok] zoxide -> /opt/homebrew/bin/zoxide
        Fast directory jumping for agent-heavy shell workflows
-  [ok] zellij -> /opt/homebrew/bin/zellij
-       Visible multi-agent terminal workspace surface
 
 Enable the shell helper layer (bash + zsh)? [y/N] y
 

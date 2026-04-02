@@ -51,7 +51,7 @@ done
 # Find source file (new name first, then legacy)
 source_file="$repo_root/skills/vc-agents/shell/vetcoders.sh"
 [[ -f "$source_file" ]] || source_file="$repo_root/skills/vc-agents/shell/vetcoders.zsh"
-[[ -f "$source_file" ]] || source_file="$repo_root/vc-agents/shell/vetcoders.zsh"
+[[ -f "$source_file" ]] || source_file="$repo_root/skills/vc-agents/shell/vetcoders.zsh"
 [[ -f "$source_file" ]] || die "Helper file not found"
 
 # Canonical install location (shell-agnostic)

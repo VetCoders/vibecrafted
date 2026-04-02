@@ -16,7 +16,7 @@ Answers from the trenches. This is the truth as of April 2026.
   others) so your agents "see" them, but the source of truth remains in `~/.vibecrafted/`.
 
 - **Why does `make vibecrafted` ask me questions instead of just installing silently?**
-  Because your environment is yours, not ours. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. checks for Starship, Zellij, and toolchain conflicts. It
+  Because your environment is yours, not ours. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. checks for Starship, Atuin, and toolchain conflicts. It
   asks because blindly overwriting a developer's shell config or existing aliases is a sin. For a direct non-interactive
   install path, use `make install` or call
   `python3 scripts/vetcoders_install.py install --source "$PWD" --non-interactive`.
@@ -26,10 +26,10 @@ Answers from the trenches. This is the truth as of April 2026.
   helper file (`${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh`) if you want the high-level aliases like
   `vc-init`.
 
-- **What if I already have a Starship/Atuin/Zellij config — will 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. overwrite it?**
+- **What if I already have a Starship/Atuin config — will 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. overwrite it?**
   No. It detects existing configs and prompts you. It can install the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. versions alongside yours or skip them
-  entirely. We prefer `mise` for managing these, so they often stay scoped to the toolchain rather than your global OS
-  config.
+  entirely. The repo now ships optional Zellij sidecars too, but they stay opt-in: companion frontier paths can
+  override them per asset, and nothing launches a dashboard unless you ask for it.
 
 - **How do I move my installation to a custom directory?**
   Set `VIBECRAFTED_HOME` in your environment before running the installer. The installer respects this variable for the
@@ -133,9 +133,10 @@ Answers from the trenches. This is the truth as of April 2026.
   It defaults to `~/.vibecrafted`. You'd change it if you want to store your 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. data on an external drive, a
   synced Dropbox folder, or in a shared team location.
 
-- **Why is there a `config/` directory with Starship and Zellij configs?**
-  Because the "Operator UX" matters. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. provides a pre-configured terminal environment optimized for
-  multi-agent workflows (panes for logs, status lines for context).
+- **Why is there a `config/` directory with Starship and Atuin configs?**
+  Because the "Operator UX" matters. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. keeps a small, honest operator layer in-repo: prompt context and
+  history recall. That same layer now includes optional Zellij config and branded layouts, while terminal-emulator
+  presets such as Alacritty stay outside the core repo surface.
 
 - **What is mise and why does 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. include a `mise.toml`?**
   `mise` (formerly `rtx`) handles the toolchain. It ensures that the specific versions of Python, Rust, or Node needed

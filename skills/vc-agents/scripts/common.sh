@@ -347,41 +347,70 @@ EOF_PROMPT
 }
 
 spawn_frontier_root() {
-  local candidate script_root
-  script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd || true)"
-
-  for candidate in \
-    "${VIBECRAFT_ROOT:-}" \
-    "${SPAWN_ROOT:-}" \
-    "$script_root" \
-    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current"
-  do
-    [[ -n "$candidate" ]] || continue
-    if [[ -d "$candidate/config/atuin" && -d "$candidate/config/zellij" && -f "$candidate/config/starship.toml" ]]; then
-      printf '%s/config\n' "$candidate"
+  local candidate
+  while IFS= read -r candidate; do
+    if [[ -f "$candidate/starship.toml" ]]; then
+      printf '%s\n' "$candidate"
       return 0
     fi
-  done
-
-  candidate="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier"
-  if [[ -d "$candidate/atuin" && -d "$candidate/zellij" && -f "$candidate/starship.toml" ]]; then
-    printf '%s\n' "$candidate"
-    return 0
-  fi
+  done < <(spawn_frontier_candidates)
 
   return 1
 }
 
-spawn_export_frontier_sidecars() {
-  local root
-  root="$(spawn_frontier_root)" || return 0
+spawn_frontier_candidates() {
+  local script_root candidate seen=""
+  script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd || true)"
 
-  if [[ -z "${STARSHIP_CONFIG:-}" ]] && command -v starship >/dev/null 2>&1 && [[ -f "$root/starship.toml" ]]; then
-    export STARSHIP_CONFIG="$root/starship.toml"
+  for candidate in \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier" \
+    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/config" \
+    "${VIBECRAFT_ROOT:+$VIBECRAFT_ROOT/config}" \
+    "${SPAWN_ROOT:+$SPAWN_ROOT/config}" \
+    "${script_root:+$script_root/config}"
+  do
+    [[ -n "$candidate" && -d "$candidate" ]] || continue
+    case ":$seen:" in
+      *":$candidate:"*) continue ;;
+    esac
+    seen="${seen:+$seen:}$candidate"
+    printf '%s\n' "$candidate"
+  done
+
+  return 0
+}
+
+# Resolve each frontier asset independently so repo-owned prompt/history presets
+# can coexist with an external session companion repo.
+spawn_frontier_file() {
+  local relative_path="$1"
+  local candidate
+  while IFS= read -r candidate; do
+    if [[ -f "$candidate/$relative_path" ]]; then
+      printf '%s/%s\n' "$candidate" "$relative_path"
+      return 0
+    fi
+  done < <(spawn_frontier_candidates)
+  return 1
+}
+
+spawn_export_frontier_sidecars() {
+  local starship_config atuin_config zellij_config zellij_config_dir
+  starship_config="$(spawn_frontier_file "starship.toml" 2>/dev/null || true)"
+  atuin_config="$(spawn_frontier_file "atuin/config.toml" 2>/dev/null || true)"
+  zellij_config="$(spawn_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
+
+  if [[ -z "${STARSHIP_CONFIG:-}" ]] && command -v starship >/dev/null 2>&1 && [[ -n "$starship_config" ]]; then
+    export STARSHIP_CONFIG="$starship_config"
   fi
 
-  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]] && command -v zellij >/dev/null 2>&1 && [[ -d "$root/zellij" ]]; then
-    export ZELLIJ_CONFIG_DIR="$root/zellij"
+  if [[ -z "${ATUIN_CONFIG:-}" ]] && command -v atuin >/dev/null 2>&1 && [[ -n "$atuin_config" ]]; then
+    export ATUIN_CONFIG="$atuin_config"
+  fi
+
+  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]] && command -v zellij >/dev/null 2>&1 && [[ -n "$zellij_config" ]]; then
+    zellij_config_dir="$(dirname "$zellij_config")"
+    export ZELLIJ_CONFIG_DIR="$zellij_config_dir"
   fi
 }
 
@@ -447,6 +476,7 @@ EOF_LAUNCH
 
   cat >> "$launcher" <<'EOF_LAUNCH'
 spawn_export_frontier_sidecars
+export PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}"
 
 if bash -c "$SPAWN_CMD"; then
 EOF_LAUNCH
@@ -545,7 +575,8 @@ spawn_in_zellij_pane() {
   local launcher="$1"
   local pane_name="${2:-agent}"
   if [[ -n "${ZELLIJ:-}" ]] && command -v zellij >/dev/null 2>&1; then
-    zellij run --name "$pane_name" -- bash "$launcher"
+    # Spawned agent opens to the right of the orchestrator (bottom zone)
+    zellij run --name "$pane_name" --direction right -- /bin/zsh -l -c "bash '$launcher'"
     return 0
   fi
   return 1

@@ -43,11 +43,11 @@ help:
 	@printf "\n"
 
 vibecrafted: init-hooks
-	@$(PYTHON) scripts/installer_tui.py
+	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell
 
 install: init-hooks
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --non-interactive
-	@bash skills/vc-agents/scripts/install-frontier-config.sh --source "$(SOURCE)" 2>/dev/null || true
+	@bash skills/vc-agents/scripts/install-frontier-config.sh --source "$(SOURCE)" || printf '\033[33m[warn]\033[0m Frontier config install skipped (non-fatal)\n'
 
 skills:
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --non-interactive
@@ -111,6 +111,11 @@ init-hooks:
 		git config core.hooksPath scripts/hooks; \
 		chmod +x scripts/hooks/pre-commit scripts/hooks/pre-push; \
 		echo "Hooks installed to scripts/hooks and activated via core.hooksPath."; \
+		echo "Ensuring hook toolchain..."; \
+		command -v uv >/dev/null 2>&1 || { echo "  installing uv..."; curl -LsSf https://astral.sh/uv/install.sh | sh; }; \
+		uvx ruff --version >/dev/null 2>&1 && echo "  ruff: ok" || echo "  [warn] ruff unavailable via uvx"; \
+		command -v semgrep >/dev/null 2>&1 && echo "  semgrep: ok" || { echo "  installing semgrep..."; pip3 install semgrep --break-system-packages 2>/dev/null || uvx semgrep --version >/dev/null 2>&1 || echo "  [warn] semgrep install failed"; }; \
+		npx --yes prettier --version >/dev/null 2>&1 && echo "  prettier: ok" || echo "  [warn] prettier unavailable via npx"; \
 	else \
 		echo "Not a git repo — skipping hooks."; \
 	fi

@@ -29,12 +29,41 @@ _agents=(claude codex gemini)
 _modes=(implement research review plan prompt observe)
 _skills=(decorate delegate dou followup hydrate justdo marbles partner prune release research review scaffold workflow)
 
-_version() {
-  local script_dir repo_root vf
+_script_repo_root() {
+  local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  repo_root="$(cd "$script_dir/.." && pwd)"
+  cd "$script_dir/.." && pwd
+}
+
+_is_framework_source_root() {
+  local candidate="${1:-}"
+  [[ -n "$candidate" && -f "$candidate/VERSION" && -f "$candidate/scripts/vibecrafted" && -d "$candidate/skills" ]]
+}
+
+_repo_source_root() {
+  local repo_root script_root
+  repo_root="$(_repo_root)"
+  if _is_framework_source_root "$repo_root"; then
+    printf '%s\n' "$repo_root"
+    return 0
+  fi
+
+  script_root="$(_script_repo_root)"
+  if _is_framework_source_root "$script_root" && [[ "$script_root" != "$crafted_tools" ]]; then
+    printf '%s\n' "$script_root"
+    return 0
+  fi
+
+  return 1
+}
+
+_version() {
+  local source_root repo_root vf
+  repo_root="$(_script_repo_root)"
+  source_root="$(_repo_source_root 2>/dev/null || true)"
 
   for vf in \
+    "${source_root:+$source_root/VERSION}" \
     "$crafted_home/VERSION" \
     "$crafted_tools/VERSION" \
     "$repo_root/VERSION"; do
@@ -76,19 +105,21 @@ _has_skill() {
 _skill_candidates() {
   local skill="$1"
   local runtime="${2:-}"
-  local script_dir repo_root
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  repo_root="$(cd "$script_dir/.." && pwd)"
+  local repo_source
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+
+  if [[ -n "$repo_source" ]]; then
+    printf '%s\n' "$repo_source/skills/${skill}/SKILL.md"
+  fi
 
   if [[ -n "$runtime" ]]; then
     printf '%s\n' "$HOME/.${runtime}/skills/${skill}/SKILL.md"
   fi
 
   printf '%s\n' \
-    "$HOME/.agents/skills/${skill}/SKILL.md" \
     "$crafted_skills/${skill}/SKILL.md" \
     "$crafted_tools/skills/${skill}/SKILL.md" \
-    "$repo_root/skills/${skill}/SKILL.md"
+    "$HOME/.agents/skills/${skill}/SKILL.md"
 }
 
 _resolve_skill_path() {
@@ -109,9 +140,12 @@ _resolve_skill_path() {
 }
 
 _helper_candidates() {
-  local script_dir repo_helper
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  repo_helper="$(cd "$script_dir/.." && pwd)/skills/vc-agents/shell/vetcoders.sh"
+  local repo_source repo_helper
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  repo_helper="$(_script_repo_root)/skills/vc-agents/shell/vetcoders.sh"
+  if [[ -n "$repo_source" ]]; then
+    printf '%s\n' "$repo_source/skills/vc-agents/shell/vetcoders.sh"
+  fi
   printf '%s\n' \
     "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" \
     "$crafted_skills/vc-agents/shell/vetcoders.sh" \
@@ -161,16 +195,17 @@ cmd_help() {
   printf '  %bvibecrafted help%b                      Show the command deck\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted help --full%b               Full reference (all skills, modes, aliases)\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted init%b [agent]              Start an interactive init session\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard%b [layout]        Launch an optional repo-owned Zellij dashboard\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b <skill> <agent> [flags]   Run a framework skill\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b <agent> <mode> [args]     implement/research/review/plan/prompt/observe\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted doctor%b                    Verify installation health\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted dashboard%b [--layout name]  Zellij workspace (vc-marbles, vc-research, vc-workflow)\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted init claude\n'
+  printf '  vibecrafted dashboard vc-marbles\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
   printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
   printf '  vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
@@ -221,6 +256,11 @@ cmd_help_full() {
   printf '  %bvibecrafted <agent> prompt%b    <plan.md>   Free-form prompt with context\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted <agent> observe%b   --last      Check last agent report/transcript\n' "$_cyan" "$_reset"
   printf '\n'
+  printf '%b=== OPERATOR SURFACE ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  %bvibecrafted dashboard%b [layout]        Launch repo-owned Zellij dashboard (%bvc-dashboard%b default)\n' "$_cyan" "$_reset" "$_bold" "$_reset"
+  printf '  %bvibecrafted start%b [layout]            Alias for %bvibecrafted dashboard%b\n' "$_cyan" "$_reset" "$_cyan" "$_reset"
+  printf '\n'
   printf '  Agents: %bclaude%b · %bcodex%b · %bgemini%b\n' "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset"
   printf '\n'
   printf '%b=== ADDITIONAL SKILLS ===%b\n' "$_bold" "$_reset"
@@ -239,14 +279,13 @@ cmd_help_full() {
   printf '  %bvibecrafted init%b [agent]              Interactive init session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted dashboard%b [--layout name]  Zellij workspace (vc-marbles, vc-research, vc-workflow)\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted doctor%b                    Installation health check\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted version%b                   Print version\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
   printf '\n'
   printf '%b=== ALIASES ===%b\n' "$_bold" "$_reset"
   printf '\n'
-  printf '  %bstats%b = status       %bmc%b = dashboard       %bcheck%b = doctor       %bremove%b = uninstall\n' "$_dim" "$_reset" "$_dim" "$_reset" "$_dim" "$_reset" "$_dim" "$_reset"
+  printf '  %bstats%b = status       %bcheck%b = doctor       %bremove%b = uninstall\n' "$_dim" "$_reset" "$_dim" "$_reset" "$_dim" "$_reset"
   printf '\n'
   printf '%b=== SKILL FLAGS (uniform contract) ===%b\n' "$_bold" "$_reset"
   printf '\n'
@@ -271,16 +310,20 @@ cmd_help_full() {
   printf '%b=== EXAMPLES ===%b\n' "$_bold" "$_reset"
   printf '\n'
   printf '  vibecrafted init claude\n'
+  printf '  vibecrafted dashboard vc-workflow\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
   printf '  vibecrafted workflow claude --file /path/to/brief.md\n'
   printf '  vibecrafted marbles codex --count 3 --depth 3\n'
-  printf '  vibecrafted dashboard --layout vc-marbles\n'
   printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
   printf '  vibecrafted dou claude\n'
   printf '  vibecrafted hydrate codex\n'
   printf '  vibecrafted release codex\n'
   printf '  vibecrafted prune codex\n'
   printf '\n'
+}
+
+cmd_start() {
+  cmd_dashboard "$@"
 }
 
 cmd_init() {
@@ -297,17 +340,6 @@ cmd_init() {
     gemini) command -v gemini >/dev/null 2>&1 || return 1 ;;
   esac
 
-  # Auto-wrap in zellij if outside a session
-  if [[ -z "${ZELLIJ:-}" ]] && command -v zellij >/dev/null 2>&1; then
-    local _layouts="${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts"
-    local _layout=""
-    [[ -f "${_layouts}/vibecrafted.kdl" ]] && _layout="${_layouts}/vibecrafted.kdl"
-    if [[ -n "$_layout" ]]; then
-      zellij --layout "$_layout"
-      return
-    fi
-  fi
-
   skill_path="$(_resolve_skill_path "vc-init" "$agent")" || return 1
   printf -v init_prompt "Use [\$vc-init](%s) on this repository and give me full operating context." "$skill_path"
 
@@ -320,8 +352,10 @@ cmd_init() {
 }
 
 cmd_doctor() {
-  local makefile=""
+  local makefile="" repo_source=""
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
   for candidate in \
+    "${repo_source:+$repo_source/Makefile}" \
     "$crafted_tools/Makefile" \
     "$(_repo_root)/Makefile"; do
     [[ -f "$candidate" ]] && makefile="$candidate" && break
@@ -353,8 +387,10 @@ cmd_stats() {
 }
 
 cmd_uninstall() {
-  local makefile=""
+  local makefile="" repo_source=""
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
   for candidate in \
+    "${repo_source:+$repo_source/Makefile}" \
     "$crafted_tools/Makefile" \
     "$(_repo_root)/Makefile"; do
     [[ -f "$candidate" ]] && makefile="$candidate" && break
@@ -435,21 +471,6 @@ run_skill() {
     return 1
   }
 
-  # Auto-wrap in zellij if outside a session and a layout exists
-  if [[ -z "${ZELLIJ:-}" ]] && command -v zellij >/dev/null 2>&1; then
-    local layouts_dir="${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts"
-    local layout=""
-    if [[ -f "${layouts_dir}/vc-${skill}.kdl" ]]; then
-      layout="${layouts_dir}/vc-${skill}.kdl"
-    elif [[ -f "${layouts_dir}/vibecrafted.kdl" ]]; then
-      layout="${layouts_dir}/vibecrafted.kdl"
-    fi
-    if [[ -n "$layout" ]]; then
-      zellij --layout "$layout"
-      return
-    fi
-  fi
-
   _ensure_helpers_loaded || return 1
   _run_helper "${agent}-skill-${skill}" "$@"
 }
@@ -459,6 +480,10 @@ run_wrapper() {
   shift
   if [[ "$wrapper" == "vc-help" ]]; then
     cmd_help
+    return
+  fi
+  if [[ "$wrapper" == "vc-start" ]]; then
+    cmd_start "$@"
     return
   fi
   if [[ "$wrapper" == "vc-init" ]]; then
@@ -514,6 +539,7 @@ main() {
 
   case "$cmd" in
     help|-h|--help) cmd_help "$@" ;;
+    start) cmd_start "$@" ;;
     init) cmd_init "$@" ;;
     resume) cmd_resume "$@" ;;
     doctor|check) cmd_doctor ;;
