@@ -19,8 +19,10 @@ jobs:
           sudo apt-get install -y shellcheck
       - name: Run shell checks
         run: make check
-      - name: Install pytest
-        run: python3 -m pip install pytest
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Run installer tests
         run: make test

@@ -72,7 +72,7 @@ bundle-check:
 	@$(PYTHON) scripts/build_marketplace_bundle.py --check
 
 test:
-	@$(PYTHON) -m pytest tests/tui -q
+	@uvx pytest tests/tui -q
 
 update:
 	@printf "Pulling origin/$(BRANCH)...\n"
