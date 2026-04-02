@@ -19,16 +19,16 @@ jobs:
           sudo apt-get install -y shellcheck
       - name: Run shell checks
         run: make check
-      - name: Install pytest
-        run: python3 -m pip install pytest
-      - name: Run installer tests
-        run: make test
-      - name: Check marketplace bundle drift
-        run: make bundle-check
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Install pytest
+        run: uv pip install pytest --break-system-packages
+      - name: Run installer tests
+        run: uv run make test
+      - name: Check marketplace bundle drift
+        run: uv run make bundle-check
       - name: Run tests
-        run: make test
+        run: uv run make test
       - name: Read version
         id: version
         run: |
@@ -43,7 +43,7 @@ jobs:
       - name: Build marketplace bundle
         run: |
           mkdir -p dist
-          python3 scripts/build_marketplace_bundle.py --output dist/vibecraft-framework.plugin
+          uv run python3 scripts/build_marketplace_bundle.py --output dist/vibecraft-framework.plugin
           sha256sum dist/vibecraft-framework.plugin > dist/vibecraft-framework.plugin.sha256
 
       - name: Build release archive
