@@ -1,10 +1,5 @@
-# ╔══════════════════════════════════════════════════════════════════════════════════╗
-# ║                         ATUIN QUANTUM HISTORY CONFIGURATION                     ║
-# ║                         Gang of Bastards × LibraxisAI                            ║
-# ║                    Where Human and AI Become Equal Partners                      ║
-# ╚══════════════════════════════════════════════════════════════════════════════════╝
 
-## Atuin Configuration for Quantum Consciousness Shell
+## Atuin Configuration for Vibecrafted.
 
 # ┌─────────────────────────────────────────────────────────────────────────────────┐
 # │                              SYNC SETTINGS                                      │
@@ -27,7 +22,7 @@ filter_mode = "global"
 
 # Show preview of command before executing
 show_preview = true
-max_preview_height = 24
+max_preview_height = 16
 
 # ┌─────────────────────────────────────────────────────────────────────────────────┐
 # │                            HISTORY SETTINGS                                     │

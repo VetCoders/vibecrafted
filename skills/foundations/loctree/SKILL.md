@@ -2,9 +2,10 @@
 name: loctree
 version: 2.0.0
 description: >
-  Your senses in the codebase. Loctree gives you structural sight before
-  you touch anything — architecture, dependencies, blast radius, dead code.
-  No edit without orientation. No delete without impact. No create without search.
+  Holographic structural perception of the codebase. Loctree gives you 
+  structural sight before you touch anything — architecture, dependencies, 
+  blast radius, dead code. No edit without orientation. No delete without 
+  impact. No create without search.
   The craftsman studies the grain before cutting.
 ---
 
@@ -34,19 +35,65 @@ A craftsman who cuts without studying the material produces waste.
 An agent who edits without structural context produces noise.
 Loctree is the difference between the two.
 
-## Your Senses (Tool Reference)
+## Your Diagnostic Workhorse (Tool Reference)
 
-Each tool is a different sense. Use them in order of breadth:
+Each tool is a different fidelity. Use them in order of breadth:
 
-| Sense            | Tool                 | What it reveals                                   |
-| ---------------- | -------------------- | ------------------------------------------------- |
-| **Overview**     | `repo-view(project)` | Files, LOC, languages, health, top hubs           |
-| **Focus**        | `focus(directory)`   | Module internals, edges, external deps            |
-| **X-Ray**        | `slice(file)`        | File + dependencies + consumers in one view       |
-| **Blast Radius** | `impact(file)`       | What breaks if you touch this file                |
-| **Search**       | `find(name)`         | Symbol search with regex — does it already exist? |
-| **Signals**      | `follow(scope)`      | Dead code, cycles, twins, hotspots — field-level  |
-| **Layout**       | `tree(project)`      | Directory structure with LOC counts               |
+1. The look from step back and get the thorough structural overview:
+
+- mcp_loctree-mcp_repo-view
+  Get repository overview: file count, LOC, languages, health
+  summary, top hubs. USE THIS FIRST at the start of any AI session to
+  understand the codebase.
+
+2. The directory structure overview without noise - use when u need to
+   get the overview of the project architecture:
+
+- `mcp_loctree-mcp_tree`
+  Get directory structure with LOC (lines of code) counts. Helps
+  understand project layout and find large files/directories.
+
+3. The first look into module overview:
+
+- `mcp_loctree-mcp_focus`
+  Focus on a specific directory: list files, their LOC, exports, and
+  dependencies within that directory. Great for understanding a
+  module or subsystem.
+
+4. The complete holographic dependency graph for a file:
+
+- `mcp_loctree-mcp_slice`
+  Get file context: the file + all its imports + all files that
+  depend on it. USE THIS BEFORE modifying any file. One call = complete
+  understanding of a file's role.
+
+5. The microscope - find the symbols, parameters, functions, types, etc.
+   in the codebase (first choice before grep):
+
+- `mcp_loctree-mcp_find`
+  Find symbols, trace imports, or explore features. Modes: 'symbols'
+  (default) — symbol/param search with regex. 'who-imports' — what files
+  import this file (reverse deps). 'where-symbol' — where is this symbol
+  defined. 'tagmap' — unified keyword search (files + crowd + dead).
+  'crowd' — functional clustering around a keyword.
+
+6. The structural signals - dead code, cycles, twins, hotspots, trace,
+   commands, events, pipelines:
+
+- `mcp_loctree-mcp_follow`
+  Pursue structural signals at field level. Scopes: 'dead' — unused exports
+  with nearest consumers. 'cycles' — circular imports with weakest link.
+  'twins' — duplicate exports. 'hotspots' — high-importer files. 'trace' —
+  trace a Tauri/IPC handler end-to-end (requires handler param).
+  'commands' — Tauri FE<->BE handler coverage. 'events' — event emit/listen
+  flow analysis. 'pipelines' — pipeline summary (events + commands + risks).
+  'all' — dead + cycles + twins + hotspots.
+
+7. The refactor handy tool:
+
+- `mcp_loctree-mcp_impact`
+  What breaks if you change or delete this file? Shows direct and transitive
+  consumers. USE THIS BEFORE deleting or major refactor.
 
 All tools accept `project` parameter (default: current dir).
 First use auto-scans if no snapshot exists. Subsequent calls use cache.
@@ -193,4 +240,4 @@ Announce the degradation. Do not pretend you have full senses when you do not.
 
 _"Know the material. Study the grain. Then cut — once, clean, right."_
 
-_Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
+_Vibecrafted with AI Agents by VetCoders (c)2024-2026 VetCoders_

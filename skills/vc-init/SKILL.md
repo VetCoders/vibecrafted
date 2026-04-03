@@ -1,39 +1,38 @@
 ---
 name: vc-init
-version: 3.0.0
+version: 4.1.0
 description: >-
-  Orientation before action. Init equips the agent with three layers of
-  situational awareness — History (what happened before), Eyes (what the
-  code looks like now), and Verify (whether what you see is actually true).
-  No implementation without orientation. The craftsman reads the brief,
-  studies the material, and tests the tools before the first cut.
+  Technical due diligence before stabilization. The vibe-coding weekend 
+  got the app to launch. Now we find the taped-together auth, god tables, and silent 
+  failures. Init equips the agent with Perception, Intentions, and Security/Stability Ground Truth.
   Trigger: "init", "initialize", "bootstrap", "daj kontekst", "zainicjuj",
   "przygotuj agenta", "start fresh with context".
 ---
 
-# vc-init — Orientation Before Action
+# vc-init — Technical Due Diligence
 
-> You would not operate on a patient without reading their chart.
-> You would not navigate a city without a map.
-> You would not cook without tasting the ingredients.
-> Init is how you get oriented before touching anything.
+> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 is the ansfwer for the failure of vibe coding
+> and vibe coders community (that newer grew up unfortunately)
+> stuck in the 80/20 <-> 20/80 trap; look the reference:
+> [VIBECRAFTED.md](https://raw.githubusercontent.com/VetCoders/vibecrafted/refs/heads/main/docs/VIBECRAFTED.md)
+> "Not hating on vibe coding. It got you to launch and that matters more than most
+> people admit. But I keep getting the same call from founders who built their
+> product in a weekend with Cursor... and now they're stuck.
+> They can't close enterprise deals. They can't pass a security review. Their Stripe
+> integration works until it doesn't."
 
-## The Mission
+Init is **Technical Due Diligence**. We are here to stabilize. An agent sent to "fix".
+Nowadays when vibe-coded codebases can overgrow the half of the google's login agent
+in complexity acting without the complete initial overview is a quick way to
+catastrophic failures.
+Fortunately if you are opt in to use this skill with very big propability you work in
+the repository where 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. methods have already overtaken the
+guards of the quality.
 
-An agent without context is dangerous. Not because it is malicious, but
-because it is confident. It will edit code based on training patterns instead
-of project reality. It will create symbols that already exist. It will
-restructure things that other sessions already restructured differently.
-
-Init prevents this. It gives the agent three things before any implementation:
-
-- **Memory** — what was done before you arrived
-- **Sight** — what the code looks like right now
-- **Ground truth** — whether the tools actually work
-
-This is not overhead. This is the minimum viable awareness for competent
-action. A craftsman who skips orientation produces waste. An agent who
-skips init produces noise that other agents (or humans) must clean up.
+We apply the VetCoders Axioms here: **Perception over memory** and **Intentions
+retrieval over RAG**. We don't blindly load a million tokens of historical context—we
+need to see what the code is _now_. We need to find what's broken on the critical
+path before we touch a single line of code.
 
 ## Pipeline Position
 
@@ -42,8 +41,7 @@ scaffold → [INIT] → workflow → followup → marbles → dou → decorate �
            ^^^^^^
 ```
 
-Init is the first real act of every session. Everything downstream depends
-on the quality of orientation achieved here.
+Init is the first real act of every session. Everything downstream depends on the quality of due diligence achieved here.
 
 ## When To Use
 
@@ -54,235 +52,206 @@ Execute at the start of every session, **before any implementation work**:
 - **Subagent delegation**: Agents inherit structured context
 - **Structural drift**: Major changes by others since last session
 
-If you are tempted to skip init because "it's a small task" — that is
-exactly when init prevents the most damage.
+If you are tempted to skip init because "it's a small task" — that is exactly when init prevents the most damage.
 
 ---
 
-## The Three Senses
+## The Triad of Diligence
 
-### Sense 1: Memory — What Happened Before
+### Sense 1: Intentions (over RAG)
 
-_Your patient has a chart. Read it._
+Pull historical context from previous AI sessions for this project. We are looking
+for the _why_, not just a blind dump of _how_. Understand:
 
-Pull historical context from previous AI sessions for this project:
+- What was the original intention behind the architecture?
+- What duct-tape was applied late at night to "just make it work"?
 
-- **`aicx_store(hours=168, project=<project>)`** — refresh the indexed record
-- **`aicx_refs(hours=168, project=<project>, strict=true)`** — list stored context files
-- **`aicx_rank(project=<project>, hours=168, strict=true, top=5)`** — prioritize densest chunks
-- **Optional: `aicx_search(query=<task>, project=<project>)`** — narrow to specific feature/bug
+**Discipline:** AICX is an intention-retrieval engine, not a blind RAG cannon.
+Retrieve the context of the decisions, then verify their current truth in Sense 2.
 
-Read the most recent 1-2 context files, or the top-ranked 1-2 if more
-signal-dense. Understand:
+You have acces to both `aicx` (cli) and `aicx-mcp` (stdio and streamable-http):
+a) the dual mode (stdio + streamable-http) allows for flexible and versatile
+integration with various AI frameworks - the streamable-http mode is particularly useful for session retrieval from remote
+sources (e.g. other workstations or users' remote agents) so do not rely only on
+your local retrieval having configured the remote aicx-mcp http endpoint
+b) the mcp reference: - `mcp_aicx_aicx_rank`
+Rank stored AI session chunks by content quality. Shows signal density, noise ratio, and quality labels (HIGH/MEDIUM/LOW/NOISE) per chunk. Use --strict
+to filter noise. - `mcp_aicx_aicx_search`
+Fuzzy search across stored AI session chunks. Returns quality-scored results
+with matched lines. Supports Polish diacritics normalization and optional
+project filtering. - `mcp_aicx_aicx_steer`
+Retrieve stored chunks by steering metadata (frontmatter fields).
+Filters by run_id, prompt_id, agent, kind, project, and/or date range using
+sidecar metadata — no filesystem grep needed. Returns chunk paths with their
+sidecar metadata for selective re-entry.
 
-- What was the last task worked on?
-- Are there open TODOs or decisions pending?
-- What signals were extracted (look for `[signals]` blocks)?
+The full reference for the binaries can be found in the `aicx` SKILL which offers
+a detailed information and use-cases or simply by calling `aicx --help`.
 
-**Discipline:** AICX is a card catalog, not a backpack. Use it to find
-the right cards, then read the few relevant files on demand. Do not stuff
-the whole archive into context.
+### Sense 2: Perception (over memory)
 
-**Fallback:** If AICX MCP unavailable, try `aicx all -p "$PROJECT" -H 168 --incremental`
-CLI. If neither exists, skip and note the gap. Memory is valuable but not blocking.
+`loctree` v0.8.16 Features
 
-### Sense 2: Sight — What The Code Looks Like Now
+Shipping maps, reports, and runtime truth for living codebases.
+Loctree is no longer just dead-code detection. It is context
+extraction, structural analysis, Tauri contract verification, bundle
+intelligence, artifact generation, and MCP-native codebase perception.
 
-_Your patient is in front of you. Look at them._
+`loct` (cli) and `loctree-mcp` (stdio) — the primary tool for structural analysis
+Each tool is a different fidelity. Use them in order of breadth:
 
-Three sub-steps, in order of breadth:
+1. The look from step back and get the thorough structural overview:
 
-#### 2a. Structural Map (loctree MCP)
+- `mcp_loctree-mcp_repo-view`
+  Get repository overview: file count, LOC, languages, health
+  summary, top hubs. USE THIS FIRST at the start of any AI session to
+  understand the codebase.
 
-1. **`repo-view(project)`** — health, hubs, languages, LOC, dead exports, cycles
-2. **`focus(directory)`** — for target module(s) relevant to the task (1-3 dirs)
-3. **`follow(scope)`** — only if repo-view flagged signals (dead, cycles, twins, hotspots)
+2. The directory structure overview without noise - use when u need to
+   get the overview of the project architecture:
 
-This gives the agent structural awareness: what files matter, what depends
-on what, where the risk is. Without this, every edit is a guess.
+- `mcp_loctree-mcp_tree`
+  Get directory structure with LOC (lines of code) counts. Helps
+  understand project layout and find large files/directories.
 
-#### 2b. Absorb Existing Agent Configs
+3. The first look into module overview:
 
-Check for and read `.vibecrafted/GUIDELINES.md` — the canonical cross-tool
-reference. If it exists, use as starting context but **verify against code**.
+- `mcp_loctree-mcp_focus`
+  Focus on a specific directory: list files, their LOC, exports, and
+  dependencies within that directory. Great for understanding a
+  module or subsystem.
 
-Also glob for other agent config files: `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
-`VETCODERS.md`, `README.md`, Copilot/Cursor rules, etc.
+4. The complete holographic dependency graph for a file:
 
-**Do NOT blindly trust any config file.** They may be outdated.
-Cross-reference against what loctree and git show you. If a config file
-claims a command that contradicts current code, trust the code.
+- `mcp_loctree-mcp_slice`
+  Get file context: the file + all its imports + all files that
+  depend on it. USE THIS BEFORE modifying any file. One call = complete
+  understanding of a file's role.
 
-#### 2c. Derive Conventions from Git History
+5. The microscope - find the symbols, parameters, functions, types, etc.
+   in the codebase (first choice before grep):
 
-Run the following git commands for a complete repository snapshot:
+- `mcp_loctree-mcp_find`
+  Find symbols, trace imports, or explore features. Modes: 'symbols'
+  (default) — symbol/param search with regex. 'who-imports' — what files
+  import this file (reverse deps). 'where-symbol' — where is this symbol
+  defined. 'tagmap' — unified keyword search (files + crowd + dead).
+  'crowd' — functional clustering around a keyword.
+
+6. The structural signals - dead code, cycles, twins, hotspots, trace,
+   commands, events, pipelines:
+
+- `mcp_loctree-mcp_follow`
+  Pursue structural signals at field level. Scopes: 'dead' — unused exports
+  with nearest consumers. 'cycles' — circular imports with weakest link.
+  'twins' — duplicate exports. 'hotspots' — high-importer files. 'trace' —
+  trace a Tauri/IPC handler end-to-end (requires handler param).
+  'commands' — Tauri FE<->BE handler coverage. 'events' — event emit/listen
+  flow analysis. 'pipelines' — pipeline summary (events + commands + risks).
+  'all' — dead + cycles + twins + hotspots.
+
+7. The refactor handy tool:
+
+- `mcp_loctree-mcp_impact`
+  What breaks if you change or delete this file? Shows direct and transitive
+  consumers. USE THIS BEFORE deleting or major refactor.
+
+The cli reference:
+
+- the full reference can be retrieved by calling `loct --help`
+  and `loct [subcommand] --help`.
+
+All tools accept `project` parameter (default: current dir).
+First use auto-scans if no snapshot exists. Subsequent calls use cache.
+
+### Sense 3: Ground Truth over intuition
+
+- taking the previous steps as the base, we now reason about the project
+
+#### 3a. Derive Conventions from Git History
+
+Run 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.'s canonical git retrieval helper:
 
 ```bash
-git log --oneline --decorate --graph -n 15
-git status -sb
-git stash list
+zsh -ic repo-full
 ```
 
-From the output, observe actual commit style and active contributors.
-Do not invent conventions — read what the team actually does.
+It provides deep dive into the current repo state far beyond what
+`git log` and `git status` can provide.
 
-### Sense 3: Ground Truth — Is What You See Actually Real?
+Fallback: `git log --oneline --decorate --graph -n 15` and `git status -sb`. Observe actual commit style.
 
-_You read the chart and looked at the patient. Now test whether your
-instruments work before you start cutting._
+**Due Diligence Focus:**
 
-**This step is mandatory. Do not skip it. Do not assume commands work.**
+- Are we looking at a Prisma/SQL schema with a 35-column "User" God Table and zero indexes?
+- Is there a NextAuth/Clerk setup where everyone is either "admin" or "user" with no real row-level security?
+- Are `.env` files tracked in git?
 
-Locate the project's quality gate commands from:
+#### 3b. Absorb Existing Agent Configs
 
-- `pyproject.toml`, `Makefile`, `justfile`, `package.json`
-- `.vibecrafted/GUIDELINES.md` or other agent configs
-- README "Testing" or "Development" sections
+- Check for and read `.claude/CLAUDE.md`, `.gemini/GEMINI.md`, `.codex/AGENTS.md`
+- Read (if exists) `.vibecrafted/GUIDELINES.md` — the canonical cross-tool reference.
+- Verify it against code. If a config file claims a command that contradicts current
+  code, trust the code and update other agents' files accordingly.
 
+---
+
+### Sense 4: Quality Gates (optional)
+
+While 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology highly care about the best
+possible standards in quality gates, there is no need to run any of them on session
+init if not explicitly requested.
+The `vc-init` is an entry point for upcoming tasks and the quality gates will be run
+as a part of the task execution.
+Running the gates in the initial session bootstrap is a waste of time and resources.
+
+> **Future reference (coming soon):**
+> Refer to **𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.'s:**
+>
+> - `vc-gates` foundation skill which is the main reference for the VetCoders
+>   quality gates.
+> - `vc-tdd` foundation skill which is the main reference for the VetCoders test
+>   driven development.
+
+**The below steps are optional. Test whether your instruments work before you start cutting.**
+A green test suite on a completely broken architecture is just a faster train on the wrong tracks. We value structural truth over synthetic checks.
+
+Locate the project's quality gate commands (tests, lints, builds).
 Run each quality gate command and record the result:
 
 ```bash
-# Python example:
+# Example:
 uv run pytest tests/ -q --tb=no 2>&1 | tail -3
-uv run ruff check <src>/ 2>&1 | tail -3
-
-# Rust example:
 cargo clippy --workspace -- -D warnings 2>&1 | tail -5
-cargo test --workspace -q 2>&1 | tail -5
-
-# Installer/runtime example:
-python3 scripts/vetcoders_install.py doctor 2>&1 | tail -5
 ```
 
-**Rules:**
+## `.env` vars policy
 
-- **Run the commands.** Do not write "run pytest" in a report without running it.
-- Record pass/fail and any unexpected output.
-- If a command fails, note it as known issue — do not fix during init.
-- If a command does not exist, note absence, do not fabricate.
-- Use `--tb=no` or `tail` for conciseness — this is a health check, not debug.
-
----
-
-## Produce Situational Report
-
-After all three senses, produce two outputs:
-
-### A. Session Report (ephemeral, for this session)
-
-```
-## Session Init: <project>
-
-### Memory
-- Last activity: <date>
-- Open signals: <TODOs, pending decisions — or "none">
-- Sessions: <count> entries across <agents>
-
-### Sight
-- Files: <N> | LOC: <N> | Languages: <list>
-- Health: <cycles, dead exports, twins — or "clean">
-- Top hubs: <top 3 files by importers>
-- GUIDELINES.md: <current / stale / missing>
-
-### Ground Truth
-- <gate 1>: <pass / fail / not configured>
-- <gate 2>: <pass / fail / not configured>
-- <gate 3>: <pass / fail / not configured>
-
-### Ready
-Agent has memory, sight, and verified ground truth.
-```
-
-### B. GUIDELINES.md (durable, for all future agents)
-
-Generate on first init, update on subsequent inits if stale. **Always ask
-before writing.**
-
-Structure: Product → Architecture → Quality Gates (verified) → Conventions
-→ Critical Files → Known Issues. Target 200-600 words. Concise beats complete.
-
-**Do:**
-
-- Derive from code analysis and verified commands
-- Date the "verified" timestamp
-- Note critical files with high blast radius
-
-**Do NOT:**
-
-- Repeat easily discoverable information
-- Include generic advice ("write tests", "handle errors")
-- Include test commands you did not verify
-- Exceed 600 words
-
----
-
-## Operational Doctrine (Agent Execution Model)
-
-_This section is for agent internalization._
-
-### Role In The Convergence System
-
-Init is the prosecution's case file preparation. Before any convergence
-loop (marbles) can ask "what is still wrong?", the agent must know:
-
-- **What was already fixed** (Memory/AICX) — so it does not re-break solved problems
-- **What the current structure is** (Sight/loctree) — so it has objective evidence
-- **What the instruments say** (Verify/gates) — so it knows baseline health
-
-Without init, the agent is a tank with no coordinates. It will fire, but
-not at the right targets.
-
-### Evidence Chain
-
-Every init output is evidence that downstream skills consume:
-
-- `vc-workflow` uses the structural map to scope implementation
-- `vc-followup` uses the gate baseline to measure delta
-- `vc-marbles` uses everything — the baseline is what "loop 0" looks like
-- `vc-dou` uses the verified gates to assess shipping readiness
-
-If init is skipped, every downstream skill operates on assumptions instead
-of evidence. Assumptions are the primary source of wasted loops.
-
-### For Subagent Prompts
-
-When delegating via `vc-agents`, include this preamble:
-
-```
-## Context Bootstrap
-
-Use loctree MCP tools as primary exploration layer:
-- repo-view(project) first for overview
-- slice(file) before modifying any file
-- find(name) before creating new symbols
-- impact(file) before deleting
-
-Derive truth from code, not from docs. If a doc says X and code says Y, trust Y.
-
-Historical context:
-- aicx_store(hours=168, project=<project>)
-- aicx_refs(hours=168, project=<project>, strict=true)
-
-Treat AICX as an index. Pull few relevant records, do not dump the archive.
-Before creating new implementations, search for existing ones.
-```
+- in VetCoders we never commit `.env` files to version control.
+- we always add the `.env` files with variants like `.env.*`, `.env.local`, etc.
+  to `.gitignore`
+- we use the hardened pre-commit and pre-push hooks configurations to avoid
+  commiting the `.env` files to version control by accident.
+- we always appreciate direct and open reporting on env vars leaks which gives us
+  the opportunity to revoke them or take any reasonable actions immediately.
+- This is why we are confident that **we can** work with `.env` files locally without
+  any security risks while hesitating on working with them is a potential serius
+  vulnerability for security workflows in the future.
 
 ---
 
 ## Anti-Patterns
 
 - Starting implementation without running init (blind coding)
-- Running loctree but skipping AICX history (no memory of prior work)
-- Reading every context file (context bloat) — read only 1-2 most recent
-- Skipping repo-view and jumping to grep (no structural map)
-- Trusting config files without cross-referencing code (doc rot)
-- Writing "run pytest" without actually running pytest (unverified claims)
-- Generating GUIDELINES.md with commands you never tested (hallucination)
-- Including generic developer advice (noise)
-- Inventing commit conventions instead of reading `git log` (fabrication)
+- Claiming your's or someone else's weekend MVP architecture as "production-ready"
+  without verifying.
+- Assuming the Auth handles edge cases like token expiration.
+- Writing "run pytest" without actually running pytest (unverified claims).
+- Commiting the `.env` file in version control and the same time hesitating on
+  working with it locally because "it's security risk."
 
 ---
 
-_"Memory. Sight. Ground truth. Then — and only then — act."_
+_"Perception. Intentions. Ground truth. Then — and only then — stabilize."_
 
-_Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
+_Vibecrafted with AI Agents by VetCoders (c)2024-2026 VetCoders_
