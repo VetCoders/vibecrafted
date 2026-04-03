@@ -383,7 +383,7 @@ Same output but without Y/n prompts — just runs and prints the final state.
 
 ## Architecture
 
-### setup_vibecraft.py (interactive orchestrator)
+### setup_vibecrafted.py (interactive orchestrator)
 
 Simplify to:
 
@@ -394,7 +394,7 @@ Simplify to:
 
 ### vetcoders_install.py changes
 
-Add a `--compact` flag (default True when called from setup_vibecraft.py).
+Add a `--compact` flag (default True when called from setup_vibecrafted.py).
 
 When compact:
 
@@ -403,7 +403,7 @@ When compact:
 - **Bundle contents**: don't list 16 skill names. Just count.
 - **Agent runtimes**: detect silently. Print one summary line.
 - **Foundations**: detect silently. Print count + first 3 names.
-- **Plan**: don't print the plan block or ask Y/n (setup_vibecraft already asked).
+- **Plan**: don't print the plan block or ask Y/n (setup_vibecrafted already asked).
 - **Installing skills**: don't print 16 `-> skill` lines. Print one line when done.
 - **Linking agent views**: silent.
 - **Installing shell helper**: silent (or one line).
@@ -468,7 +468,7 @@ When `--compact`:
 The compact lines use the same data that's already computed — just format
 differently.
 
-### 4. Update setup_vibecraft.py
+### 4. Update setup_vibecrafted.py
 
 Remove the "Installing the shared skill store" block (What/Reason/Safe).
 Pass `--compact` to the underlying installer.
@@ -478,17 +478,17 @@ Keep only: header, plan, Y/n, then let installer handle the rest compactly.
 
 Currently there are 3 prompts in interactive mode:
 
-- "Start setup?" (setup_vibecraft.py)
+- "Start setup?" (setup_vibecrafted.py)
 - "Create the default skill views?" (vetcoders_install.py)
 - "Install this plan?" (vetcoders_install.py)
 
-Reduce to ONE in setup_vibecraft.py: "Start setup?"
+Reduce to ONE in setup_vibecrafted.py: "Start setup?"
 The installer runs without additional prompts when called with --compact.
 
 ## Files to Modify
 
 1. `scripts/vetcoders_install.py` — add --compact, TeeLogger, compact output
-2. `scripts/setup_vibecraft.py` — simplify, pass --compact
+2. `scripts/setup_vibecrafted.py` — simplify, pass --compact
 3. Leave `make install` (non-interactive) behavior as-is unless --compact is added
 
 ## What NOT to Change

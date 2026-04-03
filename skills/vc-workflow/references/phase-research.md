@@ -25,7 +25,7 @@ Limit: 3 calls per question. Use best result after 3 attempts.
 For broader questions, current practices, comparisons:
 
 ```bash
-python3 $VIBECRAFT_ROOT/skills/vc-research/bravesearch/brave_search.py "query" [-c count] [-l lang]
+python3 $VIBECRAFT_ROOT/skills/vc-research/engines/brave_search.py "query" [-c count] [-l lang]
 ```
 
 Query formulation tips:

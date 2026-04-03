@@ -89,7 +89,7 @@ Each agent plan should include relevant sections from:
 
 ## Living Tree Note
 
-- Work on a living tree with Vibecrafting methodology — concurrent changes expected.
+- Work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology — concurrent changes expected.
 - Adapt proactively, but never skip quality, security, or test gates.
 - If blocked, report exact blocker and run closest safe equivalent.
 ```

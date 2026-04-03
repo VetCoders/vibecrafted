@@ -666,7 +666,7 @@ Every delegated plan should:
 Always include this living-tree preamble:
 
 ```text
-You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
+You work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology, so concurrent changes are expected.
 Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
 Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 ```

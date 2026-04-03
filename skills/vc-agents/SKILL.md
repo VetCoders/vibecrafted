@@ -106,7 +106,7 @@ Every subagent plan should:
 Always include this exact preamble in every subagent plan or prompt:
 
 ```text
-You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
+You work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology, so concurrent changes are expected.
 Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
 Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 ```
@@ -164,7 +164,7 @@ Context:
 - <very short summary>
 
 Living tree note:
-- You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
+- You work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology, so concurrent changes are expected.
 - Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
 - Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 - Coordination mode: <solo on this stage / parallel with other agents on this stage>
@@ -246,7 +246,3 @@ Keep the standard 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. quality bar:
 Spawn is not for outsourcing thought.
 Spawn is for deploying equally capable front-line agents through a strict, canonical launch path.
 Use them to implement, not merely to comment on implementation.
-lementation.
-nch path.
-Use them to implement, not merely to comment on implementation.
-lementation.
