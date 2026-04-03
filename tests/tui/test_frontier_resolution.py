@@ -111,6 +111,57 @@ def test_vc_dashboard_mixes_companion_zellij_config_with_repo_layout(
     assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in payload
 
 
+def test_sourcing_helper_exports_frontier_sidecars_per_asset(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    xdg_config_home = tmp_path / "xdg"
+    fake_bin = tmp_path / "bin"
+    zellij_config = xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    zellij_config.parent.mkdir(parents=True)
+    zellij_config.write_text("layout {}\n", encoding="utf-8")
+    _write_fake_binary(fake_bin, "starship")
+    _write_fake_binary(fake_bin, "atuin")
+    _write_fake_binary(fake_bin, "zellij")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["XDG_CONFIG_HOME"] = str(xdg_config_home)
+    env["VIBECRAFT_ROOT"] = str(REPO_ROOT)
+    env.pop("STARSHIP_CONFIG", None)
+    env.pop("ATUIN_CONFIG", None)
+    env.pop("ZELLIJ_CONFIG_DIR", None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                'printf "STARSHIP_CONFIG=%s\\n" "$STARSHIP_CONFIG"; '
+                'printf "ATUIN_CONFIG=%s\\n" "$ATUIN_CONFIG"; '
+                'printf "ZELLIJ_CONFIG_DIR=%s\\n" "$ZELLIJ_CONFIG_DIR"'
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert f"STARSHIP_CONFIG={REPO_ROOT / 'config' / 'starship.toml'}" in result.stdout
+    assert (
+        f"ATUIN_CONFIG={REPO_ROOT / 'config' / 'atuin' / 'config.toml'}"
+        in result.stdout
+    )
+    assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in result.stdout
+
+
 def test_frontier_install_dry_run_succeeds_without_repo_alacritty_preset(
     tmp_path: Path,
 ) -> None:

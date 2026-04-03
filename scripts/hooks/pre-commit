@@ -42,6 +42,6 @@ if [ ${#MD_YAML_FILES[@]} -gt 0 ]; then
 fi
 
 echo "▸ semgrep"
-semgrep scan --config auto --error --quiet --staged
+semgrep scan --config auto --error --quiet
 
 echo "✓ Pre-commit passed"

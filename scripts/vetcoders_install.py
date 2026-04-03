@@ -297,6 +297,17 @@ FOUNDATIONS: List[Foundation] = [
         verify_cmd="zoxide --version",
         required=False,
     ),
+    Foundation(
+        name="zellij",
+        description="Visible multi-agent terminal workspace surface",
+        channels=["brew", "github"],
+        packages={
+            "brew": "zellij",
+            "github": "https://github.com/zellij-org/zellij/releases",
+        },
+        verify_cmd="zellij --version",
+        required=False,
+    ),
 ]
 
 RUNTIME_DEPS = ["python3", "git"]

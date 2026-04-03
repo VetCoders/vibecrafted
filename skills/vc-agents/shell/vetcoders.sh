@@ -128,15 +128,17 @@ _vetcoders_load_frontier_sidecars() {
   atuin_config="$(_vetcoders_frontier_file "atuin/config.toml" 2>/dev/null || true)"
   zellij_config="$(_vetcoders_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
 
-  if [[ -z "${STARSHIP_CONFIG:-}" ]] && command -v starship >/dev/null 2>&1 && [[ -n "$starship_config" ]]; then
+  # Keep the interactive helper pinned to the frontier resolution order rather
+  # than whatever config an older shell session happened to export first.
+  if command -v starship >/dev/null 2>&1 && [[ -n "$starship_config" ]]; then
     export STARSHIP_CONFIG="$starship_config"
   fi
 
-  if [[ -z "${ATUIN_CONFIG:-}" ]] && command -v atuin >/dev/null 2>&1 && [[ -n "$atuin_config" ]]; then
+  if command -v atuin >/dev/null 2>&1 && [[ -n "$atuin_config" ]]; then
     export ATUIN_CONFIG="$atuin_config"
   fi
 
-  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]] && command -v zellij >/dev/null 2>&1 && [[ -n "$zellij_config" ]]; then
+  if command -v zellij >/dev/null 2>&1 && [[ -n "$zellij_config" ]]; then
     zellij_config_dir="$(dirname "$zellij_config")"
     export ZELLIJ_CONFIG_DIR="$zellij_config_dir"
   fi
