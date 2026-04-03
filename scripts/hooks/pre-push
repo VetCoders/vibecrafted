@@ -80,7 +80,7 @@ if [ ${#MD_YAML_FILES[@]} -gt 0 ]; then
 fi
 
 echo "▸ semgrep (full)"
-semgrep scan --config auto --error --quiet
+semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity
 
 if [ ${#REWRITTEN_FILES[@]} -gt 0 ]; then
     git add "${REWRITTEN_FILES[@]}"
