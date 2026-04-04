@@ -18,7 +18,7 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     config_home = home / ".config"
     crafted_home = home / ".vibecrafted"
     store_path = crafted_home / "skills"
-    launcher_bin = crafted_home / "bin"
+    launcher_bin = home / ".local" / "bin"
     helper_dir = config_home / "vetcoders"
 
     store_path.mkdir(parents=True)
@@ -45,7 +45,7 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
         launcher_bin / "vibecrafted",
         "#!/usr/bin/env bash\nprintf '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. help ok\\n'\n",
     )
-    (launcher_bin / "vc-help").symlink_to(launcher_bin / "vibecrafted")
+    (launcher_bin / "vc-help").symlink_to("vibecrafted")
 
     state = installer.InstallState(
         framework_version="1.2.1",

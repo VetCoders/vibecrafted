@@ -201,6 +201,22 @@ _vetcoders_osascript_bin() {
   command -v osascript 2>/dev/null || return 1
 }
 
+_vetcoders_preferred_terminal() {
+  local pref="${VIBECRAFTED_TERMINAL:-}"
+  if [[ -n "$pref" ]]; then
+    printf '%s\n' "$pref"
+    return 0
+  fi
+  if [[ -d "/Applications/iTerm.app" ]]; then
+    printf 'iterm\n'
+    return 0
+  fi
+  case "${TERM_PROGRAM:-}" in
+    iTerm.app) printf 'iterm\n' ;;
+    *) printf 'terminal\n' ;;
+  esac
+}
+
 _vetcoders_zellij_session_state() {
   local session_name="$1"
   local listing
@@ -232,7 +248,7 @@ _vetcoders_open_iterm_command() {
   local command_text="$1"
   local osascript_bin
   osascript_bin="$(_vetcoders_osascript_bin)" || return 1
-  [[ "${TERM_PROGRAM:-}" == "iTerm.app" || -n "${ITERM_SESSION_ID:-}" ]] || return 1
+  [[ "$(_vetcoders_preferred_terminal)" == "iterm" ]] || return 1
   local command_json
   command_json="$(python3 - "$command_text" <<'PY'
 import json
@@ -312,27 +328,33 @@ _vetcoders_wait_for_zellij_session() {
   return 1
 }
 
-_vetcoders_print_session_recovery_hint() {
-  local session_name="$1"
-  local listing
-  listing="$(zellij ls 2>/dev/null | _vetcoders_strip_ansi || true)"
-  echo "Dead Zellij session detected: $session_name" >&2
-  if [[ -n "$listing" ]]; then
-    echo "Known sessions:" >&2
-    while IFS= read -r line; do
-      [[ -n "$line" ]] || continue
-      printf '  %s\n' "$line" >&2
-    done <<< "$listing"
-  fi
-  echo "Run: vc-start resume" >&2
-}
 
-_vetcoders_delete_dead_zellij_session() {
+_vetcoders_ensure_zellij_session() {
   local session_name="$1"
+  local layout_file="$2"
+  shift 2
 
-  command -v zellij >/dev/null 2>&1 || return 1
-  zellij delete-session "$session_name" >/dev/null 2>&1 || \
-    zellij delete-session --force "$session_name" >/dev/null 2>&1
+  command -v zellij >/dev/null 2>&1 || {
+    echo "zellij is required." >&2
+    return 1
+  }
+
+  case "$(_vetcoders_zellij_session_state "$session_name")" in
+    live)
+      zellij "$@" attach "$session_name"
+      ;;
+    dead)
+      zellij "$@" attach --force-run-commands "$session_name"
+      ;;
+    *)
+      if [[ -n "$layout_file" ]]; then
+        zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+      else
+        echo "Layout file missing and session not found." >&2
+        return 1
+      fi
+      ;;
+  esac
 }
 
 _vetcoders_prepare_operator_runtime() {
@@ -361,13 +383,12 @@ _vetcoders_prepare_operator_runtime() {
       return 0
       ;;
     dead)
-      # Clean up dead session silently and recreate below
-      _vetcoders_delete_dead_zellij_session "$session_name" 2>/dev/null || true
+      command_text="zellij attach --force-run-commands \"$session_name\""
+      ;;
+    *)
+      command_text="zellij --session \"$session_name\" --new-session-with-layout \"$layout_file\""
       ;;
   esac
-
-  # Session doesn't exist (or was just cleaned up) — create via osascript
-  command_text="zellij --session \"$session_name\" --new-session-with-layout \"$layout_file\""
   if _vetcoders_open_iterm_command "$command_text"; then
     :
   elif _vetcoders_open_terminal_command "$command_text"; then
@@ -683,26 +704,7 @@ _vetcoders_launch_dashboard() {
   fi
 
   session_name="$(_vetcoders_dashboard_session_name "$layout_name")"
-  case "$(_vetcoders_zellij_session_state "$session_name")" in
-    live)
-      zellij attach "$session_name"
-      ;;
-    dead)
-      if [[ -n "${VIBECRAFTED_RUN_ID:-}" ]]; then
-        _vetcoders_delete_dead_zellij_session "$session_name" || {
-          _vetcoders_print_session_recovery_hint "$session_name"
-          return 1
-        }
-        zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
-      else
-        _vetcoders_print_session_recovery_hint "$session_name"
-        return 1
-      fi
-      ;;
-    *)
-      zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
-      ;;
-  esac
+  _vetcoders_ensure_zellij_session "$session_name" "$layout_file" "$@"
 }
 
 _vetcoders_resume_operator_session() {
@@ -710,26 +712,7 @@ _vetcoders_resume_operator_session() {
   session_name="$(_vetcoders_operator_session_name)"
   layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
 
-  command -v zellij >/dev/null 2>&1 || {
-    echo "zellij is required for vibecrafted resume." >&2
-    return 1
-  }
-
-  case "$(_vetcoders_zellij_session_state "$session_name")" in
-    dead)
-      zellij attach --force-run-commands "$session_name"
-      ;;
-    live)
-      zellij attach "$session_name"
-      ;;
-    *)
-      [[ -n "$layout_file" ]] || {
-        echo "Operator layout not found." >&2
-        return 1
-      }
-      zellij --session "$session_name" --new-session-with-layout "$layout_file"
-      ;;
-  esac
+  _vetcoders_ensure_zellij_session "$session_name" "$layout_file"
 }
 
 _vetcoders_prompt_file() {

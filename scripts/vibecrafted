@@ -563,11 +563,8 @@ cmd_init() {
   printf -v init_prompt "Use [\$vc-init](%s) on this repository and give me full operating context." "$skill_path"
 
   printf '%b⚒%b  Starting %b%s%b with vc-init...\n' "$_copper" "$_reset" "$_bold" "$agent" "$_reset"
-  case "$agent" in
-    claude) claude "$init_prompt" ;;
-    codex) codex "$init_prompt" ;;
-    gemini) gemini "$init_prompt" ;;
-  esac
+  _ensure_helpers_loaded || return 1
+  _run_helper "${agent}-skill-init" --prompt "$init_prompt"
 }
 
 cmd_doctor() {

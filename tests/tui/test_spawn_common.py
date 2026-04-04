@@ -165,7 +165,8 @@ def test_spawn_prepare_paths_generates_real_run_context_when_missing(
         f'''
         set -euo pipefail
         export HOME="{tmp_path / "home"}"
-        mkdir -p "$VIBECRAFTED_ROOT/"
+        export VIBECRAFTED_ROOT="{REPO_ROOT}"
+            mkdir -p "$VIBECRAFTED_ROOT/"
         source "{COMMON_SH}"
         unset VIBECRAFTED_RUN_ID
         unset VIBECRAFTED_RUN_LOCK

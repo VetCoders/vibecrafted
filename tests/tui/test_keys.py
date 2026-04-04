@@ -180,7 +180,7 @@ def test_install_launcher_dedupes_zshrc_path_entries(
     zshrc_content = zshrc.read_text(encoding="utf-8")
     assert zshrc_content.count(path_line) == 1
     assert zshrc_content.count("# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher") == 1
-    assert (home / ".vibecrafted" / "bin" / "vibecrafted").exists()
+    assert (home / ".local" / "bin" / "vibecrafted").exists()
 
 
 def test_pipeline_category_describes_release_not_removed_ship_skill() -> None:

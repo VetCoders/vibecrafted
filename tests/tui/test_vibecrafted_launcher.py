@@ -63,13 +63,15 @@ def test_init_prefers_repo_skill_path_when_repo_launcher_runs_with_portable_home
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     capture_file = tmp_path / "codex-args.txt"
-    _write_fake_agent(fake_bin, "codex", capture_file)
+    fake_bin.joinpath("codex").write_text("#!/usr/bin/env bash\nexit 0\n")
+    fake_bin.joinpath("codex").chmod(0o755)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["VIBECRAFTED_HOME"] = "$VIBECRAFTED_ROOT/.portable-vc"
     env["CAPTURE_FILE"] = str(capture_file)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
 
     subprocess.run(
         ["bash", str(LAUNCHER), "init", "codex"],
@@ -78,9 +80,14 @@ def test_init_prefers_repo_skill_path_when_repo_launcher_runs_with_portable_home
         env=env,
     )
 
-    args = capture_file.read_text(encoding="utf-8").splitlines()
-    assert str(REPO_ROOT / "skills" / "vc-init" / "SKILL.md") in args[0]
-    assert str(skill_path) not in args[0]
+    artifacts_dir = (
+        Path(env.get("VIBECRAFTED_HOME", home / ".vibecrafted")) / "artifacts"
+    )
+    prompt_files = list(artifacts_dir.glob("**/*_prompt.md"))
+    assert prompt_files, "Prompt file not found"
+    prompt_content = prompt_files[0].read_text(encoding="utf-8")
+    assert str(REPO_ROOT / "skills" / "vc-init" / "SKILL.md") in prompt_content
+    assert str(skill_path) not in prompt_content
 
 
 def test_init_falls_back_to_repo_skill_path_when_store_missing(tmp_path: Path) -> None:
@@ -88,13 +95,15 @@ def test_init_falls_back_to_repo_skill_path_when_store_missing(tmp_path: Path) -
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     capture_file = tmp_path / "claude-args.txt"
-    _write_fake_agent(fake_bin, "claude", capture_file)
+    fake_bin.joinpath("claude").write_text("#!/usr/bin/env bash\nexit 0\n")
+    fake_bin.joinpath("claude").chmod(0o755)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env.pop("VIBECRAFTED_HOME", None)
     env["CAPTURE_FILE"] = str(capture_file)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
 
     subprocess.run(
         ["bash", str(LAUNCHER), "init", "claude"],
@@ -103,8 +112,13 @@ def test_init_falls_back_to_repo_skill_path_when_store_missing(tmp_path: Path) -
         env=env,
     )
 
-    args = capture_file.read_text(encoding="utf-8").splitlines()
-    assert str(REPO_ROOT / "skills" / "vc-init" / "SKILL.md") in args[0]
+    artifacts_dir = (
+        Path(env.get("VIBECRAFTED_HOME", home / ".vibecrafted")) / "artifacts"
+    )
+    prompt_files = list(artifacts_dir.glob("**/*_prompt.md"))
+    assert prompt_files, "Prompt file not found"
+    prompt_content = prompt_files[0].read_text(encoding="utf-8")
+    assert str(REPO_ROOT / "skills" / "vc-init" / "SKILL.md") in prompt_content
 
 
 def test_vc_help_wrapper_symlink_renders_main_help(tmp_path: Path) -> None:
@@ -198,6 +212,7 @@ def test_dashboard_subcommand_launches_repo_owned_zellij_layout(tmp_path: Path) 
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     env.pop("ZELLIJ_CONFIG_DIR", None)
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
@@ -233,6 +248,7 @@ def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) ->
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     env.pop("ZELLIJ_CONFIG_DIR", None)
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)

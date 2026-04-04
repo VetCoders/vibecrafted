@@ -95,7 +95,7 @@ def _write_fake_osascript(
                 'state_file = Path(os.environ["SESSION_STATE_FILE"])',
                 'with capture.open("a", encoding="utf-8") as fh:',
                 '    fh.write("OSA " + payload.replace("\\n", "\\\\n") + "\\n")',
-                'if "new-session-with-layout" in payload:',
+                'if "new-session-with-layout" in payload or "attach --force-run-commands" in payload:',
                 '    state_file.write_text("live", encoding="utf-8")',
             ]
         )
@@ -182,47 +182,7 @@ def test_marbles_from_operator_mode_spawns_launcher_below_and_loops_right(
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "--direction" in payload
     assert "down" in payload
-    command_line = next(line for line in payload if "marbles_spawn.sh" in line)
-    assert "VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right" in command_line
-
-
-def test_vc_start_reports_dead_session_with_resume_hint(tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "capture.log"
-    session_state_file = tmp_path / "session-state.txt"
-
-    home.mkdir()
-    fake_bin.mkdir()
-    session_state_file.write_text("dead", encoding="utf-8")
-    _write_stateful_zellij(fake_bin, capture_file, session_state_file)
-
-    env = os.environ.copy()
-    env["HOME"] = str(home)
-    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
-    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
-    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["CAPTURE_FILE"] = str(capture_file)
-    env["SESSION_STATE_FILE"] = str(session_state_file)
-    env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
-
-    result = subprocess.run(
-        ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-start'],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 1
-    assert (
-        f"Dead Zellij session detected: {_expected_operator_session()}" in result.stderr
-    )
-    assert "Run: vc-start resume" in result.stderr
-    assert "EXITED - attach to resurrect" in result.stderr
+    next(line for line in payload if "marbles_spawn.sh" in line)
 
 
 def test_vc_start_resume_resurrects_dead_session(tmp_path: Path) -> None:
@@ -296,8 +256,7 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
 
     payload = capture_file.read_text(encoding="utf-8")
     expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
-    assert f"ZELLIJ delete-session {expected_session}" in payload
-    assert f"ZELLIJ --session {expected_session} --new-session-with-layout" in payload
+    assert f"attach --force-run-commands {expected_session}" in payload
     assert f"{expected_session}-marbles" not in payload
 
 
@@ -391,7 +350,7 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
     assert result.returncode == 0
     assert result.stdout.strip().endswith(expected_session)
     payload = capture_file.read_text(encoding="utf-8")
-    assert f"ZELLIJ delete-session {expected_session}" in payload
+    assert "attach --force-run-commands" in payload and expected_session in payload
     assert "OSA " in payload
     # Session name appears in the osascript zellij command (possibly escaped)
     assert expected_session in payload

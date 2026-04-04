@@ -637,6 +637,29 @@ spawn_osascript_bin() {
   command -v osascript 2>/dev/null || return 1
 }
 
+# Detect preferred terminal app. Priority:
+#   1. VIBECRAFTED_TERMINAL env (explicit override: iterm, terminal)
+#   2. iTerm2 installed at /Applications
+#   3. TERM_PROGRAM from current session
+#   4. Fallback: terminal (Terminal.app)
+spawn_preferred_terminal() {
+  local pref="${VIBECRAFTED_TERMINAL:-}"
+  if [[ -n "$pref" ]]; then
+    printf '%s\n' "$pref"
+    return 0
+  fi
+  # Detect installed terminal apps (survives agent/vscode context)
+  if [[ -d "/Applications/iTerm.app" ]]; then
+    printf 'iterm\n'
+    return 0
+  fi
+  # Session-level detection as last resort
+  case "${TERM_PROGRAM:-}" in
+    iTerm.app) printf 'iterm\n' ;;
+    *) printf 'terminal\n' ;;
+  esac
+}
+
 spawn_open_terminal() {
   local launcher="$1"
   local osascript_bin
@@ -670,7 +693,7 @@ spawn_open_iterm() {
   local launcher="$1"
   local osascript_bin
   osascript_bin="$(spawn_osascript_bin)" || return 1
-  [[ "${TERM_PROGRAM:-}" == "iTerm.app" || -n "${ITERM_SESSION_ID:-}" ]] || return 1
+  [[ "$(spawn_preferred_terminal)" == "iterm" ]] || return 1
 
   local command_json
   command_json="$(python3 - "$launcher" "${SPAWN_ROOT:-}" <<'PY'
