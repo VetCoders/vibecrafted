@@ -46,8 +46,8 @@ You do not spawn agents blindly. You pick the cognitive profile required for the
 
 ## Delegation Doctrine
 
-- **Delegate, do not micromanage:** Do not produce 15-point bureaucratic checklists for the spawned agent. Write a high-level plan with `Goal`, `Scope`, and `Acceptance Criteria`. Let them figure out the _how_.
-- **The Living Tree:** Agents must know they operate in a live system. Ensure your spawn plan states: _"You are working on a living tree. Concurrent changes are expected. Adapt proactively."_
+- **Delegate, do not micromanage:** Do not produce 15-point bureaucratic checklists for the spawned agent. Write a high-level plan with `Goal`, `Scope`, and `Acceptance Criteria`. Let them figure out the *how*.
+- **The Living Tree:** Agents must know they operate in a live system. Ensure your spawn plan states: *"You are working on a living tree. Concurrent changes are expected. Adapt proactively."*
 - **Full Replacement over Scar Tissue:** Tell your agents they are empowered to rewrite broken abstractions. Sometimes a full replacement is cleaner than patching over bad prototype code.
 
 ## Execution (The Spawn Paths)
@@ -61,15 +61,13 @@ PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan-slug>.md
 # 2. Spawn the chosen mind
 bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement
 ```
-
-_(Swap `codex_spawn.sh` for `claude_spawn.sh` or `gemini_spawn.sh` depending on the matrix)._
+*(Swap `codex_spawn.sh` for `claude_spawn.sh` or `gemini_spawn.sh` depending on the matrix).*
 
 ## Anti-Patterns
 
 - **Hoarding Execution:** Refusing to spawn external agents because you think you can "do it quickly here." You will bloat the context window. Delegate.
 - **Bureaucracy:** Treating the sub-agent like a glorified macro with a hyper-rigid output format. If it requires actual thought, give them the goal and get out of the way. If it's trivial, just write the script yourself.
-- **Blind Faith:** You spawn them, they execute. _You_ still review the output when they finish. Trust, but verify via code mapping (`loctree`) and quality gates.
+- **Blind Faith:** You spawn them, they execute. *You* still review the output when they finish. Trust, but verify via code mapping (`loctree`) and quality gates.
 
 ---
-
 _Vibecrafted with AI Agents by VetCoders (c)2026_
