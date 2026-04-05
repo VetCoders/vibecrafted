@@ -53,7 +53,7 @@ _init_state() {
   "current_loop": 0,
   "status": "initialized",
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "watcher_pid": $,
+  "watcher_pid": $$,
   "loops": [],
   "trajectory": []
 }
