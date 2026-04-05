@@ -16,8 +16,6 @@ A single agent session carries immense context. Attempting to execute every smal
 
 `vc-agents` is the delegation layer. You identify the structural gap, pick the right mind for the job from the **`vc-why-matrix`**, spin up the autonomous worker, and return to your main orchestration.
 
-
-
 ## The `vc-why-matrix`
 
 You do not spawn agents blindly. You pick the cognitive profile required for the cut.
@@ -48,8 +46,8 @@ You do not spawn agents blindly. You pick the cognitive profile required for the
 
 ## Delegation Doctrine
 
-- **Delegate, do not micromanage:** Do not produce 15-point bureaucratic checklists for the spawned agent. Write a high-level plan with `Goal`, `Scope`, and `Acceptance Criteria`. Let them figure out the *how*.
-- **The Living Tree:** Agents must know they operate in a live system. Ensure your spawn plan states: *"You are working on a living tree. Concurrent changes are expected. Adapt proactively."*
+- **Delegate, do not micromanage:** Do not produce 15-point bureaucratic checklists for the spawned agent. Write a high-level plan with `Goal`, `Scope`, and `Acceptance Criteria`. Let them figure out the _how_.
+- **The Living Tree:** Agents must know they operate in a live system. Ensure your spawn plan states: _"You are working on a living tree. Concurrent changes are expected. Adapt proactively."_
 - **Full Replacement over Scar Tissue:** Tell your agents they are empowered to rewrite broken abstractions. Sometimes a full replacement is cleaner than patching over bad prototype code.
 
 ## Plan template
@@ -57,10 +55,12 @@ You do not spawn agents blindly. You pick the cognitive profile required for the
 Use this structure:
 
 ---
-run_id: <unique-run-id> 
+
+run_id: <unique-run-id>
 agent: <agent-name>
 status: <pending|in-progress|completed|failed>
 loops_completed: <number>
+
 ---
 
 ```text

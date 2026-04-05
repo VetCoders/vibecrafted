@@ -24,7 +24,7 @@ It is a promise of a process that converges to quality.
 
 ---
 
-#  ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
+# ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
 
 `// A Framework that created itself`
 

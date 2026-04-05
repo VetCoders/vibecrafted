@@ -161,7 +161,8 @@ def test_vc_dashboard_uses_base_run_id_session_without_layout_suffix(
     assert "--session" in payload
     assert _expected_operator_session(env["VIBECRAFTED_RUN_ID"]) in payload
     assert (
-        f"{_expected_operator_session(env['VIBECRAFTED_RUN_ID'])}-marbles" not in payload
+        f"{_expected_operator_session(env['VIBECRAFTED_RUN_ID'])}-marbles"
+        not in payload
     )
 
 

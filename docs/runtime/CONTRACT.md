@@ -24,6 +24,7 @@ provides all the necessary tools to follow this pattern.
 ### The Four Pillars
 
 1. **Foundations:**
+
    - [loctree](https://loct.io) — Codebase mapping and architectural perception.
    - [aicx](https://github.com/VetCoders/aicx) — Context boundaries and intentions retrieval.
    - [prview](https://github.com/VetCoders/prview) — Continuous review pipelines.
@@ -37,6 +38,7 @@ provides all the necessary tools to follow this pattern.
    delegation of work to the AI agents.
 
 3. **`vc-runtime`:**
+
    - `vibecrafted` — Ultimate shell helper and the entry point for `vc-workflows`.
      Used as the main framework launcher.
    - `vc-term` — A custom alacritty implementation providing a terminal emulator.

@@ -20,6 +20,7 @@ the job.
 The framework consists of:
 
 ### 1. Foundations
+
 - [loctree](https://loct.io) — Codebase mapping and architectural perception.
 - [aicx](https://github.com/VetCoders/aicx) — Context boundaries and intentions retrieval.
 - [prview](https://github.com/VetCoders/prview) — Continuous review pipelines.
@@ -30,10 +31,12 @@ non-programmers capable of production-grade implementation of
 complex development tasks.
 
 ### 2. `vc-workflows`
+
 (Technically `skills`.) Specialized instructions based on VetCoders
 team experience, used to optimize the delegation of work to AI agents.
 
 ### 3. `vc-runtime`
+
 - **`vibecrafted`** — Ultimate shell helper and the entry point for
   `vc-workflows`. Used as the main framework launcher.
 - **`vc-term`** — A custom alacritty implementation providing a
@@ -44,6 +47,7 @@ team experience, used to optimize the delegation of work to AI agents.
   session tracker using the `session_id`+`run_id` as the primary key.
 
 ### 4. `vc-agents`
+
 The skill that spawns external specialized AI agents from the user's
 fleet (Codex, Claude, Gemini) using the `vc-why-matrix` picker,
 `vibecrafted` helper and (if applied) the magic of zellij panes that
@@ -54,8 +58,8 @@ delegated work.
 
 ## Documents in this directory
 
-| Document | What it covers |
-| --- | --- |
+| Document                     | What it covers                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [CONTRACT.md](./CONTRACT.md) | Session ownership, zellij layout, plan templates, living tree rule, spawn commands, output conventions, observation, quality gates, safety rules |
 
 ---
