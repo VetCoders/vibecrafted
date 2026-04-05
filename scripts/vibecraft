@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Best-effort redirect: vibecraft → vibecrafted
+printf '\033[33mvibecraft\033[0m has been renamed to \033[1mvibecrafted\033[0m.\n'
+printf 'Running: vibecrafted %s\n\n' "$*"
+exec vibecrafted "$@"

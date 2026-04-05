@@ -28,7 +28,85 @@ spawn_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
 }
 
-# Central artifact store: ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
+spawn_org_repo() {
+  local root="${1:-$(spawn_repo_root)}"
+  local fallback_to_basename="${2:-1}"
+  local org_repo=""
+  org_repo="$(cd "$root" && git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+)/([^/.]+)(\.git)?$|\1/\2|' || true)"
+  if [[ -n "$org_repo" ]]; then
+    printf '%s\n' "$org_repo"
+  elif [[ "$fallback_to_basename" == "1" ]]; then
+    printf '%s\n' "$(basename "$root")"
+  else
+    printf '\n'
+  fi
+}
+
+spawn_skill_prefix() {
+  local name="${1:-}"
+  case "$name" in
+    agents) printf 'agnt\n' ;;
+    decorate) printf 'deco\n' ;;
+    delegate) printf 'delg\n' ;;
+    dou) printf 'vdou\n' ;;
+    followup) printf 'fwup\n' ;;
+    hydrate) printf 'hydr\n' ;;
+    implement|prompt) printf 'impl\n' ;;
+    init) printf 'init\n' ;;
+    justdo) printf 'just\n' ;;
+    marbles) printf 'marb\n' ;;
+    partner) printf 'prtn\n' ;;
+    plan) printf 'plan\n' ;;
+    prune) printf 'prun\n' ;;
+    release) printf 'rels\n' ;;
+    research) printf 'rsch\n' ;;
+    review) printf 'rvew\n' ;;
+    scaffold) printf 'scaf\n' ;;
+    workflow) printf 'wflw\n' ;;
+    *)
+      if [[ -n "$name" ]]; then
+        printf '%.4s\n' "$name"
+      else
+        printf 'impl\n'
+      fi
+      ;;
+  esac
+}
+
+spawn_generate_run_id() {
+  local prefix="${1:-impl}"
+  printf '%s-%s\n' "$prefix" "$(date +%H%M%S)"
+}
+
+spawn_has_ambient_run_context() {
+  [[ -n "${SPAWN_AGENT:-}" ]] || return 1
+  [[ -n "${SPAWN_RUN_ID:-}" ]] || return 1
+  [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
+  [[ "${SPAWN_RUN_ID}" == "${VIBECRAFTED_RUN_ID}" ]] || return 1
+  [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || return 1
+  spawn_in_zellij_context && return 1
+  return 0
+}
+
+spawn_effective_run_id() {
+  spawn_has_ambient_run_context && return 1
+  [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_RUN_ID}"
+}
+
+spawn_effective_run_lock() {
+  spawn_has_ambient_run_context && return 1
+  [[ -n "${VIBECRAFTED_RUN_LOCK:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_RUN_LOCK}"
+}
+
+spawn_effective_skill_code() {
+  spawn_has_ambient_run_context && return 1
+  [[ -n "${VIBECRAFTED_SKILL_CODE:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_SKILL_CODE}"
+}
+
+# Central artifact store: $HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
 # Override with VIBECRAFTED_HOME env var for custom location
 # Falls back to <repo>/.vibecrafted/ if git remote unavailable
 VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
@@ -36,7 +114,7 @@ VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
 spawn_store_dir() {
   local root="${1:-$(spawn_repo_root)}"
   local org_repo=""
-  org_repo="$(cd "$root" && git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+)/([^/.]+)(\.git)?$|\1/\2|' || true)"
+  org_repo="$(spawn_org_repo "$root" 0)"
   if [[ -n "$org_repo" ]]; then
     local date_dir
     date_dir="$(date +%Y_%m%d)"
@@ -49,8 +127,8 @@ spawn_store_dir() {
 
 spawn_effective_store_dir() {
   local root="${1:-$(spawn_repo_root)}"
-  if [[ -n "${VIBECRAFT_STORE_DIR:-}" ]]; then
-    spawn_abspath "$VIBECRAFT_STORE_DIR"
+  if [[ -n "${VIBECRAFTED_STORE_DIR:-}" ]]; then
+    spawn_abspath "$VIBECRAFTED_STORE_DIR"
     return 0
   fi
   spawn_store_dir "$root"
@@ -93,7 +171,7 @@ spawn_framework_version() {
   script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd || true)"
 
   for candidate in \
-    "${VIBECRAFT_ROOT:+$VIBECRAFT_ROOT/VERSION}" \
+    "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/VERSION}" \
     "${SPAWN_ROOT:+$SPAWN_ROOT/VERSION}" \
     "${script_root:+$script_root/VERSION}" \
     "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/VERSION"
@@ -203,6 +281,7 @@ spawn_finish_meta() {
   python3 - "$meta_path" "$status" "$exit_code" <<'PY'
 import datetime as dt
 import json
+import re
 import sys
 
 meta_path, status, exit_code = sys.argv[1:4]
@@ -223,16 +302,55 @@ payload["completed_at"] = completed_at.isoformat()
 payload["duration_s"] = duration_s
 payload["status"] = status
 payload["exit_code"] = int(exit_code)
+
+# Parse session_id from transcript (strip ANSI, match "session: <uuid>")
+transcript_path = payload.get("transcript", "")
+if transcript_path:
+    try:
+        with open(transcript_path, "r", errors="replace") as tf:
+            raw = tf.read(64 * 1024)  # first 64KB is enough
+        clean = re.sub(r'\x1b\[[0-9;]*m', '', raw)
+        m = re.search(r'session: ([a-f0-9-]{8,})', clean)
+        if m:
+            payload["session_id"] = m.group(1)
+    except (OSError, IOError):
+        pass  # transcript not readable — skip silently
+
 with open(meta_path, "w", encoding="utf-8") as fh:
     json.dump(payload, fh, indent=2, ensure_ascii=False)
     fh.write("\n")
 PY
 }
 
+spawn_create_run_lock() {
+  local run_id="$1"
+  local agent="$2"
+  local skill="$3"
+  local root="$4"
+  local org_repo lock_dir lock_file
+
+  org_repo="$(spawn_org_repo "$root")"
+  lock_dir="$VIBECRAFTED_HOME/locks/$org_repo"
+  mkdir -p "$lock_dir"
+  lock_file="$lock_dir/${run_id}.lock"
+  cat > "$lock_file" <<LOCK
+run_id=$run_id
+agent=$agent
+skill=$skill
+root=$root
+started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+status=running
+LOCK
+  printf '%s\n' "$lock_file"
+}
+
 spawn_prepare_paths() {
   local agent="$1"
   local prompt_file="$2"
   local root="${3:-}"
+  local mode="${4:-${VIBECRAFTED_SKILL_NAME:-}}"
+  local skill_name="${VIBECRAFTED_SKILL_NAME:-$mode}"
+  local lock_file=""
 
   if [[ -n "$root" ]]; then
     SPAWN_ROOT="$(spawn_abspath "$root")"
@@ -246,14 +364,30 @@ spawn_prepare_paths() {
   SPAWN_TS="$(spawn_timestamp)"
   SPAWN_AGENT="$agent"
   SPAWN_PROMPT_ID="${SPAWN_SLUG}_${SPAWN_TS%%_*}"
-  SPAWN_SKILL_CODE="${VIBECRAFT_SKILL_CODE:-}"
-  SPAWN_LOOP_NR="${VIBECRAFT_LOOP_NR:-0}"
+  SPAWN_SKILL_CODE="$(spawn_effective_skill_code 2>/dev/null || true)"
+  if [[ -z "$SPAWN_SKILL_CODE" && -n "$skill_name" ]]; then
+    SPAWN_SKILL_CODE="$(spawn_skill_prefix "$skill_name")"
+  fi
+  SPAWN_LOOP_NR="${VIBECRAFTED_LOOP_NR:-0}"
   case "$SPAWN_LOOP_NR" in
     ''|*[!0-9]*)
       SPAWN_LOOP_NR=0
       ;;
   esac
-  SPAWN_RUN_ID="${VIBECRAFT_RUN_ID:-$(printf '%s-%03d' "${SPAWN_SKILL_CODE:-impl}" "$SPAWN_LOOP_NR")}"
+  SPAWN_RUN_ID="$(spawn_effective_run_id 2>/dev/null || true)"
+  if [[ -n "$SPAWN_RUN_ID" ]]; then
+    :
+  else
+    SPAWN_RUN_ID="$(spawn_generate_run_id "${SPAWN_SKILL_CODE:-impl}")"
+  fi
+  lock_file="$(spawn_effective_run_lock 2>/dev/null || true)"
+  if [[ -z "$lock_file" || ! -f "$lock_file" ]]; then
+    lock_file="$VIBECRAFTED_HOME/locks/$(spawn_org_repo "$SPAWN_ROOT")/${SPAWN_RUN_ID}.lock"
+  fi
+  if [[ ! -f "$lock_file" ]]; then
+    lock_file="$(spawn_create_run_lock "$SPAWN_RUN_ID" "$agent" "${skill_name:-${mode:-implement}}" "$SPAWN_ROOT")"
+  fi
+  SPAWN_RUN_LOCK="$lock_file"
 
   # Central store path (falls back to per-repo if no git remote)
   local store_base
@@ -269,7 +403,7 @@ spawn_prepare_paths() {
   SPAWN_LAUNCHER="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_SLUG}_${agent}_launch.sh"
   mkdir -p "$store_base/plans" "$SPAWN_REPORT_DIR" "$SPAWN_TMP_DIR"
   spawn_link_repo_artifacts "$store_base" "$SPAWN_ROOT"
-  export SPAWN_ROOT SPAWN_PLAN SPAWN_SLUG SPAWN_TS SPAWN_AGENT SPAWN_PROMPT_ID SPAWN_RUN_ID SPAWN_SKILL_CODE SPAWN_LOOP_NR
+  export SPAWN_ROOT SPAWN_PLAN SPAWN_SLUG SPAWN_TS SPAWN_AGENT SPAWN_PROMPT_ID SPAWN_RUN_ID SPAWN_RUN_LOCK SPAWN_SKILL_CODE SPAWN_LOOP_NR
   export SPAWN_PLAN_DIR SPAWN_REPORT_DIR SPAWN_TMP_DIR SPAWN_BASE SPAWN_REPORT SPAWN_TRANSCRIPT SPAWN_META SPAWN_LAUNCHER
 }
 
@@ -316,7 +450,27 @@ PY
   touch "$marker"
   [[ -n "$recent_active" ]] || return 0
 
-  printf '\033[2mRecent active VibeCrafted runs:\n%s\033[0m\n' "$recent_active"
+  printf '\033[2mRecent active 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. runs:\n%s\033[0m\n' "$recent_active"
+}
+
+
+spawn_write_frontmatter() {
+  local target_file="$1"
+  local agent="${2:-${SPAWN_AGENT:-unknown}}"
+  local model="${3:-${SPAWN_MODEL:-unknown}}"
+  local status="${4:-pending}"
+
+  cat > "$target_file" <<EOF_FM
+---
+run_id: ${SPAWN_RUN_ID:-unknown}
+prompt_id: ${SPAWN_PROMPT_ID:-unknown}
+agent: $agent
+skill: ${SPAWN_SKILL_CODE:-unknown}
+model: $model
+status: $status
+---
+
+EOF_FM
 }
 
 spawn_build_runtime_prompt() {
@@ -324,64 +478,99 @@ spawn_build_runtime_prompt() {
   local runtime_file="$2"
   local report_path="$3"
   local agent="${4:-${SPAWN_AGENT:-agent}}"
+  local model="${5:-${SPAWN_MODEL:-unknown}}"
 
-  cat "$source_file" > "$runtime_file"
+  spawn_write_frontmatter "$runtime_file" "$agent" "$model" "prompt"
+
+  # Strip existing frontmatter (so we don't have double) and append the plan
+  awk '
+    BEGIN { in_fm=0; fm_done=0; }
+    NR==1 && /^---[ 	]*$/ { in_fm=1; next; }
+    in_fm && /^---[ 	]*$/ { in_fm=0; fm_done=1; next; }
+    in_fm { next; }
+    { print }
+  ' "$source_file" >> "$runtime_file"
+
   cat >> "$runtime_file" <<EOF_PROMPT
 
 At the end of the task, write your final human-readable report to this exact path:
-$report_path
+Report path: $report_path
 
 Keep streaming useful progress to stdout while you work. If you cannot write a
 standalone report file, finish normally and let the transcript act as the fallback
 artifact.
 
-When writing your report file, include YAML frontmatter at the top:
----
-agent: $agent
-run_id: ${SPAWN_RUN_ID:-unknown}
-prompt_id: ${SPAWN_PROMPT_ID:-unknown}
-started_at: (ISO 8601 when you began)
-model: (your model name)
----
+When writing your report file, include YAML frontmatter at the top (use the exact frontmatter that this prompt starts with, but change status to 'completed' or 'failed').
 EOF_PROMPT
 }
 
 spawn_frontier_root() {
-  local candidate script_root
-  script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd || true)"
-
-  for candidate in \
-    "${VIBECRAFT_ROOT:-}" \
-    "${SPAWN_ROOT:-}" \
-    "$script_root" \
-    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current"
-  do
-    [[ -n "$candidate" ]] || continue
-    if [[ -d "$candidate/config/atuin" && -d "$candidate/config/zellij" && -f "$candidate/config/starship.toml" ]]; then
-      printf '%s/config\n' "$candidate"
+  local candidate
+  while IFS= read -r candidate; do
+    if [[ -f "$candidate/starship.toml" ]]; then
+      printf '%s\n' "$candidate"
       return 0
     fi
-  done
-
-  candidate="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier"
-  if [[ -d "$candidate/atuin" && -d "$candidate/zellij" && -f "$candidate/starship.toml" ]]; then
-    printf '%s\n' "$candidate"
-    return 0
-  fi
+  done < <(spawn_frontier_candidates)
 
   return 1
 }
 
-spawn_export_frontier_sidecars() {
-  local root
-  root="$(spawn_frontier_root)" || return 0
+spawn_frontier_candidates() {
+  local script_root candidate seen=""
+  script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd || true)"
 
-  if [[ -z "${STARSHIP_CONFIG:-}" ]] && command -v starship >/dev/null 2>&1 && [[ -f "$root/starship.toml" ]]; then
-    export STARSHIP_CONFIG="$root/starship.toml"
+  for candidate in \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier" \
+    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/config" \
+    "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/config}" \
+    "${SPAWN_ROOT:+$SPAWN_ROOT/config}" \
+    "${script_root:+$script_root/config}"
+  do
+    [[ -n "$candidate" && -d "$candidate" ]] || continue
+    case ":$seen:" in
+      *":$candidate:"*) continue ;;
+    esac
+    seen="${seen:+$seen:}$candidate"
+    printf '%s\n' "$candidate"
+  done
+
+  return 0
+}
+
+# Resolve each frontier asset independently so repo-owned prompt/history presets
+# can coexist with an external session companion repo.
+spawn_frontier_file() {
+  local relative_path="$1"
+  local candidate
+  while IFS= read -r candidate; do
+    if [[ -f "$candidate/$relative_path" ]]; then
+      printf '%s/%s\n' "$candidate" "$relative_path"
+      return 0
+    fi
+  done < <(spawn_frontier_candidates)
+  return 1
+}
+
+spawn_export_frontier_sidecars() {
+  local starship_config atuin_config zellij_config zellij_config_dir
+  starship_config="$(spawn_frontier_file "starship.toml" 2>/dev/null || true)"
+  atuin_config="$(spawn_frontier_file "atuin/config.toml" 2>/dev/null || true)"
+  zellij_config="$(spawn_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
+
+  # Re-pin the active frontier assets every time so spawned sessions do not
+  # inherit stale shell config from an unrelated install or repo.
+  if command -v starship >/dev/null 2>&1 && [[ -n "$starship_config" ]]; then
+    export STARSHIP_CONFIG="$starship_config"
   fi
 
-  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]] && command -v zellij >/dev/null 2>&1 && [[ -d "$root/zellij" ]]; then
-    export ZELLIJ_CONFIG_DIR="$root/zellij"
+  if command -v atuin >/dev/null 2>&1 && [[ -n "$atuin_config" ]]; then
+    export ATUIN_CONFIG="$atuin_config"
+  fi
+
+  if command -v zellij >/dev/null 2>&1 && [[ -n "$zellij_config" ]]; then
+    zellij_config_dir="$(dirname "$zellij_config")"
+    export ZELLIJ_CONFIG_DIR="$zellij_config_dir"
   fi
 }
 
@@ -406,7 +595,8 @@ spawn_generate_launcher() {
   [[ -n "$command" ]] || spawn_die "Missing command payload for launcher."
 
   local q_meta q_report q_transcript q_common q_cmd
-  local q_root q_agent q_prompt_id q_run_id q_loop_nr q_skill_code
+  local q_root q_agent q_prompt_id q_run_id q_run_lock q_loop_nr q_skill_code
+  local q_operator_session q_spawn_direction
   q_meta="$(printf '%q' "$meta_path")"
   q_report="$(printf '%q' "$report_path")"
   q_transcript="$(printf '%q' "$transcript_path")"
@@ -416,8 +606,11 @@ spawn_generate_launcher() {
   q_agent="$(printf '%q' "${SPAWN_AGENT:-}")"
   q_prompt_id="$(printf '%q' "${SPAWN_PROMPT_ID:-}")"
   q_run_id="$(printf '%q' "${SPAWN_RUN_ID:-}")"
+  q_run_lock="$(printf '%q' "${SPAWN_RUN_LOCK:-}")"
   q_loop_nr="$(printf '%q' "${SPAWN_LOOP_NR:-0}")"
   q_skill_code="$(printf '%q' "${SPAWN_SKILL_CODE:-}")"
+  q_operator_session="$(printf '%q' "${VIBECRAFTED_OPERATOR_SESSION:-}")"
+  q_spawn_direction="$(printf '%q' "${VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION:-}")"
 
   cat > "$launcher" <<EOF_LAUNCH
 #!/usr/bin/env bash
@@ -432,10 +625,20 @@ export SPAWN_ROOT=$q_root
 export SPAWN_AGENT=$q_agent
 export SPAWN_PROMPT_ID=$q_prompt_id
 export SPAWN_RUN_ID=$q_run_id
+export SPAWN_RUN_LOCK=$q_run_lock
 export SPAWN_LOOP_NR=$q_loop_nr
 export SPAWN_SKILL_CODE=$q_skill_code
+export VIBECRAFTED_RUN_ID=$q_run_id
+export VIBECRAFTED_RUN_LOCK=$q_run_lock
+export VIBECRAFTED_SKILL_CODE=$q_skill_code
+export VIBECRAFTED_OPERATOR_SESSION=$q_operator_session
+export VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=$q_spawn_direction
 
 rm -f "\$transcript" "\$report"
+spawn_write_frontmatter "\$transcript" "\$SPAWN_AGENT" "unknown" "transcript"
+if [[ -n "\${SPAWN_ROOT:-}" ]]; then
+  cd "\$SPAWN_ROOT"
+fi
 EOF_LAUNCH
 
   if [[ -n "$pre_hook" ]]; then
@@ -444,6 +647,7 @@ EOF_LAUNCH
 
   cat >> "$launcher" <<'EOF_LAUNCH'
 spawn_export_frontier_sidecars
+export PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}"
 
 if bash -c "$SPAWN_CMD"; then
 EOF_LAUNCH
@@ -477,22 +681,61 @@ spawn_launch_headless() {
   printf 'Spawned headless launcher (pid=%s): %s\n' "$launcher_pid" "$launcher"
 }
 
+spawn_osascript_bin() {
+  local override="${VIBECRAFTED_OSASCRIPT_BIN:-}"
+  if [[ -n "$override" && -x "$override" ]]; then
+    printf '%s\n' "$override"
+    return 0
+  fi
+
+  command -v osascript 2>/dev/null || return 1
+}
+
+# Detect preferred terminal app. Priority:
+#   1. VIBECRAFTED_TERMINAL env (explicit override: iterm, terminal)
+#   2. iTerm2 installed at /Applications
+#   3. TERM_PROGRAM from current session
+#   4. Fallback: terminal (Terminal.app)
+spawn_preferred_terminal() {
+  local pref="${VIBECRAFTED_TERMINAL:-}"
+  if [[ -n "$pref" ]]; then
+    printf '%s\n' "$pref"
+    return 0
+  fi
+  # Detect installed terminal apps (survives agent/vscode context)
+  if [[ -d "/Applications/iTerm.app" ]]; then
+    printf 'iterm\n'
+    return 0
+  fi
+  # Session-level detection as last resort
+  case "${TERM_PROGRAM:-}" in
+    iTerm.app) printf 'iterm\n' ;;
+    *) printf 'terminal\n' ;;
+  esac
+}
+
 spawn_open_terminal() {
   local launcher="$1"
-  command -v osascript >/dev/null 2>&1 || spawn_die "osascript is required for visible Terminal spawns."
+  local osascript_bin
+  osascript_bin="$(spawn_osascript_bin)" || spawn_die "osascript is required for visible Terminal spawns."
 
   local command_json
-  command_json="$(python3 - "$launcher" <<'PY'
+  command_json="$(python3 - "$launcher" "${SPAWN_ROOT:-}" <<'PY'
 import json
 import shlex
 import sys
 
 launcher = sys.argv[1]
-print(json.dumps("bash " + shlex.quote(launcher)))
+root = sys.argv[2] if len(sys.argv) > 2 else ""
+parts = []
+if root:
+    parts.append("cd " + shlex.quote(root))
+parts.append("bash " + shlex.quote(launcher))
+print(json.dumps(" && ".join(parts)))
 PY
 )"
 
-  osascript <<EOF_APPLE
+  "$osascript_bin" <<EOF_APPLE
  tell application "Terminal"
    activate
    do script $command_json
@@ -500,14 +743,117 @@ PY
 EOF_APPLE
 }
 
+spawn_open_iterm() {
+  local launcher="$1"
+  local osascript_bin
+  osascript_bin="$(spawn_osascript_bin)" || return 1
+  [[ "$(spawn_preferred_terminal)" == "iterm" ]] || return 1
+
+  local command_json
+  command_json="$(python3 - "$launcher" "${SPAWN_ROOT:-}" <<'PY'
+import json
+import shlex
+import sys
+
+launcher = sys.argv[1]
+root = sys.argv[2] if len(sys.argv) > 2 else ""
+parts = []
+if root:
+    parts.append("cd " + shlex.quote(root))
+parts.append("bash " + shlex.quote(launcher))
+print(json.dumps(" && ".join(parts)))
+PY
+)"
+
+  "$osascript_bin" <<EOF_APPLE
+tell application "iTerm2"
+  tell current window
+    create tab with default profile
+    tell current session of current tab
+      write text $command_json
+    end tell
+  end tell
+end tell
+EOF_APPLE
+}
+
+spawn_in_zellij_context() {
+  [[ "${ZELLIJ:-}" == "0" ]] && return 1
+  [[ -n "${ZELLIJ_PANE_ID:-}" ]] || [[ -n "${ZELLIJ:-}" ]]
+}
+
+spawn_current_zellij_session_name() {
+  printf '%s\n' "${ZELLIJ_SESSION_NAME:-}"
+}
+
+spawn_in_target_zellij_session() {
+  local target_session="${VIBECRAFTED_OPERATOR_SESSION:-}"
+  spawn_in_zellij_context || return 1
+  [[ -n "$target_session" ]] || return 0
+  [[ "$(spawn_current_zellij_session_name)" == "$target_session" ]]
+}
+
+spawn_pane_direction() {
+  # Grid policy: 4 per row, 8 per tab, 9th opens new tab.
+  # Uses SPAWN_LOOP_NR (marbles) or VIBECRAFTED_PANE_SEQ (manual).
+  local seq="${SPAWN_LOOP_NR:-${VIBECRAFTED_PANE_SEQ:-0}}"
+  local max_per_row=4
+  local max_per_tab=8
+
+  if (( seq >= max_per_tab )); then
+    printf 'new-tab\n'
+  elif (( seq > 0 && seq % max_per_row == 0 )); then
+    printf 'down\n'
+  else
+    printf 'right\n'
+  fi
+}
+
 spawn_in_zellij_pane() {
   local launcher="$1"
   local pane_name="${2:-agent}"
-  if [[ -n "${ZELLIJ:-}" ]] && command -v zellij >/dev/null 2>&1; then
-    zellij run --name "$pane_name" -- bash "$launcher"
+  local direction="${VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION:-$(spawn_pane_direction)}"
+
+  if spawn_in_zellij_context && command -v zellij >/dev/null 2>&1; then
+    if [[ "$direction" == "new-tab" ]]; then
+      zellij action new-tab \
+        --name "$pane_name" \
+        --cwd "${SPAWN_ROOT:-$(pwd)}" \
+        -- /bin/zsh -l -c "bash '$launcher'"
+    else
+      zellij action new-pane \
+        --direction "$direction" \
+        --name "$pane_name" \
+        --cwd "${SPAWN_ROOT:-$(pwd)}" \
+        -- /bin/zsh -l -c "bash '$launcher'"
+    fi
     return 0
   fi
   return 1
+}
+
+spawn_in_operator_session() {
+  local launcher="$1"
+  local pane_name="${2:-agent}"
+  local session_name="${VIBECRAFTED_OPERATOR_SESSION:-}"
+  local direction="${VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION:-$(spawn_pane_direction)}"
+
+  [[ -n "$session_name" ]] || return 1
+  command -v zellij >/dev/null 2>&1 || return 1
+
+  # External spawn into existing operator session — route as pane or new tab per grid policy.
+  if [[ "$direction" == "new-tab" ]]; then
+    zellij --session "$session_name" action new-tab \
+      --name "$pane_name" \
+      --cwd "${SPAWN_ROOT:-$(pwd)}" \
+      -- /bin/zsh -l -c "bash '$launcher'"
+  else
+    zellij --session "$session_name" action new-pane \
+      --direction "$direction" \
+      --name "$pane_name" \
+      --cwd "${SPAWN_ROOT:-$(pwd)}" \
+      -- /bin/zsh -l -c "bash '$launcher'"
+  fi
 }
 
 spawn_launch() {
@@ -530,7 +876,11 @@ spawn_launch() {
     terminal|visible)
       if spawn_in_zellij_pane "$launcher" "$pane_name"; then
         :
-      elif command -v osascript >/dev/null 2>&1; then
+      elif spawn_in_operator_session "$launcher" "$pane_name"; then
+        :
+      elif spawn_open_iterm "$launcher" 2>/dev/null; then
+        :
+      elif spawn_osascript_bin >/dev/null 2>&1; then
         spawn_open_terminal "$launcher"
       else
         printf 'Runtime fallback: visible Terminal requested, but osascript is unavailable. Running headless.\n' >&2
@@ -563,13 +913,13 @@ spawn_print_launch() {
   local mode="$2"
   local runtime="${3:-terminal}"
 
-  # ── VibeCrafted branded spawn output ──────────────────────────────
+  # ── 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. branded spawn output ──────────────────────────────
   local _dim='\033[2m'    _bold='\033[1m'
   local _copper='\033[38;5;173m'  _steel='\033[38;5;247m'
   local _reset='\033[0m'
   local _bar="${_steel}──────────────────────────────────${_reset}"
 
-  printf '\n%b ⚒  VibeCrafted · %s-%s%b\n' "$_bold$_copper" "$agent" "$mode" "$_reset"
+  printf '\n%b ⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. · %s-%s%b\n' "$_bold$_copper" "$agent" "$mode" "$_reset"
   printf '%b\n' "$_bar"
   printf '%b  plan:    %b%s%b\n'   "$_steel" "$_reset" "${SPAWN_PLAN:-—}" "$_reset"
   printf '%b  report:  %b%s%b\n'   "$_steel" "$_reset" "${SPAWN_REPORT:-—}" "$_reset"

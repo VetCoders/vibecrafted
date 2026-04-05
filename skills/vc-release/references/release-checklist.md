@@ -4,7 +4,8 @@ Use this. Don't skip steps. Users will find every skip.
 
 ## Pre-Release (24h before)
 
-- [ ] **Version number decided.** Semantic versioning: MAJOR.MINOR.PATCH. Is this a breaking change? (MAJOR) New feature? (MINOR) Bug fix? (PATCH)
+- [ ] **Version number decided.** Semantic versioning: MAJOR.MINOR.PATCH. Is this a breaking change? (MAJOR) New
+      feature? (MINOR) Bug fix? (PATCH)
 - [ ] **Changelog written.** Include: what changed, why, breaking changes in bold, migration path if needed.
 - [ ] **All tests pass.** `npm test`, `cargo test`, `pytest`, whatever your stack uses. Green across CI/CD.
 - [ ] **Code reviewed.** Second pair of eyes on significant changes.
@@ -16,7 +17,8 @@ Use this. Don't skip steps. Users will find every skip.
 
 ## Release Day (1–2 hours)
 
-- [ ] **Bump version in source files.** `package.json`, `Cargo.toml`, `setup.py`, version file, whatever your lang uses. Exactly one source of truth.
+- [ ] **Bump version in source files.** `package.json`, `Cargo.toml`, `setup.py`, version file, whatever your lang uses.
+      Exactly one source of truth.
 - [ ] **Build artifacts.** Compile, bundle, create distributable. Binary, wheel, JAR, Docker image, whatever.
 - [ ] **Test artifact locally.** Install it cold from the artifact, not from source. Does it work?
 - [ ] **Commit version bump.** Commit message: "Release v1.2.3" (clear, minimal).

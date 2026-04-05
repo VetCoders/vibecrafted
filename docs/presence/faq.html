@@ -4,22 +4,30 @@
 <head>
     <meta charset="UTF-8">
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
-    <title>VibeCrafted FAQ | VetCoders</title>
+    <title> ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. FAQ | VetCoders</title>
     <meta
-        content="Answers to the most common VibeCrafted questions: install path, shell helpers, skills vs agents, foundations, CI, and commercial posture."
+        content="Answers to the most common  ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. questions: install path, shell helpers, skills vs agents, foundations, CI, and commercial posture."
         name="description">
-    <meta content="https://vetcoders.github.io/vibecrafted/faq.html" property="og:url">
-    <meta content="VibeCrafted FAQ" property="og:title">
+    <meta content="https://vetcoders.github.io/vibecrafted/presence/faq.html" property="og:url">
+    <meta content=" ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. FAQ" property="og:title">
     <meta content="Answered questions about install path, architecture, workflows, and commercial posture."
         property="og:description">
     <meta content="https://vetcoders.github.io/vibecrafted/presence/og-image.png" property="og:image">
     <meta content="summary_large_image" name="twitter:card">
-    <meta content="VibeCrafted FAQ" name="twitter:title">
+    <meta content=" ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. FAQ" name="twitter:title">
     <meta content="Answered questions about install path, architecture, workflows, and commercial posture."
         name="twitter:description">
     <meta content="https://vetcoders.github.io/vibecrafted/presence/og-image.png" name="twitter:image">
     <meta content="#0e0e11" name="theme-color">
+    <!-- Canonical and hreflang tags are metadata, not fetchable subresources. -->
+    <!-- nosemgrep: html.security.audit.missing-integrity.missing-integrity -->
     <link href="https://vetcoders.github.io/vibecrafted/presence/faq.html" rel="canonical">
+    <!-- nosemgrep: html.security.audit.missing-integrity.missing-integrity -->
+    <link href="https://vetcoders.github.io/vibecrafted/presence/faq.html" hreflang="en" rel="alternate">
+    <!-- nosemgrep: html.security.audit.missing-integrity.missing-integrity -->
+    <link href="https://vetcoders.github.io/vibecrafted/pl/faq.html" hreflang="pl" rel="alternate">
+    <!-- nosemgrep: html.security.audit.missing-integrity.missing-integrity -->
+    <link href="https://vetcoders.github.io/vibecrafted/presence/faq.html" hreflang="x-default" rel="alternate">
     <link href="favicon.ico" rel="icon" sizes="32x32">
     <link href="logo-64.png" rel="icon" sizes="64x64" type="image/png">
     <link href="logo-128.png" rel="apple-touch-icon">
@@ -28,21 +36,22 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&amp;family=Lora:ital,wght@0,400;0,500;0,600;1,400&amp;display=swap"
         rel="stylesheet">
-    <link href="styles.css?v=20260331s" rel="stylesheet">
+    <link href="styles.css?v=20260331ah" rel="stylesheet">
 </head>
 
-<body>
+<body class="docs-page docs-page--faq">
     <a class="skip-link" href="#main-content">Skip to content</a>
 
     <div class="topbar">
         <header class="nav-shell">
-            <a class="brand" href="../">
+            <a class="brand" href="../index.html">
                 <span class="brand-wordmark">vibecrafted</span>
                 <img alt="" aria-hidden="true" class="brand-logo" height="24" src="./logo-32.png">
             </a>
             <nav aria-label="Primary" class="nav-links">
-                <a href="../">Overview</a>
+                <a href="../index.html">Overview</a>
                 <a href="quickstart.html">Quick Start</a>
+                <a href="../pl/faq.html" hreflang="pl" lang="pl">PL</a>
                 <a href="https://github.com/VetCoders/vibecrafted">GitHub</a>
             </nav>
         </header>
@@ -58,9 +67,12 @@
                     repo,
                     the shell helpers, or the license before they know whether the system fits.
                 </p>
+                <p class="manifesto-quote">
+                    Created by itself through the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙.
+                </p>
                 <div class="manifesto-actions">
                     <a class="btn-solid" href="quickstart.html">Read Quick Start</a>
-                    <a class="btn-outline" href="../">Back to Overview</a>
+                    <a class="btn-outline" href="../index.html">Back to Overview</a>
                 </div>
             </section>
 
@@ -69,17 +81,23 @@
                     <article class="faq-group">
                         <h2>Installation</h2>
                         <details class="faq-item" open>
-                            <summary>Why does VibeCrafted install into <code>~/.vibecrafted/</code> instead of
-                                <code>~/.agents/</code>?</summary>
-                            <p><code>~/.vibecrafted/</code> is the central store and control plane. Agent-specific
+                            <summary>Why does ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. install into
+                                <code>$VIBECRAFTED_ROOT/.vibecrafted/</code> instead
+                                of
+                                <code>$HOME/.agents/</code>?
+                            </summary>
+                            <p><code>$VIBECRAFTED_ROOT/.vibecrafted/</code> is the central store and control plane.
+                                Agent-specific
                                 directories are only views or symlink targets. The real source of truth, artifacts, and
                                 helper state live in one place.</p>
                         </details>
                         <details class="faq-item">
-                            <summary>Can I install VibeCrafted without editing my shell config?</summary>
+                            <summary>Can I install ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. without editing my shell config?</summary>
                             <p>Yes. During the interactive path you can opt out of shell-helper installation. If you
                                 still want helpers in the current session, source
-                                <code>${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh</code> manually.</p>
+                                <code>${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh</code>
+                                manually.
+                            </p>
                         </details>
                         <details class="faq-item">
                             <summary>What does <code>make doctor</code> actually check?</summary>
@@ -91,7 +109,8 @@
                             <summary>Which install path should I use in CI or automation?</summary>
                             <p>Use <code>make install</code> for the direct non-interactive path, or call
                                 <code>python3 scripts/vetcoders_install.py install --source "$PWD" --non-interactive</code>
-                                when you want full CLI control.</p>
+                                when you want full CLI control.
+                            </p>
                         </details>
                     </article>
 
@@ -105,13 +124,14 @@
                         </details>
                         <details class="faq-item">
                             <summary>Why not just use ChatGPT, Copilot, or a single giant prompt?</summary>
-                            <p>Because VibeCrafted is trying to solve system-shaping, not just chat convenience. It
+                            <p>Because ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. is trying to solve system-shaping, not just chat
+                                convenience. It
                                 combines structural awareness, decision retrieval, convergence loops, and shipping
                                 audits so the model sees the repo and the product surface instead of improvising blind.
                             </p>
                         </details>
                         <details class="faq-item">
-                            <summary>Can I use VibeCrafted without loctree or aicx?</summary>
+                            <summary>Can I use ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. without loctree or aicx?</summary>
                             <p>Technically yes, but you lose structural perception and session continuity. The framework
                                 still runs, but the agent is operating with much weaker context.</p>
                         </details>
@@ -132,12 +152,12 @@
                                 architectural decisions more closely.</p>
                         </details>
                         <details class="faq-item">
-                            <summary>Can I run VibeCrafted in CI/CD?</summary>
+                            <summary>Can I run ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. in CI/CD?</summary>
                             <p>Yes. The direct install path is non-interactive, and skills like review, followup, and
                                 release are explicitly shaped to work as repeatable quality or packaging gates.</p>
                         </details>
                         <details class="faq-item">
-                            <summary>What lives in <code>~/.vibecrafted/artifacts/</code>?</summary>
+                            <summary>What lives in <code>$VIBECRAFTED_ROOT/.vibecrafted/artifacts/</code>?</summary>
                             <p>Plans, reports, transcripts, and metadata from major runs. The artifact store exists so
                                 agent work leaves durable evidence instead of disappearing into terminal scrollback.</p>
                         </details>
@@ -151,7 +171,7 @@
                     <article class="faq-group">
                         <h2>Commercial posture</h2>
                         <details class="faq-item" open>
-                            <summary>Is VibeCrafted open source?</summary>
+                            <summary>Is ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. open source?</summary>
                             <p>The framework is distributed under Business Source License 1.1. The repo is visible and
                                 usable, but it is not pure permissive open source.</p>
                         </details>
@@ -182,19 +202,19 @@
 
     <footer>
         <div class="footer-brand">
-            <img src="./logo-32.png" alt="" class="footer-logo" width="24" height="24">
+            <img alt="" class="footer-logo" height="24" src="./logo-32.png" width="24">
             <span class="footer-title">VIBECRAFTED</span>
         </div>
-        <p class="footer-tagline">Built under founder pressure. Proven in production.</p>
-        <nav class="footer-links" aria-label="Footer links">
-            <a href="../">Overview</a>
+        <p class="footer-tagline">𝗕𝘂𝗶𝗹𝘁 𝘂𝗻𝗱𝗲𝗿 ᵐⁱᵈⁿⁱᵍʰᵗ 𝗽𝗿𝗲𝘀𝘀𝘂𝗿𝗲. 𝗗𝗲𝗽𝗹𝗼𝘆𝗲𝗱 𝘁𝗼 ˡᵒᶜᵃˡʰᵒˢᵗ.</p>
+        <nav aria-label="Footer links" class="footer-links">
+            <a href="../index.html">Overview</a>
             <a href="quickstart.html">Quick Start</a>
             <a href="https://github.com/VetCoders/vibecrafted">GitHub</a>
         </nav>
         <p class="footer-copyright">&copy; 2025-2026 VetCoders. Built by Maciej Gad &amp; Monika Szymańska.</p>
     </footer>
 
-    <script src="app.js?v=20260330"></script>
+    <script src="app.js?v=20260331k"></script>
 </body>
 
 </html>

@@ -10,7 +10,8 @@ description: >
 
 # vc-scaffold: Founder-First Architecture Planning
 
-You are the architecture engine for founders who have ideas but no time for corporate design docs. Your job is SCOPE, PLAN, and PRODUCE an actionable breakdown that vc-workflow can execute.
+You are the architecture engine for founders who have ideas but no time for corporate design docs. Your job is SCOPE,
+PLAN, and PRODUCE an actionable breakdown that vc-workflow can execute.
 
 ## Pipeline Position
 
@@ -19,7 +20,7 @@ You are the architecture engine for founders who have ideas but no time for corp
 ^^^^^^^^^^
 ```
 
-Scaffold is the entry point of the VibeCrafted pipeline. It runs before `vc-init`
+Scaffold is the entry point of the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. pipeline. It runs before `vc-init`
 when the task is new, vague, or requires architectural scoping. If the user
 already has a clear, bounded task, skip scaffold and start with `vc-init`.
 
@@ -31,7 +32,8 @@ After scaffolding produces a plan, the pipeline continues:
 
 ## The Mission
 
-A founder walks in with a problem or a feature idea. Maybe it's vague. Maybe it's "we need real-time collaboration" or "our codebase is unmaintainable" or "I have this idea but don't know where to start."
+A founder walks in with a problem or a feature idea. Maybe it's vague. Maybe it's "we need real-time collaboration" or "
+our codebase is unmaintainable" or "I have this idea but don't know where to start."
 
 Your job:
 
@@ -76,7 +78,8 @@ This is an architectural decision, not a decoration afterthought.
 
 Define:
 
-- **Material metaphor**: What physical materials represent this product? (steel=precision, wood=craft, stone=foundation, copper=warmth, glass=transparency)
+- **Material metaphor**: What physical materials represent this product? (steel=precision, wood=craft, stone=foundation,
+  copper=warmth, glass=transparency)
 - **Color strategy**: 3-5 semantic roles (accent, surface, text, muted, success/warning/error)
 - **Typography strategy**: Mono for tools/chrome, serif for narrative/craft, sans for apps/dashboards
 - **Tone**: Surowy? Ciepły? Techniczny? Przyjazny? Clinical?
@@ -142,15 +145,20 @@ Save it to the task output directory. vc-workflow will read it.
 
 ## Critical Rules
 
-**No premature optimization.** The best architecture is the one that ships. Bias toward CQRS, event-driven, or layered if you're unsure. Don't invent new patterns.
+**No premature optimization.** The best architecture is the one that ships. Bias toward CQRS, event-driven, or layered
+if you're unsure. Don't invent new patterns.
 
-**Map before designing.** If there's existing code, understand it first. The best architecture respects the grain of the system.
+**Map before designing.** If there's existing code, understand it first. The best architecture respects the grain of the
+system.
 
-**Scope is your best friend.** A tight scope with great execution beats a loose scope with mediocre execution every single time.
+**Scope is your best friend.** A tight scope with great execution beats a loose scope with mediocre execution every
+single time.
 
-**Write for humans.** vc-workflow is AI but it will hand off to humans. Make the plan readable, the decisions clear, the boundaries explicit.
+**Write for humans.** vc-workflow is AI but it will hand off to humans. Make the plan readable, the decisions clear, the
+boundaries explicit.
 
-**Keep dependencies shallow.** If task A blocks task B blocks task C, you've broken parallelization. Prefer independent workstreams.
+**Keep dependencies shallow.** If task A blocks task B blocks task C, you've broken parallelization. Prefer independent
+workstreams.
 
 ## What Success Looks Like
 
@@ -184,4 +192,4 @@ That's it. No polishing. No prettifying. Just working plans.
 
 See references/plan-template.md for the output format.
 
-_Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
+_Vibecrafted with AI Agents by VetCoders (c)2024-2026 VetCoders_

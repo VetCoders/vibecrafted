@@ -23,8 +23,11 @@ Always run this sequence:
 
 1. `vc-init` (history + structure baseline)
 2. `vc-workflow` (Examine -> optional Research -> Implement context)
-3. `vc-agents` first; use `vc-delegate` only for small or model-agnostic delegated audits
-4. Final synthesis by primary agent (you)
+3. **Audit Inputs**:
+   - `prview` (Foundation) — generate artifacts for any code changes.
+   - `screenscribe` (Foundation) — if visual confirmation is needed, consume demos.
+4. `vc-agents` first; use `vc-delegate` only for small or model-agnostic delegated audits
+5. Final synthesis by primary agent (you)
 
 Do not skip sequence unless user explicitly opts out.
 
@@ -70,10 +73,10 @@ If AICX MCP is unavailable, fall back to the `aicx` CLI if present.
 
 Create pipeline artifacts:
 
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_CONTEXT.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_RESEARCH.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`
+- `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_CONTEXT.md`
+- `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_RESEARCH.md`
+- `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/`
+- `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`
 
 `CONTEXT.md` must include:
 
@@ -95,7 +98,7 @@ Prepare at least 2 audit tracks:
 ### Mandatory preamble in each plan
 
 ```text
-You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
+You work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology, so concurrent changes are expected.
 Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
 Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 ```
@@ -134,8 +137,8 @@ Context:
 ### Spawn method
 
 Use the portable scripts from `vc-agents` (see `vc-agents` SKILL.md for commands).
-Write plans to `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/`
-and reports to `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
+Write plans to `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/`
+and reports to `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
 
 ## Phase D - Follow-up Synthesis (Primary Agent)
 

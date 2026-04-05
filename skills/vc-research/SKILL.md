@@ -48,7 +48,8 @@ Do NOT use for:
 
 - Questions answerable by reading one file in the repo
 - Problems where loctree slice + grep gives the answer in 30 seconds
-- Pure implementation tasks (use vc-workflow, usually through vc-agents; use vc-delegate only for small model-agnostic work)
+- Pure implementation tasks (use vc-workflow, usually through vc-agents; use vc-delegate only for small model-agnostic
+  work)
 
 ## The 6-Step Research Flow
 
@@ -120,7 +121,7 @@ Write your findings to the report file as markdown with this structure:
 ```
 
 Save to
-`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md`.
+`$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md`.
 
 Plans can be split if the problem has clearly separable domains. Each agent
 gets ALL plans — they are independent researchers, not specialists.
@@ -130,14 +131,15 @@ gets ALL plans — they are independent researchers, not specialists.
 Canonical launch path is through the portable spawn scripts:
 
 ```bash
-PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md"
+PLAN="$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md"
 
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/claude_spawn.sh "$PLAN" --mode research
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode research
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode research
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/claude_spawn.sh "$PLAN" --mode research
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode research
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode research
 ```
 
-If your environment has the shell aliases (e.g. `claude-research`), those are convenience wrappers that point to these exact scripts.
+If your environment has the shell aliases (e.g. `claude-research`), those are convenience wrappers that point to these
+exact scripts.
 
 All three get the same plan. All three work independently. This is intentional —
 divergence between reports reveals blind spots.
@@ -147,17 +149,17 @@ divergence between reports reveals blind spots.
 Reports land in:
 
 ```
-~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_claude.md
-~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_codex.md
-~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_gemini.md
+$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_claude.md
+$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_codex.md
+$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_gemini.md
 ```
 
 Wait for all three. Use the observe scripts:
 
 ```bash
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/observe.sh claude --last
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/observe.sh codex --last
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/observe.sh gemini --last
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/observe.sh claude --last
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/observe.sh codex --last
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/observe.sh gemini --last
 ```
 
 ### Step 5 — Synthesize
@@ -183,7 +185,7 @@ Rules for synthesis:
 ### Step 6 — Produce gap-free research document
 
 Write the final document to
-`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_RESEARCH.md`:
+`$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_RESEARCH.md`:
 
 ```markdown
 # Research: <title>
@@ -258,4 +260,4 @@ research │                         │
 
 ---
 
-_Created by M&K (c)2026 VetCoders_
+_Created by M&K (c)2024-2026 VetCoders_

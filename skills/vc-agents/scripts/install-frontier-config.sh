@@ -8,9 +8,10 @@ Usage: install-frontier-config.sh [--source <repo-root>] [--dry-run] [--mode sym
 Install the repo-owned frontier shell presets:
 - starship
 - atuin
-- zellij
+- zellij (config + layouts)
 
-By default this creates symlinks in ~/.config so the repo remains the source of truth.
+By default this creates sidecar symlinks in $HOME/.config/vetcoders/frontier so the
+repo remains the source of truth without taking over your global shell layout.
 EOF_USAGE
 }
 
@@ -23,6 +24,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 dry_run=0
 mode="symlink"
 timestamp="$(date +%Y%m%d_%H%M%S)"
+frontier_root="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -102,13 +104,15 @@ install_one() {
 printf 'Installing VetCoders frontier config\n'
 printf '  source repo: %s\n' "$repo_root"
 printf '  mode: %s\n' "$mode"
+printf '  frontier root: %s\n' "$frontier_root"
 
-install_one "$repo_root/config/starship.toml" "${XDG_CONFIG_HOME:-$HOME/.config}/starship.toml"
-install_one "$repo_root/config/atuin/config.toml" "${XDG_CONFIG_HOME:-$HOME/.config}/atuin/config.toml"
-install_one "$repo_root/config/zellij/config.kdl" "${XDG_CONFIG_HOME:-$HOME/.config}/zellij/config.kdl"
-install_one "$repo_root/config/zellij/layouts/research-grid.kdl" "${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts/research-grid.kdl"
-install_one "$repo_root/config/zellij/layouts/implement-dual.kdl" "${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts/implement-dual.kdl"
-install_one "$repo_root/config/zellij/layouts/vibecrafted.kdl" "${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts/vibecrafted.kdl"
-install_one "$repo_root/config/zellij/layouts/mission-control.kdl" "${XDG_CONFIG_HOME:-$HOME/.config}/zellij/layouts/mission-control.kdl"
+install_one "$repo_root/config/starship.toml" "$frontier_root/starship.toml"
+install_one "$repo_root/config/atuin/config.toml" "$frontier_root/atuin/config.toml"
+install_one "$repo_root/config/zellij/config.kdl" "$frontier_root/zellij/config.kdl"
+install_one "$repo_root/config/zellij/layouts/vc-research.kdl" "$frontier_root/zellij/layouts/vc-research.kdl"
+install_one "$repo_root/config/zellij/layouts/vc-workflow.kdl" "$frontier_root/zellij/layouts/vc-workflow.kdl"
+install_one "$repo_root/config/zellij/layouts/vc-marbles.kdl" "$frontier_root/zellij/layouts/vc-marbles.kdl"
+install_one "$repo_root/config/zellij/layouts/vc-dashboard.kdl" "$frontier_root/zellij/layouts/vc-dashboard.kdl"
+install_one "$repo_root/config/zellij/layouts/vibecrafted.kdl" "$frontier_root/zellij/layouts/vibecrafted.kdl"
 
 printf 'Done.\n'

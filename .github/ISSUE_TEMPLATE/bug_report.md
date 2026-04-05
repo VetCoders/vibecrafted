@@ -30,7 +30,7 @@ What should have happened instead?
 ## Evidence
 
 - Relevant command output:
-- Artifact path under `~/.vibecrafted/artifacts/`:
+- Artifact path under `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/`:
 - Screenshots or screen recording:
 
 ## Additional context

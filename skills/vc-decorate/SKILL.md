@@ -96,7 +96,7 @@ too thin to explain how the experience actually feels in motion.
 
 ### Unicode Toolkit for CLI
 
-VibeCrafted ships a Unicode database (2601 characters, 13 categories) and a
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. ships a Unicode database (2601 characters, 13 categories) and a
 unicode-puzzles-mcp server. Use them for CLI decoration instead of
 guessing code points or hardcoding ANSI escape sequences.
 
@@ -181,7 +181,8 @@ scaffold → init → workflow → followup → marbles → dou → [DECORATE] �
                                                         ^^^^^^^^^^^
 ```
 
-Decorate sits after `dou`, ensuring the now-complete product surface is visually coherent before final packaging (`hydrate`) and shipping (`release`).
+Decorate sits after `dou`, ensuring the now-complete product surface is visually coherent before final packaging (
+`hydrate`) and shipping (`release`).
 
 ---
 
@@ -199,7 +200,8 @@ The user's actual visual language:
 
 Things that merely accumulated:
 
-- inconsistent border radii, mismatched spacing, conflicting button styles, random hover behaviors, or prototype artifacts.
+- inconsistent border radii, mismatched spacing, conflicting button styles, random hover behaviors, or prototype
+  artifacts.
 
 Decorate should preserve **identity** and reduce **drift**.
 
@@ -233,4 +235,4 @@ Step 5: Verify
 ---
 
 _Phase 3 — Ship (dou → decorate → hydrate → release)_
-_Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
+_Vibecrafted with AI Agents by VetCoders (c)2024-2026 VetCoders_

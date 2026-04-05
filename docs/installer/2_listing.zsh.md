@@ -20,7 +20,7 @@
     - Workflows (9 basic, 7 advanced)
     - Helpers and binaries (executables and functions)
   3. Post-installation setup
-    - Workspace directories (in $HOME/.vibecrafted/)
+    - Workspace directories (in $VIBECRAFTED_ROOT/.vibecrafted/)
     - Symlinks for AI coding agents (in $HOME/.agents/)
   4. Verification and quick tour
 

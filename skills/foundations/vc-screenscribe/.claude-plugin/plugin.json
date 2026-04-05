@@ -1,0 +1,8 @@
+{
+  "name": "ScreenScribe",
+  "description": "Convert screen recordings into structured engineering findings. The bridge from visual demos to code truth.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

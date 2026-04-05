@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# VibeCrafted custom pre-commit hook
+# 𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭. pre-commit hook
 set -e
 
-echo "⚒  Running VibeCrafted pre-commit hooks..."
+echo "⚒  Running pre-commit checks..."
 
 STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
 
@@ -15,32 +15,33 @@ PY_FILES=()
 MD_YAML_FILES=()
 
 while IFS= read -r file; do
-    # Skip empty lines
     [ -z "$file" ] && continue
-    
     case "$file" in
-        *.sh|*.bash|*.zsh) SH_FILES+=("$file") ;;
+        *.sh|*.bash) SH_FILES+=("$file") ;;
         *.py) PY_FILES+=("$file") ;;
         *.md|*.yaml|*.yml) MD_YAML_FILES+=("$file") ;;
     esac
 done <<< "$STAGED_FILES"
 
 if [ ${#SH_FILES[@]} -gt 0 ]; then
-    echo "▸ shellcheck"
+    echo "▸ shellcheck (${#SH_FILES[@]} files)"
     python3 scripts/check_shell.py "${SH_FILES[@]}"
 fi
 
 if [ ${#PY_FILES[@]} -gt 0 ]; then
-    echo "▸ ruff"
-    ruff check --fix "${PY_FILES[@]}"
-    ruff format "${PY_FILES[@]}"
+    echo "▸ ruff (${#PY_FILES[@]} files)"
+    uvx ruff check --fix "${PY_FILES[@]}"
+    uvx ruff format "${PY_FILES[@]}"
     git add "${PY_FILES[@]}"
 fi
 
 if [ ${#MD_YAML_FILES[@]} -gt 0 ]; then
-    echo "▸ prettier"
-    npx prettier --write "${MD_YAML_FILES[@]}"
+    echo "▸ prettier (${#MD_YAML_FILES[@]} files)"
+    npx --yes prettier --write "${MD_YAML_FILES[@]}"
     git add "${MD_YAML_FILES[@]}"
 fi
 
-echo "✓ All pre-commit checks passed!"
+echo "▸ semgrep"
+semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity
+
+echo "✓ Pre-commit passed"

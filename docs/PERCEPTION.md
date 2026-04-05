@@ -1,21 +1,64 @@
-# PERCEPTION: How Agents See the Codebase
+# Perception: How Agents See the Codebase
 
-In the VibeCrafted framework, agents don't just "read code"—they _perceive_ the architecture. We achieve this primarily through **loctree**.
+Language models cannot guess architecture topology.
+And they should not pretend to.
 
-## Loctree integration
+In 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍., agents do not "read code" — they **perceive** structure
+through instruments. The instruments deliver objective truth.
+The agent delivers interpretation and action.
 
-Loctree MCP provides structural code intelligence. Our agents start every deep architectural task by gaining codebase awareness through these baseline tools:
+## Loctree: Your Senses
 
-- `repo-view` - The entry point. It gives an overview of files, lines of code (LOC), languages, codebase health, and top hubs.
-- `slice` - Before modifying a file, an agent runs this to see the file itself, all of its dependencies, and crucially, its consumers (who imports it).
-- `find` - Before creating or redefining, agents search for symbols globally (with regex), finding definitions or mapping functional "crowds."
-- `impact` - Before deleting or doing a major refactor, agents analyze the blast radius (direct and transitive consumers).
-- `focus` - Used to understand a specific module, viewing internal edges and external dependencies.
-- `tree` - A directory structure with LOC counts for spatial orientation.
-- `follow` - Used to pursue structural signals, such as dead code, cycles, duplicate exports, and event pipelines.
+Loctree MCP is the primary perception layer. Every tool is a different sense:
 
-## The VibeCrafted Principle
+| Sense            | Tool        | What it reveals                                         |
+| ---------------- | ----------- | ------------------------------------------------------- |
+| **Overview**     | `repo-view` | Files, LOC, languages, health score, top hubs           |
+| **Focus**        | `focus`     | Module internals, edges, external dependencies          |
+| **X-Ray**        | `slice`     | File + all dependencies + all consumers in one view     |
+| **Blast Radius** | `impact`    | What breaks if you touch this file                      |
+| **Search**       | `find`      | Does this symbol already exist? (regex, multi-query)    |
+| **Signals**      | `follow`    | Dead code, cycles, twins, hotspots — field-level detail |
+| **Layout**       | `tree`      | Directory structure with LOC counts                     |
 
-Agents working within a "Living Tree" (a shared workspace) use these tools to proactively avoid collisions, understand side-effects, and make safe architectural decisions without demanding constant human micromanagement.
+## The Discipline
 
-When you install VibeCrafted, you gain this augmented perception engine by default in your AI context workflows.
+Before editing, an agent maps. Before deleting, an agent measures blast
+radius. Before creating, an agent searches for existing parts.
+
+This is not overhead. This is the difference between a craftsman who
+studies the material and one who cuts blind.
+
+```
+1. repo-view    → know the territory
+2. focus        → narrow the scope
+3. slice        → X-ray before cutting
+4. impact       → measure what depends on your target
+5. find         → check if the part already exists
+6. follow       → pursue structural symptoms to root cause
+7. grep/read    → now detail matters
+8. validate     → run gates, confirm the patient is stable
+```
+
+## Dual-Source Truth
+
+When multiple senses disagree, the disagreement is the signal:
+
+- `sniff` says an export is dead → `dist` says it is in the bundle
+- That disagreement reveals a dynamic import the static analysis missed
+- The correction eliminates an entire class of false positives
+
+This is convergence through counterexample applied to perception itself.
+
+## Living Tree
+
+Agents working in a shared workspace use these senses to avoid collisions,
+understand side-effects, and make safe decisions without demanding constant
+human micromanagement.
+
+When you install 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍., this perception engine is available by default
+in every AI session.
+
+---
+
+`// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞`

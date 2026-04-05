@@ -3,7 +3,7 @@
               ⚒ ＶｉｂｅＣｒａｆｔｅｄ ⚒
               𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝 (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
 ─────────────────────────────────────────────────────────
-  Welcome to The VibeCrafted
+  Welcome to The  ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
 
   This setup will install and configure The Framework
   and all of its required foundation packages and
@@ -15,7 +15,7 @@
 
   Each step says what changes, why it matters, and
   we will provide you a summary before we touch your
-  filesystem. Do do it so friendly as we want it to
+  filesystem. To do it so friendly as we want it to
   keep we need to checkout some things if you agree.
 
   This installer will guide you through the setup but

@@ -1,0 +1,34 @@
+// vc-marbles — convergence workspace
+// Launch: vibecrafted marbles dashboard | vibecrafted dashboard vc-marbles
+//
+// Top 60%: operator consoles (agent left, user right)
+// Bottom 40%: run monitoring (convergence + sessions)
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="zellij:compact-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+    }
+    tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Marbles" focus=true {
+        pane split_direction="horizontal" {
+            // Operator consoles — top 60%
+            pane split_direction="vertical" size="60%" {
+                pane name="agent" size="50%" focus=true
+                pane name="operator" size="50%"
+            }
+            // Run monitoring — bottom 40%
+            pane split_direction="vertical" size="40%" {
+                pane name="convergence" command="bash" {
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:-}/skills/vc-agents\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Convergence monitor not found.\\n'; sleep 3600"
+                }
+                pane name="sessions" command="bash" {
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:-}/skills/vc-agents\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Sessions monitor not found.\\n'; sleep 3600"
+                }
+            }
+        }
+    }
+}

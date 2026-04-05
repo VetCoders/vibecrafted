@@ -25,7 +25,8 @@ description: >
 Use this skill only when all of the following are true:
 
 - The task is small, bounded, or clearly low-risk for native delegation
-- The task does not need model-specific strengths such as Codex purity, Claude investigative nature, or Gemini creativity
+- The task does not need model-specific strengths such as Codex purity, Claude investigative nature, or Gemini
+  creativity
 - You want in-session visibility more than runtime robustness
 - Terminal/CLI agent runtime is unavailable, undesirable, or disproportionate
 
@@ -64,7 +65,8 @@ Use this decision rule everywhere in VetCoders skills:
 
 1. `vc-agents` is the default first choice.
 2. `vc-delegate` is allowed only when the task is small or does not need model-specific-only features.
-3. If you want Codex purity, Claude's investigative nature, Gemini creativity, durable artifacts, or external robustness, choose `vc-agents`.
+3. If you want Codex purity, Claude's investigative nature, Gemini creativity, durable artifacts, or external
+   robustness, choose `vc-agents`.
 
 ## Standard Workflow
 
@@ -74,7 +76,7 @@ Same convention as `vc-agents`:
 
 ```bash
 ROOT="$(git rev-parse --show-toplevel)"
-source "$VIBECRAFT_ROOT/skills/vc-agents/scripts/common.sh"
+source "$VIBECRAFTED_ROOT/skills/vc-agents/scripts/common.sh"
 ARTIFACT_DAY="$(spawn_store_dir "$ROOT")"
 
 mkdir -p "$ARTIFACT_DAY"/{plans,reports,tmp}
@@ -83,7 +85,7 @@ mkdir -p "$ARTIFACT_DAY"/{plans,reports,tmp}
 ### 2. Write Plans
 
 Write one plan per subagent to
-`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/`.
+`$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/`.
 Use the same plan template as `vc-agents`:
 
 ```markdown
@@ -119,7 +121,7 @@ Context:
 
 Living tree note:
 
-- You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
+- You work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology, so concurrent changes are expected.
 - Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
 - Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 ```
@@ -186,7 +188,7 @@ Task tool returns results directly to the conversation.
 
 ```
 Write report to:
-`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_<task>_claude_task_claude.md`
+`$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_<task>_claude_task_claude.md`
 ```
 
 Format:
@@ -237,7 +239,7 @@ After all agents return, the primary agent (you):
 ```
 ## Context
 Project: $ROOT
-Artifact root: ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
+Artifact root: $VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
 Context file: plans/<ts>_<slug>_CONTEXT.md
 Research file: plans/<ts>_<slug>_RESEARCH.md
 
@@ -250,7 +252,7 @@ Use loctree MCP tools as your primary exploration layer:
 Never edit code without mapping it first.
 
 ## Living Tree
-You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
+You work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology, so concurrent changes are expected.
 Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
 Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 ```
@@ -328,7 +330,7 @@ Switch to `vc-agents` when:
 - Agent needs to install dependencies or modify system state
 - Task will take >10 minutes of agent time
 
-## Integration with VibeCrafted Pipeline
+## Integration with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Pipeline
 
 ```
 scaffold → init → workflow → followup → marbles → dou → decorate → hydrate → release
@@ -339,14 +341,14 @@ The pipeline accepts both skills, but they are not equal defaults.
 Use `vc-agents` first. Reach for `vc-delegate` only for small,
 model-agnostic, or environment-constrained work. The pipeline only requires
 the canonical `plans/` and `reports/` directories under
-`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/`.
+`$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/`.
 
 ## Output Convention
 
 Same as `vc-agents` — full compatibility:
 
-- Plans: `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<task>_claude_task_claude.md`
-- Reports: `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_<task>_claude_task_claude.md`
+- Plans: `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<task>_claude_task_claude.md`
+- Reports: `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_<task>_claude_task_claude.md`
 - Agent suffix: `_claude-task` (vs `_codex` or `_claude` for spawn)
 
 ## Anti-Patterns
@@ -373,4 +375,4 @@ Why this exists alongside `vc-agents`:
 
 ---
 
-_Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
+_Vibecrafted with AI Agents by VetCoders (c)2024-2026 VetCoders_

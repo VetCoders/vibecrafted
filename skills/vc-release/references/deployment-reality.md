@@ -4,7 +4,8 @@ When to use what. Real costs. No abstractions.
 
 ## Nginx
 
-**What it is:** Ancient, fast, battle-tested reverse proxy and web server. Handles millions of concurrent connections. Devops standard.
+**What it is:** Ancient, fast, battle-tested reverse proxy and web server. Handles millions of concurrent connections.
+Devops standard.
 
 **How you set it up:**
 
@@ -38,7 +39,8 @@ When to use what. Real costs. No abstractions.
 
 ## Docker
 
-**What it is:** Container runtime. Reproducible deployment. Your app + dependencies = one image. Guaranteed to work the same everywhere.
+**What it is:** Container runtime. Reproducible deployment. Your app + dependencies = one image. Guaranteed to work the
+same everywhere.
 
 **How you set it up:**
 
@@ -72,7 +74,8 @@ When to use what. Real costs. No abstractions.
 
 ## Caddy
 
-**What it is:** Modern HTTP server. Automatic HTTPS. Minimal config. Built-in reverse proxy. Single binary, no dependencies.
+**What it is:** Modern HTTP server. Automatic HTTPS. Minimal config. Built-in reverse proxy. Single binary, no
+dependencies.
 
 **How you set it up:**
 

@@ -1,0 +1,20 @@
+// vc-workflow — ERi implementation workspace
+// Launch: vibecrafted dashboard vc-workflow
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="zellij:compact-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+    }
+    tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Workflow" split_direction="vertical" {
+        pane name="main" size="70%" focus=true command="zsh"
+        pane split_direction="horizontal" {
+            pane name="agent-1" command="zsh"
+            pane name="agent-2" command="zsh"
+        }
+    }
+}

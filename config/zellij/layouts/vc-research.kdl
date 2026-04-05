@@ -1,0 +1,25 @@
+// vc-research — triple-agent research workspace
+// Launch: vibecrafted dashboard vc-research
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="zellij:compact-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+    }
+    tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Research" {
+        pane split_direction="vertical" {
+            pane split_direction="horizontal" {
+                pane name="claude" command="zsh"
+                pane name="codex" command="zsh"
+            }
+            pane split_direction="horizontal" {
+                pane name="gemini" command="zsh"
+                pane name="synthesis" focus=true command="zsh"
+            }
+        }
+    }
+}

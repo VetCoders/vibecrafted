@@ -1,6 +1,7 @@
 # Quick Start
 
-You have a repo. You have AI agents. You want them to stop breaking things and start shipping.
+You have a repo. You have AI agents. You want them to stop guessing
+and start converging.
 
 ## 1. Install
 
@@ -9,134 +10,97 @@ curl -fsSLO https://raw.githubusercontent.com/VetCoders/vibecrafted/main/install
 bash install.sh
 ```
 
-The bootstrap is non-destructive and stages its local control plane under `~/.vibecrafted/tools/`.
-Then the orchestrator becomes interactive. It tells you what it does before it does it.
-It asks before touching your shell config. Everything is reversible with `make -C ~/.vibecrafted/tools/vibecrafted-current uninstall`.
+Non-destructive. Interactive. Tells you what it does before it does it.
+Asks before touching your shell config. Everything reversible with
+`make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current uninstall`.
 
-After install, open a new terminal (or `source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"`).
+After install, open a new terminal or:
+
+```bash
+source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"
+```
 
 ## 2. Verify
 
 ```bash
-make -C ~/.vibecrafted/tools/vibecrafted-current doctor
+make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current doctor
 ```
 
-If you see green — you're good. If something is yellow — the doctor tells you why.
+Green means ready. Yellow means the doctor tells you why.
 
-## 3. Your first pipeline
+## 3. Orient your agent
 
-Go to any git repo you're working on:
+Go to any git repo:
 
-```
-cd ~/your-project
-```
-
-Start a Claude Code session and say:
-
-```
-Init session
+```bash
+cd $VIBECRAFTED_ROOT/your-project
+vibecrafted init claude
 ```
 
-This runs `vc-init` — it reads your repo history, maps the structure, and runs quality gates. Your agent now knows what it's looking at instead of guessing.
+This runs `vibecrafted init claude` — the command-deck front door for `vc-init`.
+Your agent gets three things before touching anything:
+
+- **Memory** — what was done before (indexed session history)
+- **Sight** — what the code looks like now (structural map via loctree)
+- **Ground truth** — whether quality gates actually pass
+
+Your agent now has orientation instead of assumptions.
 
 ## 4. Build something
 
-```
-Just do: add user authentication with JWT
+```bash
+vibecrafted justdo codex --prompt "Add user authentication with JWT"
 ```
 
-That's it. `vc-justdo` chains the entire pipeline:
+`vibecrafted justdo` chains the entire pipeline through `vc-justdo`:
 
 - **Craft** — examines the repo, researches the approach, implements
-- **Converge** — runs marbles loops until P0/P1/P2 are all zero
-- **Ship** — checks product surface, decorates, hydrates, releases to market
+- **Converge** — runs marbles loops: _"what is still wrong?"_ → fix → repeat
+- **Ship** — checks product surface, decorates, packages for release
 
-You can also run phases individually:
+## 5. Run phases individually
 
-```
-Scaffold this                           (vc-scaffold — architecture planning)
-Init session                            (vc-init — context bootstrap)
-ERi pipeline for adding auth module     (vc-workflow)
-Follow-up check                         (vc-followup)
-Marbles -- loop until clean             (vc-marbles)
-DoU audit -- are we shippable?          (vc-dou)
-Decorate                                (vc-decorate — visual coherence)
-Hydrate                                 (vc-hydrate — packaging & SEO)
-Release prep -- launch/deploy path      (vc-release)
-```
-
-## 5. Spawn the fleet
-
-When one agent isn't enough, spawn external agents in parallel:
-
-```
-codex-implement .vibecrafted/plans/my-plan.md
-claude-research .vibecrafted/plans/my-plan.md
-gemini-implement .vibecrafted/plans/my-plan.md
+```bash
+vibecrafted scaffold claude --prompt "Plan the auth architecture"   # vc-scaffold
+vibecrafted init claude                                             # vc-init
+vibecrafted workflow claude --prompt "Plan and implement auth"      # vc-workflow
+vibecrafted followup codex --prompt "Audit the auth changes"        # vc-followup
+vibecrafted marbles codex --count 3 --depth 3                       # vc-marbles
+vibecrafted dou claude --prompt "Audit launch readiness"            # vc-dou
+vibecrafted decorate codex --prompt "Polish the surface"            # vc-decorate
+vibecrafted hydrate codex --prompt "Package the product"            # vc-hydrate
+vibecrafted release codex --prompt "Prepare release steps"          # vc-release
 ```
 
-Or use skill-specific shortcuts:
+## 6. Multi-agent research
+
+For hard problems, send the same question to multiple planners:
 
 ```
-codex-dou           (Definition of Undone audit via Codex)
-claude-marbles      (convergence loop via Claude)
-gemini-hydrate      (market packaging via Gemini)
+Research: what is the best auth strategy for this codebase?
 ```
 
-Each agent works in its own terminal. Reports land in `~/.vibecrafted/artifacts/`.
+`vc-partner` sends the same plan to Claude, Codex, and Gemini independently.
+You get three expert opinions. Synthesize the strongest parts. Resume the
+winning agent into implementation.
 
-## 6. Check what they did
+## 7. Convergence loops
 
-```
-codex-observe --last
-claude-observe --last
-```
+When the code is close but not done:
 
-## 7. Keep iterating
-
-VibeCrafted is not a one-shot tool. It's a loop:
-
-```
-Build something → Check what broke → Fix it → Check again → Ship when clean
+```bash
+vibecrafted marbles codex --prompt "Fill the gaps on the auth module" --count 3
 ```
 
-The framework does this for you. You provide the vision. Agents provide the labor.
+The agent enters a convergence loop — tools find what is wrong, agent fixes it,
+tools check the new landscape, repeat. Stops when no tool can find a single
+remaining accusation.
+
+## The tab trick
+
+Type `vibecrafted help` for the command deck. Once shell helpers are loaded,
+`vc-` wrappers stay available as shortcuts.
 
 ---
 
-## What you need
-
-- macOS or Linux
-- One or more AI agent CLIs: `claude`, `codex`, `gemini`
-- Python 3.10+ and Git
-- Optionally: `cargo` (to install loctree-mcp, aicx-mcp, prview from source)
-
-## What you get
-
-```
-~/.vibecrafted/
-  skills/        17 VibeCrafted skills, readable by all your agents
-  artifacts/     Plans, reports, transcripts — organized by project and date
-  tools/         Staged control plane used by the bootstrap installer
-  helpers/       Shell commands (codex-implement, claude-plan, etc.)
-```
-
-Symlinks in `~/.agents/skills/`, `~/.claude/skills/`, and `~/.codex/skills/` point to the central store by default. `~/.gemini/skills/` can still be added selectively.
-
-## Vocabulary
-
-| You say           | Framework does                                  |
-| ----------------- | ----------------------------------------------- |
-| "Init session"    | Reads history, maps repo, runs gates            |
-| "Just do: ..."    | Full pipeline end-to-end                        |
-| "Scaffold this"   | Founder-first architecture and scoping plan     |
-| "Release this"    | Launch, deploy, and market-readiness mechanics  |
-| "Follow-up check" | P0/P1/P2 triage of what's broken                |
-| "Marbles"         | Convergence loop until clean                    |
-| "DoU audit"       | Gap analysis: code vs. shippable product        |
-| "Decorate"        | Visual polish using your existing design tokens |
-| "Hydrate"         | Market packaging, SEO, distribution             |
-
----
-
-VibeCrafted by VetCoders | https://vetcoders.github.io/vibecrafted/
+`// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞`

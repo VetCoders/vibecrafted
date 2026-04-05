@@ -75,7 +75,7 @@ done
 }
 spawn_require_file "$plan_file"
 spawn_validate_runtime "$runtime"
-spawn_prepare_paths gemini "$plan_file" "$root"
+spawn_prepare_paths gemini "$plan_file" "$root" "$mode"
 spawn_scan_active "$SPAWN_REPORT_DIR"
 runtime_input="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_SLUG}_gemini_prompt.md"
 spawn_build_runtime_prompt "$SPAWN_PLAN" "$runtime_input" "$SPAWN_REPORT" gemini
@@ -93,13 +93,15 @@ qmodel="$(printf '%q' "$model")"
 # shellcheck disable=SC2016
 gemini_success_hook='
   if [[ ! -s "$report" && -s "$transcript" ]]; then
-    cp "$transcript" "$report"
+    spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "completed"
+    cat "$transcript" >> "$report"
   fi'
 
 # shellcheck disable=SC2016
 gemini_failure_hook='
   if [[ ! -s "$report" && -s "$transcript" ]]; then
-    cp "$transcript" "$report"
+    spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "failed"
+    cat "$transcript" >> "$report"
   fi'
 
 model_flag=""
@@ -130,5 +132,5 @@ spawn_generate_launcher "$SPAWN_LAUNCHER" \
 chmod +x "$SPAWN_LAUNCHER"
 spawn_print_launch gemini "$mode" "$runtime"
 [[ -n "$model" ]] && printf '  model:  %s\n' "$model" || printf '  model:  (CLI default)\n'
-spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run"
+spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run" "gemini-${VIBECRAFTED_SKILL_NAME:-$mode}"
 printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"

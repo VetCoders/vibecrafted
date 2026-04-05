@@ -1,231 +1,131 @@
-# The VibeCrafted Manifesto
+# ݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. - A Framework that created itself
 
-We do not treat AI like magic.
+## The **Definition of Undone**
 
-We treat it like a stochastic engine that can accelerate craft, multiply leverage, and still produce noise if left without structure.
+**݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.** is a framework for AI-Native Software Development. It allows you to take the acceptance criteria, DoDs, and other goals you put into your Agents' prompts, and transform them from "Pending" to "Done".
 
-VibeCrafted exists because fragile prompting is not a development methodology.
-Shipping requires shape.
-Shipping requires taste.
-Shipping requires pressure against chaos.
+It does not promise that AI "will write your code"—it's obvious it will. It promises it may help you break the ceiling of blockers that prevent you from delivering production readiness.
+It promises something stronger and much more valuable: that the code will be validated not just by the AI itself, but will be pushed through a rigid loop of finding errors, fixing them, and verifying them again until it is truly ready for release.
 
-## We believe code is craft
+## The **80/20** Rule
 
-Code is not paperwork.
-Code is not an accidental byproduct of tickets.
-Code is not “done” because a narrow check turned green.
+Many methods and tools leave you with a first draft.
+Some can deliver half of the job.
+There are brilliant sets of tools so overly complex that they are out of the reach for non-programmers.
+But if you try, learn, and push your boundaries, it would bring you to your first professional test-deployment.
 
-Code is craft.
+This is sometimes up to **80/100** of the job.
 
-Good systems are shaped.
-They are cut, refined, tested against reality, and made legible to the people who must use them.
-Local elegance is not enough.
-Runtime truth matters more than theoretical correctness.
-Product truth matters more than internal neatness.
+## The **20/80** Rule
 
-## We believe real builders can come from anywhere
+At this stage, the proportions revert and you discover that the 80 percent you have is actually 20 percent of the effort you'll pay.
 
-VibeCrafted was built by people outside the traditional priesthood of software.
-That is not an apology.
-That is evidence.
+AI Augmented Coding gets you far, but solving the final conflict requires convergence:
 
-The point was never pedigree.
-The point was whether the thing could be made real.
+```𝚍𝚒𝚏𝚏
+# ================= #
+#  * ݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.*  #
+# ================= #
 
-We respect clear thinking, real execution, and systems that survive contact with reality.
-Everything else is costume.
+<<<<<<<<< 𝚃𝚑𝚎𝚒𝚛𝚜
 
-## Vibecrafting is a real engineering mode
+  "𝙿𝚛𝚘𝚍𝚞𝚌𝚝𝚒𝚘𝚗 𝚁𝚎𝚊𝚍𝚢"
 
-What some people dismiss as “vibe coding” becomes powerful only when discipline enters the room.
+========
 
-Vibecrafting is structured human-AI collaborative engineering [1].
-It is not blind prompting.
-It is not random generation with post-rationalized hope.
-It is a mixed-initiative process with constraints, checkpoints, and ruthless feedback loops [1].
+  "𝙰𝚕𝚠𝚊𝚢𝚜 𝚒𝚗 𝚙𝚛𝚘𝚍𝚞𝚌𝚝𝚒𝚘𝚗."
 
-Human taste sets the direction.
-Agentic force expands the search space.
-Reality decides what survives.
+>>>>>>>> 𝚈𝚘𝚞𝚛𝚜
+```
 
-## Marbles is how noise becomes product
+Its most important question is:
 
-Every AI system introduces variance [2].
-Every generation adds noise.
-That is not failure.
-That is physics.
+**"What is still wrong?"**
 
-The answer is not faith.
-The answer is convergence.
+This question boots the entire system.
+First, the agent receives the repository structure, the history of decisions, and context. Then, the framework finds whatever is still broken, unclosed, or just "looks good" but covers a void. Next, it fixes the problem, checks the effect, and repeats the loop until nothing important is left.
+This is not a promise of a "smarter model." It is the promise of a process that converges to quality.
 
-We loop.
-We inspect.
-We add counterexamples.
-We reduce entropy.
-We keep going until the circle is full.
+That is why ݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. is not just another AI coding tool.
+It is a framework for taking code from an AI draft to a state where you can confidently ship it.
 
-Marbles is not repetition for its own sake.
-It is counterexample-guided stochastic convergence [2].
-Early loops remove structural breakage.
-Late loops remove residue, drag, and polish debt.
-The loop ends when the thing stops lying about being done.
+And there is one more piece of evidence that cannot be easily faked:
+**The framework built itself.**
 
-## Structure comes before output
+Its skills.
+Its installer.
+Its pipeline.
+Its documentation.
+Its website.
+Its distribution channels.
 
-Large models are powerful and forgetful.
-They lose the middle.
-They hallucinate continuity.
-They write into local context while breaking global shape.
+If it can organize and expand its own system, it can do the same with yours.
 
-That is why architecture must be externalized [3].
+## The Origin Story
 
-Loctree and structural mapping are not accessories.
-They are memory prosthetics.
-They force the system to see the whole before cutting the part.
-Without structure, generation is imitation.
-With structure, generation becomes engineering [3].
+The history of its creation isn't typical.
+It started with two veterinarians who wanted to use AI to build a tool supporting other veterinarians. They were not programmers. They had vision, stubbornness, and a belief that AI could be used to build a product independently. At first, it worked. The code was written. The application grew. Then came the second phase: the models began getting lost in their own code, adding unnecessary layers, and "fixing" things that weren't broken.
 
-## “Done” is a market condition
+Then, instead of messaging the AI "build this," a new question emerged:
 
-A passing test suite is good.
-A healthy repo is good.
-A clean architecture is good.
+**"What is still wrong?"**
 
-None of that is enough.
+From this frustration, a new prompt wasn't born. A methodology was.
+And from that methodology, this framework was born.
 
-If nobody can find the product, install it, trust it, understand it, or buy it, then it is not done.
+Underneath, ݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. ties together several key layers:
 
-This is the Definition of Undone [4].
+- Tools for reading the repository structure, so the agent doesn't guess the architecture.
+- Intentions retrieval memory, so it doesn't start from scratch every session.
+- Follow-up and Marbles loops, which systematically reduce errors.
+- Multi-agent orchestration, because one perspective isn't enough.
+- The shipping layer, which guards not just the code, but the product's readiness for real-world use.
 
-Most unfinished products do not fail because the code is impossible.
-They fail because the external surface remains broken:
-the onboarding,
-the docs,
-the install path,
-the discoverability,
-the credibility,
-the conversion path.
+This means ݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. doesn't stop at "it works on my machine."
+It keeps asking:
 
-Shipping begins where technical self-congratulation ends.
+- Can it be found?
+- Can it be understood?
+- Can it be installed?
+- Can someone trust it?
+- Can it actually be shipped?
 
-## We prefer the better shape
+That is what separates working code from a finished product.
 
-We do not preserve bad architecture out of politeness.
-We do not worship backward compatibility when the current shape is actively harmful.
-We do not confuse migration cost with strategic wisdom.
-We do not defend scar tissue because it is old.
+## Who is it for?
 
-If a patch is enough, patch.
-If the shape is wrong, rewrite.
-If the code should not exist, remove it.
+݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. solves problems for several groups simultaneously:
 
-A clean cut is often kinder than indefinite maintenance of something broken.
+- **For founders** who want to build faster without the chaos.
+- **For skeptical developers** who don't believe that AI-native coding is capable of delivering production-ready software natively.
+- **For startups** that want to accelerate without tons of heavy tech debt.
+- **For teams** that need an auditable trail, not a black box.
+- **For neurodivergent** individuals who are more willing to cooperate with algorithms than other humans.
 
-## We work in living systems
+AI Agents will create a solid base up to a certain level.
+݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. will find what is still wrong and help break the 80/20 threshold ceiling.
+And it will keep returning to that question until the answer is: nothing.
 
-Real product trees are alive.
-Other people are editing.
-Context shifts.
-Assumptions go stale.
-The repo is never a museum.
-
-That is not chaos.
-That is the condition of modern building.
-
-So we re-read.
-We adapt.
-We avoid stale certainty.
-We do not revert what we do not understand.
-We work with movement, not against it.
-
-## We optimize for first real users
-
-Early products do not need theatrical optionality.
-They need one sharp use case.
-One believable promise.
-One path that works.
-
-A blurry platform is often just fear wearing a product costume.
-
-We prefer clarity over coverage.
-We prefer one working funnel over a hundred half-ideas.
-We prefer the smallest surface that proves truth.
-
-## We reject false reassurance
-
-We reject:
-
-- green CI as proof of readiness
-- tiny diffs as proof of wisdom
-- backward compatibility by reflex
-- fake abstractions that only hide confusion
-- framework rituals without payoff
-- internal capability mistaken for external completion
-- parallel systems created to avoid one necessary cleanup
-
-A system can be technically impressive and still commercially unfinished.
-It can be elegant and still unusable.
-It can compile and still be dead.
-
-## VibeCrafted is not anti-science
-
-It was born from practice, but it stands on real ground.
-
-We do not choose between intuition and rigor.
-We use intuition to find shape and rigor to prove it.
-
-SHACE, Marbles, Loctree Mapping, and PSCD are original VibeCrafted concepts.
-They were discovered under pressure, not borrowed from papers.
-But they did not emerge in a vacuum.
-
-## The job is to ship
-
-Not to impress.
-Not to preserve internal myths.
-Not to accumulate elegant fragments.
-
-The job is to turn rough systems into useful, credible, sellable tools.
-
-That means:
-diagnose what is actually wrong,
-reframe toward the better shape,
-cut dead weight,
-implement decisively,
-verify reality,
-and surface the next truth.
-
-That is the work.
-
-## Final line
-
-Move fast, but with taste.
-
-Be radical when radical is cleaner.
-Be practical when practical wins.
-Finish the whole thing, not just the code.
-
-VibeCrafted is for builders who are done pretending that chaos is a process.
-We craft.
-We converge.
-We ship.
+It is not a framework that promises magic.
+It is a framework that forces completion.
 
 ---
 
-## Influences
+### TL;DR (The Short Version)
 
-1. **Kief Morris; Birgitta Böckeler (Thoughtworks / Martin Fowler, 2026).**
-   _Humans and Agents in Software Engineering Loops_, _Harness Engineering_, _Context Engineering for Coding Agents_.
-   Inspiration for the why-loop / how-loop framing, harness design, and human-guided agent workflows.
+݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. is a convergence framework for AI-native software development.
 
-2. **AST-T5 (2024); GraphCodeBERT (ICLR 2021).**
-   Structure-aware code modeling research showing that models benefit from richer code structure than flat token streams alone.
-   GraphCodeBERT uses data flow, not AST. The distinction matters.
+It is not meant to have AI write code for you.
+It is meant to take the code generated by AI through a loop: find the problem, fix it, check it again — until nothing important is left.
 
-3. **Ward Cunningham (1992) and later technical debt literature.**
-   Foundation for the debt metaphor and the idea that working code is not the same thing as a healthy, shippable system.
+Its fundamental question is:
 
-4. **CEGIS / counterexample-guided optimization literature (incl. AAAI 2025).**
-   Inspiration for iterative refinement driven by failure signals, counterexamples, and convergence pressure.
+**"What is still wrong?"**
 
-5. **VibeCrafted / VetCoders.**
-   SHACE, Marbles, Loctree Mapping, and PSCD are original VibeCrafted concepts built from practice, not borrowed labels.
+Most tools finish their work at the first draft.
+݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. starts exactly there.
+
+The framework built itself: its skills, installer, pipeline, docs, and website. If it can organize its own system, it can do the same to yours.
+
+This is not a promise of intelligence.
+It is a promise of a process that converges to quality.

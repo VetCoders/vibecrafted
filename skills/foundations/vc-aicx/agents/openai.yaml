@@ -1,0 +1,4 @@
+interface:
+  display_name: "AICX Extract"
+  short_description: "Recover large agent outputs"
+  default_prompt: "Recover agent output from Claude JSONL files using `aicx extract`."

@@ -4,3 +4,53 @@ copy_command "pbcopy"
 mouse_mode true
 pane_frames true
 scroll_buffer_size 50000
+
+keybinds {
+    // We intentionally free the secondary Alt/Opt surface so Polish characters
+    // remain usable in the terminal. The replacement quick-actions live on
+    // Ctrl+Shift because plain Ctrl is already Zellij's primary mode modifier.
+    shared_except "locked" {
+        unbind "Alt f" "Alt n" "Alt i" "Alt o"
+        unbind "Alt h" "Alt Left" "Alt l" "Alt Right"
+        unbind "Alt j" "Alt Down" "Alt k" "Alt Up"
+        unbind "Alt =" "Alt +" "Alt -" "Alt [" "Alt ]"
+        unbind "Alt p" "Alt Shift p"
+        // Remove default Ctrl-mode switchers that clash with our Ctrl+Shift rebinds
+        unbind "Ctrl o" "Ctrl n" "Ctrl h" "Ctrl s"
+
+        bind "Ctrl Shift f" { ToggleFloatingPanes; }
+        bind "Ctrl Shift n" { NewPane; }
+        bind "Ctrl Shift i" { MoveTab "Left"; }
+        bind "Ctrl Shift o" { MoveTab "Right"; }
+        bind "Ctrl Shift h" "Ctrl Shift Left" { MoveFocusOrTab "Left"; }
+        bind "Ctrl Shift l" "Ctrl Shift Right" { MoveFocusOrTab "Right"; }
+        bind "Ctrl Shift j" "Ctrl Shift Down" { MoveFocus "Down"; }
+        bind "Ctrl Shift k" "Ctrl Shift Up" { MoveFocus "Up"; }
+        bind "Ctrl Shift =" "Ctrl Shift +" { Resize "Increase"; }
+        bind "Ctrl Shift -" { Resize "Decrease"; }
+        bind "Ctrl Shift [" { PreviousSwapLayout; }
+        bind "Ctrl Shift ]" { NextSwapLayout; }
+        bind "Ctrl Shift p" { TogglePaneInGroup; }
+        bind "Ctrl Shift g" { ToggleGroupMarking; }
+
+        // Session destruction is no longer one accidental chord away.
+        bind "Ctrl Shift q" { SwitchToMode "Session"; }
+    }
+
+    // Fast close should affect the current focus, not the entire session.
+    shared_except "locked" "tab" "session" {
+        bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }
+    }
+
+    tab {
+        bind "Ctrl q" { CloseTab; SwitchToMode "Normal"; }
+    }
+
+    // Native Zellij does not provide a modal confirm-on-quit action, so we use
+    // Session mode itself as the confirmation surface: enter with Ctrl+Shift+Q,
+    // press y to quit, n/Esc/Ctrl+Q to cancel.
+    session {
+        bind "y" { Quit; }
+        bind "n" "Esc" "Ctrl q" "Ctrl Shift q" { SwitchToMode "Normal"; }
+    }
+}

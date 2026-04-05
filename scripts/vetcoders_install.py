@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""VetCoders Smart Installer v2 — manifest-driven, multi-channel, interactive.
+"""𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Smart Installer v2 — manifest-driven, multi-channel, interactive.
 
 Subcommands:
-    install         Install the VetCoders skill bundle
+    install         Install the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skill bundle
     doctor          Verify installation health
-    list            Show available VetCoders skills and the runtime substrate beneath them
-    uninstall       Remove VetCoders skills, symlinks, and helpers
+    list            Show available 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills and the runtime substrate beneath them
+    uninstall       Remove 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills, symlinks, and helpers
     restore         Restore pre-install state from backup
 
 Usage:
@@ -40,6 +40,11 @@ try:
         separator as brand_separator,
         version_line as brand_version_line,
     )
+    from runtime_paths import (
+        read_version_file,
+        xdg_config_home,
+        vibecrafted_home,
+    )
 except (
     ModuleNotFoundError
 ):  # pragma: no cover - module import path depends on entrypoint
@@ -51,6 +56,11 @@ except (
         VAPOR_HEADER,
         separator as brand_separator,
         version_line as brand_version_line,
+    )
+    from scripts.runtime_paths import (
+        read_version_file,
+        xdg_config_home,
+        vibecrafted_home,
     )
 
 # ---------------------------------------------------------------------------
@@ -93,6 +103,7 @@ MISS = red("[missing]")
 WARN = yellow("[warn]")
 OPT = dim("[optional]")
 SKIP = dim("[skip]")
+
 
 # ---------------------------------------------------------------------------
 # Compact-mode output: TeeLogger + helpers
@@ -147,8 +158,8 @@ def _compact_line(out, icon: str, label: str, value: str) -> None:
 
 SKILL_CATEGORIES = {
     "pipeline": {
-        "label": "VetCoders Pipeline",
-        "description": "Core workflow skills: init, workflow, followup, marbles, dou, hydrate, ship",
+        "label": "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Pipeline",
+        "description": "Core workflow skills: init, workflow, followup, marbles, dou, hydrate, release",
         "prefix": "vc-",
     },
     "foundations": {
@@ -299,7 +310,8 @@ FOUNDATIONS: List[Foundation] = [
     ),
 ]
 
-RUNTIME_DEPS = ["python3", "git", "rsync"]
+RUNTIME_DEPS = ["python3", "git"]
+RECOMMENDED_DEPS = ["rsync"]
 OPTIONAL_DEPS = [
     "zsh"
 ]  # helpers work in bash and zsh; core install works without either
@@ -378,6 +390,10 @@ def detect_system_deps() -> Dict[str, Optional[str]]:
     result = {}
     for cmd in RUNTIME_DEPS:
         result[cmd] = shutil.which(cmd)
+    for cmd in RECOMMENDED_DEPS:
+        result[cmd] = shutil.which(cmd)
+    for cmd in OPTIONAL_DEPS:
+        result[cmd] = shutil.which(cmd)
     return result
 
 
@@ -402,10 +418,7 @@ def detect_cargo() -> Optional[str]:
 
 
 def get_framework_version(repo_root: Path) -> str:
-    version_file = repo_root / "VERSION"
-    if version_file.exists():
-        return version_file.read_text().strip()
-    return "unknown"
+    return read_version_file(repo_root)
 
 
 def get_repo_commit(repo_root: Path) -> str:
@@ -430,28 +443,13 @@ def get_repo_url(repo_root: Path) -> str:
         return ""
 
 
-def resolve_env_path(name: str, default: Path) -> Path:
-    raw = os.environ.get(name)
-    if raw:
-        return Path(raw).expanduser()
-    return default.expanduser()
-
-
-def xdg_config_home() -> Path:
-    return resolve_env_path("XDG_CONFIG_HOME", Path.home() / ".config")
-
-
-def vibecrafted_home() -> Path:
-    return resolve_env_path("VIBECRAFTED_HOME", Path.home() / ".vibecrafted")
-
-
 # ---------------------------------------------------------------------------
 # Skill discovery
 # ---------------------------------------------------------------------------
 
 
 def discover_skills(repo_root: Path) -> List[Path]:
-    """Find all canonical VetCoders skill directories."""
+    """Find all canonical 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skill directories."""
     skills = []
     skills_dir = repo_root / "skills"
     if not skills_dir.exists() or not skills_dir.is_dir():
@@ -904,8 +902,144 @@ def _old_zshrc_source_line() -> str:
     return '[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"'
 
 
+def _helper_surface_label(*, zsh_available: Optional[bool] = None) -> str:
+    helper_file = _helper_target_path()
+    legacy_file = _helper_legacy_path()
+    if zsh_available is None:
+        zsh_available = shutil.which("zsh") is not None
+
+    if helper_file.exists():
+        return "bash + zsh" if zsh_available else "bash only"
+    if legacy_file.exists():
+        return "legacy zsh"
+    return "not installed"
+
+
 def _launcher_path_line() -> str:
-    return 'export PATH="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/bin:$PATH"'
+    return 'export PATH="$HOME/.local/bin:$PATH"'
+
+
+def _run_smoke_command(
+    command: Sequence[str],
+    *,
+    env: Optional[Dict[str, str]] = None,
+    expected_text: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Run a small runtime smoke command and capture a concise result."""
+    try:
+        result = subprocess.run(
+            command,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return False, str(exc)
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    detail = stdout or stderr or f"exit {result.returncode}"
+
+    if result.returncode != 0:
+        return False, detail
+
+    if expected_text and expected_text not in stdout:
+        return False, f"missing expected text: {expected_text}"
+
+    return True, detail
+
+
+def _clean_legacy_rc_entries(content: str) -> Tuple[str, int]:
+    import re
+
+    lines = content.splitlines()
+    kept = []
+    skip_until = None
+    removed = 0
+
+    for cl in lines:
+        stripped = cl.strip()
+
+        # 1. Block cleanup
+        if skip_until:
+            removed += 1
+            if skip_until in stripped:
+                skip_until = None
+            continue
+
+        if (
+            stripped.startswith("# >>> VibeCraft")
+            or stripped.startswith("# <<< VibeCraft")
+            or stripped.startswith("# >>> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝")
+            or stripped.startswith("# <<< 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝")
+        ):
+            removed += 1
+            skip_until = "VibeCraft" if "VibeCraft" in stripped else "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝"
+            continue
+
+        # 2. Known source lines
+        if stripped.startswith("[[ -r ") and (
+            "vc-skills" in stripped or "vetcoders" in stripped
+        ):
+            removed += 1
+            continue
+        if stripped.startswith("source ") and (
+            "vc-skills" in stripped or "vetcoders" in stripped
+        ):
+            removed += 1
+            continue
+
+        # 3. Known exports
+        if (
+            stripped.startswith("export VIBECRAFTED_ROOT")
+            or stripped.startswith("export VIBECRAFT_ROOT")
+            or stripped.startswith("export VIBECRAFTED_HOME")
+            or stripped.startswith("export LOCTREE_NUDGE")
+        ):
+            removed += 1
+            continue
+        if stripped.startswith("export PATH=") and (
+            "vibecraft" in stripped.lower() and "/bin" in stripped.lower()
+        ):
+            removed += 1
+            continue
+
+        # 4. Known comments
+        if stripped.startswith("#"):
+            lower_comment = stripped.lower()
+            if (
+                any(
+                    x in lower_comment
+                    for x in [
+                        "vetcoders shell helpers",
+                        "vibecraft shell helpers",
+                        "vibecrafted shell helpers",
+                        "vibecraft launcher",
+                        "vibecrafted launcher",
+                        "vibecrafted. helper shim",
+                        "vibecrafted. launcher",
+                        "vibecrafted. shell helpers",
+                    ]
+                )
+                or "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝" in stripped
+            ):
+                removed += 1
+                continue
+
+        kept.append(cl)
+
+    joined = "\n".join(kept)
+    joined = re.sub(r"\n{3,}", "\n\n", joined)
+    if content.endswith("\n") and not joined.endswith("\n"):
+        joined += "\n"
+    if not joined:
+        joined = ""
+
+    # If the text changed, adjust removed count safely
+    if joined != content and removed == 0:
+        removed = 1
+
+    return joined, removed
 
 
 def _strip_rc_entry(
@@ -921,9 +1055,12 @@ def _strip_rc_entry(
         stripped = current.strip()
         if comment and stripped == f"# {comment}":
             next_idx = idx + 1
+            # allow empty lines in between comment and line
+            while next_idx < len(raw_lines) and not raw_lines[next_idx].strip():
+                next_idx += 1
             if next_idx < len(raw_lines) and raw_lines[next_idx].strip() == line:
-                removed += 2
-                idx += 2
+                removed += next_idx - idx + 1
+                idx = next_idx + 1
                 continue
         if stripped == line:
             removed += 1
@@ -939,7 +1076,50 @@ def _strip_rc_entry(
 
 
 def _rc_has_vibecrafted_bin_path(content: str) -> bool:
-    return "vibecrafted/bin" in content or ".vibecrafted/bin" in content
+    return (
+        ".local/bin" in content
+        or "vibecrafted/bin" in content
+        or ".vibecrafted/bin" in content
+    )
+
+
+HELPER_SHIM_MARKER = "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. helper shim. Generated by install-shell.sh."
+
+SKILL_WRAPPER_NAMES = [
+    "decorate",
+    "delegate",
+    "dou",
+    "followup",
+    "hydrate",
+    "justdo",
+    "marbles",
+    "partner",
+    "prune",
+    "release",
+    "research",
+    "review",
+    "scaffold",
+    "workflow",
+]
+
+LAUNCHER_WRAPPERS = [
+    "vc-help",
+    "vc-init",
+    "vc-resume",
+    "vc-agents",
+    *[f"vc-{name}" for name in SKILL_WRAPPER_NAMES],
+]
+
+
+def _launcher_bin_dirs() -> List[Path]:
+    dirs: List[Path] = []
+    for candidate in (
+        vibecrafted_home() / "bin",
+        Path.home() / ".local" / "bin",
+    ):
+        if candidate not in dirs:
+            dirs.append(candidate)
+    return dirs
 
 
 # ---------------------------------------------------------------------------
@@ -1043,7 +1223,7 @@ def report_helper_conflicts(
     print()
     print(
         yellow(
-            "  These files already contain non-VetCoders content — installer will NOT edit them."
+            "  These files already contain non-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. content — installer will NOT edit them."
         )
     )
 
@@ -1083,21 +1263,41 @@ def report_helper_conflicts(
 # ---------------------------------------------------------------------------
 
 
+_RSYNC_EXCLUDES = {".DS_Store", ".loctree"}
+
+
+def _copytree_skill(src: Path, dst: Path, mirror: bool = False) -> None:
+    """Pure-Python fallback when rsync is not available."""
+    if mirror and dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if item.name in _RSYNC_EXCLUDES:
+            continue
+        target = dst / item.name
+        if item.is_dir():
+            _copytree_skill(item, target, mirror=False)
+        else:
+            shutil.copy2(str(item), str(target))
+
+
 def rsync_skill(
     src: Path, dst: Path, dry_run: bool = False, mirror: bool = False
 ) -> None:
-    """Rsync a single skill directory."""
-    if not dry_run:
-        dst.mkdir(parents=True, exist_ok=True)
-    cmd = ["rsync", "-az", "--exclude", ".DS_Store", "--exclude", ".loctree"]
-    if mirror:
-        cmd.append("--delete")
+    """Sync a single skill directory. Uses rsync when available, shutil otherwise."""
     if dry_run:
-        cmd += ["--dry-run"]
-    cmd += [str(src) + "/", str(dst) + "/"]
-    subprocess.run(
-        cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    if shutil.which("rsync"):
+        cmd = ["rsync", "-az", "--exclude", ".DS_Store", "--exclude", ".loctree"]
+        if mirror:
+            cmd.append("--delete")
+        cmd += [str(src) + "/", str(dst) + "/"]
+        subprocess.run(
+            cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    else:
+        _copytree_skill(src, dst, mirror=mirror)
 
 
 def prune_orphaned_skills(
@@ -1248,7 +1448,7 @@ def _configure_gemini_plans(dry_run: bool = False) -> None:
 
     Gemini resolves symlinks with realpath() and rejects plans directories
     that resolve outside the project root.  Our .vibecrafted/plans symlink
-    points to ~/.vibecrafted/artifacts/…  which is always outside the repo.
+    points to $VIBECRAFTED_ROOT/.vibecrafted/artifacts/…  which is always outside the repo.
 
     Fix: reset plan.directory to the Gemini-native default so Gemini writes
     plans into $PWD/.gemini/plans/ (its own space).  Our spawn system handles
@@ -1435,7 +1635,21 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     helper_file = _helper_target_path()
     legacy_file = _helper_legacy_path()
     if helper_file.exists():
-        findings.append(DoctorFinding("ok", "shell-helpers", str(helper_file)))
+        try:
+            helper_content = helper_file.read_text(encoding="utf-8")
+        except OSError:
+            helper_content = ""
+
+        if HELPER_SHIM_MARKER in helper_content:
+            findings.append(DoctorFinding("ok", "shell-helpers", str(helper_file)))
+        else:
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    "shell-helpers",
+                    f"{helper_file} is a copied helper — reinstall to remove stale drift risk",
+                )
+            )
     elif legacy_file.exists():
         findings.append(
             DoctorFinding(
@@ -1453,6 +1667,68 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     else:
         findings.append(
             DoctorFinding("ok", "shell-helpers", "not installed (optional)")
+        )
+
+    if helper_file.exists():
+        helper_ok, helper_detail = _run_smoke_command(
+            [
+                "bash",
+                "-c",
+                'source "$1"; command -v vc-help >/dev/null && command -v codex-implement >/dev/null && command -v codex-marbles >/dev/null && command -v skills-sync >/dev/null && printf "helper-ok\\n"',
+                "_",
+                str(helper_file),
+            ],
+            env=os.environ.copy(),
+            expected_text="helper-ok",
+        )
+        findings.append(
+            DoctorFinding(
+                "ok" if helper_ok else "fail",
+                "shell-helper-runtime",
+                "helper shim sources and exports commands"
+                if helper_ok
+                else helper_detail,
+            )
+        )
+
+    launcher_bin_dir = Path.home() / ".local" / "bin"
+    missing_wrappers = [
+        name for name in LAUNCHER_WRAPPERS if not (launcher_bin_dir / name).exists()
+    ]
+    if missing_wrappers:
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "launcher-wrappers",
+                "missing wrapper commands: "
+                + ", ".join(missing_wrappers[:6])
+                + (" ..." if len(missing_wrappers) > 6 else ""),
+            )
+        )
+    else:
+        findings.append(DoctorFinding("ok", "launcher-wrappers", str(launcher_bin_dir)))
+
+    launcher = launcher_bin_dir / "vibecrafted"
+    wrapper = launcher_bin_dir / "vc-help"
+    if launcher.exists() and wrapper.exists():
+        launcher_ok, launcher_detail = _run_smoke_command(
+            ["bash", str(launcher), "help"],
+            env=os.environ.copy(),
+            expected_text="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.",
+        )
+        wrapper_ok, wrapper_detail = _run_smoke_command(
+            ["bash", str(wrapper)],
+            env=os.environ.copy(),
+            expected_text="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.",
+        )
+        findings.append(
+            DoctorFinding(
+                "ok" if launcher_ok and wrapper_ok else "fail",
+                "launcher-runtime",
+                "vibecrafted help + vc-help smoke passed"
+                if launcher_ok and wrapper_ok
+                else f"launcher={launcher_detail}; wrapper={wrapper_detail}",
+            )
         )
 
     # 7. Shell smoke check: non-interactive zsh should stay quiet under TERM=dumb
@@ -1495,12 +1771,12 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
 
 def print_doctor(findings: List[DoctorFinding]) -> int:
     """Print doctor findings. Returns exit code (0 if no failures)."""
-    if _IS_TTY:
-        print(
-            f"\n{bold('\U0001d54d\U0001d55a\U0001d553\U0001d556\U0001d554\U0001d563\U0001d552\U0001d557\U0001d565 Doctor')}\n"
-        )
-    else:
-        print(f"\n{bold('VibeCrafted Doctor')}\n")
+    _doctor_title = (
+        "\U0001d54d\U0001d55a\U0001d553\U0001d556\U0001d554\U0001d563\U0001d552\U0001d557\U0001d565 Doctor"
+        if _IS_TTY
+        else "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Doctor"
+    )
+    print(f"\n{bold(_doctor_title)}\n")
 
     fails = 0
     warns = 0
@@ -1531,7 +1807,8 @@ def print_doctor(findings: List[DoctorFinding]) -> int:
         print(f"  {yellow('Installation healthy with minor warnings.')}\n")
         return 0
     else:
-        print(f"  {green('\u2713 Installation healthy.')}\n")
+        _healthy = "\u2713 Installation healthy."
+        print(f"  {green(_healthy)}\n")
         return 0
 
 
@@ -1640,6 +1917,10 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                     for cmd, path in sys_deps.items():
                         if path:
                             print(f"  {OK} {cmd} -> {dim(path)}")
+                        elif cmd in RECOMMENDED_DEPS:
+                            print(
+                                f"  {WARN} {cmd} {dim('(recommended; Python fallback available)')}"
+                            )
                         else:
                             print(f"  {MISS} {cmd}")
 
@@ -1653,9 +1934,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                     print()
 
                     missing_critical = [
-                        cmd
-                        for cmd in ("python3", "git", "rsync")
-                        if not sys_deps.get(cmd)
+                        cmd for cmd in ("python3", "git") if not sys_deps.get(cmd)
                     ]
                     if missing_critical:
                         print(
@@ -1926,6 +2205,21 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         store_path, all_runtimes, dry_run=dry_run, interactive=interactive
     )
 
+    # --- Execute: clean legacy and duplicate RC entries ---
+    for rcname in (".bashrc", ".zshrc"):
+        rcfile = Path.home() / rcname
+        if rcfile.exists():
+            rc_content = rcfile.read_text()
+            if not _is_writable(rcfile):
+                print(f"  {WARN} {rcfile} is locked — cannot clean old entries")
+                continue
+            cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
+            if removed_rc > 0 and not dry_run:
+                rcfile.write_text(cleaned_rc)
+                print(f"  {OK} Cleaned {removed_rc} old entries from {rcname}")
+            elif removed_rc > 0:
+                print(f"  {dim('would clean')} {removed_rc} old entries from {rcname}")
+
     # --- Execute: shell helpers ---
     if install_shell:
         print(bold("Installing shell helper..."))
@@ -1990,18 +2284,32 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
 
 
 def _install_launcher(repo_root: Path, dry_run: bool) -> None:
-    """Install vibecrafted launcher to ~/.vibecrafted/bin/."""
+    """Install vibecrafted launcher to portable and legacy bin surfaces."""
     launcher_src = repo_root / "scripts" / "vibecrafted"
-    launcher_bin_dir = vibecrafted_home() / "bin"
-    launcher_dst = launcher_bin_dir / "vibecrafted"
     if launcher_src.exists():
         if not dry_run:
-            launcher_bin_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(launcher_src, launcher_dst)
-            launcher_dst.chmod(0o755)
-        # Ensure ~/.vibecrafted/bin is in PATH via shell rc files
+            legacy_redirect_src = repo_root / "scripts" / "vibecraft"
+            for launcher_bin_dir in _launcher_bin_dirs():
+                launcher_bin_dir.mkdir(parents=True, exist_ok=True)
+                launcher_dst = launcher_bin_dir / "vibecrafted"
+                shutil.copy2(launcher_src, launcher_dst)
+                launcher_dst.chmod(0o755)
+                for wrapper in LAUNCHER_WRAPPERS:
+                    create_symlink(Path("vibecrafted"), launcher_bin_dir / wrapper)
+                # Replace legacy vibecraft binary with a thin redirect
+                legacy_dst = launcher_bin_dir / "vibecraft"
+                if legacy_redirect_src.exists():
+                    shutil.copy2(legacy_redirect_src, legacy_dst)
+                    legacy_dst.chmod(0o755)
+        else:
+            for launcher_bin_dir in _launcher_bin_dirs():
+                for wrapper in LAUNCHER_WRAPPERS:
+                    create_symlink(
+                        Path("vibecrafted"), launcher_bin_dir / wrapper, dry_run=True
+                    )
+        # Ensure $HOME/.local/bin is in PATH via shell rc files
         path_line = _launcher_path_line()
-        path_comment = "VibeCrafted launcher"
+        path_comment = "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher"
         for rcname in (".bashrc", ".zshrc"):
             rcfile = Path.home() / rcname
             if rcfile.exists():
@@ -2031,12 +2339,7 @@ def _print_unicode_summary(
         for a in ("claude", "codex", "gemini")
         if (store_path / "vc-agents" / "scripts" / f"{a}_spawn.sh").exists()
     )
-    shell_list = []
-    if (Path.home() / ".bashrc").exists():
-        shell_list.append("bash")
-    if (Path.home() / ".zshrc").exists():
-        shell_list.append("zsh")
-    shell_str = " + ".join(shell_list) if shell_list else "manual"
+    shell_str = _helper_surface_label()
     fnd_ok = [f.name for f in FOUNDATIONS if f.is_installed()]
     fnd_str = " \u00b7 ".join(fnd_ok[:3]) if fnd_ok else "none"
     if len(fnd_ok) > 3:
@@ -2108,9 +2411,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 
     # --- System check (critical deps — must fail visibly) ---
     sys_deps = detect_system_deps()
-    missing_critical = [
-        cmd for cmd in ("python3", "git", "rsync") if not sys_deps.get(cmd)
-    ]
+    missing_critical = [cmd for cmd in ("python3", "git") if not sys_deps.get(cmd)]
     if missing_critical:
         print(red(f"  Missing critical dependencies: {', '.join(missing_critical)}"))
         print("  Install them before continuing.")
@@ -2119,7 +2420,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     # --- All verbose output goes to log; compact lines go to real stdout ---
     with compact_logging(log_path, quiet=True) as out:
         # Log header
-        print(f"VibeCrafted Installer v{fw_ver} — compact mode")
+        print(f"𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer v{fw_ver} — compact mode")
         print(f"Source: {repo_root}")
         print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
         print()
@@ -2224,6 +2525,17 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             store_path, all_runtimes, dry_run=dry_run, interactive=False
         )
 
+        # Clean legacy RC entries
+        for rcname in (".bashrc", ".zshrc"):
+            rcfile = Path.home() / rcname
+            if rcfile.exists():
+                rc_content = rcfile.read_text()
+                if not _is_writable(rcfile):
+                    continue
+                cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
+                if removed_rc > 0 and not dry_run:
+                    rcfile.write_text(cleaned_rc)
+
         # Shell helpers
         if install_shell:
             print("Installing shell helper:")
@@ -2244,16 +2556,11 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 print(f"  Shell installer not found: {shell_script}")
             print()
 
-        shell_list = []
-        if (Path.home() / ".bashrc").exists():
-            shell_list.append("bash")
-        if (Path.home() / ".zshrc").exists():
-            shell_list.append("zsh")
         _compact_line(
             out,
             green("\u2713"),
             "Helpers",
-            " + ".join(shell_list) if shell_list else "manual",
+            _helper_surface_label(),
         )
 
         # Foundations compact line
@@ -2486,7 +2793,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     skills = discover_skills(repo_root)
     cats = categorize_all(skills)
 
-    print(f"\n{bold('VetCoders Skills Bundle')}")
+    print(f"\n{bold('𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Skills Bundle')}")
     print(dim(f"Source: {repo_root}\n"))
 
     for cat_key in ("pipeline", "specialist"):
@@ -2533,7 +2840,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         else [rt for rt in SYMLINK_TARGET_CHOICES if runtime_skills_dir(rt).exists()]
     )
 
-    print(f"\n{bold('VetCoders Uninstall')}\n")
+    print(f"\n{bold('𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Uninstall')}\n")
 
     if not skill_names:
         print(dim("Nothing to uninstall — no manifest and no known skills found."))
@@ -2542,11 +2849,11 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     print(f"  Will remove {len(skill_names)} skills from:")
     print(f"    Store: {store_path}")
     for rt in runtimes:
-        print(f"    Symlinks: ~/.{rt}/skills/")
+        print(f"    Symlinks: $VIBECRAFTED_ROOT/.{rt}/skills/")
     print()
 
     if _IS_TTY and not dry_run:
-        if not ask_yn("Remove the installed VibeCrafted bundle?", default=False):
+        if not ask_yn("Remove the installed 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. bundle?", default=False):
             print("Uninstall cancelled.")
             return 0
         print()
@@ -2606,9 +2913,11 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
         # Remove source lines from both .zshrc and .bashrc
         source_entries = [
+            (_shell_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
             (_shell_source_line(), "VetCoders shell helpers"),
+            (_old_zshrc_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
             (_old_zshrc_source_line(), "VetCoders shell helpers"),
-            (_launcher_path_line(), "VibeCrafted launcher"),
+            (_launcher_path_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher"),
         ]
         for rcname in (".zshrc", ".bashrc"):
             rcfile = Path.home() / rcname
@@ -2661,7 +2970,7 @@ def cmd_restore(args: argparse.Namespace) -> int:
     dry_run = args.dry_run
     backup_root = _backup_root(store_path)
 
-    print(f"\n{bold('VetCoders Restore')}\n")
+    print(f"\n{bold('𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Restore')}\n")
 
     # Find latest backup
     latest_file = backup_root / "latest"
@@ -2782,13 +3091,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="vc-install",
-        description="VibeCrafted installer — the founders' framework for shipping software with AI agents.",
+        description="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installer — the founders' framework for shipping software with AI agents.",
     )
     sub = parser.add_subparsers(dest="command")
 
     # install
     p_install = sub.add_parser(
-        "install", help="Install the VibeCrafted framework bundle"
+        "install", help="Install the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework bundle"
     )
     p_install.add_argument(
         "--source", default=default_source, help="Repo root (default: auto-detect)"
@@ -2835,7 +3144,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # list
     p_list = sub.add_parser(
         "list",
-        help="Show available VibeCrafted skills and the runtime substrate beneath them",
+        help="Show available 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills and the runtime substrate beneath them",
     )
     p_list.add_argument(
         "--source", default=default_source, help="Repo root (default: auto-detect)"
@@ -2843,7 +3152,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # uninstall
     p_uninstall = sub.add_parser(
-        "uninstall", help="Remove VibeCrafted skills, views, and helpers"
+        "uninstall", help="Remove 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills, views, and helpers"
     )
     p_uninstall.add_argument(
         "--dry-run", "-n", action="store_true", help="Show what would be done"

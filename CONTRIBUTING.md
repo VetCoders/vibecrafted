@@ -1,25 +1,45 @@
-# Contributing to VibeCrafted
+# Contributing to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
 
-Welcome! We build tools for AI agents to build tools.
+We build tools for AI agents to build tools.
+This framework created itself. You can help it create the next version.
 
 ## The Living Tree Rule
 
-VibeCrafted operates on the principle that the codebase is alive. When contributing:
+The codebase is alive. When contributing:
 
 - Always assume concurrent changes are possible.
 - Re-read files before editing if time has passed.
-- Use the provided tools (`loctree`) to understand impact before making structural changes.
+- Use loctree to understand impact before making structural changes.
+- Do not revert what you do not understand.
 
 ## Adding a New Skill
 
-1. Create a new directory in `./skills/`. Name it `vc-<your-skill-name>`.
-2. Provide a `SKILL.md` file that defines the skill's purpose, triggers, and execution strategy.
-3. Update any internal pathing to ensure your skill interacts correctly with the rest of the VibeCrafted framework (using the `skills/` path).
+1. Create `skills/vc-<name>/SKILL.md` with two layers:
+   - **Manifest** — the craft-oriented explanation for humans
+   - **Doctrine** — the precise execution model for agents
+2. Include triggers, protocol, anti-patterns, and output format.
+3. Test the skill by running it in a real session before submitting.
 
 ## Pull Requests
 
 1. **Be decisive.** If a rewrite is cheaper than a rescue, do it.
-2. **DoU is Law.** Green tests are necessary, but not sufficient. Ensure the product surface is finished, documented, and ready for end-users.
+2. **DoU is law.** Green tests are necessary, but not sufficient. The product surface must be finished, documented, and
+   ready for end-users.
 3. **Run your own audits.** Use `vc-dou` on your changes before submitting.
+4. **Evidence over opinion.** Cite tool output, not aesthetic preference.
 
-We value aggressive simplification and bold moves over timid preservation. If it feels right, and it works, we ship it.
+We value aggressive simplification and bold moves over timid preservation.
+
+## Brand Marks
+
+When signing contributions or generated artifacts, use the appropriate mark:
+
+| Context      | Mark                        |
+| ------------ | --------------------------- |
+| Full product | `⚒🅅·🄸·🄱·🄴·🄲·🅡·🄰·🄵·🅃·🄴·🄳·؞` |
+| Design work  | `𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭؞`              |
+| Source code  | `// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞`           |
+
+---
+
+`// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞`

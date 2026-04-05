@@ -1,4 +1,4 @@
 interface:
   display_name: "VC Release"
   short_description: "Ship code to market: release mechanics, financial awareness, legal basics, deployment reality. Use /vc-release to invoke."
-  default_prompt: "Use $vc-release to classify runtime/build/publish surface, route non-trivial release work through external VibeCrafted agents, and plan a proof-driven release."
+  default_prompt: "Use $vc-release to classify runtime/build/publish surface, route non-trivial release work through external 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. agents, and plan a proof-driven release."

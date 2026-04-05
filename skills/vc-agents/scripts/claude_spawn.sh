@@ -75,7 +75,7 @@ done
 }
 spawn_require_file "$plan_file"
 spawn_validate_runtime "$runtime"
-spawn_prepare_paths claude "$plan_file" "$root"
+spawn_prepare_paths claude "$plan_file" "$root" "$mode"
 spawn_scan_active "$SPAWN_REPORT_DIR"
 runtime_input="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_SLUG}_claude_prompt.md"
 spawn_build_runtime_prompt "$SPAWN_PLAN" "$runtime_input" "$SPAWN_REPORT" claude
@@ -93,7 +93,8 @@ qmodel="$(printf '%q' "$model")"
 # shellcheck disable=SC2016
 claude_success_hook='
   if [[ ! -s "$report" ]]; then
-    cat > "$report" <<TXT
+    spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "completed"
+    cat >> "$report" <<TXT
 Claude completed without writing a standalone report file.
 See transcript for the full event stream:
 $transcript
@@ -103,7 +104,8 @@ TXT
 # shellcheck disable=SC2016
 claude_failure_hook='
   if [[ ! -s "$report" ]]; then
-    cat > "$report" <<TXT
+    spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "failed"
+    cat >> "$report" <<TXT
 Claude failed before writing a standalone report file.
 See transcript for the full event stream:
 $transcript
@@ -116,7 +118,7 @@ qfilter="$(printf '%q' "$SCRIPT_DIR/claude_stream_filter.jq")"
 # Claude sometimes emits non-JSON noise before the JSONL stream.
 # Keep only JSON object lines so jq never chokes on banners, warnings, or status text.
 # Stream-json → grep JSON objects → jq (external filter file) → clean text to terminal AND transcript
-# Raw JSONL lives in ~/.claude/projects/ — aicx ingests from there, not from us
+# Raw JSONL lives in $HOME/.claude/projects/ — aicx ingests from there, not from us
 launch_cmd="set -o pipefail && cd $qroot && claude -p --output-format stream-json --verbose --dangerously-skip-permissions $model_flag -- \"\$(cat $qruntime)\" 2>&1 | grep --line-buffered '^[[:space:]]*{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript ; echo ; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true"
 
 # Combine built-in hooks with caller-provided hooks (marbles chain, etc.)
@@ -138,5 +140,5 @@ spawn_generate_launcher "$SPAWN_LAUNCHER" \
 chmod +x "$SPAWN_LAUNCHER"
 spawn_print_launch claude "$mode" "$runtime"
 [[ -n "$model" ]] && printf '  model:  %s\n' "$model" || printf '  model:  (CLI default)\n'
-spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run"
+spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run" "claude-${VIBECRAFTED_SKILL_NAME:-$mode}"
 printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"

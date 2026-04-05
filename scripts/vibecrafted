@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# VibeCrafted command deck
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. command deck
 set -euo pipefail
 
 _expand_home_path() {
   local raw="${1:-}"
   case "$raw" in
-    "~") printf '%s\n' "$HOME" ;;
-    "~/"*) printf '%s/%s\n' "$HOME" "${raw:2}" ;;
+    [~]) printf '%s\n' "$HOME/" ;;
+    [~]/*) printf '%s/%s\n' "$HOME/" "${raw:2}" ;;
     *) printf '%s\n' "$raw" ;;
   esac
 }
@@ -29,10 +29,50 @@ _agents=(claude codex gemini)
 _modes=(implement research review plan prompt observe)
 _skills=(decorate delegate dou followup hydrate justdo marbles partner prune release research review scaffold workflow)
 
+_script_repo_root() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  cd "$script_dir/.." && pwd
+}
+
+_is_framework_source_root() {
+  local candidate="${1:-}"
+  [[ -n "$candidate" && -f "$candidate/VERSION" && -f "$candidate/scripts/vibecrafted" && -d "$candidate/skills" ]]
+}
+
+_repo_source_root() {
+  local repo_root script_root
+  repo_root="$(_repo_root)"
+  if _is_framework_source_root "$repo_root"; then
+    printf '%s\n' "$repo_root"
+    return 0
+  fi
+
+  script_root="$(_script_repo_root)"
+  if _is_framework_source_root "$script_root" && [[ "$script_root" != "$crafted_tools" ]]; then
+    printf '%s\n' "$script_root"
+    return 0
+  fi
+
+  return 1
+}
+
 _version() {
-  local vf="$crafted_home/VERSION"
-  [[ -f "$vf" ]] || vf="$crafted_tools/VERSION"
-  [[ -f "$vf" ]] && cat "$vf" || echo "?"
+  local source_root repo_root vf
+  repo_root="$(_script_repo_root)"
+  source_root="$(_repo_source_root 2>/dev/null || true)"
+
+  for vf in \
+    "${source_root:+$source_root/VERSION}" \
+    "$crafted_home/VERSION" \
+    "$crafted_tools/VERSION" \
+    "$repo_root/VERSION"; do
+    [[ -f "$vf" ]] || continue
+    cat "$vf"
+    return 0
+  done
+
+  echo "?"
 }
 
 _repo_root() {
@@ -65,19 +105,21 @@ _has_skill() {
 _skill_candidates() {
   local skill="$1"
   local runtime="${2:-}"
-  local script_dir repo_root
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  repo_root="$(cd "$script_dir/.." && pwd)"
+  local repo_source
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+
+  if [[ -n "$repo_source" ]]; then
+    printf '%s\n' "$repo_source/skills/${skill}/SKILL.md"
+  fi
 
   if [[ -n "$runtime" ]]; then
     printf '%s\n' "$HOME/.${runtime}/skills/${skill}/SKILL.md"
   fi
 
   printf '%s\n' \
-    "$HOME/.agents/skills/${skill}/SKILL.md" \
     "$crafted_skills/${skill}/SKILL.md" \
     "$crafted_tools/skills/${skill}/SKILL.md" \
-    "$repo_root/skills/${skill}/SKILL.md"
+    "$HOME/.agents/skills/${skill}/SKILL.md"
 }
 
 _resolve_skill_path() {
@@ -98,9 +140,12 @@ _resolve_skill_path() {
 }
 
 _helper_candidates() {
-  local script_dir repo_helper
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  repo_helper="$(cd "$script_dir/.." && pwd)/skills/vc-agents/shell/vetcoders.sh"
+  local repo_source repo_helper
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  repo_helper="$(_script_repo_root)/skills/vc-agents/shell/vetcoders.sh"
+  if [[ -n "$repo_source" ]]; then
+    printf '%s\n' "$repo_source/skills/vc-agents/shell/vetcoders.sh"
+  fi
   printf '%s\n' \
     "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" \
     "$crafted_skills/vc-agents/shell/vetcoders.sh" \
@@ -116,7 +161,7 @@ _ensure_helpers_loaded() {
     source "$helper"
     return 0
   done < <(_helper_candidates)
-  printf '%b[error]%b Could not find the VibeCrafted helper layer.\n' "$_red" "$_reset" >&2
+  printf '%b[error]%b Could not find the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. helper layer.\n' "$_red" "$_reset" >&2
   printf '  Expected one of:\n' >&2
   _helper_candidates | sed 's/^/    - /' >&2
   return 1
@@ -133,36 +178,243 @@ _run_helper() {
   return 1
 }
 
+_is_help_flag() {
+  local candidate="${1:-}"
+  [[ "$candidate" == "--help" || "$candidate" == "-h" || "$candidate" == "help" ]]
+}
+
+_skill_summary() {
+  case "$1" in
+    decorate) printf 'Visual finishing and UX coherence pass.\n' ;;
+    delegate) printf 'Native in-session subagent delegation.\n' ;;
+    dou) printf 'Definition of Undone audit across the product surface.\n' ;;
+    followup) printf 'Post-implementation audit for gaps, regressions, and next moves.\n' ;;
+    hydrate) printf 'Packaging and go-to-market hydration.\n' ;;
+    justdo) printf 'Autonomous end-to-end implementation when the thing simply needs to ship.\n' ;;
+    marbles) printf 'Counterexample loop that keeps fixing what is still wrong until the surface is clean.\n' ;;
+    partner) printf 'Collaborative debugging, architecture triage, or full ownership mode.\n' ;;
+    prune) printf 'Runtime and publish-cone cleanup with hard cuts and proof.\n' ;;
+    release) printf 'Release mechanics, deployment reality, and ship-readiness work.\n' ;;
+    research) printf 'Triple-agent research pass for ground truth before implementation.\n' ;;
+    review) printf 'Full review pipeline with findings-first output.\n' ;;
+    scaffold) printf 'Founder-first architecture planning from a vague idea.\n' ;;
+    workflow) printf 'Examine -> Research -> Implement pipeline.\n' ;;
+    *) printf 'Framework skill.\n' ;;
+  esac
+}
+
+_print_common_skill_flags() {
+  printf '%bCommon flags:%b\n' "$_bold" "$_reset"
+  printf '  -p, --prompt <text>            Inline prompt\n'
+  printf '  -f, --file <path.md>           Input file as prompt context\n'
+}
+
+_print_skill_specific_flags() {
+  case "$1" in
+    marbles)
+      printf '\n%bSkill-specific flags:%b\n' "$_bold" "$_reset"
+      printf '  --count <n>                    Marbles loop count (default: 3)\n'
+      printf '  --depth <n>                    Marbles plan crawl depth (default: 3)\n'
+      ;;
+    resume)
+      printf '\n%bResume flags:%b\n' "$_bold" "$_reset"
+      printf '  --session <id>                 Session ID to resume\n'
+      printf '  -p, --prompt <text>            Continue with extra prompt text\n'
+      printf '  -f, --file <path.md>           Continue with prompt context from file\n'
+      ;;
+  esac
+}
+
+cmd_skill_help() {
+  local skill="$1"
+  local agent="${2:-<claude|codex|gemini>}"
+  local wrapper="vc-$skill"
+
+  printf '\n'
+  printf '%b⚒%b  %b%s%b\n' "$_copper" "$_reset" "$_bold" "$skill" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  %s' "$(_skill_summary "$skill")"
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted %s %s [flags]\n' "$skill" "$agent"
+  printf '  %s %s [flags]\n' "$wrapper" "$agent"
+  if [[ "$skill" == "justdo" ]]; then
+    printf '  Alias: vibecrafted implement <agent> [flags] / vc-implement <agent> [flags]\n'
+  fi
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  case "$skill" in
+    justdo)
+      printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
+      printf '  vibecrafted implement claude --file /path/to/brief.md\n'
+      ;;
+    marbles)
+      printf '  vibecrafted marbles codex --count 3 --depth 3\n'
+      printf '  vc-marbles claude --prompt "Loop until clean"\n'
+      ;;
+    followup)
+      printf '  vibecrafted followup codex --prompt "Audit this implementation"\n'
+      printf '  vc-followup claude --file /path/to/brief.md\n'
+      ;;
+    workflow)
+      printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
+      printf '  vc-workflow codex --file /path/to/brief.md\n'
+      ;;
+    review)
+      printf '  vibecrafted review codex --prompt "Review this branch"\n'
+      printf '  vc-review claude --file /path/to/pr-brief.md\n'
+      ;;
+    research)
+      printf '  vibecrafted research gemini --prompt "Research the API surface"\n'
+      printf '  vc-research codex --file /path/to/question-set.md\n'
+      ;;
+    *)
+      printf '  vibecrafted %s codex --prompt "Run %s on this repository"\n' "$skill" "$skill"
+      printf '  %s claude --file /path/to/brief.md\n' "$wrapper"
+      ;;
+  esac
+  printf '\n'
+  _print_common_skill_flags
+  _print_skill_specific_flags "$skill"
+  printf '\n'
+}
+
+cmd_agent_help() {
+  local agent="$1"
+  printf '\n'
+  printf '%b⚒%b  %b%s%b\n' "$_copper" "$_reset" "$_bold" "$agent" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Plan-based helper modes for %s.\n' "$agent"
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted %s <implement|research|review|plan|prompt|observe> [args]\n' "$agent"
+  printf '\n'
+  printf '%bModes:%b\n' "$_bold" "$_reset"
+  printf '  implement <plan.md>            Execute a plan file\n'
+  printf '  research  <plan.md>            Research a topic or plan file\n'
+  printf '  review    <plan.md>            Review code or architecture\n'
+  printf '  plan      <plan.md>            Generate an implementation plan\n'
+  printf '  prompt    <plan.md>            Free-form prompt with plan context\n'
+  printf '  observe   --last               Check the last report or transcript\n'
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted %s implement .vibecrafted/plans/my-plan.md\n' "$agent"
+  printf '  vibecrafted %s research .vibecrafted/plans/my-plan.md\n' "$agent"
+  printf '  vibecrafted %s observe --last\n' "$agent"
+  printf '\n'
+}
+
+cmd_start_help() {
+  printf '\n'
+  printf '%b⚒%b  %bstart%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Start the operator Zellij session.\n'
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted start\n'
+  printf '  vc-start\n'
+  printf '  vc-start resume\n'
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted start\n'
+  printf '  vc-start resume\n'
+  printf '\n'
+}
+
+cmd_dashboard_help() {
+  printf '\n'
+  printf '%b⚒%b  %bdashboard%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Launch an optional repo-owned Zellij dashboard layout.\n'
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted dashboard [vc-dashboard|vc-workflow|vc-marbles|vc-research|vibecrafted]\n'
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted dashboard\n'
+  printf '  vibecrafted dashboard vc-marbles\n'
+  printf '  vibecrafted dashboard vibecrafted\n'
+  printf '\n'
+}
+
+cmd_resume_help() {
+  printf '\n'
+  printf '%b⚒%b  %bresume%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Resume an existing agent session.\n'
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted resume <claude|codex|gemini> --session <session_id> [flags]\n'
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted resume claude --session abc123\n'
+  printf '  vibecrafted resume codex --session abc123 --prompt "Continue from the failing test"\n'
+  printf '\n'
+  _print_skill_specific_flags "resume"
+  printf '\n'
+}
+
 cmd_help() {
+  local topic="${1:-}"
+  case "$topic" in
+    claude|codex|gemini)
+      cmd_agent_help "$topic"
+      return
+      ;;
+    start)
+      cmd_start_help
+      return
+      ;;
+    dashboard|mc|mission-control)
+      cmd_dashboard_help
+      return
+      ;;
+    resume)
+      cmd_resume_help
+      return
+      ;;
+    implement)
+      cmd_skill_help "justdo"
+      return
+      ;;
+    decorate|delegate|dou|followup|hydrate|justdo|marbles|partner|prune|release|research|review|scaffold|workflow)
+      cmd_skill_help "$topic"
+      return
+      ;;
+  esac
+  if [[ "${1:-}" == "--full" ]] || (( VIBECRAFTED_VERBOSE )); then
+    cmd_help_full
+    return
+  fi
   local ver
   ver="$(_version)"
   printf '\n'
-  printf '%b⚒  VibeCrafted %s%b\n' "$_bold$_copper" "$ver" "$_reset"
+  printf '%b⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. %s%b\n' "$_bold$_copper" "$ver" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
   printf '  The Founders'"'"' Framework\n'
   printf '  A convergence-driven system for shipping software with AI agents.\n'
   printf '\n'
   printf '%bFront door:%b\n' "$_bold" "$_reset"
   printf '  %bvibecrafted help%b                      Show the command deck\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted help --full%b               Full reference (all skills, modes, aliases)\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted help%b <topic>              Help for a skill, agent, or command\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted init%b [agent]              Start an interactive init session\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard%b [layout]        Launch an optional repo-owned Zellij dashboard\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b <skill> <agent> [flags]   Run a framework skill\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted%b <agent> <mode> [args]     Use plan/research/review helpers\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted%b <agent> <mode> [args]     implement/research/review/plan/prompt/observe\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted doctor%b                    Verify installation health\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted dashboard%b                 Open mission control\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
   printf '\n'
-  printf '%bExamples (preferred front door):%b\n' "$_bold" "$_reset"
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted init claude\n'
+  printf '  vibecrafted dashboard vc-marbles\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
-  printf '  vibecrafted workflow claude --file /path/to/brief.md\n'
-  printf '  vibecrafted marbles codex\n'
-  printf '  vibecrafted marbles codex --count 4 --depth 4\n'
-  printf '  vibecrafted resume claude --session <id> --prompt "Continue the fix"\n'
   printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
-  printf '  vibecrafted dou claude\n'
-  printf '  vibecrafted hydrate codex\n'
-  printf '  vibecrafted release codex\n'
+  printf '  vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
+  printf '  vibecrafted codex observe --last\n'
+  printf '  vibecrafted resume claude --session <id> --prompt "Continue"\n'
   printf '\n'
   printf '%bSkill flags (uniform contract):%b\n' "$_bold" "$_reset"
   printf '  -p, --prompt <text>            Inline prompt\n'
@@ -171,11 +423,126 @@ cmd_help() {
   printf '  --depth <n>                    Marbles plan crawl depth (default: 3)\n'
   printf '  --session <id>                 Session ID for vibecrafted resume\n'
   printf '\n'
-  printf '%bInfrastructure:%b\n' "$_bold" "$_reset"
+  printf '%bGlobal options:%b\n' "$_bold" "$_reset"
+  printf '  --verbose                      Detailed output from all commands\n'
+  printf '\n'
+  printf '  %bvibecrafted help --full%b for the complete reference.\n' "$_dim" "$_reset"
+  printf '\n'
+}
+
+cmd_help_full() {
+  local ver
+  ver="$(_version)"
+  printf '\n'
+  printf '%b⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. %s%b (Full Reference)\n' "$_bold$_copper" "$ver" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  The Founders'"'"' Framework\n'
+  printf '  A convergence-driven system for shipping software with AI agents.\n'
+  printf '\n'
+  printf '%b=== PIPELINE (canonical order) ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  %bscaffold%b   → Plan architecture from a vague idea\n' "$_copper" "$_reset"
+  printf '  %binit%b       → Orient: history, eyes, verify\n' "$_copper" "$_reset"
+  printf '  %bworkflow%b   → Examine → Research → Implement\n' "$_copper" "$_reset"
+  printf '  %bfollowup%b   → Audit implementation gaps\n' "$_copper" "$_reset"
+  printf '  %bmarbles%b    → Convergence loop (counterexample elimination)\n' "$_copper" "$_reset"
+  printf '  %bdou%b        → Definition of Undone audit\n' "$_copper" "$_reset"
+  printf '  %bdecorate%b   → Visual finishing and UX coherence\n' "$_copper" "$_reset"
+  printf '  %bhydrate%b    → Packaging and go-to-market\n' "$_copper" "$_reset"
+  printf '  %brelease%b    → Ship to production\n' "$_copper" "$_reset"
+  printf '\n'
+  printf '%b=== MODES (per agent) ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  %bvibecrafted <agent> implement%b <plan.md>   Execute a plan file\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted <agent> research%b  <plan.md>   Research a topic\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted <agent> review%b    <plan.md>   Review code or architecture\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted <agent> plan%b      <plan.md>   Generate an implementation plan\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted <agent> prompt%b    <plan.md>   Free-form prompt with context\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted <agent> observe%b   --last      Check last agent report/transcript\n' "$_cyan" "$_reset"
+  printf '\n'
+  printf '%b=== OPERATOR SURFACE ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  %bvibecrafted dashboard%b [layout]        Launch repo-owned Zellij dashboard (%bvc-dashboard%b default)\n' "$_cyan" "$_reset" "$_bold" "$_reset"
+  printf '  %bvibecrafted start%b [layout]            Alias for %bvibecrafted dashboard%b\n' "$_cyan" "$_reset" "$_cyan" "$_reset"
+  printf '\n'
+  printf '  Agents: %bclaude%b · %bcodex%b · %bgemini%b\n' "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset"
+  printf '\n'
+  printf '%b=== ADDITIONAL SKILLS ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  %bpartner%b    Collaborative debugging and architecture triage\n' "$_copper" "$_reset"
+  printf '  %bjustdo%b     Autonomous end-to-end implementation\n' "$_copper" "$_reset"
+  printf '  %bdelegate%b   In-session native subagent delegation\n' "$_copper" "$_reset"
+  printf '  %bresearch%b   Triple-agent research (claude + codex + gemini)\n' "$_copper" "$_reset"
+  printf '  %breview%b     Full PR review pipeline\n' "$_copper" "$_reset"
+  printf '  %bprune%b      Runtime/publish cone extraction\n' "$_copper" "$_reset"
+  printf '\n'
+  printf '%b=== MANAGEMENT ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  %bvibecrafted help%b                      Compact command deck\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted help --full%b               This full reference\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted init%b [agent]              Interactive init session\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted doctor%b                    Installation health check\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted version%b                   Print version\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
+  printf '\n'
+  printf '%b=== ALIASES ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  %bstats%b = status       %bcheck%b = doctor       %bremove%b = uninstall\n' "$_dim" "$_reset" "$_dim" "$_reset" "$_dim" "$_reset"
+  printf '\n'
+  printf '%b=== SKILL FLAGS (uniform contract) ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  -p, --prompt <text>            Inline prompt\n'
+  printf '  -f, --file <path.md>           Input file as prompt context\n'
+  printf '  --count <n>                    Marbles loop count (default: 3)\n'
+  printf '  --depth <n>                    Marbles plan crawl depth (default: 3)\n'
+  printf '  --session <id>                 Session ID for vibecrafted resume\n'
+  printf '\n'
+  printf '%b=== GLOBAL OPTIONS ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  --verbose                      Detailed output from all commands\n'
+  printf '\n'
+  printf '%b=== INFRASTRUCTURE ===%b\n' "$_bold" "$_reset"
+  printf '\n'
   printf '  vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
   printf '  vibecrafted claude research .vibecrafted/plans/my-plan.md\n'
   printf '  vibecrafted gemini review .vibecrafted/plans/my-plan.md\n'
+  printf '  vibecrafted codex observe --last\n'
+  printf '  vibecrafted resume claude --session <id> --prompt "Continue the fix"\n'
   printf '\n'
+  printf '%b=== EXAMPLES ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  vibecrafted init claude\n'
+  printf '  vibecrafted dashboard vc-workflow\n'
+  printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
+  printf '  vibecrafted workflow claude --file /path/to/brief.md\n'
+  printf '  vibecrafted marbles codex --count 3 --depth 3\n'
+  printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
+  printf '  vibecrafted dou claude\n'
+  printf '  vibecrafted hydrate codex\n'
+  printf '  vibecrafted release codex\n'
+  printf '  vibecrafted prune codex\n'
+  printf '\n'
+}
+
+cmd_start() {
+  if _is_help_flag "${1:-}"; then
+    cmd_start_help
+    return 0
+  fi
+  local previous_repo_zellij_pref="${VIBECRAFTED_PREFER_REPO_ZELLIJ-}"
+  local status
+  _ensure_helpers_loaded || return 1
+  export VIBECRAFTED_PREFER_REPO_ZELLIJ=1
+  _run_helper vc-start "$@"
+  status=$?
+  if [[ -n "${previous_repo_zellij_pref}" ]]; then
+    export VIBECRAFTED_PREFER_REPO_ZELLIJ="${previous_repo_zellij_pref}"
+  else
+    unset VIBECRAFTED_PREFER_REPO_ZELLIJ
+  fi
+  return "$status"
 }
 
 cmd_init() {
@@ -193,52 +560,76 @@ cmd_init() {
   esac
 
   skill_path="$(_resolve_skill_path "vc-init" "$agent")" || return 1
-  printf -v init_prompt 'Use [$vc-init](%s) on this repository and give me full operating context.' "$skill_path"
+  printf -v init_prompt "Use [\$vc-init](%s) on this repository and give me full operating context." "$skill_path"
 
   printf '%b⚒%b  Starting %b%s%b with vc-init...\n' "$_copper" "$_reset" "$_bold" "$agent" "$_reset"
-  case "$agent" in
-    claude) claude -i "$init_prompt" ;;
-    codex) codex -i "$init_prompt" ;;
-    gemini) gemini -i "$init_prompt" ;;
-  esac
+  _ensure_helpers_loaded || return 1
+  _run_helper "${agent}-skill-init" --prompt "$init_prompt"
 }
 
 cmd_doctor() {
-  local makefile=""
+  local makefile="" repo_source=""
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
   for candidate in \
+    "${repo_source:+$repo_source/Makefile}" \
     "$crafted_tools/Makefile" \
     "$(_repo_root)/Makefile"; do
     [[ -f "$candidate" ]] && makefile="$candidate" && break
   done
   [[ -n "$makefile" ]] || {
-    printf '%b[error]%b Makefile not found. Is VibeCrafted installed?\n' "$_red" "$_reset" >&2
+    printf '%b[error]%b Makefile not found. Is 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installed?\n' "$_red" "$_reset" >&2
     return 1
   }
   make -C "$(dirname "$makefile")" doctor
 }
 
 cmd_dashboard() {
+  if _is_help_flag "${1:-}"; then
+    cmd_dashboard_help
+    return 0
+  fi
+  local previous_repo_zellij_pref="${VIBECRAFTED_PREFER_REPO_ZELLIJ-}"
+  local status
   _ensure_helpers_loaded || return 1
-  _run_helper vc-dashboard
+  export VIBECRAFTED_PREFER_REPO_ZELLIJ=1
+  _run_helper vc-dashboard "$@"
+  status=$?
+  if [[ -n "${previous_repo_zellij_pref}" ]]; then
+    export VIBECRAFTED_PREFER_REPO_ZELLIJ="${previous_repo_zellij_pref}"
+  else
+    unset VIBECRAFTED_PREFER_REPO_ZELLIJ
+  fi
+  return "$status"
 }
 
 cmd_stats() {
-  local today_dir artifacts_dir
+  local today_dir ts_prefix artifacts_dir local_artifacts_dir
+  local search_dirs=()
+  
   today_dir="$(date +%Y_%m%d)"
+  ts_prefix="$(date +%Y%m%d)"
   artifacts_dir="$crafted_home/artifacts"
-  printf '\n%b⚒  VibeCrafted Stats — %s%b\n' "$_bold$_copper" "$(date +%Y-%m-%d)" "$_reset"
+  local_artifacts_dir="$(_repo_root 2>/dev/null || pwd)/.vibecrafted/reports"
+
+  [[ -d "$artifacts_dir" ]] && search_dirs+=("$artifacts_dir")
+  [[ -d "$local_artifacts_dir" ]] && search_dirs+=("$local_artifacts_dir")
+
+  printf '\n%b⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Stats — %s%b\n' "$_bold$_copper" "$(date +%Y-%m-%d)" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  if [[ ! -d "$artifacts_dir" ]]; then
+  if [[ ${#search_dirs[@]} -eq 0 ]]; then
     printf '  No artifacts found yet.\n\n'
     return 0
   fi
-  find "$artifacts_dir" -path "*${today_dir}*" -name "*.meta.json" -type f | sort -r | sed -n '1,8p' | sed 's#^#  #'
+  
+  find "${search_dirs[@]}" \( -path "*${today_dir}*" -o -name "${ts_prefix}_*.meta.json" \) -name "*.meta.json" -type f 2>/dev/null | sort -r | sed -n '1,8p' | sed 's#^#  #'
   printf '\n'
 }
 
 cmd_uninstall() {
-  local makefile=""
+  local makefile="" repo_source=""
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
   for candidate in \
+    "${repo_source:+$repo_source/Makefile}" \
     "$crafted_tools/Makefile" \
     "$(_repo_root)/Makefile"; do
     [[ -f "$candidate" ]] && makefile="$candidate" && break
@@ -260,8 +651,12 @@ cmd_agents() {
 
 cmd_resume() {
   local agent="${1:-}"
+  if _is_help_flag "$agent"; then
+    cmd_resume_help
+    return 0
+  fi
   [[ -n "$agent" ]] || {
-    printf '%b[error]%b Usage: vibecrafted resume <claude|codex|gemini> --session <session_id> [--prompt <text>] [--file <path>]\n' "$_red" "$_reset" >&2
+    cmd_resume_help >&2
     return 1
   }
   shift || true
@@ -277,6 +672,19 @@ run_mode() {
   local agent="$1"
   local mode="$2"
   shift 2
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    printf '%b⚒%b  %b%s %s%b\n\n' "$_copper" "$_reset" "$_bold" "$agent" "$mode" "$_reset"
+    case "$mode" in
+      implement) printf '  Execute a plan file with the agent.\n  Usage: vibecrafted %s implement <plan.md>\n' "$agent" ;;
+      research)  printf '  Research a topic using the agent.\n  Usage: vibecrafted %s research <plan.md>\n' "$agent" ;;
+      review)    printf '  Review code or architecture.\n  Usage: vibecrafted %s review <plan.md>\n' "$agent" ;;
+      plan)      printf '  Generate an implementation plan.\n  Usage: vibecrafted %s plan <plan.md>\n' "$agent" ;;
+      prompt)    printf '  Free-form prompt with plan context.\n  Usage: vibecrafted %s prompt <plan.md>\n' "$agent" ;;
+      observe)   printf '  Check the last agent report or transcript.\n  Usage: vibecrafted %s observe --last\n' "$agent" ;;
+    esac
+    printf '\n'
+    return 0
+  fi
   _ensure_helpers_loaded || return 1
   _run_helper "${agent}-${mode}" "$@"
 }
@@ -285,6 +693,11 @@ run_skill() {
   local skill="$1"
   local agent="${2:-}"
   shift 2 || true
+
+  if _is_help_flag "$agent"; then
+    cmd_skill_help "$skill"
+    return 0
+  fi
 
   if [[ "$skill" == "init" ]]; then
     cmd_init "$agent" "$@"
@@ -296,8 +709,25 @@ run_skill() {
     return
   fi
 
+  if [[ "$agent" == "dashboard" ]]; then
+    cmd_dashboard "vc-${skill}" "$@"
+    return
+  fi
+
+  if _is_help_flag "${1:-}"; then
+    cmd_skill_help "$skill" "$agent"
+    return 0
+  fi
+
+  [[ -n "$agent" ]] || {
+    cmd_skill_help "$skill" >&2
+    return 1
+  }
+
   _has_agent "$agent" || {
-    printf '%b[error]%b Usage: vibecrafted %s <claude|codex|gemini> [args]\n' "$_red" "$_reset" "$skill" >&2
+    printf '%b[error]%b Unknown agent: %s\n' "$_red" "$_reset" "$agent" >&2
+    printf '\n' >&2
+    cmd_skill_help "$skill" >&2
     return 1
   }
 
@@ -308,6 +738,14 @@ run_skill() {
 run_wrapper() {
   local wrapper="$1"
   shift
+  if [[ "$wrapper" == "vc-help" ]]; then
+    cmd_help
+    return
+  fi
+  if [[ "$wrapper" == "vc-start" ]]; then
+    cmd_start "$@"
+    return
+  fi
   if [[ "$wrapper" == "vc-init" ]]; then
     cmd_init "$@"
     return
@@ -321,6 +759,7 @@ run_wrapper() {
     return
   fi
   local skill="${wrapper#vc-}"
+  [[ "$skill" != "implement" ]] || skill="justdo"
   _has_skill "$skill" || {
     printf '%b[error]%b Unknown wrapper: %s\n' "$_red" "$_reset" "$wrapper" >&2
     return 1
@@ -339,6 +778,17 @@ main() {
   local invoked cmd
   invoked="$(basename "$0")"
 
+  # Global flags — strip before dispatch
+  export VIBECRAFTED_VERBOSE="${VIBECRAFTED_VERBOSE:-0}"
+  local filtered=()
+  for _arg in "$@"; do
+    case "$_arg" in
+      --verbose) VIBECRAFTED_VERBOSE=1 ;;
+      *) filtered+=("$_arg") ;;
+    esac
+  done
+  set -- ${filtered[@]+"${filtered[@]}"}
+
   if [[ "$invoked" != "vibecrafted" ]]; then
     run_wrapper "$invoked" "$@"
     return
@@ -348,19 +798,24 @@ main() {
   shift || true
 
   case "$cmd" in
-    help|-h|--help) cmd_help ;;
+    help|-h|--help) cmd_help "$@" ;;
+    start) cmd_start "$@" ;;
     init) cmd_init "$@" ;;
     resume) cmd_resume "$@" ;;
     doctor|check) cmd_doctor ;;
-    dashboard|mc|mission-control) cmd_dashboard ;;
+    dashboard|mc|mission-control) cmd_dashboard "$@" ;;
     stats|status) cmd_stats ;;
     uninstall|remove) cmd_uninstall ;;
     version|--version|-v) printf 'vibecrafted %s\n' "$(_version)" ;;
     agents) cmd_agents "$@" ;;
     claude|codex|gemini)
       local mode="${1:-}"
+      if _is_help_flag "$mode"; then
+        cmd_agent_help "$cmd"
+        return 0
+      fi
       [[ -n "$mode" ]] || {
-        printf '%b[error]%b Usage: vibecrafted %s <mode> [args]\n' "$_red" "$_reset" "$cmd" >&2
+        cmd_agent_help "$cmd" >&2
         return 1
       }
       shift || true
@@ -370,7 +825,8 @@ main() {
       }
       run_mode "$cmd" "$mode" "$@"
       ;;
-    init|decorate|delegate|dou|followup|hydrate|justdo|marbles|partner|prune|release|research|review|scaffold|workflow)
+    implement) run_skill "justdo" "$@" ;;
+    decorate|delegate|dou|followup|hydrate|justdo|marbles|partner|prune|release|research|review|scaffold|workflow)
       run_skill "$cmd" "$@"
       ;;
     *)

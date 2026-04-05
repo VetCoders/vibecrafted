@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF_USAGE'
 Usage: install.sh [--ref <branch>] [--archive-url <url> | --archive-file <path>] [--tools-dir <dir>] [make-target]
 
-Bootstrap a local VibeCrafted source snapshot into ~/.vibecrafted/tools and then
+Bootstrap a local 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. source snapshot into $VIBECRAFTED_ROOT/.vibecrafted/tools and then
 run a local staged install path from that copy.
 
 Interactive terminals always enter the installer TUI.
@@ -36,7 +36,7 @@ sanitize_ref() {
   printf '%s' "$1" | tr '/:@ ' '----' | tr -cd '[:alnum:]._-' 
 }
 
-vibecrafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+vibecrafted_home="${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}"
 default_tools_dir="${VIBECRAFTED_TOOLS_HOME:-$vibecrafted_home/tools}"
 default_ref="${VIBECRAFTED_REF:-main}"
 
@@ -117,7 +117,7 @@ if [[ -n "$archive_file" ]]; then
   info "Unpacking local archive: $archive_file"
   tar -xzf "$archive_file" -C "$extract_root"
 else
-  info "Downloading VibeCrafted snapshot: $archive_url"
+  info "Downloading 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. snapshot: $archive_url"
   curl -fsSL "$archive_url" | tar -xzf - -C "$extract_root"
 fi
 
@@ -136,7 +136,7 @@ safe_ref="$(sanitize_ref "$ref")"
 [[ -n "$safe_ref" ]] || safe_ref="current"
 staged_dir="$tools_dir/vibecrafted-$safe_ref"
 current_link="$tools_dir/vibecrafted-current"
-incoming_dir="$tools_dir/.incoming-$safe_ref-$$"
+incoming_dir="$tools_dir/.incoming-$safe_ref-$"
 
 rm -rf "$incoming_dir"
 mv "$source_dir" "$incoming_dir"

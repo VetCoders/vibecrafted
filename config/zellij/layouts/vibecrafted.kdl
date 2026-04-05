@@ -1,0 +1,18 @@
+// vibecrafted — operator entrypoint
+// Launch: vibecrafted start | vc-start
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="zellij:compact-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="zellij:status-bar"
+        }
+    }
+    tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Operator" focus=true {
+        pane name="operator" focus=true command="bash" {
+            args "-lc" "for root in \"${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT}/.vibecrafted/skills/vc-agents\" \"${VIBECRAFTED_ROOT:-}/skills/vc-agents\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/operator-console.sh\" ]]; then exec \"$root/scripts/mission-control/operator-console.sh\"; fi; done; export VIBECRAFTED_OPERATOR_MODE=1 VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=down; printf '⚒ Operator mode\\n\\n'; printf '  vibecrafted marbles codex --count 3 --depth 3\\n'; printf '  vibecrafted workflow claude -p \"Plan and implement\"\\n'; printf '  vibecrafted review codex -f /path/to/plan.md\\n\\n'; printf 'Spawn policy:\\n  normal workflows -> launcher below\\n  marbles -> status below, loops to the right\\n\\n'; exec /bin/zsh -l"
+        }
+    }
+}

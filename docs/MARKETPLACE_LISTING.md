@@ -1,39 +1,68 @@
-# VibeCrafted Framework
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework
 
-Structured AI-guided engineering for founders who need Codex, Claude, and Gemini to ship real software instead of producing disconnected cleverness.
+A convergence framework for AI-assisted software development.
 
 ## What it does
 
-VibeCrafted is a workflow framework for AI-assisted software engineering. It gives frontier models structural context, decision history, convergence loops, and shipping audits so they can operate inside real repositories without coding blind.
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. does not write code for you. It gives AI agents a system where
+their output is systematically improved until it meets production quality —
+through closed verification loops, structural analysis, and multi-agent
+orchestration.
+
+The framework asks one question, relentlessly: _What is still wrong?_
+And keeps going until the answer is: _Nothing._
 
 ## When to use
 
-- You want AI agents to work in a live repository instead of isolated toy contexts.
-- You need a repeatable path from architecture planning to launch readiness.
-- You want Codex, Claude, and Gemini to collaborate without losing durable artifacts.
-- You need a packaging and discoverability layer, not just code generation.
+- You want AI agents to work in a live repository, not isolated toy contexts
+- You need a repeatable path from architecture planning to launch readiness
+- You want Claude, Codex, and Gemini to collaborate with durable artifacts
+- You need convergence to quality, not just code generation
+- You need the product surface finished — not just the code
 
 ## How it works
 
-VibeCrafted breaks engineering into deliberate phases: craft, converge, and ship. Skills such as `vc-init`, `vc-workflow`, `vc-followup`, `vc-marbles`, `vc-dou`, and `vc-hydrate` give the agent a protocol for each phase, while the installer and shell helpers make those flows accessible from a normal terminal.
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. breaks engineering into three phases:
+
+**Craft** — orient, examine, research, implement. Skills like `vc-init`,
+`vc-workflow`, and `vc-scaffold` give agents structured protocols for
+understanding the codebase before touching it.
+
+**Converge** — find what is wrong, fix it, observe the cascade, repeat.
+`vc-marbles` runs adaptive convergence loops (solo, duo, trio, multi-agent)
+until no tool can generate a single accusation against the code.
+
+**Ship** — check the product surface, not just the code. `vc-dou` measures
+what is undone. `vc-decorate` adds brand polish. `vc-hydrate` packages for
+market. `vc-release` deploys.
 
 ## Requirements
 
 - macOS or Linux
-- Git, Python 3.10+, and `make`
-- One or more agent CLIs: Codex, Claude, or Gemini
-- Optional but recommended foundations: loctree, aicx, prview, ScreenScribe
+- Git, Python 3.10+, `make`
+- One or more agent CLIs: Claude Code, Codex, or Gemini CLI
+- Recommended: Loctree (structural analysis), AICX (session history)
+
+## Pricing
+
+Free for personal use and startups. No limits on repos or agents.
+Enterprise: info@vibecrafted.io
 
 ## Part of
 
-VetCoders VibeCrafted Suite — a structured system for AI-guided engineering, convergence, packaging, and release.
+VetCoders 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Suite — structured AI-guided engineering,
+convergence, packaging, and release.
 
-## Registry Metadata Draft
+## Registry Metadata
 
-- description: Structured AI-guided engineering framework for orchestrating Codex, Claude, and Gemini across real repositories.
-- keywords: ai-agent-engineering, developer-tools, codex, claude, gemini, workflow, repo-automation
+- description: Convergence framework for AI-assisted software development. Agents fix code until nothing is wrong.
+- keywords: ai-agent-engineering, convergence, developer-tools, codex, claude, gemini, workflow, multi-agent
 - homepage: https://vetcoders.github.io/vibecrafted/
 - repository: https://github.com/VetCoders/vibecrafted
-- documentation: https://vetcoders.github.io/vibecrafted/quickstart.html
-- faq: https://vetcoders.github.io/vibecrafted/faq.html
+- documentation: https://vetcoders.github.io/vibecrafted/presence/quickstart.html
+- faq: https://vetcoders.github.io/vibecrafted/presence/faq.html
 - license: Business Source License 1.1 with Additional Use Grant for non-competitive small-team production use
+
+---
+
+`// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞`

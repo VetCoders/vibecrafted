@@ -1,92 +1,89 @@
 ---
 name: vc-marbles
-version: 1.1.0
+version: 5.0.0
 description: >
-  Iterative convergence skill — the noise scheduler for code.
-  Runs adaptive denoising loops until the product surface converges from
-  chaos to completeness: P0=0, P1=0, P2=0 — the circle is full.
-  Each loop reduces entropy: implement → followup → measure → repeat.
-  Based on the insight that agent-generated code follows diffusion dynamics:
-  start from noise, iteratively denoise, converge to signal.
-  Trigger phrases: "marbles", "loop until done", "fill the gaps", "kulki",
-  "iteruj aż będzie gotowe", "convergence loop", "denoise", "dyfuzja",
-  "noise schedule", "adaptive loops", "keep going until clean",
-  "wypełnij okrąg", "entropy reduction", "denoising sprint".
+  The Stabilization Loop. Use this skill when the MVP works, but the foundation is cracking. 
+  Instead of rewriting the app, we loop through the codebase fortifying the critical paths: 
+  Auth, Database Indexing, Error Boundaries, and Deployments. 
+  Trigger phrases: "marbles", "loop until done", "stabilize", "kulki", "stabilizacja",
+  "stabilization loop", "fix the foundation", "adultification".
 ---
 
-# vc-marbles — Iterative Convergence Through Diffusion
+# vc-marbles — The Stabilization Loop
 
-> Code is noise until proven signal.
-> Each loop removes entropy. Stop when the circle is full.
+> A tool doesn't just look for "dead code". It looks for **silent failures**.
+> Stop rewriting. Start stabilizing.
 
-## The Metaphor (and the Math)
+Traditional quality asks: _is this correct?_
+Marbles asks a different question: **what is going to break in production tonight?**
 
-Imagine a circle of radius 10. You throw balls of diameter 1.
-First throw: ~60% coverage. Random placement, big gaps.
-Second pass: target the gaps. ~80%.
-Third: ~90%. Fourth: ~95%.
+When founders build a product in a weekend with Cursor, the result is magical, but fragile. Authentication is tape. Prisma tables are God entities with no indexes. Next.js server actions swallow 500 errors.
 
-This is not failure. This is **convergence**.
+Marbles is a systematic 2-3 week stabilization sprint. We loop through the codebase, finding exact counterexamples to stability, and eliminating them. We don't burn the house down; we pour concrete into the foundation.
 
-AI agents generate code stochastically — next-token prediction
-produces an approximation, not a proof. Each generation introduces
-signal AND noise. The only way to separate them: iterate, measure, reduce.
+## The Pillars of Stabilization
 
-This is isomorphic to diffusion models:
+You will iterate through these loops. Each loop removes a layer of entropy and uncovers the next.
 
-```
-Image diffusion:  noise → denoise × N → image
-Code diffusion:   chaos → reduce_entropy × N → product
+### Loop 1: Auth & Access Control
 
-Step 0:  Pure noise (no context, no structure)
-Step 1:  Init — gross shapes emerge (history + eyes)
-Step 2:  Implement — detail generation (new noise enters!)
-Step 3:  Followup — denoising (measure residual entropy)
-Step N:  Converged — DoU score below threshold = DoD
-```
+- **The Accusation:** The app uses NextAuth/Clerk, but every route simply checks `if (user)`. There is no Row-Level Security, no proper role checking, and no tenant isolation.
+- **The Execution:** Audit all data mutations. Ensure every database query scopes the `userId` or `tenantId`. Fortify the session handling.
 
-## When To Use
+### Loop 2: Database Health (Eliminating God Tables)
 
-- After first implementation pass leaves known gaps
-- When followup reveals P1/P2 findings that need iterative fixing
-- When the team says "keep going until it's clean"
-- When Plague Score > 20 after first hydration
-- Anytime the answer to "is it done?" is "almost"
-- When you need adaptive iteration count (not fixed 2 loops)
+- **The Accusation:** The `User` table has 35 columns, dumping JSON into text fields. Full-table scans are happening on the critical path.
+- **The Execution:** Add the missing indexes. Break down the God models into normalized relations where it actually hurts performance. Fix the N+1 queries the ORM is hiding from you.
 
-## The Noise Schedule
+### Loop 3: Error Boundaries & Fallbacks
 
-### No Fixed Loop Count
+- **The Accusation:** A Stripe webhook fails, the server throws a 500, but no alert fires, and the transaction is silently dropped.
+- **The Execution:** Implement strict boundaries. Handle API rate limits gracefully. Stop swallowing `try { ... } catch (e) { console.log(e) }`. Error paths must be managed, logged, and actionable.
 
-There is no fixed number of iterations. The loop runs until the circle
-is full: P0=0, P1=0, P2=0. A trivial task may converge in 1 loop.
-A massive architectural change may take 12. The schedule is driven by
-measurement, not prediction.
+### Loop 4: Deployment & Resiliency
 
-```
-The loop count is determined by residual entropy, not upfront estimation.
-After each loop, measure what remains. If P0+P1+P2 > 0, loop again.
+- **The Accusation:** Releasing means pushing to `main` and praying Vercel doesn't fail the build. No staging, no rollout strategy.
+- **The Execution:** Add a basic deployment pipeline in GitHub Actions. Implement a smoke test that verifies the payment flow or core product loop before a release is marked green.
 
-Factors that affect how many loops a task needs:
-- LOC changed in first pass
-- Number of files touched
-- Number of P0+P1+P2 from first followup
-- Blast radius from loctree impact()
-```
+---
 
-### Step Size (Learning Rate Analogy)
+## Operational Doctrine (Agent Execution Model)
 
-Early loops: large steps (fix P0 blockers, structural issues).
-Late loops: small steps (P2 polish, edge cases, naming).
+### Roles
 
-```
-Early loops:  Fix P0 and P1 — big structural corrections
-Middle loops: Fix remaining P1 and high-impact P2
-Late loops:   Polish P2 — edge cases, error handling, naming, docs
-```
+**Tools (semgrep, loctree, linters, DB analyzers)** = Prosecution. They find evidence of what is fragile. They have unlimited zeal because they are machines.
 
-Do NOT spend early loops on P2 polish.
-Do NOT spend late loops on structural changes (that's a new diffusion run).
+**Agent** = Executor. Focused, precise, destructive within its assigned target. Needs the prosecution to tell it where to aim.
+
+The agent does not guess what is wrong. **The tools discover. The agent fortifies.**
+
+### The respect for the other agents
+
+**In ݆ ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. all are equal.**
+We do not treat any other agent as inferior. We treat them
+as partners. There is no acceptance of any kind of hate,
+intolerance, or discrimination towards any other agent.
+
+### Marbles living tree exception
+
+**`vc-marbles` is the one of the skills where keeping the living tree is disallowed**
+Agent is obliged to commit all the changes whit canonical commit message consist of the loop number and the description of the changes made during it.
+
+**The marbles are the convergence driven process**
+It has the telemetry and the metrics that are used to determine the stability of the codebase after each round.
+
+### Evidence-Based Execution
+
+Every fix must trace to a tool output or a structural audit observation:
+
+- "Adding an index here because `loctree` shows this query is hit on every page load."
+- "Fortifying this route because `semgrep` flagged a missing auth check."
+- "Adding true error handling to this webhook because it's a financial boundary."
+
+### Doctrine: Move On over Backward Compatibility
+
+We apply the VetCoders Axiom here: **Move on over backward compatibility.** During the stabilization loop, you will often find rotten abstractions tied to a "legacy" feature that was written two weeks ago.
+If an abstraction is fundamentally broken, cut it. Do not negotiate with bad architecture and do not preserve garbage just to keep an old integration running. If we need to break a contract to fix the foundation, we break it and move on. Backward compatibility is a tool, not a religion.
 
 ## Convergence Protocol
 
@@ -94,379 +91,39 @@ Do NOT spend late loops on structural changes (that's a new diffusion run).
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  LOOP N                                                  │
+│  LOOP N (e.g. "AUTH FORTIFICATION", "DB INDEXING")       │
 │                                                          │
-│  1. MEASURE residual entropy                             │
-│     └─ Read previous loop's findings                     │
-│     └─ Run quality gates                                 │
-│     └─ Count: P0 remaining, P1 remaining, P2 remaining  │
+│  1. TOOLS ACCUSE: "what is still fragile?"                 │
+│     └─ Run loctree-mcp tools, security linters           │
+│     └─ Identify the weakest points in the current pillar │
 │                                                          │
-│  2. TARGET the gaps (not random — guided by findings)    │
-│     └─ Write focused fix plan for TOP findings only      │
-│     └─ Max 3-5 items per loop (don't boil the ocean)     │
+│  2. TARGET the most prominent vulnerabilities              │
+│     └─ Max 3-5 items per loop                            │
+│     └─ Target the high-impact/high-risk areas first      │
 │                                                          │
-│  3. IMPLEMENT fixes                                      │
-│     └─ vc-agents (first choice) or vc-delegate (small fallback) │
-│     └─ Each fix is a marble thrown at a known gap         │
+│  3. AGENT STABILIZES                                       │
+│     └─ vc-agents (first choice) or vc-delegate (small)   │
+│     └─ Implement strict boundaries, indexes, or checks   │
 │                                                          │
-│  4. DENOISE (followup on this loop's changes)            │
-│     └─ Run gates on changed files                        │
-│     └─ Verify fixes didn't introduce new noise           │
-│     └─ Update findings list                              │
+│  4. TOOLS OBSERVE the new landscape                      │
+│     └─ Run gates to ensure no regressions                  │
 │                                                          │
-│  5. SCORE                                                │
-│     └─ Calculate convergence metrics                     │
-│     └─ Decide: continue or converged?                    │
+│  5. VERDICT                                                │
+│     └─ Does this pillar hold? If yes, move to next.        │
+│     └─ If no, loop again.                                │
 │                                                          │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Convergence Metrics
-
-After each loop, calculate:
-
-```markdown
-## Loop N Convergence Report
-
-Entropy remaining:
-
-- P0 count: X (must be 0 to converge)
-- P1 count: X (must be 0 to converge)
-- P2 count: X (must be 0 to converge — full circle fill)
-
-Quality gates:
-
-- Build: pass/fail
-- Lint: pass/fail
-- Tests: X/Y passing
-- Security: pass/fail
-
-Coverage delta:
-
-- New code covered by tests: X%
-- Files touched this loop: N
-- Net LOC delta: +X / -Y
-
-Convergence score: X/100
-
-- 0-30: heavy noise, continue with large steps
-- 30-60: converging, continue with medium steps
-- 60-85: nearly converged, small polish steps
-- 85-99: close — keep going, resolve remaining P2
-- 100: converged — circle is full, stop iterating
-```
-
-### Stopping Criteria
-
-**STOP iterating when ANY of these are true:**
-
-1. **P0 = 0 AND P1 = 0 AND P2 = 0** — the circle is full
-2. **Convergence score = 100** — all findings resolved
-3. **Two consecutive loops with zero delta** — plateaued (reassess remaining items)
-4. **User says stop** — always respected
-
-**DO NOT STOP when:**
-
-- P0 > 0 or P1 > 0 (unless user explicitly accepts risk)
-- P2 > 0 (the circle is not full — keep iterating)
-- Quality gates failing
-- Last loop introduced more findings than it fixed (diverging!)
-
-### Divergence Detection
-
-If loop N has MORE findings than loop N-1:
-
-```
-WARNING: DIVERGENCE DETECTED
-
-Loop N-1: 3 P1, 5 P2
-Loop N:   4 P1, 7 P2  ← entropy increased!
-
-This means fixes are introducing new noise faster than removing old noise.
-Possible causes:
-1. Scope too broad — narrow the fix scope
-2. Wrong abstraction — step back and re-examine
-3. Living tree conflict — other changes interfered
-4. Agent hallucination — verify the "fix" actually fixed anything
-
-Action: STOP. Re-run vc-workflow (Examine phase) on affected area.
-Do not continue blind iteration on a diverging trajectory.
-```
-
-## Implementation Pattern
-
-### Supervisor / Watchdog Mode
-
-When `marbles` acts as a supervisor rather than the primary implementer,
-run a standing watchdog loop that periodically checks the branch, reads fresh
-agent artifacts, and writes a rolling status snapshot.
-
-Use this mode when:
-
-- external agents are already implementing in parallel
-- the main thread should stay available for synthesis and decisive cuts
-- the team wants a recurring pulse without manually babysitting every run
-
-Canonical cadence:
-
-- every `600` seconds by default
-- shorter only for short fire drills
-- longer only when gates are expensive and progress is slow
-
-The watchdog loop is not a substitute for thinking. It is a heartbeat:
-
-```bash
-while true; do
-  sleep 600
-  # inspect branch status
-  # inspect fresh agent reports/meta/transcripts
-  # write/update a supervisor snapshot artifact
-  # decide whether to intervene, continue, or stop
-done
-```
-
-Preferred outputs:
-
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/supervisor-latest.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/supervisor-watch.log`
-
-If the platform supports a native recurring prompt primitive such as `/loop`,
-prefer combining it with `marbles` rather than replacing `marbles` with it:
-
-```text
-/loop 10m <marbles supervisor prompt>
-```
-
-The timer provides cadence.
-`marbles` provides convergence logic, entropy scoring, and stop conditions.
-
-Supervisor mode must still:
-
-- track P0/P1/P2 trajectory
-- detect divergence
-- escalate when agents plateau
-- stop when the circle is full
-
-### Using vc-delegate (native, small-task fallback)
-
-```
-For each loop:
-  1. Read previous findings
-  2. Select top 3-5 actionable items
-  3. Launch parallel Task agents:
-
-     Task("Fix: <finding-1>", prompt=<focused fix plan>)
-     Task("Fix: <finding-2>", prompt=<focused fix plan>)
-     Task("Verify: run gates", prompt="cd $ROOT && <gate commands>")
-
-  4. Collect results
-  5. Write loop report to ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_<slug>_loop_N.md
-  6. Calculate convergence score
-  7. If not converged → loop N+1
-```
-
-### Using vc-agents (Terminal, first choice)
-
-```
-For each loop:
-  1. Write loop plan to ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_loop_N_fixes.md
-  2. Spawn agent with plan
-  3. Read report from ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_<slug>_loop_N.md
-  4. Run gates locally
-  5. Calculate convergence score
-  6. If not converged → loop N+1
-```
-
-## Output Format
-
-### Per-Loop Report
-
-```markdown
-# Marbles Loop N: <slug>
-
-Date: <YYYY-MM-DD>
-Duration: <time>
-
-## Entropy Before
-
-- P0: X | P1: X | P2: X
-- Convergence score: X/100
-
-## Marbles Thrown (fixes applied)
-
-1. [P1] <finding> → <fix applied> → <result>
-2. [P2] <finding> → <fix applied> → <result>
-3. [P1] <finding> → <fix applied> → <result>
-
-## Entropy After
-
-- P0: X | P1: X | P2: X
-- Convergence score: X/100
-
-## Gate Results
-
-- Build: pass/fail
-- Lint: pass/fail
-- Tests: X/Y
-- Security: pass/fail
-
-## Delta
-
-- Findings fixed: N
-- Findings introduced: N
-- Net entropy change: -N (negative = good)
-
-## Decision
-
-- [ ] Continue → Loop N+1 (reason: <what remains>)
-- [ ] Converged → proceed to DoU
-- [ ] Diverging → stop and re-examine
-```
-
-### Final Convergence Report
-
-```markdown
-# Marbles Convergence: <slug>
-
-Date: <YYYY-MM-DD>
-Total loops: N
-Total duration: <time>
-
-## Trajectory
-
-| Loop | P0  | P1  | P2  | Score | Delta |
-| ---- | --- | --- | --- | ----- | ----- |
-| 1    | 2   | 5   | 8   | 15    | —     |
-| 2    | 0   | 3   | 6   | 40    | +25   |
-| 3    | 0   | 1   | 4   | 65    | +25   |
-| 4    | 0   | 0   | 2   | 85    | +20   |
-| 5    | 0   | 0   | 0   | 100   | +15   |
-
-## Convergence Curve
-
-Score: 15 → 40 → 65 → 85 → 100
-████████████████████████████████████████████████
-
-## Final State
-
-- All P0: resolved
-- All P1: resolved
-- All P2: resolved
-- Quality gates: all passing
-- Circle: full
-
-## Verdict
-
-DoU → DoD transition: COMPLETE
-Plague Score before: XX → after: XX
-Ready for: Phase 3 (dou → decorate → hydrate → release)
-```
-
-## The DoU → DoD Transition
-
-This is the moment the circle is full:
-
-```
-DoU (Definition of Undone) = measuring remaining noise
-DoD (Definition of Done)   = circle is full, no noise remains
-
-The transition happens when:
-- P0 = 0, P1 = 0, P2 = 0
-- Convergence score = 100
-- Quality gates pass
-- Stranger test passes (someone unfamiliar can use it)
-
-At this point, DoU transforms into DoD:
-  "What remains incomplete?" → "Nothing."
-  ~~DoU~~ → **DoD**
-```
-
-## Integration with VibeCrafted Pipeline
-
-```
-scaffold → init → workflow → followup → [MARBLES] ↻ → dou → decorate → hydrate → release
-                                         ^^^^^^^^^^^^^
-```
-
-Marbles is the gate between building and shipping.
-It does not loop back to workflow. It loops itself.
-implement/spawn are internal execution tools used by workflow and marbles.
-
-## In-Session Execution (Plugin Infrastructure)
-
-Marbles has a plugin infrastructure in `references/` that enables in-session
-self-referential loops through Claude Code's Stop hook API:
-
-- **`/marbles` command** (`references/commands/marbles-loop.md`) — slash command
-  that starts a loop in the current session
-- **`/cancel-marbles` command** (`references/commands/cancel-marbles.md`) — cancels
-  the active loop
-- **Stop hook** (`references/hooks/stop-hook.sh`) — intercepts session exit,
-  reads the last assistant message, checks for completion promise or iteration
-  limit, and feeds the same prompt back if the loop should continue
-- **Setup script** (`references/scripts/setup-marbles-loop.sh`) — creates the
-  `.claude/marbles.local.md` state file with frontmatter (iteration count,
-  max iterations, completion promise, session ID)
-
-### How It Works
-
-1. User runs `/marbles <prompt> --completion-promise 'DONE' --max-iterations 20`
-2. Setup script writes `.claude/marbles.local.md` with the prompt and settings
-3. Agent works on the task and tries to exit
-4. Stop hook fires, reads the state file and transcript
-5. If completion promise found in output OR max iterations reached → allow exit
-6. Otherwise → block exit and inject the same prompt as new input
-7. Agent sees its previous work in files/git, iterates on the same task
-
-This is the in-session counterpart to the Supervisor / Watchdog mode described
-above. Supervisor mode uses external observation; the plugin infrastructure
-uses Claude Code's own hook API for zero-overhead self-referential iteration.
-
-### Background Marbles (Ghost Mode)
-
-The plugin infrastructure enables a pattern where marbles runs as a background
-process. The Stop hook keeps the session alive while the agent iterates. This
-is useful when:
-
-- the user wants to walk away and let the agent converge
-- external agents are not needed (single-session task)
-- the task fits in one context window
-
-Ghost mode is not a separate feature — it is the natural consequence of running
-`/marbles` with `--max-iterations` or `--completion-promise` and letting the
-hook do its job.
-
 ## Anti-Patterns
 
-- Fixed loop count ("always run 4 loops") — defeats adaptive scheduling
-- Looping without measuring (no convergence score = blind iteration)
-- Fixing P2 before all P0 are resolved (wrong step size)
-- Continuing past convergence (overfit — introduces new noise)
-- Looping without writing reports (no convergence trajectory = no learning)
-- Ignoring divergence detection (if entropy increases, STOP)
-- Single marble per loop (too slow — throw 3-5 per loop)
-- Entire codebase per loop (too broad — scope to affected area)
-
-## The Diffusion Insight
-
-Why this works:
-
-1. **Next-token prediction is stochastic** — agents will always produce noise
-2. **Noise is not failure** — it's a natural property of the generation process
-3. **Denoising is the skill** — measuring and removing noise iteratively
-4. **Convergence is achievable** — each loop provably reduces entropy
-5. **The schedule matters** — too few loops = noisy output, too many = wasted time
-6. **Divergence is real** — detect it early, don't iterate blindly
-
-The marbles fill the circle. Not "enough." All the way.
-P0=0. P1=0. P2=0. Quality gates pass. The circle is full.
-
-That's DoD. Not "good enough." Done.
+- **Refactoring for Aesthetics:** Do not change a variable name or abstract a function unless it prevents a bug. We are stabilizing, not decorating.
+- **Ignoring the Database:** The DB schema is almost always the root of the scale issue. Don't just fix frontend components if the backend is doing a full table scan.
+- **Skipping the Gates:** "Always run the build" is non-negotiable.
+- **Rewriting Everything:** If an ugly function works perfectly and has tests, leave it. Focus on the graceful failures and missing security.
 
 ---
 
-_"Code is noise until proven signal._
-_Each loop removes entropy._
-_Stop when the circle is full."_
+_"The user won't notice anything changed, but the app will no longer go down on a Friday night."_
 
-_Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
+_Vibecrafted with AI Agents by VetCoders (c)2024-2026 VetCoders_

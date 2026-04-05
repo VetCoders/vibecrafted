@@ -1,9 +1,9 @@
 # shellcheck shell=bash
-# VetCoders shell helpers (bash/zsh compatible)
-# Source this from your ~/.bashrc or ~/.zshrc to get consistent wrapper commands
-# for the VibeCrafted framework installed under your local repository path.
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers (bash/zsh compatible)
+# Source this from your $HOME/.bashrc or $HOME/.zshrc to get consistent wrapper commands
+# for the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework installed under your local repository path.
 # These are shell functions, not standalone binaries. Non-interactive callers
-# should use an interactive shell so ~/.zshrc sources this file; fall back
+# should use an interactive shell so $HOME/.zshrc sources this file; fall back
 # to `bash -ic` on bash-only systems.
 
 _vetcoders_spawn_home() {
@@ -16,7 +16,7 @@ _vetcoders_spawn_home() {
   fi
 
   local repo_root
-  repo_root="${VIBECRAFT_ROOT:-$(_vetcoders_repo_root)}"
+  repo_root="${VIBECRAFTED_ROOT:-$(_vetcoders_repo_root)}"
   if [[ -d "$repo_root/skills/vc-agents" ]]; then
     printf '%s/skills/vc-agents' "$repo_root"
     return 0
@@ -37,7 +37,7 @@ _vetcoders_spawn_script() {
   local base
   base="$(_vetcoders_spawn_home "$tool")"
   [[ -f "$base/scripts/$script_name" ]] || {
-    echo "VetCoders spawn script not found: $base/scripts/$script_name" >&2
+    echo "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. spawn script not found: $base/scripts/$script_name" >&2
     return 1
   }
   printf '%s/scripts/%s' "$base" "$script_name"
@@ -47,55 +47,730 @@ _vetcoders_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
 }
 
+_vetcoders_org_repo() {
+  local root="${1:-$(_vetcoders_repo_root)}"
+  local org_repo=""
+  org_repo="$(cd "$root" && git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+)/([^/.]+)(\.git)?$|\1/\2|' || true)"
+  if [[ -n "$org_repo" ]]; then
+    printf '%s\n' "$org_repo"
+  else
+    printf '%s\n' "$(basename "$root")"
+  fi
+}
+
+_vetcoders_skill_prefix() {
+  local name="${1:-}"
+  case "$name" in
+    agents) printf 'agnt\n' ;;
+    decorate) printf 'deco\n' ;;
+    delegate) printf 'delg\n' ;;
+    dou) printf 'vdou\n' ;;
+    followup) printf 'fwup\n' ;;
+    hydrate) printf 'hydr\n' ;;
+    implement|prompt) printf 'impl\n' ;;
+    init) printf 'init\n' ;;
+    justdo) printf 'just\n' ;;
+    marbles) printf 'marb\n' ;;
+    partner) printf 'prtn\n' ;;
+    plan) printf 'plan\n' ;;
+    prune) printf 'prun\n' ;;
+    release) printf 'rels\n' ;;
+    research) printf 'rsch\n' ;;
+    review) printf 'rvew\n' ;;
+    scaffold) printf 'scaf\n' ;;
+    workflow) printf 'wflw\n' ;;
+    *)
+      if [[ -n "$name" ]]; then
+        printf '%.4s\n' "$name"
+      else
+        printf 'impl\n'
+      fi
+      ;;
+  esac
+}
+
+_vetcoders_generate_run_id() {
+  local prefix="$1"
+  printf '%s-%s\n' "$prefix" "$(date +%H%M%S)"
+}
+
+_vetcoders_has_ambient_spawn_context() {
+  [[ -n "${SPAWN_AGENT:-}" ]] || return 1
+  [[ -n "${SPAWN_RUN_ID:-}" ]] || return 1
+  [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
+  [[ "${SPAWN_RUN_ID}" == "${VIBECRAFTED_RUN_ID}" ]] || return 1
+  [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || return 1
+  _vetcoders_in_zellij && return 1
+  return 0
+}
+
+_vetcoders_effective_run_id() {
+  _vetcoders_has_ambient_spawn_context && return 1
+  [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_RUN_ID}"
+}
+
+_vetcoders_effective_run_lock() {
+  _vetcoders_has_ambient_spawn_context && return 1
+  [[ -n "${VIBECRAFTED_RUN_LOCK:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_RUN_LOCK}"
+}
+
+_vetcoders_effective_skill_name() {
+  _vetcoders_has_ambient_spawn_context && return 1
+  [[ -n "${VIBECRAFTED_SKILL_NAME:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_SKILL_NAME}"
+}
+
+_vetcoders_effective_skill_code() {
+  _vetcoders_has_ambient_spawn_context && return 1
+  [[ -n "${VIBECRAFTED_SKILL_CODE:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_SKILL_CODE}"
+}
+
+_vetcoders_create_run_lock() {
+  local run_id="$1"
+  local agent="$2"
+  local skill="$3"
+  local root="$4"
+  local org_repo lock_dir lock_file
+  org_repo="$(_vetcoders_org_repo "$root")"
+  lock_dir="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/locks/$org_repo"
+  mkdir -p "$lock_dir"
+  lock_file="$lock_dir/${run_id}.lock"
+  cat > "$lock_file" <<LOCK
+run_id=$run_id
+agent=$agent
+skill=$skill
+root=$root
+started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+status=running
+LOCK
+  printf '%s\n' "$lock_file"
+}
+
+_vetcoders_spawn_root_arg() {
+  local arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      --root)
+        [[ $# -gt 0 ]] || break
+        printf '%s\n' "$1"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+_vetcoders_ensure_run_context() {
+  local tool="$1"
+  local mode="$2"
+  local root="${3:-$(_vetcoders_repo_root)}"
+  local skill_name
+  local skill_code
+  local run_id
+  local lock_file
+
+  skill_name="$(_vetcoders_effective_skill_name 2>/dev/null || true)"
+  [[ -n "$skill_name" ]] || skill_name="$mode"
+  skill_code="$(_vetcoders_effective_skill_code 2>/dev/null || true)"
+  run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
+  lock_file="$(_vetcoders_effective_run_lock 2>/dev/null || true)"
+
+  [[ -n "$skill_code" ]] || skill_code="$(_vetcoders_skill_prefix "$skill_name")"
+  [[ -n "${VIBECRAFTED_SKILL_NAME:-}" ]] || export VIBECRAFTED_SKILL_NAME="$skill_name"
+  export VIBECRAFTED_SKILL_CODE="$skill_code"
+
+  # Preserve the first run_id created for this workflow so prompts, locks,
+  # operator sessions, and spawned workers stay traceable as one run.
+  if [[ -z "$run_id" ]]; then
+    run_id="$(_vetcoders_generate_run_id "$skill_code")"
+  fi
+  export VIBECRAFTED_RUN_ID="$run_id"
+
+  if [[ -z "$lock_file" || ! -f "$lock_file" ]]; then
+    lock_file="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/locks/$(_vetcoders_org_repo "$root")/${run_id}.lock"
+  fi
+  if [[ ! -f "$lock_file" ]]; then
+    lock_file="$(_vetcoders_create_run_lock "$run_id" "$tool" "$skill_name" "$root")"
+  fi
+  export VIBECRAFTED_RUN_LOCK="$lock_file"
+}
+
 _vetcoders_default_runtime() {
   printf '%s\n' "${VETCODERS_SPAWN_RUNTIME:-terminal}"
 }
 
-_vetcoders_frontier_root() {
-  local root
-  root="${VIBECRAFT_ROOT:-}"
-  if [[ -n "$root" && -d "$root/config/atuin" && -d "$root/config/zellij" && -f "$root/config/starship.toml" ]]; then
-    printf '%s/config' "$root"
+_vetcoders_in_zellij() {
+  [[ "${ZELLIJ:-}" == "0" ]] && return 1
+  [[ -n "${ZELLIJ_PANE_ID:-}" ]] || [[ -n "${ZELLIJ:-}" ]]
+}
+
+_vetcoders_guess_active_zellij_session() {
+  command -v zellij >/dev/null 2>&1 || return 0
+  local active
+  active="$(zellij ls 2>/dev/null | _vetcoders_strip_ansi | grep -E '\(attached\)|\(current\)' | head -1 | awk '{print $1}')"
+  if [[ -z "$active" ]]; then
+    active="$(zellij ls 2>/dev/null | _vetcoders_strip_ansi | grep -v '(EXITED' | head -1 | awk '{print $1}')"
+  fi
+  printf '%s\n' "$active"
+}
+
+_vetcoders_current_zellij_session_name() {
+  printf '%s\n' "${ZELLIJ_SESSION_NAME:-}"
+}
+
+_vetcoders_atuin_bin() {
+  local override="${VIBECRAFTED_ATUIN_BIN:-}"
+  if [[ -n "$override" && -x "$override" ]]; then
+    printf '%s\n' "$override"
     return 0
   fi
 
-  local repo_root
+  if [[ -n "${_VETCODERS_ATUIN_BIN:-}" && -x "${_VETCODERS_ATUIN_BIN}" ]]; then
+    printf '%s\n' "${_VETCODERS_ATUIN_BIN}"
+    return 0
+  fi
+
+  command -v atuin 2>/dev/null || return 1
+}
+
+_vetcoders_strip_ansi() {
+  python3 -c 'import re, sys; print(re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", sys.stdin.read()), end="")'
+}
+
+_vetcoders_osascript_bin() {
+  local override="${VIBECRAFTED_OSASCRIPT_BIN:-}"
+  if [[ -n "$override" && -x "$override" ]]; then
+    printf '%s\n' "$override"
+    return 0
+  fi
+
+  command -v osascript 2>/dev/null || return 1
+}
+
+_vetcoders_preferred_terminal() {
+  local pref="${VIBECRAFTED_TERMINAL:-}"
+  if [[ -n "$pref" ]]; then
+    printf '%s\n' "$pref"
+    return 0
+  fi
+  if [[ -d "/Applications/iTerm.app" ]]; then
+    printf 'iterm\n'
+    return 0
+  fi
+  case "${TERM_PROGRAM:-}" in
+    iTerm.app) printf 'iterm\n' ;;
+    *) printf 'terminal\n' ;;
+  esac
+}
+
+_vetcoders_zellij_session_state() {
+  local session_name="$1"
+  local listing
+
+  command -v zellij >/dev/null 2>&1 || {
+    printf 'missing\n'
+    return 0
+  }
+
+  listing="$(zellij ls 2>/dev/null | _vetcoders_strip_ansi || true)"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    case "$line" in
+      "$session_name "*)
+        if [[ "$line" == *"(EXITED"* ]]; then
+          printf 'dead\n'
+        else
+          printf 'live\n'
+        fi
+        return 0
+        ;;
+    esac
+  done <<< "$listing"
+
+  printf 'missing\n'
+}
+
+_vetcoders_open_iterm_command() {
+  local command_text="$1"
+  local osascript_bin
+  osascript_bin="$(_vetcoders_osascript_bin)" || return 1
+  [[ "$(_vetcoders_preferred_terminal)" == "iterm" ]] || return 1
+  local command_json
+  command_json="$(python3 - "$command_text" <<'PY'
+import json
+import sys
+
+print(json.dumps(sys.argv[1]))
+PY
+)"
+
+  "$osascript_bin" <<EOF_APPLE
+tell application "iTerm2"
+  tell current window
+    create tab with default profile
+    tell current session of current tab
+      write text $command_json
+    end tell
+  end tell
+end tell
+EOF_APPLE
+}
+
+_vetcoders_open_terminal_command() {
+  local command_text="$1"
+  local osascript_bin
+  osascript_bin="$(_vetcoders_osascript_bin)" || return 1
+  local command_json
+  command_json="$(python3 - "$command_text" <<'PY'
+import json
+import sys
+
+print(json.dumps(sys.argv[1]))
+PY
+)"
+
+  "$osascript_bin" <<EOF_APPLE
+ tell application "Terminal"
+   activate
+   do script $command_json
+ end tell
+EOF_APPLE
+}
+
+_vetcoders_operator_layout_file() {
+  _vetcoders_frontier_file "zellij/layouts/vibecrafted.kdl"
+}
+
+_vetcoders_operator_session_name() {
+  local root base run_id
+  root="$(_vetcoders_repo_root)"
+  base="$(basename "$root" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/^-*//; s/-*$//')"
+  [[ -n "$base" ]] || base="vibecrafted"
+  run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
+  if [[ -n "$run_id" ]]; then
+    printf '%s-%s\n' "$base" "$run_id"
+  else
+    printf '%s\n' "$base"
+  fi
+}
+
+
+_vetcoders_wait_for_zellij_session() {
+  local session_name="$1"
+  local attempts="${2:-40}"
+  local current=0
+
+  while (( current < attempts )); do
+    [[ "$(_vetcoders_zellij_session_state "$session_name")" == "live" ]] && return 0
+    sleep 0.25
+    ((current+=1))
+  done
+
+  return 1
+}
+
+
+_vetcoders_ensure_zellij_session() {
+  local session_name="$1"
+  local layout_file="$2"
+  shift 2
+
+  command -v zellij >/dev/null 2>&1 || {
+    echo "zellij is required." >&2
+    return 1
+  }
+
+  case "$(_vetcoders_zellij_session_state "$session_name")" in
+    live)
+      zellij "$@" attach "$session_name"
+      ;;
+    dead)
+      zellij "$@" attach --force-run-commands "$session_name"
+      ;;
+    *)
+      if [[ -n "$layout_file" ]]; then
+        zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+      else
+        echo "Layout file missing and session not found." >&2
+        return 1
+      fi
+      ;;
+  esac
+}
+
+_vetcoders_prepare_operator_runtime() {
+  local runtime="${1:-$(_vetcoders_default_runtime)}"
+  local session_name layout_file state command_text
+
+  case "$runtime" in
+    terminal|visible) ;;
+    *) return 0 ;;
+  esac
+
+  # If we are already inside a Zellij session, naturally attach to it.
+  if _vetcoders_in_zellij; then
+    export VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
+    return 0
+  fi
+
+  # If spawned by a headless agent, attempt to naturally latch onto the user's active session.
+  local guessed_session
+  guessed_session="$(_vetcoders_guess_active_zellij_session)"
+  if [[ -n "$guessed_session" ]]; then
+    export VIBECRAFTED_OPERATOR_SESSION="$guessed_session"
+    return 0
+  fi
+
+  session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
+  command -v zellij >/dev/null 2>&1 || return 0
+
+  layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
+  [[ -n "$layout_file" ]] || return 0
+
+  state="$(_vetcoders_zellij_session_state "$session_name")"
+  case "$state" in
+    live)
+      export VIBECRAFTED_OPERATOR_SESSION="$session_name"
+      return 0
+      ;;
+    dead)
+      command_text="zellij attach --force-run-commands \"$session_name\""
+      ;;
+    *)
+      command_text="zellij --session \"$session_name\" --new-session-with-layout \"$layout_file\""
+      ;;
+  esac
+  if _vetcoders_open_iterm_command "$command_text"; then
+    :
+  elif _vetcoders_open_terminal_command "$command_text"; then
+    :
+  else
+    return 0
+  fi
+
+  if _vetcoders_wait_for_zellij_session "$session_name"; then
+    export VIBECRAFTED_OPERATOR_SESSION="$session_name"
+  fi
+}
+
+_vetcoders_spawn_into_operator_session() {
+  local tab_name="$1"
+  local command_text="$2"
+  local session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
+  local root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
+
+  command -v zellij >/dev/null 2>&1 || return 1
+  # When bootstrapping from outside the operator session, open a fresh tab so
+  # we do not disturb the currently focused tab layout.
+  zellij --session "$session_name" action new-tab \
+    --name "$tab_name" \
+    --cwd "$root_dir" \
+    -- /bin/zsh -l -c "$command_text"
+}
+
+_vetcoders_frontier_candidates() {
+  local repo_root crafted_sidecar candidate seen=""
   repo_root="$(_vetcoders_repo_root)"
-  if [[ -d "$repo_root/config/atuin" && -d "$repo_root/config/zellij" && -f "$repo_root/config/starship.toml" ]]; then
-    printf '%s/config' "$repo_root"
-    return 0
-  fi
+  crafted_sidecar="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/config"
 
-  local crafted_sidecar="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/config"
-  if [[ -d "$crafted_sidecar/atuin" && -d "$crafted_sidecar/zellij" && -f "$crafted_sidecar/starship.toml" ]]; then
-    printf '%s' "$crafted_sidecar"
-    return 0
-  fi
+  for candidate in \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier" \
+    "$crafted_sidecar" \
+    "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/config}" \
+    "$repo_root/config"
+  do
+    [[ -n "$candidate" && -d "$candidate" ]] || continue
+    case ":$seen:" in
+      *":$candidate:"*) continue ;;
+    esac
+    seen="${seen:+$seen:}$candidate"
+    printf '%s\n' "$candidate"
+  done
+}
 
-  local sidecar="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier"
-  if [[ -d "$sidecar/atuin" && -d "$sidecar/zellij" && -f "$sidecar/starship.toml" ]]; then
-    printf '%s' "$sidecar"
-    return 0
-  fi
+_vetcoders_frontier_root() {
+  local candidate
+  while IFS= read -r candidate; do
+    if [[ -f "$candidate/starship.toml" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done < <(_vetcoders_frontier_candidates)
 
-  echo "VetCoders frontier config not found. Run vc-frontier-install from the repo checkout." >&2
+  echo "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. frontier config not found. Run vc-frontier-install from the repo checkout." >&2
+  return 1
+}
+
+# Resolve each frontier asset independently so repo-owned prompt/history presets
+# can coexist with an external session companion repo.
+_vetcoders_frontier_file() {
+  local relative_path="$1"
+  local candidate
+  while IFS= read -r candidate; do
+    if [[ -f "$candidate/$relative_path" ]]; then
+      printf '%s/%s\n' "$candidate" "$relative_path"
+      return 0
+    fi
+  done < <(_vetcoders_frontier_candidates)
+  return 1
+}
+
+_vetcoders_frontier_source_root() {
+  local repo_root crafted_root candidate seen=""
+  repo_root="$(_vetcoders_repo_root)"
+  crafted_root="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current"
+
+  for candidate in \
+    "${VIBECRAFTED_ROOT:-}" \
+    "$repo_root" \
+    "$crafted_root"
+  do
+    [[ -n "$candidate" ]] || continue
+    case ":$seen:" in
+      *":$candidate:"*) continue ;;
+    esac
+    seen="${seen:+$seen:}$candidate"
+    if [[ -f "$candidate/config/starship.toml" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
   return 1
 }
 
 _vetcoders_load_frontier_sidecars() {
-  local root
-  root="$(_vetcoders_frontier_root 2>/dev/null)" || return 0
+  local starship_config atuin_config zellij_config zellij_config_dir
+  starship_config="$(_vetcoders_frontier_file "starship.toml" 2>/dev/null || true)"
+  atuin_config="$(_vetcoders_frontier_file "atuin/config.toml" 2>/dev/null || true)"
+  zellij_config="$(_vetcoders_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
 
-  if [[ -z "${STARSHIP_CONFIG:-}" ]] && command -v starship >/dev/null 2>&1 && [[ -f "$root/starship.toml" ]]; then
-    export STARSHIP_CONFIG="$root/starship.toml"
+  # Frontier tools (starship, atuin, zellij) are suggested for the runtime,
+  # not required. Never override a user's existing config — only set env vars
+  # when the user has no config of their own. Users opt in explicitly.
+  if command -v starship >/dev/null 2>&1 && [[ -n "$starship_config" && -z "${STARSHIP_CONFIG:-}" ]]; then
+    export STARSHIP_CONFIG="$starship_config"
   fi
 
-  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]] && command -v zellij >/dev/null 2>&1 && [[ -d "$root/zellij" ]]; then
-    export ZELLIJ_CONFIG_DIR="$root/zellij"
+  if command -v atuin >/dev/null 2>&1 && [[ -n "$atuin_config" && -z "${ATUIN_CONFIG:-}" ]]; then
+    export ATUIN_CONFIG="$atuin_config"
+  fi
+
+  if command -v zellij >/dev/null 2>&1 && [[ -n "$zellij_config" && -z "${ZELLIJ_CONFIG_DIR:-}" ]]; then
+    zellij_config_dir="$(dirname "$zellij_config")"
+    export ZELLIJ_CONFIG_DIR="$zellij_config_dir"
   fi
 }
 
 _vetcoders_load_frontier_sidecars
+
+_VETCODERS_ATUIN_BIN="$(_vetcoders_atuin_bin 2>/dev/null || true)"
+
+_vetcoders_atuin_home_fallback_enabled() {
+  [[ "${VIBECRAFTED_ATUIN_HOME_FALLBACK:-1}" != "0" ]]
+}
+
+_vetcoders_atuin_home_fallback_cwd() {
+  printf '%s\n' "${VIBECRAFTED_ATUIN_FALLBACK_CWD:-$HOME}"
+}
+
+_vetcoders_same_physical_dir() {
+  local left="${1:-}"
+  local right="${2:-}"
+  local left_real right_real
+
+  [[ -n "$left" && -n "$right" ]] || return 1
+  left_real="$(cd "$left" 2>/dev/null && pwd -P)" || return 1
+  right_real="$(cd "$right" 2>/dev/null && pwd -P)" || return 1
+  [[ "$left_real" == "$right_real" ]]
+}
+
+_vetcoders_atuin_search_can_fallback() {
+  local arg
+  [[ "${1:-}" == "search" ]] || return 1
+  shift
+
+  for arg in "$@"; do
+    case "$arg" in
+      -c|--cwd|--exclude-cwd|--filter-mode|--delete|--delete-it-all)
+        return 1
+        ;;
+    esac
+  done
+
+  return 0
+}
+
+_vetcoders_atuin_search_is_interactive() {
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -i|--interactive|--shell-up-key-binding)
+        return 0
+        ;;
+    esac
+  done
+
+  return 1
+}
+
+_vetcoders_atuin_run() {
+  local atuin_bin
+  atuin_bin="$(_vetcoders_atuin_bin)" || return 127
+  "$atuin_bin" "$@"
+}
+
+_vetcoders_atuin_run_with_home_scope() {
+  local fallback_cwd="$1"
+  shift
+  local -a argv=()
+
+  argv+=("search" "--cwd" "$fallback_cwd")
+  # Skip "search" from caller args if present
+  [[ "${1:-}" == "search" ]] && shift
+  argv+=("$@")
+  _vetcoders_atuin_run "${argv[@]}"
+}
+
+_vetcoders_atuin_probe_current_scope() {
+  local arg
+  local -a argv=()
+
+  argv+=("search" "--cmd-only" "--limit" "1")
+  # Skip "search" from caller args if present
+  [[ "${1:-}" == "search" ]] && shift
+  for arg in "$@"; do
+    case "$arg" in
+      -i|--interactive|--shell-up-key-binding)
+        continue
+        ;;
+      --cmd-only|--limit)
+        continue
+        ;;
+    esac
+    argv+=("$arg")
+  done
+
+  _vetcoders_atuin_run "${argv[@]}"
+}
+
+_vetcoders_wrap_atuin() {
+  # Only wrap an explicit override target. This preserves normal Atuin init
+  # behavior in user shells while keeping the controlled fallback contract
+  # available for tests and opt-in environments.
+  [[ -n "${VIBECRAFTED_ATUIN_BIN:-}" ]] || return 0
+
+  atuin() {
+    if _vetcoders_atuin_home_fallback_enabled && _vetcoders_atuin_search_can_fallback "$@"; then
+      local probe_output fallback_cwd
+      if _vetcoders_atuin_search_is_interactive "$@"; then
+        probe_output="$(_vetcoders_atuin_probe_current_scope "$@")" || return $?
+      else
+        probe_output="$(_vetcoders_atuin_run "$@")" || return $?
+      fi
+      if [[ -n "$probe_output" ]]; then
+        printf '%s' "$probe_output"
+        return 0
+      fi
+
+      fallback_cwd="$(_vetcoders_atuin_home_fallback_cwd)"
+      if [[ -n "$fallback_cwd" ]] && ! _vetcoders_same_physical_dir "${PWD:-.}" "$fallback_cwd"; then
+        _vetcoders_atuin_run_with_home_scope "$fallback_cwd" "$@"
+        return $?
+      fi
+    fi
+
+    _vetcoders_atuin_run "$@"
+  }
+}
+
+_vetcoders_wrap_atuin
+
+_vetcoders_dashboard_layout_name() {
+  local requested="${1:-vc-dashboard}"
+  case "$requested" in
+    ""|dashboard|mc|mission-control|vc-dashboard) printf 'vc-dashboard\n' ;;
+    marbles|vc-marbles) printf 'vc-marbles\n' ;;
+    workflow|vc-workflow) printf 'vc-workflow\n' ;;
+    research|vc-research) printf 'vc-research\n' ;;
+    vibecrafted) printf 'vibecrafted\n' ;;
+    *) printf '%s\n' "$requested" ;;
+  esac
+}
+
+_vetcoders_dashboard_layout_file() {
+  local layout_name
+  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  _vetcoders_frontier_file "zellij/layouts/${layout_name}.kdl"
+}
+
+_vetcoders_dashboard_session_name() {
+  local layout_name slug base_session run_id
+  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  base_session="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
+  run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
+  if [[ -n "$run_id" ]]; then
+    printf '%s\n' "$base_session"
+    return 0
+  fi
+  if [[ "$layout_name" == "vibecrafted" ]]; then
+    printf '%s\n' "$base_session"
+    return 0
+  fi
+  slug="${layout_name#vc-}"
+  printf '%s-%s\n' "$base_session" "$slug"
+}
+
+_vetcoders_launch_dashboard() {
+  local layout_name layout_file session_name repo_source repo_zellij_dir
+  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  shift || true
+
+  command -v zellij >/dev/null 2>&1 || {
+    echo "zellij is required for vibecrafted dashboard." >&2
+    return 1
+  }
+
+  _vetcoders_load_frontier_sidecars
+
+  layout_file="$(_vetcoders_dashboard_layout_file "$layout_name" 2>/dev/null || true)"
+  [[ -n "$layout_file" ]] || {
+    echo "Dashboard layout not found for: $layout_name" >&2
+    echo "Expected zellij/layouts/${layout_name}.kdl in the active frontier config roots." >&2
+    return 1
+  }
+
+  if [[ "${VIBECRAFTED_PREFER_REPO_ZELLIJ:-0}" == "1" ]]; then
+    # Use the git-derived repo root, not frontier source root, so that an
+    # ambient VIBECRAFTED_ROOT pointing at a different repo cannot hijack the
+    # config dir when the launcher explicitly asked for repo-local zellij.
+    repo_source="$(_vetcoders_repo_root)"
+    repo_zellij_dir="$repo_source/config/zellij"
+    if [[ -d "$repo_zellij_dir" && -f "$repo_zellij_dir/config.kdl" ]]; then
+      local repo_layout="$repo_zellij_dir/layouts/${layout_name}.kdl"
+      if [[ -f "$repo_layout" ]]; then
+        layout_file="$repo_layout"
+        export ZELLIJ_CONFIG_DIR="$repo_zellij_dir"
+      fi
+    fi
+  fi
+
+  session_name="$(_vetcoders_dashboard_session_name "$layout_name")"
+  _vetcoders_ensure_zellij_session "$session_name" "$layout_file" "$@"
+}
+
+_vetcoders_resume_operator_session() {
+  local session_name layout_file
+  session_name="$(_vetcoders_operator_session_name)"
+  layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
+
+  _vetcoders_ensure_zellij_session "$session_name" "$layout_file"
+}
 
 _vetcoders_prompt_file() {
   local agent="$1"
@@ -226,6 +901,15 @@ _vetcoders_require_file() {
   }
 }
 
+_vetcoders_shell_quote_join() {
+  local quoted=()
+  local arg
+  for arg in "$@"; do
+    quoted+=("$(printf '%q' "$arg")")
+  done
+  printf '%s' "${quoted[*]}"
+}
+
 _vetcoders_compose_input_context() {
   local prompt_text="${1:-}"
   local file_path="${2:-}"
@@ -268,7 +952,23 @@ _vetcoders_spawn_plan() {
   local mode="$2"
   local plan_file="$3"
   shift 3
-  local script
+  local script root
+  local runtime="$(_vetcoders_default_runtime)"
+  local idx=1
+  while (( idx <= $# )); do
+    if [[ "${!idx}" == "--runtime" ]]; then
+      ((idx+=1))
+      if (( idx <= $# )); then
+        runtime="${!idx}"
+      fi
+      break
+    fi
+    ((idx+=1))
+  done
+  root="$(_vetcoders_spawn_root_arg "$@" 2>/dev/null || true)"
+  [[ -n "$root" ]] || root="$(_vetcoders_repo_root)"
+  _vetcoders_ensure_run_context "$tool" "$mode" "$root"
+  _vetcoders_prepare_operator_runtime "$runtime" || return 1
   script="$(_vetcoders_spawn_script "$tool" "${tool}_spawn.sh")" || return 1
   bash "$script" --mode "$mode" "$plan_file" "$@"
 }
@@ -376,8 +1076,11 @@ _vetcoders_skill() {
   local tool="$1"
   local skill="$2"
   shift 2
-  local code="${skill:0:4}"
-  local loop_nr="${VIBECRAFT_LOOP_NR:-0}"
+  local loop_nr="${VIBECRAFTED_LOOP_NR:-0}"
+  local inherited_run_id
+  local inherited_run_lock
+  inherited_run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
+  inherited_run_lock="$(_vetcoders_effective_run_lock 2>/dev/null || true)"
   _vetcoders_parse_contract "$@" || return 1
   [[ -z "$_vetcoders_contract_count" ]] || {
     echo "--count is only supported by vibecrafted marbles." >&2
@@ -393,9 +1096,25 @@ _vetcoders_skill() {
   }
   local prompt
   prompt="$(_vetcoders_compose_skill_prompt "$skill" "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1
+  local skill_code root run_id run_lock
+  skill_code="$(_vetcoders_skill_prefix "$skill")"
+  root="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
+  run_id="$inherited_run_id"
+  [[ -n "$run_id" ]] || run_id="$(_vetcoders_generate_run_id "$skill_code")"
+  run_lock="$inherited_run_lock"
+  if [[ -z "$run_lock" || ! -f "$run_lock" ]]; then
+    run_lock="$(_vetcoders_create_run_lock "$run_id" "$tool" "$skill" "$root")" || return 1
+  fi
   local spawn_args=(--runtime "$(_vetcoders_effective_runtime)")
   [[ -n "$_vetcoders_contract_root" ]] && spawn_args+=(--root "$_vetcoders_contract_root")
-  VIBECRAFT_SKILL_CODE="$code" VIBECRAFT_LOOP_NR="$loop_nr" _vetcoders_prompt_text "$tool" implement "$prompt" "${spawn_args[@]}"
+  (
+    export VIBECRAFTED_RUN_ID="$run_id"
+    export VIBECRAFTED_RUN_LOCK="$run_lock"
+    export VIBECRAFTED_SKILL_CODE="$skill_code"
+    export VIBECRAFTED_LOOP_NR="$loop_nr"
+    export VIBECRAFTED_SKILL_NAME="$skill"
+    _vetcoders_prompt_text "$tool" implement "$prompt" "${spawn_args[@]}"
+  )
 }
 
 _vetcoders_skill_entry() {
@@ -416,7 +1135,7 @@ gemini-hydrate() { _vetcoders_skill gemini hydrate "$@"; }
 _vetcoders_marbles() {
   local tool="$1"
   shift
-  local script
+  local script marbles_cmd quoted_args operator_session
   script="$(_vetcoders_spawn_script "$tool" "marbles_spawn.sh")" || return 1
   _vetcoders_parse_contract "$@" || return 1
   [[ -z "$_vetcoders_contract_session" ]] || {
@@ -447,7 +1166,35 @@ _vetcoders_marbles() {
     marbles_args+=(--depth "${_vetcoders_contract_depth:-3}")
   fi
 
-  bash "$script" "${marbles_args[@]}"
+  quoted_args="$(_vetcoders_shell_quote_join "${marbles_args[@]}")"
+  marbles_cmd="bash $(printf '%q' "$script") ${quoted_args}"
+  operator_session="${VIBECRAFTED_OPERATOR_SESSION:-}"
+  if [[ -z "$operator_session" ]] && _vetcoders_in_zellij; then
+    operator_session="$(_vetcoders_current_zellij_session_name)"
+  fi
+  if [[ -z "$operator_session" ]]; then
+    operator_session="$(_vetcoders_operator_session_name)"
+  fi
+
+  # Inside zellij: run marbles orchestrator in a pane below, keep operator free
+  if _vetcoders_in_zellij && command -v zellij >/dev/null 2>&1; then
+    export VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
+    zellij action new-pane \
+      --direction down \
+      --height 40% \
+      --name "marbles" \
+      --cwd "${_vetcoders_contract_root:-$(_vetcoders_repo_root)}" \
+      -- /bin/zsh -l -c "$marbles_cmd"
+  elif [[ "$(_vetcoders_effective_runtime)" =~ ^(terminal|visible)$ ]]; then
+    _vetcoders_prepare_operator_runtime "$(_vetcoders_effective_runtime)" || return 1
+    if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
+      _vetcoders_spawn_into_operator_session "marbles" "$marbles_cmd"
+    else
+      bash "$script" "${marbles_args[@]}"
+    fi
+  else
+    bash "$script" "${marbles_args[@]}"
+  fi
 }
 
 _vetcoders_resume_agent() {
@@ -512,6 +1259,13 @@ vc-resume() {
 codex-marbles() { _vetcoders_marbles codex "$@"; }
 claude-marbles() { _vetcoders_marbles claude "$@"; }
 gemini-marbles() { _vetcoders_marbles gemini "$@"; }
+
+# Marbles control subcommands
+marbles-pause()   { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" pause "$@"; }
+marbles-stop()    { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" stop "$@"; }
+marbles-resume()  { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" resume "$@"; }
+marbles-session() { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" session "$@"; }
+marbles-inspect() { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" inspect "$@"; }
 
 codex-decorate() { _vetcoders_skill codex decorate "$@"; }
 claude-decorate() { _vetcoders_skill claude decorate "$@"; }
@@ -608,7 +1362,7 @@ gemini-skill-workflow() { _vetcoders_skill_entry gemini workflow "$@"; }
 vc-help() {
   local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
   cat <<'HELP'
-VibeCrafted Framework — Skills & Helpers
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework — Skills & Helpers
 
 Pipeline:  scaffold → init → workflow → followup → marbles → dou → decorate → hydrate → release
 Modes:     partner (collaborative) | justdo (autonomous)
@@ -639,7 +1393,7 @@ Command deck:
   vibecrafted <skill> <agent>    Run a repo skill via the launcher
   vibecrafted resume <agent>     Resume a previous session
   vibecrafted workflow claude -p "Plan and implement auth"
-  vibecrafted marbles codex --count 4 --depth 4
+  vibecrafted marbles codex --count 3 --depth 3
   vibecrafted init claude        First-context entrypoint
 
 Uniform skill flags:
@@ -652,12 +1406,11 @@ Uniform skill flags:
 Utilities:
   repo-full                      Full git context dump
   skills-sync                    Sync skills to agents
-  vc-dashboard                   Open Mission Control zellij dashboard
   vc-frontier-paths              Show frontier config paths
-  vc-frontier-install            Install starship/atuin/zellij presets
+  vc-frontier-install            Install frontier presets (starship/atuin/zellij)
   vc-help                        This help
 
-Frontier docs:  docs/FRONTIER.md (mise, zellij, starship, atuin quickstart)
+Frontier docs:  docs/FRONTIER.md (starship, atuin, optional zellij)
 HELP
   printf '\nInbox:     %s/inbox/\n' "$crafted_home"
   printf 'Artifacts: %s/artifacts/<org>/<repo>/<YYYY_MMDD>/\n' "$crafted_home"
@@ -839,43 +1592,37 @@ repo-full() {
   echo "==================== DONE ===================="
 }
 
+vc-start() {
+  if [[ "${1:-}" == "resume" ]]; then
+    shift || true
+    _vetcoders_resume_operator_session "$@"
+    return
+  fi
+  _vetcoders_launch_dashboard vibecrafted "$@"
+}
+
 vc-frontier-paths() {
-  local root
-  root="$(_vetcoders_frontier_root)" || return 1
-  printf 'STARSHIP_CONFIG=%s/starship.toml\n' "$root"
-  printf 'ATUIN_CONFIG=%s/atuin/config.toml\n' "$root"
-  printf 'ZELLIJ_CONFIG_DIR=%s/zellij\n' "$root"
+  local starship_config atuin_config zellij_config
+  starship_config="$(_vetcoders_frontier_file "starship.toml")" || return 1
+  atuin_config="$(_vetcoders_frontier_file "atuin/config.toml" 2>/dev/null || true)"
+  zellij_config="$(_vetcoders_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
+
+  printf 'STARSHIP_CONFIG=%s\n' "$starship_config"
+  [[ -n "$atuin_config" ]] && printf 'ATUIN_CONFIG=%s\n' "$atuin_config"
+  [[ -n "$zellij_config" ]] && printf 'ZELLIJ_CONFIG_DIR=%s\n' "$(dirname "$zellij_config")"
+  return 0
 }
 
 vc-dashboard() {
-  command -v zellij >/dev/null 2>&1 || {
-    echo "zellij is not installed or not on PATH." >&2
-    return 1
-  }
-
-  local layout repo_root
-  repo_root="${VIBECRAFT_ROOT:-$(_vetcoders_repo_root)}"
-  layout="$(_vetcoders_frontier_root 2>/dev/null)/zellij/layouts/mission-control.kdl"
-  [[ -f "$layout" ]] || layout="$repo_root/config/zellij/layouts/mission-control.kdl"
-  [[ -f "$layout" ]] || {
-    echo "Mission control layout not found. Run vc-frontier-install first." >&2
-    return 1
-  }
-
-  if [[ -d "$repo_root/.git" || -d "$repo_root/skills/vc-agents" ]]; then
-    (
-      cd "$repo_root" || exit 1
-      zellij --layout "$layout" --session vibecrafted-mc
-    )
-  else
-    zellij --layout "$layout" --session vibecrafted-mc
-  fi
+  _vetcoders_launch_dashboard "$@"
 }
 
 vc-frontier-install() {
-  local frontier_root repo_root script base
-  frontier_root="$(_vetcoders_frontier_root)" || return 1
-  repo_root="$(dirname "$frontier_root")"
+  local repo_root script base
+  repo_root="$(_vetcoders_frontier_source_root)" || {
+    echo "Repo-owned frontier source not found." >&2
+    return 1
+  }
   base="$(_vetcoders_spawn_home "vc-agents")"
   script="$base/scripts/install-frontier-config.sh"
   

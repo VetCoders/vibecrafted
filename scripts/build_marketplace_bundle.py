@@ -4,18 +4,18 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import zipfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-import zipfile
 
 try:
     from vetcoders_install import discover_skills
 except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypoint
     from scripts.vetcoders_install import discover_skills
 
-OUTPUT_FILENAME = "vibecraft-framework.plugin"
-PLUGIN_NAME = "vibecraft-framework"
+OUTPUT_FILENAME = "vibecrafted-framework.plugin"
+PLUGIN_NAME = "vibecrafted-framework"
 FIXED_ZIP_DATE_TIME = (2026, 3, 30, 0, 0, 0)
 DEFAULT_FILE_MODE = 0o100644
 IGNORED_PATH_PARTS = {".DS_Store", "__pycache__", ".pytest_cache"}
@@ -45,7 +45,7 @@ def parse_listing_metadata(text: str) -> ListingMetadata:
 
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
-        if line.strip() == "## Registry Metadata Draft":
+        if line.strip() in {"## Registry Metadata", "## Registry Metadata Draft"}:
             in_registry_section = True
             continue
         if not in_registry_section:
@@ -226,7 +226,7 @@ def check_bundle(repo_root: Path, output_path: Path) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the VibeCrafted marketplace bundle from current repo state."
+        description="Build the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. marketplace bundle from current repo state."
     )
     parser.add_argument(
         "--output",
@@ -250,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
 
     write_bundle(REPO_ROOT, output_path)
     print(
-        f"Built {output_path} from VibeCrafted {read_version(REPO_ROOT)} "
+        f"Built {output_path} from 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. {read_version(REPO_ROOT)} "
         f"with {len(discover_bundle_skills(REPO_ROOT))} current skills."
     )
     return 0

@@ -9,48 +9,52 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - runner: dragon-macos
+            os: macOS
+          - runner: ops-linux
+            os: Linux
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck on Ubuntu
-        if: runner.os == 'Linux'
+      - name: Install shellcheck on Linux
+        if: matrix.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-      - name: Install shellcheck on macOS
-        if: runner.os == 'macOS'
-        run: brew install shellcheck
       - name: Run shell checks
         run: make check
-      - name: Install pytest
-        run: python3 -m pip install pytest
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
       - name: Run installer tests
         run: make test
+      - name: Build marketplace bundle
+        run: make bundle
       - name: Check marketplace bundle drift
         run: make bundle-check
-      - name: Install rsync on Ubuntu
-        if: runner.os == 'Linux'
+      - name: Install rsync on Linux
+        if: matrix.os == 'Linux'
         run: |
           sudo apt-get install -y rsync
       - name: Run portable checks
         run: bash scripts/check-portable.sh
+      - name: Run tests
+        run: make test
 
   curl-bootstrap:
     name: curl | bash bootstrap
     needs: portable
-    runs-on: ubuntu-latest
+    runs-on: ops-linux
     steps:
       - uses: actions/checkout@v4
       - name: Serve install.sh locally and bootstrap
         run: |
-          # Create a local archive from the checked-out source
           archive="/tmp/vibecrafted-bootstrap.tar.gz"
           tar -czf "$archive" --exclude='.git' -C "$GITHUB_WORKSPACE" .
           bash install.sh --archive-file "$archive"
       - name: Verify bootstrap result
         run: |
-          test -L "$HOME/.vibecrafted/tools/vibecrafted-current"
-          test -f "$HOME/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh"
+          test -L "$VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current"
+          test -f "$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh"
           test -f "$HOME/.config/vetcoders/vc-skills.sh"
           echo "Bootstrap OK"

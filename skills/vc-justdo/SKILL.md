@@ -71,10 +71,13 @@ ask questions at all. Make the reasonable call and go.
 
 ### 2. Get your bearings
 
-Bootstrap context quietly. No init report to the user.
+Bootstrap context quietly. No init report to the user. Use the **Foundation Tools** (loctree, aicx, prview,
+screenscribe) as your eyes and ears.
 
-- `repo-full` or `repo-view` for structure
-- `slice` / `focus` on the areas you will touch
+- `repo-view` / `focus` / `slice` / `impact` (loctree) for structure and risk
+- `aicx extract` if previous output is too large to read
+- `prview` if working on an existing PR
+- `screenscribe` if the task involves visual demo evidence
 - Read existing code before writing new code
 - Check git log for recent changes in the target area
 
@@ -114,6 +117,9 @@ While implementing:
 - Do not refactor unrelated code
 - Do not add features the user did not ask for
 - Commit logical chunks, not one mega-diff
+- In `decorate` rounds, preserve progress incrementally like marbles. Use local
+  numbered commits such as `decorate 1: ...`, `decorate 2: ...` as verified
+  seams harden.
 
 ### 5. Followup (mandatory)
 

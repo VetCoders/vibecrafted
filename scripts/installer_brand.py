@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-VAPOR_HEADER = "\uff36\uff49\uff42\uff45\uff23\uff52\uff41\uff46\uff54\uff45\uff44"
+VAPOR_HEADER = "\uff36\uff49\uff42\uff45\uff43\uff52\uff41\uff46\uff54\uff45\uff44"
 MONO_SUB = (
     "\U0001d69f\U0001d692\U0001d68b\U0001d68e\U0001d68c"
     "\U0001d69b\U0001d68a\U0001d68f\U0001d69d"
@@ -12,7 +12,7 @@ FRAMEWORK_STAMP = (
 )
 TAGLINE = "The Founders' Framework"
 PRODUCT_LINE = "A convergence-driven system for shipping software with AI agents."
-FOOTER_BRANDING = "VibeCrafted with AI Agents (c)2026 VetCoders"
+FOOTER_BRANDING = "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents (c)2024-2026 VetCoders"
 
 
 def version_line(version: str) -> str:

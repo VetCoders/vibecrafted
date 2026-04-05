@@ -16,10 +16,15 @@
 /.playwright-mcp
 *.out
 *.zip
+*.plugin
+!vibecrafted-framework.plugin
+*.sha256
 /.vibecrafted
 CLAUDE.md
 AGENTS.md
 /tests/tui/__pycache__
+**/__pycache__/
+*.py[cod]
 aicx-dashboard.html
 /*.md
 !README.md
@@ -28,3 +33,5 @@ aicx-dashboard.html
 !VIBECRAFTED.md
 !CONTRIBUTING.md
 !SECURITY.md
+/tmp
+/dist

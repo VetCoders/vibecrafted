@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ops-linux
     steps:
       - uses: actions/checkout@v4
       - name: Install shellcheck
@@ -19,15 +19,14 @@ jobs:
           sudo apt-get install -y shellcheck
       - name: Run shell checks
         run: make check
-      - name: Install pytest
-        run: python3 -m pip install pytest
-
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
       - name: Run installer tests
         run: make test
-
       - name: Check marketplace bundle drift
         run: make bundle-check
-
+      - name: Run tests
+        run: make test
       - name: Read version
         id: version
         run: |
@@ -42,8 +41,8 @@ jobs:
       - name: Build marketplace bundle
         run: |
           mkdir -p dist
-          python3 scripts/build_marketplace_bundle.py --output dist/vibecraft-framework.plugin
-          sha256sum dist/vibecraft-framework.plugin > dist/vibecraft-framework.plugin.sha256
+          uv run python3 scripts/build_marketplace_bundle.py --output dist/vibecrafted-framework.plugin
+          sha256sum dist/vibecrafted-framework.plugin > dist/vibecrafted-framework.plugin.sha256
 
       - name: Build release archive
         run: |
@@ -51,7 +50,7 @@ jobs:
           mkdir -p dist
           tar -czf "dist/${archive_name}.tar.gz" \
             --exclude='./dist' \
-            --exclude='./vibecraft-framework.plugin' \
+            --exclude='./vibecrafted-framework.plugin' \
             --exclude='./.pytest_cache' \
             --exclude='./presence' \
             --exclude='./.github' \
@@ -87,7 +86,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: VibeCrafted ${{ steps.version.outputs.tag }}
+          name: 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. ${{ steps.version.outputs.tag }}
           body: ${{ steps.changelog.outputs.body }}
           files: |
             dist/*.tar.gz

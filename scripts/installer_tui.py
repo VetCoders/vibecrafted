@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import contextlib
-import os
 import queue
 import select
 import shutil
 import subprocess
 import sys
 import termios
-import threading
 import textwrap
+import threading
 import tty
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +25,11 @@ try:
         separator as brand_separator,
         version_line as brand_version_line,
     )
+    from runtime_paths import (
+        read_version_file,
+        xdg_config_home,
+        vibecrafted_home,
+    )
 except (
     ModuleNotFoundError
 ):  # pragma: no cover - module import path depends on entrypoint
@@ -37,6 +41,11 @@ except (
         VAPOR_HEADER,
         separator as brand_separator,
         version_line as brand_version_line,
+    )
+    from scripts.runtime_paths import (
+        read_version_file,
+        xdg_config_home,
+        vibecrafted_home,
     )
 
 STEP_MIN = 0
@@ -67,7 +76,7 @@ CATEGORY_ORDER = tuple(CATEGORY_LABELS)
 FOUNDATION_COMMANDS = ("loctree-mcp", "aicx-mcp", "prview", "screenscribe")
 TOOLCHAIN_COMMANDS = ("python3", "node", "git", "rsync")
 AGENT_COMMANDS = ("claude", "codex", "gemini")
-ADDITIONAL_TOOL_COMMANDS = ("zellij", "mise", "starship", "atuin", "zoxide")
+ADDITIONAL_TOOL_COMMANDS = ("mise", "starship", "atuin", "zoxide")
 INSTALL_OUTPUT_TAIL = 18
 READ_KEY_TIMEOUT = 0.1
 DEFAULT_RENDER_WIDTH = 57
@@ -78,25 +87,7 @@ def default_source_dir() -> str:
 
 
 def read_framework_version(source_dir: str) -> str:
-    version_file = Path(source_dir) / "VERSION"
-    if version_file.exists():
-        return version_file.read_text(encoding="utf-8").strip()
-    return "unknown"
-
-
-def resolve_env_path(name: str, default: Path) -> Path:
-    raw = os.environ.get(name)
-    if raw:
-        return Path(raw).expanduser()
-    return default.expanduser()
-
-
-def xdg_config_home() -> Path:
-    return resolve_env_path("XDG_CONFIG_HOME", Path.home() / ".config")
-
-
-def vibecrafted_home() -> Path:
-    return resolve_env_path("VIBECRAFTED_HOME", Path.home() / ".vibecrafted")
+    return read_version_file(source_dir)
 
 
 def framework_store_dir() -> Path:
@@ -211,7 +202,7 @@ def _framework_checks() -> dict[str, dict[str, Any]]:
             "found": bool(active_views),
             "detail": ", ".join(active_views)
             if active_views
-            else "No runtime skill views detected in ~/.agents, ~/.claude, ~/.codex, or ~/.gemini",
+            else "No runtime skill views detected in $HOME/.agents, $HOME/.claude, $HOME/.codex, or $HOME/.gemini",
             "kind": "path",
         },
     }
@@ -700,8 +691,8 @@ def _render_welcome(console: Any, state: InstallerState, width: int) -> None:
         console,
         width,
         [
-            f"{PRODUCT_LINE} This setup stages VibeCrafted inside {home_display} and prepares the framework for daily work with agent CLIs.",
-            "Nothing outside your VibeCrafted home changes until you approve the install step.",
+            f"{PRODUCT_LINE} This setup stages 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. inside {home_display} and prepares the framework for daily work with agent CLIs.",
+            "Nothing outside your 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. home changes until you approve the install step.",
             "Each screen shows what changes, why it matters, and what stays reversible before we touch your shell or runtime views.",
             "If you need product context instead of setup context, the public surface lives at https://vibecrafted.io.",
         ],
@@ -739,7 +730,7 @@ def _render_listing(console: Any, state: InstallerState, width: int) -> None:
         [
             (
                 "Diagnostics",
-                "Check the framework surface, required foundations, toolchains, agent CLIs, and optional sidecars.",
+                "Check the framework surface, required foundations, toolchains, agent CLIs, and the prompt/history sidecars that ship with core 1.2.1.",
             ),
             (
                 "Install",

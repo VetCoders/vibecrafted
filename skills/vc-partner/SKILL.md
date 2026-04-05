@@ -26,7 +26,7 @@ compatibility:
     - js_repl
 ---
 
-# VibeCrafted Partner
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Partner
 
 Two modes, one skill. The difference is who holds the steering wheel.
 
@@ -558,11 +558,11 @@ Run the same plan through independent planners using the portable spawn
 scripts:
 
 ```bash
-PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<track>.md"
+PLAN="$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<track>.md"
 
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode plan
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/claude_spawn.sh "$PLAN" --mode plan
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode plan
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode plan
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/claude_spawn.sh "$PLAN" --mode plan
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode plan
 ```
 
 > **Note**: If your environment has `codex-plan`, `claude-plan`, `gemini-plan`
@@ -597,7 +597,7 @@ codex-resume <session-uuid> '<continuation prompt>'
 gemini-resume <session-uuid> '<continuation prompt>'
 
 # If not, use portable scripts with the synthesis as the new plan:
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement
 ```
 
 Do not pretend continuity exists if the resume helper does not exist.
@@ -645,10 +645,10 @@ continuation until the circle is full.
 Maintain these artifacts:
 
 - `docs/<area>/<topic>-findings.md` or equivalent append-only findings log
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<track>.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<track>_<agent>.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/*.transcript.log`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/*.meta.json`
+- `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<track>.md`
+- `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<track>_<agent>.md`
+- `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/*.transcript.log`
+- `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/*.meta.json`
 
 During crisis sessions, prefer append-only behavior for the findings log.
 Preserve chronology, corrections, and reversals of interpretation.
@@ -666,7 +666,7 @@ Every delegated plan should:
 Always include this living-tree preamble:
 
 ```text
-You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
+You work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology, so concurrent changes are expected.
 Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
 Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 ```

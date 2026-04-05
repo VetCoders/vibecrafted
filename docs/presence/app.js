@@ -2,6 +2,37 @@ var prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-redu
 var supportsIntersectionObserver = 'IntersectionObserver' in window;
 var liveRegion;
 var liveRegionTimer;
+var appLocale = ((document.documentElement && document.documentElement.lang) || 'en').toLowerCase();
+var isPolishLocale = appLocale.indexOf('pl') === 0;
+var uiStrings = isPolishLocale ? {
+    copy: 'Kopiuj',
+    copied: 'Skopiowano',
+    copyFailed: 'Błąd kopiowania',
+    codeCopied: 'Blok kodu został skopiowany do schowka.',
+    copyCodeFallback: 'Kopiowanie się nie udało. Zaznacz polecenie i skopiuj je ręcznie.',
+    installCopied: 'Polecenie instalacji zostało skopiowane do schowka.',
+    copyInstallFallback: 'Kopiowanie się nie udało. Zaznacz polecenie instalacji i skopiuj je ręcznie.',
+    commandCopied: 'Polecenie zostało skopiowane do schowka.',
+    copyCommandFallback: 'Kopiowanie się nie udało. Zaznacz polecenie i skopiuj je ręcznie.',
+    copyCommandAriaPrefix: 'Skopiuj polecenie: ',
+    pipelineCopied: 'Kod pipeline został skopiowany.',
+    tooltipCopy: 'Kopiuj',
+    previewUnavailable: 'Podgląd jest niedostępny.'
+} : {
+    copy: 'Copy',
+    copied: 'Copied',
+    copyFailed: 'Copy failed',
+    codeCopied: 'Code block copied to clipboard.',
+    copyCodeFallback: 'Copy failed. Select the command and copy it manually.',
+    installCopied: 'Install command copied to clipboard.',
+    copyInstallFallback: 'Copy failed. Select the install command and copy it manually.',
+    commandCopied: 'Command copied to clipboard.',
+    copyCommandFallback: 'Copy failed. Select the command and copy it manually.',
+    copyCommandAriaPrefix: 'Copy command: ',
+    pipelineCopied: 'Pipeline code copied.',
+    tooltipCopy: 'Copy',
+    previewUnavailable: 'Preview unavailable.'
+};
 
 function getLiveRegion() {
     if (liveRegion) return liveRegion;
@@ -59,8 +90,8 @@ function copyText(text) {
 
 function flashCopyButton(btn, copied) {
     if (!btn) return;
-    var defaultText = btn.getAttribute('data-default-label') || btn.textContent.trim() || 'Copy';
-    btn.textContent = copied ? 'Copied' : 'Copy failed';
+    var defaultText = btn.getAttribute('data-default-label') || btn.textContent.trim() || uiStrings.copy;
+    btn.textContent = copied ? uiStrings.copied : uiStrings.copyFailed;
     btn.classList.toggle('is-copied', copied);
     btn.classList.toggle('is-error', !copied);
     clearTimeout(btn._copyTimer);
@@ -368,7 +399,7 @@ function shuffleArr(a) {
     function pickCoverageGoal() {
         return 1 + rand(0, 0.10);
     }
-    
+
     // Shape generators — your app is a canvas, you define the shape, agents fill the gaps
     var shapeIndex = 0;
 
@@ -513,22 +544,24 @@ function shuffleArr(a) {
             drawGroove(boardLayerCtx, slot.x, slot.y, marbleRadius);
         });
     }
-    
+
     function resizeCanvas() {
         var rect = canvas.getBoundingClientRect();
         if (!rect.width) return;
-        width = rect.width; height = rect.height;
-        canvas.width = width * dpr; canvas.height = height * dpr;
+        width = rect.width;
+        height = rect.height;
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        
+
         board.x = width / 2;
         board.y = height / 2;
         board.radius = Math.min(width, height) * 0.42;
         marbleRadius = Math.max(10, board.radius * 0.08);
-        
+
         buildBoard();
     }
-    
+
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
@@ -578,7 +611,9 @@ function shuffleArr(a) {
 
     function throwWave() {
         if (morphing) return;
-        var unassigned = slots.filter(function (slot) { return !slot.assigned; });
+        var unassigned = slots.filter(function (slot) {
+            return !slot.assigned;
+        });
         if (!unassigned.length) return;
 
         var nextLoop = currentLoop + 1;
@@ -645,7 +680,9 @@ function shuffleArr(a) {
                     m.z = 2 + Math.random() * 10;
                     m.vz = 6 + Math.random() * 8;
                     // Reassign to a random empty slot
-                    var empties = slots.filter(function(s) { return !s.assigned; });
+                    var empties = slots.filter(function (s) {
+                        return !s.assigned;
+                    });
                     if (empties.length > 0) {
                         var newSlot = empties[Math.floor(Math.random() * empties.length)];
                         newSlot.assigned = true;
@@ -660,26 +697,26 @@ function shuffleArr(a) {
         }
         updateCounters();
     }
-    
+
     function updateCounters() {
-        if(loopCounter) loopCounter.textContent = marbles.length;
-        if(coverageCounter) {
+        if (loopCounter) loopCounter.textContent = marbles.length;
+        if (coverageCounter) {
             var pct = slots.length ? Math.round(displayCoverageRatio() * 100) : 0;
             coverageCounter.textContent = pct + '%';
         }
     }
-    
+
     function tick(now) {
         var dt = Math.min(32, now - lastAt);
         lastAt = now;
-        
+
         ctx.clearRect(0, 0, width, height);
         if (boardLayer.width && boardLayer.height) {
             ctx.drawImage(boardLayer, 0, 0, width, height);
         }
-        
+
         // Remove marbles that flew way off screen
-        marbles = marbles.filter(function(m) {
+        marbles = marbles.filter(function (m) {
             if (m.settled) return true;
             var inBounds = m.x > -100 && m.x < width + 100 && m.y > -300 && m.y < height + 100;
             if (!inBounds && m.target) {
@@ -694,9 +731,12 @@ function shuffleArr(a) {
             if (!m.settled) {
                 var dx = m.target.x - m.x;
                 var dy = m.target.y - m.y;
-                var dist = Math.sqrt(dx*dx + dy*dy);
+                var dist = Math.sqrt(dx * dx + dy * dy);
 
-                if (m.z === undefined) { m.z = 0; m.vz = 0; }
+                if (m.z === undefined) {
+                    m.z = 0;
+                    m.vz = 0;
+                }
                 m.vz -= 1.0;
                 m.z += m.vz;
                 if (m.z < 0) {
@@ -738,11 +778,11 @@ function shuffleArr(a) {
             }
         });
 
-        var renderList = marbles.slice().sort((a,b) => a.y - b.y);
+        var renderList = marbles.slice().sort((a, b) => a.y - b.y);
 
         renderList.forEach(m => {
             var sprite = m.sprite;
-            var speed = m.vx !== undefined ? Math.sqrt(m.vx*m.vx + m.vy*m.vy) : 0;
+            var speed = m.vx !== undefined ? Math.sqrt(m.vx * m.vx + m.vy * m.vy) : 0;
             var hover = m.z || 0;
 
             // Marble alpha: settled marbles are brighter as convergence increases
@@ -754,16 +794,16 @@ function shuffleArr(a) {
                 var shadowW = marbleRadius * 0.8 * shadowScale;
                 var shadowH = marbleRadius * 0.4 * shadowScale;
                 var shadowAlpha = Math.max(0.05, 0.4 - hover / 250);
-                
+
                 ctx.globalAlpha = mAlpha * shadowAlpha;
                 ctx.beginPath();
-                ctx.ellipse(m.x, m.y + marbleRadius * 0.6 + hover * 0.15, shadowW, shadowH, 0, 0, Math.PI*2);
+                ctx.ellipse(m.x, m.y + marbleRadius * 0.6 + hover * 0.15, shadowW, shadowH, 0, 0, Math.PI * 2);
                 ctx.fillStyle = 'rgba(0,0,0,1)';
                 ctx.fill();
             }
 
             ctx.globalAlpha = mAlpha;
-            ctx.drawImage(sprite, m.x - sprite.width/2, m.y - hover - sprite.height/2);
+            ctx.drawImage(sprite, m.x - sprite.width / 2, m.y - hover - sprite.height / 2);
         });
         ctx.globalAlpha = 1;
 
@@ -777,10 +817,10 @@ function shuffleArr(a) {
             }
         }
         updateCounters();
-        
+
         requestAnimationFrame(tick);
     }
-    
+
     loopTimer = 700 + Math.random() * 300;
     requestAnimationFrame(tick);
 })();
@@ -849,8 +889,8 @@ function shuffleArr(a) {
         var seed = Math.floor(Math.random() * 999999);
         return {
             sprite: MarbleFactory.createSprite(MR, palIdx, pat, seed),
-            alpha: 0, 
-            drop: 1.0 + Math.random() * 2.5, 
+            alpha: 0,
+            drop: 1.0 + Math.random() * 2.5,
             dropSpeed: 0.03 + Math.random() * 0.04,
             shaking: false, shakeT: 0
         };
@@ -981,6 +1021,7 @@ function shuffleArr(a) {
 (function () {
     var target = document.getElementById('trajectoryBars');
     if (!target) return;
+
     function animateBars() {
         var bars = target.querySelectorAll('.bar');
         bars.forEach(function (bar, i) {
@@ -989,6 +1030,7 @@ function shuffleArr(a) {
             }, prefersReducedMotion ? 0 : i * 300);
         });
     }
+
     if (prefersReducedMotion || !supportsIntersectionObserver) {
         animateBars();
         return;
@@ -1029,13 +1071,13 @@ function shuffleArr(a) {
 (function () {
     var buttons = document.querySelectorAll('.copy-btn');
     buttons.forEach(function (btn) {
-        btn.setAttribute('data-default-label', btn.textContent.trim() || 'Copy');
+        btn.setAttribute('data-default-label', btn.textContent.trim() || uiStrings.copy);
         btn.addEventListener('click', function () {
             var code = btn.parentElement && btn.parentElement.querySelector('code');
             var text = code ? code.innerText : '';
             copyText(text).then(function (copied) {
                 flashCopyButton(btn, copied);
-                announceUiMessage(copied ? 'Code block copied to clipboard.' : 'Copy failed. Select the command and copy it manually.');
+                announceUiMessage(copied ? uiStrings.codeCopied : uiStrings.copyCodeFallback);
             });
         });
     });
@@ -1043,14 +1085,16 @@ function shuffleArr(a) {
 
 // ============ CURL BANNER COPY ============
 (function () {
-    var btn = document.querySelector('.cb-copy');
-    if (!btn) return;
-    btn.setAttribute('data-default-label', btn.textContent.trim() || 'Copy');
-    btn.addEventListener('click', function () {
-        var cmd = btn.getAttribute('data-copy');
-        copyText(cmd).then(function (copied) {
-            flashCopyButton(btn, copied);
-            announceUiMessage(copied ? 'Install command copied to clipboard.' : 'Copy failed. Select the install command and copy it manually.');
+    var buttons = document.querySelectorAll('.cb-copy');
+    if (!buttons.length) return;
+    buttons.forEach(function (btn) {
+        btn.setAttribute('data-default-label', btn.getAttribute('data-default-label') || btn.textContent.trim() || uiStrings.copy);
+        btn.addEventListener('click', function () {
+            var cmd = btn.getAttribute('data-copy');
+            copyText(cmd).then(function (copied) {
+                flashCopyButton(btn, copied);
+                announceUiMessage(copied ? uiStrings.installCopied : uiStrings.copyInstallFallback);
+            });
         });
     });
 })();
@@ -1061,7 +1105,7 @@ function shuffleArr(a) {
     if (!copyables.length) return;
     var tip = document.createElement('div');
     tip.className = 'hterm-tip';
-    tip.textContent = 'Copy';
+    tip.textContent = uiStrings.tooltipCopy;
     tip.setAttribute('aria-hidden', 'true');
     document.body.appendChild(tip);
     var hideTimer;
@@ -1082,8 +1126,8 @@ function shuffleArr(a) {
     function copyFromElement(el, x, y) {
         var value = el.getAttribute('data-copy');
         copyText(value).then(function (copied) {
-            showTip(x, y, copied ? 'Copied' : 'Copy failed', copied ? 'ok' : 'err');
-            announceUiMessage(copied ? 'Command copied to clipboard.' : 'Copy failed. Select the command and copy it manually.');
+            showTip(x, y, copied ? uiStrings.copied : uiStrings.copyFailed, copied ? 'ok' : 'err');
+            announceUiMessage(copied ? uiStrings.commandCopied : uiStrings.copyCommandFallback);
             clearTimeout(hideTimer);
             hideTimer = setTimeout(hideTip, copied ? 1200 : 1600);
         });
@@ -1093,10 +1137,10 @@ function shuffleArr(a) {
         var value = el.getAttribute('data-copy') || '';
         el.setAttribute('role', 'button');
         el.setAttribute('tabindex', '0');
-        el.setAttribute('aria-label', 'Copy command: ' + value);
+        el.setAttribute('aria-label', uiStrings.copyCommandAriaPrefix + value);
         el.addEventListener('mouseenter', function (e) {
             clearTimeout(hideTimer);
-            showTip(e.clientX, e.clientY, 'Copy');
+            showTip(e.clientX, e.clientY, uiStrings.tooltipCopy);
         });
         el.addEventListener('mousemove', function (e) {
             if (tip.classList.contains('ok') || tip.classList.contains('err')) return;
@@ -1105,7 +1149,7 @@ function shuffleArr(a) {
         });
         el.addEventListener('focus', function () {
             var r = el.getBoundingClientRect();
-            showTip(r.left + r.width / 2, r.top, 'Copy');
+            showTip(r.left + r.width / 2, r.top, uiStrings.tooltipCopy);
         });
         el.addEventListener('blur', function () {
             clearTimeout(hideTimer);
@@ -1164,6 +1208,10 @@ function shuffleArr(a) {
     if (!originals.length) return;
     var cycleWidth = 0;
     var resetQueued = false;
+    var targetScrollLeft = 0;
+    var velocity = 0;
+    var animationFrame = 0;
+    var isMomentumScroll = false;
 
     function cloneCard(card) {
         var clone = card.cloneNode(true);
@@ -1193,19 +1241,27 @@ function shuffleArr(a) {
         }, 0);
     }
 
+    function normalizeScrollLeft(value) {
+        if (!cycleWidth) return value;
+        while (value < cycleWidth * 0.5) {
+            value += cycleWidth;
+        }
+        while (value > cycleWidth * 1.5) {
+            value -= cycleWidth;
+        }
+        return value;
+    }
+
     function jumpToMiddle(force) {
         measureCycleWidth();
         if (!cycleWidth) return;
         if (force) {
             strip.scrollLeft = cycleWidth;
+            targetScrollLeft = cycleWidth;
             return;
         }
-        while (strip.scrollLeft < cycleWidth * 0.5) {
-            strip.scrollLeft += cycleWidth;
-        }
-        while (strip.scrollLeft > cycleWidth * 1.5) {
-            strip.scrollLeft -= cycleWidth;
-        }
+        strip.scrollLeft = normalizeScrollLeft(strip.scrollLeft);
+        targetScrollLeft = normalizeScrollLeft(targetScrollLeft || strip.scrollLeft);
     }
 
     function queueWrap() {
@@ -1225,11 +1281,64 @@ function shuffleArr(a) {
         return width + gap;
     }
 
+    function stopMomentum() {
+        velocity = 0;
+        if (!animationFrame) return;
+        cancelAnimationFrame(animationFrame);
+        animationFrame = 0;
+    }
+
+    function stepMomentum() {
+        animationFrame = 0;
+        measureCycleWidth();
+        if (!cycleWidth) return;
+
+        var current = strip.scrollLeft;
+        var delta = targetScrollLeft - current;
+        var attraction = prefersReducedMotion ? 0.18 : 0.11;
+        var damping = prefersReducedMotion ? 0.56 : 0.82;
+
+        velocity += delta * attraction;
+        velocity *= damping;
+
+        if (Math.abs(delta) < 0.35 && Math.abs(velocity) < 0.16) {
+            isMomentumScroll = true;
+            strip.scrollLeft = targetScrollLeft;
+            queueWrap();
+            isMomentumScroll = false;
+            velocity = 0;
+            return;
+        }
+
+        isMomentumScroll = true;
+        strip.scrollLeft = current + velocity;
+        queueWrap();
+        animationFrame = requestAnimationFrame(stepMomentum);
+    }
+
+    function ensureMomentum() {
+        if (prefersReducedMotion) {
+            stopMomentum();
+            strip.scrollLeft = targetScrollLeft;
+            queueWrap();
+            return;
+        }
+        if (!animationFrame) {
+            animationFrame = requestAnimationFrame(stepMomentum);
+        }
+    }
+
+    function pushMomentum(distance, impulseMultiplier) {
+        measureCycleWidth();
+        if (!cycleWidth) return;
+        targetScrollLeft = normalizeScrollLeft((targetScrollLeft || strip.scrollLeft) + distance);
+        velocity += distance * impulseMultiplier;
+        ensureMomentum();
+    }
+
     function scrollStrip(direction) {
-        strip.scrollBy({
-            left: direction * getScrollAmount(),
-            behavior: prefersReducedMotion ? 'auto' : 'smooth'
-        });
+        var amount = getScrollAmount() * (prefersReducedMotion ? 1 : 1.15);
+        pushMomentum(direction * amount, prefersReducedMotion ? 0.02 : 0.04);
     }
 
     seedInfiniteStrip();
@@ -1243,18 +1352,72 @@ function shuffleArr(a) {
         scrollStrip(1);
     });
 
-    strip.addEventListener('scroll', queueWrap, { passive: true });
+    strip.addEventListener('pointerdown', function () {
+        stopMomentum();
+        targetScrollLeft = strip.scrollLeft;
+    });
+
+    strip.addEventListener('touchstart', function () {
+        stopMomentum();
+        targetScrollLeft = strip.scrollLeft;
+    }, {passive: true});
+
+    strip.addEventListener('scroll', function () {
+        if (!isMomentumScroll) {
+            targetScrollLeft = strip.scrollLeft;
+        }
+        queueWrap();
+        isMomentumScroll = false;
+    }, {passive: true});
 
     wrap.addEventListener('wheel', function (event) {
         var delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
         if (!delta) return;
         event.preventDefault();
-        strip.scrollLeft += delta;
-        queueWrap();
-    }, { passive: false });
+        pushMomentum(delta, prefersReducedMotion ? 0.02 : 0.035);
+    }, {passive: false});
 
     window.addEventListener('resize', function () {
+        stopMomentum();
         jumpToMiddle(false);
+    });
+})();
+
+// ============ FOOTER DRAWER STABILIZER ============
+(function () {
+    var footer = document.querySelector('.footer-shell');
+    if (!footer || !window.matchMedia || !window.matchMedia('(hover: hover) and (pointer: fine)').matches) return;
+
+    var closeTimer = 0;
+
+    function openDrawer() {
+        if (closeTimer) {
+            clearTimeout(closeTimer);
+            closeTimer = 0;
+        }
+        footer.setAttribute('data-drawer-open', 'true');
+    }
+
+    function closeDrawerSoon() {
+        if (closeTimer) clearTimeout(closeTimer);
+        closeTimer = window.setTimeout(function () {
+            footer.removeAttribute('data-drawer-open');
+            closeTimer = 0;
+        }, 120);
+    }
+
+    footer.addEventListener('pointerenter', openDrawer);
+    footer.addEventListener('pointerleave', closeDrawerSoon);
+    footer.addEventListener('focusin', openDrawer);
+    footer.addEventListener('focusout', function (event) {
+        if (footer.contains(event.relatedTarget)) return;
+        closeDrawerSoon();
+    });
+
+    window.addEventListener('blur', function () {
+        if (closeTimer) clearTimeout(closeTimer);
+        closeTimer = 0;
+        footer.removeAttribute('data-drawer-open');
     });
 })();
 
@@ -1262,28 +1425,82 @@ function shuffleArr(a) {
 (function () {
     var btn = document.querySelector('.mmd-copy');
     if (!btn) return;
-    btn.setAttribute('data-default-label', 'Copy');
+    btn.setAttribute('data-default-label', uiStrings.copy);
     var code = btn.parentElement && btn.parentElement.querySelector('code');
     if (!code) return;
     btn.addEventListener('click', function () {
         copyText(code.textContent).then(function (ok) {
             flashCopyButton(btn, ok);
-            announceUiMessage(ok ? 'Pipeline code copied.' : 'Copy failed.');
+            announceUiMessage(ok ? uiStrings.pipelineCopied : uiStrings.copyFailed);
         });
     });
 })();
 
 // ============ MERMAID TOGGLE ============
-(function() {
+(function () {
     var toggleBtn = document.querySelector('.mmd-toggle');
     var splitBtn = document.querySelector('.mmd-split');
     var shell = document.querySelector('.mmd-shell');
     var codeBlock = shell ? shell.querySelector('code') : null;
+    var codePane = shell ? shell.querySelector('.mmd-code') : null;
     var previewPane = shell ? shell.querySelector('.mmd-preview') : null;
-    
-    if (!toggleBtn || !shell || !codeBlock || !previewPane) return;
-    
+
+    if (!toggleBtn || !shell || !codeBlock || !codePane || !previewPane) return;
+
     var mermaidInitialized = false;
+    var switchTimer = null;
+
+    function showMermaidUnavailable() {
+        previewPane.textContent = uiStrings.previewUnavailable;
+        lockMermaidShellHeight();
+    }
+
+    function measurePaneHeight(pane, paneWidth) {
+        var prevDisplay = pane.style.display;
+        var prevPosition = pane.style.position;
+        var prevVisibility = pane.style.visibility;
+        var prevPointerEvents = pane.style.pointerEvents;
+        var prevInset = pane.style.inset;
+        var prevWidth = pane.style.width;
+        var prevMaxWidth = pane.style.maxWidth;
+
+        pane.style.display = 'block';
+        pane.style.position = 'absolute';
+        pane.style.visibility = 'hidden';
+        pane.style.pointerEvents = 'none';
+        pane.style.inset = '0 auto auto 0';
+        pane.style.width = Math.max(0, paneWidth) + 'px';
+        pane.style.maxWidth = Math.max(0, paneWidth) + 'px';
+
+        var measured = Math.ceil(pane.scrollHeight || pane.getBoundingClientRect().height || 0);
+
+        pane.style.display = prevDisplay;
+        pane.style.position = prevPosition;
+        pane.style.visibility = prevVisibility;
+        pane.style.pointerEvents = prevPointerEvents;
+        pane.style.inset = prevInset;
+        pane.style.width = prevWidth;
+        pane.style.maxWidth = prevMaxWidth;
+
+        return measured;
+    }
+
+    function lockMermaidShellHeight() {
+        var shellStyles = window.getComputedStyle(shell);
+        var shellInnerWidth = shell.clientWidth
+            - parseFloat(shellStyles.paddingLeft || 0)
+            - parseFloat(shellStyles.paddingRight || 0);
+        var shellExtra = parseFloat(shellStyles.paddingTop || 0) + parseFloat(shellStyles.paddingBottom || 0);
+        var codeHeight = measurePaneHeight(codePane, shellInnerWidth);
+        var previewHeight = measurePaneHeight(previewPane, shellInnerWidth);
+        var stableHeight = Math.max(codeHeight, previewHeight);
+        if (stableHeight > 0) {
+            shell.style.minHeight = (stableHeight + shellExtra) + 'px';
+            previewPane.style.minHeight = stableHeight + 'px';
+        } else {
+            previewPane.style.minHeight = '';
+        }
+    }
 
     function renderMermaidPreview(svgMarkup) {
         var parser = new DOMParser();
@@ -1291,7 +1508,7 @@ function shuffleArr(a) {
         var svg = parsed.documentElement;
 
         if (parsed.querySelector('parsererror') || !svg || svg.nodeName.toLowerCase() !== 'svg') {
-            previewPane.textContent = 'Preview unavailable.';
+            showMermaidUnavailable();
             return;
         }
 
@@ -1317,23 +1534,51 @@ function shuffleArr(a) {
 
         previewPane.textContent = '';
         previewPane.appendChild(document.importNode(svg, true));
+        requestAnimationFrame(lockMermaidShellHeight);
     }
-    
+
     function initMermaid() {
         if (!mermaidInitialized && window.mermaid) {
-            mermaid.initialize({
-                startOnLoad: false,
-                theme: 'dark',
-                flowchart: {
-                    htmlLabels: false,
-                    curve: 'linear'
-                }
-            });
-            var rawText = codeBlock.innerText || codeBlock.textContent;
-            mermaid.render('mermaid-graph-1', rawText).then(function(result) {
-                renderMermaidPreview(result.svg);
-            });
-            mermaidInitialized = true;
+            try {
+                mermaid.initialize({
+                    startOnLoad: false,
+                    theme: 'base',
+                    themeVariables: {
+                        darkMode: true,
+                        background: '#0e0e11',
+                        primaryColor: '#1a1d22',
+                        primaryTextColor: '#e5ecf5',
+                        primaryBorderColor: '#d4905c',
+                        secondaryColor: '#14171b',
+                        secondaryTextColor: '#e5ecf5',
+                        secondaryBorderColor: '#a3b8c7',
+                        tertiaryColor: '#122018',
+                        tertiaryTextColor: '#e5ecf5',
+                        tertiaryBorderColor: '#5a8a7a',
+                        lineColor: '#c4d4e0',
+                        arrowheadColor: '#c4d4e0',
+                        clusterBkg: '#14171b',
+                        clusterBorder: '#5a8a7a',
+                        edgeLabelBackground: '#0e0e11',
+                        nodeTextColor: '#e5ecf5',
+                        mainBkg: '#1a1d22',
+                        fontFamily: 'JetBrains Mono, monospace'
+                    },
+                    flowchart: {
+                        htmlLabels: false,
+                        curve: 'linear'
+                    }
+                });
+                var rawText = codeBlock.innerText || codeBlock.textContent;
+                mermaid.render('mermaid-graph-1', rawText).then(function (result) {
+                    renderMermaidPreview(result.svg);
+                }).catch(function () {
+                    showMermaidUnavailable();
+                });
+                mermaidInitialized = true;
+            } catch (err) {
+                showMermaidUnavailable();
+            }
         }
     }
 
@@ -1342,13 +1587,13 @@ function shuffleArr(a) {
         if (newMode === 'preview') {
             toggleBtn.style.color = 'var(--orange)';
             toggleBtn.style.borderColor = 'var(--orange)';
-            if(splitBtn) {
+            if (splitBtn) {
                 splitBtn.style.color = '';
                 splitBtn.style.borderColor = '';
             }
             initMermaid();
         } else if (newMode === 'split') {
-            if(splitBtn) {
+            if (splitBtn) {
                 splitBtn.style.color = 'var(--orange)';
                 splitBtn.style.borderColor = 'var(--orange)';
             }
@@ -1359,24 +1604,41 @@ function shuffleArr(a) {
             // code
             toggleBtn.style.color = '';
             toggleBtn.style.borderColor = '';
-            if(splitBtn) {
+            if (splitBtn) {
                 splitBtn.style.color = '';
                 splitBtn.style.borderColor = '';
             }
         }
+        requestAnimationFrame(lockMermaidShellHeight);
     }
 
-    toggleBtn.addEventListener('click', function() {
+    function animateModeChange(newMode) {
+        clearTimeout(switchTimer);
+        shell.classList.add('is-switching');
+        switchTimer = setTimeout(function () {
+            setMode(newMode);
+            requestAnimationFrame(function () {
+                shell.classList.remove('is-switching');
+            });
+        }, 120);
+    }
+
+    toggleBtn.addEventListener('click', function () {
         var mode = shell.getAttribute('data-mode');
-        setMode(mode === 'preview' ? 'code' : 'preview');
+        animateModeChange(mode === 'preview' ? 'code' : 'preview');
     });
 
-    if(splitBtn) {
-        splitBtn.addEventListener('click', function() {
+    if (splitBtn) {
+        splitBtn.addEventListener('click', function () {
             var mode = shell.getAttribute('data-mode');
-            setMode(mode === 'split' ? 'code' : 'split');
+            animateModeChange(mode === 'split' ? 'code' : 'split');
         });
     }
+
+    lockMermaidShellHeight();
+    window.addEventListener('resize', function () {
+        requestAnimationFrame(lockMermaidShellHeight);
+    });
 })();
 
 // ============ HOVER CURL BANNER ============ 
@@ -1431,4 +1693,80 @@ function shuffleArr(a) {
             hideBanner(180);
         }
     }, {passive: true});
+})();
+
+// ============ MODAL SURFACES ============
+(function () {
+    var triggers = document.querySelectorAll('[data-modal-open]');
+    var modals = document.querySelectorAll('.surface-modal');
+    if (!triggers.length || !modals.length) return;
+
+    var activeModal = null;
+    var lastTrigger = null;
+
+    function setModalHidden(modal, hidden) {
+        if (!modal) return;
+        modal.hidden = hidden;
+        modal.setAttribute('aria-hidden', hidden ? 'true' : 'false');
+    }
+
+    function openModal(modal, trigger) {
+        if (!modal) return;
+        if (activeModal && activeModal !== modal) {
+            closeModal(true);
+        }
+
+        lastTrigger = trigger || lastTrigger;
+        activeModal = modal;
+        setModalHidden(modal, false);
+        document.body.classList.add('modal-open');
+
+        requestAnimationFrame(function () {
+            modal.classList.add('is-visible');
+            var panel = modal.querySelector('.surface-modal__panel');
+            if (panel) panel.focus();
+        });
+    }
+
+    function closeModal(skipFocusRestore) {
+        if (!activeModal) return;
+        var modal = activeModal;
+        activeModal = null;
+        modal.classList.remove('is-visible');
+        document.body.classList.remove('modal-open');
+
+        setTimeout(function () {
+            setModalHidden(modal, true);
+            if (!skipFocusRestore && lastTrigger && typeof lastTrigger.focus === 'function') {
+                lastTrigger.focus();
+            }
+        }, 180);
+    }
+
+    triggers.forEach(function (trigger) {
+        trigger.addEventListener('click', function (event) {
+            var modalId = trigger.getAttribute('data-modal-open');
+            var modal = modalId ? document.getElementById(modalId) : null;
+            if (!modal) return;
+            event.preventDefault();
+            openModal(modal, trigger);
+        });
+    });
+
+    modals.forEach(function (modal) {
+        setModalHidden(modal, true);
+        modal.addEventListener('click', function (event) {
+            if (event.target === modal || event.target.hasAttribute('data-modal-close') ||
+                event.target.classList.contains('surface-modal__backdrop')) {
+                closeModal(false);
+            }
+        });
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && activeModal) {
+            event.preventDefault();
+            closeModal(false);
+        }
+    });
 })();

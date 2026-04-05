@@ -1,127 +1,67 @@
 ---
 name: vc-agents
-version: 1.4.1
+version: 3.0.0
 description: >
-  Spawn external subagents via the VibeCrafted method using the portable spawn
-  scripts. Use when the user wants
-  full isolation, visible Terminal agents, durable artifacts in the canonical
-  `~/.vibecrafted/artifacts/` store,
-  and real delegated implementation instead of in-thread analysis. Trigger
-  phrases: "spawn agents", "terminal agents", "agent fleet", "odpal agentow",
-  "deleguj przez terminal", "codex agents", "power agents".
+  Spawn external specialized AI agents from the user's fleet (Codex, Claude, Gemini).
+  Use this when you need parallel execution, deep isolation, or task-specific cognitive 
+  strengths that surpass generic in-thread delegation.
+  Trigger: "vc-agents", "/vc-agents", "delegate to agents", "spawn".
 ---
 
-# VibeCrafted Agents
+# vc-agents — The AI-Native Fleet
 
-## When to use
+> We do not outsource thought. We deploy equally capable minds on parallel execution paths to protect the main context buffer.
 
-Trigger when the user asks to delegate work, especially phrases like:
+A single agent session carries immense context. Attempting to execute every small rewrite, forensic deep-dive, or radical structural shift in-thread causes prompt bloat and dilutes your focus.
 
-- "Uzyj ... do agentow", "Deleguj ... agentom", "Zlec to agentowi"
-- Any request that implies parallelization or multi-track execution
-- Any request that wants visible Terminal agents or long-running isolated work
+`vc-agents` is the delegation layer. You identify the structural gap, pick the right mind for the job from the **`vc-why-matrix`**, spin up the autonomous worker, and return to your main orchestration.
 
-## Why use agents
+## The `vc-why-matrix`
 
-- Your context is precious and built through many sessions, so you should delegate precisely and minimize context bloat.
-- Spawning through the VibeCrafted method requires a strict execution pattern.
-- The command shape is canonical and obligatory without exceptions. If you hesitate to use it as provided, do not use this skill.
-- Agents are copies of yourself: same smart, same capable, just lighter and more agile because they do not carry your full context window.
-- Spawn exists so field teams can implement, research, review, and converge outside the main thread while still leaving durable artifacts in the canonical store.
+You do not spawn agents blindly. You pick the cognitive profile required for the cut.
 
-## Why-matrix
+```mermaid
+  graph TD
+    subgraph Codex
+        CodexDesc[Precision & Surgery]
+        CodexBest[Best for:\n\n– Critical implementations\n– Exact refactors\n– Contract-gated execution]
+        Codex --> CodexDesc
+        Codex --> CodexBest
+    end
 
-Use `vc-agents` as the default first choice whenever the task benefits from model-specific strengths.
-Reach for native `vc-delegate` only when the task is small, bounded, and model-agnostic.
+    subgraph Claude
+        ClaudeDesc[Forensics & Research]
+        ClaudeBest[Best for:\n\n– Bug hunts across deep layers\n– Architecture audits\n– Assessing unknown paths]
+        Claude --> ClaudeDesc
+        Claude --> ClaudeBest
+    end
 
-| Model  | Why choose it                                                                   | Best for                                                                                              | Avoid when                                                                                                                |
-| ------ | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| Codex  | Precision, implementation purity, and highly reliable code surgery.             | Critical implementations, exact refactors, test-gated fixes, and bounded engineering execution.       | The repo is in a chaotic state, the brief is vague, or you are really asking someone to explore and clean up chaos first. |
-| Claude | Investigative depth, stubborn logic tracing, and exhaustive research instincts. | Bug hunts, codebase forensics, audits, architecture research, and SoTA framework assessment.          | The work is mostly straightforward code surgery and does not need a full investigative pass.                              |
-| Gemini | Bold reframing, creative system redesign, and fearless simplification.          | Architecture leaps, radical cleanup ideas, product reframing, and high-variance creative exploration. | The task only needs predictable, surgical implementation and low-variance execution.                                      |
-
-If the task wants one of these strengths, external agents win by default because you can route work to the right mind instead of forcing a generic in-thread delegation path.
-
-## Goal
-
-Create a small fleet of subagents that each get a precise task into the
-canonical `plans/` directory under
-`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/`.
-
-Delegate:
-
-- exploration
-- research
-- implementation
-- review
-
-Then collect their results in `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/` in the current repo.
-
-## Standard workflow
-
-1. Clarify scope if needed.
-   - If tasks are not explicit, propose a split into 2-5 items and get alignment.
-2. Prepare repo folders.
-   - Ensure `skills/vc-agents/scripts/common.sh` `spawn_prepare_paths()` has materialized `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/{plans,reports,tmp}/`.
-   - Repo-local `.vibecrafted/plans -> ~/.vibecrafted/artifacts/.../plans` and `.vibecrafted/reports -> ~/.vibecrafted/artifacts/.../reports` are convenience symlink paths only.
-3. Write one plan per subagent in the canonical `plans/` directory.
-   - Keep it high level, decisive, and test-gated.
-   - Provide reason and context.
-   - Give a clear `[ ]` todo list.
-   - Include acceptance criteria and required checks.
-   - End with a short call to action.
-4. Spawn subagents through the portable spawn scripts.
-5. Observe progress through artifacts and transcripts.
-6. Synthesize results back into the main thread.
-
-## Mandatory plan rules
-
-Every subagent plan should:
-
-- be high level, decisive, and test-gated
-- include reason and context
-- include a clear checkbox todo list
-- include acceptance criteria
-- include required checks
-- end with a short call to action
-
-## Living tree rule
-
-Always include this exact preamble in every subagent plan or prompt:
-
-```text
-You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
-Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
-Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
+    subgraph Gemini
+        GeminiDesc[Radical Reframing]
+        GeminiBest[Best for:\n\n– Architecture leaps\n– Fearless simplification\n– Stripping dead scaffolding]
+        Gemini --> GeminiDesc
+        Gemini --> GeminiBest
+    end
 ```
 
-Keep this preamble repo-agnostic.
+## Delegation Doctrine
 
-Add this living-tree coordination note below the preamble whenever the plan
-needs it:
-
-- State explicitly whether the agent is working solo at that stage or alongside
-  other agents in parallel.
-- The agent needs to know whether the stage is solo or shared, but does not
-  need to read other agents' plan files unless the plan explicitly requires it.
-- If the original plan clearly calls for a stabilization checkpoint, the agent
-  must preserve its tranche of work with a local commit, without push.
-- Never change branches during active work. The intent is to stay on the
-  current working branch and keep building inside that living tree.
-- Plans may explicitly instruct the agent to finish and harden one seam, spawn
-  another `vc-agents` worker for the next plan, commit locally for
-  preservation, and continue.
-
-## VibeCrafted doctrine
-
-- Do not treat agents like couriers or report printers. Treat them like artists and implementers.
-- Do not over-restrict them into tiny bureaucratic slices when the task wants a real rewrite.
-- Sometimes a full replacement is cleaner than patching scar tissue.
-- VibeCrafted builders ship real products through vibeguiding. Agents should be trusted to do the same.
+- **Delegate, do not micromanage:** Do not produce 15-point bureaucratic checklists for the spawned agent. Write a high-level plan with `Goal`, `Scope`, and `Acceptance Criteria`. Let them figure out the _how_.
+- **The Living Tree:** Agents must know they operate in a live system. Ensure your spawn plan states: _"You are working on a living tree. Concurrent changes are expected. Adapt proactively."_
+- **Full Replacement over Scar Tissue:** Tell your agents they are empowered to rewrite broken abstractions. Sometimes a full replacement is cleaner than patching over bad prototype code.
 
 ## Plan template
 
 Use this structure:
+
+---
+
+run_id: <unique-run-id>
+agent: <agent-name>
+status: <pending|in-progress|completed|failed>
+loops_completed: <number>
+
+---
 
 ```text
 # Task: <short title>
@@ -148,7 +88,7 @@ Context:
 - <very short summary>
 
 Living tree note:
-- You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
+- You work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology, so concurrent changes are expected.
 - Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
 - Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 - Coordination mode: <solo on this stage / parallel with other agents on this stage>
@@ -160,53 +100,58 @@ Living tree note:
 
 The canonical launch path for agent-to-agent delegation is through the portable spawn scripts.
 
-If the environment has optional shell aliases (like `codex-implement`), those are just convenience wrappers around these exact same scripts. Always use the portable scripts to ensure maximum compatibility.
+If the environment has optional shell aliases (like `codex-implement`), those are just convenience wrappers around these
+exact same scripts. Always use the portable scripts to ensure maximum compatibility.
 
 ### Codex
 
 ```bash
-PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement
+# 1. Save the target plan
+PLAN="$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan-slug>.md"
+
+# 2. Spawn the chosen mind
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement
 ```
 
 ### Claude
 
 ```bash
-PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/claude_spawn.sh "$PLAN" --mode implement
+PLAN="$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/claude_spawn.sh "$PLAN" --mode implement
 ```
 
 ### Gemini
 
 ```bash
-PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode implement
+PLAN="$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode implement
 ```
 
 If these tools are unavailable, stop pretending spawn is correctly configured and say so explicitly.
 
 ## Output convention
 
-- Plans: `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<slug>.md` or another stable per-task filename
-- Reports: `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<slug>_<agent>.md`
-- Transcripts: `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<slug>_<agent>.transcript.log`
-- Metadata: `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<slug>_<agent>.meta.json`
+- Plans: `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<slug>.md` or another stable per-task
+  filename
+- Reports: `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<slug>_<agent>.md`
+- Transcripts: `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<slug>_<agent>.transcript.log`
+- Metadata: `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<slug>_<agent>.meta.json`
 
 ## Observation
 
-Observe progress through durable artifacts in `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
+Observe progress through durable artifacts in `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
 
 If your environment exposes the observer helper, the standard check is:
 
 ```bash
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/observe.sh codex --last
+bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/observe.sh codex --last
 ```
 
 Use the equivalent agent observer when needed.
 
 ## Quality gate expectations
 
-Keep the standard VibeCrafted quality bar:
+Keep the standard 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. quality bar:
 
 - loctree-mcp as first-choice exploration and search tool with fail-fast if inaccessible
 - semgrep as first-choice security guard when available
@@ -225,10 +170,6 @@ Keep the standard VibeCrafted quality bar:
 
 ## Final principle
 
-Spawn is not for outsourcing thought.
-Spawn is for deploying equally capable front-line agents through a strict, canonical launch path.
+Fleet is not for outsourcing thought.
+Fleet is for deploying equally capable front-line agents through a strict, canonical launch path.
 Use them to implement, not merely to comment on implementation.
-lementation.
-nch path.
-Use them to implement, not merely to comment on implementation.
-lementation.

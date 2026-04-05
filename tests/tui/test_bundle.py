@@ -1,6 +1,6 @@
 import json
-from pathlib import Path
 import zipfile
+from pathlib import Path
 
 from scripts import build_marketplace_bundle as bundle
 
@@ -14,6 +14,11 @@ def test_parse_listing_metadata_reads_current_registry_fields() -> None:
 
     assert metadata.homepage == "https://vetcoders.github.io/vibecrafted/"
     assert metadata.repository == "https://github.com/VetCoders/vibecrafted"
+    assert (
+        metadata.documentation
+        == "https://vetcoders.github.io/vibecrafted/presence/quickstart.html"
+    )
+    assert metadata.faq == "https://vetcoders.github.io/vibecrafted/presence/faq.html"
     assert metadata.license.startswith("Business Source License 1.1")
     assert "codex" in metadata.keywords
 
@@ -46,3 +51,24 @@ def test_write_bundle_uses_current_metadata_and_skill_inventory(tmp_path: Path) 
     assert "skills/vc-ship/SKILL.md" not in members
     assert "skills/vc-ownership/SKILL.md" not in members
     assert "skills/vc-screenscribe/SKILL.md" not in members
+
+
+def test_committed_bundle_matches_current_repo_state() -> None:
+    bundle_path = bundle.REPO_ROOT / bundle.OUTPUT_FILENAME
+
+    assert bundle_path.exists(), f"Missing marketplace bundle at {bundle_path}"
+    assert bundle_path.read_bytes() == bundle.build_bundle_bytes(bundle.REPO_ROOT), (
+        "Marketplace bundle drifted from the current repo state. "
+        "Run: python3 scripts/build_marketplace_bundle.py"
+    )
+
+
+def test_framework_playground_uses_vibecrafted_command_deck() -> None:
+    text = (bundle.REPO_ROOT / "docs" / "presence" / "framework.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "vibecrafted scaffold claude" in text
+    assert "vibecrafted partner claude" in text
+    assert "vibecrafted marbles codex --count " in text
+    assert "return 'vc-' + phaseDef.name;" not in text

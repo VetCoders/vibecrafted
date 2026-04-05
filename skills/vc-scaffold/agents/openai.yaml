@@ -1,4 +1,4 @@
 interface:
   display_name: "VC Scaffold"
   short_description: "Founder-first architecture planning. Takes a vague idea, maps the landscape, produces a scoped build plan. Use /vc-scaffold to invoke."
-  default_prompt: "Use $vc-scaffold to classify runtime/build/publish surface, route non-trivial release work through external VibeCrafted agents, and plan a proof-driven release."
+  default_prompt: "Use $vc-scaffold to classify runtime/build/publish surface, route non-trivial release work through external 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. agents, and plan a proof-driven release."
