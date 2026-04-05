@@ -94,6 +94,40 @@ _vetcoders_generate_run_id() {
   printf '%s-%s\n' "$prefix" "$(date +%H%M%S)"
 }
 
+_vetcoders_has_ambient_spawn_context() {
+  [[ -n "${SPAWN_AGENT:-}" ]] || return 1
+  [[ -n "${SPAWN_RUN_ID:-}" ]] || return 1
+  [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
+  [[ "${SPAWN_RUN_ID}" == "${VIBECRAFTED_RUN_ID}" ]] || return 1
+  [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || return 1
+  _vetcoders_in_zellij && return 1
+  return 0
+}
+
+_vetcoders_effective_run_id() {
+  _vetcoders_has_ambient_spawn_context && return 1
+  [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_RUN_ID}"
+}
+
+_vetcoders_effective_run_lock() {
+  _vetcoders_has_ambient_spawn_context && return 1
+  [[ -n "${VIBECRAFTED_RUN_LOCK:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_RUN_LOCK}"
+}
+
+_vetcoders_effective_skill_name() {
+  _vetcoders_has_ambient_spawn_context && return 1
+  [[ -n "${VIBECRAFTED_SKILL_NAME:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_SKILL_NAME}"
+}
+
+_vetcoders_effective_skill_code() {
+  _vetcoders_has_ambient_spawn_context && return 1
+  [[ -n "${VIBECRAFTED_SKILL_CODE:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_SKILL_CODE}"
+}
+
 _vetcoders_create_run_lock() {
   local run_id="$1"
   local agent="$2"
@@ -135,10 +169,16 @@ _vetcoders_ensure_run_context() {
   local tool="$1"
   local mode="$2"
   local root="${3:-$(_vetcoders_repo_root)}"
-  local skill_name="${VIBECRAFTED_SKILL_NAME:-$mode}"
-  local skill_code="${VIBECRAFTED_SKILL_CODE:-}"
-  local run_id="${VIBECRAFTED_RUN_ID:-}"
-  local lock_file="${VIBECRAFTED_RUN_LOCK:-}"
+  local skill_name
+  local skill_code
+  local run_id
+  local lock_file
+
+  skill_name="$(_vetcoders_effective_skill_name 2>/dev/null || true)"
+  [[ -n "$skill_name" ]] || skill_name="$mode"
+  skill_code="$(_vetcoders_effective_skill_code 2>/dev/null || true)"
+  run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
+  lock_file="$(_vetcoders_effective_run_lock 2>/dev/null || true)"
 
   [[ -n "$skill_code" ]] || skill_code="$(_vetcoders_skill_prefix "$skill_name")"
   [[ -n "${VIBECRAFTED_SKILL_NAME:-}" ]] || export VIBECRAFTED_SKILL_NAME="$skill_name"
@@ -165,7 +205,8 @@ _vetcoders_default_runtime() {
 }
 
 _vetcoders_in_zellij() {
-  [[ -n "${ZELLIJ_PANE_ID:-}" ]] || [[ -n "${ZELLIJ:-}" && "${ZELLIJ}" != "0" ]]
+  [[ "${ZELLIJ:-}" == "0" ]] && return 1
+  [[ -n "${ZELLIJ_PANE_ID:-}" ]] || [[ -n "${ZELLIJ:-}" ]]
 }
 
 _vetcoders_guess_active_zellij_session() {
@@ -310,7 +351,7 @@ _vetcoders_operator_session_name() {
   root="$(_vetcoders_repo_root)"
   base="$(basename "$root" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g; s/^-*//; s/-*$//')"
   [[ -n "$base" ]] || base="vibecrafted"
-  run_id="${VIBECRAFTED_RUN_ID:-}"
+  run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
   if [[ -n "$run_id" ]]; then
     printf '%s-%s\n' "$base" "$run_id"
   else
@@ -669,10 +710,11 @@ _vetcoders_dashboard_layout_file() {
 }
 
 _vetcoders_dashboard_session_name() {
-  local layout_name slug base_session
+  local layout_name slug base_session run_id
   layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
   base_session="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
-  if [[ -n "${VIBECRAFTED_RUN_ID:-}" ]]; then
+  run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
+  if [[ -n "$run_id" ]]; then
     printf '%s\n' "$base_session"
     return 0
   fi
@@ -1035,8 +1077,10 @@ _vetcoders_skill() {
   local skill="$2"
   shift 2
   local loop_nr="${VIBECRAFTED_LOOP_NR:-0}"
-  local inherited_run_id="${VIBECRAFTED_RUN_ID:-}"
-  local inherited_run_lock="${VIBECRAFTED_RUN_LOCK:-}"
+  local inherited_run_id
+  local inherited_run_lock
+  inherited_run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
+  inherited_run_lock="$(_vetcoders_effective_run_lock 2>/dev/null || true)"
   _vetcoders_parse_contract "$@" || return 1
   [[ -z "$_vetcoders_contract_count" ]] || {
     echo "--count is only supported by vibecrafted marbles." >&2

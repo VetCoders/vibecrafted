@@ -1110,6 +1110,18 @@ LAUNCHER_WRAPPERS = [
     *[f"vc-{name}" for name in SKILL_WRAPPER_NAMES],
 ]
 
+
+def _launcher_bin_dirs() -> List[Path]:
+    dirs: List[Path] = []
+    for candidate in (
+        vibecrafted_home() / "bin",
+        Path.home() / ".local" / "bin",
+    ):
+        if candidate not in dirs:
+            dirs.append(candidate)
+    return dirs
+
+
 # ---------------------------------------------------------------------------
 # Helper conflict detection
 # ---------------------------------------------------------------------------
@@ -2272,28 +2284,29 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
 
 
 def _install_launcher(repo_root: Path, dry_run: bool) -> None:
-    """Install vibecrafted launcher to $HOME/.local/bin/."""
+    """Install vibecrafted launcher to portable and legacy bin surfaces."""
     launcher_src = repo_root / "scripts" / "vibecrafted"
-    launcher_bin_dir = Path.home() / ".local" / "bin"
-    launcher_dst = launcher_bin_dir / "vibecrafted"
     if launcher_src.exists():
         if not dry_run:
-            launcher_bin_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(launcher_src, launcher_dst)
-            launcher_dst.chmod(0o755)
-            for wrapper in LAUNCHER_WRAPPERS:
-                create_symlink(Path("vibecrafted"), launcher_bin_dir / wrapper)
-            # Replace legacy vibecraft binary with a thin redirect
             legacy_redirect_src = repo_root / "scripts" / "vibecraft"
-            legacy_dst = launcher_bin_dir / "vibecraft"
-            if legacy_redirect_src.exists():
-                shutil.copy2(legacy_redirect_src, legacy_dst)
-                legacy_dst.chmod(0o755)
+            for launcher_bin_dir in _launcher_bin_dirs():
+                launcher_bin_dir.mkdir(parents=True, exist_ok=True)
+                launcher_dst = launcher_bin_dir / "vibecrafted"
+                shutil.copy2(launcher_src, launcher_dst)
+                launcher_dst.chmod(0o755)
+                for wrapper in LAUNCHER_WRAPPERS:
+                    create_symlink(Path("vibecrafted"), launcher_bin_dir / wrapper)
+                # Replace legacy vibecraft binary with a thin redirect
+                legacy_dst = launcher_bin_dir / "vibecraft"
+                if legacy_redirect_src.exists():
+                    shutil.copy2(legacy_redirect_src, legacy_dst)
+                    legacy_dst.chmod(0o755)
         else:
-            for wrapper in LAUNCHER_WRAPPERS:
-                create_symlink(
-                    Path("vibecrafted"), launcher_bin_dir / wrapper, dry_run=True
-                )
+            for launcher_bin_dir in _launcher_bin_dirs():
+                for wrapper in LAUNCHER_WRAPPERS:
+                    create_symlink(
+                        Path("vibecrafted"), launcher_bin_dir / wrapper, dry_run=True
+                    )
         # Ensure $HOME/.local/bin is in PATH via shell rc files
         path_line = _launcher_path_line()
         path_comment = "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher"

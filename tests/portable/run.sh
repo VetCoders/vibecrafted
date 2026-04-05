@@ -359,8 +359,8 @@ chmod +x "$fake_bin/rsync"
 sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/skills/vc-agents/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
 echo "$sync_output" | grep -q "Syncing skills from" || die "Sync dry-run failed to start"
 echo "$sync_output" | grep -q "rsync .* --dry-run" || die "Sync dry-run didn't pass dry-run to rsync"
-# shellcheck disable=SC2088 # matching literal ~ in sync output, not expanding
-echo "$sync_output" | grep -q "$VIBECRAFTED_ROOT/.vibecrafted/skills\|$HOME/.agents/skills" || die "Sync dry-run didn't target the shared canonical skill store"
+# shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
+echo "$sync_output" | grep -q '\$HOME/.vibecrafted/skills\|\$HOME/.agents/skills' || die "Sync dry-run didn't target the shared canonical skill store"
 
 log "docs truth checks"
 # shellcheck disable=SC2016 # backticks are literal content we're matching, not command substitution

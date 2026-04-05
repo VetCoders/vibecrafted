@@ -78,6 +78,34 @@ spawn_generate_run_id() {
   printf '%s-%s\n' "$prefix" "$(date +%H%M%S)"
 }
 
+spawn_has_ambient_run_context() {
+  [[ -n "${SPAWN_AGENT:-}" ]] || return 1
+  [[ -n "${SPAWN_RUN_ID:-}" ]] || return 1
+  [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
+  [[ "${SPAWN_RUN_ID}" == "${VIBECRAFTED_RUN_ID}" ]] || return 1
+  [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || return 1
+  spawn_in_zellij_context && return 1
+  return 0
+}
+
+spawn_effective_run_id() {
+  spawn_has_ambient_run_context && return 1
+  [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_RUN_ID}"
+}
+
+spawn_effective_run_lock() {
+  spawn_has_ambient_run_context && return 1
+  [[ -n "${VIBECRAFTED_RUN_LOCK:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_RUN_LOCK}"
+}
+
+spawn_effective_skill_code() {
+  spawn_has_ambient_run_context && return 1
+  [[ -n "${VIBECRAFTED_SKILL_CODE:-}" ]] || return 1
+  printf '%s\n' "${VIBECRAFTED_SKILL_CODE}"
+}
+
 # Central artifact store: $HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
 # Override with VIBECRAFTED_HOME env var for custom location
 # Falls back to <repo>/.vibecrafted/ if git remote unavailable
@@ -336,7 +364,7 @@ spawn_prepare_paths() {
   SPAWN_TS="$(spawn_timestamp)"
   SPAWN_AGENT="$agent"
   SPAWN_PROMPT_ID="${SPAWN_SLUG}_${SPAWN_TS%%_*}"
-  SPAWN_SKILL_CODE="${VIBECRAFTED_SKILL_CODE:-}"
+  SPAWN_SKILL_CODE="$(spawn_effective_skill_code 2>/dev/null || true)"
   if [[ -z "$SPAWN_SKILL_CODE" && -n "$skill_name" ]]; then
     SPAWN_SKILL_CODE="$(spawn_skill_prefix "$skill_name")"
   fi
@@ -346,12 +374,13 @@ spawn_prepare_paths() {
       SPAWN_LOOP_NR=0
       ;;
   esac
-  if [[ -n "${VIBECRAFTED_RUN_ID:-}" ]]; then
-    SPAWN_RUN_ID="$VIBECRAFTED_RUN_ID"
+  SPAWN_RUN_ID="$(spawn_effective_run_id 2>/dev/null || true)"
+  if [[ -n "$SPAWN_RUN_ID" ]]; then
+    :
   else
     SPAWN_RUN_ID="$(spawn_generate_run_id "${SPAWN_SKILL_CODE:-impl}")"
   fi
-  lock_file="${VIBECRAFTED_RUN_LOCK:-}"
+  lock_file="$(spawn_effective_run_lock 2>/dev/null || true)"
   if [[ -z "$lock_file" || ! -f "$lock_file" ]]; then
     lock_file="$VIBECRAFTED_HOME/locks/$(spawn_org_repo "$SPAWN_ROOT")/${SPAWN_RUN_ID}.lock"
   fi
@@ -749,7 +778,8 @@ EOF_APPLE
 }
 
 spawn_in_zellij_context() {
-  [[ -n "${ZELLIJ_PANE_ID:-}" ]] || [[ -n "${ZELLIJ:-}" && "${ZELLIJ}" != "0" ]]
+  [[ "${ZELLIJ:-}" == "0" ]] && return 1
+  [[ -n "${ZELLIJ_PANE_ID:-}" ]] || [[ -n "${ZELLIJ:-}" ]]
 }
 
 spawn_current_zellij_session_name() {
