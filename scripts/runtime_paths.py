@@ -23,4 +23,6 @@ def xdg_config_home() -> Path:
 
 
 def vibecrafted_home() -> Path:
-    return resolve_env_path("VIBECRAFTED_HOME", Path.home() / ".vibecrafted")
+    if "VIBECRAFTED_HOME" in os.environ and os.environ["VIBECRAFTED_HOME"]:
+        return Path(os.environ["VIBECRAFTED_HOME"]).expanduser()
+    return Path.home() / ".vibecrafted"

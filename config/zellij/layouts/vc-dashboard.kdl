@@ -13,18 +13,18 @@ layout {
     tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. MC" split_direction="horizontal" {
         pane split_direction="vertical" size="50%" {
             pane name="agents" focus=true command="bash" {
-                args "-lc" "for root in \"${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:-}/skills/vc-agents\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/active-agents.sh\" ]]; then exec \"$root/scripts/mission-control/active-agents.sh\"; fi; done; printf 'Mission control helper not found: active-agents.sh\\n'; sleep 3600"
+                args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/active-agents.sh\" ]]; then exec \"$root/scripts/mission-control/active-agents.sh\"; fi; done; printf 'Mission control helper not found: active-agents.sh\\n'; sleep 3600"
             }
             pane name="transcript" command="bash" {
-                args "-lc" "for root in \"${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:-}/skills/vc-agents\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/live-transcript.sh\" ]]; then exec \"$root/scripts/mission-control/live-transcript.sh\"; fi; done; printf 'Mission control helper not found: live-transcript.sh\\n'; sleep 3600"
+                args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/live-transcript.sh\" ]]; then exec \"$root/scripts/mission-control/live-transcript.sh\"; fi; done; printf 'Mission control helper not found: live-transcript.sh\\n'; sleep 3600"
             }
         }
         pane split_direction="vertical" size="50%" {
             pane name="convergence" command="bash" {
-                args "-lc" "for root in \"${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:-}/skills/vc-agents\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Mission control helper not found: convergence-trend.sh\\n'; sleep 3600"
+                args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Mission control helper not found: convergence-trend.sh\\n'; sleep 3600"
             }
             pane name="sessions" command="bash" {
-                args "-lc" "for root in \"${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:-}/skills/vc-agents\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Mission control helper not found: recent-sessions.sh\\n'; sleep 3600"
+                args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Mission control helper not found: recent-sessions.sh\\n'; sleep 3600"
             }
         }
     }

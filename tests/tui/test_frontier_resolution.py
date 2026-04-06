@@ -45,6 +45,32 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
+def test_dashboard_layouts_resolve_helpers_from_home_store_first() -> None:
+    expected_home_root = "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents"
+    expected_repo_store_root = (
+        "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}"
+    )
+    expected_repo_root = "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}"
+
+    for layout_name in ("vc-dashboard.kdl", "vc-marbles.kdl", "vibecrafted.kdl"):
+        payload = (REPO_ROOT / "config" / "zellij" / "layouts" / layout_name).read_text(
+            encoding="utf-8"
+        )
+        assert expected_home_root in payload
+        assert expected_repo_store_root in payload
+        assert expected_repo_root in payload
+
+
+def test_operator_layout_does_not_append_nested_vibecrafted_store() -> None:
+    payload = (
+        REPO_ROOT / "config" / "zellij" / "layouts" / "vibecrafted.kdl"
+    ).read_text(encoding="utf-8")
+    assert (
+        "${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT}/.vibecrafted/skills/vc-agents"
+        not in payload
+    )
+
+
 def test_vc_frontier_paths_mix_repo_prompt_with_companion_zellij(
     tmp_path: Path,
 ) -> None:

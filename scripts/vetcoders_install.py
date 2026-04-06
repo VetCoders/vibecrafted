@@ -1430,6 +1430,10 @@ def prune_legacy_skills(
 
 def create_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
     """Create a symlink, removing any existing entry."""
+    if target == link:
+        if dry_run:
+            print(f"  {dim('same-path')} {target}")
+        return
     if dry_run:
         print(f"  {dim('ln -s')} {target} -> {link}")
         return

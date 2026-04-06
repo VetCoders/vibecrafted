@@ -32,11 +32,20 @@ is_interactive_session() {
   [[ -t 0 && -t 1 ]]
 }
 
+default_vibecrafted_home() {
+  if [[ -n "${VIBECRAFTED_HOME:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_HOME"
+    return
+  fi
+  printf '%s\n' "$HOME/.vibecrafted"
+}
+
 sanitize_ref() {
   printf '%s' "$1" | tr '/:@ ' '----' | tr -cd '[:alnum:]._-' 
 }
 
-vibecrafted_home="${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}"
+vibecrafted_home="$(default_vibecrafted_home)"
+export VIBECRAFTED_HOME="$vibecrafted_home"
 default_tools_dir="${VIBECRAFTED_TOOLS_HOME:-$vibecrafted_home/tools}"
 default_ref="${VIBECRAFTED_REF:-main}"
 

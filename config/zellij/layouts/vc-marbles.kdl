@@ -23,10 +23,10 @@ layout {
             // Run monitoring — bottom 40%
             pane split_direction="vertical" size="40%" {
                 pane name="convergence" command="bash" {
-                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:-}/skills/vc-agents\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Convergence monitor not found.\\n'; sleep 3600"
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Convergence monitor not found.\\n'; sleep 3600"
                 }
                 pane name="sessions" command="bash" {
-                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:-}/skills/vc-agents\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Sessions monitor not found.\\n'; sleep 3600"
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Sessions monitor not found.\\n'; sleep 3600"
                 }
             }
         }
