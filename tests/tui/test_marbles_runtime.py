@@ -53,7 +53,9 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
-def _run_marbles_prompt(tmp_path: Path, *, inside_zellij: bool) -> list[str]:
+def _run_marbles_prompt(
+    tmp_path: Path, *, inside_zellij: bool
+) -> tuple[list[str], list[str]]:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
     fake_bin = tmp_path / "bin"
@@ -103,13 +105,16 @@ def _run_marbles_prompt(tmp_path: Path, *, inside_zellij: bool) -> list[str]:
         env=env,
     )
 
-    return capture_file.read_text(encoding="utf-8").splitlines()
+    return (
+        capture_file.read_text(encoding="utf-8").splitlines(),
+        zellij_capture_file.read_text(encoding="utf-8").splitlines(),
+    )
 
 
 def test_vc_marbles_preserves_prompt_as_single_argument_inside_zellij(
     tmp_path: Path,
 ) -> None:
-    payload = _run_marbles_prompt(tmp_path, inside_zellij=True)
+    payload, zellij_payload = _run_marbles_prompt(tmp_path, inside_zellij=True)
 
     assert "--agent" in payload
     assert "claude" in payload
@@ -117,12 +122,18 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_zellij(
     assert "1" in payload
     assert "--prompt" in payload
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
+    assert "new-tab" in zellij_payload
+    assert any("vibecrafted-marbles." in line for line in zellij_payload)
+    assert not any(
+        "weź i vc-justdo wszystko co marbles znajdzie" in line
+        for line in zellij_payload
+    )
 
 
 def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
     tmp_path: Path,
 ) -> None:
-    payload = _run_marbles_prompt(tmp_path, inside_zellij=False)
+    payload, zellij_payload = _run_marbles_prompt(tmp_path, inside_zellij=False)
 
     assert "--agent" in payload
     assert "claude" in payload
@@ -130,6 +141,12 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
     assert "1" in payload
     assert "--prompt" in payload
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
+    assert "new-tab" in zellij_payload
+    assert any("vc-spawn-cmd." in line for line in zellij_payload)
+    assert not any(
+        "weź i vc-justdo wszystko co marbles znajdzie" in line
+        for line in zellij_payload
+    )
 
 
 def test_vetcoders_shell_quote_join_stays_utf8_clean_for_multiline_prompt(

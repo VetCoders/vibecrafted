@@ -182,7 +182,7 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "new-tab" in payload
     assert "--direction" not in payload
-    assert any(line.endswith(".sh") for line in payload)
+    assert any("vibecrafted-marbles." in line for line in payload)
 
 
 def test_vc_start_resume_resurrects_dead_session(tmp_path: Path) -> None:

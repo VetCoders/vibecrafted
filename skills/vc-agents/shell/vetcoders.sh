@@ -464,14 +464,18 @@ _vetcoders_spawn_into_operator_session() {
   local command_text="$2"
   local session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
   local root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
+  local cmd_script
 
   command -v zellij >/dev/null 2>&1 || return 1
-  # When bootstrapping from outside the operator session, open a fresh tab so
-  # we do not disturb the currently focused tab layout.
+  # zellij rejects inline command args once they carry shell-quoted multibyte
+  # prompt content. Hand it an ASCII-safe temp script path instead.
+  cmd_script="$(mktemp "${TMPDIR:-/tmp}/vc-spawn-cmd.XXXXXX")"
+  printf '#!/bin/zsh -l\ntrap "rm -f %q" EXIT\n%s\n' "$cmd_script" "$command_text" > "$cmd_script"
+  chmod +x "$cmd_script"
   zellij --session "$session_name" action new-tab \
     --name "$tab_name" \
     --cwd "$root_dir" \
-    -- /bin/zsh -l -c "$command_text"
+    -- "$cmd_script"
 }
 
 _vetcoders_frontier_candidates() {
@@ -1194,7 +1198,7 @@ _vetcoders_marbles() {
   if _vetcoders_in_zellij && command -v zellij >/dev/null 2>&1; then
     local cmd_script
     export VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
-    cmd_script="$(mktemp "${TMPDIR:-/tmp}/vibecrafted-marbles-XXXXXX.sh")"
+    cmd_script="$(mktemp "${TMPDIR:-/tmp}/vibecrafted-marbles.XXXXXX")"
     printf '#!/bin/zsh -l\ntrap "rm -f %q" EXIT\n%s\n' "$cmd_script" "$marbles_cmd" > "$cmd_script"
     chmod +x "$cmd_script"
     zellij action new-tab \
