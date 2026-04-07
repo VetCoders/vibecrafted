@@ -1,4 +1,4 @@
-# ؞Vibecraftedٜ - The Marbles
+# Vibecraftedٜ - The Marbles
 
 ## For Founders and Agentosceptic Developers
 

@@ -1,4 +1,4 @@
-# ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Use Cases: The Vibe Hangover
+#𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Use Cases: The Vibe Hangover
 
 _I've been fixing vibe-coded SaaS products for 6 months. The same four things are broken every single time._
 

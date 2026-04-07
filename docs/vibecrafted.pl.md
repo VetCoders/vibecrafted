@@ -1,8 +1,8 @@
-## ؞Vibecraftedٜ — The Founders’ Framework that created itself.
+## Vibecraftedٜ — The Founders’ Framework that created itself.
 
 ### Opis
 
-؞Vibecraftedٜ to framework dla AI-guided engineering. Nie jest narzędziem do generowania kodu ani zestawem promptów. To
+Vibecraftedٜ to framework dla AI-guided engineering. Nie jest narzędziem do generowania kodu ani zestawem promptów. To
 system pracy z agentami, który prowadzi od pierwszego draftu do produktu gotowego do wypuszczenia.
 
 Nie zakłada, że AI „pisze dobrze”. Zakłada, że kod generowany przez AI jest zmienny, często niekompletny i podatny na
@@ -18,7 +18,7 @@ pokazać światu.
 
 Większość narzędzi kończy się na wygenerowaniu kodu.
 
-؞Vibecraftedٜ zaczyna się tam, gdzie inne narzędzia kończą.
+Vibecraftedٜ zaczyna się tam, gdzie inne narzędzia kończą.
 
 Agent nie zatrzymuje się na pierwszym rozwiązaniu. Każda zmiana jest:
 
@@ -71,7 +71,7 @@ Agent nie „zakłada że działa”. Musi to udowodnić.
 AI generuje kod stochastycznie.  
 To oznacza, że bez struktury produkuje zarówno dobre rozwiązania, jak i błędy.
 
-؞Vibecraftedٜ nie próbuje tego zmienić.
+Vibecraftedٜ nie próbuje tego zmienić.
 
 Zamiast tego:
 
@@ -86,7 +86,7 @@ To podejście jest bliższe metodom inżynieryjnym niż „promptowaniu”.
 
 ### Origin
 
-؞Vibecraftedٜ nie powstał jako teoria.
+Vibecraftedٜ nie powstał jako teoria.
 
 Powstał z potrzeby dowiezienia realnego produktu przez osoby spoza tradycyjnej ścieżki software engineering. Praca z
 agentami szybko pokazała ograniczenia: brak globalnego kontekstu, nadpisywanie działających fragmentów, rosnący chaos.
@@ -120,7 +120,7 @@ Potrzebują śladu decyzji, a nie tylko efektu końcowego
 
 ### Commercial posture
 
-؞Vibecraftedٜ jest publicznie dostępny i source-visible.
+Vibecraftedٜ jest publicznie dostępny i source-visible.
 
 Działa na licencji Business Source License 1.1 z dodatkowymi uprawnieniami dla indywidualnych twórców i małych zespołów.
 Pozwala to używać frameworka w praktyce bez barier wejścia, przy jednoczesnej ochronie przed bezpośrednim replikowaniem
@@ -133,14 +133,14 @@ modelu jako produktu konkurencyjnego.
 AI nie jest problemem.  
 Brak struktury jest problemem.
 
-؞Vibecraftedٜ nie sprawia, że AI staje się mądrzejsze.  
+Vibecraftedٜ nie sprawia, że AI staje się mądrzejsze.  
 Sprawia, że jego błędy stają się wykrywalne i naprawialne.
 
 ---
 
 ### Jedno zdanie
 
-؞Vibecraftedٜ to framework, który zamienia generowanie kodu w proces dochodzenia do produktu.
+Vibecraftedٜ to framework, który zamienia generowanie kodu w proces dochodzenia do produktu.
 
 ---
 

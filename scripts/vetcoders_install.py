@@ -312,13 +312,14 @@ FOUNDATIONS: List[Foundation] = [
     Foundation(
         name="zellij",
         description="Visible multi-agent terminal workspace surface",
-        channels=["brew", "github"],
+        channels=["brew", "cargo", "github"],
         packages={
             "brew": "zellij",
+            "cargo": "zellij",
             "github": "https://github.com/zellij-org/zellij/releases",
         },
         verify_cmd="zellij --version",
-        required=False,
+        required=True,
     ),
 ]
 

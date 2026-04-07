@@ -1,4 +1,4 @@
-# Architecture Plan: ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer TUI
+# Architecture Plan:𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer TUI
 
 ## Problem Statement
 

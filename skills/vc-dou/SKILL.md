@@ -47,6 +47,14 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted dou claude --prompt 'Audit launch readiness'
+vc-dou codex --prompt 'Full product surface audit for loctree'
+vibecrafted dou gemini --file /path/to/previous-dou-report.md
+```
+
 > "Audit skills are dead. Work is taking initiative, not just pointing out flaws."
 > "The engineering is done. The packaging is not."
 

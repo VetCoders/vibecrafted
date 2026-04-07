@@ -42,6 +42,14 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted release codex --prompt 'Prepare v1.2.1 release'
+vc-release claude --prompt 'Tag and publish to crates.io'
+vibecrafted release gemini --file /path/to/release-checklist.md
+```
+
 This is where "done in the repo" meets "done in the world." You're moving code from your machine to people's machines.
 That's not abstract—it's financial, legal, and operational reality.
 

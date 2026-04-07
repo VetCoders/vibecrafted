@@ -2,7 +2,7 @@
   <img width="1536" height="677" alt="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍." src="https://github.com/user-attachments/assets/4c238bf2-3087-472a-a420-1f68f717f5ad" />
 </p>
 
-<h1 align="center">A framework that created itself؞</h1>
+<h1 align="center">A framework that created itself</h1>
 
 <p align="center">
   <em>...and its tooling, and its release pipeline, and its distribution channels.</em><br>
@@ -82,13 +82,13 @@ _(No longer guessing the architecture, but seeing it)._
 
 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. has three typographic signatures — one for each layer of craft:
 
-| Mark                       | Layer              | When to use                              |
-| -------------------------- | ------------------ | ---------------------------------------- |
-| `⚒🅅·🄸·🄱·🄴·🄲·🅡·🄰·🄵·🅃·🄴·🄳·؞` | **Produced with**  | Full product built through the framework |
-| `𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭؞`             | **Designed with**  | Design, UI, visual identity, brand work  |
-| `// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞`          | **Developed with** | Source code, engineering, infrastructure |
+| Mark                      | Layer              | When to use                              |
+| ------------------------- | ------------------ | ---------------------------------------- |
+| `⚒🅅·🄸·🄱·🄴·🄲·🅡·🄰·🄵·🅃·🄴·🄳·` | **Produced with**  | Full product built through the framework |
+| `𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭`             | **Designed with**  | Design, UI, visual identity, brand work  |
+| `//𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍..`         | **Developed with** | Source code, engineering, infrastructure |
 
-The `؞` is not decoration. It is the mark.
+The `` is not decoration. It is the mark.
 
 ---
 
@@ -137,7 +137,7 @@ For enterprise: **info@vibecrafted.io**
 </p>
 
 <p align="center">
-  <code>// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞</code>
+  <code>//𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.</code>
 </p>
 
 <p align="center">

@@ -40,6 +40,14 @@ vc-<workflow> <agent> --prompt '<prompt>'
 That active workflow then delegates through `vc-agents` when external workers
 are actually needed.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted codex implement /path/to/plan.md
+vibecrafted claude implement /path/to/plan.md
+vc-agents gemini --file /path/to/plan.md
+```
+
 > **DEPRECATED**: This skill has been merged into `vc-agents`.
 > Do not use this file anymore.
 

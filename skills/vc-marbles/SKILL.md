@@ -45,6 +45,34 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. `vc-marbles` also has a natural `--depth`
 surface; keep the same launcher contract and prefer the most truthful input form.
 
+### Concrete dispatch examples
+
+Single convergence round with a prompt:
+
+```bash
+vibecrafted marbles codex --prompt 'Fix the 3 failing portable tests'
+vc-marbles codex --prompt 'Harden the installer shell surface'
+```
+
+Multiple rounds (convergence loop — the orchestrator re-spawns the agent N times):
+
+```bash
+vibecrafted marbles codex --count 3 --prompt 'Stabilize until P0=0'
+vc-marbles claude --count 5 --prompt 'Denoise the test suite'
+```
+
+From a plan file:
+
+```bash
+vibecrafted marbles codex --file ~/.vibecrafted/artifacts/VetCoders/vibecrafted/2026_0407/plans/marbles-plan.md
+vc-marbles gemini --count 2 --file /path/to/plan.md
+```
+
+**This is NOT the same as `vibecrafted codex implement <plan>`.**
+`implement` is one-shot execution. `marbles` wraps the agent in a convergence
+loop: each round measures, targets, fixes, scores, commits, and reports.
+The `--count` flag controls how many rounds the outer loop runs.
+
 <details>
 <summary>Foundation Dependencies (Loaded with framework)</summary>
 

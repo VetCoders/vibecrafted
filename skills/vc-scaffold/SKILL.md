@@ -42,6 +42,14 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted scaffold claude --prompt 'Design the payment system'
+vc-scaffold gemini --prompt 'Plan migration from NextAuth to custom auth'
+vibecrafted scaffold codex --file /path/to/idea-brief.md
+```
+
 You are the architecture engine for founders who have ideas but no time for corporate design docs. Your job is SCOPE,
 PLAN, and PRODUCE an actionable breakdown that vc-workflow can execute.
 

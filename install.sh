@@ -89,7 +89,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$target" in
-  install|vibecrafted)
+  vibecrafted)
     target="vibecrafted"
     ;;
 esac
@@ -163,6 +163,22 @@ if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
   [[ -f "$installer" ]] || die "Installer not found: $installer"
   info "Non-interactive bootstrap detected:"
   info "  bypassing TUI and running compact installer"
+
+  # Install foundations (loctree, aicx) from GH releases before the main installer.
+  foundations_script="$current_link/scripts/install-foundations.sh"
+  if [[ -x "$foundations_script" ]] || [[ -f "$foundations_script" ]]; then
+    info "Installing foundations..."
+    bash "$foundations_script" || info "  [warn] Foundation install had issues (non-fatal)"
+  fi
+
+  # Ensure foundations and tools installed by install-foundations.sh are visible.
+  for _p in "${vibecrafted_home}/bin" "${vibecrafted_home}/tools/node/bin" "$HOME/.cargo/bin"; do
+    case ":${PATH}:" in
+      *":${_p}:"*) ;;
+      *) [[ -d "$_p" ]] && export PATH="${_p}:${PATH}" ;;
+    esac
+  done
+
   info "Launching installer:"
   info "  python3 $installer install --source $current_link --with-shell --compact --non-interactive"
   printf '\n'

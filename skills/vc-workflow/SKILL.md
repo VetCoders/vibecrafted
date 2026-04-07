@@ -46,6 +46,14 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted workflow claude --prompt 'Examine auth surface and implement fixes'
+vc-workflow codex --prompt 'Research SSO options then implement the best fit'
+vibecrafted workflow gemini --file /path/to/research-plan.md
+```
+
 <details>
 <summary>Foundation Dependencies (Loaded with framework)</summary>
 

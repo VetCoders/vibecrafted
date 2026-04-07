@@ -48,6 +48,14 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted decorate gemini --prompt 'Polish the landing page'
+vc-decorate claude --prompt 'Coherence audit on the CLI output surface'
+vibecrafted decorate codex --file /path/to/decorate-plan.md
+```
+
 > "Do not decorate chaos. First make the system coherent. Then make it feel premium."
 
 Decorate is **not** a "make it pretty" skill.

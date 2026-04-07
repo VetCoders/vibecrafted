@@ -161,6 +161,10 @@ def test_init_claude_uses_interactive_tab_without_print_mode(
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
+    # Sanitize real zellij env to prevent leaks from the host session.
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", str(LAUNCHER), "init", "claude"],
@@ -170,8 +174,8 @@ def test_init_claude_uses_interactive_tab_without_print_mode(
     )
 
     payload = capture_file.read_text(encoding="utf-8")
-    assert "OSA " in payload
-    assert "new-session-with-layout" in payload
+    # When zellij operator session exists, spawn routes directly through zellij
+    # without opening a new terminal via osascript.
     assert f"ZELLIJ --session {_expected_operator_session()} action new-tab" in payload
 
     command_script = _spawned_command_script(payload)
@@ -203,6 +207,10 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
+    # Sanitize real zellij env to prevent leaks from the host session.
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", str(LAUNCHER), "init", "codex"],
@@ -212,7 +220,8 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
     )
 
     payload = capture_file.read_text(encoding="utf-8")
-    assert "OSA " in payload
+    # When zellij operator session exists, spawn routes directly through zellij
+    # without opening a new terminal via osascript.
     assert f"ZELLIJ --session {_expected_operator_session()} action new-tab" in payload
 
     command_script = _spawned_command_script(payload)

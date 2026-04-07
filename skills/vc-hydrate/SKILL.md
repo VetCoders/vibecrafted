@@ -47,6 +47,14 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted hydrate codex --prompt 'Package for marketplace'
+vc-hydrate claude --prompt 'Generate missing SEO and landing page'
+vibecrafted hydrate gemini --file /path/to/dou-report.md
+```
+
 > "The code is dry — structurally complete but missing the fluid
 > that makes it flow to users. Hydration means: make the path
 > from stranger to user frictionless."

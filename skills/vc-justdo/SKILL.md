@@ -58,6 +58,14 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted justdo codex --prompt 'Build the login page'
+vc-justdo claude --prompt 'Implement caching layer e2e'
+vibecrafted justdo gemini --file /path/to/feature-plan.md
+```
+
 <details>
 <summary>Foundation Dependencies (Loaded with framework)</summary>
 

@@ -1,9 +1,9 @@
 ```shell
 ─────────────────────────────────────────────────────────
-              ⚒ ＶｉｂｅＣｒａｆｔｅｄ ⚒
-              𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝 (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
+              ⚒ Ｖｉｂｅｃｒａｆｔｅｄ. ⚒
+             𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
 ─────────────────────────────────────────────────────────
-  Welcome to The  ݆𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
+  Welcome to The 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
 
   This setup will install and configure The Framework
   and all of its required foundation packages and

@@ -44,6 +44,14 @@ or create the operator session and run that workflow in a new tab. Replace
 other review-specific inputs; keep the same launcher contract and use the most
 truthful flag for the review surface.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted review claude --prompt 'Review PR #4'
+vc-review codex --prompt 'Deep review of release/v1.2.1 branch'
+vibecrafted review gemini --file /path/to/pr-artifacts-pack.md
+```
+
 Two-phase skill: **Phase 1** generates structured artifacts with prview-rs,
 **Phase 2** squeezes maximum findings from them. Output: P-leveled findings
 with evidence + before-merge TODO checklist.

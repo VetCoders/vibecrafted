@@ -42,6 +42,14 @@ If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
 or create the operator session and run that workflow in a new tab. `vc-agents`
 defines how that workflow fans out into external workers.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted codex implement /path/to/plan.md
+vibecrafted claude implement /path/to/plan.md
+vibecrafted gemini implement /path/to/plan.md
+```
+
 > We do not outsource thought. We deploy equally capable minds on parallel execution paths to protect the main context buffer.
 
 A single agent session carries immense context. Attempting to execute every small rewrite, forensic deep-dive, or radical structural shift in-thread causes prompt bloat and dilutes your focus.

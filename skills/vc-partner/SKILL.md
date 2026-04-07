@@ -60,6 +60,14 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted partner claude --prompt 'Help me debug the installer'
+vc-partner codex --prompt 'Triage the licensing callback flow'
+vibecrafted partner gemini --file /path/to/debug-findings.md
+```
+
 <details>
 <summary>Foundation Dependencies (Loaded with framework)</summary>
 

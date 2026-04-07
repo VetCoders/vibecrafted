@@ -45,6 +45,14 @@ keep the same launcher contract and omit `--file` / `--prompt` when they are not
 `vc-init` launches the agent in native interactive mode, not the headless
 `-p` / `exec` paths.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted init claude
+vc-init codex
+vibecrafted init gemini --prompt 'Bootstrap context for the payments module'
+```
+
 <details>
 <summary>Foundation Dependencies (Loaded with framework)</summary>
 

@@ -43,6 +43,14 @@ or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
 
+### Concrete dispatch examples
+
+```bash
+vibecrafted prune gemini --prompt 'Strip dead auth experiments'
+vc-prune codex --prompt 'Remove abandoned Stripe webhook handlers'
+vibecrafted prune claude --file /path/to/prune-plan.md
+```
+
 > Don't burn the house down, just strip it to the load-bearing walls.
 
 A vibe-coded repo is a graveyard of good intentions. Claude loves generating 4 different iterations of an API integration before one sticks. The user hits "Accept All" and moves on.

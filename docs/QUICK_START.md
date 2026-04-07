@@ -103,4 +103,4 @@ Type `vibecrafted help` for the command deck. Once shell helpers are loaded,
 
 ---
 
-`// 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍؞`
+`//𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍..`
