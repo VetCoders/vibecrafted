@@ -85,10 +85,10 @@ if (( !dry_run )); then
   spawn_require_command gemini
 fi
 
-qroot="$(printf '%q' "$SPAWN_ROOT")"
-qruntime="$(printf '%q' "$runtime_input")"
-qtranscript="$(printf '%q' "$SPAWN_TRANSCRIPT")"
-qmodel="$(printf '%q' "$model")"
+qroot="$(spawn_shell_quote "$SPAWN_ROOT")"
+qruntime="$(spawn_shell_quote "$runtime_input")"
+qtranscript="$(spawn_shell_quote "$SPAWN_TRANSCRIPT")"
+qmodel="$(spawn_shell_quote "$model")"
 
 # shellcheck disable=SC2016
 gemini_success_hook='
@@ -106,11 +106,11 @@ gemini_failure_hook='
 
 model_flag=""
 [[ -n "$model" ]] && model_flag="--model $qmodel"
-qfilter="$(printf '%q' "$SCRIPT_DIR/gemini_stream_filter.jq")"
+qfilter="$(spawn_shell_quote "$SCRIPT_DIR/gemini_stream_filter.jq")"
 # Gemini emits non-JSON noise (YOLO banner, MCP bootstrap) before JSONL.
 # grep '^{' strips non-JSON lines so jq doesn't choke.
 vibecrafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
-qvhome="$(printf '%q' "$vibecrafted_home")"
+qvhome="$(spawn_shell_quote "$vibecrafted_home")"
 launch_cmd="set -o pipefail && cd $qroot && GEMINI_FORCE_FILE_STORAGE=true gemini -p '' -y $model_flag --include-directories $qvhome -o stream-json < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript"
 
 # Combine built-in hooks with caller-provided hooks (marbles chain, etc.)

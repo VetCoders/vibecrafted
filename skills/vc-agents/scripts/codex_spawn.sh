@@ -83,13 +83,13 @@ if (( !dry_run )); then
   spawn_require_command codex
 fi
 
-qroot="$(printf '%q' "$SPAWN_ROOT")"
-qruntime="$(printf '%q' "$runtime_input")"
-qreport="$(printf '%q' "$SPAWN_REPORT")"
-qtranscript="$(printf '%q' "$SPAWN_TRANSCRIPT")"
+qroot="$(spawn_shell_quote "$SPAWN_ROOT")"
+qruntime="$(spawn_shell_quote "$runtime_input")"
+qreport="$(spawn_shell_quote "$SPAWN_REPORT")"
+qtranscript="$(spawn_shell_quote "$SPAWN_TRANSCRIPT")"
 
 # Codex --json emits JSONL events. jq filter extracts readable text + tool tags + session ID.
-qfilter="$(printf '%q' "$SCRIPT_DIR/codex_stream_filter.jq")"
+qfilter="$(spawn_shell_quote "$SCRIPT_DIR/codex_stream_filter.jq")"
 launch_cmd="set -o pipefail && cd $qroot && codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript ; echo ; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true"
 
 # shellcheck disable=SC2016

@@ -130,3 +130,74 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
     assert "1" in payload
     assert "--prompt" in payload
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
+
+
+def test_vetcoders_shell_quote_join_stays_utf8_clean_for_multiline_prompt(
+    tmp_path: Path,
+) -> None:
+    env = os.environ.copy()
+    env["PROMPT_PAYLOAD"] = (
+        "Siemka! weź i zażółć gęślą jaźń.\n"
+        "_Run inside zellij - if there is any open window attach to it._\n"
+        "Don't drop UTF-8 on the floor."
+    )
+
+    quoted = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'source "{HELPER_SCRIPT}"; _vetcoders_shell_quote_join "$PROMPT_PAYLOAD"',
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+    ).stdout.decode("utf-8")
+
+    roundtrip_script = tmp_path / "roundtrip.sh"
+    roundtrip_script.write_text(
+        f"#!/usr/bin/env bash\nprintf %s {quoted}\n",
+        encoding="utf-8",
+    )
+    roundtrip_script.chmod(0o755)
+
+    roundtrip = subprocess.run(
+        ["bash", str(roundtrip_script)],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+    ).stdout.decode("utf-8")
+
+    assert roundtrip == env["PROMPT_PAYLOAD"]
+
+
+def test_parse_contract_treats_everything_after_prompt_as_prompt_block() -> None:
+    env = os.environ.copy()
+    env["PROMPT_HEAD"] = "Portable musi działać."
+
+    payload = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                '_vetcoders_parse_contract --count 8 --prompt "$PROMPT_HEAD" '
+                "--runtime headless --depth 99; "
+                'printf "COUNT=%s\\n" "$_vetcoders_contract_count"; '
+                'printf "RUNTIME=%s\\n" "$_vetcoders_contract_runtime"; '
+                'printf "DEPTH=%s\\n" "$_vetcoders_contract_depth"; '
+                'printf "PROMPT=%s\\n" "$_vetcoders_contract_prompt"'
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    lines = dict(line.split("=", 1) for line in payload.strip().splitlines())
+    assert lines["COUNT"] == "8"
+    assert lines["RUNTIME"] == ""
+    assert lines["DEPTH"] == ""
+    assert lines["PROMPT"] == "Portable musi działać. --runtime headless --depth 99"

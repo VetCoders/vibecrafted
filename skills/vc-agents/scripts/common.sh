@@ -24,6 +24,17 @@ spawn_require_positive_int() {
   [[ "$value" =~ ^[1-9][0-9]*$ ]] || spawn_die "${flag_name} must be a positive integer"
 }
 
+spawn_shell_quote() {
+  local value="${1-}"
+  # printf '%q' can emit byte sequences that break zellij's UTF-8 validation.
+  python3 - "$value" <<'PY'
+import shlex
+import sys
+
+print(shlex.quote(sys.argv[1]), end="")
+PY
+}
+
 spawn_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
 }
@@ -605,20 +616,20 @@ spawn_generate_launcher() {
   local q_meta q_report q_transcript q_common q_cmd
   local q_root q_agent q_prompt_id q_run_id q_run_lock q_loop_nr q_skill_code
   local q_operator_session q_spawn_direction
-  q_meta="$(printf '%q' "$meta_path")"
-  q_report="$(printf '%q' "$report_path")"
-  q_transcript="$(printf '%q' "$transcript_path")"
-  q_common="$(printf '%q' "$common_path")"
-  q_cmd="$(printf '%q' "$command")"
-  q_root="$(printf '%q' "${SPAWN_ROOT:-}")"
-  q_agent="$(printf '%q' "${SPAWN_AGENT:-}")"
-  q_prompt_id="$(printf '%q' "${SPAWN_PROMPT_ID:-}")"
-  q_run_id="$(printf '%q' "${SPAWN_RUN_ID:-}")"
-  q_run_lock="$(printf '%q' "${SPAWN_RUN_LOCK:-}")"
-  q_loop_nr="$(printf '%q' "${SPAWN_LOOP_NR:-0}")"
-  q_skill_code="$(printf '%q' "${SPAWN_SKILL_CODE:-}")"
-  q_operator_session="$(printf '%q' "${VIBECRAFTED_OPERATOR_SESSION:-}")"
-  q_spawn_direction="$(printf '%q' "${VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION:-}")"
+  q_meta="$(spawn_shell_quote "$meta_path")"
+  q_report="$(spawn_shell_quote "$report_path")"
+  q_transcript="$(spawn_shell_quote "$transcript_path")"
+  q_common="$(spawn_shell_quote "$common_path")"
+  q_cmd="$(spawn_shell_quote "$command")"
+  q_root="$(spawn_shell_quote "${SPAWN_ROOT:-}")"
+  q_agent="$(spawn_shell_quote "${SPAWN_AGENT:-}")"
+  q_prompt_id="$(spawn_shell_quote "${SPAWN_PROMPT_ID:-}")"
+  q_run_id="$(spawn_shell_quote "${SPAWN_RUN_ID:-}")"
+  q_run_lock="$(spawn_shell_quote "${SPAWN_RUN_LOCK:-}")"
+  q_loop_nr="$(spawn_shell_quote "${SPAWN_LOOP_NR:-0}")"
+  q_skill_code="$(spawn_shell_quote "${SPAWN_SKILL_CODE:-}")"
+  q_operator_session="$(spawn_shell_quote "${VIBECRAFTED_OPERATOR_SESSION:-}")"
+  q_spawn_direction="$(spawn_shell_quote "${VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION:-}")"
 
   cat > "$launcher" <<EOF_LAUNCH
 #!/usr/bin/env bash

@@ -17,7 +17,7 @@ Options:
   --agent <name>      claude, codex, or gemini (required)
   --depth <n>         Crawl last n plan files as context (default: 3 when no source is given)
   --file <file>       Use specific plan/input file
-  --prompt <text>     Inline prompt string
+  --prompt <text>     Inline prompt string; captures the rest of the command line
   --count <n>         Number of loops (default: 3)
   --runtime <rt>      terminal, headless (default: terminal)
   --root <dir>        Repository root
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
     --agent)   shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --agent";   agent="$1" ;;
     --depth)   shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --depth";   depth="$1" ;;
     --task|--file|-f) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --file"; task="$1" ;;
-    --prompt|-p) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --prompt"; prompt="$1" ;;
+    --prompt|-p) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --prompt"; prompt="$*"; break ;;
     --count)   shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --count";   count="$1" ;;
     --runtime) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --runtime"; runtime="$1" ;;
     --root)    shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --root";    root="$1" ;;
@@ -135,13 +135,13 @@ l1_plan="$store/plans/marbles-${plan_slug}_L1.md"
 cp "$original_plan" "$l1_plan"
 
 # ── Build hooks for chaining ──────────────────────────────────────────
-q_agent="$(printf '%q' "$agent")"
-q_plan="$(printf '%q' "$original_plan")"
-q_root="$(printf '%q' "$root_dir")"
-q_runtime="$(printf '%q' "$runtime")"
-q_scripts="$(printf '%q' "$SCRIPT_DIR")"
-q_lock="$(printf '%q' "$session_lock")"
-q_store="$(printf '%q' "$store")"
+q_agent="$(spawn_shell_quote "$agent")"
+q_plan="$(spawn_shell_quote "$original_plan")"
+q_root="$(spawn_shell_quote "$root_dir")"
+q_runtime="$(spawn_shell_quote "$runtime")"
+q_scripts="$(spawn_shell_quote "$SCRIPT_DIR")"
+q_lock="$(spawn_shell_quote "$session_lock")"
+q_store="$(spawn_shell_quote "$store")"
 
 success_hook="bash $q_scripts/marbles_next.sh $q_agent $q_plan $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
 failure_hook="bash $q_scripts/marbles_next.sh --failed $q_agent $q_plan $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"

@@ -148,7 +148,7 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     )
 
 
-def test_marbles_from_operator_mode_spawns_launcher_below_and_loops_right(
+def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -180,9 +180,9 @@ def test_marbles_from_operator_mode_spawns_launcher_below_and_loops_right(
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert "--direction" in payload
-    assert "down" in payload
-    next(line for line in payload if "marbles_spawn.sh" in line)
+    assert "new-tab" in payload
+    assert "--direction" not in payload
+    assert any(line.endswith(".sh") for line in payload)
 
 
 def test_vc_start_resume_resurrects_dead_session(tmp_path: Path) -> None:

@@ -821,7 +821,8 @@ _vetcoders_parse_contract() {
       -p|--prompt)
         shift
         [[ $# -gt 0 ]] || { echo "Missing value for --prompt" >&2; return 1; }
-        _vetcoders_contract_prompt="$1"
+        _vetcoders_contract_prompt="$*"
+        break
         ;;
       -f|--file|--task)
         shift
@@ -902,11 +903,22 @@ _vetcoders_require_file() {
   }
 }
 
+_vetcoders_shell_quote() {
+  local value="${1-}"
+  # printf '%q' can emit invalid UTF-8 byte sequences for multibyte input.
+  python3 - "$value" <<'PY'
+import shlex
+import sys
+
+print(shlex.quote(sys.argv[1]), end="")
+PY
+}
+
 _vetcoders_shell_quote_join() {
   local quoted=()
   local arg
   for arg in "$@"; do
-    quoted+=("$(printf '%q' "$arg")")
+    quoted+=("$(_vetcoders_shell_quote "$arg")")
   done
   printf '%s' "${quoted[*]}"
 }
@@ -1168,7 +1180,7 @@ _vetcoders_marbles() {
   fi
 
   quoted_args="$(_vetcoders_shell_quote_join "${marbles_args[@]}")"
-  marbles_cmd="bash $(printf '%q' "$script") ${quoted_args}"
+  marbles_cmd="bash $(_vetcoders_shell_quote "$script") ${quoted_args}"
   operator_session="${VIBECRAFTED_OPERATOR_SESSION:-}"
   if [[ -z "$operator_session" ]] && _vetcoders_in_zellij; then
     operator_session="$(_vetcoders_current_zellij_session_name)"
@@ -1177,15 +1189,18 @@ _vetcoders_marbles() {
     operator_session="$(_vetcoders_operator_session_name)"
   fi
 
-  # Inside zellij: run marbles orchestrator in a pane below, keep operator free
+  # Inside zellij: hand marbles off via a temp script so zellij only sees an
+  # ASCII-safe path instead of a long command payload with user prompt bytes.
   if _vetcoders_in_zellij && command -v zellij >/dev/null 2>&1; then
+    local cmd_script
     export VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
-    zellij action new-pane \
-      --direction down \
-      --height 40% \
+    cmd_script="$(mktemp "${TMPDIR:-/tmp}/vibecrafted-marbles-XXXXXX.sh")"
+    printf '#!/bin/zsh -l\ntrap "rm -f %q" EXIT\n%s\n' "$cmd_script" "$marbles_cmd" > "$cmd_script"
+    chmod +x "$cmd_script"
+    zellij action new-tab \
       --name "marbles" \
       --cwd "${_vetcoders_contract_root:-$(_vetcoders_repo_root)}" \
-      -- /bin/zsh -l -c "$marbles_cmd"
+      -- "$cmd_script"
   elif [[ "$(_vetcoders_effective_runtime)" =~ ^(terminal|visible)$ ]]; then
     _vetcoders_prepare_operator_runtime "$(_vetcoders_effective_runtime)" || return 1
     if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
@@ -1398,7 +1413,7 @@ Command deck:
   vibecrafted init claude        First-context entrypoint
 
 Uniform skill flags:
-  -p, --prompt <text>            Inline prompt
+  -p, --prompt <text>            Inline prompt; captures the rest of the command line
   -f, --file <path.md>           Input file as prompt context
   --count <n>                    Marbles loop count (default: 3)
   --depth <n>                    Marbles plan crawl depth (default: 3)

@@ -85,10 +85,10 @@ if (( !dry_run )); then
   spawn_require_command claude
 fi
 
-qroot="$(printf '%q' "$SPAWN_ROOT")"
-qruntime="$(printf '%q' "$runtime_input")"
-qtranscript="$(printf '%q' "$SPAWN_TRANSCRIPT")"
-qmodel="$(printf '%q' "$model")"
+qroot="$(spawn_shell_quote "$SPAWN_ROOT")"
+qruntime="$(spawn_shell_quote "$runtime_input")"
+qtranscript="$(spawn_shell_quote "$SPAWN_TRANSCRIPT")"
+qmodel="$(spawn_shell_quote "$model")"
 
 # shellcheck disable=SC2016
 claude_success_hook='
@@ -114,7 +114,7 @@ TXT
 
 model_flag=""
 [[ -n "$model" ]] && model_flag="--model $qmodel"
-qfilter="$(printf '%q' "$SCRIPT_DIR/claude_stream_filter.jq")"
+qfilter="$(spawn_shell_quote "$SCRIPT_DIR/claude_stream_filter.jq")"
 # Claude sometimes emits non-JSON noise before the JSONL stream.
 # Keep only JSON object lines so jq never chokes on banners, warnings, or status text.
 # Stream-json → grep JSON objects → jq (external filter file) → clean text to terminal AND transcript
