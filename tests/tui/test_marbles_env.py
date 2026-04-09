@@ -24,6 +24,7 @@ def _prepare_scripts(tmp_path: Path, capture_file: Path) -> Path:
     """Copy real scripts and write fake agent_spawn.sh stubs."""
     sd = tmp_path / "scripts"
     sd.mkdir()
+    shutil.copytree(SCRIPTS_DIR / "lib", sd / "lib")
     for n in ("common.sh", "marbles_spawn.sh", "marbles_next.sh", "marbles_watcher.sh"):
         t = sd / n
         shutil.copy2(SCRIPTS_DIR / n, t)
