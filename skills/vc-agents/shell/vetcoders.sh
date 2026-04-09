@@ -1266,8 +1266,10 @@ _vetcoders_skill() {
   (
     export VIBECRAFTED_RUN_ID="$run_id"
     export VIBECRAFTED_RUN_LOCK="$run_lock"
+    # shellcheck disable=SC2030
     export VIBECRAFTED_SKILL_CODE="$skill_code"
     export VIBECRAFTED_LOOP_NR="$loop_nr"
+    # shellcheck disable=SC2030
     export VIBECRAFTED_SKILL_NAME="$skill"
     _vetcoders_prompt_text "$tool" implement "$prompt" "${spawn_args[@]}"
   )
@@ -1341,6 +1343,11 @@ _vetcoders_marbles() {
   }
   [[ -z "$_vetcoders_contract_count" ]] || _vetcoders_require_positive_int "$_vetcoders_contract_count" "--count" || return 1
   [[ -z "$_vetcoders_contract_depth" ]] || _vetcoders_require_positive_int "$_vetcoders_contract_depth" "--depth" || return 1
+
+  # shellcheck disable=SC2031
+  [[ -n "${VIBECRAFTED_SKILL_NAME:-}" ]] || export VIBECRAFTED_SKILL_NAME="marbles"
+  # shellcheck disable=SC2031
+  export VIBECRAFTED_SKILL_CODE="marb"
 
   local marbles_args=(--agent "$tool" --runtime "$(_vetcoders_effective_runtime)")
   [[ -n "$_vetcoders_contract_root" ]] && marbles_args+=(--root "$_vetcoders_contract_root")
