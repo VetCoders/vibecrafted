@@ -25,46 +25,11 @@ spawn_store_dir() {
 
 spawn_effective_store_dir() {
   local root="${1:-$(spawn_repo_root)}"
-  local store_root_hint="${2:-}"
-  local resolved_root resolved_store_root=""
-
-  resolved_root="$(spawn_abspath "$root")"
   if [[ -n "${VIBECRAFTED_STORE_DIR:-}" ]]; then
-    resolved_store_root="${VIBECRAFTED_STORE_ROOT:-$store_root_hint}"
-    if [[ -n "$resolved_store_root" ]] && [[ "$resolved_root" == "$(spawn_abspath "$resolved_store_root")" ]]; then
-      spawn_abspath "$VIBECRAFTED_STORE_DIR"
-      return 0
-    fi
+    spawn_abspath "$VIBECRAFTED_STORE_DIR"
+    return 0
   fi
-  spawn_store_dir "$resolved_root"
-}
-
-spawn_tmp_dir() {
-  local root="${1:-${SPAWN_ROOT:-$(spawn_repo_root)}}"
-  local tmp_dir="${SPAWN_TMP_DIR:-}"
-
-  if [[ -z "$tmp_dir" ]]; then
-    tmp_dir="$(spawn_effective_store_dir "$root" "${VIBECRAFTED_STORE_ROOT:-}")/tmp"
-  fi
-
-  mkdir -p "$tmp_dir"
-  printf '%s\n' "$tmp_dir"
-}
-
-spawn_tmp_script_path() {
-  local prefix="$1"
-  local root="${2:-${SPAWN_ROOT:-$(spawn_repo_root)}}"
-  local tmp_dir stamp context
-
-  tmp_dir="$(spawn_tmp_dir "$root")" || return 1
-  stamp="${SPAWN_TS:-$(spawn_timestamp)}"
-  context="${SPAWN_RUN_ID:-${VIBECRAFTED_RUN_ID:-${SPAWN_SKILL_CODE:-${VIBECRAFTED_SKILL_CODE:-session}}}}"
-  context="$(printf '%s' "$context" | tr -cs '[:alnum:]._-' '-')"
-  context="${context#-}"
-  context="${context%-}"
-  [[ -n "$context" ]] || context="session"
-
-  mktemp "${tmp_dir%/}/${prefix}.${stamp}_${context}.XXXXXX"
+  spawn_store_dir "$root"
 }
 
 spawn_marbles_store_dir() {
