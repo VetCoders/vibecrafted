@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 usage() {
   cat <<EOF
-Usage: marbles_spawn.sh --agent <agent> [--depth <n>|--file <file>|--prompt <text>] [--count <n>] [--runtime <rt>] [--root <dir>]
+Usage: marbles_spawn.sh --agent <agent> [--depth <n>|--file <file>|--prompt <text>] [--count <n>] [--rotation <mode>] [--runtime <rt>] [--root <dir>]
 
 Marbles convergence loop orchestrator.
 Runs <agent> in a loop of <count> iterations against a live ancestor plan.
@@ -19,6 +19,7 @@ Options:
   --file <file>       Use specific plan/input file
   --prompt <text>     Inline prompt string; captures the rest of the command line
   --count <n>         Number of loops (default: 3)
+  --rotation <mode>   single, duo, trio, or multi (default: single)
   --runtime <rt>      terminal, headless (default: terminal)
   --root <dir>        Repository root
   --no-watch          Skip watcher UI and run chaining directly
@@ -30,6 +31,7 @@ depth=""
 task=""
 prompt=""
 count=3
+rotation="single"
 runtime="terminal"
 root=""
 use_watcher=1
@@ -41,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --task|--file|-f) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --file"; task="$1" ;;
     --prompt|-p) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --prompt"; prompt="$*"; break ;;
     --count)   shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --count"; count="$1" ;;
+    --rotation) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --rotation"; rotation="$1" ;;
     --runtime) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --runtime"; runtime="$1" ;;
     --root)    shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --root"; root="$1" ;;
     --no-watch) use_watcher=0 ;;
@@ -52,6 +55,7 @@ done
 
 [[ -n "$agent" ]] || spawn_die "Missing --agent"
 [[ "$agent" =~ ^(claude|codex|gemini)$ ]] || spawn_die "Invalid agent: $agent"
+[[ "$rotation" =~ ^(single|duo|trio|multi)$ ]] || spawn_die "Invalid rotation: $rotation"
 spawn_validate_runtime "$runtime"
 spawn_require_positive_int "$count" "--count"
 [[ -z "$depth" ]] || spawn_require_positive_int "$depth" "--depth"
@@ -146,24 +150,65 @@ EOF
 } > "$ancestor_plan"
 rm -f "$body_file"
 
-cat > "$state_file" <<EOF
-{
-  "run_id": "$marbles_run_id",
-  "agent": "$agent",
-  "mode": "steered",
-  "plan": "$ancestor_plan",
-  "god_plan": "$god_plan",
-  "ancestor_plan": "$ancestor_plan",
-  "root": "$root_dir",
-  "runtime": "$runtime",
-  "total_loops": $count,
-  "current_loop": 0,
-  "status": "initialized",
-  "started_at": "$created_at",
-  "loops": [],
-  "trajectory": []
+ancestor_mtime="$(spawn_file_mtime_iso "$ancestor_plan")"
+rotation_pool_json="$(spawn_rotation_pool_json "$agent" "$rotation")"
+
+python3 - "$state_file" "$marbles_run_id" "$agent" "$ancestor_plan" "$god_plan" "$root_dir" "$runtime" "$count" "$created_at" "$rotation" "$rotation_pool_json" "$ancestor_mtime" "$ancestor_focus" "$ancestor_model" <<'PY'
+import json
+import sys
+
+(
+    state_file,
+    run_id,
+    agent,
+    ancestor_plan,
+    god_plan,
+    root_dir,
+    runtime,
+    count_raw,
+    created_at,
+    rotation,
+    rotation_pool_raw,
+    ancestor_mtime,
+    ancestor_focus,
+    ancestor_model,
+) = sys.argv[1:15]
+
+payload = {
+    "run_id": run_id,
+    "agent": agent,
+    "mode": "steered",
+    "plan": ancestor_plan,
+    "god_plan": god_plan,
+    "ancestor_plan": ancestor_plan,
+    "root": root_dir,
+    "runtime": runtime,
+    "total_loops": int(count_raw),
+    "current_loop": 0,
+    "status": "initialized",
+    "started_at": created_at,
+    "rotation": rotation,
+    "rotation_pool": json.loads(rotation_pool_raw),
+    "ancestor_mtime": ancestor_mtime,
+    "loops": [
+        {
+            "loop": 1,
+            "status": "scheduled",
+            "agent": agent,
+            "agent_source": "rotation",
+            "focus": ancestor_focus,
+            "ancestor_slug": "ancestor",
+        }
+    ],
+    "trajectory": [],
 }
-EOF
+if ancestor_model:
+    payload["loops"][0]["model"] = ancestor_model
+
+with open(state_file, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
 
 org_repo=""
 if cd "$root_dir" && git remote get-url origin >/dev/null 2>&1; then
@@ -183,6 +228,7 @@ current=1
 runtime=$runtime
 root=$root_dir
 state_dir=$state_dir
+rotation=$rotation
 started=$created_at
 status=running
 LOCK
@@ -193,6 +239,7 @@ printf '%b───────────────────────�
 printf '%b  god:     %b%s\n'   "$_steel" "$_reset" "$god_plan"
 printf '%b  ancestor:%b%s\n'   "$_steel" "$_reset" "$ancestor_plan"
 printf '%b  loops:   %b%s\n'   "$_steel" "$_reset" "$count"
+printf '%b  rotate:  %b%s\n'   "$_steel" "$_reset" "$rotation"
 printf '%b  run_id:  %b%s\n'   "$_steel" "$_reset" "$marbles_run_id"
 printf '%b  lock:    %b%s\n'   "$_steel" "$_reset" "$session_lock"
 printf '%b──────────────────────────────────%b\n' "$_steel" "$_reset"

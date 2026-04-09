@@ -366,6 +366,119 @@ for line in lines[1:]:
 PY
 }
 
+spawn_frontmatter_set_field() {
+  local source_file="$1"
+  local field_name="$2"
+  local field_value="${3-}"
+  local delete_empty="${4:-0}"
+
+  python3 - "$source_file" "$field_name" "$field_value" "$delete_empty" <<'PY'
+import pathlib
+import sys
+
+source_file, field_name, field_value, delete_empty = sys.argv[1:5]
+path = pathlib.Path(source_file)
+try:
+    text = path.read_text(encoding="utf-8")
+except OSError:
+    raise SystemExit(1)
+
+lines = text.splitlines(keepends=True)
+frontmatter: list[str] = []
+body = text
+if lines and lines[0].strip() == "---":
+    end_idx = None
+    for idx, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            end_idx = idx
+            break
+    if end_idx is not None:
+        frontmatter = lines[1:end_idx]
+        body = "".join(lines[end_idx + 1 :]).lstrip("\n")
+
+fields: dict[str, str] = {}
+order: list[str] = []
+for line in frontmatter:
+    if ":" not in line:
+        continue
+    key, value = line.split(":", 1)
+    key = key.strip()
+    if not key:
+        continue
+    if key not in order:
+        order.append(key)
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1]
+    fields[key] = value
+
+if delete_empty == "1" and field_value == "":
+    fields.pop(field_name, None)
+    order = [key for key in order if key != field_name]
+else:
+    fields[field_name] = field_value
+    if field_name not in order:
+        order.append(field_name)
+
+frontmatter_lines = ["---\n"]
+for key in order:
+    if key not in fields:
+        continue
+    frontmatter_lines.append(f"{key}: {fields[key]}\n")
+frontmatter_lines.append("---\n")
+frontmatter_lines.append("\n")
+
+path.write_text("".join(frontmatter_lines) + body, encoding="utf-8")
+PY
+}
+
+spawn_file_mtime_iso() {
+  local source_file="$1"
+
+  python3 - "$source_file" <<'PY'
+import datetime as dt
+import pathlib
+import sys
+
+try:
+    stat = pathlib.Path(sys.argv[1]).stat()
+except OSError:
+    raise SystemExit(0)
+
+mtime = dt.datetime.fromtimestamp(stat.st_mtime_ns / 1_000_000_000, tz=dt.timezone.utc)
+print(mtime.isoformat().replace("+00:00", "Z"), end="")
+PY
+}
+
+spawn_rotation_pool_json() {
+  local start_agent="$1"
+  local rotation="$2"
+
+  python3 - "$start_agent" "$rotation" <<'PY'
+import json
+import sys
+
+start_agent, rotation = sys.argv[1:3]
+base = ["codex", "claude", "gemini"]
+if start_agent not in base:
+    start_agent = "codex"
+
+start_idx = base.index(start_agent)
+ordered = base[start_idx:] + base[:start_idx]
+
+if rotation == "single":
+    pool = [start_agent]
+elif rotation == "duo":
+    pool = ordered[:2]
+elif rotation in {"trio", "multi"}:
+    pool = ordered
+else:
+    raise SystemExit(1)
+
+print(json.dumps(pool), end="")
+PY
+}
+
 spawn_strip_frontmatter_to_file() {
   local source_file="$1"
   local target_file="$2"
@@ -963,6 +1076,7 @@ spawn_build_runtime_prompt() {
   local report_path="$3"
   local agent="${4:-${SPAWN_AGENT:-agent}}"
   local model="${5:-${SPAWN_MODEL:-unknown}}"
+  local commit_label="[${agent}/${SPAWN_RUN_ID:-unknown}]"
 
   spawn_write_frontmatter "$runtime_file" "$agent" "$model" "prompt"
 
@@ -976,6 +1090,16 @@ spawn_build_runtime_prompt() {
   ' "$source_file" >> "$runtime_file"
 
   cat >> "$runtime_file" <<EOF_PROMPT
+
+## Commit Contract
+
+Every commit you make MUST have a subject starting with this exact label:
+\`$commit_label\`
+
+Example:
+\`$commit_label Fix installer path resolution\`
+
+This is mandatory. Do not skip this label. Do not modify it.
 
 At the end of the task, write your final human-readable report to this exact path:
 Report path: $report_path
@@ -1147,6 +1271,17 @@ EOF_LAUNCH
   if [[ -n "$success_hook" ]]; then
     printf '%s\n' "$success_hook" >> "$launcher"
   fi
+
+  cat >> "$launcher" <<'EOF_LAUNCH'
+  if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    expected_label="[${SPAWN_AGENT}/${SPAWN_RUN_ID:-unknown}]"
+    last_subject="$(git log -1 --format=%s 2>/dev/null || true)"
+    if [[ -n "$last_subject" && "${last_subject#"$expected_label"}" == "$last_subject" ]]; then
+      printf '\033[33m[warn]\033[0m Agent committed without label: %s\n' "$expected_label"
+      printf '  last commit: %s\n' "$last_subject"
+    fi
+  fi
+EOF_LAUNCH
 
   cat >> "$launcher" <<'EOF_LAUNCH'
   if [[ -n "$startup_watch_pid" ]]; then

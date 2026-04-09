@@ -49,11 +49,54 @@ _write_state() {
 }
 
 _init_state() {
-  local initial_agent=""
-  initial_agent="$(spawn_frontmatter_field "$ancestor_plan" "agent")"
-  [[ -n "$initial_agent" ]] || initial_agent="unknown"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$state_file" "$run_id" "$ancestor_plan" "$god_plan" "$root_dir" "$runtime" "$total_count" "$$" <<'PY'
+import datetime
+import json
+import pathlib
+import sys
 
-  _write_state <<EOF
+state_file, run_id, ancestor_plan, god_plan, root_dir, runtime, total_count_raw, watcher_pid = sys.argv[1:9]
+path = pathlib.Path(state_file)
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+payload = {}
+if path.exists():
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        payload = {}
+
+payload.setdefault("started_at", now)
+payload.setdefault("rotation", "single")
+payload.setdefault("rotation_pool", [payload.get("agent", "unknown")])
+payload.setdefault("ancestor_mtime", "")
+payload.setdefault("loops", [])
+payload.setdefault("trajectory", [])
+payload.update(
+    {
+        "run_id": run_id,
+        "mode": "steered",
+        "plan": ancestor_plan,
+        "god_plan": god_plan,
+        "ancestor_plan": ancestor_plan,
+        "root": root_dir,
+        "runtime": runtime,
+        "total_loops": int(total_count_raw),
+        "watcher_pid": int(watcher_pid),
+        "updated_at": now,
+    }
+)
+payload["status"] = payload.get("status") or "initialized"
+
+path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+PY
+  else
+    local initial_agent=""
+    initial_agent="$(spawn_frontmatter_field "$ancestor_plan" "agent")"
+    [[ -n "$initial_agent" ]] || initial_agent="unknown"
+
+    _write_state <<EOF
 {
   "run_id": "$run_id",
   "agent": "$initial_agent",
@@ -68,10 +111,14 @@ _init_state() {
   "status": "initialized",
   "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "watcher_pid": $$,
+  "rotation": "single",
+  "rotation_pool": ["$initial_agent"],
+  "ancestor_mtime": "",
   "loops": [],
   "trajectory": []
 }
 EOF
+  fi
 }
 
 _update_status() {
@@ -103,9 +150,10 @@ _record_loop_start() {
   local focus="$4"
   local ancestor_slug="$5"
   local model="${6:-}"
+  local agent_source="${7:-}"
 
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$state_file" "$loop_nr" "$transcript" "$agent_name" "$focus" "$ancestor_slug" "$model" <<'PY'
+    python3 - "$state_file" "$loop_nr" "$transcript" "$agent_name" "$focus" "$ancestor_slug" "$model" "$agent_source" <<'PY'
 import datetime
 import json
 import sys
@@ -114,12 +162,13 @@ with open(sys.argv[1], encoding="utf-8") as handle:
     payload = json.load(handle)
 
 loop_nr = int(sys.argv[2])
-transcript, agent_name, focus, ancestor_slug, model = sys.argv[3:8]
+transcript, agent_name, focus, ancestor_slug, model, agent_source = sys.argv[3:9]
 now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 payload["current_loop"] = loop_nr
 payload["status"] = "promise"
 payload["updated_at"] = now
+payload["agent"] = agent_name
 
 loops = payload.get("loops", [])
 target = None
@@ -137,6 +186,8 @@ target["transcript"] = transcript
 target["agent"] = agent_name
 target["focus"] = focus
 target["ancestor_slug"] = ancestor_slug
+if agent_source:
+    target["agent_source"] = agent_source
 if model:
     target["model"] = model
 elif "model" in target:
@@ -149,6 +200,28 @@ with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
     mv "$state_file.tmp" "$state_file"
+  fi
+}
+
+_read_loop_field() {
+  local loop_nr="$1"
+  local field_name="$2"
+  if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$state_file" "$loop_nr" "$field_name" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+for loop in payload.get("loops", []):
+    if loop.get("loop") == int(sys.argv[2]):
+        value = loop.get(sys.argv[3], "")
+        if value is None:
+            value = ""
+        print(value, end="")
+        raise SystemExit(0)
+PY
   fi
 }
 
@@ -573,8 +646,10 @@ for ((loop_nr = 1; loop_nr <= total_count; loop_nr++)); do
     loop_agent="$(spawn_frontmatter_field "$ancestor_plan" "agent")"
   fi
   [[ -n "$loop_agent" ]] || loop_agent="unknown"
+  loop_agent_source="$(_read_loop_field "$loop_nr" "agent_source")"
+  [[ -n "$loop_agent_source" ]] || loop_agent_source="rotation"
 
-  _record_loop_start "$loop_nr" "" "$loop_agent" "$loop_focus" "$ancestor_slug" "$loop_model"
+  _record_loop_start "$loop_nr" "" "$loop_agent" "$loop_focus" "$ancestor_slug" "$loop_model" "$loop_agent_source"
 
   promise_detail="$loop_agent"
   if [[ -n "$loop_focus" ]]; then
@@ -604,7 +679,7 @@ for ((loop_nr = 1; loop_nr <= total_count; loop_nr++)); do
 
   actual_transcript="$(spawn_read_meta_field "$meta_path" "transcript")"
   actual_report_hint="$(spawn_read_meta_field "$meta_path" "report")"
-  _record_loop_start "$loop_nr" "$actual_transcript" "$loop_agent" "$loop_focus" "$ancestor_slug" "$loop_model"
+  _record_loop_start "$loop_nr" "$actual_transcript" "$loop_agent" "$loop_focus" "$ancestor_slug" "$loop_model" "$loop_agent_source"
 
   session_id=""
   if [[ -n "$actual_transcript" ]]; then

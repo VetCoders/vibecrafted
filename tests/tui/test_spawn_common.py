@@ -61,6 +61,28 @@ def test_runtime_prompt_guards_report_path_from_bare_slash(tmp_path: Path) -> No
     assert f"\n{report_path}\n" not in payload
 
 
+def test_runtime_prompt_includes_commit_label_contract(tmp_path: Path) -> None:
+    source_file = tmp_path / "source.md"
+    runtime_file = tmp_path / "runtime.md"
+    report_path = tmp_path / "report.md"
+    source_file.write_text("# Prompt\n", encoding="utf-8")
+
+    _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        export SPAWN_RUN_ID="marb-143215-001"
+        export SPAWN_PROMPT_ID="prompt-123"
+        spawn_build_runtime_prompt "{source_file}" "{runtime_file}" "{report_path}" codex
+        '''
+    )
+
+    payload = runtime_file.read_text(encoding="utf-8")
+    assert "## Commit Contract" in payload
+    assert "`[codex/marb-143215-001]`" in payload
+    assert "Do not skip this label. Do not modify it." in payload
+
+
 def test_generated_launcher_runs_from_spawn_root(tmp_path: Path) -> None:
     root_dir = tmp_path / "project"
     root_dir.mkdir()
