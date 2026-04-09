@@ -9,7 +9,7 @@ spawn_normalize_ambient_context() {
   operator_session="${VIBECRAFTED_OPERATOR_SESSION:-}"
 
   [[ -n "$run_id" ]] || {
-    unset VIBECRAFTED_RUN_LOCK VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME VIBECRAFTED_LOOP_NR
+    unset VIBECRAFTED_RUN_LOCK VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME
     return 0
   }
 
@@ -21,7 +21,7 @@ spawn_normalize_ambient_context() {
   fi
 
   expected_session="$(spawn_operator_session_name_for_run_id "$run_id")"
-  unset VIBECRAFTED_RUN_LOCK VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME VIBECRAFTED_LOOP_NR
+  unset VIBECRAFTED_RUN_LOCK VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME
 
   if [[ "$(basename "$lock")" != "${run_id}.lock" ]]; then
     if [[ -n "$operator_session" && "$operator_session" != "$expected_session" ]]; then
@@ -59,3 +59,4 @@ spawn_effective_skill_code() {
   [[ -n "${VIBECRAFTED_SKILL_CODE:-}" ]] || return 1
   printf '%s\n' "${VIBECRAFTED_SKILL_CODE}"
 }
+

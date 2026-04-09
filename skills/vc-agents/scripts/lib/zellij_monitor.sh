@@ -35,6 +35,7 @@ spawn_write_startup_monitor_script() {
   cat > "$script_path" <<EOF_MONITOR
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'rm -f "\$0"' EXIT
 source $q_common
 session_name=$q_session
 workflow_name=$q_workflow
@@ -62,8 +63,8 @@ spawn_open_startup_monitor_pane() {
   command -v zellij >/dev/null 2>&1 || return 1
 
   common_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)/common.sh"
-  monitor_script="$(spawn_tmp_script_path "vc-startup-monitor" "$root_dir")"
-  cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "$root_dir")"
+  monitor_script="$(mktemp "${TMPDIR:-/tmp}/vc-startup-monitor.XXXXXX")"
+  cmd_script="$(mkdir -p "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp" && mktemp "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp/vc-spawn-cmd.XXXXXX")"
 
   spawn_write_startup_monitor_script \
     "$monitor_script" \
@@ -83,5 +84,6 @@ spawn_open_startup_monitor_pane() {
     --height 30% \
     --name "startup-monitor" \
     --cwd "$root_dir" \
-    -- "$cmd_script" >/dev/null
+    -- "$cmd_script"
 }
+

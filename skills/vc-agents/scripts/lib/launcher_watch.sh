@@ -73,13 +73,10 @@ initial_transcript = strip_frontmatter(read_text(transcript_path))
 initial_report_size = report_size(report_path)
 activity = bool(initial_transcript.strip()) or initial_report_size > 0
 printed_len = 0
-echo_enabled = os.environ.get("VIBECRAFTED_STARTUP_WATCH_ECHO", "1") != "0"
 
-if initial_transcript and echo_enabled:
+if initial_transcript:
     sys.stdout.write(initial_transcript)
     sys.stdout.flush()
-    printed_len = len(initial_transcript)
-else:
     printed_len = len(initial_transcript)
 
 clean_initial = ansi_re.sub("", initial_transcript)
@@ -105,9 +102,8 @@ while time.monotonic() < deadline:
         clean = ansi_re.sub("", appended)
         if appended.strip():
             activity = True
-            if echo_enabled:
-                sys.stdout.write(appended)
-                sys.stdout.flush()
+            sys.stdout.write(appended)
+            sys.stdout.flush()
         printed_len = len(transcript_body)
         if any(marker in clean for marker in failure_markers):
             raise SystemExit(10)
@@ -140,8 +136,7 @@ PY
       ;; 
   esac
 
-  if [[ "$rc" != "10" ]]; then
-    spawn_print_dashboard_hint
-  fi
+  spawn_print_dashboard_hint
   return 0
 }
+
