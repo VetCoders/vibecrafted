@@ -15,6 +15,46 @@ description: >
 
 # vc-hydrate — The Antidote to Always-in-Production
 
+## Operator Entry
+
+Operator enters the framework session through:
+
+```bash
+vibecrafted start
+# or
+vc-start
+# same default board as: vc-start vibecrafted
+```
+
+Then launch this workflow through the command deck, not raw `skills/.../*.sh` paths:
+
+```bash
+vibecrafted <workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --file '/path/to/plan.md'
+```
+
+```bash
+vc-<workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --prompt '<prompt>'
+```
+
+If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
+or create the operator session and run that workflow in a new tab. Replace
+`<workflow>` with this skill's name. Prefer `--file` for an existing plan or
+artifact and `--prompt` for inline intent.
+
+### Concrete dispatch examples
+
+```bash
+vibecrafted hydrate codex --prompt 'Package for marketplace'
+vc-hydrate claude --prompt 'Generate missing SEO and landing page'
+vibecrafted hydrate gemini --file /path/to/dou-report.md
+```
+
 > "The code is dry — structurally complete but missing the fluid
 > that makes it flow to users. Hydration means: make the path
 > from stranger to user frictionless."
@@ -415,7 +455,7 @@ Target: Plague Score reduction of at least 20 points.
 <things only a human can do: DNS, API keys, marketplace submit button>
 ```
 
-## Integration with VibeCrafted Pipeline
+## Integration with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Pipeline
 
 ```
 Phase 1 — Craft:     scaffold → init → workflow → followup
@@ -478,4 +518,4 @@ Hydration is the antidote.
 _"Hydration means: consolidate, give each product a complete surface,_
 _make the path from stranger to user frictionless."_
 
-_Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
+_Vibecrafted with AI Agents by VetCoders (c)2024-2026 VetCoders_

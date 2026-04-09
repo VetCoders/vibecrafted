@@ -23,6 +23,53 @@ compatibility:
 
 # vc-research — Triple-Agent Research Swarm
 
+## Operator Entry
+
+Operator enters the framework session through:
+
+```bash
+vibecrafted start
+# or
+vc-start
+# same default board as: vc-start vibecrafted
+```
+
+Then launch this workflow through the command deck, not raw `skills/.../*.sh` paths:
+
+```bash
+vibecrafted <workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --file '/path/to/plan.md'
+```
+
+```bash
+vc-<workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --prompt '<prompt>'
+```
+
+If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
+or create the operator session and run that workflow in a new tab. Replace
+`<workflow>` with this skill's name. Prefer `--file` for an existing plan or
+artifact and `--prompt` for inline intent.
+
+### Concrete dispatch examples
+
+```bash
+vibecrafted research claude --prompt 'Compare auth libraries for Tauri desktop'
+vc-research codex --prompt 'State of the art for MCP streaming transports'
+vibecrafted research gemini --file /path/to/research-plan.md
+```
+
+<details>
+<summary>Foundation Dependencies (Loaded with framework)</summary>
+
+- [vc-loctree](../foundations/vc-loctree/SKILL.md) — primary map and structural awareness.
+- [vc-aicx](../foundations/vc-aicx/SKILL.md) — primary memory and steerability index.
+</details>
+
 > One perspective is an opinion. Three perspectives are evidence.
 
 ## Purpose
@@ -48,7 +95,8 @@ Do NOT use for:
 
 - Questions answerable by reading one file in the repo
 - Problems where loctree slice + grep gives the answer in 30 seconds
-- Pure implementation tasks (use vc-workflow, usually through vc-agents; use vc-delegate only for small model-agnostic work)
+- Pure implementation tasks (use vc-workflow, usually through vc-agents; use vc-delegate only for small model-agnostic
+  work)
 
 ## The 6-Step Research Flow
 
@@ -68,6 +116,14 @@ Output: a short problem statement (3-5 sentences) agreed with the user.
 Create one plan file. The plan is what every agent receives. It contains:
 
 ```markdown
+---
+run_id: <generated-unique-id>
+agent: <claude|codex|gemini>
+skill: vc-research
+project: <repo-name>
+status: in-progress
+---
+
 # Research Plan: <title>
 
 ## Problem
@@ -120,24 +176,25 @@ Write your findings to the report file as markdown with this structure:
 ```
 
 Save to
-`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md`.
+`$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md`.
 
 Plans can be split if the problem has clearly separable domains. Each agent
 gets ALL plans — they are independent researchers, not specialists.
 
 ### Step 3 — Spawn triple research swarm
 
-Canonical launch path is through the portable spawn scripts:
+Canonical operator-facing launch path goes through the command deck:
 
 ```bash
-PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md"
+PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md"
 
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/claude_spawn.sh "$PLAN" --mode research
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode research
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode research
+vc-research claude --file "$PLAN"
+vc-research codex --file "$PLAN"
+vc-research gemini --file "$PLAN"
 ```
 
-If your environment has the shell aliases (e.g. `claude-research`), those are convenience wrappers that point to these exact scripts.
+The repo-owned spawn scripts remain the internal engine behind that surface. Do
+not document raw `bash skills/...spawn.sh` paths as the operator entrypoint.
 
 All three get the same plan. All three work independently. This is intentional —
 divergence between reports reveals blind spots.
@@ -147,17 +204,17 @@ divergence between reports reveals blind spots.
 Reports land in:
 
 ```
-~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_claude.md
-~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_codex.md
-~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_gemini.md
+$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_claude.md
+$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_codex.md
+$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_gemini.md
 ```
 
 Wait for all three. Use the observe scripts:
 
 ```bash
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/observe.sh claude --last
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/observe.sh codex --last
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/observe.sh gemini --last
+vibecrafted claude observe --last
+vibecrafted codex observe --last
+vibecrafted gemini observe --last
 ```
 
 ### Step 5 — Synthesize
@@ -183,9 +240,17 @@ Rules for synthesis:
 ### Step 6 — Produce gap-free research document
 
 Write the final document to
-`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_RESEARCH.md`:
+`$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_RESEARCH.md`:
 
 ```markdown
+---
+run_id: <generated-unique-id>
+agent: <claude|codex|gemini>
+skill: vc-research
+project: <repo-name>
+status: completed
+---
+
 # Research: <title>
 
 ## Problem
@@ -258,4 +323,4 @@ research │                         │
 
 ---
 
-_Created by M&K (c)2026 VetCoders_
+_Created by M&K (c)2024-2026 VetCoders_

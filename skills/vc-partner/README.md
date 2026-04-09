@@ -65,7 +65,7 @@ reasoning in the center.
 > **Note**: `codex-plan`, `claude-plan`, `gemini-plan`, `*-resume` are
 > convenience aliases from private dotfiles. The canonical, machine-portable
 > equivalent is the repo-owned spawn scripts:
-> `bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh <plan>.md --mode plan`
+> `bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/codex_spawn.sh <plan>.md --mode plan`
 > See `vc-partner/SKILL.md` Spawn Playbook for full details.
 
 During resumed implementation, one important rule now applies:

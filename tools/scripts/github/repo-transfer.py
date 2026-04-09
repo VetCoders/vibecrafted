@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+
 # =============================================================================
 # ANSI Colors
 # =============================================================================
@@ -741,7 +742,7 @@ Examples:
   ./repo-transfer.py --transfer owner/repo --to NewOwner/new-name --yes
   ./repo-transfer.py --transfer owner/repo --to NewOwner --clean --yes
 
-Created by M&K (c)2026 VetCoders
+Created by M&K (c)2024-2026 VetCoders
 """,
     )
 

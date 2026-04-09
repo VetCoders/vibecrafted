@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pipeline-init.sh — Initialize canonical ERi artifact paths
 # Usage: bash pipeline-init.sh <slug> [root-dir]
-# Created by M&K (c)2026 VetCoders
+# Created by M&K (c)2024-2026 VetCoders
 
 set -euo pipefail
 
@@ -14,7 +14,7 @@ ROOT_INPUT="${2:-$(pwd)}"
 ROOT="$(spawn_abspath "$ROOT_INPUT")"
 [[ -d "$ROOT" ]] || spawn_die "Root directory not found: $ROOT"
 
-# Canonical store: ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/{plans,reports,tmp}/
+# Canonical store: $VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/{plans,reports,tmp}/
 STORE_BASE="$(spawn_store_dir "$ROOT")"
 PLAN_DIR="$STORE_BASE/plans"
 REPORT_DIR="$STORE_BASE/reports"

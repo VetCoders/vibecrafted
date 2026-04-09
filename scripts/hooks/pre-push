@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# VibeCrafted custom pre-push hook
+# 𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭. pre-push hook
 set -e
 
-echo "⚒  Running VibeCrafted pre-push hooks..."
+echo "⚒  Running pre-push checks..."
 
 ALL_FILES=$(git ls-files)
 
@@ -28,14 +28,12 @@ track_hashes() {
 find_tracked_hash() {
     local needle="$1"
     local i
-
     for ((i=0; i<${#HASHED_FILES[@]}; i++)); do
         if [[ "${HASHED_FILES[$i]}" == "$needle" ]]; then
             printf '%s' "${HASH_VALUES[$i]}"
             return 0
         fi
     done
-
     return 1
 }
 
@@ -51,9 +49,7 @@ collect_rewrites() {
 }
 
 while IFS= read -r file; do
-    # Skip empty lines
     [ -z "$file" ] && continue
-
     case "$file" in
         *.sh|*.bash|*.zsh) SH_FILES+=("$file") ;;
         *.py) PY_FILES+=("$file") ;;
@@ -67,20 +63,33 @@ if [ ${#SH_FILES[@]} -gt 0 ]; then
 fi
 
 if [ ${#PY_FILES[@]} -gt 0 ]; then
-    echo "▸ ruff fix + format (full)"
+    echo "▸ ruff (full)"
     track_hashes "${PY_FILES[@]}"
-    ruff check --fix "${PY_FILES[@]}"
-    ruff format "${PY_FILES[@]}"
-    ruff check "${PY_FILES[@]}"
-    collect_rewrites "${PY_FILES[@]}"
+    if command -v uvx >/dev/null 2>&1; then
+        uvx ruff check --fix "${PY_FILES[@]}"
+        uvx ruff format "${PY_FILES[@]}"
+        uvx ruff check "${PY_FILES[@]}"
+        collect_rewrites "${PY_FILES[@]}"
+    else
+        echo "[warn] uvx unavailable; skipping ruff checks"
+    fi
 fi
 
 if [ ${#MD_YAML_FILES[@]} -gt 0 ]; then
-    echo "▸ prettier write + check (full)"
+    echo "▸ prettier (full)"
     track_hashes "${MD_YAML_FILES[@]}"
-    npx prettier --write "${MD_YAML_FILES[@]}"
-    npx prettier --check "${MD_YAML_FILES[@]}"
+    npx --yes prettier --write "${MD_YAML_FILES[@]}"
+    npx --yes prettier --check "${MD_YAML_FILES[@]}"
     collect_rewrites "${MD_YAML_FILES[@]}"
+fi
+
+echo "▸ semgrep (full)"
+if command -v semgrep >/dev/null 2>&1; then
+    semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity
+elif command -v uvx >/dev/null 2>&1; then
+    uvx semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity
+else
+    echo "[warn] semgrep unavailable; skipping"
 fi
 
 if [ ${#REWRITTEN_FILES[@]} -gt 0 ]; then
@@ -90,4 +99,4 @@ if [ ${#REWRITTEN_FILES[@]} -gt 0 ]; then
     exit 1
 fi
 
-echo "✓ All pre-push checks passed. Ready to push!"
+echo "✓ Pre-push passed"

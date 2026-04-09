@@ -26,7 +26,54 @@ compatibility:
     - js_repl
 ---
 
-# VibeCrafted Partner
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Partner
+
+## Operator Entry
+
+Operator enters the framework session through:
+
+```bash
+vibecrafted start
+# or
+vc-start
+# same default board as: vc-start vibecrafted
+```
+
+Then launch this workflow through the command deck, not raw `skills/.../*.sh` paths:
+
+```bash
+vibecrafted <workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --file '/path/to/plan.md'
+```
+
+```bash
+vc-<workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --prompt '<prompt>'
+```
+
+If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
+or create the operator session and run that workflow in a new tab. Replace
+`<workflow>` with this skill's name. Prefer `--file` for an existing plan or
+artifact and `--prompt` for inline intent.
+
+### Concrete dispatch examples
+
+```bash
+vibecrafted partner claude --prompt 'Help me debug the installer'
+vc-partner codex --prompt 'Triage the licensing callback flow'
+vibecrafted partner gemini --file /path/to/debug-findings.md
+```
+
+<details>
+<summary>Foundation Dependencies (Loaded with framework)</summary>
+
+- [vc-loctree](../foundations/vc-loctree/SKILL.md) — primary map and structural awareness.
+- [vc-aicx](../foundations/vc-aicx/SKILL.md) — primary memory and steerability index.
+</details>
 
 Two modes, one skill. The difference is who holds the steering wheel.
 
@@ -268,10 +315,11 @@ Preferred pattern:
 - the agent that researched track B implements track B
 - same thread, next phase
 
-#### Phase 7 — Converge With Marbles
+#### Phase 7 — Mandatory Marbles Escalation
 
-After implementation starts, switch the same sessions into `vc-marbles` loops:
+**NO EXCEPTION RULE:** After implementation, if there are ANY unresolved `P0` or `P1` gaps or broken tests, switch the sessions into `vc-marbles` loops:
 
+- DO NOT STOP and leave broken code. You MUST invoke `vc-marbles` autonomously.
 - measure residual entropy
 - fix top gaps
 - verify
@@ -476,6 +524,7 @@ Examples:
 - does the output feel intentional
 
 If the result works but still feels unfinished, it is unfinished.
+**NO EXCEPTION RULE:** If validation reveals ANY broken functionality, regressions, or P0/P1 gaps, you MUST invoke `vc-marbles` to loop through autonomously until resolved. Do not stop and wait for the user to fix the gaps.
 
 ### Desktop And Browser Control
 
@@ -554,21 +603,19 @@ This is normal. Do not announce mode switches. Just shift posture.
 
 ### Planner swarm
 
-Run the same plan through independent planners using the portable spawn
-scripts:
+Run the same plan through independent planners using the command deck:
 
 ```bash
-PLAN="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<track>.md"
+PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<track>.md"
 
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode plan
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/claude_spawn.sh "$PLAN" --mode plan
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode plan
+vibecrafted codex plan "$PLAN"
+vibecrafted claude plan "$PLAN"
+vibecrafted gemini plan "$PLAN"
 ```
 
-> **Note**: If your environment has `codex-plan`, `claude-plan`, `gemini-plan`
-> shell aliases (from private dotfiles), those are convenience wrappers that
-> call the same portable scripts. The repo-owned scripts above are the
-> canonical path and work on any machine with the skills installed.
+> **Note**: The repo-owned spawn scripts remain the internal engine. Operator
+> docs should point to `vibecrafted ...` / `vc-...`, not directly to
+> `bash skills/...spawn.sh`.
 
 For Gemini, make auth explicit before you trust the swarm:
 
@@ -597,7 +644,7 @@ codex-resume <session-uuid> '<continuation prompt>'
 gemini-resume <session-uuid> '<continuation prompt>'
 
 # If not, use portable scripts with the synthesis as the new plan:
-bash $VIBECRAFT_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement
+vibecrafted codex implement "$PLAN"
 ```
 
 Do not pretend continuity exists if the resume helper does not exist.
@@ -645,10 +692,10 @@ continuation until the circle is full.
 Maintain these artifacts:
 
 - `docs/<area>/<topic>-findings.md` or equivalent append-only findings log
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<track>.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<track>_<agent>.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/*.transcript.log`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/*.meta.json`
+- `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<track>.md`
+- `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<track>_<agent>.md`
+- `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/*.transcript.log`
+- `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/*.meta.json`
 
 During crisis sessions, prefer append-only behavior for the findings log.
 Preserve chronology, corrections, and reversals of interpretation.
@@ -666,7 +713,7 @@ Every delegated plan should:
 Always include this living-tree preamble:
 
 ```text
-You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
+You work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology, so concurrent changes are expected.
 Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
 Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 ```

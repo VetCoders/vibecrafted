@@ -1,0 +1,50 @@
+// vc-workflow — ERi implementation workspace
+// Launch: vibecrafted dashboard vc-workflow
+//
+// Design: operator-first. Main pane gets 75% width for focused implementation.
+// Agent sidebar is compact — enough to see output, not enough to distract.
+// Additional agents spawn as tabs, not panes.
+//
+// Swap layouts:
+//   "default"  — 75/25 vertical split (main + agent sidebar)
+//   "solo"     — full screen single pane (deep focus)
+//   "dual"     — 50/50 side-by-side (code review / pair)
+//
+// VibeCrafted with AI Agents (c)2026 VetCoders
+layout {
+    // new_tab_template removed: Zellij 0.44 broke `children` inside it.
+    // default_tab_template covers both existing and new tabs.
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="compact-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Workflow" {
+        pane split_direction="vertical" {
+            pane name="main" size="75%" focus=true command="zsh"
+            pane name="agent" size="25%" command="zsh"
+        }
+    }
+
+    // Swap: solo — full screen deep focus
+    swap_tiled_layout name="solo" {
+        tab {
+            pane name="main" focus=true
+        }
+    }
+
+    // Swap: dual — 50/50 side by side
+    swap_tiled_layout name="dual" {
+        tab {
+            pane split_direction="vertical" {
+                pane name="main" size="50%" focus=true command="zsh"
+                pane name="agent" size="50%" command="zsh"
+            }
+        }
+    }
+}

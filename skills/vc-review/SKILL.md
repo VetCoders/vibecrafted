@@ -11,6 +11,47 @@ description: >
 
 # vc-review — Code Review Pipeline (Generate + Audit)
 
+## Operator Entry
+
+Operator enters the framework session through:
+
+```bash
+vibecrafted start
+# or
+vc-start
+# same default board as: vc-start vibecrafted
+```
+
+Then launch this workflow through the command deck, not raw `skills/.../*.sh` paths:
+
+```bash
+vibecrafted <workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --file '/path/to/plan.md'
+```
+
+```bash
+vc-<workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --prompt '<prompt>'
+```
+
+If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
+or create the operator session and run that workflow in a new tab. Replace
+`<workflow>` with this skill's name. `vc-review` may also prefer `--pr` or
+other review-specific inputs; keep the same launcher contract and use the most
+truthful flag for the review surface.
+
+### Concrete dispatch examples
+
+```bash
+vibecrafted review claude --prompt 'Review PR #4'
+vc-review codex --prompt 'Deep review of release/v1.2.1 branch'
+vibecrafted review gemini --file /path/to/pr-artifacts-pack.md
+```
+
 Two-phase skill: **Phase 1** generates structured artifacts with prview-rs,
 **Phase 2** squeezes maximum findings from them. Output: P-leveled findings
 with evidence + before-merge TODO checklist.
@@ -118,13 +159,13 @@ artifacts only.
 
 ## Artifact Pack Layout
 
-Output: `~/.prview/pr-artifacts/<branch>/<timestamp>/`
-Symlink: `~/.prview/pr-artifacts/<branch>/latest`
+Output: `$VIBECRAFTED_ROOT/.prview/pr-artifacts/<branch>/<timestamp>/`
+Symlink: `$VIBECRAFTED_ROOT/.prview/pr-artifacts/<branch>/latest`
 
 Always select the **newest** `<timestamp>`. Empty or missing directory → **P0**.
 
 ```
-~/.prview/pr-artifacts/<branch>/<timestamp>/
+$VIBECRAFTED_ROOT/.prview/pr-artifacts/<branch>/<timestamp>/
 ├── dashboard.html                # Interactive HTML report
 ├── AI_INDEX.md                   # Artifact map + suggested reading order
 ├── report.json                   # Canonical structured report (PARSE FIRST)
@@ -400,20 +441,20 @@ Auto-detected from repo contents. Override: `--profile <PROFILE>`.
 
 ---
 
-## VibeCrafted Pipeline Integration
+## 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Pipeline Integration
 
 ### As input to vc-followup
 
 ```bash
 prview --pr $PR_NUMBER --with-tests --with-lint
-ARTIFACTS="~/.prview/pr-artifacts/<branch>/latest"
+ARTIFACTS="$VIBECRAFTED_ROOT/.prview/pr-artifacts/<branch>/latest"
 ```
 
 ### Subagent delegation context
 
 ```
 ## Context Bootstrap
-- prview artifacts at: ~/.prview/pr-artifacts/<branch>/latest/
+- prview artifacts at: $VIBECRAFTED_ROOT/.prview/pr-artifacts/<branch>/latest/
 - Parse report.json first (canonical)
 - Read 00_summary/MERGE_GATE.json for quick verdict
 - Read 20_quality/checks-errors.log for error details
@@ -450,4 +491,4 @@ prview --json --quiet | jq '.checks[] | select(.status == "Failed")'
 
 ---
 
-_Created by M&K (c)2026 VetCoders_
+_Created by M&K (c)2024-2026 VetCoders_

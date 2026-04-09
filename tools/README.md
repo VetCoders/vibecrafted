@@ -10,11 +10,11 @@ git clone git@github.com:VetCoders/vetcoders-hooks.git
 cd vetcoders-hooks
 
 # Copy all hooks
-cp *.sh ~/.claude/hooks/
-chmod +x ~/.claude/hooks/*.sh
+cp *.sh $HOME/.claude/hooks/
+chmod +x $HOME/.claude/hooks/*.sh
 
 # Copy settings template (BACKUP YOUR settings.json FIRST!)
-cp example-settings.json ~/.claude/settings.json
+cp example-settings.json $HOME/.claude/settings.json
 ```
 
 ## Hook Categories
@@ -54,7 +54,7 @@ cp example-settings.json ~/.claude/settings.json
 
 ## MCP Servers
 
-Copy `mcp-servers.json` to `~/.claude/` for canonical MCP configuration:
+Copy `mcp-servers.json` to `$HOME/.claude/` for canonical MCP configuration:
 
 | Server               | Type  | Purpose                                   |
 | -------------------- | ----- | ----------------------------------------- |
@@ -66,7 +66,7 @@ Copy `mcp-servers.json` to `~/.claude/` for canonical MCP configuration:
 | `filesystem`         | stdio | File system access                        |
 
 ```bash
-cp mcp-servers.json ~/.claude/
+cp mcp-servers.json $HOME/.claude/
 ```
 
 ## Launchd Agents (macOS)
@@ -75,11 +75,11 @@ Daily memex optimization to prevent "too many open files" errors:
 
 ```bash
 # Edit path in plist if needed, then:
-cp launchd/com.vetcoders.memex-optimize.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.vetcoders.memex-optimize.plist
+cp launchd/com.vetcoders.memex-optimize.plist $VIBECRAFTED_ROOT/Library/LaunchAgents/
+launchctl load $VIBECRAFTED_ROOT/Library/LaunchAgents/com.vetcoders.memex-optimize.plist
 ```
 
-Runs daily at 4:00 AM. Logs: `~/.ai-memories/logs/optimize.log`
+Runs daily at 4:00 AM. Logs: `$HOME/.ai-memories/logs/optimize.log`
 
 ## Requirements
 
@@ -104,5 +104,5 @@ Key sections:
 
 ---
 
-Created by M&K (c)2026 VetCoders
+Created by M&K (c)2024-2026 VetCoders
 Co-Authored-By: [Maciej](void@div0.space) & [Klaudiusz](the1st@whoai.am)

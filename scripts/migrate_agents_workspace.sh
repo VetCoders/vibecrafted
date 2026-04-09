@@ -3,17 +3,38 @@ set -euo pipefail
 
 # Skrypt migracyjny dla legacy katalogów z `.ai-agents/`
 # Wykonuje "twardą" przeprowadzkę legacy katalogów z `.ai-agents/`
-# do centralnego archiwum ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
+# do centralnego archiwum $VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
 # Przenosi wyłącznie foldery: plans, pipeline, reports, tmp
 # Pozostawia nietknięte ewentualne inne pliki w .ai-agents/ (np. GUIDELINES.md)
 #
 # Użycie:
 #   ./migrate_agents_workspace.sh [--dry-run] [dir1 dir2 ...]
-#   Domyślnie przeszukuje $HOME
+#   Domyślnie przeszukuje $VIBECRAFTED_ROOT/ albo bieżący katalog
 #
 # Do weryfikacji org/repo można też użyć: zsh -ic 'repo-full'
 
-VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+default_vibecrafted_home() {
+  if [[ -n "${VIBECRAFTED_HOME:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_HOME"
+    return
+  fi
+  if [[ -n "${VIBECRAFTED_ROOT:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_ROOT/.vibecrafted"
+    return
+  fi
+  printf '%s\n' "$HOME/.vibecrafted"
+}
+
+default_search_root() {
+  if [[ -n "${VIBECRAFTED_ROOT:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_ROOT/"
+    return
+  fi
+  printf '%s\n' "$PWD"
+}
+
+VIBECRAFTED_HOME="$(default_vibecrafted_home)"
+DEFAULT_SEARCH_ROOT="$(default_search_root)"
 
 # Parsowanie argumentów: pierwszy arg może być --dry-run, reszta to katalogi
 DRY_RUN=""
@@ -25,14 +46,14 @@ for arg in "$@"; do
     SEARCH_DIRS+=("$arg")
   fi
 done
-[[ ${#SEARCH_DIRS[@]} -eq 0 ]] && SEARCH_DIRS=("$HOME")
+[[ ${#SEARCH_DIRS[@]} -eq 0 ]] && SEARCH_DIRS=("$DEFAULT_SEARCH_ROOT")
 
 info()  { printf '  \033[32m[ok]\033[0m %s\n' "$*"; }
 warn()  { printf '  \033[33m[skip]\033[0m %s\n' "$*"; }
 dry()   { printf '  \033[36m[dry]\033[0m %s\n' "$*"; }
 
 echo ""
-echo "  Migrating legacy .ai-agents/ workspace folders to ~/.vibecrafted/artifacts/"
+echo "  Migrating legacy .ai-agents/ workspace folders to $VIBECRAFTED_HOME/artifacts/"
 echo "  Searching: ${SEARCH_DIRS[*]}"
 echo "  ─────────────────────────────────────────────────────────"
 echo ""

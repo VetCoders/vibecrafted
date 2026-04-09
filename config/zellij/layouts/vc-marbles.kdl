@@ -1,0 +1,81 @@
+// vc-marbles — convergence workspace
+// Launch: vibecrafted marbles dashboard | vibecrafted dashboard vc-marbles
+//
+// Design: operator-centric. The operator pane is full-width and focused.
+// Convergence monitoring lives in a compact bottom bar — always visible but
+// never dominating. Each marble agent spawns as an ADDITIONAL TAB in this
+// session (visible in the tab bar, never stealing operator focus).
+//
+// Swap layouts:
+//   "default"    — operator full + compact monitoring bar (daily driver)
+//   "expanded"   — operator + right sidebar with convergence + sessions
+//   "grid"       — 2x2 grid for when you want all agents visible at once
+//
+// VibeCrafted with AI Agents (c)2026 VetCoders
+layout {
+    // new_tab_template removed: Zellij 0.44 broke `children` inside it.
+    // default_tab_template covers both existing and new tabs.
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="compact-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    // Primary tab: operator workspace with compact monitoring below.
+    tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Marbles" focus=true {
+        pane split_direction="horizontal" {
+            // Operator — main workspace, 75% of vertical space
+            pane name="operator" size="75%" focus=true
+
+            // Monitoring bar — compact, 25%, split horizontally
+            pane split_direction="vertical" size="25%" {
+                pane name="convergence" command="bash" {
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Convergence monitor not found.\\n'; exec /bin/zsh -l"
+                }
+                pane name="sessions" command="bash" {
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Sessions monitor not found.\\n'; exec /bin/zsh -l"
+                }
+            }
+        }
+    }
+
+    // Swap: expanded monitoring sidebar
+    swap_tiled_layout name="expanded" {
+        tab {
+            pane split_direction="vertical" {
+                pane name="operator" size="65%" focus=true
+                pane split_direction="horizontal" size="35%" {
+                    pane name="convergence" command="bash" {
+                        args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Convergence monitor not found.\\n'; exec /bin/zsh -l"
+                    }
+                    pane name="agents" command="bash" {
+                        args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/active-agents.sh\" ]]; then exec \"$root/scripts/mission-control/active-agents.sh\"; fi; done; printf 'Agent monitor not found.\\n'; exec /bin/zsh -l"
+                    }
+                    pane name="sessions" command="bash" {
+                        args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Sessions monitor not found.\\n'; exec /bin/zsh -l"
+                    }
+                }
+            }
+        }
+    }
+
+    // Swap: full grid for multi-agent visibility
+    swap_tiled_layout name="grid" {
+        tab {
+            pane split_direction="horizontal" {
+                pane split_direction="vertical" size="50%" {
+                    pane name="operator" focus=true
+                    pane name="convergence"
+                }
+                pane split_direction="vertical" size="50%" {
+                    pane name="agents"
+                    pane name="sessions"
+                }
+            }
+        }
+    }
+}

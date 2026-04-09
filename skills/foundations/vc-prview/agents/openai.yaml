@@ -1,0 +1,4 @@
+interface:
+  display_name: "PRView Audit"
+  short_description: "Generate persistent PR review artifacts"
+  default_prompt: "Generate PR review artifacts using `prview` for deep audit and verification."

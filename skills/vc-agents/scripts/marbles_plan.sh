@@ -28,7 +28,7 @@ done
 [[ -n "$depth" ]] || spawn_die "Missing --depth"
 root_dir="${root:-$(spawn_repo_root)}"
 day_store="$(spawn_store_dir "$root_dir")"
-store="${VIBECRAFT_STORE_DIR:-$(spawn_marbles_store_dir "$root_dir")}"
+store="${VIBECRAFTED_STORE_DIR:-$(spawn_marbles_store_dir "$root_dir")}"
 artifacts_parent="$(dirname "$day_store")"
 
 # Scan recent plan files across today and previous days.

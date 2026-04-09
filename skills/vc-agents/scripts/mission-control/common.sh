@@ -17,7 +17,7 @@ mc_clear() {
 mc_header() {
   local title="$1"
   mc_clear
-  printf '%sVibeCraft MC%s %s%s%s\n' "$MC_COPPER" "$MC_RESET" "$MC_STEEL" "$title" "$MC_RESET"
+  printf '%s𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭.%s %s%s%s\n' "$MC_COPPER" "$MC_RESET" "$MC_STEEL" "$title" "$MC_RESET"
   printf '%sartifact root:%s %s\n\n' "$MC_STEEL" "$MC_RESET" "$MC_ARTIFACT_ROOT"
 }
 

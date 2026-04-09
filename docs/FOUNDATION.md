@@ -1,4 +1,4 @@
-# VibeCrafted Foundation
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Foundation
 
 Foundation packages are infrastructure that all skills depend on.
 They are not skills — they are the senses and memory of the agent layer.
@@ -29,7 +29,7 @@ With it, they see the dependency graph before touching anything.
 `repo-view` as its first action. `vc-workflow` runs `slice` before editing.
 `vc-followup` runs `impact` before deleting.
 
-**Install**: `npm install -g loctree` or binary from
+**Install**: `make foundations` (auto-downloads v0.8.16 binary) or
 [Loctree/Loctree releases](https://github.com/Loctree/Loctree/releases)
 
 ## AICX — Memory
@@ -46,7 +46,7 @@ multi-gigabyte context windows.
 **Used by**: `vc-init` (history baseline), `vc-followup` (prior decisions),
 `vc-research` (what was already researched), `vc-partner` (session context).
 
-**Install**: Binary from
+**Install**: `make foundations` (binary or cargo fallback) or
 [VetCoders/ai-contexters releases](https://github.com/VetCoders/ai-contexters/releases)
 
 ## PRView — Review
@@ -89,22 +89,22 @@ persistent review artifacts (prview), or visual input (screenscribe).
 
 The recommended install order:
 
-1. VibeCrafted framework (`make install`)
-2. Agent CLIs (claude, codex, gemini)
-3. Loctree + AICX (critical for non-trivial codebases)
+1. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework (`make install`)
+2. Foundation binaries (`make foundations` — installs loctree + aicx)
+3. Agent CLIs (claude, codex, gemini)
 4. PRView (recommended for review workflows)
 5. ScreenScribe (optional, for visual verification)
 
 ## Foundation vs Skills
 
-|                | Foundation            | Skills                          |
-| -------------- | --------------------- | ------------------------------- |
-| **What**       | Infrastructure binary | Instruction set (SKILL.md)      |
-| **Where**      | System PATH           | `~/.vibecrafted/skills/`        |
-| **Updates**    | Binary releases       | `make install` or `skills-sync` |
-| **Without it** | Skill degrades        | Agent doesn't know the workflow |
-| **Example**    | loctree-mcp           | vc-workflow                     |
+|                | Foundation            | Skills                                   |
+| -------------- | --------------------- | ---------------------------------------- |
+| **What**       | Infrastructure binary | Instruction set (SKILL.md)               |
+| **Where**      | System PATH           | `$VIBECRAFTED_ROOT/.vibecrafted/skills/` |
+| **Updates**    | Binary releases       | `make install` or `skills-sync`          |
+| **Without it** | Skill degrades        | Agent doesn't know the workflow          |
+| **Example**    | loctree-mcp           | vc-workflow                              |
 
 ---
 
-_VibeCrafted by VetCoders_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. by VetCoders_

@@ -1,4 +1,4 @@
 interface:
   display_name: "VC Prune"
   short_description: "Prune repos to runtime or publish cone"
-  default_prompt: "Use $vc-prune to classify runtime/build/publish surface, route non-trivial prune work through external VibeCrafted agents, and plan a proof-driven cleanup."
+  default_prompt: "Use $vc-prune to classify runtime/build/publish surface, route non-trivial prune work through external 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. agents, and plan a proof-driven cleanup."

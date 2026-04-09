@@ -40,7 +40,7 @@ Environment Variables:
     CHATCLIENT_API_KEY      Default API key
     CHATCLIENT_MODEL        Default model
 
-Created by M&K (c)2026 VetCoders
+Created by M&K (c)2024-2026 VetCoders
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ import json
 import logging
 import mimetypes
 import os
+import ssl
 import sys
 from collections.abc import Iterator
 from typing import Any
@@ -64,6 +65,21 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger(__name__)
+
+
+def validate_remote_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("Only absolute http(s) URLs are allowed")
+    return url
+
+
+def safe_urlopen(request: Request, timeout: float):
+    url = validate_remote_url(request.full_url)
+    context = ssl.create_default_context() if url.startswith("https://") else None
+    # Validation above rejects file:// and other non-network schemes before opening.
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+    return urlopen(request, timeout=timeout, context=context)
 
 
 class C:
@@ -125,7 +141,7 @@ def internet_search(query: str, timeout: float = 6.0) -> str:
     try:
         url = f"https://api.duckduckgo.com/?q={quote_plus(query)}&format=json&no_html=1&skip_disambig=1"
         req = Request(url, headers={"User-Agent": "ChatCLI/1.0"})
-        with urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(req, timeout=timeout) as resp:
             if resp.getcode() != 200:
                 return f"Search failed: HTTP {resp.getcode()}"
             data = json.loads(resp.read().decode("utf-8", "strict"))
@@ -159,7 +175,7 @@ def sse_post(
     req_headers.update(headers or {})
     req = Request(url, data=body, headers=req_headers, method="POST")
     try:
-        with urlopen(req, timeout=timeout) as resp:
+        with safe_urlopen(req, timeout=timeout) as resp:
             status = resp.getcode()
             if status < 200 or status >= 300:
                 raise HTTPError(
@@ -200,7 +216,7 @@ def post_once(
     req_headers = {"Content-Type": "application/json", "User-Agent": "ChatCLI/1.0"}
     req_headers.update(headers or {})
     req = Request(url, data=body, headers=req_headers, method="POST")
-    with urlopen(req, timeout=timeout) as resp:
+    with safe_urlopen(req, timeout=timeout) as resp:
         status = resp.getcode()
         if status < 200 or status >= 300:
             raise HTTPError(url, status, f"HTTP status {status}", resp.headers, None)
@@ -259,7 +275,7 @@ Examples:
   # OpenAI
   ./chat-cli.py --base-url https://api.openai.com/v1 --api-key $OPENAI_API_KEY --model gpt-4o
 
-Created by M&K (c)2026 VetCoders
+Created by M&K (c)2024-2026 VetCoders
 """,
     )
     parser.add_argument(
@@ -298,6 +314,7 @@ Created by M&K (c)2026 VetCoders
     base_url = (args.base_url or "").rstrip("/")
     if not base_url:
         parser.error("--base-url is required (or set CHATCLIENT_BASE_URL)")
+    validate_remote_url(base_url)
 
     headers = {"Authorization": f"Bearer {args.api_key}"}
     messages: list[dict[str, Any]] = []

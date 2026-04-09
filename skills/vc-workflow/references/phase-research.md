@@ -25,7 +25,7 @@ Limit: 3 calls per question. Use best result after 3 attempts.
 For broader questions, current practices, comparisons:
 
 ```bash
-python3 $VIBECRAFT_ROOT/skills/vc-research/bravesearch/brave_search.py "query" [-c count] [-l lang]
+python3 $VIBECRAFTED_ROOT/skills/vc-research/engines/brave_search.py "query" [-c count] [-l lang]
 ```
 
 Query formulation tips:
@@ -92,7 +92,7 @@ Report depth level in RESEARCH.md header.
 
 Date: <YYYY-MM-DD>
 Depth: quick | standard | deep
-Artifact root: ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
+Artifact root: $VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/
 
 ## Open Questions (from CONTEXT.md)
 
@@ -134,8 +134,8 @@ Artifact root: ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
 
 - **Context**: <from CONTEXT.md>
 - **Options considered**:
-  1. <option A> — <pros/cons>
-  2. <option B> — <pros/cons>
+  1. {option A} — {pros/cons}
+  2. {option B} — {pros/cons}
 - **Chosen**: <option> because <reasoning based on findings>
 - **Consequences**: <what this means for implementation>
 
@@ -145,7 +145,7 @@ Artifact root: ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
 
 - <concrete guidance derived from research>
 - <API patterns to use>
-- <pitfalls to avoid>
+- {pitfalls to avoid}
 
 ### Dependencies to add:
 

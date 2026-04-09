@@ -3,6 +3,15 @@
 Use this template for planning output. Strip out the comments in your actual output.
 
 ```markdown
+---
+run_id: <generated-unique-id>
+agent: <claude|codex|gemini>
+skill: <vc-scaffold|vc-workflow|vc-justdo>
+project: <repo-name>
+status: pending
+created: <ISO-8601 timestamp>
+---
+
 # Architecture Plan: [Project Name]
 
 ## Problem Statement

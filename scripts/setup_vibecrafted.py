@@ -3,6 +3,13 @@ import os
 import subprocess
 import sys
 
+try:
+    from runtime_paths import read_version_file
+except (
+    ModuleNotFoundError
+):  # pragma: no cover - module import path depends on entrypoint
+    from scripts.runtime_paths import read_version_file
+
 _IS_TTY = sys.stdout.isatty() and sys.stdin.isatty()
 
 
@@ -38,14 +45,6 @@ def ask_yes_no(question, default=True):
         return default
 
 
-def get_framework_version(repo_dir):
-    version_file = os.path.join(repo_dir, "VERSION")
-    if os.path.exists(version_file):
-        with open(version_file) as f:
-            return f.read().strip()
-    return "unknown"
-
-
 def run_underlying_installer(repo_dir):
     installer_path = os.path.join(repo_dir, "scripts", "vetcoders_install.py")
     if os.path.exists(installer_path):
@@ -71,12 +70,12 @@ def run_underlying_installer(repo_dir):
 
 def main():
     repo_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    fw_ver = get_framework_version(repo_dir)
+    fw_ver = read_version_file(repo_dir)
 
     # --- Compact header ---
     sep = "\u2500" * 37
     print()
-    print(f"  {Colors.BOLD}\u2692  VibeCrafted Installer v{fw_ver}{Colors.ENDC}")
+    print(f"  {Colors.BOLD}\u2692  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer v{fw_ver}{Colors.ENDC}")
     print(f"  {sep}")
     print()
 

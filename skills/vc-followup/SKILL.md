@@ -1,241 +1,51 @@
 ---
 name: vc-followup
-version: 1.0.0
+version: 2.0.0
 description: >
-  Production follow-up audit skill for VetCoders. Runs a strict chain:
-  vc-init -> vc-workflow -> vc-agents, then synthesizes
-  implementation gaps, readiness risks, quality gate outcomes, and next actions
-  before hands-on build/testing. Trigger phrases: "follow-up check",
-  "followup audit", "czy sa jeszcze luki", "readiness before hands-on",
-  "audit this implementation", "po implementacji", "gaps after agents",
-  "co zostało do zrobienia", "post-implementation review".
+  [DEPRECATED / MERGED] Production follow-up audit skill. 
+  This skill is redundant with the Review phase of vc-workflow and the standalone
+  vc-review skill. The workflow has been consolidated.
+  Trigger phrases: "follow-up check", "followup audit", "czy sa jeszcze luki",
+  "readiness before hands-on", "audit this implementation", "po implementacji",
+  "gaps after agents", "co zostało do zrobienia", "post-implementation review".
+compatibility:
+  tools: []
 ---
 
 # vc-followup
 
-Follow-up skill for post-implementation review of agent-delivered work.
-Use this when the team asks for "follow-up check", "czy sa jeszcze luki",
-"readiness before hands-on", or "audit this implementation after plan execution".
+## Operator Entry
 
-## Core Contract
+Operator enters the framework session through:
 
-Always run this sequence:
-
-1. `vc-init` (history + structure baseline)
-2. `vc-workflow` (Examine -> optional Research -> Implement context)
-3. `vc-agents` first; use `vc-delegate` only for small or model-agnostic delegated audits
-4. Final synthesis by primary agent (you)
-
-Do not skip sequence unless user explicitly opts out.
-
-## Required Inputs
-
-- Repo root path (`$ROOT`)
-- Pipeline slug (for example `YYYYMMDD_followup-agent2`)
-- Target scope (modules/features touched today)
-- Quality gate commands for this repo
-
-## Non-Negotiables
-
-- Use loctree MCP as first exploration layer; fail-fast if snapshot is stale.
-- Use semgrep as first security gate.
-- Rust repos: run `cargo clippy -- -D warnings`.
-- Run tests relevant to touched surfaces plus at least one cross-pipeline e2e test.
-- Findings are primary output, sorted by severity (`P0`, `P1`, `P2`).
-- Every finding must include concrete file references.
-
-## Phase A - Bootstrap (vc-init)
-
-1. Refresh history index:
-
-- `aicx_store(hours=168, project=<project>)`
-- `aicx_refs(hours=168, project=<project>, strict=true)`
-- optional: `aicx_rank(project=<project>, hours=168, strict=true, top=5)`
-
-If AICX MCP is unavailable, fall back to the `aicx` CLI if present.
-
-2. Map structure:
-
-- `repo-view(project)`
-- `focus(directory)` for 1-3 target dirs
-- `follow(scope="all")` when risk signals appear
-
-3. Produce situational summary with:
-
-- open signals from indexed history
-- repo health and top hubs
-- target scope and risks
-
-## Phase B - Workflow Context (vc-workflow)
-
-Create pipeline artifacts:
-
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_CONTEXT.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_RESEARCH.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`
-
-`CONTEXT.md` must include:
-
-- repo health
-- critical files table
-- risk map
-- phase decision (research needed or not)
-
-`RESEARCH.md` should be concise and only cover unknowns that affect architecture,
-runtime behavior, or production readiness.
-
-## Phase C - Delegation (vc-agents)
-
-Prepare at least 2 audit tracks:
-
-1. Runtime/architecture audit
-2. Hands-on readiness and gate audit
-
-### Mandatory preamble in each plan
-
-```text
-You work on a living tree with Vibecrafting methodology, so concurrent changes are expected.
-Adapt proactively and continue, but this is never permission to skip quality, security, or test gates.
-Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
+```bash
+vibecrafted start
+# or
+vc-start
+# same default board as: vc-start vibecrafted
 ```
 
-### Subagent plan skeleton
+Do not launch `vc-followup` directly. Its operator-facing replacements are:
 
-```markdown
-# Task: <short title>
-
-Goal:
-
-- <1-3 bullets>
-
-Scope:
-
-- In scope: <areas>
-- Out of scope: <areas>
-
-Acceptance:
-
-- [ ] <objective outcome>
-- [ ] <objective outcome>
-- [x] refinement
-
-Test gate:
-
-- semgrep --config auto --error --quiet
-- cargo clippy -- -D warnings
-- <repo specific tests>
-
-Context:
-
-- <short context from CONTEXT.md + RESEARCH.md>
+```bash
+vibecrafted review <agent> --file '/path/to/plan.md'
 ```
 
-### Spawn method
-
-Use the portable scripts from `vc-agents` (see `vc-agents` SKILL.md for commands).
-Write plans to `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/`
-and reports to `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
-
-## Phase D - Follow-up Synthesis (Primary Agent)
-
-After reports arrive:
-
-1. Validate subagent claims against real code (`slice/find/rg` + file reads).
-2. Re-run mandatory gates on current tree.
-3. Build one consolidated verdict:
-
-- implementation gaps
-- blockers vs caveats
-- readiness score
-- exact next fixes
-
-## Severity Model
-
-- `P0` - release/blocking issue (crash, compile break, wrong runtime path)
-- `P1` - high risk / likely regression in production flows
-- `P2` - quality/usability/observability gap, non-blocking
-
-## Output Format (Mandatory)
-
-Use this exact top-level structure in final response:
-
-```text
-Current state: <what is wrong or still risky>
-Proposal: <target state + why>
-Migration plan: <ordered concrete steps>
-Quick win: <one immediate high-impact action>
+```bash
+vc-review <agent> --prompt '<prompt>'
 ```
 
-Then include:
+If review finds `P0` / `P1` gaps, route immediately to:
 
-- Findings list (P0/P1/P2, with file refs)
-- Gate results (pass/fail + command)
-- Hands-on readiness verdict (`GO`, `GO-WITH-CAVEATS`, `NO-GO`)
-- Confidence score (0-100)
-
-## Ready-to-Use Prompts
-
-### Prompt 1 - Runtime audit subagent
-
-```text
-Task: Follow-up runtime audit for Agent implementation
-
-Review runtime routing, tool execution path, fallback behavior, and persistence consistency.
-Focus on whether new runtime is truly used in all intended paths.
-
-Deliver:
-- P0/P1/P2 findings with file:line evidence
-- Exact mismatch points between intended and actual runtime
-- Minimal remediation sequence
-
-Run gates:
-- semgrep --config auto --error --quiet
-- cargo clippy -- -D warnings
+```bash
+vibecrafted marbles <agent> --file '/path/to/plan.md'
 ```
 
-### Prompt 2 - Hands-on readiness subagent
+> **DEPRECATED**: This skill caused logical drift by replicating the "Review & Marbles Escalation" loop already present in `vc-workflow`, `vc-justdo`, and `vc-review`.
 
-```text
-Task: Hands-on readiness follow-up audit
+To perform a followup audit:
 
-Verify that codebase is ready for manual desktop testing:
-- build/test gates
-- operational assumptions (env/permissions)
-- UX blockers for real-world session
+1. If you are reviewing a branch or PR gap, use **`vc-review`** directly to generate artifacts.
+2. If those finding artifacts contain `P0`/`P1` issues, immediately route to **`vc-marbles`** to loop through and fix them.
 
-Deliver:
-- blocker/caveat list
-- readiness verdict and confidence score
-- concrete smoke checklist for desktop test session
-
-Run gates:
-- semgrep --config auto --error --quiet
-- cargo clippy -- -D warnings
-- targeted tests for touched modules
-```
-
-## Anti-Patterns
-
-- Treating green unit tests as production readiness proof.
-- Reporting only summary without severity-ranked findings.
-- Skipping file-level evidence.
-- Running subagents without living-tree preamble.
-- Ending without a clear `GO/NO-GO` recommendation.
-
----
-
-## Pipeline Position
-
-```
-scaffold → init → workflow → [FOLLOWUP] → marbles → dou → decorate → hydrate → release
-                             ^^^^^^^^^^
-```
-
-Followup sits at the end of the Craft phase. Its findings determine whether
-the work proceeds to convergence (marbles) or needs another implementation pass.
-
----
-
-VetCoders follow-up principle:
-"Green gates are necessary, not sufficient. Runtime truth wins."
+Do not use this file anymore. Follow the `vc-review` → `vc-marbles` pipeline instead.

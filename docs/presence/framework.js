@@ -1,6 +1,153 @@
 (function () {
     var prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     var DPR_CAP = prefersReducedMotion ? 1.25 : 2;
+    var frameworkLocale = /^pl\b/i.test(document.documentElement.lang || '') ? 'pl' : 'en';
+    var FRAMEWORK_I18N = {
+        en: {
+            overlayPhase: 'Phase',
+            overlayConverge: 'Converge',
+            overlayMarbles: 'Marbles',
+            showcaseKicker: 'Framework Playground',
+            showcaseHeading: 'Command the convergence board',
+            showcaseLead: 'Board-first teaching surface. Trace the frame, tune the grooves, invite specialists, then let Marbles run the convergence batches.',
+            defaultEyebrow: 'Phase 0 · Setup',
+            defaultPressCopy: 'Define the board geometry.',
+            operators: 'Operators',
+            choosePhase: 'Choose Phase',
+            alerts: {
+                dou: {title: 'DoU', detail: 'Blockers surfaced'},
+                review: {title: 'Review', detail: 'Weak fits exposed'}
+            },
+            hints: {
+                workflow: 'Tune groove density until the board exposes the right amount of working capacity.',
+                init: 'Bootstrap context so the first true grooves are cut from history instead of guessed from nothing.',
+                research: 'Probe the lane choices before committing force. Research narrows the search space and marks the promising paths.',
+                marbles: 'Set the marbles count and force, then let the board run the convergence sequence by itself.',
+                agents: 'Select specialist count and spawn them into the grooves.',
+                scaffold: 'Choose the outer frame first. Capacity comes later, once the board shape is real.',
+                review: 'Run a stress pass on the first placements before the noisy convergence loops begin.',
+                followup: 'Shake the board and see which claims of progress were never truly anchored.',
+                prune: 'Remove weak or unnecessary fits so the board can converge around the stronger core.',
+                dou: 'Flash the undone truth in red and expose what still blocks shipping.',
+                hydrate: 'Fill the remaining critical gaps with deterministic precision.',
+                decorate: 'Apply final polish pass to saturate colors and sharpen the finish.',
+                release: 'Launch the finished surface and release the loop to the market.'
+            },
+            phaseOverrides: {}
+        },
+        pl: {
+            overlayPhase: 'Faza',
+            overlayConverge: 'Domknięcie',
+            overlayMarbles: 'Marbles',
+            showcaseKicker: 'Playground frameworku',
+            showcaseHeading: 'Steruj planszą konwergencji',
+            showcaseLead: 'Plansza jako powierzchnia nauki. Wyznacz ramę, dostrój rowki, zaproś specjalistów, a potem pozwól Marbles uruchomić batchowe domykanie.',
+            defaultEyebrow: 'Faza 0 · Setup',
+            defaultPressCopy: 'Zdefiniuj geometrię planszy.',
+            operators: 'Operator',
+            choosePhase: 'Wybierz fazę',
+            alerts: {
+                dou: {title: 'DoU', detail: 'Blokery ujawnione'},
+                review: {title: 'Review', detail: 'Słabe dopasowania ujawnione'}
+            },
+            hints: {
+                workflow: 'Dostrój gęstość rowków, aż plansza pokaże właściwą pojemność roboczą.',
+                init: 'Zainicjuj kontekst, żeby pierwsze prawdziwe rowki były wycinane z historii zamiast zgadywane od zera.',
+                research: 'Przetestuj możliwe tory, zanim dołożysz siłę. Research zawęża przestrzeń szukania i zaznacza obiecujące ścieżki.',
+                marbles: 'Ustaw liczbę kulek i siłę, a potem pozwól planszy samodzielnie uruchomić sekwencję konwergencji.',
+                agents: 'Wybierz liczbę specjalistów i wpuść ich w rowki.',
+                scaffold: 'Najpierw wybierz zewnętrzną ramę. Pojemność przychodzi później, gdy kształt planszy jest już prawdziwy.',
+                review: 'Uruchom pass stresowy dla pierwszych ułożeń, zanim zaczną się głośniejsze pętle domykania.',
+                followup: 'Potrząśnij planszą i sprawdź, które deklaracje postępu nigdy nie były naprawdę osadzone.',
+                prune: 'Usuń słabe albo zbędne dopasowania, żeby plansza mogła domknąć się wokół mocniejszego rdzenia.',
+                dou: 'Pokaż na czerwono prawdę o niedomknięciu i ujawnij, co nadal blokuje release.',
+                hydrate: 'Wypełnij pozostałe krytyczne luki z deterministyczną precyzją.',
+                decorate: 'Nałóż końcowy polish pass, żeby nasycić kolory i wyostrzyć finish.',
+                release: 'Wypuść gotową powierzchnię i uwolnij pętlę na rynek.'
+            },
+            phaseOverrides: {
+                scaffold: {
+                    eyebrow: 'Faza 0 · Setup',
+                    title: 'Wyznacz zewnętrzną ramę',
+                    description: 'Najpierw wyznacz granicę. Scaffold dotyczy tylko sylwetki planszy, zanim zdecydujemy, ile rowków ma unieść.',
+                    detail: 'Szkielet układu · blokada geometrii'
+                },
+                init: {
+                    eyebrow: 'Faza 1 · Twórz',
+                    title: 'Wytraw pierwsze rowki',
+                    description: 'Init zakotwicza planszę w rzeczywistości. Historia i struktura zaczynają wycinać prawdziwe rowki, żeby późniejsza praca miała gdzie lądować.',
+                    detail: 'Ładowanie kontekstu · pierwsze rowki'
+                },
+                research: {
+                    eyebrow: 'Faza 1 · Twórz',
+                    title: 'Zmapuj wiarygodne tory',
+                    description: 'Research bada przestrzeń opcji, zanim wejdziemy w throughput. Plansza zaczyna podświetlać, które rowki mają znaczenie, które są zmyłką i gdzie dołożyć kolejne ciśnienie.',
+                    detail: 'Skan opcji · odkrywanie trasy'
+                },
+                workflow: {
+                    eyebrow: 'Faza 1 · Twórz',
+                    title: 'Ustaw gęstość rowków',
+                    description: 'Tutaj definiujemy pojemność. Workflow decyduje, ile rowków plansza wystawi, żeby dalsza praca wpadała w prawdziwy model operacyjny zamiast pustej tekstury.',
+                    detail: 'Liczba rowków · strojenie gęstości'
+                },
+                agents: {
+                    eyebrow: 'Faza 1 · Twórz',
+                    title: 'Wpuść pierwszych specjalistów',
+                    description: 'Kilka celowych kulek ląduje czysto. Wczesna praca agentów ma być precyzyjna, a nie jak chaos rozpylony po planszy.',
+                    detail: 'Niski chaos · oceaniczne kulki'
+                },
+                marbles: {
+                    eyebrow: 'Faza 2 · Domykaj',
+                    title: 'Dodaj siłę i zaakceptuj wariancję',
+                    description: 'Docierają kolejne batch’e i rośnie entropia. To uczciwy środek: throughput przyspiesza, ale rośnie też szum.',
+                    detail: 'Rzuty batchowe · rosnąca entropia'
+                },
+                review: {
+                    eyebrow: 'Faza 2 · Domykaj',
+                    title: 'Dociśnij poruszającą się planszę',
+                    description: 'Review sprawdza, czy ułożony wzór naprawdę odpowiada intencji. Słabe dopasowania, spillover i podejrzane ułożenia stają się widoczne pod presją.',
+                    detail: 'Brama jakości · wykrywanie słabych dopasowań'
+                },
+                followup: {
+                    eyebrow: 'Faza 2 · Domykaj',
+                    title: 'Strząśnij fałszywe sukcesy',
+                    description: 'Luźne kulki zaczynają odpadać. Followup to moment, w którym głośne deklaracje sukcesu zderzają się z tym, co naprawdę się trzyma.',
+                    detail: 'Grawitacyjne czyszczenie · nadmiar odpada'
+                },
+                prune: {
+                    eyebrow: 'Faza 2 · Domykaj',
+                    title: 'Przytnij do runtime’owego rdzenia',
+                    description: 'Część pozornie solidnych elementów jest usuwana celowo. Prune otwiera luki na nowo, żeby plansza mogła domknąć się wokół mocniejszego kształtu.',
+                    detail: 'Celowe luki · martwy ciężar znika'
+                },
+                dou: {
+                    eyebrow: 'Faza 3 · Audyt',
+                    title: 'Definition of Undone',
+                    description: 'Wyciągnij na czerwono prawdę. Uruchom systematyczną analizę luk na całej powierzchni produktu, żeby zobaczyć, co nadal blokuje wysyłkę.',
+                    detail: 'Plague check · audyt gotowości'
+                },
+                decorate: {
+                    eyebrow: 'Faza 3 · Wdrażaj',
+                    title: 'Zamień spójność w wykończenie',
+                    description: 'Osadzone kulki zyskują nasycenie i ostrość. Decorate nie jest przypadkową ornamentyką; to końcowy pass spójności, który sprawia, że system czuje się intencjonalny.',
+                    detail: 'Podbicie nasycenia · pass wykończenia'
+                },
+                hydrate: {
+                    eyebrow: 'Faza 3 · Wdrażaj',
+                    title: 'Wypełnij dokładnie brakujące szczeliny',
+                    description: 'Tutaj ruch zmienia ton. Pozostałe luki są domykane deterministycznie, po jednym krytycznym dla launchu otworze naraz.',
+                    detail: 'Precyzyjne wypełnienie · domknięcie pod rynek'
+                },
+                release: {
+                    eyebrow: 'Krok końcowy · Release',
+                    title: 'Wypuść kod na rynek',
+                    description: 'Plansza rozświetla się, utrzymuje wzór, a potem blednie przed kolejnym cyklem. Shipping nie jest brakiem ruchu; to domknięta pętla gotowa, by zacząć od nowa.',
+                    detail: 'Stabilna plansza · reset na kolejny cykl'
+                }
+            }
+        }
+    };
+    var FRAMEWORK_TEXT = FRAMEWORK_I18N[frameworkLocale];
 
     var PHASES = [
         {
@@ -134,6 +281,9 @@
             snapshotRatio: 0.34
         }
     ];
+    PHASES = PHASES.map(function (phaseDef) {
+        return Object.assign({}, phaseDef, FRAMEWORK_TEXT.phaseOverrides[phaseDef.name] || {});
+    });
 
     var SHAPES = ['circle', 'square', 'hexagon', 'spiral', 'waves', 'grid'];
     var PAL = {
@@ -252,48 +402,57 @@
     }
 
     function phaseCommand(phaseDef) {
-        return 'vc-' + phaseDef.name;
+        if (phaseDef.name === 'init') {
+            return 'vibecrafted init claude';
+        }
+        if (phaseDef.name === 'agents') {
+            return 'vibecrafted partner claude';
+        }
+        if (phaseDef.name === 'scaffold' || phaseDef.name === 'research' || phaseDef.name === 'workflow' || phaseDef.name === 'dou') {
+            return 'vibecrafted ' + phaseDef.name + ' claude';
+        }
+        return 'vibecrafted ' + phaseDef.name + ' codex';
     }
 
     function phaseHint(phaseDef) {
         if (phaseDef.name === 'workflow') {
-            return 'Tune groove density until the board exposes the right amount of working capacity.';
+            return FRAMEWORK_TEXT.hints.workflow;
         }
         if (phaseDef.name === 'init') {
-            return 'Bootstrap context so the first true grooves are cut from history instead of guessed from nothing.';
+            return FRAMEWORK_TEXT.hints.init;
         }
         if (phaseDef.name === 'research') {
-            return 'Probe the lane choices before committing force. Research narrows the search space and marks the promising paths.';
+            return FRAMEWORK_TEXT.hints.research;
         }
         if (phaseDef.name === 'marbles') {
-            return 'Set the marbles count and force, then let the board run the convergence sequence by itself.';
+            return FRAMEWORK_TEXT.hints.marbles;
         }
         if (phaseDef.name === 'agents') {
-            return 'Select specialist count and spawn them into the grooves.';
+            return FRAMEWORK_TEXT.hints.agents;
         }
         if (phaseDef.name === 'scaffold') {
-            return 'Choose the outer frame first. Capacity comes later, once the board shape is real.';
+            return FRAMEWORK_TEXT.hints.scaffold;
         }
         if (phaseDef.name === 'review') {
-            return 'Run a stress pass on the first placements before the noisy convergence loops begin.';
+            return FRAMEWORK_TEXT.hints.review;
         }
         if (phaseDef.name === 'followup') {
-            return 'Shake the board and see which claims of progress were never truly anchored.';
+            return FRAMEWORK_TEXT.hints.followup;
         }
         if (phaseDef.name === 'prune') {
-            return 'Remove weak or unnecessary fits so the board can converge around the stronger core.';
+            return FRAMEWORK_TEXT.hints.prune;
         }
         if (phaseDef.name === 'dou') {
-            return 'Flash the undone truth in red and expose what still blocks shipping.';
+            return FRAMEWORK_TEXT.hints.dou;
         }
         if (phaseDef.name === 'hydrate') {
-            return 'Fill the remaining critical gaps with deterministic precision.';
+            return FRAMEWORK_TEXT.hints.hydrate;
         }
         if (phaseDef.name === 'decorate') {
-            return 'Apply final polish pass to saturate colors and sharpen the finish.';
+            return FRAMEWORK_TEXT.hints.decorate;
         }
         if (phaseDef.name === 'release') {
-            return 'Launch the finished surface and release the loop to the market.';
+            return FRAMEWORK_TEXT.hints.release;
         }
         return phaseDef.description;
     }
@@ -304,9 +463,9 @@
             : [
                 '  <div class="framework-playground__meta">',
                 '    <div class="framework-playground__meta-copy">',
-                '      <p class="framework-playground__kicker">Framework Playground</p>',
-                '      <h3 class="framework-playground__heading">Command the convergence board</h3>',
-                '      <p class="framework-playground__lede">Board-first teaching surface. Trace the frame, tune the grooves, invite specialists, then let Marbles run the convergence batches.</p>',
+                '      <p class="framework-playground__kicker">' + FRAMEWORK_TEXT.showcaseKicker + '</p>',
+                '      <h3 class="framework-playground__heading">' + FRAMEWORK_TEXT.showcaseHeading + '</h3>',
+                '      <p class="framework-playground__lede">' + FRAMEWORK_TEXT.showcaseLead + '</p>',
                 '    </div>',
                 '  </div>'
             ].join('');
@@ -315,28 +474,28 @@
             metaSection,
             '  <div class="framework-playground__body">',
             '    <p class="framework-playground__pressline">',
-            '      <span class="framework-playground__press-kicker" data-framework-phase-eyebrow>Phase 0 · Setup</span>',
-            '      <span class="framework-playground__press-copy" data-framework-phase-press>Define the board geometry.</span>',
+            '      <span class="framework-playground__press-kicker" data-framework-phase-eyebrow>' + FRAMEWORK_TEXT.defaultEyebrow + '</span>',
+            '      <span class="framework-playground__press-copy" data-framework-phase-press>' + FRAMEWORK_TEXT.defaultPressCopy + '</span>',
             '    </p>',
             '    <div class="framework-playground__board-column">',
             '      <div class="framework-playground__stage">',
             '        <canvas class="framework-playground__canvas" aria-hidden="true"></canvas>',
             '        <div class="framework-playground__overlay" aria-hidden="true">',
-            '          <span>Phase <strong data-framework-phase-label>Scaffold</strong></span>',
-            '          <span>Converge <strong data-framework-coverage>0%</strong></span>',
-            '          <span>Marbles <strong data-framework-marbles>0</strong></span>',
+            '          <span>' + FRAMEWORK_TEXT.overlayPhase + ' <strong data-framework-phase-label>Scaffold</strong></span>',
+            '          <span>' + FRAMEWORK_TEXT.overlayConverge + ' <strong data-framework-coverage>0%</strong></span>',
+            '          <span>' + FRAMEWORK_TEXT.overlayMarbles + ' <strong data-framework-marbles>0</strong></span>',
             '        </div>',
             '        <p class="framework-playground__prompt" aria-hidden="true">',
             '          <span class="framework-playground__prompt-mark">$ &gt;</span>',
-            '          <span class="framework-playground__prompt-command" data-framework-command>vc-scaffold</span>',
+            '          <span class="framework-playground__prompt-command" data-framework-command>vibecrafted scaffold claude</span>',
             '        </p>',
             '      </div>',
             '    </div>',
             '    <aside class="framework-playground__side-column">',
-            '      <p class="framework-playground__side-kicker">Operators</p>',
+            '      <p class="framework-playground__side-kicker">' + FRAMEWORK_TEXT.operators + '</p>',
             '      <p class="framework-playground__side-copy" data-framework-phase-hint></p>',
             '      <div class="framework-playground__controls" data-framework-controls></div>',
-            '      <p class="framework-playground__side-kicker" style="margin-top: 0.35rem;">Choose Phase</p>',
+            '      <p class="framework-playground__side-kicker" style="margin-top: 0.35rem;">' + FRAMEWORK_TEXT.choosePhase + '</p>',
             '      <div class="framework-playground__rail-shell">',
             '        <div class="framework-playground__rail framework-playground__rail--stack" data-framework-rail></div>',
             '      </div>',
@@ -344,6 +503,18 @@
             '  </div>',
             '</div>'
         ].join('');
+    }
+
+    function replaceRootMarkup(root, markup) {
+        var parser = new window.DOMParser();
+        var parsed = parser.parseFromString(markup, 'text/html');
+        var fragment = document.createDocumentFragment();
+
+        while (parsed.body.firstChild) {
+            fragment.appendChild(parsed.body.firstChild);
+        }
+
+        root.replaceChildren(fragment);
     }
 
     function initFrameworkPlayground(root, rootIndex) {
@@ -355,7 +526,7 @@
         root.classList.add('framework-playground');
         root.classList.toggle('framework-playground--standalone', layout === 'standalone');
 
-        root.innerHTML = buildShowcaseMarkup(layout);
+        replaceRootMarkup(root, buildShowcaseMarkup(layout));
 
         var stage = root.querySelector('.framework-playground__stage');
         var canvas = root.querySelector('.framework-playground__canvas');
@@ -413,16 +584,16 @@
         function currentPhaseCommand() {
             var phaseDef = PHASES[phase];
             if (phaseDef.name === 'scaffold') {
-                return 'vc-scaffold --shape ' + SHAPES[boardShape];
+                return 'vibecrafted scaffold claude --prompt "Shape the board as ' + SHAPES[boardShape] + '"';
             }
             if (phaseDef.name === 'workflow') {
-                return 'vc-workflow --density ' + boardDensity.toFixed(1);
+                return 'vibecrafted workflow claude --prompt "Tune groove density to ' + boardDensity.toFixed(1) + '"';
             }
             if (phaseDef.name === 'agents') {
-                return 'vc-agents --count ' + agentBatchSize;
+                return 'vibecrafted partner claude --prompt "Spawn ' + agentBatchSize + ' specialist tracks"';
             }
             if (phaseDef.name === 'marbles') {
-                return 'vc-marbles --count ' + marbleRunCount;
+                return 'vibecrafted marbles codex --count ' + marbleRunCount + ' --depth 3';
             }
             return phaseCommand(phaseDef);
         }
@@ -430,16 +601,10 @@
         function currentAlertCopy() {
             var phaseDef = PHASES[phase];
             if (phaseDef.name === 'dou') {
-                return {
-                    title: 'DoU',
-                    detail: 'Blockers surfaced'
-                };
+                return FRAMEWORK_TEXT.alerts.dou;
             }
             if (phaseDef.name === 'review') {
-                return {
-                    title: 'Review',
-                    detail: 'Weak fits exposed'
-                };
+                return FRAMEWORK_TEXT.alerts.review;
             }
             return {
                 title: phaseDef.label,
@@ -461,6 +626,15 @@
 
         function setRangePct(input, pct) {
             input.style.setProperty('--range-pct', pct + '%');
+        }
+
+        function createControlCaption(text, tagName) {
+            var node = document.createElement(tagName || 'label');
+            node.style.fontSize = '0.7rem';
+            node.style.color = 'var(--steel-dark)';
+            node.style.fontFamily = 'var(--font-mono)';
+            node.textContent = text;
+            return node;
         }
 
         function resolvePhaseIndex(name) {
@@ -492,9 +666,9 @@
                     } else if (shape === 'square') {
                         isInside = Math.abs(dx) <= boardRadius * 0.85 && Math.abs(dy) <= boardRadius * 0.85;
                     } else if (shape === 'hexagon') {
-                        var q = (2/3 * dx) / (boardRadius * 0.8);
-                        var r = (-1/3 * dx + Math.sqrt(3)/3 * dy) / (boardRadius * 0.8);
-                        var s = -q-r;
+                        var q = (2 / 3 * dx) / (boardRadius * 0.8);
+                        var r = (-1 / 3 * dx + Math.sqrt(3) / 3 * dy) / (boardRadius * 0.8);
+                        var s = -q - r;
                         isInside = Math.abs(q) <= 1 && Math.abs(r) <= 1 && Math.abs(s) <= 1;
                     } else if (shape === 'spiral') {
                         var angle = Math.atan2(dy, dx);
@@ -649,20 +823,20 @@
             var dx = tx - m.x;
             var dy = ty - m.y;
             var dist = Math.sqrt(dx * dx + dy * dy);
-            
+
             // Magnetic pull: stronger as it gets closer
             var pullMagnitude = m.target ? (dist < 40 ? 0.04 : 0.015) : 0.008;
             m.vx += dx * pullMagnitude;
             m.vy += dy * pullMagnitude;
-            
+
             // Damping increases as it gets closer to target
             var damping = m.target && dist < 10 ? 0.75 : 0.88;
             m.vx *= damping;
             m.vy *= damping;
-            
+
             m.x += m.vx * dt;
             m.y += m.vy * dt;
-            
+
             if (dist < 1.5 && Math.abs(m.vx) < 0.5 && Math.abs(m.vy) < 0.5) {
                 m.settled = true;
                 m.x = tx;
@@ -700,7 +874,7 @@
 
         function renderPhaseControls(phaseIdx) {
             var p = PHASES[phaseIdx];
-            controlsEl.innerHTML = '';
+            controlsEl.replaceChildren();
 
             var wrap = document.createElement('div');
             wrap.className = 'framework-playground__controls-inner';
@@ -710,7 +884,7 @@
                 shapeRow.style.display = 'flex';
                 shapeRow.style.alignItems = 'center';
                 shapeRow.style.justifyContent = 'space-between';
-                shapeRow.innerHTML = '<span style="font-size:0.7rem; color:var(--steel-dark); font-family:var(--font-mono);">LAYOUT</span>';
+                shapeRow.appendChild(createControlCaption('LAYOUT', 'span'));
 
                 var shapeNav = document.createElement('div');
                 shapeNav.style.display = 'flex';
@@ -718,8 +892,8 @@
 
                 var prevShape = document.createElement('button');
                 prevShape.className = 'framework-playground__control-btn';
-                prevShape.innerHTML = '&lt;';
-                prevShape.onclick = function() {
+                prevShape.textContent = '<';
+                prevShape.onclick = function () {
                     boardShape = (boardShape - 1 + SHAPES.length) % SHAPES.length;
                     buildSlots();
                     render();
@@ -735,8 +909,8 @@
 
                 var nextShape = document.createElement('button');
                 nextShape.className = 'framework-playground__control-btn';
-                nextShape.innerHTML = '&gt;';
-                nextShape.onclick = function() {
+                nextShape.textContent = '>';
+                nextShape.onclick = function () {
                     boardShape = (boardShape + 1) % SHAPES.length;
                     buildSlots();
                     render();
@@ -752,7 +926,7 @@
                 var densityRow = document.createElement('div');
                 densityRow.style.display = 'grid';
                 densityRow.style.gap = '0.35rem';
-                densityRow.innerHTML = '<label style="font-size:0.7rem; color:var(--steel-dark); font-family:var(--font-mono);">FRAME: ' + SHAPES[boardShape].toUpperCase() + '</label>';
+                densityRow.appendChild(createControlCaption('FRAME: ' + SHAPES[boardShape].toUpperCase()));
                 var frameNote = document.createElement('div');
                 frameNote.className = 'framework-playground__side-copy';
                 frameNote.textContent = 'Lock the boundary first. Groove count belongs to Workflow.';
@@ -762,25 +936,31 @@
                 var acceptBtn = document.createElement('button');
                 acceptBtn.className = 'framework-playground__action-btn';
                 acceptBtn.textContent = 'ACCEPT FRAME';
-                acceptBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                acceptBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(acceptBtn);
             } else if (p.name === 'init') {
                 var initBtn = document.createElement('button');
                 initBtn.className = 'framework-playground__action-btn';
                 initBtn.textContent = 'BOOTSTRAP CONTEXT';
-                initBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                initBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(initBtn);
             } else if (p.name === 'research') {
                 var researchBtn = document.createElement('button');
                 researchBtn.className = 'framework-playground__action-btn';
                 researchBtn.textContent = 'RUN RESEARCH';
-                researchBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                researchBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(researchBtn);
             } else if (p.name === 'workflow') {
                 var densityRow = document.createElement('div');
                 densityRow.style.display = 'grid';
                 densityRow.style.gap = '0.35rem';
-                densityRow.innerHTML = '<label style="font-size:0.7rem; color:var(--steel-dark); font-family:var(--font-mono);">DENSITY: ' + boardDensity.toFixed(1) + ' · GROOVES: ' + slots.length + '</label>';
+                densityRow.appendChild(createControlCaption('DENSITY: ' + boardDensity.toFixed(1) + ' · GROOVES: ' + slots.length));
                 var densitySlider = document.createElement('input');
                 densitySlider.type = 'range';
                 densitySlider.min = '0.5';
@@ -788,7 +968,7 @@
                 densitySlider.step = '0.1';
                 densitySlider.value = boardDensity;
                 setRangePct(densitySlider, (boardDensity - 0.5) / 1.5 * 100);
-                densitySlider.oninput = function() {
+                densitySlider.oninput = function () {
                     boardDensity = parseFloat(this.value);
                     setRangePct(this, (boardDensity - 0.5) / 1.5 * 100);
                     buildSlots();
@@ -803,20 +983,22 @@
                 var acceptBtn = document.createElement('button');
                 acceptBtn.className = 'framework-playground__action-btn';
                 acceptBtn.textContent = 'LOCK GROOVES';
-                acceptBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                acceptBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(acceptBtn);
             } else if (p.name === 'agents') {
                 var agentBatchRow = document.createElement('div');
                 agentBatchRow.style.display = 'grid';
                 agentBatchRow.style.gap = '0.35rem';
-                agentBatchRow.innerHTML = '<label style="font-size:0.7rem; color:var(--steel-dark); font-family:var(--font-mono);">SPECIALIST COUNT: ' + agentBatchSize + '</label>';
+                agentBatchRow.appendChild(createControlCaption('SPECIALIST COUNT: ' + agentBatchSize));
                 var agentSlider = document.createElement('input');
                 agentSlider.type = 'range';
                 agentSlider.min = '1';
                 agentSlider.max = '10';
                 agentSlider.value = agentBatchSize;
                 setRangePct(agentSlider, (agentBatchSize - 1) / 9 * 100);
-                agentSlider.oninput = function() {
+                agentSlider.oninput = function () {
                     agentBatchSize = parseInt(this.value);
                     setRangePct(this, (agentBatchSize - 1) / 9 * 100);
                     renderPhaseControls(phaseIdx);
@@ -833,7 +1015,9 @@
                 var nextBtn = document.createElement('button');
                 nextBtn.className = 'framework-playground__action-btn framework-playground__action-btn--muted';
                 nextBtn.textContent = 'PROCEED TO MARBLES';
-                nextBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                nextBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(nextBtn);
             } else if (p.name === 'review') {
                 var reviewBtn = document.createElement('button');
@@ -845,20 +1029,22 @@
                 var reviewNextBtn = document.createElement('button');
                 reviewNextBtn.className = 'framework-playground__action-btn framework-playground__action-btn--muted';
                 reviewNextBtn.textContent = 'PROCEED TO FOLLOWUP';
-                reviewNextBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                reviewNextBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(reviewNextBtn);
             } else if (p.name === 'marbles') {
                 var batchRow = document.createElement('div');
                 batchRow.style.display = 'grid';
                 batchRow.style.gap = '0.35rem';
-                batchRow.innerHTML = '<label style="font-size:0.7rem; color:var(--steel-dark); font-family:var(--font-mono);">--COUNT: ' + marbleRunCount + '</label>';
+                batchRow.appendChild(createControlCaption('--COUNT: ' + marbleRunCount));
                 var batchSlider = document.createElement('input');
                 batchSlider.type = 'range';
                 batchSlider.min = '1';
                 batchSlider.max = '8';
                 batchSlider.value = marbleRunCount;
                 setRangePct(batchSlider, (marbleRunCount - 1) / 7 * 100);
-                batchSlider.oninput = function() {
+                batchSlider.oninput = function () {
                     marbleRunCount = parseInt(this.value);
                     setRangePct(this, (marbleRunCount - 1) / 7 * 100);
                     renderPhaseControls(phaseIdx);
@@ -870,7 +1056,7 @@
                 var powerRow = document.createElement('div');
                 powerRow.style.display = 'grid';
                 powerRow.style.gap = '0.35rem';
-                powerRow.innerHTML = '<label style="font-size:0.7rem; color:var(--steel-dark); font-family:var(--font-mono);">POWER: ' + marblePower.toFixed(1) + '</label>';
+                powerRow.appendChild(createControlCaption('POWER: ' + marblePower.toFixed(1)));
                 var powerSlider = document.createElement('input');
                 powerSlider.type = 'range';
                 powerSlider.min = '0.5';
@@ -878,7 +1064,7 @@
                 powerSlider.step = '0.1';
                 powerSlider.value = marblePower;
                 setRangePct(powerSlider, (marblePower - 0.5) / 2.5 * 100);
-                powerSlider.oninput = function() {
+                powerSlider.oninput = function () {
                     marblePower = parseFloat(this.value);
                     setRangePct(this, (marblePower - 0.5) / 2.5 * 100);
                     renderPhaseControls(phaseIdx);
@@ -896,7 +1082,9 @@
                 var nextBtn = document.createElement('button');
                 nextBtn.className = 'framework-playground__action-btn framework-playground__action-btn--muted';
                 nextBtn.textContent = 'PROCEED TO REVIEW';
-                nextBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                nextBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(nextBtn);
             } else if (p.name === 'followup') {
                 var followBtn = document.createElement('button');
@@ -908,7 +1096,9 @@
                 var followNextBtn = document.createElement('button');
                 followNextBtn.className = 'framework-playground__action-btn framework-playground__action-btn--muted';
                 followNextBtn.textContent = 'PROCEED TO PRUNE';
-                followNextBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                followNextBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(followNextBtn);
             } else if (p.name === 'prune') {
                 var pruneBtn = document.createElement('button');
@@ -920,7 +1110,9 @@
                 var pruneNextBtn = document.createElement('button');
                 pruneNextBtn.className = 'framework-playground__action-btn framework-playground__action-btn--muted';
                 pruneNextBtn.textContent = 'PROCEED TO DOU';
-                pruneNextBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                pruneNextBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(pruneNextBtn);
             } else if (p.name === 'dou') {
                 var douBtn = document.createElement('button');
@@ -932,21 +1124,25 @@
                 var douNextBtn = document.createElement('button');
                 douNextBtn.className = 'framework-playground__action-btn framework-playground__action-btn--muted';
                 douNextBtn.textContent = 'PROCEED TO DECORATE';
-                douNextBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                douNextBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(douNextBtn);
             } else if (p.name === 'hydrate') {
                 var hydroBatchRow = document.createElement('div');
                 hydroBatchRow.style.display = 'grid';
                 hydroBatchRow.style.gap = '0.35rem';
-                hydroBatchRow.innerHTML = '<label style="font-size:0.7rem; color:var(--steel-dark); font-family:var(--font-mono);">PRECISION FILL: ' + hydrateBatchSize + '</label>';
+                hydroBatchRow.appendChild(createControlCaption('PRECISION FILL: ' + hydrateBatchSize));
                 var hydroSlider = document.createElement('input');
-                hydroSlider.type = 'range'; hydroSlider.min = '1'; hydroSlider.max = '10';
+                hydroSlider.type = 'range';
+                hydroSlider.min = '1';
+                hydroSlider.max = '10';
                 hydroSlider.value = hydrateBatchSize;
                 setRangePct(hydroSlider, (hydrateBatchSize - 1) / 9 * 100);
-                hydroSlider.oninput = function() { 
+                hydroSlider.oninput = function () {
                     setRangePct(this, (this.value - 1) / 9 * 100);
-                    hydrateBatchSize = parseInt(this.value); 
-                    renderPhaseControls(phaseIdx); 
+                    hydrateBatchSize = parseInt(this.value);
+                    renderPhaseControls(phaseIdx);
                 };
                 hydroBatchRow.appendChild(hydroSlider);
                 wrap.appendChild(hydroBatchRow);
@@ -960,23 +1156,30 @@
                 var nextBtn = document.createElement('button');
                 nextBtn.className = 'framework-playground__action-btn framework-playground__action-btn--muted';
                 nextBtn.textContent = 'PROCEED TO RELEASE';
-                nextBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                nextBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(nextBtn);
             } else if (p.name === 'decorate') {
                 var polishRow = document.createElement('div');
                 polishRow.style.display = 'grid';
                 polishRow.style.gap = '0.35rem';
-                polishRow.innerHTML = '<label style="font-size:0.7rem; color:var(--steel-dark); font-family:var(--font-mono);">POLISH INTENSITY: ' + Math.round(polishIntensity * 100) + '%</label>';
+                polishRow.appendChild(createControlCaption('POLISH INTENSITY: ' + Math.round(polishIntensity * 100) + '%'));
                 var polishSlider = document.createElement('input');
-                polishSlider.type = 'range'; polishSlider.min = '0'; polishSlider.max = '1'; polishSlider.step = '0.01';
+                polishSlider.type = 'range';
+                polishSlider.min = '0';
+                polishSlider.max = '1';
+                polishSlider.step = '0.01';
                 polishSlider.value = polishIntensity;
                 setRangePct(polishSlider, polishIntensity * 100);
-                polishSlider.oninput = function() { 
-                    polishIntensity = parseFloat(this.value); 
+                polishSlider.oninput = function () {
+                    polishIntensity = parseFloat(this.value);
                     setRangePct(this, polishIntensity * 100);
-                    marbles.forEach(function(m) { if(m.settled) m.saturation = 0.6 + polishIntensity * 0.4; });
+                    marbles.forEach(function (m) {
+                        if (m.settled) m.saturation = 0.6 + polishIntensity * 0.4;
+                    });
                     render();
-                    renderPhaseControls(phaseIdx); 
+                    renderPhaseControls(phaseIdx);
                 };
                 polishRow.appendChild(polishSlider);
                 wrap.appendChild(polishRow);
@@ -990,7 +1193,9 @@
                 var decorateNextBtn = document.createElement('button');
                 decorateNextBtn.className = 'framework-playground__action-btn framework-playground__action-btn--muted';
                 decorateNextBtn.textContent = 'PROCEED TO HYDRATE';
-                decorateNextBtn.onclick = function() { showPhase(phaseIdx + 1); };
+                decorateNextBtn.onclick = function () {
+                    showPhase(phaseIdx + 1);
+                };
                 wrap.appendChild(decorateNextBtn);
             } else if (p.name === 'release') {
                 var launchBtn = document.createElement('button');
@@ -999,17 +1204,21 @@
                 launchBtn.style.color = 'var(--patina)';
                 launchBtn.style.background = 'rgba(90, 163, 163, 0.12)';
                 launchBtn.textContent = 'RELEASE LOOP';
-                launchBtn.onclick = function() { 
+                launchBtn.onclick = function () {
                     shipGlow = 1.0;
                     startMotionLoop();
-                    setTimeout(function() { showPhase(0, true); }, 2000);
+                    setTimeout(function () {
+                        showPhase(0, true);
+                    }, 2000);
                 };
                 wrap.appendChild(launchBtn);
             } else {
                 var nextBtn = document.createElement('button');
                 nextBtn.className = 'framework-playground__action-btn';
                 nextBtn.textContent = phaseIdx < PHASES.length - 1 ? 'PROCEED TO ' + PHASES[phaseIdx + 1].label.toUpperCase() : 'RESTART LOOP';
-                nextBtn.onclick = function() { showPhase((phaseIdx + 1) % PHASES.length); };
+                nextBtn.onclick = function () {
+                    showPhase((phaseIdx + 1) % PHASES.length);
+                };
                 wrap.appendChild(nextBtn);
             }
 
@@ -1048,7 +1257,9 @@
             } else if (p.name === 'release') {
                 shipGlow = 1.0;
                 startMotionLoop();
-                setTimeout(function() { showPhase(0, true); }, 2000);
+                setTimeout(function () {
+                    showPhase(0, true);
+                }, 2000);
             }
         }
 
@@ -1175,143 +1386,143 @@
             syncSlotVisibility();
 
             switch (p.name) {
-            case 'scaffold':
-                boardAlpha = Math.min(1, phaseTime / 400);
-                grooveRevealProgress = 0;
-                if (phaseTime < 200) {
-                    shakeX = (Math.random() - 0.5) * 4 * (1 - phaseTime / 200);
-                    shakeY = (Math.random() - 0.5) * 4 * (1 - phaseTime / 200);
-                } else {
-                    shakeX = 0;
-                    shakeY = 0;
-                }
-                break;
-            case 'init':
-                boardAlpha = Math.max(boardAlpha, 1);
-                grooveRevealProgress = Math.min(0.18, phaseTime / p.duration * 0.18);
-                break;
-            case 'research':
-                boardAlpha = Math.max(boardAlpha, 1);
-                grooveRevealProgress = Math.min(0.42, phaseTime / p.duration * 0.42);
-                break;
-            case 'workflow':
-                boardAlpha = Math.max(boardAlpha, 1);
-                grooveRevealProgress = Math.min(1, phaseTime / (p.duration * 0.65));
-                break;
-            case 'agents':
-                if (isSimulating && throwTimer <= 0) {
-                    var precise = slots.filter(function (s) {
-                        return !s.filled && s.visible;
+                case 'scaffold':
+                    boardAlpha = Math.min(1, phaseTime / 400);
+                    grooveRevealProgress = 0;
+                    if (phaseTime < 200) {
+                        shakeX = (Math.random() - 0.5) * 4 * (1 - phaseTime / 200);
+                        shakeY = (Math.random() - 0.5) * 4 * (1 - phaseTime / 200);
+                    } else {
+                        shakeX = 0;
+                        shakeY = 0;
+                    }
+                    break;
+                case 'init':
+                    boardAlpha = Math.max(boardAlpha, 1);
+                    grooveRevealProgress = Math.min(0.18, phaseTime / p.duration * 0.18);
+                    break;
+                case 'research':
+                    boardAlpha = Math.max(boardAlpha, 1);
+                    grooveRevealProgress = Math.min(0.42, phaseTime / p.duration * 0.42);
+                    break;
+                case 'workflow':
+                    boardAlpha = Math.max(boardAlpha, 1);
+                    grooveRevealProgress = Math.min(1, phaseTime / (p.duration * 0.65));
+                    break;
+                case 'agents':
+                    if (isSimulating && throwTimer <= 0) {
+                        var precise = slots.filter(function (s) {
+                            return !s.filled && s.visible;
+                        });
+                        if (precise.length > 0) {
+                            marbles.push(spawnMarble(precise[Math.floor(Math.random() * precise.length)], 0.15, 'ocean'));
+                        }
+                        throwTimer = 400 + Math.random() * 300;
+                    }
+                    break;
+                case 'marbles':
+                    if (!isSimulating && marbleRunRemaining > 0 && throwTimer <= 0) {
+                        spawnMarbleWave();
+                        marbleRunRemaining--;
+                        throwTimer = Math.max(260, 720 - marblePower * 140);
+                    }
+                    break;
+                case 'review':
+                    if (isSimulating && throwTimer <= 0) {
+                        var overflowSlots = slots.filter(function (s) {
+                            return !s.filled && s.visible;
+                        });
+                        if (overflowSlots.length > 0) {
+                            marbles.push(spawnMarble(overflowSlots[Math.floor(Math.random() * overflowSlots.length)], 0.8));
+                        }
+                        for (var o = 0; o < 3 + Math.floor(Math.random() * 4); o++) {
+                            overflowMarbles.push(spawnOverflow());
+                        }
+                        throwTimer = 200;
+                    }
+                    break;
+                case 'dou':
+                    errorFlash = Math.sin(phaseTime * 0.015) * 0.5 + 0.5;
+                    break;
+                case 'followup':
+                    if (phaseTime < 400) {
+                        shakeX = Math.sin(phaseTime * 0.08) * 3 * (1 - phaseTime / 400);
+                        shakeY = Math.cos(phaseTime * 0.06) * 2 * (1 - phaseTime / 400);
+                    } else {
+                        shakeX *= 0.9;
+                        shakeY *= 0.9;
+                    }
+                    overflowMarbles.forEach(function (m) {
+                        if (m.settled) {
+                            m.vy += 0.5;
+                            m.y += m.vy;
+                            m.alpha = Math.max(0, m.alpha - 0.008);
+                        }
                     });
-                    if (precise.length > 0) {
-                        marbles.push(spawnMarble(precise[Math.floor(Math.random() * precise.length)], 0.15, 'ocean'));
-                    }
-                    throwTimer = 400 + Math.random() * 300;
-                }
-                break;
-            case 'marbles':
-                if (!isSimulating && marbleRunRemaining > 0 && throwTimer <= 0) {
-                    spawnMarbleWave();
-                    marbleRunRemaining--;
-                    throwTimer = Math.max(260, 720 - marblePower * 140);
-                }
-                break;
-            case 'review':
-                if (isSimulating && throwTimer <= 0) {
-                    var overflowSlots = slots.filter(function (s) {
-                        return !s.filled && s.visible;
+                    overflowMarbles = overflowMarbles.filter(function (m) {
+                        return m.alpha > 0.01;
                     });
-                    if (overflowSlots.length > 0) {
-                        marbles.push(spawnMarble(overflowSlots[Math.floor(Math.random() * overflowSlots.length)], 0.8));
-                    }
-                    for (var o = 0; o < 3 + Math.floor(Math.random() * 4); o++) {
-                        overflowMarbles.push(spawnOverflow());
-                    }
-                    throwTimer = 200;
-                }
-                break;
-            case 'dou':
-                errorFlash = Math.sin(phaseTime * 0.015) * 0.5 + 0.5;
-                break;
-            case 'followup':
-                if (phaseTime < 400) {
-                    shakeX = Math.sin(phaseTime * 0.08) * 3 * (1 - phaseTime / 400);
-                    shakeY = Math.cos(phaseTime * 0.06) * 2 * (1 - phaseTime / 400);
-                } else {
-                    shakeX *= 0.9;
-                    shakeY *= 0.9;
-                }
-                overflowMarbles.forEach(function (m) {
-                    if (m.settled) {
-                        m.vy += 0.5;
-                        m.y += m.vy;
-                        m.alpha = Math.max(0, m.alpha - 0.008);
-                    }
-                });
-                overflowMarbles = overflowMarbles.filter(function (m) {
-                    return m.alpha > 0.01;
-                });
-                break;
-            case 'prune':
-                if (phaseTime < 100) {
-                    var filled = slots.filter(function (s) {
-                        return s.filled;
-                    });
-                    var toLose = Math.min(5, Math.ceil(filled.length * 0.06));
-                    for (var l = 0; l < toLose; l++) {
-                        var pick = filled[Math.floor(Math.random() * filled.length)];
-                        pick.filled = false;
-                        for (var j = marbles.length - 1; j >= 0; j--) {
-                            if (marbles[j].target === pick && marbles[j].settled) {
-                                marbles[j].settled = false;
-                                marbles[j].vy = -5 - Math.random() * 5;
-                                marbles[j].vx = (Math.random() - 0.5) * 8;
-                                marbles[j].target = null;
-                                marbles[j].landY = height + 50;
-                                marbles[j].landX = marbles[j].x;
-                                break;
+                    break;
+                case 'prune':
+                    if (phaseTime < 100) {
+                        var filled = slots.filter(function (s) {
+                            return s.filled;
+                        });
+                        var toLose = Math.min(5, Math.ceil(filled.length * 0.06));
+                        for (var l = 0; l < toLose; l++) {
+                            var pick = filled[Math.floor(Math.random() * filled.length)];
+                            pick.filled = false;
+                            for (var j = marbles.length - 1; j >= 0; j--) {
+                                if (marbles[j].target === pick && marbles[j].settled) {
+                                    marbles[j].settled = false;
+                                    marbles[j].vy = -5 - Math.random() * 5;
+                                    marbles[j].vx = (Math.random() - 0.5) * 8;
+                                    marbles[j].target = null;
+                                    marbles[j].landY = height + 50;
+                                    marbles[j].landX = marbles[j].x;
+                                    break;
+                                }
                             }
                         }
                     }
-                }
-                marbles.forEach(function (m) {
-                    if (!m.settled && !m.target) {
-                        m.vy += 0.3;
-                        m.y += m.vy;
-                        m.alpha = Math.max(0, m.alpha - 0.005);
-                    }
-                });
-                marbles = marbles.filter(function (m) {
-                    return m.alpha > 0.01 || m.settled;
-                });
-                break;
-            case 'hydrate':
-                if (isSimulating && throwTimer <= 0) {
-                    var gaps = slots.filter(function (s) {
-                        return !s.filled && s.visible;
-                    });
-                    if (gaps.length > 0) {
-                        marbles.push(spawnMarble(gaps[0], 0.05, 'forest'));
-                    }
-                    throwTimer = 500;
-                }
-                break;
-            case 'decorate':
-                marbles.forEach(function (m) {
-                    if (m.settled) m.saturation = Math.min(1, 0.6 + polishIntensity * 0.4 + phaseTime * 0.0001);
-                });
-                break;
-            case 'release':
-                if (shipGlow > 0) {
-                    shipGlow = Math.max(0, shipGlow - 0.015);
-                }
-                if (phaseTime > p.duration * 0.7) {
-                    boardAlpha = Math.max(0, boardAlpha - 0.01);
                     marbles.forEach(function (m) {
-                        m.alpha = Math.max(0, m.alpha - 0.008);
+                        if (!m.settled && !m.target) {
+                            m.vy += 0.3;
+                            m.y += m.vy;
+                            m.alpha = Math.max(0, m.alpha - 0.005);
+                        }
                     });
-                }
-                break;
+                    marbles = marbles.filter(function (m) {
+                        return m.alpha > 0.01 || m.settled;
+                    });
+                    break;
+                case 'hydrate':
+                    if (isSimulating && throwTimer <= 0) {
+                        var gaps = slots.filter(function (s) {
+                            return !s.filled && s.visible;
+                        });
+                        if (gaps.length > 0) {
+                            marbles.push(spawnMarble(gaps[0], 0.05, 'forest'));
+                        }
+                        throwTimer = 500;
+                    }
+                    break;
+                case 'decorate':
+                    marbles.forEach(function (m) {
+                        if (m.settled) m.saturation = Math.min(1, 0.6 + polishIntensity * 0.4 + phaseTime * 0.0001);
+                    });
+                    break;
+                case 'release':
+                    if (shipGlow > 0) {
+                        shipGlow = Math.max(0, shipGlow - 0.015);
+                    }
+                    if (phaseTime > p.duration * 0.7) {
+                        boardAlpha = Math.max(0, boardAlpha - 0.01);
+                        marbles.forEach(function (m) {
+                            m.alpha = Math.max(0, m.alpha - 0.008);
+                        });
+                    }
+                    break;
             }
 
             syncSlotVisibility();
@@ -1493,7 +1704,7 @@
         function showPhase(target, hardReset) {
             target = Math.max(0, Math.min(PHASES.length - 1, target));
             resetCycle(hardReset);
-            
+
             if (hardReset) {
                 for (var i = 0; i <= target; i++) {
                     phase = i;
@@ -1503,7 +1714,7 @@
                     advanceSimulation(PHASES[i].duration * (i === target ? (PHASES[i].snapshotRatio || 0.55) : 1));
                 }
             }
-            
+
             phase = target;
             render();
             updateUi(true);
@@ -1557,7 +1768,10 @@
             button.dataset.frameworkPhase = phaseDef.name;
             button.dataset.frameworkTooltip = phaseDef.title + ' — ' + phaseDef.description;
             button.setAttribute('aria-label', phaseDef.label + '. ' + phaseDef.title + '. ' + phaseDef.description);
-            button.innerHTML = '<span class="framework-playground__chip-label">' + phaseDef.label + '</span>';
+            var buttonLabel = document.createElement('span');
+            buttonLabel.className = 'framework-playground__chip-label';
+            buttonLabel.textContent = phaseDef.label;
+            button.appendChild(buttonLabel);
             button.addEventListener('click', function () {
                 showPhase(index);
             });

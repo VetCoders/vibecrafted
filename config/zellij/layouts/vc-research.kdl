@@ -1,0 +1,62 @@
+// vc-research — triple-agent research workspace
+// Launch: vibecrafted dashboard vc-research
+//
+// Design: synthesis-focused. The synthesis pane gets prime real estate (left,
+// focused). Three agent panes are stacked vertically on the right — compact
+// but visible. When agents complete, results flow to synthesis.
+//
+// Swap layouts:
+//   "default"   — synthesis left + 3 agents stacked right
+//   "grid"      — 2x2 equal grid (all agents equal weight)
+//   "synthesis"  — full screen synthesis (agents in tabs)
+//
+// VibeCrafted with AI Agents (c)2026 VetCoders
+layout {
+    // new_tab_template removed: Zellij 0.44 broke `children` inside it.
+    // default_tab_template covers both existing and new tabs.
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="compact-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Research" {
+        pane split_direction="vertical" {
+            // Synthesis — main workspace
+            pane name="synthesis" size="55%" focus=true command="zsh"
+            // Agent stack — compact, right side
+            pane split_direction="horizontal" size="45%" {
+                pane name="claude" command="zsh"
+                pane name="codex" command="zsh"
+                pane name="gemini" command="zsh"
+            }
+        }
+    }
+
+    // Swap: 2x2 grid — all agents equal
+    swap_tiled_layout name="grid" {
+        tab {
+            pane split_direction="horizontal" {
+                pane split_direction="vertical" size="50%" {
+                    pane name="claude" command="zsh"
+                    pane name="codex" command="zsh"
+                }
+                pane split_direction="vertical" size="50%" {
+                    pane name="gemini" command="zsh"
+                    pane name="synthesis" focus=true command="zsh"
+                }
+            }
+        }
+    }
+
+    // Swap: synthesis full screen
+    swap_tiled_layout name="synthesis" {
+        tab {
+            pane name="synthesis" focus=true
+        }
+    }
+}

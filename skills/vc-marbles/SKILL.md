@@ -1,472 +1,507 @@
 ---
 name: vc-marbles
-version: 1.1.0
+version: 6.0.0
 description: >
-  Iterative convergence skill — the noise scheduler for code.
-  Runs adaptive denoising loops until the product surface converges from
-  chaos to completeness: P0=0, P1=0, P2=0 — the circle is full.
-  Each loop reduces entropy: implement → followup → measure → repeat.
-  Based on the insight that agent-generated code follows diffusion dynamics:
-  start from noise, iteratively denoise, converge to signal.
-  Trigger phrases: "marbles", "loop until done", "fill the gaps", "kulki",
-  "iteruj aż będzie gotowe", "convergence loop", "denoise", "dyfuzja",
-  "noise schedule", "adaptive loops", "keep going until clean",
-  "wypełnij okrąg", "entropy reduction", "denoising sprint".
+  Blind stabilization round. Use when the product works but the foundation is fragile.
+  Each invocation is isolated: inspect the current tree, find the most dangerous present
+  fragility, fortify a small high-impact surface, run gates, commit, and emit a machine-
+  diffable round delta report. Do not reconstruct prior marble rounds unless the operator
+  explicitly requests forensics.
+  Trigger phrases: "marbles", "kulki", "stabilize", "stabilizacja", "loop until done",
+  "reduce chaos", "fortify the foundation", "adultification".
 ---
 
-# vc-marbles — Iterative Convergence Through Diffusion
+# vc-marbles — Convergence Rounds
 
-> Code is noise until proven signal.
-> Each loop removes entropy. Stop when the circle is full.
+## Operator Entry
 
-## The Metaphor (and the Math)
-
-Imagine a circle of radius 10. You throw balls of diameter 1.
-First throw: ~60% coverage. Random placement, big gaps.
-Second pass: target the gaps. ~80%.
-Third: ~90%. Fourth: ~95%.
-
-This is not failure. This is **convergence**.
-
-AI agents generate code stochastically — next-token prediction
-produces an approximation, not a proof. Each generation introduces
-signal AND noise. The only way to separate them: iterate, measure, reduce.
-
-This is isomorphic to diffusion models:
-
-```
-Image diffusion:  noise → denoise × N → image
-Code diffusion:   chaos → reduce_entropy × N → product
-
-Step 0:  Pure noise (no context, no structure)
-Step 1:  Init — gross shapes emerge (history + eyes)
-Step 2:  Implement — detail generation (new noise enters!)
-Step 3:  Followup — denoising (measure residual entropy)
-Step N:  Converged — DoU score below threshold = DoD
-```
-
-## When To Use
-
-- After first implementation pass leaves known gaps
-- When followup reveals P1/P2 findings that need iterative fixing
-- When the team says "keep going until it's clean"
-- When Plague Score > 20 after first hydration
-- Anytime the answer to "is it done?" is "almost"
-- When you need adaptive iteration count (not fixed 2 loops)
-
-## The Noise Schedule
-
-### No Fixed Loop Count
-
-There is no fixed number of iterations. The loop runs until the circle
-is full: P0=0, P1=0, P2=0. A trivial task may converge in 1 loop.
-A massive architectural change may take 12. The schedule is driven by
-measurement, not prediction.
-
-```
-The loop count is determined by residual entropy, not upfront estimation.
-After each loop, measure what remains. If P0+P1+P2 > 0, loop again.
-
-Factors that affect how many loops a task needs:
-- LOC changed in first pass
-- Number of files touched
-- Number of P0+P1+P2 from first followup
-- Blast radius from loctree impact()
-```
-
-### Step Size (Learning Rate Analogy)
-
-Early loops: large steps (fix P0 blockers, structural issues).
-Late loops: small steps (P2 polish, edge cases, naming).
-
-```
-Early loops:  Fix P0 and P1 — big structural corrections
-Middle loops: Fix remaining P1 and high-impact P2
-Late loops:   Polish P2 — edge cases, error handling, naming, docs
-```
-
-Do NOT spend early loops on P2 polish.
-Do NOT spend late loops on structural changes (that's a new diffusion run).
-
-## Convergence Protocol
-
-### Each Loop Iteration
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  LOOP N                                                  │
-│                                                          │
-│  1. MEASURE residual entropy                             │
-│     └─ Read previous loop's findings                     │
-│     └─ Run quality gates                                 │
-│     └─ Count: P0 remaining, P1 remaining, P2 remaining  │
-│                                                          │
-│  2. TARGET the gaps (not random — guided by findings)    │
-│     └─ Write focused fix plan for TOP findings only      │
-│     └─ Max 3-5 items per loop (don't boil the ocean)     │
-│                                                          │
-│  3. IMPLEMENT fixes                                      │
-│     └─ vc-agents (first choice) or vc-delegate (small fallback) │
-│     └─ Each fix is a marble thrown at a known gap         │
-│                                                          │
-│  4. DENOISE (followup on this loop's changes)            │
-│     └─ Run gates on changed files                        │
-│     └─ Verify fixes didn't introduce new noise           │
-│     └─ Update findings list                              │
-│                                                          │
-│  5. SCORE                                                │
-│     └─ Calculate convergence metrics                     │
-│     └─ Decide: continue or converged?                    │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Convergence Metrics
-
-After each loop, calculate:
-
-```markdown
-## Loop N Convergence Report
-
-Entropy remaining:
-
-- P0 count: X (must be 0 to converge)
-- P1 count: X (must be 0 to converge)
-- P2 count: X (must be 0 to converge — full circle fill)
-
-Quality gates:
-
-- Build: pass/fail
-- Lint: pass/fail
-- Tests: X/Y passing
-- Security: pass/fail
-
-Coverage delta:
-
-- New code covered by tests: X%
-- Files touched this loop: N
-- Net LOC delta: +X / -Y
-
-Convergence score: X/100
-
-- 0-30: heavy noise, continue with large steps
-- 30-60: converging, continue with medium steps
-- 60-85: nearly converged, small polish steps
-- 85-99: close — keep going, resolve remaining P2
-- 100: converged — circle is full, stop iterating
-```
-
-### Stopping Criteria
-
-**STOP iterating when ANY of these are true:**
-
-1. **P0 = 0 AND P1 = 0 AND P2 = 0** — the circle is full
-2. **Convergence score = 100** — all findings resolved
-3. **Two consecutive loops with zero delta** — plateaued (reassess remaining items)
-4. **User says stop** — always respected
-
-**DO NOT STOP when:**
-
-- P0 > 0 or P1 > 0 (unless user explicitly accepts risk)
-- P2 > 0 (the circle is not full — keep iterating)
-- Quality gates failing
-- Last loop introduced more findings than it fixed (diverging!)
-
-### Divergence Detection
-
-If loop N has MORE findings than loop N-1:
-
-```
-WARNING: DIVERGENCE DETECTED
-
-Loop N-1: 3 P1, 5 P2
-Loop N:   4 P1, 7 P2  ← entropy increased!
-
-This means fixes are introducing new noise faster than removing old noise.
-Possible causes:
-1. Scope too broad — narrow the fix scope
-2. Wrong abstraction — step back and re-examine
-3. Living tree conflict — other changes interfered
-4. Agent hallucination — verify the "fix" actually fixed anything
-
-Action: STOP. Re-run vc-workflow (Examine phase) on affected area.
-Do not continue blind iteration on a diverging trajectory.
-```
-
-## Implementation Pattern
-
-### Supervisor / Watchdog Mode
-
-When `marbles` acts as a supervisor rather than the primary implementer,
-run a standing watchdog loop that periodically checks the branch, reads fresh
-agent artifacts, and writes a rolling status snapshot.
-
-Use this mode when:
-
-- external agents are already implementing in parallel
-- the main thread should stay available for synthesis and decisive cuts
-- the team wants a recurring pulse without manually babysitting every run
-
-Canonical cadence:
-
-- every `600` seconds by default
-- shorter only for short fire drills
-- longer only when gates are expensive and progress is slow
-
-The watchdog loop is not a substitute for thinking. It is a heartbeat:
+Operator enters the framework session through:
 
 ```bash
-while true; do
-  sleep 600
-  # inspect branch status
-  # inspect fresh agent reports/meta/transcripts
-  # write/update a supervisor snapshot artifact
-  # decide whether to intervene, continue, or stop
-done
+vibecrafted start
+# or
+vc-start
+# same default board as: vc-start vibecrafted
 ```
 
-Preferred outputs:
+Then launch this workflow through the command deck, not raw `skills/.../*.sh` paths:
 
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/supervisor-latest.md`
-- `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/supervisor-watch.log`
-
-If the platform supports a native recurring prompt primitive such as `/loop`,
-prefer combining it with `marbles` rather than replacing `marbles` with it:
-
-```text
-/loop 10m <marbles supervisor prompt>
+```bash
+vibecrafted <workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --file '/path/to/plan.md'
 ```
 
-The timer provides cadence.
-`marbles` provides convergence logic, entropy scoring, and stop conditions.
-
-Supervisor mode must still:
-
-- track P0/P1/P2 trajectory
-- detect divergence
-- escalate when agents plateau
-- stop when the circle is full
-
-### Using vc-delegate (native, small-task fallback)
-
-```
-For each loop:
-  1. Read previous findings
-  2. Select top 3-5 actionable items
-  3. Launch parallel Task agents:
-
-     Task("Fix: <finding-1>", prompt=<focused fix plan>)
-     Task("Fix: <finding-2>", prompt=<focused fix plan>)
-     Task("Verify: run gates", prompt="cd $ROOT && <gate commands>")
-
-  4. Collect results
-  5. Write loop report to ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_<slug>_loop_N.md
-  6. Calculate convergence score
-  7. If not converged → loop N+1
+```bash
+vc-<workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --prompt '<prompt>'
 ```
 
-### Using vc-agents (Terminal, first choice)
+If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
+or create the operator session and run that workflow in a new tab. Replace
+`<workflow>` with this skill's name. `vc-marbles` also has a natural `--depth`
+surface; keep the same launcher contract and prefer the most truthful input form.
 
-```
-For each loop:
-  1. Write loop plan to ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_loop_N_fixes.md
-  2. Spawn agent with plan
-  3. Read report from ~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_<slug>_loop_N.md
-  4. Run gates locally
-  5. Calculate convergence score
-  6. If not converged → loop N+1
-```
+### Concrete dispatch examples
 
-## Output Format
+Single convergence round with a prompt:
 
-### Per-Loop Report
-
-```markdown
-# Marbles Loop N: <slug>
-
-Date: <YYYY-MM-DD>
-Duration: <time>
-
-## Entropy Before
-
-- P0: X | P1: X | P2: X
-- Convergence score: X/100
-
-## Marbles Thrown (fixes applied)
-
-1. [P1] <finding> → <fix applied> → <result>
-2. [P2] <finding> → <fix applied> → <result>
-3. [P1] <finding> → <fix applied> → <result>
-
-## Entropy After
-
-- P0: X | P1: X | P2: X
-- Convergence score: X/100
-
-## Gate Results
-
-- Build: pass/fail
-- Lint: pass/fail
-- Tests: X/Y
-- Security: pass/fail
-
-## Delta
-
-- Findings fixed: N
-- Findings introduced: N
-- Net entropy change: -N (negative = good)
-
-## Decision
-
-- [ ] Continue → Loop N+1 (reason: <what remains>)
-- [ ] Converged → proceed to DoU
-- [ ] Diverging → stop and re-examine
+```bash
+vibecrafted marbles codex --prompt 'Fix the 3 failing portable tests'
+vc-marbles codex --prompt 'Harden the installer shell surface'
 ```
 
-### Final Convergence Report
+Multiple rounds (convergence loop — the runtime orchestrator script
+spawns the new agent N times):
 
-```markdown
-# Marbles Convergence: <slug>
-
-Date: <YYYY-MM-DD>
-Total loops: N
-Total duration: <time>
-
-## Trajectory
-
-| Loop | P0  | P1  | P2  | Score | Delta |
-| ---- | --- | --- | --- | ----- | ----- |
-| 1    | 2   | 5   | 8   | 15    | —     |
-| 2    | 0   | 3   | 6   | 40    | +25   |
-| 3    | 0   | 1   | 4   | 65    | +25   |
-| 4    | 0   | 0   | 2   | 85    | +20   |
-| 5    | 0   | 0   | 0   | 100   | +15   |
-
-## Convergence Curve
-
-Score: 15 → 40 → 65 → 85 → 100
-████████████████████████████████████████████████
-
-## Final State
-
-- All P0: resolved
-- All P1: resolved
-- All P2: resolved
-- Quality gates: all passing
-- Circle: full
-
-## Verdict
-
-DoU → DoD transition: COMPLETE
-Plague Score before: XX → after: XX
-Ready for: Phase 3 (dou → decorate → hydrate → release)
+```bash
+vibecrafted marbles codex --count 5 \
+   --prompt 'Stabilize until P0=0'
+vc-marbles claude --count 8 \
+   --prompt 'Refactor the 1500 LOC monoliths across the project'
 ```
 
-## The DoU → DoD Transition
+From a plan file:
 
-This is the moment the circle is full:
-
-```
-DoU (Definition of Undone) = measuring remaining noise
-DoD (Definition of Done)   = circle is full, no noise remains
-
-The transition happens when:
-- P0 = 0, P1 = 0, P2 = 0
-- Convergence score = 100
-- Quality gates pass
-- Stranger test passes (someone unfamiliar can use it)
-
-At this point, DoU transforms into DoD:
-  "What remains incomplete?" → "Nothing."
-  ~~DoU~~ → **DoD**
+```bash
+vibecrafted marbles codex --file ~/.vibecrafted/artifacts/VetCoders/vibecrafted/2026_0407/plans/marbles-plan.md
+vc-marbles gemini --count 2 --file /path/to/plan.md
 ```
 
-## Integration with VibeCrafted Pipeline
+**This is NOT the same as `vibecrafted codex implement <plan>`.**
+`implement` is one-shot execution. `marbles` wraps the agent in
+a convergence
+loop: each round measures, targets, fixes, scores, commits, and reports.
+The `--count` flag controls how many rounds the outer loop runs.
+
+<details>
+<summary>Foundation Dependencies (Loaded with framework)</summary>
+
+- [vc-loctree]($VIBECRAFTED_HOME/foundations/vc-loctree/SKILL.md) — structural map and hot-path locator.
+- [vc-aicx]($VIBECRAFTED_HOME/skills/vc-aicx/SKILL.md) — current-run steerability only.
+Do not use it to reconstruct prior marble rounds unless the operator explicitly asks for forensics.
+</details>
+
+> The worker sees the tree, not the factory.
+> One round. One fortification. One report. Then leave.
+
+## Core doctrine
+
+`vc-marbles` is not a reflective swarm.
+
+It is a conveyor of short-lived stabilization workers.
+
+A marble worker is intentionally **blind to prior marble history**.
+It works against the **current workspace state** and the **current evidence surface** only.
+
+The loop exists outside the worker.
+The worker must not try to model, narrate, or optimize the loop.
+
+## Why this works
+
+Context weight kills quality. An agent that has been working for 90 minutes on a
+complex refactor will make worse decisions in minute 91 than a fresh agent would in
+minute 1. The accumulated context becomes a lens that distorts perception — the agent
+starts defending its own sunk cost instead of seeing the tree clearly.
+
+Marbles exist to exploit this. Every round gets a fresh mind. The fresh mind does
+`vc-init`, perceives the project through live instruments (loctree, aicx-steer,
+semgrep), and sees the codebase as it actually is — not as the previous worker
+left it in their mental model.
+
+This is not a workaround. This is the design.
+
+## Reception protocol — how the orchestrator briefs the worker
+
+The orchestrating agent (partner, operator) prepares the plan. The implementing
+agent receives it as a plain task. The framing matters:
+
+**The worker enters with a mission, not a maintenance ticket.**
+
+Good framing:
+
+- "This project needs you. The auth surface is still exposed. Ship the fix."
+- "The installer doesn't bootstrap on bare machines. Make it work end-to-end."
+- "Tests pass but the runtime is fragile. Find the structural weakness and fortify."
+
+Bad framing:
+
+- "Previous rounds failed to deliver this." (creates parity judgment)
+- "Round 4 of 8, here's what rounds 1-3 did." (reveals mechanism)
+- "The delta from the last round was insufficient." (convergence cosplay)
+
+The worker should feel like the best person for the job walking into a project
+that needs them — not like cog #4 on a conveyor belt.
+
+## Mandatory entry: `vc-init`
+
+Every round begins with `vc-init`. No exceptions.
+
+The agent must perceive the project through live instruments before touching code:
+
+1. **loctree** — structural map, dependencies, dead code, hotspots
+2. **aicx-steer** — project intentions and decision history (not prior round reports)
+3. **semgrep / linters** — current security and quality surface
+4. **git status / recent commits** — what the tree looks like right now
+
+This is perception, not research. The agent is not building a mental model of
+the project's history — it is seeing what exists now.
+
+Without `vc-init`, the agent invents its own reality. With it, the agent works
+from evidence.
+
+## Instruments vs. gates
+
+**Instruments** (loctree, semgrep, aicx-steer) go at the **beginning**.
+They direct where to look. They are prosecution — accusing the tree with evidence.
+
+**Tests** (pytest, cargo test, build checks) go at the **end**.
+They verify the fix. They are the gate — confirming the fortification holds.
+
+If the agent runs tests first, its field of vision collapses to "what fails" instead
+of "what is fragile." Red tests scream loudest, but the real structural weakness is
+often silent. Instruments find the silent ones. Tests confirm the fix.
+
+## What this skill does
+
+One invocation of `vc-marbles` performs one bounded stabilization round:
+
+1. discover what is fragile **now**
+2. select up to **3** high-impact targets
+3. fortify the smallest surface that materially reduces fragility
+4. run gates
+5. commit
+6. write one machine-diffable **round delta report**
+7. stop
+
+## What this skill does not do
+
+Do not:
+
+- read previous marble reports, transcript logs, or artifact history
+- inspect git history to reconstruct the story of earlier rounds
+- compare yourself to prior workers
+- compute or mention delta, stepper, convergence score, or loop efficiency
+- write strategic plans for the next marble
+- refactor for aesthetics
+- inflate touched surface to make the round look impressive
+- pretend to know the full repo-wide backlog of open fragility
+
+If the operator explicitly asks for historical comparison or forensics, that is a different task.
+Default `vc-marbles` execution is blind.
+
+## Locker-room rule
+
+When the round ends, the worker leaves.
+
+Only these outputs survive the round:
+
+- the repo state
+- one commit
+- one round delta report
+
+Everything else is disposable.
+
+## Inputs
+
+Allowed inputs:
+
+- current workspace state
+- operator brief
+- local tool evidence
+- failing/passing gates in the current run
+- explicit constraints from the operator
+
+Not allowed as implicit inputs:
+
+- previous marble reports
+- previous marble transcripts
+- git narrative/history mining
+- sibling marble sessions, panes, worktrees, or artifacts
+- external convergence metrics
+- another worker’s explanation of “what happened before”
+
+## Stabilization lenses
+
+These are **lenses**, not a fixed staircase.
+Use the one that matches the weakest live surface.
+
+- **Access & Isolation** — auth, tenant scoping, role checks, permission boundaries
+- **Data Health** — indexes, query plans, N+1s, schema hotspots, dangerous God tables
+- **Errors & Observability** — swallowed exceptions, silent failures, missing alerts, weak fallbacks
+- **Release & Runtime Resilience** — CI/CD gates, smoke tests, rollout safety, config drift, operational breakage
+
+A round may touch one lens or a tightly coupled cluster.
+Do not force a pillar order if the evidence says otherwise.
+
+## Execution model
+
+**Tools** = Prosecution  
+They accuse the fragile surface with evidence.
+
+Use:
+
+- `vc-loctree`
+- semgrep / linters
+- tests and smoke checks
+- query plans / profiler output
+- workflow failures
+- direct structural audit of the current tree
+
+**Agent** = Fortifier  
+You do not guess. You do not theorize first. You fortify where the evidence is loudest.
+
+Execution backend:
+
+- Use `vc-agents` as the default first choice whenever the task benefits from model-specific strengths.
+- Reach for native `vc-delegate` only when the task is small, bounded, and model-agnostic.
+
+## Lane respect
+
+Other marbles may exist in parallel.
+They are not your context.
+
+Do not:
+
+- inspect their reports
+- read their transcripts
+- depend on their state
+- rewrite their lanes
+- merge their narrative into yours
+
+Work only inside your assigned tree, worktree, or lane.
+
+## Branch and tree guard
+
+**HARD RULE: Never change branches. Never create branches in the user's repo-root.**
+
+The operator chose the current branch.
+That decision is not yours to revisit.
+
+If the current path is unusable, create or use a `git worktree`.
+The repo-root branch is sacred because concurrent work may depend on it.
+
+## Commit rule
+
+`vc-marbles` is allowed to commit.
+
+One round = one commit.
+
+No partial commits.
+No squashing across multiple marble rounds.
+No mining git history to decide your subject line.
+
+### Commit convention
 
 ```
-scaffold → init → workflow → followup → [MARBLES] ↻ → dou → decorate → hydrate → release
-                                         ^^^^^^^^^^^^^
+marble: <one-line summary>
+
+- <file>: <what changed and why>
+
+Gate: <pass|fail>
+Tests: <what ran>
+Regressions: <count>
+Round-ID: <opaque-id-if-provided>
 ```
 
-Marbles is the gate between building and shipping.
-It does not loop back to workflow. It loops itself.
-implement/spawn are internal execution tools used by workflow and marbles.
+Example:
 
-## In-Session Execution (Plugin Infrastructure)
+```
+marble: fortify operator-session spawn isolation
 
-Marbles has a plugin infrastructure in `references/` that enables in-session
-self-referential loops through Claude Code's Stop hook API:
+- skills/vc-agents/shell/vetcoders.sh: cleared stale ambient run/session context before targeted spawn
+- skills/vc-agents/scripts/common.sh: preserved explicit spawn direction while dropping leaked defaults
 
-- **`/marbles` command** (`references/commands/marbles-loop.md`) — slash command
-  that starts a loop in the current session
-- **`/cancel-marbles` command** (`references/commands/cancel-marbles.md`) — cancels
-  the active loop
-- **Stop hook** (`references/hooks/stop-hook.sh`) — intercepts session exit,
-  reads the last assistant message, checks for completion promise or iteration
-  limit, and feeds the same prompt back if the loop should continue
-- **Setup script** (`references/scripts/setup-marbles-loop.sh`) — creates the
-  `.claude/marbles.local.md` state file with frontmatter (iteration count,
-  max iterations, completion promise, session ID)
+Gate: pass
+Tests: 5 targeted + bundle-check
+Regressions: 0
+Round-ID: mr-20260407-01
+```
 
-### How It Works
+### Commit rules
 
-1. User runs `/marbles <prompt> --completion-promise 'DONE' --max-iterations 20`
-2. Setup script writes `.claude/marbles.local.md` with the prompt and settings
-3. Agent works on the task and tries to exit
-4. Stop hook fires, reads the state file and transcript
-5. If completion promise found in output OR max iterations reached → allow exit
-6. Otherwise → block exit and inject the same prompt as new input
-7. Agent sees its previous work in files/git, iterates on the same task
+- Do not invent a sequential round number by reading history.
+- If the operator or runtime injects an opaque round id, include it.
+- If the gate fails, still commit the actual round result. Do not hide the failure.
 
-This is the in-session counterpart to the Supervisor / Watchdog mode described
-above. Supervisor mode uses external observation; the plugin infrastructure
-uses Claude Code's own hook API for zero-overhead self-referential iteration.
+## Single-round protocol
 
-### Background Marbles (Ghost Mode)
+### 1. Accuse the present tree
 
-The plugin infrastructure enables a pattern where marbles runs as a background
-process. The Stop hook keeps the session alive while the agent iterates. This
-is useful when:
+Find current fragility from evidence.
 
-- the user wants to walk away and let the agent converge
-- external agents are not needed (single-session task)
-- the task fits in one context window
+Every target must trace to one of:
 
-Ghost mode is not a separate feature — it is the natural consequence of running
-`/marbles` with `--max-iterations` or `--completion-promise` and letting the
-hook do its job.
+- tool output
+- failing gate
+- direct structural audit
+- concrete production-risk counterexample
 
-## Anti-Patterns
+No evidence, no target.
 
-- Fixed loop count ("always run 4 loops") — defeats adaptive scheduling
-- Looping without measuring (no convergence score = blind iteration)
-- Fixing P2 before all P0 are resolved (wrong step size)
-- Continuing past convergence (overfit — introduces new noise)
-- Looping without writing reports (no convergence trajectory = no learning)
-- Ignoring divergence detection (if entropy increases, STOP)
-- Single marble per loop (too slow — throw 3-5 per loop)
-- Entire codebase per loop (too broad — scope to affected area)
+### 2. Pick the smallest high-impact surface
 
-## The Diffusion Insight
+Select at most 3 primary targets.
 
-Why this works:
+Prefer:
 
-1. **Next-token prediction is stochastic** — agents will always produce noise
-2. **Noise is not failure** — it's a natural property of the generation process
-3. **Denoising is the skill** — measuring and removing noise iteratively
-4. **Convergence is achievable** — each loop provably reduces entropy
-5. **The schedule matters** — too few loops = noisy output, too many = wasted time
-6. **Divergence is real** — detect it early, don't iterate blindly
+- high-severity breakage
+- high-frequency paths
+- silent failure modes
+- weak boundaries
+- issues that close an entire class of failure
 
-The marbles fill the circle. Not "enough." All the way.
-P0=0. P1=0. P2=0. Quality gates pass. The circle is full.
+Avoid:
 
-That's DoD. Not "good enough." Done.
+- broad rewrites
+- style-only cleanup
+- speculative architecture changes
+- “while I’m here” edits
 
+### 3. Fortify
+
+Make the smallest set of changes that materially reduces fragility.
+
+Typical fortifications:
+
+- add missing scoping / auth checks
+- add missing indexes or reshape a hot query
+- replace swallowed exceptions with actionable handling
+- add smoke tests or gate enforcement
+- remove a rotten abstraction instead of preserving it
+
+Apply the VetCoders axiom here:
+Move on over backward compatibility.
+If a local abstraction is rotten and blocks stabilization, cut it cleanly instead of preserving garbage.
+
+### 4. Gate
+
+Run the narrowest credible gates first, then broader gates if warranted.
+
+Minimum expectation:
+
+- syntax / lint sanity for touched surfaces
+- tests that directly cover the fortified path
+- relevant build or bundle checks when release/runtime is involved
+
+If a gate fails:
+
+- report it plainly
+- count the regression
+- do not bury it under narrative
+
+### 5. Commit
+
+Create exactly one round commit with the convention above.
+
+### 6. Report
+
+Save one short round delta report to the central store:
+
+`$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/marbles/reports/<ts>_marble_<run_or_round_id>_<agent>.md`
+
+The report is factual.
+No essay. No loop storytelling. No global convergence verdict.
+
+This is a local round report, not a repo-wide inventory.
+Do not enumerate everything still broken in the entire project.
+The external convergence layer owns the global ledger.
+
+### Report template
+
+```yaml
 ---
+run_id: <opaque-run-id>
+round_id: <opaque-round-id-or-run_id>
+agent: <claude|codex|gemini>
+skill: vc-marbles
+project: <repo-name>
+status: <completed|blocked|failed-gate>
+created: <ISO-8601 timestamp>
+branch: <current-branch>
+gate: <pass|fail>
+gates_ran:
+  - <gate-name-or-command>
+tests_added: <number>
+files_touched:
+  - <path>
+---
+```
 
-_"Code is noise until proven signal._
-_Each loop removes entropy._
-_Stop when the circle is full."_
+```markdown
+# Marble Report
 
-_Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
+## Attacked
+
+- id: <pillar/surface/failure-kind>
+  pillar: <access|data|errors|release>
+  severity: <high|medium|low>
+  locator: <file|route|workflow|query>
+  evidence: <tool output or structural observation>
+  intent: <what this round tried to fortify>
+
+## Resolved
+
+- id: <same-id>
+  origin: <attacked|discovered-in-round>
+  action: <what changed>
+  proof: <test/gate/evidence that supports closure>
+
+## Still Open
+
+- id: <same-id>
+  origin: <attacked|discovered-in-round>
+  blocker: <why it remains open>
+
+## Discovered
+
+- id: <pillar/surface/failure-kind>
+  severity: <high|medium|low>
+  evidence: <tool output or structural observation>
+  note: <why it matters>
+
+## Regressions
+
+- none
+```
+
+### Report rules
+
+- Do not attempt a repo-wide backlog.
+- Report only what you attacked and what you newly discovered in this round.
+- Every attacked id must end in exactly one of: **Resolved** or **Still Open**.
+- A newly discovered issue that remains open goes in **Discovered**.
+- A newly discovered issue fully fixed in the same round goes in **Resolved** with `origin: discovered-in-round`.
+- Regressions are failures introduced or exposed by your change/gate outcome.
+- Use `- none` for empty sections.
+
+### Finding ID rule
+
+Finding ids must be stable and boring. Format: `<pillar>/<surface>/<failure-kind>`
+
+Good: `access/orders-create/missing-tenant-scope`, `errors/stripe-webhook/silent-catch`
+
+Bad: `issue-7`, `round-2-bug`, `fixed-by-me-now`
+
+The external convergence layer depends on stable ids. Do not rename the same issue every round.
+
+## Anti-patterns
+
+- **Historical self-awareness** — reading prior marble artifacts to sound informed.
+- **Convergence cosplay** — talking about step size, delta, or loop mastery instead of reducing current fragility.
+- **Surface-area vanity** — touching many files to make the round look bigger.
+- **Aesthetic refactors** — cleanup that does not close a failure mode.
+- **Backward-compatibility worship** — preserving rotten contracts that keep the foundation weak.
+- **Narrative inflation** — long explanations that hide a weak gate result.
+- **Parallel contamination** — importing another marble’s context into your round.
+- **Fake omniscience** — pretending this round can see the full global backlog.
+
+## Finish condition
+
+Stop after the commit and report.
+Do not self-extend into the next round.
+Do not write instructions to your successor.
+Do your round well, then leave.

@@ -10,7 +10,48 @@ description: >
 
 # vc-release: Ship to Market
 
-This is where "done in the repo" meets "done in the world." You're moving code from your machine to people's machines. That's not abstract—it's financial, legal, and operational reality.
+## Operator Entry
+
+Operator enters the framework session through:
+
+```bash
+vibecrafted start
+# or
+vc-start
+# same default board as: vc-start vibecrafted
+```
+
+Then launch this workflow through the command deck, not raw `skills/.../*.sh` paths:
+
+```bash
+vibecrafted <workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --file '/path/to/plan.md'
+```
+
+```bash
+vc-<workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --prompt '<prompt>'
+```
+
+If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
+or create the operator session and run that workflow in a new tab. Replace
+`<workflow>` with this skill's name. Prefer `--file` for an existing plan or
+artifact and `--prompt` for inline intent.
+
+### Concrete dispatch examples
+
+```bash
+vibecrafted release codex --prompt 'Prepare v1.2.1 release'
+vc-release claude --prompt 'Tag and publish to crates.io'
+vibecrafted release gemini --file /path/to/release-checklist.md
+```
+
+This is where "done in the repo" meets "done in the world." You're moving code from your machine to people's machines.
+That's not abstract—it's financial, legal, and operational reality.
 
 ## Pipeline Position
 
@@ -19,7 +60,7 @@ scaffold → init → workflow → followup → marbles → dou → decorate →
                                                                              ^^^^^^^^^
 ```
 
-Release is the final skill in the VibeCrafted pipeline. It executes after:
+Release is the final skill in the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. pipeline. It executes after:
 
 - `vc-dou` has verified the product surface is complete
 - `vc-decorate` has ensured visual coherence
@@ -186,11 +227,13 @@ This is where most people get lost. Let's be concrete.
 - Deploy automatically: CI/CD on every docs change.
 - Custom domain: ~$12/year, worth it for credibility.
 
-**Key metric: Can a stranger find your code, understand what it does, and use it in 5 minutes?** If no, you haven't shipped. You've just uploaded files.
+**Key metric: Can a stranger find your code, understand what it does, and use it in 5 minutes?** If no, you haven't
+shipped. You've just uploaded files.
 
 ## The Shipping Mindset
 
-Release is not the end. It's the beginning of learning from real users. But the mechanics above—tags, changelogs, legal clarity, deployment reality—separate projects that sustain from projects that die.
+Release is not the end. It's the beginning of learning from real users. But the mechanics above—tags, changelogs, legal
+clarity, deployment reality—separate projects that sustain from projects that die.
 
 Ship it clean. Ship it documented. Ship it with a plan for what comes next.
 
@@ -207,4 +250,4 @@ Ship it clean. Ship it documented. Ship it with a plan for what comes next.
 
 _"The code is done. The packaging is done. Now ship it to people."_
 
-_Vibecrafted with AI Agents by VetCoders (c)2026 VetCoders_
+_Vibecrafted with AI Agents by VetCoders (c)2024-2026 VetCoders_

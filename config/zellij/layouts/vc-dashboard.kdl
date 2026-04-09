@@ -1,0 +1,73 @@
+// vc-dashboard — mission control overview
+// Launch: vibecrafted dashboard
+//
+// Design: pure monitoring surface — no work pane. Four quadrants showing
+// live system state. Agent tabs spawned during monitoring sessions get
+// branded chrome via new_tab_template.
+//
+// Swap layouts:
+//   "default"  — 2x2 grid (balanced monitoring)
+//   "stacked"  — vertical stack (narrow terminals)
+//   "focused"  — single large pane + compact sidebar
+//
+// VibeCrafted with AI Agents (c)2026 VetCoders
+layout {
+    // new_tab_template removed: Zellij 0.44 broke `children` inside it.
+    // default_tab_template covers both existing and new tabs.
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="compact-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. MC" {
+        pane split_direction="horizontal" {
+            pane split_direction="vertical" size="50%" {
+                pane name="agents" focus=true command="bash" {
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/active-agents.sh\" ]]; then exec \"$root/scripts/mission-control/active-agents.sh\"; fi; done; printf 'Mission control helper not found: active-agents.sh\\n'; exec /bin/zsh -l"
+                }
+                pane name="transcript" command="bash" {
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/live-transcript.sh\" ]]; then exec \"$root/scripts/mission-control/live-transcript.sh\"; fi; done; printf 'Mission control helper not found: live-transcript.sh\\n'; exec /bin/zsh -l"
+                }
+            }
+            pane split_direction="vertical" size="50%" {
+                pane name="convergence" command="bash" {
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Mission control helper not found: convergence-trend.sh\\n'; exec /bin/zsh -l"
+                }
+                pane name="sessions" command="bash" {
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Mission control helper not found: recent-sessions.sh\\n'; exec /bin/zsh -l"
+                }
+            }
+        }
+    }
+
+    // Swap: vertical stack for narrow terminals
+    swap_tiled_layout name="stacked" {
+        tab {
+            pane split_direction="horizontal" {
+                pane name="agents" size="25%" focus=true
+                pane name="transcript" size="25%"
+                pane name="convergence" size="25%"
+                pane name="sessions" size="25%"
+            }
+        }
+    }
+
+    // Swap: focused — one big pane + compact sidebar
+    swap_tiled_layout name="focused" {
+        tab {
+            pane split_direction="vertical" {
+                pane name="agents" size="60%" focus=true
+                pane split_direction="horizontal" size="40%" {
+                    pane name="transcript"
+                    pane name="convergence"
+                    pane name="sessions"
+                }
+            }
+        }
+    }
+}

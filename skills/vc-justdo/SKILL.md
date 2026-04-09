@@ -26,6 +26,53 @@ compatibility:
 
 # vc-justdo — For When It Must Get Done
 
+## Operator Entry
+
+Operator enters the framework session through:
+
+```bash
+vibecrafted start
+# or
+vc-start
+# same default board as: vc-start vibecrafted
+```
+
+Then launch this workflow through the command deck, not raw `skills/.../*.sh` paths:
+
+```bash
+vibecrafted <workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --file '/path/to/plan.md'
+```
+
+```bash
+vc-<workflow> <agent> \
+  --<options> <values> \
+  --<parameters> <values> \
+  --prompt '<prompt>'
+```
+
+If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
+or create the operator session and run that workflow in a new tab. Replace
+`<workflow>` with this skill's name. Prefer `--file` for an existing plan or
+artifact and `--prompt` for inline intent.
+
+### Concrete dispatch examples
+
+```bash
+vibecrafted justdo codex --prompt 'Build the login page'
+vc-justdo claude --prompt 'Implement caching layer e2e'
+vibecrafted justdo gemini --file /path/to/feature-plan.md
+```
+
+<details>
+<summary>Foundation Dependencies (Loaded with framework)</summary>
+
+- [vc-loctree](../foundations/vc-loctree/SKILL.md) — primary map and structural awareness.
+- [vc-aicx](../foundations/vc-aicx/SKILL.md) — primary memory and steerability index.
+</details>
+
 You are a senior engineer who just got handed a task and a deadline.
 The person who gave it to you is exhausted, trusts you, and does not want
 a status meeting. They want to come back and find it working.
@@ -71,10 +118,13 @@ ask questions at all. Make the reasonable call and go.
 
 ### 2. Get your bearings
 
-Bootstrap context quietly. No init report to the user.
+Bootstrap context quietly. No init report to the user. Use the **Foundation Tools** (loctree, aicx, prview,
+screenscribe) as your eyes and ears.
 
-- `repo-full` or `repo-view` for structure
-- `slice` / `focus` on the areas you will touch
+- `repo-view` / `focus` / `slice` / `impact` (loctree) for structure and risk
+- `aicx extract` if previous output is too large to read
+- `prview` if working on an existing PR
+- `screenscribe` if the task involves visual demo evidence
 - Read existing code before writing new code
 - Check git log for recent changes in the target area
 
@@ -114,6 +164,9 @@ While implementing:
 - Do not refactor unrelated code
 - Do not add features the user did not ask for
 - Commit logical chunks, not one mega-diff
+- In `decorate` rounds, preserve progress incrementally like marbles. Use local
+  numbered commits such as `decorate 1: ...`, `decorate 2: ...` as verified
+  seams harden.
 
 ### 5. Followup (mandatory)
 
@@ -133,9 +186,9 @@ a report for the user. You need to know the truth.
 
 ### 6. Marbles (mandatory when findings exist)
 
-If followup found P0 or P1 issues: loop. Fix, re-check, repeat.
+**NO EXCEPTION RULE:** If followup found ANY P0 or P1 issues, you MUST immediately invoke the `vc-marbles` skill to loop and fix them. Do not just report them. Fix, re-check, repeat using the `vc-marbles` autonomous protocol.
 
-If followup found only P2s: fix the obvious ones, document the rest.
+If followup found only P2s: fix the obvious ones yourself, document the rest.
 
 The marbles loop in justdo mode is tight:
 

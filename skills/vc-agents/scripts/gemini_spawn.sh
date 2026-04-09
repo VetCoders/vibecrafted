@@ -75,7 +75,7 @@ done
 }
 spawn_require_file "$plan_file"
 spawn_validate_runtime "$runtime"
-spawn_prepare_paths gemini "$plan_file" "$root"
+spawn_prepare_paths gemini "$plan_file" "$root" "$mode"
 spawn_scan_active "$SPAWN_REPORT_DIR"
 runtime_input="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_SLUG}_gemini_prompt.md"
 spawn_build_runtime_prompt "$SPAWN_PLAN" "$runtime_input" "$SPAWN_REPORT" gemini
@@ -85,30 +85,32 @@ if (( !dry_run )); then
   spawn_require_command gemini
 fi
 
-qroot="$(printf '%q' "$SPAWN_ROOT")"
-qruntime="$(printf '%q' "$runtime_input")"
-qtranscript="$(printf '%q' "$SPAWN_TRANSCRIPT")"
-qmodel="$(printf '%q' "$model")"
+qroot="$(spawn_shell_quote "$SPAWN_ROOT")"
+qruntime="$(spawn_shell_quote "$runtime_input")"
+qtranscript="$(spawn_shell_quote "$SPAWN_TRANSCRIPT")"
+qmodel="$(spawn_shell_quote "$model")"
 
 # shellcheck disable=SC2016
 gemini_success_hook='
   if [[ ! -s "$report" && -s "$transcript" ]]; then
-    cp "$transcript" "$report"
+    spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "completed"
+    cat "$transcript" >> "$report"
   fi'
 
 # shellcheck disable=SC2016
 gemini_failure_hook='
   if [[ ! -s "$report" && -s "$transcript" ]]; then
-    cp "$transcript" "$report"
+    spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "failed"
+    cat "$transcript" >> "$report"
   fi'
 
 model_flag=""
 [[ -n "$model" ]] && model_flag="--model $qmodel"
-qfilter="$(printf '%q' "$SCRIPT_DIR/gemini_stream_filter.jq")"
+qfilter="$(spawn_shell_quote "$SCRIPT_DIR/gemini_stream_filter.jq")"
 # Gemini emits non-JSON noise (YOLO banner, MCP bootstrap) before JSONL.
 # grep '^{' strips non-JSON lines so jq doesn't choke.
 vibecrafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
-qvhome="$(printf '%q' "$vibecrafted_home")"
+qvhome="$(spawn_shell_quote "$vibecrafted_home")"
 launch_cmd="set -o pipefail && cd $qroot && GEMINI_FORCE_FILE_STORAGE=true gemini -p '' -y $model_flag --include-directories $qvhome -o stream-json < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript"
 
 # Combine built-in hooks with caller-provided hooks (marbles chain, etc.)
@@ -130,5 +132,5 @@ spawn_generate_launcher "$SPAWN_LAUNCHER" \
 chmod +x "$SPAWN_LAUNCHER"
 spawn_print_launch gemini "$mode" "$runtime"
 [[ -n "$model" ]] && printf '  model:  %s\n' "$model" || printf '  model:  (CLI default)\n'
-spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run"
+spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run" "gemini-${VIBECRAFTED_SKILL_NAME:-$mode}"
 printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"

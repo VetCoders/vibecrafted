@@ -1,0 +1,4 @@
+interface:
+  display_name: "Loctree Map"
+  short_description: "Structural code intelligence for agents"
+  default_prompt: "Use the loctree workflow: map the repo, focus on directories, and slice files before making any changes."

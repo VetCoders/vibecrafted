@@ -1,7 +1,7 @@
 ```shell
 ─────────────────────────────────────────────────────────
-              ⚒ ＶｉｂｅＣｒａｆｔｅｄ ⚒
-              𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝 (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
+              ⚒ Ｖｉｂｅｃｒａｆｔｅｄ. ⚒
+             𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
 ─────────────────────────────────────────────────────────
   Installer checklist:
   1. Diagnostics
@@ -20,7 +20,7 @@
     - Workflows (9 basic, 7 advanced)
     - Helpers and binaries (executables and functions)
   3. Post-installation setup
-    - Workspace directories (in $HOME/.vibecrafted/)
+    - Workspace directories (in $VIBECRAFTED_ROOT/.vibecrafted/)
     - Symlinks for AI coding agents (in $HOME/.agents/)
   4. Verification and quick tour
 

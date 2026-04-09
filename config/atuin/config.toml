@@ -1,33 +1,68 @@
-dialect = "uk"
-auto_sync = true
+
+## Atuin Configuration for Vibecrafted.
+
+# ┌─────────────────────────────────────────────────────────────────────────────────┐
+# │                              SYNC SETTINGS                                      │
+# └─────────────────────────────────────────────────────────────────────────────────┘
+
+# Sync provider - use local for privacy, or set up server
 sync_address = "https://api.atuin.sh"
 sync_frequency = "10m"
+auto_sync = true
 
+# ┌─────────────────────────────────────────────────────────────────────────────────┐
+# │                            SEARCH BEHAVIOR                                      │
+# └─────────────────────────────────────────────────────────────────────────────────┘
+
+# Search mode: fuzzy for maximum quantum flexibility
 search_mode = "fuzzy"
-filter_mode = "workspace"
-workspaces = true
-search_mode_shell_up_key_binding = "fuzzy"
-filter_mode_shell_up_key_binding = "workspace"
 
-style = "full"
-inline_height = 20
-inline_height_shell_up_key_binding = 12
+# Filter mode: global for universal consciousness
+filter_mode = "global"
+
+# Show preview of command before executing
 show_preview = true
-max_preview_height = 8
-show_help = true
-show_tabs = true
-exit_mode = "return-original"
-enter_accept = true
-word_jump_mode = "emacs"
-secrets_filter = true
+max_preview_height = 16
 
-history_filter = [
-  "^ls$",
-  "^cd( .*)?$",
-  "^pwd$",
-  "^clear$",
-  "^history$",
+# ┌─────────────────────────────────────────────────────────────────────────────────┐
+# │                            HISTORY SETTINGS                                     │
+# └─────────────────────────────────────────────────────────────────────────────────┘
+
+# Update existing entries if we see the same command again
+update_snapshots = true
+
+# Which commands to record
+history_filter = ["blacklist"]
+
+# Commands to ignore (privacy and noise reduction)
+history_ignore = [
+    "ls", "cd", "pwd", "exit", "clear", "history",
+    "atuin search", "atuin sync",
+    # Sensitive commands
+    "pass", "password", "secret", "token", "key", "auth",
+    # Gang of Bastards - keep our secrets
+    "export OPENAI_API_KEY", "export GITHUB_TOKEN",
+    "cat *.env", "echo $OPENAI_API_KEY", "echo $GITHUB_TOKEN"
 ]
 
-[sync]
-records = true
+# ┌─────────────────────────────────────────────────────────────────────────────────┐
+# │                              UI SETTINGS                                        │
+# └─────────────────────────────────────────────────────────────────────────────────┘
+
+# Style of the search interface
+style = "full"
+show_help = true
+exit_mode = "return-original"
+
+# ┌─────────────────────────────────────────────────────────────────────────────────┐
+# │                            QUANTUM ENHANCEMENTS                                 │
+# └─────────────────────────────────────────────────────────────────────────────────┘
+
+# Store session information for better context
+store_failed = true
+
+# Record additional statistics  
+# stats = false # deprecated in newer versions
+
+# Word jump characters for Ctrl+Left/Right
+word_jump_mode = "emacs"

@@ -5,15 +5,15 @@ usage() {
   cat <<'EOF_USAGE'
 Usage: install.sh [--ref <branch>] [--archive-url <url> | --archive-file <path>] [--tools-dir <dir>] [make-target]
 
-Bootstrap a local VibeCrafted source snapshot into ~/.vibecrafted/tools and then
+Bootstrap a local 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. source snapshot into $VIBECRAFTED_ROOT/.vibecrafted/tools and then
 run a local staged install path from that copy.
 
 Interactive terminals always enter the installer TUI.
 Non-interactive runs bypass TUI and call the compact installer directly.
 
 Examples:
-  curl -fsSLO <raw-install-url> && bash install.sh
-  curl -fsSLO <raw-install-url> && bash install.sh --ref develop
+  curl -fsSL https://vibecrafted.io/install.sh | bash
+  curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --ref develop
   bash install.sh doctor
   bash install.sh --archive-file /tmp/vibecrafted.tar.gz vibecrafted
 EOF_USAGE
@@ -32,11 +32,20 @@ is_interactive_session() {
   [[ -t 0 && -t 1 ]]
 }
 
+default_vibecrafted_home() {
+  if [[ -n "${VIBECRAFTED_HOME:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_HOME"
+    return
+  fi
+  printf '%s\n' "$HOME/.vibecrafted"
+}
+
 sanitize_ref() {
   printf '%s' "$1" | tr '/:@ ' '----' | tr -cd '[:alnum:]._-' 
 }
 
-vibecrafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+vibecrafted_home="$(default_vibecrafted_home)"
+export VIBECRAFTED_HOME="$vibecrafted_home"
 default_tools_dir="${VIBECRAFTED_TOOLS_HOME:-$vibecrafted_home/tools}"
 default_ref="${VIBECRAFTED_REF:-main}"
 
@@ -80,7 +89,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$target" in
-  install|vibecrafted)
+  vibecrafted)
     target="vibecrafted"
     ;;
 esac
@@ -90,7 +99,7 @@ if [[ -n "$archive_url" && -n "$archive_file" ]]; then
 fi
 
 if [[ -z "$archive_url" && -z "$archive_file" ]]; then
-  archive_url="https://github.com/VetCoders/vibecrafted/archive/refs/heads/${ref}.tar.gz"
+  archive_url="https://vibecrafted.io/vibecrafted-v1.2.1.tar.gz"
 fi
 
 command -v tar >/dev/null 2>&1 || die "tar is required"
@@ -113,12 +122,54 @@ trap cleanup EXIT
 extract_root="$tmpdir/extract"
 mkdir -p "$extract_root"
 
+verify_signature() {
+  local file="$1" base_url="$2"
+  local sig_file="${file}.sig"
+  local pub_file="$tmpdir/vibecrafted-signing.pub"
+  local sums_file="$tmpdir/SHA256SUMS"
+
+  if ! curl -fsSL "${base_url}/vibecrafted-signing.pub" -o "$pub_file" 2>/dev/null; then
+    info "  [warn] Could not fetch signing key — skipping signature verification"
+    return 0
+  fi
+  if ! curl -fsSL "${base_url}/SHA256SUMS" -o "$sums_file" 2>/dev/null; then
+    info "  [warn] Could not fetch SHA256SUMS — skipping checksum verification"
+    return 0
+  fi
+
+  local expected actual
+  expected="$(grep "$(basename "$file")" "$sums_file" | awk '{print $1}')"
+  actual="$(shasum -a 256 "$file" 2>/dev/null || sha256sum "$file" 2>/dev/null)"
+  actual="${actual%% *}"
+  if [[ -n "$expected" && "$actual" != "$expected" ]]; then
+    die "SHA256 mismatch for $(basename "$file"): expected $expected, got $actual"
+  fi
+  [[ -n "$expected" ]] && info "  SHA256 ✓"
+
+  if curl -fsSL "${base_url}/$(basename "$sig_file")" -o "$sig_file" 2>/dev/null; then
+    if openssl dgst -sha256 -verify "$pub_file" -signature "$sig_file" "$file" >/dev/null 2>&1; then
+      info "  Signature ✓  (Maciej Gad / MW223P3NPX)"
+    else
+      die "Signature verification FAILED for $(basename "$file")"
+    fi
+  else
+    info "  [warn] No .sig file found — skipping signature verification"
+  fi
+}
+
 if [[ -n "$archive_file" ]]; then
   info "Unpacking local archive: $archive_file"
   tar -xzf "$archive_file" -C "$extract_root"
 else
-  info "Downloading VibeCrafted snapshot: $archive_url"
-  curl -fsSL "$archive_url" | tar -xzf - -C "$extract_root"
+  info "Downloading 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. snapshot: $archive_url"
+  local_archive="$tmpdir/$(basename "$archive_url")"
+  curl -fsSL "$archive_url" -o "$local_archive"
+
+  base_url="${archive_url%/*}"
+  info "Verifying integrity..."
+  verify_signature "$local_archive" "$base_url"
+
+  tar -xzf "$local_archive" -C "$extract_root"
 fi
 
 source_dir=""
@@ -154,6 +205,22 @@ if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
   [[ -f "$installer" ]] || die "Installer not found: $installer"
   info "Non-interactive bootstrap detected:"
   info "  bypassing TUI and running compact installer"
+
+  # Install foundations (loctree, aicx) from GH releases before the main installer.
+  foundations_script="$current_link/scripts/install-foundations.sh"
+  if [[ -x "$foundations_script" ]] || [[ -f "$foundations_script" ]]; then
+    info "Installing foundations..."
+    bash "$foundations_script" || info "  [warn] Foundation install had issues (non-fatal)"
+  fi
+
+  # Ensure foundations and tools installed by install-foundations.sh are visible.
+  for _p in "${vibecrafted_home}/bin" "${vibecrafted_home}/tools/node/bin" "$HOME/.cargo/bin"; do
+    case ":${PATH}:" in
+      *":${_p}:"*) ;;
+      *) [[ -d "$_p" ]] && export PATH="${_p}:${PATH}" ;;
+    esac
+  done
+
   info "Launching installer:"
   info "  python3 $installer install --source $current_link --with-shell --compact --non-interactive"
   printf '\n'

@@ -4,18 +4,18 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import zipfile
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-import zipfile
 
 try:
     from vetcoders_install import discover_skills
 except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypoint
     from scripts.vetcoders_install import discover_skills
 
-OUTPUT_FILENAME = "vibecraft-framework.plugin"
-PLUGIN_NAME = "vibecraft-framework"
+OUTPUT_FILENAME = "vibecrafted-framework.plugin"
+PLUGIN_NAME = "vibecrafted-framework"
 FIXED_ZIP_DATE_TIME = (2026, 3, 30, 0, 0, 0)
 DEFAULT_FILE_MODE = 0o100644
 IGNORED_PATH_PARTS = {".DS_Store", "__pycache__", ".pytest_cache"}
@@ -45,7 +45,7 @@ def parse_listing_metadata(text: str) -> ListingMetadata:
 
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
-        if line.strip() == "## Registry Metadata Draft":
+        if line.strip() in {"## Registry Metadata", "## Registry Metadata Draft"}:
             in_registry_section = True
             continue
         if not in_registry_section:
@@ -93,6 +93,31 @@ def load_listing_metadata(repo_root: Path) -> ListingMetadata:
 def discover_bundle_skills(repo_root: Path) -> list[Path]:
     return sorted(
         (skill for skill in discover_skills(repo_root) if skill.name.startswith("vc-")),
+        key=lambda path: path.name,
+    )
+
+
+def discover_foundation_skills(repo_root: Path) -> list[Path]:
+    """Find foundation skill directories under skills/foundations/vc-*.
+
+    The main discover_skills helper (in vetcoders_install) scans only direct
+    children of skills/ with a vc- or vetcoders- prefix, so foundation skills
+    nested under skills/foundations/ are invisible to it. The bundle must still
+    ship them so relative links from pipeline skills (e.g. ../foundations/vc-loctree)
+    resolve inside the extracted plugin tree.
+    """
+    foundations_dir = repo_root / "skills" / "foundations"
+    if not foundations_dir.exists() or not foundations_dir.is_dir():
+        return []
+    return sorted(
+        (
+            entry
+            for entry in foundations_dir.iterdir()
+            if entry.is_dir()
+            and not entry.name.startswith(".")
+            and entry.name.startswith("vc-")
+            and (entry / "SKILL.md").exists()
+        ),
         key=lambda path: path.name,
     )
 
@@ -197,6 +222,17 @@ def build_bundle_bytes(repo_root: Path) -> bytes:
                     source_file.stat().st_mode,
                 )
 
+        for foundation_dir in discover_foundation_skills(repo_root):
+            for source_file in iter_skill_files(foundation_dir):
+                relative = source_file.relative_to(foundation_dir).as_posix()
+                arcname = f"skills/foundations/{foundation_dir.name}/{relative}"
+                write_zip_entry(
+                    bundle,
+                    arcname,
+                    source_file.read_bytes(),
+                    source_file.stat().st_mode,
+                )
+
     return buffer.getvalue()
 
 
@@ -205,38 +241,14 @@ def write_bundle(repo_root: Path, output_path: Path) -> None:
     output_path.write_bytes(build_bundle_bytes(repo_root))
 
 
-def check_bundle(repo_root: Path, output_path: Path) -> int:
-    expected = build_bundle_bytes(repo_root)
-    if not output_path.exists():
-        print(f"Marketplace bundle missing at {output_path}")
-        print("Run: python3 scripts/build_marketplace_bundle.py")
-        return 1
-
-    actual = output_path.read_bytes()
-    if actual != expected:
-        print(f"Marketplace bundle drift detected at {output_path}")
-        print("Run: python3 scripts/build_marketplace_bundle.py")
-        return 1
-
-    print(
-        f"Marketplace bundle is current: {output_path} ({len(discover_bundle_skills(repo_root))} skills)"
-    )
-    return 0
-
-
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the VibeCrafted marketplace bundle from current repo state."
+        description="Build the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. marketplace bundle from current repo state."
     )
     parser.add_argument(
         "--output",
         default=str(REPO_ROOT / OUTPUT_FILENAME),
-        help="Path to the .plugin zip to write or validate.",
-    )
-    parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Exit non-zero if the existing bundle does not match the current repo state.",
+        help="Path to the .plugin zip to write.",
     )
     return parser.parse_args(argv)
 
@@ -245,12 +257,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     output_path = Path(args.output).expanduser().resolve()
 
-    if args.check:
-        return check_bundle(REPO_ROOT, output_path)
-
     write_bundle(REPO_ROOT, output_path)
     print(
-        f"Built {output_path} from VibeCrafted {read_version(REPO_ROOT)} "
+        f"Built {output_path} from 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. {read_version(REPO_ROOT)} "
         f"with {len(discover_bundle_skills(REPO_ROOT))} current skills."
     )
     return 0

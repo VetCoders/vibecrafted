@@ -9,7 +9,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in VibeCrafted Skills, please report it
+If you discover a security vulnerability in 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Skills, please report it
 responsibly.
 
 **Do not open a public issue.**
@@ -42,6 +42,8 @@ Out of scope:
 
 ## Known Security Boundaries
 
-- Spawn scripts use `zsh -ic` which loads the user's full shell environment. This is by design — agents need the real env. Do not run spawns in untrusted environments.
-- `--dangerously-skip-permissions` flags are required for external agents. This is documented and intentional. The `vc-delegate` skill exists as the safe alternative.
+- Spawn scripts use `zsh -ic` which loads the user's full shell environment. This is by design — agents need the real
+  env. Do not run spawns in untrusted environments.
+- `--dangerously-skip-permissions` flags are required for external agents. This is documented and intentional. The
+  `vc-delegate` skill exists as the safe alternative.
 - No secrets should ever be committed to this repo. Skills read credentials from environment variables only.

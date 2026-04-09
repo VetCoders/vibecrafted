@@ -2,7 +2,7 @@
 
 ## Goal
 
-Transform the VibeCrafted installer from a 3-screen wall of text into a
+Transform the𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installer from a 3-screen wall of text into a
 compact, progressive build-up that fits on ONE terminal screen. Like how
 `uv` (Astral's Python package manager) installs — the output IS the result,
 not the log of the process.
@@ -11,7 +11,8 @@ not the log of the process.
 
 `make vibecrafted` currently outputs ~80 lines across:
 
-- VibeCrafted Framework Setup header + plan (8 lines)
+-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework Setup header + plan (8 lines)
+
 - Y/n prompt
 - "Installing the shared skill store" block (3 lines)
 - "Running Core Installer..."
@@ -41,7 +42,7 @@ Total: ~80+ lines. User scrolls past everything to see the result.
 - During proces Each line appears on the visible portion but only **some** STAYS as a summary.
 - They are built from current lines.
 - The final state on screen IS the complete summary but the details are hidden and can be shown by pressing ->| key.
-- Introduce the installer's ~/.vibecrafted/logs/install.log.
+- Introduce the installer's $VIBECRAFTED_ROOT/.vibecrafted/logs/install.log.
 
 ---
 
@@ -50,7 +51,7 @@ Total: ~80+ lines. User scrolls past everything to see the result.
 ```bash
  make setup-dev
 
-  ⚒  VibeCrafted Installer
+  ⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer
   ─────────────────────────────────
   Source: /Users/maciejgad/hosted/VetCoders/vetcoders-skills
   Version: 1.0.4
@@ -131,8 +132,6 @@ Runtime Foundations:
        Shell history recall with optional encrypted sync
   [ok] zoxide -> /opt/homebrew/bin/zoxide
        Fast directory jumping for agent-heavy shell workflows
-  [ok] zellij -> /opt/homebrew/bin/zellij
-       Visible multi-agent terminal workspace surface
 
 Enable the shell helper layer (bash + zsh)? [y/N] y
 
@@ -191,16 +190,16 @@ Verification:
   [ok] All checks passed
 
 
-  ⚒ ＶｉｂｅＣｒａｆｔｅｄ ⚒
+  ⚒ Ｖｉｂｅｃｒａｆｔｅｄ. ⚒
 
-  𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝 (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
+ 𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
   ─────────────────────────────────────
 
   ✓ Skills       16 installed
   ✓ Agents       claude · codex · gemini
   ✓ Helpers      zsh
   ✓ Foundations   aicx-mcp · loctree-mcp · prview +6
-  ✓ Store        ~/.vibecrafted/skills
+  ✓ Store        $VIBECRAFTED_ROOT/.vibecrafted/skills
 
   ─────────────────────────────────────
     Start        vibecrafted help
@@ -216,15 +215,15 @@ Verification:
 
 ```bash
 ─────────────────────────────────────────────────────────
-              ⚒ ＶｉｂｅＣｒａｆｔｅｄ ⚒
-              𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝 (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
+              ⚒ Ｖｉｂｅｃｒａｆｔｅｄ. ⚒
+             𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
 ─────────────────────────────────────────────────────────
 ```
 
 - II. Middle section - dynamic
 
 ```bash
-  Welcome to The VibeCrafted
+  Welcome to The 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
 
   This setup will install and configure The Framework
   and all of its required foundation packages and
@@ -270,10 +269,10 @@ III. Action prompt or progress bar
 
 ```shell
 ─────────────────────────────────────────────────────────
-              ⚒ ＶｉｂｅＣｒａｆｔｅｄ ⚒
-              𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝 (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
+              ⚒ Ｖｉｂｅｃｒａｆｔｅｄ. ⚒
+             𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
 ─────────────────────────────────────────────────────────
-  Welcome to The VibeCrafted
+  Welcome to The 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
 
   This setup will install and configure The Framework
   and all of its required foundation packages and
@@ -306,11 +305,11 @@ III. Action prompt or progress bar
 
 ```shell
 ─────────────────────────────────────────────────────────
-              ⚒ ＶｉｂｅＣｒａｆｔｅｄ ⚒
-              𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝 (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
+              ⚒ Ｖｉｂｅｃｒａｆｔｅｄ. ⚒
+             𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
 ─────────────────────────────────────────────────────────
   Craftsmanship is about making things useful, handy and
-  beautiful. VibeCrafted is a craft for the code.
+  beautiful. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. is a craft for the code.
   We mainly use the cli for the daily coding.
   We believe though that the cli shouldn't be
   unfriendly.
@@ -342,8 +341,8 @@ III. Action prompt or progress bar
 
 ```shell
 ─────────────────────────────────────────────────────────
-              ⚒ ＶｉｂｅＣｒａｆｔｅｄ ⚒
-              𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝 (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
+              ⚒ Ｖｉｂｅｃｒａｆｔｅｄ. ⚒
+             𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. (𝚟𝚌-𝚌𝚕𝚒) 𝚟1.0.4
 ─────────────────────────────────────────────────────────
   Installer checklist:
   1. Diagnostics
@@ -362,7 +361,7 @@ III. Action prompt or progress bar
     - Workflows (9 basic, 7 advanced)
     - Helpers and binaries (executables and functions)
   3. Post-installation setup
-    - Workspace directories (in $HOME/.vibecrafted/)
+    - Workspace directories (in $VIBECRAFTED_ROOT/.vibecrafted/)
     - Symlinks for AI coding agents (in $HOME/.agents/)
   4. Verification and quick tour
 
@@ -385,7 +384,7 @@ Same output but without Y/n prompts — just runs and prints the final state.
 
 ## Architecture
 
-### setup_vibecraft.py (interactive orchestrator)
+### setup_vibecrafted.py (interactive orchestrator)
 
 Simplify to:
 
@@ -396,7 +395,7 @@ Simplify to:
 
 ### vetcoders_install.py changes
 
-Add a `--compact` flag (default True when called from setup_vibecraft.py).
+Add a `--compact` flag (default True when called from setup_vibecrafted.py).
 
 When compact:
 
@@ -405,7 +404,7 @@ When compact:
 - **Bundle contents**: don't list 16 skill names. Just count.
 - **Agent runtimes**: detect silently. Print one summary line.
 - **Foundations**: detect silently. Print count + first 3 names.
-- **Plan**: don't print the plan block or ask Y/n (setup_vibecraft already asked).
+- **Plan**: don't print the plan block or ask Y/n (setup_vibecrafted already asked).
 - **Installing skills**: don't print 16 `-> skill` lines. Print one line when done.
 - **Linking agent views**: silent.
 - **Installing shell helper**: silent (or one line).
@@ -420,7 +419,7 @@ When NOT compact (direct `make install` or `python3 installer.py`):
 ### Verbose log
 
 All the verbose output that gets suppressed in compact mode should go to:
-`~/.vibecrafted/logs/installer/install.log`
+`$VIBECRAFTED_ROOT/.vibecrafted/logs/installer/install.log`
 
 The user can always check it if something went wrong.
 
@@ -470,7 +469,7 @@ When `--compact`:
 The compact lines use the same data that's already computed — just format
 differently.
 
-### 4. Update setup_vibecraft.py
+### 4. Update setup_vibecrafted.py
 
 Remove the "Installing the shared skill store" block (What/Reason/Safe).
 Pass `--compact` to the underlying installer.
@@ -480,17 +479,17 @@ Keep only: header, plan, Y/n, then let installer handle the rest compactly.
 
 Currently there are 3 prompts in interactive mode:
 
-- "Start setup?" (setup_vibecraft.py)
+- "Start setup?" (setup_vibecrafted.py)
 - "Create the default skill views?" (vetcoders_install.py)
 - "Install this plan?" (vetcoders_install.py)
 
-Reduce to ONE in setup_vibecraft.py: "Start setup?"
+Reduce to ONE in setup_vibecrafted.py: "Start setup?"
 The installer runs without additional prompts when called with --compact.
 
 ## Files to Modify
 
 1. `scripts/vetcoders_install.py` — add --compact, TeeLogger, compact output
-2. `scripts/setup_vibecraft.py` — simplify, pass --compact
+2. `scripts/setup_vibecrafted.py` — simplify, pass --compact
 3. Leave `make install` (non-interactive) behavior as-is unless --compact is added
 
 ## What NOT to Change
@@ -506,7 +505,7 @@ The installer runs without additional prompts when called with --compact.
 
 - `make vibecrafted` fits on one screen (~25 lines)
 - `make install` still works (verbose by default)
-- `~/.vibecrafted/install.log` contains full verbose output
+- `$VIBECRAFTED_ROOT/.vibecrafted/install.log` contains full verbose output
 - `bash scripts/check-portable.sh` passes
 - All 16 skills installed correctly
 - Doctor passes after compact install

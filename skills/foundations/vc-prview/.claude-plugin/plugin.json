@@ -1,0 +1,8 @@
+{
+  "name": "PRView",
+  "description": "Persistent PR review artifacts. Generates structured review data for deep analysis and gatekeeping.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

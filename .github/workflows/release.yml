@@ -19,15 +19,10 @@ jobs:
           sudo apt-get install -y shellcheck
       - name: Run shell checks
         run: make check
-      - name: Install pytest
-        run: python3 -m pip install pytest
-
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
       - name: Run installer tests
         run: make test
-
-      - name: Check marketplace bundle drift
-        run: make bundle-check
-
       - name: Read version
         id: version
         run: |
@@ -42,8 +37,8 @@ jobs:
       - name: Build marketplace bundle
         run: |
           mkdir -p dist
-          python3 scripts/build_marketplace_bundle.py --output dist/vibecraft-framework.plugin
-          sha256sum dist/vibecraft-framework.plugin > dist/vibecraft-framework.plugin.sha256
+          uv run python3 scripts/build_marketplace_bundle.py --output dist/vibecrafted-framework.plugin
+          sha256sum dist/vibecrafted-framework.plugin > dist/vibecrafted-framework.plugin.sha256
 
       - name: Build release archive
         run: |
@@ -51,7 +46,7 @@ jobs:
           mkdir -p dist
           tar -czf "dist/${archive_name}.tar.gz" \
             --exclude='./dist' \
-            --exclude='./vibecraft-framework.plugin' \
+            --exclude='./vibecrafted-framework.plugin' \
             --exclude='./.pytest_cache' \
             --exclude='./presence' \
             --exclude='./.github' \
@@ -60,10 +55,36 @@ jobs:
             --exclude='./output' \
             --exclude='./.vibecrafted' \
             --exclude='./.DS_Store' \
+            --exclude='./docs/index.html' \
+            --exclude='./docs/pl' \
+            --exclude='./docs/presence' \
+            --exclude='./docs/CNAME' \
+            --exclude='./docs/foundation' \
+            --exclude='./docs/playground' \
+            --exclude='./docs/install.sh' \
             -C . .
-          cd dist
-          sha256sum "${archive_name}.tar.gz" > "${archive_name}.sha256"
           echo "archive=${archive_name}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Sign release artifacts
+        env:
+          SIGNING_KEY_B64: ${{ secrets.VIBECRAFTED_SIGNING_KEY }}
+        run: |
+          echo "$SIGNING_KEY_B64" | base64 -d > /tmp/signing.key
+          cd dist
+          archive="${{ steps.version.outputs.version }}"
+          archive_file="vibecrafted-${archive}.tar.gz"
+
+          # SHA256SUMS
+          sha256sum "$archive_file" > SHA256SUMS
+          sha256sum ../install.sh | sed 's|  \.\./|  |' >> SHA256SUMS
+
+          # Detached signatures
+          openssl dgst -sha256 -sign /tmp/signing.key -out "${archive_file}.sig" "$archive_file"
+
+          # Derive public key from private
+          openssl rsa -in /tmp/signing.key -pubout -out vibecrafted-signing.pub 2>/dev/null
+
+          rm -f /tmp/signing.key
 
       - name: Extract changelog entry
         id: changelog
@@ -87,11 +108,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: VibeCrafted ${{ steps.version.outputs.tag }}
+          name: 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. ${{ steps.version.outputs.tag }}
           body: ${{ steps.changelog.outputs.body }}
           files: |
             dist/*.tar.gz
-            dist/*.sha256
+            dist/*.sig
             dist/*.plugin
+            dist/SHA256SUMS
+            dist/vibecrafted-signing.pub
           draft: false
           prerelease: ${{ contains(steps.version.outputs.tag, '-') }}

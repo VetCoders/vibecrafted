@@ -4,17 +4,22 @@
 Usage:
     python3 brave_search.py "search query" [--count N] [--lang LANG]
 
-Created by M&K (c)2026 VetCoders
+Created by M&K (c)2024-2026 VetCoders
 """
 
-import json
 import http.client
+import json
 import os
+import ssl
 import urllib.parse
 from typing import Optional
 
 API_HOST = "api.search.brave.com"
 API_PATH = "/res/v1/web/search"
+
+
+def build_tls_context() -> ssl.SSLContext:
+    return ssl.create_default_context()
 
 
 def search(query: str, count: int = 8, lang: Optional[str] = None) -> dict:
@@ -32,7 +37,11 @@ def search(query: str, count: int = 8, lang: Optional[str] = None) -> dict:
         params["search_lang"] = lang
 
     path = f"{API_PATH}?{urllib.parse.urlencode(params)}"
-    conn = http.client.HTTPSConnection(API_HOST, timeout=15)
+    # TLS verification is enforced via the explicit default SSL context below.
+    # nosemgrep: python.lang.security.audit.httpsconnection-detected.httpsconnection-detected
+    conn = http.client.HTTPSConnection(
+        API_HOST, timeout=15, context=build_tls_context()
+    )
     headers = {
         "Accept": "application/json",
         "Accept-Encoding": "identity",

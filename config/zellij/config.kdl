@@ -1,6 +1,107 @@
+// VibeCrafted Zellij Configuration
+// Brandowana konfiguracja terminala multiplexer dla VibeCrafted framework.
+// VibeCrafted with AI Agents (c)2026 VetCoders
+
+// ─── Theme ──────────────────────────────────────────────────────────────────────
+// Kolory zbudowane wokół ciemnego tła z akcentami amber/gold (rzemiosło)
+// i cyan (technologia). Utrzymany kontrast dla czytelności w każdych warunkach.
+themes {
+    vibecrafted {
+        fg 220 215 186         // warm cream — tekst główny
+        bg 30 30 36            // graphite — tło sesji
+        black 20 20 24         // deep night — pane borders
+        white 235 230 210      // parchment — bright text
+        red 204 36 29          // alert red — errors, close actions
+        green 142 192 124      // sage green — success, healthy gates
+        yellow 214 175 54      // amber gold — brand accent, active tabs
+        blue 69 133 136        // steel teal — secondary info
+        magenta 177 98 134     // muted rose — session mode indicator
+        orange 214 93 14       // deep orange — warnings, in-progress
+        cyan 104 157 106       // forest cyan — agent panes, monitoring
+    }
+}
+
+theme "vibecrafted"
+
+// ─── Shell & Display ────────────────────────────────────────────────────────────
 default_shell "zsh"
 default_layout "compact"
 copy_command "pbcopy"
 mouse_mode true
 pane_frames true
 scroll_buffer_size 50000
+styled_underlines true
+auto_layout true
+
+// ─── Session Resilience ─────────────────────────────────────────────────────────
+// Sesja przeżywa zamknięcie terminala (detach zamiast kill).
+// Serializacja pozwala na resurrect po restarcie.
+on_force_close "detach"
+session_serialization true
+serialize_pane_viewport true
+scrollback_lines_to_serialize 5000
+
+// ─── Plugin Aliases ─────────────────────────────────────────────────────────────
+plugins {
+    tab-bar location="zellij:tab-bar"
+    status-bar location="zellij:status-bar"
+    compact-bar location="zellij:compact-bar"
+    session-manager location="zellij:session-manager"
+    welcome-screen location="zellij:session-manager" {
+        welcome_screen true
+    }
+    strider location="zellij:strider"
+    filepicker location="zellij:strider" {
+        cwd "/"
+    }
+    configuration location="zellij:configuration"
+    plugin-manager location="zellij:plugin-manager"
+    about location="zellij:about"
+}
+
+// ─── Keybindings ────────────────────────────────────────────────────────────────
+// Alt surface zwolniony dla polskich znaków diakrytycznych.
+// Quick-actions przeniesione na Ctrl+Shift.
+keybinds {
+    shared_except "locked" {
+        unbind "Alt f" "Alt n" "Alt i" "Alt o"
+        unbind "Alt h" "Alt Left" "Alt l" "Alt Right"
+        unbind "Alt j" "Alt Down" "Alt k" "Alt Up"
+        unbind "Alt =" "Alt +" "Alt -" "Alt [" "Alt ]"
+        unbind "Alt p" "Alt Shift p"
+        unbind "Ctrl o" "Ctrl n" "Ctrl h" "Ctrl s"
+
+        bind "Ctrl Shift f" { ToggleFloatingPanes; }
+        bind "Ctrl Shift n" { NewPane; }
+        bind "Ctrl Shift i" { MoveTab "Left"; }
+        bind "Ctrl Shift o" { MoveTab "Right"; }
+        bind "Ctrl Shift h" "Ctrl Shift Left" { MoveFocusOrTab "Left"; }
+        bind "Ctrl Shift l" "Ctrl Shift Right" { MoveFocusOrTab "Right"; }
+        bind "Ctrl Shift j" "Ctrl Shift Down" { MoveFocus "Down"; }
+        bind "Ctrl Shift k" "Ctrl Shift Up" { MoveFocus "Up"; }
+        bind "Ctrl Shift =" "Ctrl Shift +" { Resize "Increase"; }
+        bind "Ctrl Shift -" { Resize "Decrease"; }
+        bind "Ctrl Shift [" { PreviousSwapLayout; }
+        bind "Ctrl Shift ]" { NextSwapLayout; }
+        bind "Ctrl Shift p" { TogglePaneInGroup; }
+        bind "Ctrl Shift g" { ToggleGroupMarking; }
+
+        // Session mode jako confirmation gate przed Quit.
+        bind "Ctrl Shift q" { SwitchToMode "Session"; }
+    }
+
+    // Ctrl+Q zamyka bieżący focus, nie sesję.
+    shared_except "locked" "tab" "session" {
+        bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }
+    }
+
+    tab {
+        bind "Ctrl q" { CloseTab; SwitchToMode "Normal"; }
+    }
+
+    // Confirm-on-quit: Ctrl+Shift+Q -> Session mode, y = quit, n/Esc = cancel.
+    session {
+        bind "y" { Quit; }
+        bind "n" "Esc" "Ctrl q" "Ctrl Shift q" { SwitchToMode "Normal"; }
+    }
+}

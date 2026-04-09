@@ -124,6 +124,9 @@ HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
 require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh"
 require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/claude_spawn.sh"
 require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/gemini_spawn.sh"
+require_file "$home_dir/.vibecrafted/bin/vibecrafted"
+require_symlink "$home_dir/.vibecrafted/bin/vc-help"
+require_symlink "$home_dir/.vibecrafted/bin/vc-marbles"
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
 require_symlink "$home_dir/.gemini/skills/vc-agents"
@@ -133,6 +136,9 @@ require_file "$home_dir/.gemini/skills/vc-agents/scripts/gemini_spawn.sh"
 # Canonical + legacy helper locations
 require_file "$config_dir/vetcoders/vc-skills.sh"
 require_file "$config_dir/zsh/vc-skills.zsh"
+assert_contains "$config_dir/vetcoders/vc-skills.sh" '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. helper shim'
+bad_helper_candidate="\${VIBECRAFTED_ROOT:-}/skills/vc-agents/shell/vetcoders.sh"
+assert_not_contains "$config_dir/vetcoders/vc-skills.sh" "$bad_helper_candidate"
 # At least one rcfile must have the source line (depends on SHELL/platform)
 rc_found=0
 for rcfile in "$home_dir/.zshrc" "$home_dir/.bashrc"; do
@@ -153,6 +159,9 @@ cat > "$fake_bin/codex" <<'EOF_CODEX'
 set -euo pipefail
 report=""
 json_mode=0
+if [[ -n "${FAKE_CODEX_CAPTURE:-}" ]]; then
+  printf "%s\n" "$@" > "$FAKE_CODEX_CAPTURE"
+fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output-last-message)
@@ -287,7 +296,7 @@ require_file "$codex_transcript"
 require_file "$claude_transcript"
 require_file "$gemini_transcript"
 assert_contains "$codex_report" 'Fake Codex Report'
-assert_contains "$codex_report" 'run_id: impl-000'
+assert_matches "$codex_report" 'run_id: plan-[0-9]{6}'
 assert_contains "$codex_report" 'prompt_id: test_'
 assert_contains "$claude_report" 'Claude completed without writing a standalone report file.'
 assert_contains "$gemini_report" 'fake gemini'
@@ -299,15 +308,26 @@ assert_matches "$gemini_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] session: fak
 assert_matches "$gemini_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} Read\]'
 
 jq -e '.prompt_id != null and (.prompt_id | startswith("test_"))' "$codex_meta" >/dev/null || die "codex meta missing prompt_id"
-jq -e '.run_id == "impl-000"' "$codex_meta" >/dev/null || die "codex meta missing default run_id"
+jq -e '.run_id | test("^plan-[0-9]{6}$")' "$codex_meta" >/dev/null || die "codex meta missing plan run_id"
+jq -e '.run_id | test("^rvew-[0-9]{6}$")' "$claude_meta" >/dev/null || die "claude meta missing review run_id"
+jq -e '.run_id | test("^impl-[0-9]{6}$")' "$gemini_meta" >/dev/null || die "gemini meta missing implement run_id"
 jq -e '.loop_nr == 0' "$codex_meta" >/dev/null || die "codex meta missing loop_nr"
 jq -e '.framework_version != null and .framework_version != ""' "$codex_meta" >/dev/null || die "codex meta missing framework_version"
 jq -e '.completed_at != null and .duration_s != null' "$codex_meta" >/dev/null || die "codex meta missing completion telemetry"
 
+log "launcher resume smoke"
+resume_capture="$workspace/resume-codex.txt"
+env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" FAKE_CODEX_CAPTURE="$resume_capture" \
+  "$home_dir/.vibecrafted/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
+require_file "$resume_capture"
+assert_contains "$resume_capture" 'resume'
+assert_contains "$resume_capture" 'fake-session-001'
+assert_contains "$resume_capture" 'resume smoke'
+
 log "helper bash smoke"
 # shellcheck disable=SC2016
-env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" \
-  bash -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
+env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.vibecrafted/bin:$fake_bin:$PATH" \
+  bash -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
   | grep -Fq 'helper-ok' || die 'bash helper layer not loaded'
 log "skill helper telemetry smoke"
 # shellcheck disable=SC2016
@@ -327,8 +347,8 @@ jq -e '.run_id | startswith("marb-")' "$skill_meta" >/dev/null || die "skill hel
 if command -v zsh >/dev/null 2>&1; then
   log "helper zsh smoke (bonus)"
   # shellcheck disable=SC2016
-  env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" \
-    zsh -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
+  env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.vibecrafted/bin:$fake_bin:$PATH" \
+    zsh -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
     | grep -Fq 'helper-ok' || die 'zsh helper layer not loaded'
 fi
 
@@ -351,17 +371,28 @@ chmod +x "$fake_bin/rsync"
 sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/skills/vc-agents/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
 echo "$sync_output" | grep -q "Syncing skills from" || die "Sync dry-run failed to start"
 echo "$sync_output" | grep -q "rsync .* --dry-run" || die "Sync dry-run didn't pass dry-run to rsync"
-# shellcheck disable=SC2088 # matching literal ~ in sync output, not expanding
-echo "$sync_output" | grep -q "~/.vibecrafted/skills\|~/.agents/skills" || die "Sync dry-run didn't target the shared canonical skill store"
+# shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
+echo "$sync_output" | grep -q '\$HOME/.vibecrafted/skills\|\$HOME/.agents/skills' || die "Sync dry-run didn't target the shared canonical skill store"
 
 log "docs truth checks"
 # shellcheck disable=SC2016 # backticks are literal content we're matching, not command substitution
 assert_not_contains "$repo_root/skills/vc-followup/SKILL.md" 'Use canonical Terminal spawn (`osascript`)'
 assert_not_contains "$repo_root/skills/vc-workflow/SKILL.md" 'osascript preferred'
+assert_not_contains "$repo_root/docs/FRONTIER.md" 'vetcoders.zsh'
+assert_not_contains "$repo_root/docs/FAQ-ANSWERED.md" 'truth as of March 2026'
 [[ ! -e "$repo_root/skills/vc-subagents/SKILL.md" ]] || die 'vc-subagents should not exist'
 if [[ -e "$repo_root/docs/index.html" ]]; then
   assert_not_contains "$repo_root/docs/index.html" 'Canonical osascript Terminal spawn'
+  assert_contains "$repo_root/docs/index.html" 'vibecrafted init claude'
+  assert_contains "$repo_root/docs/index.html" 'vibecrafted workflow claude --prompt "Plan and implement auth module"'
+  assert_contains "$repo_root/docs/index.html" 'vibecrafted marbles codex --count 3 --depth 3'
+  assert_not_contains "$repo_root/docs/index.html" 'vc-init claude'
 fi
+assert_contains "$repo_root/docs/QUICK_START.md" 'vibecrafted init claude'
+assert_contains "$repo_root/docs/QUICK_START.md" 'vibecrafted justdo codex --prompt "Add user authentication with JWT"'
+assert_contains "$repo_root/docs/presence/quickstart.html" 'vibecrafted init claude'
+assert_contains "$repo_root/docs/presence/quickstart.html" 'vibecrafted workflow claude --prompt "Plan and implement auth module"'
+assert_not_contains "$repo_root/docs/presence/quickstart.html" 'vc-init claude'
 [[ -e "$repo_root/skills/vc-suite-showcase.html" ]] && die 'vc-suite-showcase.html should not exist (was mv to docs/index.html)'
 
 log "portable checks passed"

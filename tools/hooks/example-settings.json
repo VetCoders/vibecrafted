@@ -3,7 +3,10 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/memory-context-loader.sh" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/memory-context-loader.sh"
+          }
         ]
       }
     ],
@@ -11,13 +14,19 @@
       {
         "matcher": "manual",
         "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/memory-on-compact.sh" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/memory-on-compact.sh"
+          }
         ]
       },
       {
         "matcher": "auto",
         "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/memory-on-compact.sh" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/memory-on-compact.sh"
+          }
         ]
       }
     ],
@@ -25,13 +34,19 @@
       {
         "matcher": "Grep",
         "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/loct-grep-augment.sh" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/loct-grep-augment.sh"
+          }
         ]
       },
       {
         "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/loct-grep-augment.sh --bash-filter" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/loct-grep-augment.sh --bash-filter"
+          }
         ]
       }
     ],
@@ -39,14 +54,20 @@
       {
         "matcher": "(?i)(zapami[eę]taj|remember|kurwa.*zawsze|raz na zawsze)",
         "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/memory-on-explicit.sh" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/memory-on-explicit.sh"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "~/.claude/hooks/memory-on-ultrathink.sh" }
+          {
+            "type": "command",
+            "command": "$HOME/.claude/hooks/memory-on-ultrathink.sh"
+          }
         ]
       }
     ]

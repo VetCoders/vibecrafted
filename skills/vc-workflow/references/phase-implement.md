@@ -34,7 +34,6 @@ Grep/rg is for local detail only — after structural mapping.
 Each agent plan should include relevant sections from:
 
 1. **CONTEXT.md** (Examination):
-
    - Critical files relevant to agent's scope
    - Risk map for files agent will touch
    - Existing symbols to reuse
@@ -89,7 +88,7 @@ Each agent plan should include relevant sections from:
 
 ## Living Tree Note
 
-- Work on a living tree with Vibecrafting methodology — concurrent changes expected.
+- Work on a living tree with 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 methodology — concurrent changes expected.
 - Adapt proactively, but never skip quality, security, or test gates.
 - If blocked, report exact blocker and run closest safe equivalent.
 ```
@@ -116,7 +115,7 @@ Split implementation into independent, parallel-safe units:
 ### Canonical Artifact Structure
 
 ```
-~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
+$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/
 ├── plans/
 │   ├── <ts>_<slug>_CONTEXT.md
 │   ├── <ts>_<slug>_RESEARCH.md
@@ -139,7 +138,7 @@ environment setup automatically.
 ### Codex (default for implementation)
 
 ```bash
-ARTIFACT_DAY="$HOME/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>"
+ARTIFACT_DAY="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>"
 PLAN="$ARTIFACT_DAY/plans/<ts>_<agent-task>.md"
 
 bash vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement --runtime terminal
@@ -175,7 +174,7 @@ After agents complete:
 ### 1. Collect Reports
 
 Read all reports from
-`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
+`$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
 
 ### 2. Quality Gate
 

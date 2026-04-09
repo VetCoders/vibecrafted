@@ -1,0 +1,4 @@
+interface:
+  display_name: "ScreenScribe"
+  short_description: "Convert video to engineering findings"
+  default_prompt: "Use ScreenScribe to transform visual demo recordings into structured findings for bug reports or feature audits."
