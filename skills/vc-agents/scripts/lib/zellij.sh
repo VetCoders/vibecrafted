@@ -95,7 +95,7 @@ spawn_in_zellij_pane() {
       fi
     fi
 
-    cmd_script="$(mkdir -p "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp" && mktemp "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp/vc-spawn-cmd.XXXXXX")"
+    cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
     spawn_write_command_script "$cmd_script" "$launch_cmd"
 
     if [[ "$direction" == "new-tab" ]]; then
@@ -146,7 +146,7 @@ spawn_in_operator_session() {
     fi
   fi
 
-  cmd_script="$(mkdir -p "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp" && mktemp "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp/vc-spawn-cmd.XXXXXX")"
+  cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
   spawn_write_command_script "$cmd_script" "$launch_cmd"
 
   # External spawn into existing operator session — route as pane or new tab per grid policy.

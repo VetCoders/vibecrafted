@@ -6,6 +6,7 @@ spawn_write_command_script() {
   local shell_bin
 
   shell_bin="$(spawn_preferred_shell)"
+  mkdir -p "$(dirname "$script_path")"
   # shellcheck disable=SC2016
   printf '#!/usr/bin/env bash
 set -euo pipefail

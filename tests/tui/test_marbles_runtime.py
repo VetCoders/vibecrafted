@@ -261,6 +261,16 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
+def _org_repo() -> str:
+    remote = subprocess.check_output(
+        ["git", "-C", str(REPO_ROOT), "remote", "get-url", "origin"],
+        text=True,
+    ).strip()
+    match = re.search(r"[:/]([^/]+)/([^/.]+?)(?:\.git)?$", remote)
+    assert match is not None
+    return f"{match.group(1)}/{match.group(2)}"
+
+
 def test_marbles_spawn_chains_with_agent_and_ancestor_plan_contract() -> None:
     script = (
         REPO_ROOT / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
@@ -279,7 +289,7 @@ def test_marbles_spawn_chains_with_agent_and_ancestor_plan_contract() -> None:
 
 def _run_marbles_prompt(
     tmp_path: Path, *, inside_zellij: bool
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], Path]:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
     fake_bin = tmp_path / "bin"
@@ -339,13 +349,23 @@ def _run_marbles_prompt(
     return (
         capture_file.read_text(encoding="utf-8").splitlines(),
         zellij_capture_file.read_text(encoding="utf-8").splitlines(),
+        crafted_home,
     )
 
 
 def test_vc_marbles_preserves_prompt_as_single_argument_inside_zellij(
     tmp_path: Path,
 ) -> None:
-    payload, zellij_payload = _run_marbles_prompt(tmp_path, inside_zellij=True)
+    payload, zellij_payload, crafted_home = _run_marbles_prompt(
+        tmp_path, inside_zellij=True
+    )
+    expected_tmp_root = (
+        crafted_home
+        / "artifacts"
+        / _org_repo()
+        / datetime.now().strftime("%Y_%m%d")
+        / "tmp"
+    )
 
     assert "--agent" in payload
     assert "claude" in payload
@@ -355,6 +375,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_zellij(
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
     assert "new-tab" in zellij_payload
     assert any("vibecrafted-marbles." in line for line in zellij_payload)
+    assert any(str(expected_tmp_root) in line for line in zellij_payload)
     assert not any("//vibecrafted-marbles." in line for line in zellij_payload)
     assert not any(
         "weź i vc-justdo wszystko co marbles znajdzie" in line
@@ -425,7 +446,16 @@ def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
 def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
     tmp_path: Path,
 ) -> None:
-    payload, zellij_payload = _run_marbles_prompt(tmp_path, inside_zellij=False)
+    payload, zellij_payload, crafted_home = _run_marbles_prompt(
+        tmp_path, inside_zellij=False
+    )
+    expected_tmp_root = (
+        crafted_home
+        / "artifacts"
+        / _org_repo()
+        / datetime.now().strftime("%Y_%m%d")
+        / "tmp"
+    )
 
     assert "--agent" in payload
     assert "claude" in payload
@@ -435,6 +465,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
     assert "new-tab" in zellij_payload
     assert any("vc-spawn-cmd." in line for line in zellij_payload)
+    assert any(str(expected_tmp_root) in line for line in zellij_payload)
     assert not any("//vc-spawn-cmd." in line for line in zellij_payload)
     assert not any(
         "weź i vc-justdo wszystko co marbles znajdzie" in line
@@ -542,6 +573,7 @@ def test_write_command_script_falls_back_to_bash_when_zsh_missing(
     script_body = command_script.read_text(encoding="utf-8")
     assert str(fake_bin / "bash") in script_body
     assert "zsh" not in script_body
+    assert "trap 'rm -f \"$0\"'" not in script_body
 
     result = subprocess.run(
         [str(command_script)],
@@ -551,7 +583,7 @@ def test_write_command_script_falls_back_to_bash_when_zsh_missing(
         text=True,
     )
     assert result.stdout == "fallback-ok"
-    assert not command_script.exists()
+    assert command_script.exists()
 
 
 def test_marbles_runtime_steers_next_loop_from_ancestor_frontmatter(

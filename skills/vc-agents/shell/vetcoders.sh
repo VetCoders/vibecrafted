@@ -72,6 +72,30 @@ _vetcoders_store_dir() {
   printf '%s/artifacts/%s/%s\n' "$crafted_home" "$(_vetcoders_org_repo "$root")" "$date_dir"
 }
 
+_vetcoders_tmp_dir() {
+  local root="${1:-$(_vetcoders_repo_root)}"
+  local dir
+  dir="$(_vetcoders_store_dir "$root")/tmp"
+  mkdir -p "$dir"
+  printf '%s\n' "$dir"
+}
+
+_vetcoders_tmp_script_path() {
+  local prefix="$1"
+  local root="${2:-$(_vetcoders_repo_root)}"
+  local dir stamp context
+
+  dir="$(_vetcoders_tmp_dir "$root")" || return 1
+  stamp="$(_vetcoders_spawn_timestamp)"
+  context="${VIBECRAFTED_RUN_ID:-${VIBECRAFTED_SKILL_CODE:-$(_vetcoders_session_base_name)}}"
+  context="$(printf '%s' "$context" | tr -cs '[:alnum:]._-' '-')"
+  context="${context#-}"
+  context="${context%-}"
+  [[ -n "$context" ]] || context="session"
+
+  mktemp "${dir%/}/${prefix}.${stamp}_${context}.XXXXXX"
+}
+
 _vetcoders_find_meta_for_run_id() {
   local reports_dir="$1"
   local target_run_id="$2"
@@ -695,13 +719,13 @@ _vetcoders_spawn_into_operator_session() {
   local session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
   local root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
   local cmd_script
-  local tmp_root="${TMPDIR:-/tmp}"
 
   command -v zellij >/dev/null 2>&1 || return 1
   # zellij rejects inline command args carrying shell-quoted multibyte
-  # prompt content (printf '%q' + Polish UTF-8). Temp script keeps path ASCII-safe.
-  tmp_root="${tmp_root%/}"
-  cmd_script="$(mktemp "${tmp_root}/vc-spawn-cmd.XXXXXX")"
+  # prompt content (printf '%q' + Polish UTF-8). Store the wrapper under the
+  # vibecrafted artifact tree so it survives resurrect/attach and leaves a
+  # readable trail for debugging.
+  cmd_script="$(_vetcoders_tmp_script_path "vc-spawn-cmd" "$root_dir")"
   _vetcoders_write_command_script "$cmd_script" "$command_text" || return 1
   zellij --session "$session_name" action new-tab \
     --name "$tab_name" \
@@ -1221,8 +1245,12 @@ _vetcoders_write_command_script() {
     shell_bin="$(command -v bash)"
   fi
 
+  # Keep the temp script stable on disk: zellij can re-run or resurrect panes
+  # against the original command path, so self-deleting wrappers break attach
+  # and respawn semantics.
+  mkdir -p "$(dirname "$script_path")"
   # shellcheck disable=SC2016
-  printf '#!/usr/bin/env bash\nset -euo pipefail\ntrap '\''rm -f "$0"'\'' EXIT\n%s -lc %s\n' \
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n%s -lc %s\n' \
     "$(_vetcoders_shell_quote "$shell_bin")" \
     "$(_vetcoders_shell_quote "$command_text")" \
     > "$script_path"
@@ -1604,10 +1632,8 @@ _vetcoders_marbles() {
   # Temp script keeps zellij args ASCII-safe (no inline UTF-8 prompt bytes).
   if [[ "$runtime" =~ ^(terminal|visible)$ ]] && _vetcoders_in_zellij && command -v zellij >/dev/null 2>&1; then
     local cmd_script
-    local tmp_root="${TMPDIR:-/tmp}"
     export VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
-    tmp_root="${tmp_root%/}"
-    cmd_script="$(mktemp "${tmp_root}/vibecrafted-marbles.XXXXXX")"
+    cmd_script="$(_vetcoders_tmp_script_path "vibecrafted-marbles" "$root_dir")"
     _vetcoders_write_command_script "$cmd_script" "$marbles_cmd" || return 1
     zellij action new-tab \
       --name "marbles" \

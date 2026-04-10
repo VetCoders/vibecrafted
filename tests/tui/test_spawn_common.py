@@ -781,6 +781,7 @@ def test_spawn_in_operator_session_new_tab_opens_monitor_and_disables_inline_wat
 ) -> None:
     run_id = "rsch-014520"
     operator_session = _expected_operator_session(run_id)
+    expected_tmp_root = tmp_path / ".vibecrafted" / "tmp"
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
@@ -852,16 +853,17 @@ def test_spawn_in_operator_session_new_tab_opens_monitor_and_disables_inline_wat
     )
     assert monitor_script_match is not None
     monitor_script = Path(monitor_script_match.group(1))
+    assert monitor_script.parent == expected_tmp_root
     monitor_body = monitor_script.read_text(encoding="utf-8")
-    assert "trap 'rm -f \"$0\"' EXIT" in monitor_body
+    assert "trap 'rm -f \"$0\"' EXIT" not in monitor_body
     assert (
         "Your vibecrafted session %s invoked the %s run that landed in %s %s."
         in monitor_body
     )
     assert "spawn_watch_startup" in monitor_body
 
-    workflow_cmd = Path(workflow_call[workflow_call.index("--") + 1]).read_text(
-        encoding="utf-8"
-    )
+    workflow_script = Path(workflow_call[workflow_call.index("--") + 1])
+    assert workflow_script.parent == expected_tmp_root
+    workflow_cmd = workflow_script.read_text(encoding="utf-8")
     assert "VIBECRAFTED_INLINE_STARTUP_WATCH=0" in workflow_cmd
     assert str(launcher) in workflow_cmd
