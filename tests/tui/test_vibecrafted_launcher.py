@@ -527,3 +527,102 @@ def test_dashboard_ls_delegates_to_zellij_list_sessions(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "list-sessions" in payload
+
+
+def test_dashboard_switch_inside_zellij_uses_switch_session(tmp_path: Path) -> None:
+    """dashboard switch from inside Zellij uses 'action switch-session', not attach."""
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "zellij-args.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_fake_command(fake_bin, "zellij", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    # Simulate being inside Zellij
+    env["ZELLIJ"] = "0"
+    env["ZELLIJ_PANE_ID"] = "1"
+    env["ZELLIJ_SESSION_NAME"] = "existing-session"
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "dashboard", "switch", "target-session"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert "action" in payload
+    assert "switch-session" in payload
+    assert "target-session" in payload
+    # Must NOT use 'attach' when inside Zellij
+    assert "attach" not in payload
+
+
+def test_dashboard_attach_inside_zellij_uses_switch_session(tmp_path: Path) -> None:
+    """dashboard attach from inside Zellij falls through to switch-session."""
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "zellij-args.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_fake_command(fake_bin, "zellij", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["ZELLIJ"] = "0"
+    env["ZELLIJ_PANE_ID"] = "1"
+    env["ZELLIJ_SESSION_NAME"] = "existing-session"
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "dashboard", "attach", "other-session"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert "action" in payload
+    assert "switch-session" in payload
+    assert "other-session" in payload
+    assert "attach" not in payload
+
+
+def test_dashboard_switch_outside_zellij_uses_attach(tmp_path: Path) -> None:
+    """dashboard switch from outside Zellij falls through to attach."""
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "zellij-args.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_fake_command(fake_bin, "zellij", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "dashboard", "switch", "target-session"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert "attach" in payload
+    assert "target-session" in payload

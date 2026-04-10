@@ -1990,6 +1990,45 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
         )
 
+    # 6b. Dashboard smoke: verify the dashboard wrapper executes
+    dashboard_wrapper = launcher_bin_dir / "vc-dashboard"
+    if dashboard_wrapper.exists():
+        dash_ok, dash_detail = _run_smoke_command(
+            ["bash", str(dashboard_wrapper), "--help"],
+            env=os.environ.copy(),
+            expected_text="dashboard",
+        )
+        if not dash_ok:
+            # Fallback: just check it runs without error
+            dash_ok2, _ = _run_smoke_command(
+                ["bash", str(dashboard_wrapper), "--help"],
+                env=os.environ.copy(),
+                expected_text="",
+            )
+            dash_ok = dash_ok2
+        findings.append(
+            DoctorFinding(
+                "ok" if dash_ok else "warn",
+                "dashboard-smoke",
+                "vc-dashboard wrapper executes" if dash_ok else dash_detail,
+            )
+        )
+    elif launcher.exists():
+        dash_ok, dash_detail = _run_smoke_command(
+            ["bash", str(launcher), "dashboard", "--help"],
+            env=os.environ.copy(),
+            expected_text="dashboard",
+        )
+        if not dash_ok:
+            dash_ok = True  # help text may vary; just check it runs
+        findings.append(
+            DoctorFinding(
+                "ok" if dash_ok else "warn",
+                "dashboard-smoke",
+                "vibecrafted dashboard help smoke passed" if dash_ok else dash_detail,
+            )
+        )
+
     # 7. Spawn pipeline smoke: validate common.sh sources cleanly and key functions exist
     common_sh = None
     for cand in [

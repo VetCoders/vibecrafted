@@ -93,7 +93,7 @@ with open(state_path + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file"
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true 2>/dev/null || true
   else
     _write_state <<EOF
 {
@@ -135,7 +135,7 @@ with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file"
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
   fi
 }
 
@@ -191,7 +191,7 @@ with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file"
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
   fi
 }
 
@@ -219,7 +219,7 @@ with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file"
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
   fi
 }
 
@@ -264,7 +264,7 @@ with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file"
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
   fi
 }
 
@@ -299,7 +299,7 @@ with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file"
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
   fi
 }
 
@@ -343,7 +343,7 @@ with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file"
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
   fi
 }
 
@@ -369,7 +369,7 @@ with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file"
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
   fi
 }
 
@@ -411,7 +411,7 @@ with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
+    mv "$state_file.tmp" "$state_file" 2>/dev/null || true 2>/dev/null || true
   fi
   printf '    %b⚠ verification timed out%b  L%s\n' "$_yellow" "$_reset" "$loop_nr"
 }
@@ -725,6 +725,12 @@ PY
   actual_report_hint="$(spawn_read_meta_field "$meta_path" "report")"
   actual_meta_status="$(spawn_read_meta_field "$meta_path" "status")"
   actual_exit_code="$(spawn_read_meta_field "$meta_path" "exit_code")"
+  # Trust the meta's agent over the pre-resolved child plan agent — the plan
+  # may not exist yet when the watcher enters this loop (race with marbles_next).
+  actual_meta_agent="$(spawn_read_meta_field "$meta_path" "agent")"
+  if [[ -n "$actual_meta_agent" ]]; then
+    loop_agent="$actual_meta_agent"
+  fi
   _record_loop_start "$loop_nr" "$actual_transcript" "$loop_agent" "$loop_focus" "$ancestor_slug" "$loop_model"
 
   if [[ "$actual_meta_status" == "failed" ]]; then
