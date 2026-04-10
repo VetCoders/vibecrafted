@@ -520,16 +520,48 @@ _vetcoders_ensure_zellij_session() {
     return 1
   }
 
+  local inside_zellij=0
+  [[ -n "${ZELLIJ:-}" ]] && inside_zellij=1
+
+  local current_session="${ZELLIJ_SESSION_NAME:-}"
+
+  # Already in the target session — nothing to do.
+  if (( inside_zellij )) && [[ "$current_session" == "$session_name" ]]; then
+    return 0
+  fi
+
   case "$(_vetcoders_zellij_session_state "$session_name")" in
     live)
-      zellij "$@" attach "$session_name"
+      if (( inside_zellij )); then
+        zellij action switch-session "$session_name"
+      else
+        zellij "$@" attach "$session_name"
+      fi
       ;;
     dead)
-      zellij "$@" attach --force-run-commands "$session_name"
+      if (( inside_zellij )); then
+        zellij action switch-session "$session_name"
+      else
+        zellij "$@" attach --force-run-commands "$session_name"
+      fi
       ;;
     *)
       if [[ -n "$layout_file" ]]; then
-        zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+        if (( inside_zellij )); then
+          # Create the session in the background, then switch to it.
+          zellij --session "$session_name" --new-session-with-layout "$layout_file" &
+          local bg_pid=$!
+          # Wait briefly for session to appear.
+          local wait_i=0
+          while (( wait_i < 20 )); do
+            [[ "$(_vetcoders_zellij_session_state "$session_name")" == "live" ]] && break
+            sleep 0.25
+            ((wait_i+=1))
+          done
+          zellij action switch-session "$session_name"
+        else
+          zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+        fi
       else
         echo "Layout file missing and session not found." >&2
         return 1
@@ -871,9 +903,50 @@ _vetcoders_dashboard_session_name() {
 }
 
 _vetcoders_launch_dashboard() {
+  local first_arg="${1:-}"
+
+  # Thin shim subcommands — delegate directly to native Zellij.
+  case "$first_arg" in
+    ls|list|sessions)
+      command -v zellij >/dev/null 2>&1 || {
+        echo "zellij is required." >&2; return 1
+      }
+      zellij list-sessions
+      return
+      ;;
+    switch)
+      shift
+      command -v zellij >/dev/null 2>&1 || {
+        echo "zellij is required." >&2; return 1
+      }
+      if [[ -n "${ZELLIJ:-}" ]]; then
+        zellij action switch-session "${1:?session name required}"
+      else
+        zellij attach "${1:?session name required}"
+      fi
+      return
+      ;;
+    attach)
+      shift
+      command -v zellij >/dev/null 2>&1 || {
+        echo "zellij is required." >&2; return 1
+      }
+      zellij attach "${1:?session name required}"
+      return
+      ;;
+    kill)
+      shift
+      command -v zellij >/dev/null 2>&1 || {
+        echo "zellij is required." >&2; return 1
+      }
+      zellij kill-session "${1:?session name required}"
+      return
+      ;;
+  esac
+
   local layout_name layout_file session_name repo_source repo_zellij_dir
   _vetcoders_normalize_ambient_context
-  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  layout_name="$(_vetcoders_dashboard_layout_name "${first_arg}")"
   (( $# )) && shift
 
   command -v zellij >/dev/null 2>&1 || {
@@ -891,9 +964,6 @@ _vetcoders_launch_dashboard() {
   }
 
   if [[ "${VIBECRAFTED_PREFER_REPO_ZELLIJ:-0}" == "1" ]]; then
-    # Use the git-derived repo root, not frontier source root, so that an
-    # ambient VIBECRAFTED_ROOT pointing at a different repo cannot hijack the
-    # config dir when the launcher explicitly asked for repo-local zellij.
     repo_source="$(_vetcoders_repo_root)"
     repo_zellij_dir="$repo_source/config/zellij"
     if [[ -d "$repo_zellij_dir" && -f "$repo_zellij_dir/config.kdl" ]]; then
