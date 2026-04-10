@@ -7,7 +7,7 @@ SHELL_INSTALLER := skills/vc-agents/scripts/install-shell.sh
 SOURCE   := $(CURDIR)
 BRANCH   ?= main
 
-.PHONY: help vibecrafted gui-install check test install skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks bundle foundations foundations-check
+.PHONY: help vibecrafted gui-install check test install skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks bundle bundle-check foundations foundations-check semgrep
 
 help:
 	@printf "\n"
@@ -29,6 +29,7 @@ help:
 	@printf "  \033[32m↻\033[0m  make update        \033[2mPull latest + re-install\033[0m\n"
 	@printf "  \033[32m◇\033[0m  make list          \033[2mShow bundle + runtime foundations\033[0m\n"
 	@printf "  \033[32m◇\033[0m  make bundle        \033[2mRefresh marketplace plugin bundle\033[0m\n"
+	@printf "  \033[32m◇\033[0m  make bundle-check  \033[2mFail if the committed marketplace bundle drifted from repo truth\033[0m\n"
 	@printf "  \033[32m✓\033[0m  make test          \033[2mRun installer + marketplace pytest gates\033[0m\n"
 	@printf "  \033[32m✓\033[0m  make check         \033[2mRun basic linters on shell scripts\033[0m\n"
 	@printf "\n"
@@ -79,6 +80,18 @@ list:
 
 bundle:
 	@$(PYTHON) scripts/build_marketplace_bundle.py --output "$(SOURCE)/vibecrafted-framework.plugin"
+
+bundle-check:
+	@tmp_root="$${TMPDIR:-/tmp}"; \
+	tmp_bundle="$$(mktemp "$$tmp_root/vibecrafted-bundle.XXXXXX.plugin")"; \
+	trap 'rm -f "$$tmp_bundle"' EXIT; \
+	$(PYTHON) scripts/build_marketplace_bundle.py --output "$$tmp_bundle"; \
+	if cmp -s "$$tmp_bundle" "$(SOURCE)/vibecrafted-framework.plugin"; then \
+		echo "Bundle is current."; \
+	else \
+		echo "Bundle drift detected. Run 'make bundle'."; \
+		exit 1; \
+	fi
 
 semgrep:
 	@semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity .

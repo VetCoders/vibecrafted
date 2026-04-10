@@ -1287,6 +1287,14 @@ def _launcher_bin_dirs() -> List[Path]:
     return dirs
 
 
+def _find_launcher_wrapper(name: str) -> Optional[Path]:
+    for launcher_bin_dir in _launcher_bin_dirs():
+        candidate = launcher_bin_dir / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Helper conflict detection
 # ---------------------------------------------------------------------------
@@ -1951,9 +1959,12 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
         )
 
-    launcher_bin_dir = Path.home() / ".local" / "bin"
+    wrapper_locations = {
+        name: _find_launcher_wrapper(name)
+        for name in ["vibecrafted", *LAUNCHER_WRAPPERS]
+    }
     missing_wrappers = [
-        name for name in LAUNCHER_WRAPPERS if not (launcher_bin_dir / name).exists()
+        name for name in LAUNCHER_WRAPPERS if wrapper_locations.get(name) is None
     ]
     if missing_wrappers:
         findings.append(
@@ -1966,11 +1977,24 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
         )
     else:
-        findings.append(DoctorFinding("ok", "launcher-wrappers", str(launcher_bin_dir)))
+        found_dirs = sorted(
+            {
+                str(path.parent)
+                for name, path in wrapper_locations.items()
+                if name in LAUNCHER_WRAPPERS and path is not None
+            }
+        )
+        findings.append(
+            DoctorFinding(
+                "ok",
+                "launcher-wrappers",
+                ", ".join(found_dirs) if found_dirs else "wrappers present",
+            )
+        )
 
-    launcher = launcher_bin_dir / "vibecrafted"
-    wrapper = launcher_bin_dir / "vc-help"
-    if launcher.exists() and wrapper.exists():
+    launcher = wrapper_locations.get("vibecrafted")
+    wrapper = wrapper_locations.get("vc-help")
+    if launcher is not None and wrapper is not None:
         launcher_ok, launcher_detail = _run_smoke_command(
             ["bash", str(launcher), "help"],
             env=os.environ.copy(),
@@ -1992,8 +2016,8 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         )
 
     # 6b. Dashboard smoke: verify the dashboard wrapper executes
-    dashboard_wrapper = launcher_bin_dir / "vc-dashboard"
-    if dashboard_wrapper.exists():
+    dashboard_wrapper = wrapper_locations.get("vc-dashboard")
+    if dashboard_wrapper is not None:
         dash_ok, dash_detail = _run_smoke_command(
             ["bash", str(dashboard_wrapper), "--help"],
             env=os.environ.copy(),
@@ -2014,7 +2038,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 "vc-dashboard wrapper executes" if dash_ok else dash_detail,
             )
         )
-    elif launcher.exists():
+    elif launcher is not None and launcher.exists():
         dash_ok, dash_detail = _run_smoke_command(
             ["bash", str(launcher), "dashboard", "--help"],
             env=os.environ.copy(),
@@ -2049,9 +2073,9 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 "-c",
                 'source "$1" && '
                 "type spawn_write_meta >/dev/null 2>&1 && "
-                "type spawn_init_session >/dev/null 2>&1 && "
+                "type spawn_prepare_paths >/dev/null 2>&1 && "
                 "type spawn_generate_launcher >/dev/null 2>&1 && "
-                "type spawn_rotation_schedule_agent >/dev/null 2>&1 && "
+                "type spawn_watch_startup >/dev/null 2>&1 && "
                 'printf "spawn-pipeline-ok\\n"',
                 "_",
                 str(common_sh),
@@ -2077,10 +2101,15 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 'tmpdir="$(mktemp -d)" && '
                 "export SPAWN_AGENT=doctor-smoke SPAWN_RUN_ID=smoke-000 "
                 "SPAWN_PROMPT_ID=smoke SPAWN_LOOP_NR=0 SPAWN_SKILL_CODE=doctor "
-                'SPAWN_ROOT="$tmpdir" && '
-                'spawn_write_meta "$tmpdir/meta.json" && '
-                'spawn_generate_launcher "$tmpdir/launcher.sh" "$tmpdir/meta.json" '
-                '"$tmpdir/report.md" "$tmpdir/transcript.md" "$1" "echo ok" && '
+                'SPAWN_ROOT="$tmpdir" SPAWN_PLAN="$tmpdir/doctor-plan.md" '
+                'SPAWN_REPORT="$tmpdir/report.md" '
+                'SPAWN_TRANSCRIPT="$tmpdir/transcript.md" '
+                'SPAWN_LAUNCHER="$tmpdir/launcher.sh" && '
+                'spawn_write_meta "$tmpdir/meta.json" "launching" "$SPAWN_AGENT" '
+                '"doctor" "$SPAWN_ROOT" "$SPAWN_PLAN" "$SPAWN_REPORT" '
+                '"$SPAWN_TRANSCRIPT" "$SPAWN_LAUNCHER" && '
+                'spawn_generate_launcher "$SPAWN_LAUNCHER" "$tmpdir/meta.json" '
+                '"$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$1" "echo ok" && '
                 'bash -n "$tmpdir/launcher.sh" && '
                 'rm -rf "$tmpdir" && '
                 'printf "spawn-e2e-ok\\n"',

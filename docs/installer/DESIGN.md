@@ -243,7 +243,7 @@ Verification:
   why you need it, or why you should use it.
   If you are here you probably already know what that.
   If not - you can read about it here:
-  https://vetcoders.github.io/vibecrafted
+  https://vibecrafted.io
 ```
 
 III. Action prompt or progress bar
@@ -292,7 +292,7 @@ III. Action prompt or progress bar
   why you need it, or why you should use it.
   If you are here you probably already know what that.
   If not - you can read about it here:
-  https://vetcoders.github.io/vibecrafted
+  https://vibecrafted.io
 
                 Press ⏎ Enter to proceed or Esc to quit
 ─────────────────────────────────────────────────────────

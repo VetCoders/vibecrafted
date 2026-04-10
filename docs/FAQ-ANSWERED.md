@@ -229,4 +229,4 @@ Answers from the trenches. This is the truth as of April 2026.
 
 ---
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. by VetCoders | https://vetcoders.github.io/vibecrafted/
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. by VetCoders | https://vibecrafted.io/
