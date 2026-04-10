@@ -1,9 +1,10 @@
 # Architecture Plan:𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer TUI
 
 > Status note (2026-04-10): the release-ready front door is now the browser-based
-> guided installer at `scripts/installer_gui.py`, reachable from `install.sh --gui`
-> and `make gui-install`. This document remains useful background for the TUI line,
-> but it is not the shipping installer path today.
+> guided installer at `scripts/installer_gui.py`, reachable from `install.sh --gui`,
+> `make vibecrafted`, and `make gui-install`. The shipping choice followed the more
+> effortless TwinSweep-style GUI line, while the `rmcp-memex`-style TUI remains
+> useful background for a future operator deck rather than the primary install path.
 
 ## Problem Statement
 

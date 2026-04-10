@@ -4,19 +4,25 @@ You have an AI-built repo. You want to ship it without the vibe hangover.
 
 ## 1. Install
 
-```bash
-curl -fsSL https://vibecrafted.io/install.sh | bash
-```
-
-Prefer the guided browser path when the operator should see the plan before they trust the terminal:
+Guided browser path for the human kickoff:
 
 ```bash
 curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
 ```
 
+This path stages the control plane, bootstraps the foundation layer, runs the same compact installer truth used by automation, and leaves a readable `START_HERE.md` behind.
+
+Direct compact path for automation or terminal-native installs:
+
+```bash
+curl -fsSL https://vibecrafted.io/install.sh | bash
+```
+
 Non-destructive. Interactive. Tells you what it does before it does it.
 Asks before touching your shell config. Everything reversible with
 `make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current uninstall`.
+
+Inside a local checkout, `make vibecrafted` opens the guided installer and `make install` stays direct/non-interactive.
 
 After install, open a new terminal or:
 
@@ -60,7 +66,7 @@ vibecrafted justdo codex --prompt "Add user authentication with JWT"
 
 - **Craft** — examines the repo, researches the approach, implements
 - **Converge** — runs marbles loops: _"what is still wrong?"_ → fix → repeat
-- **Ship** — checks product surface, decorates, packages for release
+- **Ship** — checks product surface, decorates it, packages it, and prepares the release path
 
 ## 5. Run phases individually
 

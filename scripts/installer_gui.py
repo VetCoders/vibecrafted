@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,7 @@ try:
         start_here_path,
         summarize_diagnostics,
     )
+    from runtime_paths import vibecrafted_home
 except ModuleNotFoundError:  # pragma: no cover - depends on entrypoint
     from scripts.installer_brand import PRODUCT_LINE, TAGLINE, VAPOR_HEADER
     from scripts.installer_tui import (
@@ -37,6 +39,7 @@ except ModuleNotFoundError:  # pragma: no cover - depends on entrypoint
         start_here_path,
         summarize_diagnostics,
     )
+    from scripts.runtime_paths import vibecrafted_home
 
 
 OUTPUT_TAIL_LIMIT = 120
@@ -48,6 +51,10 @@ def default_source_dir() -> str:
 
 def installer_script_path(source_dir: str) -> Path:
     return Path(source_dir).resolve() / "scripts" / "vetcoders_install.py"
+
+
+def foundations_script_path(source_dir: str) -> Path:
+    return Path(source_dir).resolve() / "scripts" / "install-foundations.sh"
 
 
 def build_install_command(source_dir: str, *, with_shell: bool) -> list[str]:
@@ -66,6 +73,50 @@ def build_install_command(source_dir: str, *, with_shell: bool) -> list[str]:
     if with_shell:
         command.append("--with-shell")
     return command
+
+
+@dataclass(frozen=True)
+class InstallStep:
+    label: str
+    command: list[str]
+
+
+def build_install_steps(source_dir: str, *, with_shell: bool) -> list[InstallStep]:
+    steps: list[InstallStep] = []
+    foundations_path = foundations_script_path(source_dir)
+    if foundations_path.exists():
+        steps.append(
+            InstallStep(
+                label="Bootstrap foundations",
+                command=["bash", str(foundations_path)],
+            )
+        )
+
+    steps.append(
+        InstallStep(
+            label="Install Vibecrafted",
+            command=build_install_command(source_dir, with_shell=with_shell),
+        )
+    )
+    return steps
+
+
+def install_runtime_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(os.environ if base_env is None else base_env)
+    path_entries = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
+
+    candidates = [
+        vibecrafted_home() / "bin",
+        vibecrafted_home() / "tools" / "node" / "bin",
+        Path.home() / ".cargo" / "bin",
+    ]
+    for candidate in candidates:
+        candidate_str = str(candidate)
+        if candidate.is_dir() and candidate_str not in path_entries:
+            path_entries.insert(0, candidate_str)
+
+    env["PATH"] = os.pathsep.join(path_entries)
+    return env
 
 
 def _trim_home(value: str) -> str:
@@ -96,12 +147,14 @@ def _open_target(target: str) -> bool:
 @dataclass
 class InstallRun:
     command: list[str] = field(default_factory=list)
+    plan: list[list[str]] = field(default_factory=list)
     output: list[str] = field(default_factory=list)
     with_shell: bool = True
     running: bool = False
     completed: bool = False
     exit_code: int | None = None
     error: str | None = None
+    current_stage: str | None = None
     started_at: float | None = None
     finished_at: float | None = None
 
@@ -169,14 +222,17 @@ class InstallController:
     def status_payload(self) -> dict[str, Any]:
         with self._lock:
             output_tail = self._run.output[-OUTPUT_TAIL_LIMIT:]
+            plan = self._run.plan or ([self._run.command] if self._run.command else [])
             return {
                 "command": self._run.command,
-                "command_display": " ".join(self._run.command),
+                "plan": plan,
+                "command_display": " && ".join(" ".join(step) for step in plan),
                 "with_shell": self._run.with_shell,
                 "running": self._run.running,
                 "completed": self._run.completed,
                 "exit_code": self._run.exit_code,
                 "error": self._run.error,
+                "current_stage": self._run.current_stage,
                 "output": output_tail,
                 "output_line_count": len(self._run.output),
                 "started_at": self._run.started_at,
@@ -185,16 +241,18 @@ class InstallController:
 
     def start(self, *, with_shell: bool) -> tuple[bool, str]:
         try:
-            command = build_install_command(self.source_dir, with_shell=with_shell)
+            steps = build_install_steps(self.source_dir, with_shell=with_shell)
         except FileNotFoundError as exc:
             with self._lock:
                 self._run = InstallRun(
                     command=[],
+                    plan=[],
                     with_shell=with_shell,
                     running=False,
                     completed=True,
                     exit_code=-1,
                     error=str(exc),
+                    current_stage=None,
                     finished_at=time.time(),
                 )
             return False, str(exc)
@@ -203,19 +261,21 @@ class InstallController:
             if self._run.running:
                 return False, "Installation is already running."
             self._run = InstallRun(
-                command=command,
+                command=steps[-1].command,
+                plan=[step.command for step in steps],
                 with_shell=with_shell,
                 running=True,
                 completed=False,
                 exit_code=None,
                 error=None,
                 output=[],
+                current_stage=steps[0].label,
                 started_at=time.time(),
             )
 
         worker = threading.Thread(
             target=self._worker,
-            args=(command,),
+            args=(steps,),
             daemon=True,
             name="installer-gui-worker",
         )
@@ -226,23 +286,34 @@ class InstallController:
         with self._lock:
             self._run.output.append(line)
 
-    def _worker(self, command: list[str]) -> None:
-        exit_code = -1
+    def _worker(self, steps: list[InstallStep]) -> None:
+        exit_code = 0
         error: str | None = None
+        env = install_runtime_env()
         try:
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-            assert process.stdout is not None
-            for raw_line in process.stdout:
-                self._append_output(raw_line.rstrip("\n"))
-            exit_code = process.wait()
+            for step in steps:
+                with self._lock:
+                    self._run.current_stage = step.label
+                self._append_output(f"[stage] {step.label}")
+                self._append_output(f"$ {' '.join(step.command)}")
+                process = subprocess.Popen(
+                    step.command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                    env=env,
+                )
+                assert process.stdout is not None
+                for raw_line in process.stdout:
+                    self._append_output(raw_line.rstrip("\n"))
+                exit_code = process.wait()
+                if exit_code != 0:
+                    break
+                env = install_runtime_env(env)
         except Exception as exc:  # pragma: no cover - defensive path
             error = str(exc)
+            exit_code = -1
 
         with self._lock:
             self._run.running = False
@@ -742,7 +813,7 @@ def build_html(preflight: dict[str, Any]) -> str:
                   </p>
                   <ul class="hero-list">
                     <li>See the runtime truth before touching the machine.</li>
-                    <li>Run the same compact installer used by automation.</li>
+                    <li>Bootstrap required foundations, then run the same compact installer used by automation.</li>
                     <li>Leave with a readable START_HERE guide and a clean command deck.</li>
                   </ul>
                 </article>
@@ -764,8 +835,8 @@ def build_html(preflight: dict[str, Any]) -> str:
                   <h2 class="section-title">What this path does</h2>
                   <p class="section-copy">
                     This GUI is intentionally thin. It does not invent a parallel installer; it wraps the repo-owned
-                    compact flow, streams the real log, and keeps the launch-ready onboarding surface aligned with what
-                    the product actually promises.
+                    foundation bootstrap plus the compact flow, streams the real log, and keeps the launch-ready
+                    onboarding surface aligned with what the product actually promises.
                   </p>
                   <ol class="steps">
                     <li>
@@ -777,8 +848,12 @@ def build_html(preflight: dict[str, Any]) -> str:
                       Shell helpers stay optional. The core `vibecrafted ...` command deck works either way.
                     </li>
                     <li>
-                      <strong>3. Run the same install truth</strong>
-                      The browser path launches `vetcoders_install.py --compact --non-interactive` and streams its output.
+                      <strong>3. Bootstrap foundations</strong>
+                      The browser path installs the repo-owned foundation layer first, so aicx, loctree, and friends are not skipped.
+                    </li>
+                    <li>
+                      <strong>4. Run the same install truth</strong>
+                      The browser path then launches `vetcoders_install.py --compact --non-interactive` and streams its output.
                     </li>
                   </ol>
 
@@ -929,8 +1004,9 @@ def build_html(preflight: dict[str, Any]) -> str:
                   dom.withShell.disabled = true;
                   dom.statusChip.className = 'chip warn';
                   dom.statusChip.textContent = 'Installing';
-                  dom.statusText.textContent = 'The compact installer is running now. You can leave this window open and watch the live log.';
-                  dom.statusMeta.textContent = 'Streaming repo-owned compact installer output.';
+                  const stage = status.current_stage ? `${status.current_stage} is running now.` : 'The guided install is running now.';
+                  dom.statusText.textContent = `${stage} You can leave this window open and watch the live log.`;
+                  dom.statusMeta.textContent = 'Streaming repo-owned foundations + compact installer output.';
                   dom.successPanel.hidden = true;
                   return;
                 }
@@ -942,7 +1018,7 @@ def build_html(preflight: dict[str, Any]) -> str:
                   dom.statusChip.className = 'chip ok';
                   dom.statusChip.textContent = 'Install complete';
                   dom.statusText.textContent = 'The guided path finished cleanly. Use START_HERE for the plain-language path, then switch to the command deck.';
-                  dom.statusMeta.textContent = 'Installer exited cleanly.';
+                  dom.statusMeta.textContent = 'Foundations and installer exited cleanly.';
                   dom.successPanel.hidden = false;
                   return;
                 }
@@ -959,7 +1035,7 @@ def build_html(preflight: dict[str, Any]) -> str:
                 dom.statusChip.className = 'chip';
                 dom.statusChip.textContent = 'Waiting for approval';
                 dom.statusText.textContent = 'Review the preflight cards, then start the install when the machine shape looks right.';
-                dom.statusMeta.textContent = 'Compact mode, repo-owned installer truth.';
+                dom.statusMeta.textContent = 'Guided foundations + compact mode, repo-owned installer truth.';
                 dom.successPanel.hidden = true;
               }
 

@@ -2,6 +2,8 @@
 
 Prepared on 2026-04-10 for the current pre-release shape of 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
 
+Official submit/help surfaces below were re-checked on 2026-04-10 before this pack was refreshed.
+
 ## Positioning anchor
 
 - Product name: 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
@@ -75,11 +77,45 @@ Prepared on 2026-04-10 for the current pre-release shape of 𝚅𝚒𝚋𝚎𝚌
 - Platform
   macOS, Linux
 
-- Install CTA
-  `curl -fsSL https://vibecrafted.io/install.sh | bash`
-
 - Guided install CTA
   `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui`
+
+- Direct install CTA
+  `curl -fsSL https://vibecrafted.io/install.sh | bash`
+
+## Canonical submission packet
+
+Prepare these fields once, then reuse them across directories:
+
+- Product name
+  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
+
+- Homepage URL
+  https://vibecrafted.io/
+
+- Product URL
+  https://github.com/VetCoders/vibecrafted
+
+- Primary CTA
+  Guided install
+
+- Primary CTA URL
+  https://vibecrafted.io/
+
+- Install method
+  Browser-based guided installer for human onboarding, compact CLI path for automation.
+
+- Best-fit audience
+  Founders and software teams shipping AI-generated or AI-maintained repos into production.
+
+- Problem statement
+  AI can generate a repo faster than most teams can reality-check it. The result is a vibe hangover: code that looks finished until install, trust, or launch reality breaks it.
+
+- Core outcome
+  Move an AI-built repo from draft-shaped to shippable by forcing structural truth, convergence loops, install truth, docs, packaging, and launch readiness.
+
+- Suggested assets
+  Guided installer screenshot, command deck screenshot, marbles/convergence screenshot, quickstart page screenshot, one short walkthrough video.
 
 ## Canonical long-form answer
 
@@ -93,8 +129,10 @@ Vibecrafted starts where code generation stops. It takes the repo your AI agents
 
 - Submit URL: https://theresanaiforthat.com/launch/
 - Notes from the current page:
-  They run a recurring launch thread and review submissions quickly.
-  The launch page explicitly tells makers to optimize the landing page and payment path before the traffic spike.
+  The current launch page positions this as a launch surface for creators, not just a static directory listing.
+  It says the submission fee is one-off.
+  It says unpublished tools get a full automatic refund if the editorial review rejects them.
+  The get-featured surface says launching on TAAFT first can unlock a $300 PPC bonus, which makes this the best first directory if the portal and install path are ready.
 - Suggested task/category tags:
   developer tools, coding, workflow automation, ai agents, release engineering
 
@@ -103,16 +141,17 @@ Vibecrafted starts where code generation stops. It takes the repo your AI agents
 - Submit URL: https://futuretools.io/submit-a-tool
 - FAQ surface: https://www.futuretools.io/faq
 - Notes from the current page:
-  This is curated, not guaranteed. GitHub-style tools are already present in the directory, which fits Vibecrafted well.
+  The tool is reviewed manually by Matt Wolfe's team, so this is curated, not guaranteed.
+  The FAQ still treats delayed approval as normal, so submit early and treat this as a credibility surface rather than launch-day distribution.
 - Suggested emphasis:
   founders, software teams, shipping AI-coded products, command deck, convergence loops
 
 ### Futurepedia
 
 - Submit URL: https://www.futurepedia.io/submit-tool
-- Editorial guidelines: https://www.futurepedia.io/editorial-guidelines
 - Notes from the current page:
-  Positioning is business/professional adoption, so lead with release readiness and concrete workflow outcomes, not framework mythology.
+  The submit page currently pitches Futurepedia as a large AI-tools surface for work and asks you to choose the listing option that fits your product.
+  Their public surfaces lean toward professionals adopting AI at work, so lead with release readiness and concrete workflow outcomes, not framework mythology.
 - Suggested emphasis:
   move from AI draft to shippable product, structural truth, launch readiness, product surface completion
 
@@ -120,7 +159,8 @@ Vibecrafted starts where code generation stops. It takes the repo your AI agents
 
 - Submit URL: https://www.toolify.ai/submit
 - Notes from the current page:
-  Toolify pushes SEO/distribution value heavily, so make sure the submitted copy includes strong category and keyword coverage.
+  Toolify explicitly frames the listing around visibility, trials, and paying users.
+  Their submit page also highlights update tooling, GPT submission, and AI certification, so use strong keyword/category coverage and keep the product entry maintained after listing.
 - Suggested tags:
   developer tools, prompt engineering, low-code/no-code, workflow, test automation
 
@@ -128,18 +168,20 @@ Vibecrafted starts where code generation stops. It takes the repo your AI agents
 
 - Submit URL: https://topai.tools/submit
 - Notes from the current page:
-  Editorial review claims a quick turnaround. Lead with direct utility and real operator value.
+  The current submit page says the tool must be AI-powered, functional, accessible, and clearly valuable.
+  It promises review within 48 hours and a full refund if the listing is not accepted.
+  It also says one payment keeps the listing in the directory indefinitely, so this is a good durable SEO/discovery surface.
 - Suggested emphasis:
   AI-generated repo hardening, release engineering, verification loops, install path, docs and trust surface
 
 ### Product Hunt
 
 - Posting guide: https://help.producthunt.com/en/articles/479557-how-to-post-a-product
-- Launch prep: https://www.producthunt.com/launch/preparing-for-launch
+- Launch prep: https://www.producthunt.com/launch/before-launch
 - Notes from the current docs:
-  Submit from a personal account.
-  Prepare the first maker comment in advance.
-  Launch a product people can use immediately, not vaporware.
+  New accounts need a one-week wait before posting, and Product Hunt recommends building real community presence well ahead of launch.
+  Their current launch guide says self-hunting is normal and paying hunters/promoters goes against policy.
+  Prepare the first maker comment in advance and only launch once the portal, guided install, and demo are all ready for real strangers.
 - Submission package to prepare:
   5 screenshots
   1 short walkthrough video or interactive demo
@@ -161,6 +203,15 @@ Vibecrafted starts where code generation stops. It takes the repo your AI agents
 
 5. Public landing page / portal hero
    Pull from the portal repo once its current live edits settle.
+
+## Source checklist
+
+- There’s An AI For That: `https://theresanaiforthat.com/launch/`, `https://theresanaiforthat.com/get-featured/`
+- Future Tools: `https://futuretools.io/submit-a-tool`, `https://www.futuretools.io/faq`
+- Futurepedia: `https://www.futurepedia.io/submit-tool`
+- Toolify: `https://www.toolify.ai/submit`
+- TopAI.tools: `https://topai.tools/submit`
+- Product Hunt: `https://help.producthunt.com/en/articles/479557-how-to-post-a-product`, `https://www.producthunt.com/launch/before-launch`
 
 ## First Product Hunt comment draft
 

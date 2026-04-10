@@ -18,6 +18,28 @@ def test_build_install_command_respects_shell_toggle(tmp_path: Path) -> None:
     assert with_shell[:5] == without_shell[:5]
 
 
+def test_build_install_steps_include_foundations_before_installer(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "vetcoders_install.py").write_text(
+        "#!/usr/bin/env python3\n", encoding="utf-8"
+    )
+    (scripts_dir / "install-foundations.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+
+    steps = installer_gui.build_install_steps(str(tmp_path), with_shell=True)
+
+    assert [step.label for step in steps] == [
+        "Bootstrap foundations",
+        "Install Vibecrafted",
+    ]
+    assert steps[0].command == ["bash", str(scripts_dir / "install-foundations.sh")]
+    assert steps[1].command[-1] == "--with-shell"
+
+
 def test_preflight_payload_summarizes_diagnostics(monkeypatch, tmp_path: Path) -> None:
     diagnostics = {
         "frameworks": {
@@ -60,3 +82,22 @@ def test_preflight_payload_summarizes_diagnostics(monkeypatch, tmp_path: Path) -
     assert payload["missing_count"] == 1
     assert payload["needs_install"] == {"foundations": ["loctree-mcp"]}
     assert payload["status"]["completed"] is False
+
+
+def test_install_runtime_env_prepends_repo_owned_bins(
+    monkeypatch, tmp_path: Path
+) -> None:
+    crafted_home = tmp_path / ".vibecrafted"
+    cargo_bin = tmp_path / ".cargo" / "bin"
+    node_bin = crafted_home / "tools" / "node" / "bin"
+    crafted_bin = crafted_home / "bin"
+    for path in (cargo_bin, node_bin, crafted_bin):
+        path.mkdir(parents=True)
+
+    monkeypatch.setattr(installer_gui, "vibecrafted_home", lambda: crafted_home)
+    monkeypatch.setattr(installer_gui.Path, "home", lambda: tmp_path)
+
+    env = installer_gui.install_runtime_env({"PATH": "/usr/bin"})
+    pieces = env["PATH"].split(":")
+
+    assert pieces[:3] == [str(cargo_bin), str(node_bin), str(crafted_bin)]

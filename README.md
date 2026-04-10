@@ -37,7 +37,7 @@ _(Read the full use case: [The 4 ways AI-coded MVPs break in production](docs/TH
 
 **We ship AI-built software.**
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. is not another code generator. It is the release engine you run after AI has produced a repo and before a real user touches it. It forces that repo through perception, verification, convergence, packaging, and launch-readiness checks until the product can survive first contact.
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. is not another code generator. It is the release engine you run after AI has produced a repo and before a real user touches it. It forces that repo through perception, verification, convergence, install truth, packaging, and launch-readiness checks until a stranger can install it, trust it, and actually use it.
 
 ---
 
@@ -102,13 +102,15 @@ Prefer the guided browser path when you are onboarding a founder, PM, or less te
 curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
 ```
 
-Terminal-first path:
+The guided path stages the local control plane, bootstraps the foundation layer, runs the same compact installer truth used by automation, and leaves a readable `START_HERE.md` behind.
+
+Use the direct compact path when you are scripting the install or you already know you want the terminal-only flow:
 
 ```bash
 curl -fsSL https://vibecrafted.io/install.sh | bash
 ```
 
-The installer stages a local control plane under `$VIBECRAFTED_ROOT/.vibecrafted/tools/`, then runs the orchestrator interactively. It tells you what it does before it does it. It asks before touching your shell config.
+Inside a local checkout, `make vibecrafted` now opens the same browser-based guided installer. `make install` stays as the direct non-interactive path.
 
 Verify:
 
@@ -127,6 +129,15 @@ vibecrafted justdo codex --prompt "Add JWT authentication"
 ```
 
 Type `vibecrafted help` for the command deck, or `vc-` and hit tab once the shell helpers are installed.
+
+When you want to walk the release surface explicitly, run:
+
+```bash
+vibecrafted dou claude --prompt "Audit launch readiness"
+vibecrafted decorate codex --prompt "Polish the release surface"
+vibecrafted hydrate codex --prompt "Package the product"
+vibecrafted release codex --prompt "Prepare release steps"
+```
 
 ---
 

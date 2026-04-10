@@ -74,6 +74,7 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     guide_text = guide_path.read_text(encoding="utf-8")
     assert "vibecrafted init claude" in guide_text
     assert "vibecrafted dou claude" in guide_text
+    assert "vibecrafted decorate codex" in guide_text
     assert "Dashboard is optional" in guide_text
 
 
@@ -87,6 +88,7 @@ def test_print_doctor_surfaces_simple_and_release_paths(capsys, tmp_path: Path) 
     assert "Simple path:" in output
     assert "vibecrafted init claude" in output
     assert "Ship-ready path:" in output
+    assert "vibecrafted decorate codex" in output
     assert "vibecrafted hydrate codex" in output
     assert "vibecrafted release codex" in output
     assert "START_HERE.md" in output

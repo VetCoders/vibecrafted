@@ -14,10 +14,10 @@ help:
 	@printf "  \033[1m\033[38;5;173m⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework\033[0m\n"
 	@printf "  ─────────────────────────────────────\n"
 	@printf "\n"
-	@printf "  \033[36m▸\033[0m  make vibecrafted   \033[2mSafely install or update the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework (Orchestrator)\033[0m\n"
-	@printf "  \033[36m▸\033[0m  make gui-install   \033[2mLaunch the browser-based guided installer\033[0m\n"
+	@printf "  \033[36m▸\033[0m  make vibecrafted   \033[2mLaunch the browser-based guided installer (default human front door)\033[0m\n"
+	@printf "  \033[36m▸\033[0m  make gui-install   \033[2mAlias for the browser-based guided installer\033[0m\n"
 	@printf "\n"
-	@printf "  \033[33m◆\033[0m  make install       \033[2mSkills + shell helpers (Direct)\033[0m\n"
+	@printf "  \033[33m◆\033[0m  make install       \033[2mDirect non-interactive install for automation / terminal-native paths\033[0m\n"
 	@printf "  \033[33m◇\033[0m  make skills        \033[2mSkills only\033[0m\n"
 	@printf "  \033[33m◇\033[0m  make helpers       \033[2mShell helpers only\033[0m\n"
 	@printf "  \033[33m◇\033[0m  make foundations   \033[2mInstall loctree + aicx binaries\033[0m\n"
@@ -44,10 +44,9 @@ help:
 	@printf "\n"
 
 vibecrafted: init-hooks
-	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell
-
-gui-install:
 	@$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"
+
+gui-install: vibecrafted
 
 install: init-hooks
 	@bash scripts/install-foundations.sh
