@@ -952,7 +952,7 @@ _vetcoders_launch_dashboard() {
       command -v zellij >/dev/null 2>&1 || {
         echo "zellij is required." >&2; return 1
       }
-      if [[ -n "${ZELLIJ:-}" ]]; then
+      if [[ -n "${ZELLIJ+set}" ]]; then
         zellij action switch-session "${1:?session name required}"
       else
         zellij attach "${1:?session name required}"
@@ -964,7 +964,11 @@ _vetcoders_launch_dashboard() {
       command -v zellij >/dev/null 2>&1 || {
         echo "zellij is required." >&2; return 1
       }
-      zellij attach "${1:?session name required}"
+      if [[ -n "${ZELLIJ+set}" ]]; then
+        zellij action switch-session "${1:?session name required}"
+      else
+        zellij attach "${1:?session name required}"
+      fi
       return
       ;;
     kill)

@@ -2028,6 +2028,37 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 else f"spawn pipeline broken: {spawn_detail}",
             )
         )
+        # 7a-2. Spawn e2e smoke: generate a launcher, verify it is valid bash.
+        e2e_ok, e2e_detail = _run_smoke_command(
+            [
+                "bash",
+                "-c",
+                'source "$1" && '
+                'tmpdir="$(mktemp -d)" && '
+                "export SPAWN_AGENT=doctor-smoke SPAWN_RUN_ID=smoke-000 "
+                "SPAWN_PROMPT_ID=smoke SPAWN_LOOP_NR=0 SPAWN_SKILL_CODE=doctor "
+                'SPAWN_ROOT="$tmpdir" && '
+                'spawn_write_meta "$tmpdir/meta.json" && '
+                'spawn_generate_launcher "$tmpdir/launcher.sh" "$tmpdir/meta.json" '
+                '"$tmpdir/report.md" "$tmpdir/transcript.md" "$1" "echo ok" && '
+                'bash -n "$tmpdir/launcher.sh" && '
+                'rm -rf "$tmpdir" && '
+                'printf "spawn-e2e-ok\\n"',
+                "_",
+                str(common_sh),
+            ],
+            env={k: v for k, v in os.environ.items() if not k.startswith("ZELLIJ")},
+            expected_text="spawn-e2e-ok",
+        )
+        findings.append(
+            DoctorFinding(
+                "ok" if e2e_ok else "warn",
+                "spawn-e2e",
+                "spawn pipeline generates valid launcher end-to-end"
+                if e2e_ok
+                else f"spawn e2e smoke failed: {e2e_detail}",
+            )
+        )
     else:
         findings.append(
             DoctorFinding(

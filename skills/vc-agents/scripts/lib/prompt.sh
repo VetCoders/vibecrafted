@@ -114,6 +114,15 @@ spawn_build_runtime_prompt() {
     { print }
   ' "$source_file" >> "$runtime_file"
 
+  local run_id="${SPAWN_RUN_ID:-unknown}"
+  cat >> "$runtime_file" <<EOF_LABEL
+---
+## Exit Contract
+- **COMMIT**: mandatory. One commit when done.
+- **REPORT**: mandatory. Write to the report path given at the end of this prompt.
+- **SCOPE**: do your work, commit, report, stop.
+EOF_LABEL
+
   cat >> "$runtime_file" <<EOF_PROMPT
 
 At the end of the task, write your final human-readable report to this exact path:

@@ -675,7 +675,11 @@ cmd_dashboard() {
         printf '%b[error]%b zellij is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b[error]%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
-      zellij attach "$1"
+      if [[ -n "${ZELLIJ+set}" ]]; then
+        zellij action switch-session "$1"
+      else
+        zellij attach "$1"
+      fi
       return
       ;;
     kill)
@@ -750,10 +754,30 @@ _fetch_channel_version() {
   python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('version',''),d.get('archive_url',''))" <<< "$payload" 2>/dev/null || return 1
 }
 
+_post_update_cleanup() {
+  # Remove known stale files that may survive across version transitions.
+  local tools_dir="${crafted_tools:-$HOME/.vibecrafted/tools/vibecrafted-current}"
+  local stale_candidates=(
+    "$tools_dir/scripts/vibecraft"
+    "$tools_dir/scripts/vc-implement"
+  )
+  local removed=0
+  for f in "${stale_candidates[@]}"; do
+    if [[ -e "$f" ]]; then
+      rm -f "$f"
+      (( removed++ ))
+    fi
+  done
+  if (( removed )); then
+    printf '  %bCleaned %d stale file(s) from previous install.%b\n' "$_dim" "$removed" "$_reset"
+  fi
+}
+
 _post_update_banner() {
   local old_ver="$1"
   local new_ver
   new_ver="$(_version)"
+  _post_update_cleanup
   if [[ "$new_ver" != "$old_ver" ]]; then
     printf '\n  %bUpdated:%b %s -> %b%s%b\n' "$_bold" "$_reset" "$old_ver" "$_green" "$new_ver" "$_reset"
   fi
@@ -762,6 +786,14 @@ _post_update_banner() {
 
 cmd_update() {
   local makefile="" repo_source="" installed_ver="" channel_ref="main"
+  local force=0
+  for _u_arg in "$@"; do
+    case "$_u_arg" in
+      --force|-f) force=1 ;;
+      --ref) : ;;  # consumed below
+      --ref=*) channel_ref="${_u_arg#--ref=}" ;;
+    esac
+  done
   repo_source="$(_repo_source_root 2>/dev/null || true)"
 
   installed_ver="$(_version)"
@@ -775,8 +807,9 @@ cmd_update() {
     available_url="${channel_info#* }"
     if [[ -n "$available_ver" ]]; then
       printf '  Available: %b%s%b\n' "$_green" "$available_ver" "$_reset"
-      if [[ "$installed_ver" == "$available_ver" ]]; then
-        printf '  %b(up to date)%b\n\n' "$_dim" "$_reset"
+      if [[ "$installed_ver" == "$available_ver" ]] && (( ! force )); then
+        printf '  %b(up to date — use --force to reinstall)%b\n\n' "$_dim" "$_reset"
+        return 0
       fi
     fi
   fi
@@ -995,7 +1028,7 @@ main() {
     doctor|check) cmd_doctor ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
     stats|status) cmd_stats ;;
-    update|upgrade) cmd_update ;;
+    update|upgrade) cmd_update "$@" ;;
     uninstall|remove) cmd_uninstall ;;
     version|--version|-v) printf 'vibecrafted %s\n' "$(_version)" ;;
     agents) cmd_agents "$@" ;;
