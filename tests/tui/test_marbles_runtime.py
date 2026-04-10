@@ -42,8 +42,15 @@ def _write_replaying_zellij(script_path: Path) -> None:
                 "args = sys.argv[1:]",
                 'Path(os.environ["ZELLIJ_CAPTURE_FILE"]).write_text("\\n".join(args) + "\\n", encoding="utf-8")',
                 "if args:",
+                "    cmd_script = Path(args[-1])",
+                '    expected_spawn = os.environ.get("EXPECTED_MARBLES_SPAWN", "")',
+                "    if expected_spawn and cmd_script.is_file():",
+                '        payload = cmd_script.read_text(encoding="utf-8", errors="ignore")',
+                "        if expected_spawn not in payload:",
+                '            print(f"unsafe zellij replay target: {cmd_script}", file=sys.stderr)',
+                "            sys.exit(97)",
                 "    shell = shutil.which('zsh') or shutil.which('bash') or '/bin/sh'",
-                "    subprocess.run([shell, '-lc', args[-1]], check=True, env=os.environ.copy())",
+                "    subprocess.run([shell, '-lc', str(cmd_script)], check=True, env=os.environ.copy())",
             ]
         )
         + "\n",
@@ -283,6 +290,7 @@ def _run_marbles_prompt(
     env["VIBECRAFTED_ROOT"] = str(isolated_root)
     env["CAPTURE_FILE"] = str(capture_file)
     env["ZELLIJ_CAPTURE_FILE"] = str(zellij_capture_file)
+    env["EXPECTED_MARBLES_SPAWN"] = str(spawn_script)
     env["TMPDIR"] = f"{tmpdir_root}/"
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
     env.pop("ZELLIJ", None)

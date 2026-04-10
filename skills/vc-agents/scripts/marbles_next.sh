@@ -603,6 +603,17 @@ else
   exit 0
 fi
 
+# Capture ancestor_mtime BEFORE refresh so the steering check below can detect
+# whether the child modified ancestor.md during this loop.
+_pre_refresh_ancestor_mtime=""
+if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
+  _pre_refresh_ancestor_mtime="$(python3 -c "
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as f:
+    print(json.load(f).get('ancestor_mtime', ''))
+" "$state_file")"
+fi
+
 _refresh_state_steering_fields
 
 if [[ $next -gt $total_count ]]; then
@@ -658,13 +669,16 @@ _launch_verification "$current" 0
 # Model follows the same hierarchy: steering override → ancestor raw → empty.
 _rotation_mode="single"
 _seed_agent=""
-_stored_ancestor_mtime=""
+# Use the mtime captured BEFORE _refresh_state_steering_fields updated it.
+# After refresh, state.json.ancestor_mtime == current file mtime, hiding
+# changes the child made during this loop.
+_stored_ancestor_mtime="$_pre_refresh_ancestor_mtime"
 if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
-  read -r _rotation_mode _seed_agent _stored_ancestor_mtime < <(python3 - "$state_file" <<'PY'
+  read -r _rotation_mode _seed_agent < <(python3 - "$state_file" <<'PY'
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as f:
     d = json.load(f)
-print(d.get("rotation", "single"), d.get("agent", ""), d.get("ancestor_mtime", ""))
+print(d.get("rotation", "single"), d.get("agent", ""))
 PY
   )
 fi
