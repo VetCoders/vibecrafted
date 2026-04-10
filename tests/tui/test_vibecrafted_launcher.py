@@ -308,8 +308,19 @@ def test_telemetry_wrapper_smokes_headless_marbles_runtime(tmp_path: Path) -> No
     assert "--count" in payload
     assert payload[payload.index("--count") + 1] == "1"
     assert "--no-watch" in payload
-    assert "--prompt" in payload
-    assert payload[payload.index("--prompt") + 1] == "telemetry smoke"
+    assert "--root" in payload
+    smoke_root = Path(payload[payload.index("--root") + 1])
+    assert smoke_root.exists()
+    assert smoke_root != REPO_ROOT
+    assert (smoke_root / ".git").exists()
+    assert "--file" in payload
+    smoke_plan = Path(payload[payload.index("--file") + 1])
+    assert smoke_plan.is_file()
+    assert smoke_root in smoke_plan.parents
+    plan_body = smoke_plan.read_text(encoding="utf-8")
+    assert "SMOKE_OK.md" in plan_body
+    assert "Do not run `telemetry smoke`" in plan_body
+    assert "--prompt" not in payload
 
 
 def test_repo_launcher_is_directly_executable() -> None:
