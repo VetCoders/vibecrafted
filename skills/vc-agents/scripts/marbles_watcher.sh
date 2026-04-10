@@ -691,6 +691,12 @@ PY
   if [[ -z "$loop_agent" ]]; then
     loop_agent="$(spawn_frontmatter_field "$ancestor_plan" "agent")"
   fi
+  if [[ -z "$loop_focus" ]]; then
+    loop_focus="$(spawn_frontmatter_field "$ancestor_plan" "focus")"
+  fi
+  if [[ -z "$loop_model" ]]; then
+    loop_model="$(spawn_frontmatter_field "$ancestor_plan" "model")"
+  fi
   [[ -n "$loop_agent" ]] || loop_agent="unknown"
 
   _record_loop_start "$loop_nr" "" "$loop_agent" "$loop_focus" "$ancestor_slug" "$loop_model"

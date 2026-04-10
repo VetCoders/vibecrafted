@@ -18,18 +18,11 @@ Direct compact path for automation or terminal-native installs:
 curl -fsSL https://vibecrafted.io/install.sh | bash
 ```
 
-Prefer the guided browser path when the operator should see the plan before they trust the terminal:
-
-```bash
-curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
-```
-
 Non-destructive. Interactive. Tells you what it does before it does it.
 Asks before touching your shell config. Everything reversible with
 `make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current uninstall`.
 
 Inside a local checkout, `make vibecrafted` opens the guided installer and `make install` stays direct/non-interactive.
-If you prefer the terminal-native fallback, run `make wizard`.
 
 After install, open a new terminal or:
 
@@ -117,10 +110,6 @@ remaining accusation.
 
 Type `vibecrafted help` for the command deck. Once shell helpers are loaded,
 `vc-` wrappers stay available as shortcuts.
-
-Preparing the public launch surface and directory submissions?
-Use [Release Kickoff](./RELEASE_KICKOFF.md) together with
-[Submission Forms](./SUBMISSION_FORMS.md).
 
 ---
 

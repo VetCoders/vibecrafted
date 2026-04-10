@@ -514,8 +514,9 @@ def write_start_here_guide(
         "",
         "## Ship-ready path",
         '1. `vibecrafted dou claude --prompt "Audit launch readiness"`',
-        '2. `vibecrafted hydrate codex --prompt "Package the product"`',
-        '3. `vibecrafted release codex --prompt "Prepare release steps"`',
+        '2. `vibecrafted decorate codex --prompt "Polish the release surface"`',
+        '3. `vibecrafted hydrate codex --prompt "Package the product"`',
+        '4. `vibecrafted release codex --prompt "Prepare release steps"`',
         "",
         "## Optional operator surface",
         "- `vibecrafted dashboard`",
@@ -2390,6 +2391,10 @@ def print_doctor(
     print()
     print(f"  {bold('Ship-ready path:')}")
     print("    " + cyan("vibecrafted dou claude --prompt 'Audit launch readiness'"))
+    print(
+        "    "
+        + cyan("vibecrafted decorate codex --prompt 'Polish the release surface'")
+    )
     print("    " + cyan("vibecrafted hydrate codex --prompt 'Package the product'"))
     print("    " + cyan("vibecrafted release codex --prompt 'Prepare release steps'"))
     print()
