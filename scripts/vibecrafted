@@ -155,6 +155,14 @@ _helper_candidates() {
 
 _ensure_helpers_loaded() {
   local helper
+  local repo_source=""
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  if [[ -n "$repo_source" ]]; then
+    export VIBECRAFTED_PREFER_REPO_SPAWN=1
+    [[ -n "${VIBECRAFTED_ROOT:-}" ]] || export VIBECRAFTED_ROOT="$repo_source"
+  else
+    unset VIBECRAFTED_PREFER_REPO_SPAWN
+  fi
   while IFS= read -r helper; do
     [[ -r "$helper" ]] || continue
     # shellcheck disable=SC1090
@@ -512,6 +520,7 @@ cmd_help_full() {
   printf '  %bvibecrafted init%b [agent]              Interactive init session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted update%b                     Pull latest + reinstall\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted doctor%b                    Installation health check\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted version%b                   Print version\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
@@ -665,6 +674,22 @@ cmd_uninstall() {
     return 1
   }
   make -C "$(dirname "$makefile")" uninstall
+}
+
+cmd_update() {
+  local makefile="" repo_source=""
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  for candidate in \
+    "${repo_source:+$repo_source/Makefile}" \
+    "$crafted_tools/Makefile" \
+    "$(_repo_root)/Makefile"; do
+    [[ -f "$candidate" ]] && makefile="$candidate" && break
+  done
+  [[ -n "$makefile" ]] || {
+    printf '%b[error]%b Makefile not found. Re-run the install command instead.\n' "$_red" "$_reset" >&2
+    return 1
+  }
+  make -C "$(dirname "$makefile")" update
 }
 
 cmd_agents() {
@@ -831,6 +856,7 @@ main() {
     doctor|check) cmd_doctor ;;
     dashboard|mc|mission-control) cmd_dashboard "$@" ;;
     stats|status) cmd_stats ;;
+    update|upgrade) cmd_update ;;
     uninstall|remove) cmd_uninstall ;;
     version|--version|-v) printf 'vibecrafted %s\n' "$(_version)" ;;
     agents) cmd_agents "$@" ;;

@@ -1735,6 +1735,32 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     fw_ver = state.framework_version or "unknown"
     findings.append(DoctorFinding("ok", "version", fw_ver))
 
+    # 0b. Distribution channel + upgrade path
+    tools_dir = store_path.parent  # e.g. ~/.vibecrafted/tools/../ -> ~/.vibecrafted
+    current_link = tools_dir / "tools" / "vibecrafted-current"
+    is_git = False
+    if current_link.exists():
+        resolved = current_link.resolve()
+        is_git = (resolved / ".git").exists()
+    elif store_path.parent.exists():
+        # Check if the store itself lives inside a git checkout
+        is_git = (store_path.parent / ".git").exists()
+
+    if is_git:
+        findings.append(
+            DoctorFinding(
+                "ok", "channel", "git — use 'vibecrafted update' or 'make update'"
+            )
+        )
+    else:
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "channel",
+                "tarball — no in-place upgrade; re-run install.sh to update",
+            )
+        )
+
     # 1. Store exists
     if store_path.exists():
         findings.append(DoctorFinding("ok", "store", f"{store_path} exists"))

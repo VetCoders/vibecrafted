@@ -99,7 +99,21 @@ if [[ -n "$archive_url" && -n "$archive_file" ]]; then
 fi
 
 if [[ -z "$archive_url" && -z "$archive_file" ]]; then
-  archive_url="https://vibecrafted.io/vibecrafted-v1.2.1.tar.gz"
+  # Resolve latest version from the channel manifest instead of hard-pinning.
+  channel_url="https://vibecrafted.io/channel/${ref}.json"
+  resolved_url=""
+  if command -v curl >/dev/null 2>&1; then
+    resolved_url="$(curl -fsSL "$channel_url" 2>/dev/null \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('archive_url',''))" 2>/dev/null)" || true
+  fi
+  if [[ -n "$resolved_url" ]]; then
+    archive_url="$resolved_url"
+    info "Resolved from channel ($ref): $archive_url"
+  else
+    # Fallback: frozen URL for offline / pre-channel deployments.
+    archive_url="https://vibecrafted.io/vibecrafted-v1.2.1.tar.gz"
+    info "[note] Channel manifest not available — using frozen v1.2.1 URL"
+  fi
 fi
 
 command -v tar >/dev/null 2>&1 || die "tar is required"
@@ -200,6 +214,28 @@ info "  $staged_dir"
 info "Current control plane:"
 info "  $current_link"
 
+# Extract version from the archive URL or staged Makefile for the post-install banner.
+_installed_version=""
+if [[ -f "$staged_dir/Makefile" ]]; then
+  _installed_version="$(grep -oP 'VERSION\s*:?=\s*\K\S+' "$staged_dir/Makefile" 2>/dev/null || true)"
+fi
+[[ -n "$_installed_version" ]] || _installed_version="$(basename "$archive_url" .tar.gz 2>/dev/null || echo 'unknown')"
+
+post_install_banner() {
+  printf '\n'
+  info "---------------------------------------------------------------"
+  info " Installed: vibecrafted $_installed_version"
+  info " Channel:   tarball (no self-update)"
+  info ""
+  info " To upgrade, re-run the install command — the channel manifest"
+  info " will resolve the latest version automatically when available."
+  info " There is currently no in-place 'vibecrafted update' for"
+  info " tarball installs."
+  info ""
+  info " Run 'vibecrafted doctor' to check installation health."
+  info "---------------------------------------------------------------"
+}
+
 if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
   installer="$current_link/scripts/vetcoders_install.py"
   [[ -f "$installer" ]] || die "Installer not found: $installer"
@@ -221,12 +257,14 @@ if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
     esac
   done
 
+  post_install_banner
   info "Launching installer:"
   info "  python3 $installer install --source $current_link --with-shell --compact --non-interactive"
   printf '\n'
   exec python3 "$installer" install --source "$current_link" --with-shell --compact --non-interactive
 fi
 
+post_install_banner
 info "Launching local make target:"
 info "  make -C $current_link $target"
 printf '\n'
