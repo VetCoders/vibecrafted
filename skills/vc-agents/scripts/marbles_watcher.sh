@@ -53,7 +53,49 @@ _init_state() {
   initial_agent="$(spawn_frontmatter_field "$ancestor_plan" "agent")"
   [[ -n "$initial_agent" ]] || initial_agent="unknown"
 
-  _write_state <<EOF
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$state_file" "$run_id" "$initial_agent" "$ancestor_plan" "$god_plan" "$root_dir" "$runtime" "$total_count" "$$" <<'PY'
+import datetime
+import json
+import sys
+
+state_path, run_id, initial_agent, ancestor_plan, god_plan, root_dir, runtime, total_count, watcher_pid = sys.argv[1:10]
+
+try:
+    with open(state_path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+except (OSError, json.JSONDecodeError):
+    payload = {}
+
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+payload.update(
+    {
+        "run_id": run_id,
+        "agent": initial_agent or payload.get("agent", "unknown"),
+        "mode": payload.get("mode", "steered"),
+        "plan": ancestor_plan,
+        "god_plan": god_plan,
+        "ancestor_plan": ancestor_plan,
+        "root": root_dir,
+        "runtime": runtime,
+        "total_loops": int(total_count),
+        "current_loop": 0,
+        "status": "initialized",
+        "watcher_pid": int(watcher_pid),
+        "updated_at": now,
+        "loops": [],
+        "trajectory": [],
+    }
+)
+payload.setdefault("started_at", now)
+
+with open(state_path + ".tmp", "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
+    mv "$state_file.tmp" "$state_file"
+  else
+    _write_state <<EOF
 {
   "run_id": "$run_id",
   "agent": "$initial_agent",
@@ -72,6 +114,7 @@ _init_state() {
   "trajectory": []
 }
 EOF
+  fi
 }
 
 _update_status() {

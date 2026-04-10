@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 usage() {
   cat <<EOF
-Usage: marbles_spawn.sh --agent <agent> [--depth <n>|--file <file>|--prompt <text>] [--count <n>] [--runtime <rt>] [--root <dir>]
+Usage: marbles_spawn.sh --agent <agent> [--depth <n>|--file <file>|--prompt <text>] [--count <n>] [--rotation <mode>] [--runtime <rt>] [--root <dir>]
 
 Marbles convergence loop orchestrator.
 Runs <agent> in a loop of <count> iterations against a live ancestor plan.
@@ -19,6 +19,7 @@ Options:
   --file <file>       Use specific plan/input file
   --prompt <text>     Inline prompt string; captures the rest of the command line
   --count <n>         Number of loops (default: 3)
+  --rotation <mode>   single, duo, trio, or multi (default: single)
   --runtime <rt>      terminal, headless (default: terminal)
   --root <dir>        Repository root
   --no-watch          Skip watcher UI and run chaining directly
@@ -30,6 +31,7 @@ depth=""
 task=""
 prompt=""
 count=3
+rotation="single"
 runtime="terminal"
 root=""
 use_watcher=1
@@ -41,6 +43,7 @@ while [[ $# -gt 0 ]]; do
     --task|--file|-f) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --file"; task="$1" ;;
     --prompt|-p) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --prompt"; prompt="$*"; break ;;
     --count)   shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --count"; count="$1" ;;
+    --rotation) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --rotation"; rotation="$1" ;;
     --runtime) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --runtime"; runtime="$1" ;;
     --root)    shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --root"; root="$1" ;;
     --no-watch) use_watcher=0 ;;
@@ -54,6 +57,7 @@ done
 [[ "$agent" =~ ^(claude|codex|gemini)$ ]] || spawn_die "Invalid agent: $agent"
 spawn_validate_runtime "$runtime"
 spawn_require_positive_int "$count" "--count"
+spawn_rotation_validate_mode "$rotation"
 [[ -z "$depth" ]] || spawn_require_positive_int "$depth" "--depth"
 
 sources=0
@@ -146,11 +150,17 @@ EOF
 } > "$ancestor_plan"
 rm -f "$body_file"
 
+ancestor_mtime="$(spawn_ancestor_mtime_iso "$ancestor_plan")"
+rotation_pool_json="$(spawn_rotation_pool_json)"
+
 cat > "$state_file" <<EOF
 {
   "run_id": "$marbles_run_id",
   "agent": "$agent",
   "mode": "steered",
+  "rotation": "$rotation",
+  "rotation_pool": $rotation_pool_json,
+  "ancestor_mtime": "$ancestor_mtime",
   "plan": "$ancestor_plan",
   "god_plan": "$god_plan",
   "ancestor_plan": "$ancestor_plan",

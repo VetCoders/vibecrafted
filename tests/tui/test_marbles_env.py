@@ -12,9 +12,8 @@ import os
 import shutil
 import subprocess
 import textwrap
+import tempfile
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "skills" / "vc-agents" / "scripts"
@@ -199,17 +198,86 @@ def test_normalize_does_not_clear_after_export() -> None:
     assert result.stdout.strip() == "test_value"
 
 
-# -- 4. STUB: rotation schedule for trio mode ----------------------------------
+# -- 4. Rotation schedule for trio mode ----------------------------------------
 
 
-@pytest.mark.skip(reason="awaiting rotation implementation")
 def test_rotation_schedule_trio() -> None:
-    """Trio mode starting with codex should produce: codex, claude, gemini, codex, claude, gemini."""
+    """Trio mode starting with codex rotates deterministically across the trio."""
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    f'source "{SCRIPTS_DIR / "common.sh"}"',
+                    "for loop_nr in 1 2 3 4 5 6; do",
+                    '  spawn_rotation_schedule_agent "trio" "codex" "$loop_nr"',
+                    "done",
+                ]
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.splitlines() == [
+        "codex",
+        "claude",
+        "gemini",
+        "codex",
+        "claude",
+        "gemini",
+    ]
 
 
-# -- 5. STUB: ancestor frontmatter parsing -------------------------------------
+# -- 5. Ancestor frontmatter parsing -------------------------------------------
 
 
-@pytest.mark.skip(reason="awaiting standalone frontmatter parser tests")
 def test_ancestor_frontmatter_parse() -> None:
-    """Parse 'agent: gemini' and 'focus: installer portability' from YAML frontmatter."""
+    """Parse agent/focus/model from a live ancestor frontmatter file."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        ancestor = tmp_path / "ancestor.md"
+        ancestor.write_text(
+            textwrap.dedent(
+                """\
+                ---
+                agent: gemini
+                focus: installer portability
+                model: gemini-2.5-pro
+                ---
+
+                Steer the next loop toward portability.
+                """
+            ),
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                "-lc",
+                "\n".join(
+                    [
+                        "set -euo pipefail",
+                        f'source "{SCRIPTS_DIR / "common.sh"}"',
+                        f'echo "$(spawn_frontmatter_field "{ancestor}" "agent")"',
+                        f'echo "$(spawn_frontmatter_field "{ancestor}" "focus")"',
+                        f'echo "$(spawn_frontmatter_field "{ancestor}" "model")"',
+                    ]
+                ),
+            ],
+            check=True,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.stdout.splitlines() == [
+            "gemini",
+            "installer portability",
+            "gemini-2.5-pro",
+        ]

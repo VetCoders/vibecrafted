@@ -180,7 +180,27 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
           cp "$SPAWN_REPORT" "${SPAWN_REPORT%.md}_verified.md"
         fi
 
-        if [[ "${MARBLES_TEST_EDIT_ANCESTOR:-}" == "1" && "${SPAWN_LOOP_NR:-0}" == "1" ]]; then
+        if [[ -n "${MARBLES_TEST_ANCESTOR_SEQUENCE:-}" ]]; then
+          base_run_id="${SPAWN_RUN_ID%-???}"
+          ancestor_path="$(spawn_marbles_state_dir "$base_run_id")/ancestor.md"
+          IFS=';' read -r -a ancestor_steps <<< "$MARBLES_TEST_ANCESTOR_SEQUENCE"
+          step_index=$((SPAWN_LOOP_NR - 1))
+          step="${ancestor_steps[$step_index]:-}"
+          if [[ -n "$step" ]]; then
+            IFS='|' read -r next_agent next_focus next_model <<< "$step"
+            {
+              printf -- '---\n'
+              printf 'agent: %s\n' "$next_agent"
+              printf 'focus: %s\n' "${next_focus:-initial prompt}"
+              printf 'priority: P0\n'
+              if [[ -n "${next_model:-}" ]]; then
+                printf 'model: %s\n' "$next_model"
+              fi
+              printf -- '---\n\n'
+              printf 'Steer the next loop toward %s.\n' "${next_focus:-initial prompt}"
+            } > "$ancestor_path"
+          fi
+        elif [[ "${MARBLES_TEST_EDIT_ANCESTOR:-}" == "1" && "${SPAWN_LOOP_NR:-0}" == "1" ]]; then
           base_run_id="${SPAWN_RUN_ID%-???}"
           ancestor_path="$(spawn_marbles_state_dir "$base_run_id")/ancestor.md"
           cat > "$ancestor_path" <<'EOF_ANCESTOR'
@@ -509,6 +529,108 @@ def test_marbles_runtime_steers_next_loop_from_ancestor_frontmatter(
     assert str(events[1]["plan"]).endswith("marbles-ancestor_L2.md")
     assert str(events[0]["plan"]) not in str(events[0]["success_hook"])
     assert events[1]["model"] == "gemini-2.5-pro"
+
+
+def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
+    tmp_path: Path,
+) -> None:
+    scripts_dir, capture_file = _prepare_fake_marbles_bundle(tmp_path)
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    home.mkdir()
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
+    env["MARBLES_TEST_ANCESTOR_SEQUENCE"] = (
+        "claude|auth hardening|;gemini|accessibility|gemini-2.5-pro"
+    )
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+
+    subprocess.run(
+        [
+            "bash",
+            str(scripts_dir / "marbles_spawn.sh"),
+            "--agent",
+            "codex",
+            "--count",
+            "3",
+            "--rotation",
+            "trio",
+            "--runtime",
+            "headless",
+            "--prompt",
+            "Fix installer drift end to end",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    state_dirs = list((crafted_home / "marbles").iterdir())
+    assert len(state_dirs) == 1
+    state_dir = state_dirs[0]
+    state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
+
+    assert state["god_plan"] == str(state_dir / "god.md")
+    assert state["ancestor_plan"] == str(state_dir / "ancestor.md")
+    assert state["plan"] == str(state_dir / "ancestor.md")
+    assert state["rotation"] == "trio"
+    assert state["rotation_pool"] == ["codex", "claude", "gemini"]
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", state["ancestor_mtime"]
+    )
+    assert [loop["agent"] for loop in state["loops"][:3]] == [
+        "codex",
+        "claude",
+        "gemini",
+    ]
+    assert [loop["focus"] for loop in state["loops"][:3]] == [
+        "initial prompt",
+        "auth hardening",
+        "accessibility",
+    ]
+    assert state["loops"][2]["model"] == "gemini-2.5-pro"
+    assert all(loop["ancestor_slug"] == "ancestor" for loop in state["loops"][:3])
+
+    events = _load_spawn_events(capture_file)
+    assert [event["agent"] for event in events] == ["codex", "claude", "gemini"]
+    child_plans = [Path(event["plan"]) for event in events]
+    assert [plan.name for plan in child_plans] == [
+        "marbles-ancestor_L1.md",
+        "marbles-ancestor_L2.md",
+        "marbles-ancestor_L3.md",
+    ]
+    assert (
+        child_plans[0]
+        .read_text(encoding="utf-8")
+        .startswith("---\nagent: codex\nfocus: initial prompt\npriority: P0\n---\n")
+    )
+    assert (
+        child_plans[1]
+        .read_text(encoding="utf-8")
+        .startswith("---\nagent: claude\nfocus: auth hardening\npriority: P0\n---\n")
+    )
+    assert (
+        child_plans[2]
+        .read_text(encoding="utf-8")
+        .startswith(
+            "---\nagent: gemini\nfocus: accessibility\npriority: P0\nmodel: gemini-2.5-pro\n---\n"
+        )
+    )
+
+    convergence_reports = sorted((crafted_home / "artifacts").rglob("*_CONVERGENCE.md"))
+    assert len(convergence_reports) == 1
+    convergence = convergence_reports[0].read_text(encoding="utf-8")
+    assert "## Steering Surfaces" in convergence
+    assert f"- GOD: {state_dir / 'god.md'}" in convergence
+    assert f"- ANCESTOR: {state_dir / 'ancestor.md'}" in convergence
 
 
 def test_marbles_no_watch_still_creates_god_and_ancestor_contract(

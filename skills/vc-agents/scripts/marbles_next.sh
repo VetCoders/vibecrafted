@@ -449,6 +449,30 @@ _launch_next_loop() {
 
   spawn_marbles_write_child_plan "$ancestor_plan" "$loop_plan"
 
+  # Ensure child plan frontmatter matches the resolved agent/model
+  # (critical when rotation overrides the ancestor's raw agent)
+  if [[ -f "$loop_plan" ]]; then
+    python3 - "$loop_plan" "$loop_agent" "$loop_model" <<'PY'
+import pathlib, re, sys
+
+plan, agent, model = sys.argv[1:4]
+text = pathlib.Path(plan).read_text(encoding="utf-8")
+m = re.match(r"^---\n(.*?\n)---\n", text, re.DOTALL)
+if not m:
+    raise SystemExit(0)
+fm = m.group(1)
+fm = re.sub(r"^agent:.*$", f"agent: {agent}", fm, flags=re.MULTILINE)
+if model:
+    if re.search(r"^model:", fm, re.MULTILINE):
+        fm = re.sub(r"^model:.*$", f"model: {model}", fm, flags=re.MULTILINE)
+    else:
+        fm += f"model: {model}\n"
+elif re.search(r"^model:", fm, re.MULTILINE):
+    fm = re.sub(r"^model:.*\n", "", fm, flags=re.MULTILINE)
+pathlib.Path(plan).write_text(f"---\n{fm}---\n{text[m.end():]}", encoding="utf-8")
+PY
+  fi
+
   q_state="$(spawn_shell_quote "$state_dir")"
   q_root="$(spawn_shell_quote "$root_dir")"
   q_runtime="$(spawn_shell_quote "$runtime")"
@@ -568,13 +592,44 @@ fi
 
 _launch_verification "$current" 0
 
-next_agent="$(spawn_frontmatter_field "$ancestor_plan" "agent")"
+# --- Resolve next-loop agent and model ---
+# Sources, in priority order:
+#   1. Ancestor steering: if the child rewrote ancestor.md with a different
+#      agent than the session seed, honour explicit steering.
+#   2. Rotation schedule: if mode is not "single", compute the scheduled agent.
+#   3. Ancestor raw agent (unsteered seed) / current agent fallback.
+_rotation_mode="single"
+_seed_agent=""
+if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
+  read -r _rotation_mode _seed_agent < <(python3 - "$state_file" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    d = json.load(f)
+print(d.get("rotation", "single"), d.get("agent", ""))
+PY
+  )
+fi
+
+_ancestor_agent="$(spawn_frontmatter_field "$ancestor_plan" "agent")"
+next_model="$(spawn_frontmatter_field "$ancestor_plan" "model")"
+
+next_agent=""
+if [[ -n "$_ancestor_agent" && -n "$_seed_agent" && "$_ancestor_agent" != "$_seed_agent" ]]; then
+  # Ancestor was explicitly steered by the previous child
+  next_agent="$_ancestor_agent"
+elif [[ "$_rotation_mode" != "single" && -n "$_rotation_mode" ]]; then
+  # Rotation schedule applies when ancestor was not explicitly steered
+  _rotation_base="${_seed_agent:-${_ancestor_agent:-$current_agent}}"
+  next_agent="$(spawn_rotation_schedule_agent "$_rotation_mode" "$_rotation_base" "$next")"
+fi
+# Fallbacks: ancestor raw agent, then current agent
+[[ -n "$next_agent" ]] || next_agent="$_ancestor_agent"
 [[ -n "$next_agent" ]] || next_agent="$current_agent"
+
 if [[ ! "$next_agent" =~ ^(claude|codex|gemini)$ ]]; then
   _write_invalid_ancestor_failure "$next" "$next_agent"
   exit 0
 fi
-next_model="$(spawn_frontmatter_field "$ancestor_plan" "model")"
 
 next_plan="$(_loop_child_plan "$next")"
 launch_rc=0
