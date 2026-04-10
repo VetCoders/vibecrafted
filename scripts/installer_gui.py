@@ -447,7 +447,11 @@ def build_html(preflight: dict[str, Any]) -> str:
 
               body {
                 margin: 0;
-                min-height: 100vh;
+                height: 100vh;
+                overflow: hidden;
+                display: flex;
+                align-items: center;
+                justify-content: center;
                 background:
                   radial-gradient(circle at top, var(--bg-glow), transparent 38%),
                   linear-gradient(180deg, #10161d 0%, #0b1015 100%);
@@ -461,8 +465,12 @@ def build_html(preflight: dict[str, Any]) -> str:
 
               .shell {
                 width: min(1180px, calc(100vw - 32px));
-                margin: 24px auto;
-                padding: 28px;
+                max-height: calc(100vh - 32px);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                margin: 0 auto;
+                padding: 20px;
                 border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 28px;
                 background: rgba(8, 11, 16, 0.76);
@@ -472,19 +480,23 @@ def build_html(preflight: dict[str, Any]) -> str:
 
               .hero {
                 display: grid;
-                gap: 18px;
+                gap: 14px;
                 grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.9fr);
                 align-items: stretch;
-                margin-bottom: 24px;
+                margin-bottom: 14px;
+                flex-shrink: 0;
               }
 
               .hero-copy,
               .hero-side,
               .panel {
-                padding: 24px;
+                padding: 16px;
                 border: 1px solid var(--border);
                 border-radius: 24px;
                 background: var(--panel);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
               }
 
               .eyebrow {
@@ -495,8 +507,8 @@ def build_html(preflight: dict[str, Any]) -> str:
               }
 
               h1 {
-                margin: 10px 0 14px;
-                font-size: clamp(34px, 6vw, 58px);
+                margin: 6px 0 10px;
+                font-size: clamp(24px, 4vw, 36px);
                 line-height: 0.92;
                 letter-spacing: -0.06em;
               }
@@ -570,8 +582,11 @@ def build_html(preflight: dict[str, Any]) -> str:
 
               .page-grid {
                 display: grid;
-                gap: 20px;
+                gap: 16px;
                 grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.95fr);
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
               }
 
               .section-title {
@@ -609,8 +624,11 @@ def build_html(preflight: dict[str, Any]) -> str:
 
               .category-grid {
                 display: grid;
-                gap: 14px;
-                margin-top: 18px;
+                gap: 10px;
+                margin-top: 10px;
+                flex: 1;
+                overflow-y: auto;
+                padding-right: 4px;
               }
 
               .category-card {
@@ -736,9 +754,14 @@ def build_html(preflight: dict[str, Any]) -> str:
 
               .command-box,
               .log-box {
-                margin-top: 14px;
-                padding: 16px;
-                border-radius: 18px;
+                margin-top: 12px;
+                padding: 12px;
+                border-radius: 14px;
+                flex: 1;
+                min-height: 0;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
                 border: 1px solid rgba(255, 255, 255, 0.07);
                 background: rgba(6, 9, 13, 0.82);
                 color: var(--muted);
@@ -750,6 +773,11 @@ def build_html(preflight: dict[str, Any]) -> str:
               .log-box pre {
                 margin: 0;
                 white-space: pre-wrap;
+                flex: 1;
+                overflow-y: auto;
+                display: flex;
+                flex-direction: column;
+                justify-content: flex-end;
                 word-break: break-word;
                 font: inherit;
               }
@@ -811,11 +839,7 @@ def build_html(preflight: dict[str, Any]) -> str:
                     The release engine for AI-built software. This guided installer keeps the real install
                     contract intact, but gives founders and operators a calmer front door than raw terminal prompts.
                   </p>
-                  <ul class="hero-list">
-                    <li>See the runtime truth before touching the machine.</li>
-                    <li>Bootstrap required foundations, then run the same compact installer used by automation.</li>
-                    <li>Leave with a readable START_HERE guide and a clean command deck.</li>
-                  </ul>
+                  
                 </article>
                 <aside class="hero-side">
                   <div class="eyebrow">Current surface</div>
@@ -838,24 +862,7 @@ def build_html(preflight: dict[str, Any]) -> str:
                     foundation bootstrap plus the compact flow, streams the real log, and keeps the launch-ready
                     onboarding surface aligned with what the product actually promises.
                   </p>
-                  <ol class="steps">
-                    <li>
-                      <strong>1. Inspect the machine</strong>
-                      Framework views, required foundations, toolchains, and agent CLIs are checked before install.
-                    </li>
-                    <li>
-                      <strong>2. Choose the helper surface</strong>
-                      Shell helpers stay optional. The core `vibecrafted ...` command deck works either way.
-                    </li>
-                    <li>
-                      <strong>3. Bootstrap foundations</strong>
-                      The browser path installs the repo-owned foundation layer first, so aicx, loctree, and friends are not skipped.
-                    </li>
-                    <li>
-                      <strong>4. Run the same install truth</strong>
-                      The browser path then launches `vetcoders_install.py --compact --non-interactive` and streams its output.
-                    </li>
-                  </ol>
+                  
 
                   <div class="category-grid" id="category-grid"></div>
                 </article>
@@ -914,9 +921,7 @@ def build_html(preflight: dict[str, Any]) -> str:
                 </article>
               </section>
 
-              <p class="footer-note">
-                Browser surface by design. If you are scripting installs or running CI, stay on the direct terminal path.
-              </p>
+              
             </div>
 
             <script>
