@@ -1793,6 +1793,43 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 DoctorFinding("fail", f"skill:{skill_name}", "missing from store")
             )
 
+    # 3b. Drift detection: runtime skills vs source
+    source_root = None
+    if current_link.exists():
+        resolved_source = current_link.resolve()
+        skills_src = resolved_source / "skills"
+        if skills_src.is_dir():
+            source_root = skills_src
+    drifted: List[str] = []
+    if source_root:
+        for skill_name in state.skills:
+            installed = store_path / skill_name / "SKILL.md"
+            source = source_root / skill_name / "SKILL.md"
+            if installed.is_file() and source.is_file():
+                try:
+                    if installed.read_text(encoding="utf-8") != source.read_text(
+                        encoding="utf-8"
+                    ):
+                        drifted.append(skill_name)
+                except OSError:
+                    pass
+        if drifted:
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    "drift",
+                    f"{len(drifted)} skill(s) differ from source: {', '.join(drifted[:5])}",
+                )
+            )
+        else:
+            findings.append(DoctorFinding("ok", "drift", "runtime matches source"))
+    else:
+        findings.append(
+            DoctorFinding(
+                "warn", "drift", "cannot detect drift — source link not found"
+            )
+        )
+
     # 4. Symlink views
     for runtime in state.runtimes:
         rt_skills = Path.home() / f".{runtime}" / "skills"

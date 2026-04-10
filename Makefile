@@ -90,12 +90,12 @@ update:
 	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
 		printf "Git repo detected — pulling origin/$(BRANCH)...\n"; \
 		git fetch origin; \
-		git checkout $(BRANCH) -- . 2>/dev/null || git merge --ff-only origin/$(BRANCH); \
+		git checkout "$(BRANCH)" -- . 2>/dev/null || git merge --ff-only "origin/$(BRANCH)"; \
 		printf "Re-installing...\n"; \
 		$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --mirror --non-interactive; \
 	else \
 		printf "Tarball install — re-running bootstrap installer...\n"; \
-		bash "$(SOURCE)/install.sh" --ref $(BRANCH); \
+		bash "$(SOURCE)/install.sh" --ref "$(BRANCH)"; \
 	fi
 
 uninstall:
