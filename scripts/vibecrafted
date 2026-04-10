@@ -102,6 +102,14 @@ _has_skill() {
   return 1
 }
 
+_is_marbles_control_subcommand() {
+  local candidate="${1:-}"
+  case "$candidate" in
+    pause|stop|resume|session|inspect) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 _skill_candidates() {
   local skill="$1"
   local runtime="${2:-}"
@@ -252,6 +260,10 @@ cmd_skill_help() {
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted %s %s [flags]\n' "$skill" "$agent"
   printf '  %s %s [flags]\n' "$wrapper" "$agent"
+  if [[ "$skill" == "marbles" ]]; then
+    printf '  vibecrafted marbles <pause|stop|resume|session|inspect> [args]\n'
+    printf '  vc-marbles <pause|stop|resume|session|inspect> [args]\n'
+  fi
   if [[ "$skill" == "justdo" ]]; then
     printf '  Alias: vibecrafted implement <agent> [flags] / vc-implement <agent> [flags]\n'
   fi
@@ -265,6 +277,7 @@ cmd_skill_help() {
     marbles)
       printf '  vibecrafted marbles codex --count 3 --depth 3\n'
       printf '  vc-marbles claude --prompt "Loop until clean"\n'
+      printf '  vc-marbles resume marb-134707\n'
       ;;
     followup)
       printf '  vibecrafted followup codex --prompt "Audit this implementation"\n'
@@ -345,15 +358,22 @@ cmd_dashboard_help() {
   printf '\n'
   printf '%b⚒%b  %bdashboard%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  Launch an optional repo-owned Zellij dashboard layout.\n'
+  printf '  Thin shim over native Zellij for operator session management.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted dashboard [vc-dashboard|vc-workflow|vc-marbles|vc-research|vibecrafted]\n'
+  printf '  vibecrafted dashboard [layout]          Open/switch to a dashboard layout\n'
+  printf '  vibecrafted dashboard ls                List active Zellij sessions\n'
+  printf '  vibecrafted dashboard switch <name>     Switch session (inside Zellij) or attach (outside)\n'
+  printf '  vibecrafted dashboard attach <name>     Attach to a session from outside Zellij\n'
+  printf '  vibecrafted dashboard kill <name>       Kill a Zellij session\n'
+  printf '\n'
+  printf '%bLayouts:%b  vc-dashboard (default), vc-marbles, vc-workflow, vc-research, vibecrafted\n' "$_bold" "$_reset"
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted dashboard\n'
-  printf '  vibecrafted dashboard vc-marbles\n'
-  printf '  vibecrafted dashboard vibecrafted\n'
+  printf '  vibecrafted dashboard                   # default dashboard\n'
+  printf '  vibecrafted dashboard ls                # list sessions\n'
+  printf '  vibecrafted dashboard vc-marbles        # marbles layout\n'
+  printf '  vibecrafted dashboard switch my-session  # switch/attach\n'
   printf '\n'
 }
 
@@ -499,7 +519,9 @@ cmd_help_full() {
   printf '\n'
   printf '%b=== OPERATOR SURFACE ===%b\n' "$_bold" "$_reset"
   printf '\n'
-  printf '  %bvibecrafted dashboard%b [layout]        Launch repo-owned Zellij dashboard (%bvc-dashboard%b default)\n' "$_cyan" "$_reset" "$_bold" "$_reset"
+  printf '  %bvibecrafted dashboard%b [layout]        Open/switch to a Zellij dashboard\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard ls%b              List active Zellij sessions\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard switch%b <name>   Switch to session (Zellij-native)\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted start%b [layout]            Alias for %bvibecrafted dashboard%b\n' "$_cyan" "$_reset" "$_cyan" "$_reset"
   printf '\n'
   printf '  Agents: %bclaude%b · %bcodex%b · %bgemini%b\n' "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset"
@@ -684,6 +706,16 @@ _fetch_channel_version() {
   python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('version',''),d.get('archive_url',''))" <<< "$payload" 2>/dev/null || return 1
 }
 
+_post_update_banner() {
+  local old_ver="$1"
+  local new_ver
+  new_ver="$(_version)"
+  if [[ "$new_ver" != "$old_ver" ]]; then
+    printf '\n  %bUpdated:%b %s -> %b%s%b\n' "$_bold" "$_reset" "$old_ver" "$_green" "$new_ver" "$_reset"
+  fi
+  printf '  Run %bvibecrafted doctor%b to verify the update.\n\n' "$_cyan" "$_reset"
+}
+
 cmd_update() {
   local makefile="" repo_source="" installed_ver="" channel_ref="main"
   repo_source="$(_repo_source_root 2>/dev/null || true)"
@@ -705,6 +737,8 @@ cmd_update() {
     fi
   fi
 
+  local update_status=0
+
   for candidate in \
     "${repo_source:+$repo_source/Makefile}" \
     "$crafted_tools/Makefile" \
@@ -714,7 +748,9 @@ cmd_update() {
 
   if [[ -n "$makefile" ]]; then
     make -C "$(dirname "$makefile")" update
-    return $?
+    update_status=$?
+    _post_update_banner "$installed_ver"
+    return "$update_status"
   fi
 
   # No Makefile found — attempt direct tarball update via install.sh.
@@ -728,12 +764,17 @@ cmd_update() {
   if [[ -n "$install_sh" ]]; then
     printf '  Tarball install detected — running install.sh --ref %s\n\n' "$channel_ref"
     bash "$install_sh" --ref "$channel_ref"
-    return $?
+    update_status=$?
+    _post_update_banner "$installed_ver"
+    return "$update_status"
   fi
 
   # Last resort: fetch install.sh from the web.
   printf '  No local install surface found — fetching install.sh from vibecrafted.io\n\n' >&2
   curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --ref "$channel_ref"
+  update_status=$?
+  _post_update_banner "$installed_ver"
+  return "$update_status"
 }
 
 cmd_agents() {
@@ -801,6 +842,12 @@ run_skill() {
 
   if [[ "$skill" == "agents" ]]; then
     cmd_agents "$@"
+    return
+  fi
+
+  if [[ "$skill" == "marbles" ]] && _is_marbles_control_subcommand "$agent"; then
+    _ensure_helpers_loaded || return 1
+    _run_helper "marbles-$agent" "$@"
     return
   fi
 
@@ -898,7 +945,7 @@ main() {
     init) cmd_init "$@" ;;
     resume) cmd_resume "$@" ;;
     doctor|check) cmd_doctor ;;
-    dashboard|mc|mission-control) cmd_dashboard "$@" ;;
+    dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
     stats|status) cmd_stats ;;
     update|upgrade) cmd_update ;;
     uninstall|remove) cmd_uninstall ;;

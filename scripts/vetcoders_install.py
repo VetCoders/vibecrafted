@@ -2071,6 +2071,77 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     except (OSError, ValueError):
         pass  # network unavailable — skip silently
 
+    # 7c. Stale files: look for files in installed skills that no longer exist in source
+    if source_root and store_path.exists():
+        stale_count = 0
+        for skill_name in state.skills:
+            installed_skill = store_path / skill_name
+            source_skill = source_root / skill_name
+            if not installed_skill.is_dir() or not source_skill.is_dir():
+                continue
+            for installed_file in installed_skill.rglob("*"):
+                if not installed_file.is_file():
+                    continue
+                rel = installed_file.relative_to(installed_skill)
+                if not (source_skill / rel).exists():
+                    stale_count += 1
+        if stale_count > 0:
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    "stale-files",
+                    f"{stale_count} file(s) in installed skills not present in source — "
+                    "run 'vibecrafted update' with --mirror to clean up",
+                )
+            )
+        else:
+            findings.append(
+                DoctorFinding(
+                    "ok", "stale-files", "no orphan files in installed skills"
+                )
+            )
+
+    # 7d. Agent CLI availability
+    for agent_name in ("claude", "codex", "gemini"):
+        agent_bin = shutil.which(agent_name)
+        if agent_bin:
+            findings.append(
+                DoctorFinding("ok", f"agent-cli:{agent_name}", f"-> {agent_bin}")
+            )
+        else:
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    f"agent-cli:{agent_name}",
+                    "not found in PATH — spawn will fail for this agent",
+                )
+            )
+
+    # 7e. Zellij availability and version
+    zellij_bin = shutil.which("zellij")
+    if zellij_bin:
+        try:
+            zellij_ver = subprocess.run(
+                [zellij_bin, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            ver_str = (
+                zellij_ver.stdout.strip() if zellij_ver.returncode == 0 else "unknown"
+            )
+            findings.append(DoctorFinding("ok", "zellij", f"{ver_str} -> {zellij_bin}"))
+        except (OSError, subprocess.TimeoutExpired):
+            findings.append(DoctorFinding("ok", "zellij", f"-> {zellij_bin}"))
+    else:
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "zellij",
+                "not found in PATH — dashboard/session commands unavailable",
+            )
+        )
+
     # 8. Shell smoke check: interactive shells should suppress UI noise under TERM=dumb
     zsh_path = shutil.which("zsh")
     if zsh_path:

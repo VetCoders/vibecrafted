@@ -57,10 +57,11 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
+    _real_which = shutil.which
     monkeypatch.setattr(
         installer.shutil,
         "which",
-        lambda name: None if name == "zsh" else shutil.which(name),
+        lambda name: None if name == "zsh" else _real_which(name),
     )
 
     findings = installer.run_doctor(store_path, state)
