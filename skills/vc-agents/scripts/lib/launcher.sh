@@ -82,15 +82,18 @@ fi
 if bash -c "$SPAWN_CMD"; then
 EOF_LAUNCH
 
-  if [[ -n "$success_hook" ]]; then
-    printf '%s\n' "$success_hook" >> "$launcher"
-  fi
-
   cat >> "$launcher" <<'EOF_LAUNCH'
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
   spawn_finish_meta "$meta" "completed" "0"
+EOF_LAUNCH
+
+  if [[ -n "$success_hook" ]]; then
+    printf '%s\n' "$success_hook" >> "$launcher"
+  fi
+
+  cat >> "$launcher" <<'EOF_LAUNCH'
 else
   exit_code=$?
 EOF_LAUNCH
@@ -186,4 +189,3 @@ spawn_print_launch() {
   printf '%b\n' "$_bar"
   printf '%b  Agent launched.%b\n\n' "$_dim" "$_reset"
 }
-

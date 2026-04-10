@@ -160,8 +160,12 @@ spawn_prepare_paths() {
 
 spawn_scan_active() {
   local reports_dir="$1"
-  local marker="${TMPDIR:-/tmp}/.vibecrafted-scan-marker"
+  local tmp_root="${TMPDIR:-/tmp}"
+  local marker=""
   local recent_active=""
+
+  tmp_root="${tmp_root%/}"
+  marker="${tmp_root}/.vibecrafted-scan-marker"
 
   [[ -d "$reports_dir" ]] || {
     touch "$marker"
@@ -205,4 +209,3 @@ PY
 }
 
 spawn_normalize_ambient_context
-

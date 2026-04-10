@@ -57,13 +57,15 @@ spawn_open_startup_monitor_pane() {
   local landing_name="$4"
   local root_dir="${5:-${SPAWN_ROOT:-$(pwd)}}"
   local common_path monitor_script cmd_script
+  local tmp_root="${TMPDIR:-/tmp}"
 
   [[ -n "$session_name" ]] || return 1
   [[ -n "${SPAWN_META:-}" && -n "${SPAWN_TRANSCRIPT:-}" && -n "${SPAWN_REPORT:-}" ]] || return 1
   command -v zellij >/dev/null 2>&1 || return 1
 
   common_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)/common.sh"
-  monitor_script="$(mktemp "${TMPDIR:-/tmp}/vc-startup-monitor.XXXXXX")"
+  tmp_root="${tmp_root%/}"
+  monitor_script="$(mktemp "${tmp_root}/vc-startup-monitor.XXXXXX")"
   cmd_script="$(mkdir -p "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp" && mktemp "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp/vc-spawn-cmd.XXXXXX")"
 
   spawn_write_startup_monitor_script \
@@ -86,4 +88,3 @@ spawn_open_startup_monitor_pane() {
     --cwd "$root_dir" \
     -- "$cmd_script"
 }
-

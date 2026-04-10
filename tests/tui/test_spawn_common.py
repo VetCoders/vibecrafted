@@ -408,6 +408,46 @@ def test_generated_launcher_preserves_operator_session_contract(tmp_path: Path) 
     assert payload == [operator_session, "right"]
 
 
+def test_generated_launcher_completes_meta_before_success_hook_failure(
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "launch.sh"
+    meta = tmp_path / "meta.json"
+    report = tmp_path / "report.txt"
+    transcript = tmp_path / "trace.log"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'''
+            set -euo pipefail
+            source "{COMMON_SH}"
+            export SPAWN_ROOT="{tmp_path}"
+            export SPAWN_AGENT="claude"
+            export SPAWN_PROMPT_ID="prompt-123"
+            export SPAWN_RUN_ID="marb-014520-002"
+            export SPAWN_LOOP_NR="2"
+            export SPAWN_SKILL_CODE="marb"
+            cmd='printf "ok\\n" > "{report}"'
+            spawn_write_meta "{meta}" "launching" "claude" "marbles" "{tmp_path}" "{launcher}" "{report}" "{transcript}" "{launcher}"
+            spawn_generate_launcher "{launcher}" "{meta}" "{report}" "{transcript}" "{COMMON_SH}" "$cmd" "" "exit 23"
+            chmod +x "{launcher}"
+            bash "{launcher}"
+            ''',
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 23
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["status"] == "completed"
+    assert payload["exit_code"] == 0
+
+
 def test_spawn_prepare_paths_generates_real_run_context_when_missing(
     tmp_path: Path,
 ) -> None:
