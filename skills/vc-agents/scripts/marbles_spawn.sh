@@ -217,16 +217,15 @@ printf '%b───────────────────────�
 l1_plan="$(spawn_marbles_child_plan_path "$store" "$ancestor_plan" 1)"
 spawn_marbles_write_child_plan "$ancestor_plan" "$l1_plan"
 
-q_agent="$(spawn_shell_quote "$agent")"
-q_plan="$(spawn_shell_quote "$ancestor_plan")"
+q_state="$(spawn_shell_quote "$state_dir")"
 q_root="$(spawn_shell_quote "$root_dir")"
 q_runtime="$(spawn_shell_quote "$runtime")"
 q_scripts="$(spawn_shell_quote "$SCRIPT_DIR")"
 q_lock="$(spawn_shell_quote "$session_lock")"
 q_store="$(spawn_shell_quote "$store")"
 
-success_hook="bash $q_scripts/marbles_next.sh $q_agent $q_plan $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
-failure_hook="bash $q_scripts/marbles_next.sh --failed $q_agent $q_plan $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
+success_hook="bash $q_scripts/marbles_next.sh $q_state $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
+failure_hook="bash $q_scripts/marbles_next.sh --failed $q_state $count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
 
 export VIBECRAFTED_LOOP_NR=1
 export VIBECRAFTED_RUN_ID="${marbles_run_id}-001"

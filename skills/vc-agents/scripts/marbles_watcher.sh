@@ -457,7 +457,7 @@ _render_loop_phase() {
     done)
       printf '\r\033[3A'
       printf '\n %bL%s%b %s\n' "$_bold" "$loop_nr" "$_reset" "$chain"
-      printf '    %breport ✓%b   %s\n' "$_green" "$_reset" "$detail"
+      printf '    %bloop ✓%b     %s\n' "$_green" "$_reset" "$detail"
       ;;
     timeout)
       printf '\r\033[3A'
@@ -560,22 +560,23 @@ _wait_for_report_path() {
   local stall_elapsed=0
 
   while true; do
+    local meta_status=""
     if [[ -n "$meta_path" ]]; then
-      local meta_status=""
       meta_status="$(spawn_read_meta_field "$meta_path" "status")"
       if [[ "$meta_status" == "failed" ]]; then
         return 4
       fi
     fi
 
-    if [[ -n "$report_path" && -s "$report_path" ]]; then
-      printf '%s\n' "$report_path"
-      return 0
-    fi
-
     if [[ -n "$meta_path" && -z "$report_path" ]]; then
       report_path="$(spawn_read_meta_field "$meta_path" "report")"
-      if [[ -n "$report_path" && -s "$report_path" ]]; then
+    fi
+
+    # A report can appear before the launcher finishes. Only consume the loop
+    # once meta has reached "completed"; otherwise the watcher can advance to
+    # the next loop while the current success_hook has not launched it yet.
+    if [[ -n "$report_path" && -s "$report_path" ]]; then
+      if [[ -z "$meta_path" || "$meta_status" == "completed" ]]; then
         printf '%s\n' "$report_path"
         return 0
       fi

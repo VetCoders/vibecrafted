@@ -84,9 +84,6 @@ EOF_LAUNCH
 
   cat >> "$launcher" <<'EOF_LAUNCH'
   spawn_finish_meta "$meta" "completed" "0"
-  if [[ -n "$startup_watch_pid" ]]; then
-    wait "$startup_watch_pid" 2>/dev/null || true
-  fi
 EOF_LAUNCH
 
   if [[ -n "$success_hook" ]]; then
@@ -94,12 +91,12 @@ EOF_LAUNCH
   fi
 
   cat >> "$launcher" <<'EOF_LAUNCH'
-else
-  exit_code=$?
-  spawn_finish_meta "$meta" "failed" "$exit_code"
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
+else
+  exit_code=$?
+  spawn_finish_meta "$meta" "failed" "$exit_code"
 EOF_LAUNCH
 
   if [[ -n "$failure_hook" ]]; then
@@ -107,6 +104,9 @@ EOF_LAUNCH
   fi
 
   cat >> "$launcher" <<'EOF_LAUNCH'
+  if [[ -n "$startup_watch_pid" ]]; then
+    wait "$startup_watch_pid" 2>/dev/null || true
+  fi
   exit "$exit_code"
 fi
 EOF_LAUNCH

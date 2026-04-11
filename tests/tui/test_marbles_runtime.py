@@ -223,6 +223,10 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
         EOF_ANCESTOR
         fi
 
+        if [[ -n "${MARBLES_TEST_DELAY_META_AFTER_REPORT_LOOP:-}" && "${SPAWN_LOOP_NR:-0}" == "${MARBLES_TEST_DELAY_META_AFTER_REPORT_LOOP}" ]]; then
+          sleep "${MARBLES_TEST_DELAY_META_AFTER_REPORT_S:-3}"
+        fi
+
         spawn_finish_meta "$SPAWN_META" "$meta_status" "$final_exit_code"
 
         if [[ "$meta_status" == "failed" ]]; then
@@ -277,11 +281,11 @@ def test_marbles_spawn_chains_with_agent_and_ancestor_plan_contract() -> None:
     ).read_text(encoding="utf-8")
 
     assert (
-        'success_hook="bash $q_scripts/marbles_next.sh $q_agent $q_plan $count 1 '
+        'success_hook="bash $q_scripts/marbles_next.sh $q_state $count 1 '
         '$marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"' in script
     )
     assert (
-        'failure_hook="bash $q_scripts/marbles_next.sh --failed $q_agent $q_plan '
+        'failure_hook="bash $q_scripts/marbles_next.sh --failed $q_state '
         '$count 1 $marbles_run_id $q_root $q_runtime $q_scripts $q_lock $q_store"'
         in script
     )
@@ -917,7 +921,7 @@ def test_marbles_materializes_failed_loop_when_child_spawn_dies_before_meta(
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
     env["MARBLES_TEST_FAIL_BEFORE_META_LOOP"] = "2"
-    env["VIBECRAFTED_MARBLES_META_TIMEOUT_S"] = "2"
+    env["VIBECRAFTED_MARBLES_META_TIMEOUT_S"] = "3"
     env["VIBECRAFTED_MARBLES_REPORT_TIMEOUT_S"] = "2"
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
@@ -976,6 +980,59 @@ def test_marbles_materializes_failed_loop_when_child_spawn_dies_before_meta(
     )
     assert "failed" in meta_records.stdout.splitlines()
     assert "no meta.json within" not in result.stdout
+
+
+def test_marbles_watcher_waits_for_meta_completion_before_advancing(
+    tmp_path: Path,
+) -> None:
+    scripts_dir, capture_file = _prepare_fake_marbles_bundle(tmp_path)
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    home.mkdir()
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
+    env["MARBLES_TEST_DELAY_META_AFTER_REPORT_LOOP"] = "1"
+    env["MARBLES_TEST_DELAY_META_AFTER_REPORT_S"] = "4"
+    env["VIBECRAFTED_MARBLES_META_TIMEOUT_S"] = "3"
+    env["VIBECRAFTED_MARBLES_REPORT_TIMEOUT_S"] = "10"
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(scripts_dir / "marbles_spawn.sh"),
+            "--agent",
+            "gemini",
+            "--count",
+            "2",
+            "--runtime",
+            "headless",
+            "--prompt",
+            "Wait for the loop to finish before advancing",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    state_dirs = list((crafted_home / "marbles").iterdir())
+    assert len(state_dirs) == 1
+    state = json.loads((state_dirs[0] / "state.json").read_text(encoding="utf-8"))
+
+    assert state["status"] == "completed"
+    assert [loop["status"] for loop in state["loops"]] == ["done", "done"]
+    assert "no meta.json within" not in result.stdout
+
+    events = _load_spawn_events(capture_file)
+    assert len(events) == 2
 
 
 def test_marbles_watcher_does_not_consume_failed_fallback_report(
