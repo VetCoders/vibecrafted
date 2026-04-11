@@ -1,11 +1,17 @@
-# Vibecrafted install manifest — consumed by vetcoders-installer.
+# Vibecrafted install manifest — consumed by the built-in vetcoders-installer
+# under scripts/installer/.
 #
-#   uv tool install ~/Libraxis/vetcoders-tools/installer --force
-#   vetcoders-installer ~/Libraxis/vibecrafted/install.toml
+#   make vibecrafted                      (terminal wizard, the default)
+#   make wizard                           (browser-based GUI, optional)
+#   uv run --project scripts/installer vetcoders-installer install.toml --dry-run
 #
-# `make wizard` and `install.sh` (interactive session) both delegate here.
+# Steps follow the checklist defined in docs/installer/2_listing.zsh.md:
+#   1. Diagnostics              (read-only environment scan)
+#   2. Installation             (install missing deps + foundations)
+#   3. Post-installation setup  (workspace dirs, symlinks, helpers)
+#   4. Verification & tour      (read-only doctor pass + next steps)
 
-title = "⚒ Vibecrafted"
+title = "⚒ Vibecrafted."
 version_file = "VERSION"
 log = "~/.vibecrafted/logs/installer/install-{ts}.log"
 
@@ -15,26 +21,58 @@ persist = true
 
 
 [[phase]]
-key = "foundations"
-label = "Foundations"
+key = "diagnostics"
+label = "Diagnostics"
 reason = """
-Installs runtime binaries (loctree-mcp, aicx-mcp, zellij) and agent CLIs
-(claude, codex, gemini) from their upstream channels — crates.io, brew,
-or GitHub releases.
-Writes to ~/.vibecrafted/bin and ~/.cargo/bin. Does not modify PATH.
+We will check your environment for:
+  • any existing framework installation
+    foundations · workflows · helpers · binaries
+  • toolchains
+    node · python · rust
+  • agents
+    claude-code · codex · gemini-cli
+  • additional tools
+    zellij · mise · starship · atuin · zoxide
+
+Read-only. We touch nothing on your system during this step.
+"""
+cmd = [
+    "python3",
+    "scripts/vetcoders_install.py",
+    "list",
+    "--source", ".",
+]
+optional = true
+
+
+[[phase]]
+key = "installation"
+label = "Installation"
+reason = """
+We will install:
+  • missing dependencies
+  • workflows (9 basic, 7 advanced)
+  • helpers and binaries (executables and functions)
+
+Writes foundation binaries (loctree-mcp, aicx-mcp, zellij) and agent
+CLIs (claude, codex, gemini) under ~/.vibecrafted/bin and ~/.cargo/bin.
+Your system PATH is not modified.
 """
 cmd = ["bash", "scripts/install-foundations.sh"]
 
 
 [[phase]]
-key = "skills"
-label = "Skills & Helpers"
+key = "post-install"
+label = "Post-installation setup"
 reason = """
-Syncs the 16 vc-* workflow skills to ~/.vibecrafted/skills and creates
-symlinks under ~/.claude/skills and ~/.codex/skills so your AI agents
-discover them automatically.
-Installs the shell helper layer at ~/.config/vetcoders/vc-skills.sh and
-writes the install manifest at ~/.vibecrafted/skills/.vc-install.json.
+We will configure:
+  • workspace directories under $VIBECRAFTED_ROOT/.vibecrafted/
+  • symlinks for AI coding agents under ~/.agents/
+  • the 16 vc-* workflow skills synced into ~/.vibecrafted/skills
+  • the shell helper layer at ~/.config/vetcoders/vc-skills.sh
+
+Writes the install manifest at ~/.vibecrafted/skills/.vc-install.json
+so `vibecrafted update` can re-run this flow cleanly.
 """
 cmd = [
     "python3",
@@ -48,13 +86,13 @@ cmd = [
 
 
 [[phase]]
-key = "doctor"
-label = "Doctor"
+key = "verification"
+label = "Verification and quick tour"
 reason = """
-Read-only verification. Runs `vibecrafted doctor` to check every
-installed skill, symlink, foundation binary, agent CLI, shell helper
-shim and launcher wrapper. Makes no filesystem changes — safe to skip
-if you're in a hurry.
+Read-only. We run `vibecrafted doctor` to check every installed
+component — skills, symlinks, foundation binaries, agent CLIs, helper
+shims, and launcher wrappers — then print the quick tour of the
+framework's most useful commands.
 """
 cmd = [
     "python3",

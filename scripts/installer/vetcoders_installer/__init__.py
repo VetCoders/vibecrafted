@@ -208,19 +208,31 @@ def _line_style(line: str) -> str:
 
 
 def consent(console: Any, label: str, optional: bool, auto_yes: bool) -> str:
-    """Return one of 'yes', 'skip', 'quit'."""
+    """Return one of 'yes', 'skip', 'quit'.
+
+    Uses ``console.input()`` when Rich is available — it pauses the Live
+    display (Progress bar) automatically while the prompt is shown, so the
+    consent line never collides with the sticky bar renderer.
+    """
     if auto_yes:
         return "yes"
 
     if optional:
-        suffix = "[Y/s/q]"
         hint = "Enter=yes, s=skip, q=quit"
     else:
-        suffix = "[Y/n]"
         hint = "Enter=yes, n/q=cancel"
 
+    # Leading newline separates the consent prompt from whatever Rich just
+    # rendered (typically the sticky progress bar), so the question never
+    # sits flush against the bar.
+    prompt_plain = f"\n   {hint}  ❯ Apply {label}? "
+    prompt_rich = f"\n   [dim]{hint}[/]  [bold]❯[/] Apply {label}? "
+
     try:
-        raw = input(f"  {hint}  ❯ Apply {label}? {suffix} ").strip().lower()
+        if HAS_RICH and hasattr(console, "input"):
+            raw = console.input(prompt_rich).strip().lower()
+        else:
+            raw = input(prompt_plain).strip().lower()
     except (EOFError, KeyboardInterrupt):
         print()
         return "quit"
@@ -309,8 +321,10 @@ def _print_reason_block(console: Any, phase: Phase) -> None:
         f"[bold cyan]{phase.label}[/]"
         + (" [dim](optional)[/]" if phase.optional else "")
     )
+    console.print()
     for line in phase.reason_lines:
         console.print(f"  [dim]{line}[/]")
+    console.print()
 
 
 def _print_summary(
@@ -413,10 +427,9 @@ def run(
             console.print()
         return 0
 
+    # Log is opened silently and surfaced only in the final summary — we do
+    # not announce it up front, the wizard greeting stays clean.
     log_path, log_handle = _open_log(manifest)
-    if log_path:
-        console.print(f"[dim]Log: {log_path}[/]")
-        console.print()
 
     results: list[tuple[str, str, int]] = []
     exit_code = 0
