@@ -1,0 +1,7 @@
+# External local mirror used during release work; keep structural scans inside this repo.
+vibecrafted-io-link
+
+# Local state and generated environments that do not belong to the runtime cone.
+.vibecrafted/
+scripts/installer/.venv/
+scripts/installer/uv.lock

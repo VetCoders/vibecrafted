@@ -52,6 +52,12 @@ about what the product is.
    direct-only install path or the older self-referential promise. The
    homepage, quickstart, FAQ, `install.sh`, and README must all match the
    release-engine narrative and the guided installer CTA.
+   Because `vibecrafted-io` is a separate git root, treat its build/deploy pass
+   as a separate lane from this repo commit. Minimum rebuild command:
+
+   ```bash
+   pnpm --dir ~/Libraxis/01_deployed_libraxis_vm/vibecrafted-io/site build
+   ```
 
 4. Asset truth
    Capture and store these before submission day:

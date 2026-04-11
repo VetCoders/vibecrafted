@@ -36,6 +36,52 @@ case "$report_sync_timeout_s" in
 esac
 report_poll_s=5
 
+_state_json_edit() {
+  local mutator="$1"
+  shift
+
+  command -v python3 >/dev/null 2>&1 || return 1
+
+  STATE_JSON_MUTATOR="$mutator" python3 - "$state_file" "$@" <<'PY'
+import datetime
+import fcntl
+import json
+import os
+import sys
+import tempfile
+
+state_path = sys.argv[1]
+args = sys.argv[2:]
+mutator = os.environ["STATE_JSON_MUTATOR"]
+
+lock = open(state_path + ".lock", "a+", encoding="utf-8")
+try:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        with open(state_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+
+    exec(mutator, {"datetime": datetime}, {"payload": payload, "args": args})
+
+    dir_path = os.path.dirname(state_path) or "."
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=os.path.basename(state_path) + ".", dir=dir_path
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+        os.replace(tmp_path, state_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+finally:
+    lock.close()
+PY
+}
+
 _loop_child_plan() {
   local loop_nr="$1"
   spawn_marbles_child_plan_path "$store" "$ancestor_plan" "$loop_nr"
@@ -198,31 +244,15 @@ _refresh_state_steering_fields() {
   # NOTE: does NOT update ancestor_mtime — that field tracks the mtime baseline
   # for steering detection.  The baseline is consumed (updated) after the
   # steering check in the main loop via _consume_ancestor_mtime_signal.
-  if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
-    if python3 - "$state_file" "$god_plan" "$ancestor_plan" <<'PY'
-import datetime
-import json
-import sys
-
-state_file, god_plan, ancestor_plan = sys.argv[1:4]
-
-with open(state_file, encoding="utf-8") as handle:
-    payload = json.load(handle)
-
+  if [[ -f "$state_file" ]]; then
+    if ! _state_json_edit "$(cat <<'PY'
 payload["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-payload["god_plan"] = god_plan
-payload["ancestor_plan"] = ancestor_plan
-payload["plan"] = ancestor_plan
-
-with open(state_file + ".tmp", "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2)
-    handle.write("\n")
+payload["god_plan"] = args[0]
+payload["ancestor_plan"] = args[1]
+payload["plan"] = args[1]
 PY
-    then
-      [[ -f "$state_file.tmp" ]] && mv "$state_file.tmp" "$state_file"
-    else
+)" "$god_plan" "$ancestor_plan"; then
       printf '    [warn] state refresh failed (python exit %d) — loop continues with stale state\n' "$?" >&2
-      rm -f "$state_file.tmp"
     fi
   fi
 }
@@ -230,18 +260,11 @@ PY
 _consume_ancestor_mtime_signal() {
   local current_mtime=""
   current_mtime="$(spawn_ancestor_mtime_iso "$ancestor_plan")"
-  if [[ -n "$current_mtime" && -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$state_file" "$current_mtime" <<'PY'
-import json, sys
-state_file, mtime = sys.argv[1:3]
-with open(state_file, encoding="utf-8") as f:
-    d = json.load(f)
-d["ancestor_mtime"] = mtime
-with open(state_file + ".tmp", "w", encoding="utf-8") as f:
-    json.dump(d, f, indent=2)
-    f.write("\n")
+  if [[ -n "$current_mtime" && -f "$state_file" ]]; then
+    _state_json_edit "$(cat <<'PY'
+payload["ancestor_mtime"] = args[0]
 PY
-    [[ -f "$state_file.tmp" ]] && mv "$state_file.tmp" "$state_file"
+)" "$current_mtime" >/dev/null || true
   fi
 }
 
@@ -411,25 +434,14 @@ This is the final loop. Your verified report MUST include:
 - Be honest about uncertainty — flag anything you cannot verify
 - Keep the verified report concise and actionable"
 
-  if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$state_file" "$loop_nr" <<'PY'
-import datetime
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-
+  if [[ -f "$state_file" ]]; then
+    _state_json_edit "$(cat <<'PY'
 payload["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 for loop in payload.get("loops", []):
-    if loop.get("loop") == int(sys.argv[2]):
+    if loop.get("loop") == int(args[0]):
         loop["verification_status"] = "pending"
-
-with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2)
-    handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
+)" "$loop_nr" >/dev/null || true
   fi
 
   printf '    🔍 Verification L%s → session %s\n' "$loop_nr" "${sid:0:13}…"

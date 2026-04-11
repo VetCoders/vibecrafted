@@ -1488,6 +1488,7 @@ def build_html(preflight: dict[str, Any]) -> str:
 
               function setStep(targetStep) {
                 const nextStep = Math.max(0, Math.min(targetStep, maxAccessibleStep()));
+                const stepChanged = currentStep !== nextStep;
                 currentStep = nextStep;
 
                 dom.slides.forEach((slide) => {
@@ -1513,6 +1514,11 @@ def build_html(preflight: dict[str, Any]) -> str:
                   dom.nextButton.textContent = currentStep === 3 ? 'Go to install' : 'Continue';
                 }
                 dom.footerHint.textContent = stepHints[currentStep];
+
+                if (stepChanged) {
+                  const activeSlide = dom.slides.find((slide) => Number(slide.dataset.step) === currentStep);
+                  activeSlide?.querySelector('.slide-body')?.scrollTo({ top: 0, behavior: 'auto' });
+                }
               }
 
               function renderBoot() {
@@ -1699,6 +1705,12 @@ def build_html(preflight: dict[str, Any]) -> str:
                 });
               });
 
+              function isWizardKeyTarget(target) {
+                return !(target instanceof HTMLElement)
+                  || (!target.isContentEditable
+                    && !['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName));
+              }
+
               dom.backButton.addEventListener('click', () => {
                 setStep(currentStep - 1);
               });
@@ -1742,6 +1754,44 @@ def build_html(preflight: dict[str, Any]) -> str:
                   const payload = await response.json();
                   setGuideFeedback(payload.message || '');
                 });
+              });
+
+              document.addEventListener('keydown', (event) => {
+                if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) {
+                  return;
+                }
+                if (!isWizardKeyTarget(event.target)) {
+                  return;
+                }
+
+                if (event.key === 'ArrowLeft' && currentStep > 0 && !latestStatus.running) {
+                  event.preventDefault();
+                  setStep(currentStep - 1);
+                  return;
+                }
+
+                if (event.key === 'Escape' && currentStep > 0 && !latestStatus.running) {
+                  event.preventDefault();
+                  setStep(currentStep - 1);
+                  return;
+                }
+
+                if (!['ArrowRight', 'Enter', ' '].includes(event.key)) {
+                  return;
+                }
+
+                if (event.key === ' ' && currentStep >= 4) {
+                  return;
+                }
+
+                event.preventDefault();
+                if (currentStep < 4) {
+                  setStep(currentStep + 1);
+                  return;
+                }
+                if (currentStep === 4 && !latestStatus.running) {
+                  dom.installForm.requestSubmit();
+                }
               });
 
               renderBoot();

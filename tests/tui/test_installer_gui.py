@@ -149,3 +149,5 @@ def test_build_html_renders_wizard_shell() -> None:
     assert "Launch guided install" in html
     assert "Finish state" in html
     assert "make wizard" in html
+    assert "document.addEventListener('keydown'" in html
+    assert "activeSlide?.querySelector('.slide-body')?.scrollTo" in html
