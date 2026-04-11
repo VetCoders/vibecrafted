@@ -262,7 +262,7 @@ III. Action prompt or progress bar
 ```bash
 ─────────────────────────────────────────────────────────
 ↑↓ Nav | ␣ Sel |  ⏎ Next |  ⌫ Back |  ⇥ View | ⎋ Quit # Alternatively in the small window mode: ⌥ Shortcuts
-              🄵·🅁·🄰·🄼·🄴·🅆·🄾·🅁·🄺
+              🅵·🅁·🄰·🄼·🄴·🅆·🄞·🅁·🅺
 ─────────────────────────────────────────────────────────
 ```
 
@@ -302,7 +302,7 @@ III. Action prompt or progress bar
                 Press ⏎ Enter to proceed or Esc to quit
 ─────────────────────────────────────────────────────────
 ↑↓ Nav | ␣ Sel |  ⏎ Next |  ⌫ Back |  ⇥ View | ⎋ Quit # Alternatively in the small window mode: ⌥ Shortcuts
-              🄵·🅁·🄰·🄼·🄴·🅆·🄾·🅁·🄺
+              🅵·🅁·🄰·🄼·🄴·🅆·🄞·🅁·🅺
 ─────────────────────────────────────────────────────────
 ```
 
@@ -338,7 +338,7 @@ III. Action prompt or progress bar
                                 ⏎ proceed ⌫ Back ⎋ quit
 ─────────────────────────────────────────────────────────
 ⇅ Nav | ␣ Sel |  ⏎ Next |  ⌫ Back |  ⇥ View | ⎋ Quit
-              🄵·🅁·🄰·🄼·🄴·🅆·🄾·🅁·🄺
+              🅵·🅁·🄰·🄼·🄴·🅆·🄞·🅁·🅺
 ─────────────────────────────────────────────────────────
 ```
 
@@ -373,7 +373,7 @@ III. Action prompt or progress bar
                                 ⏎ proceed ⌫ Back ⎋ quit
 ─────────────────────────────────────────────────────────
 ⇅ Nav | ␣ Sel |  ⏎ Next |  ⌫ Back |  ⇥ View | ⎋ Quit
-              🄵·🅁·🄰·🄼·🄴·🅆·🄾·🅁·🄺
+              🅵·🅁·🄰·🄼·🄴·🅆·🄞·🅁·🅺
 ─────────────────────────────────────────────────────────
 ```
 
