@@ -38,6 +38,14 @@ from pathlib import Path
 from typing import Any, Optional
 
 try:
+    import termios
+    import tty
+
+    _HAS_TERMIOS = True
+except ImportError:  # pragma: no cover - Windows
+    _HAS_TERMIOS = False
+
+try:
     from rich.console import Console
     from rich.progress import (
         BarColumn,
@@ -335,7 +343,100 @@ def run_phase(
 # ---------------------------------------------------------------------------
 
 
-def _load_mock_screen(docs_dir: Path, name: str) -> Optional[str]:
+def _read_key() -> str:
+    """Read a single keypress from stdin. Returns a semantic key name.
+
+    Handles arrow-key escape sequences, common navigation keys, and single
+    characters.  Falls back to ``"enter"`` when stdin is not a TTY (piped
+    input, CI) so the intro flow auto-advances without blocking.
+    """
+    if not sys.stdin.isatty() or not _HAS_TERMIOS:
+        return "enter"
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+        if ch == "\x1b":  # escape sequence
+            ch2 = sys.stdin.read(1)
+            if ch2 == "[":
+                ch3 = sys.stdin.read(1)
+                if ch3 == "A":
+                    return "up"
+                if ch3 == "B":
+                    return "down"
+            return "escape"
+        if ch in ("\r", "\n"):
+            return "enter"
+        if ch == " ":
+            return "space"
+        if ch in ("\x7f", "\x08"):
+            return "backspace"
+        if ch == "\t":
+            return "tab"
+        if ch == "q":
+            return "quit"
+        if ch == "b":
+            return "back"
+        return ch
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _parse_mock_layers(body: str) -> tuple[str, str, str]:
+    """Split a mockup body into (header, content, footer) layers.
+
+    Detection relies on separator lines containing at least 10 consecutive
+    ``─`` (U+2500 box-drawing horizontal).  With four or more separators the
+    layout is:
+
+        header  = start .. second separator   (inclusive)
+        footer  = second-to-last separator .. end   (inclusive)
+        content = everything in between
+
+    When fewer than four separators are found the body is returned as pure
+    content with empty header/footer so the caller can still render it.
+    """
+    lines = body.splitlines()
+    sep_indices = [i for i, line in enumerate(lines) if "\u2500" * 10 in line]
+
+    if len(sep_indices) < 4:
+        # Not enough separators -- treat entire body as content.
+        return ("", body, "")
+
+    # Header: lines 0 through second separator (inclusive).
+    header_end = sep_indices[1]
+    header = "\n".join(lines[: header_end + 1])
+
+    # Footer: from second-to-last separator to end (inclusive).
+    footer_start = sep_indices[-2]
+    footer = "\n".join(lines[footer_start:])
+
+    # Content: between header and footer.
+    content = "\n".join(lines[header_end + 1 : footer_start])
+
+    return (header, content, footer)
+
+
+def _interpolate_mock(text: str, version: str) -> str:
+    """Replace placeholder tokens in mockup text with runtime values.
+
+    Supported placeholders:
+        ``{version}``          — manifest version (or ``"dev"``).
+        ``$VIBECRAFTED_ROOT``  — env var or ``$HOME`` fallback.
+        ``$HOME``              — user home directory.
+    """
+    home = str(Path.home())
+    vibecrafted_root = os.environ.get("VIBECRAFTED_ROOT", home)
+    text = text.replace("{version}", version or "dev")
+    text = text.replace("$VIBECRAFTED_ROOT", vibecrafted_root)
+    text = text.replace("$HOME", home)
+    return text
+
+
+def _load_mock_screen(
+    docs_dir: Path, name: str, *, version: str = "dev"
+) -> Optional[str]:
     """Return the body of a mock screen from ``docs/installer/<name>``.
 
     Strips only the ``` shell fence — the banner, content, footer hint,
@@ -344,6 +445,9 @@ def _load_mock_screen(docs_dir: Path, name: str) -> Optional[str]:
     that belong to the advanced interactive flow reached via
     ``make setup-dev`` (``vetcoders_install.py install --advanced``); it
     is a consistent reference across all screens, not a per-screen promise.
+
+    ``{version}`` placeholders inside the mockup body are interpolated with
+    the manifest version (or ``"dev"`` when unset).
     """
     path = docs_dir / name
     if not path.is_file():
@@ -356,45 +460,112 @@ def _load_mock_screen(docs_dir: Path, name: str) -> Optional[str]:
         lines.pop()
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    return _interpolate_mock(body, version)
 
 
-def _show_mock_screen(console: Any, body: str, prompt: str) -> str:
-    """Print a full mock screen verbatim and wait for navigation input.
+def _print_line(console: Any, line: str) -> None:
+    """Print a single line through Rich (markup-safe) or plain fallback."""
+    if HAS_RICH:
+        console.print(line, markup=False, highlight=False)
+    else:
+        print(line)
+
+
+def _show_mock_screen(console: Any, body: str, *, can_back: bool = False) -> str:
+    """Render a mockup with sticky header/footer and wait for a keypress.
+
+    Parses the mockup body into three layers (header, content, footer)
+    using separator-line detection.  The header stays at the top, content
+    fills the middle, and the footer is pushed to the bottom of the
+    terminal via blank-line padding.
+
+    Falls back to line-buffered ``input()`` when stdin is not a TTY so
+    CI / piped invocations still work.
 
     Returns one of:
-      - ``"next"``  — user pressed ENTER (or y/yes).
-      - ``"back"``  — user pressed b / back / p / prev / minus sign.
-      - ``"quit"``  — user pressed q / n / esc or interrupted the prompt.
+      - ``"next"``  -- Enter / Down arrow / Space.
+      - ``"back"``  -- Backspace / Up arrow (only meaningful when *can_back*).
+      - ``"quit"``  -- Escape / ``q``.
     """
-    console.print()
-    for line in body.splitlines():
-        # markup=False so user banner unicode + separator characters pass
-        # through Rich untouched — no square-bracket interpretation.
-        if HAS_RICH:
-            console.print(line, markup=False, highlight=False)
-        else:
-            print(line)
-    console.print()
+    header, content, footer = _parse_mock_layers(body)
+
+    # Clear screen and move cursor to top-left.
+    print("\033[2J\033[H", end="", flush=True)
+
+    cols, rows = shutil.get_terminal_size((80, 24))
+
+    # -- Sticky header at top --
+    if header:
+        for line in header.splitlines():
+            _print_line(console, line)
+
+    # -- Scrollable content in the middle --
+    content_lines = content.splitlines() if content else []
+    for line in content_lines:
+        _print_line(console, line)
+
+    # -- Sticky footer pushed to bottom --
+    header_count = len(header.splitlines()) if header else 0
+    content_count = len(content_lines)
+    footer_lines = footer.splitlines() if footer else []
+    footer_count = len(footer_lines)
+    # +1 for the status/prompt line that follows the footer.
+    used = header_count + content_count + footer_count + 1
+    padding = max(0, rows - used)
+    if padding:
+        print("\n" * padding, end="")
+
+    if footer:
+        for line in footer_lines:
+            _print_line(console, line)
+
+    # Status bar -- reflects real available actions for this position.
+    if can_back:
+        status = "  \u23ce proceed  \u232b back  \u238b quit"
+    else:
+        status = "  \u23ce proceed  \u238b quit"
+
+    if not sys.stdin.isatty() or not _HAS_TERMIOS:
+        # Non-interactive fallback: use input() so piped/CI runs advance.
+        console.print()
+        try:
+            raw = input(f"  {status}  \u276f ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return "quit"
+        if raw in ("q", "quit", "n", "no", "esc", "escape"):
+            return "quit"
+        if raw in ("b", "back", "p", "prev", "-"):
+            return "back"
+        return "next"
+
+    # Interactive path -- single keypress, no ENTER required.
+    if HAS_RICH:
+        console.print(f"[dim]{status}[/]")
+    else:
+        print(status)
+
     try:
-        raw = input(f"  {prompt}").strip().lower()
+        key = _read_key()
     except (EOFError, KeyboardInterrupt):
         print()
         return "quit"
-    if raw in ("q", "quit", "n", "no", "esc", "escape"):
+
+    if key in ("escape", "quit"):
         return "quit"
-    if raw in ("b", "back", "p", "prev", "-"):
+    if key in ("backspace", "up", "back") and can_back:
         return "back"
+    # enter, down, space, or any other key -> advance
     return "next"
 
 
 def _show_intro_flow(console: Any, manifest: Manifest, auto_yes: bool) -> bool:
-    """Show welcome → explain → listing screens before the phase loop.
+    """Show welcome / explain / listing screens before the phase loop.
 
-    Content comes straight from ``docs/installer/*.md``. Supports ENTER to
-    advance, ``b`` to step back to the previous intro screen, and ``q`` to
-    cancel before any work starts. "Back" only applies inside the intro
-    flow — once phase execution begins there is nothing safe to un-do.
+    Content comes straight from ``docs/installer/*.md``.  Navigation uses
+    single-keypress reading (Enter/Down = next, Backspace/Up = back,
+    Esc/q = quit).  Falls back to ``input()`` for non-TTY environments.
 
     Returns False when the user cancels, True on normal completion. When
     the docs directory is absent (packaged install without repo next to
@@ -405,24 +576,21 @@ def _show_intro_flow(console: Any, manifest: Manifest, auto_yes: bool) -> bool:
     docs_dir = manifest.path.parent / "docs" / "installer"
     if not docs_dir.is_dir():
         return True
-    screens: list[tuple[str, str]] = [
-        ("0_welcome_step.zsh.md", "continue"),
-        ("1_Explain_step.zsh.md", "continue"),
-        ("2_listing.zsh.md", "begin"),
+    version = manifest.version or "dev"
+    screen_names: list[str] = [
+        "0_welcome_step.zsh.md",
+        "1_Explain_step.zsh.md",
+        "2_listing.zsh.md",
     ]
     idx = 0
-    while idx < len(screens):
-        name, verb = screens[idx]
-        body = _load_mock_screen(docs_dir, name)
+    while idx < len(screen_names):
+        name = screen_names[idx]
+        body = _load_mock_screen(docs_dir, name, version=version)
         if body is None:
             idx += 1
             continue
         can_back = idx > 0
-        if can_back:
-            prompt = f"❯ ENTER={verb}   b=back   q=quit  "
-        else:
-            prompt = f"❯ ENTER={verb}   q=quit  "
-        action = _show_mock_screen(console, body, prompt)
+        action = _show_mock_screen(console, body, can_back=can_back)
         if action == "quit":
             console.print("\n  [yellow]Cancelled — no changes were made.[/]\n")
             return False
