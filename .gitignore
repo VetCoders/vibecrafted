@@ -4,7 +4,7 @@
 
 # Built-in installer venv (vetcoders-installer runtime, created by `uv sync`)
 scripts/installer/.venv/
-scripts/installer/uv.lock
+/uv.lock
 scripts/installer/**/__pycache__/
 
 # AI Context
