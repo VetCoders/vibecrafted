@@ -60,6 +60,13 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - soft fallback path
     HAS_RICH = False
 
+try:
+    from vetcoders_installer.tui import InstallerIntroApp
+
+    _HAS_TEXTUAL = True
+except ImportError:  # pragma: no cover - textual not installed
+    _HAS_TEXTUAL = False
+
 
 __version__ = "0.1.0"
 TOOL_NAME = "vetcoders-installer"
@@ -425,10 +432,14 @@ def _interpolate_mock(text: str, version: str) -> str:
         ``{version}``          — manifest version (or ``"dev"``).
         ``$VIBECRAFTED_ROOT``  — env var or ``$HOME`` fallback.
         ``$HOME``              — user home directory.
+        ``\U0001d167X.Y.Z``    — monospace unicode version in banner headers.
     """
     home = str(Path.home())
     vibecrafted_root = os.environ.get("VIBECRAFTED_ROOT", home)
-    text = text.replace("{version}", version or "dev")
+    ver = version or "dev"
+    text = text.replace("{version}", ver)
+    # Replace hardcoded monospace-unicode version strings (𝚟X.Y.Z) in banners
+    text = re.sub(r"𝚟\d+\.\d+\.\d+", f"𝚟{ver}", text)
     text = text.replace("$VIBECRAFTED_ROOT", vibecrafted_root)
     text = text.replace("$HOME", home)
     return text
@@ -546,26 +557,32 @@ def _show_mock_screen(console: Any, body: str, *, can_back: bool = False) -> str
     else:
         print(status)
 
-    try:
-        key = _read_key()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return "quit"
+    while True:
+        try:
+            key = _read_key()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return "quit"
 
-    if key in ("escape", "quit"):
-        return "quit"
-    if key in ("backspace", "up", "back") and can_back:
-        return "back"
-    # enter, down, space, or any other key -> advance
-    return "next"
+        if key in ("escape", "quit"):
+            return "quit"
+        if key in ("backspace", "up", "back"):
+            if can_back:
+                return "back"
+            continue  # ignore back keys on first screen
+        if key in ("enter", "down", "space"):
+            return "next"
+        # any other key — ignore, wait for valid input
+        continue
 
 
 def _show_intro_flow(console: Any, manifest: Manifest, auto_yes: bool) -> bool:
     """Show welcome / explain / listing screens before the phase loop.
 
-    Content comes straight from ``docs/installer/*.md``.  Navigation uses
-    single-keypress reading (Enter/Down = next, Backspace/Up = back,
-    Esc/q = quit).  Falls back to ``input()`` for non-TTY environments.
+    When ``textual`` is available the intro renders as a proper TUI with
+    sticky header/footer and scrollable content.  Falls back to the manual
+    ANSI loop (``_show_mock_screen``) when textual is missing, and to
+    ``input()`` for non-TTY environments.
 
     Returns False when the user cancels, True on normal completion. When
     the docs directory is absent (packaged install without repo next to
@@ -582,22 +599,55 @@ def _show_intro_flow(console: Any, manifest: Manifest, auto_yes: bool) -> bool:
         "1_Explain_step.zsh.md",
         "2_listing.zsh.md",
     ]
-    idx = 0
-    while idx < len(screen_names):
-        name = screen_names[idx]
+
+    # Build (header, content, footer) tuples from mockup files.
+    screens: list[tuple[str, str, str]] = []
+    for name in screen_names:
         body = _load_mock_screen(docs_dir, name, version=version)
         if body is None:
-            idx += 1
             continue
+        header, content, footer = _parse_mock_layers(body)
+        screens.append((header, content, footer))
+
+    if not screens:
+        return True
+
+    # Non-TTY fallback (CI, piped) -- auto-advance.
+    if not sys.stdin.isatty():
+        return True
+
+    # -- Textual TUI path (preferred) --
+    if _HAS_TEXTUAL:
+        try:
+            app = InstallerIntroApp(screens, version)
+            app.run()
+            if app.result != "complete":
+                console.print("\n  [yellow]Cancelled — no changes were made.[/]\n")
+                return False
+            return True
+        except Exception:
+            # Textual crashed -- fall through to legacy path.
+            pass
+
+    # -- Legacy manual ANSI path --
+    # Re-assemble bodies from layers for _show_mock_screen.
+    bodies: list[str] = []
+    for name in screen_names:
+        body = _load_mock_screen(docs_dir, name, version=version)
+        if body is not None:
+            bodies.append(body)
+
+    idx = 0
+    while idx < len(bodies):
         can_back = idx > 0
-        action = _show_mock_screen(console, body, can_back=can_back)
+        action = _show_mock_screen(console, bodies[idx], can_back=can_back)
         if action == "quit":
             console.print("\n  [yellow]Cancelled — no changes were made.[/]\n")
             return False
         if action == "back" and can_back:
             idx -= 1
             continue
-        # "back" on the first screen is a no-op — fall through to "next".
+        # "back" on the first screen is a no-op -- fall through to "next".
         idx += 1
     return True
 
