@@ -109,7 +109,7 @@ class InstallerIntroApp(App):
         height: 1fr;
     }
     #content-container {
-        padding: 0 2;
+        padding: 0 5 1 5;
     }
     #footer {
         dock: bottom;

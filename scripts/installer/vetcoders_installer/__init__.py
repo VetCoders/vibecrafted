@@ -481,8 +481,8 @@ def _interpolate_mock(text: str, manifest: Manifest) -> str:
             text = text.replace("⚒ V A P O R C R A F T ⚒", manifest.branding["header"])
             text = text.replace("⚒ Vibecrafted. ⚒", manifest.branding["header"])
         if "name" in manifest.branding:
-            text = text.replace("Vibecrafted", manifest.branding["name"])
-            text = text.replace("vibecrafted", manifest.branding["name"].lower())
+            branded_name = manifest.branding["name"].rstrip(".")
+            text = re.sub(r"\bVibecrafted\b", branded_name, text)
         if "unicode_wordmark" in manifest.branding:
             text = text.replace("⚒ Vibecrafted.", manifest.branding["unicode_wordmark"])
         if "footer_tagline" in manifest.branding:
