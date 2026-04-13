@@ -1,13 +1,13 @@
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
 
-A convergence framework for AI-assisted software development.
+Release engine for AI-built software.
 
 ## What it does
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. does not write code for you. It gives AI agents a system where
-their output is systematically improved until it meets production quality —
-through closed verification loops, structural analysis, and multi-agent
-orchestration.
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. starts where code generation stops. It takes the repo your AI
+agents already produced and pushes it through structural mapping, convergence
+loops, install truth, packaging, and launch-readiness checks until the product
+is fit to ship.
 
 The framework asks one question, relentlessly: _What is still wrong?_
 And keeps going until the answer is: _Nothing._
@@ -15,10 +15,10 @@ And keeps going until the answer is: _Nothing._
 ## When to use
 
 - You want AI agents to work in a live repository, not isolated toy contexts
-- You need a repeatable path from architecture planning to launch readiness
+- You need a repeatable path from AI draft to release readiness
 - You want Claude, Codex, and Gemini to collaborate with durable artifacts
-- You need convergence to quality, not just code generation
-- You need the product surface finished — not just the code
+- You need convergence to quality, not just more generated code
+- You need the product surface finished: install, docs, presence, and trust
 
 ## How it works
 
@@ -39,6 +39,7 @@ market. `vc-release` deploys.
 ## Requirements
 
 - macOS or Linux
+- Guided browser installer for human onboarding; compact CLI path for automation
 - Git, Python 3.10+, `make`
 - One or more agent CLIs: Claude Code, Codex, or Gemini CLI
 - Recommended: Loctree (structural analysis), AICX (session history)
@@ -55,12 +56,12 @@ convergence, packaging, and release.
 
 ## Registry Metadata
 
-- description: Convergence framework for AI-assisted software development. Agents fix code until nothing is wrong.
-- keywords: ai-agent-engineering, convergence, developer-tools, codex, claude, gemini, workflow, multi-agent
+- description: Release engine for AI-built software. Structural mapping, convergence loops, install truth, and launch-ready packaging for AI-generated repos.
+- keywords: ai-agent-engineering, release-engineering, developer-tools, codex, claude, gemini, workflow, multi-agent, ai-native
 - homepage: https://vibecrafted.io/
 - repository: https://github.com/VetCoders/vibecrafted
-- documentation: https://vibecrafted.io/presence/quickstart.html
-- faq: https://vibecrafted.io/presence/faq.html
+- documentation: https://vibecrafted.io/en/quickstart/
+- faq: https://vibecrafted.io/en/faq/
 - license: Business Source License 1.1 with Additional Use Grant for non-competitive small-team production use
 
 ---

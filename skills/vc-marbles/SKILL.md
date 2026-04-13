@@ -2,16 +2,18 @@
 name: vc-marbles
 version: 6.0.0
 description: >
-  Blind stabilization round. Use when the product works but the foundation is fragile.
-  Each invocation is isolated: inspect the current tree, find the most dangerous present
-  fragility, fortify a small high-impact surface, run gates, commit, and emit a machine-
-  diffable round delta report. Do not reconstruct prior marble rounds unless the operator
-  explicitly requests forensics.
+  Truth-convergence executor. Use when implementation already exists but the codebase
+  still lies: overgenerated surfaces, drift between runtime paths, false certainty from
+  one-shot agent output, or a product that "works" while remaining fragile. Each
+  invocation is isolated: inspect the current tree, find the most dangerous present
+  falsehood or fragility, compress the surface into a more truthful shape, run gates,
+  commit, and emit a machine-diffable round delta report. Do not reconstruct prior
+  marble rounds unless the operator explicitly requests forensics.
   Trigger phrases: "marbles", "kulki", "stabilize", "stabilizacja", "loop until done",
   "reduce chaos", "fortify the foundation", "adultification".
 ---
 
-# vc-marbles — Convergence Rounds
+# vc-marbles — Truth Convergence Rounds
 
 ## Operator Entry
 
@@ -72,10 +74,12 @@ vc-marbles gemini --count 2 --file /path/to/plan.md
 ```
 
 **This is NOT the same as `vibecrafted codex implement <plan>`.**
-`implement` is one-shot execution. `marbles` wraps the agent in
-a convergence
-loop: each round measures, targets, fixes, scores, commits, and reports.
-The `--count` flag controls how many rounds the outer loop runs.
+`implement` is how code appears. `marbles` is what happens after code exists but
+still needs to be made truthful, legible, operable, and shippable. The mechanism
+wraps the agent in a convergence loop: each round re-perceives the live tree,
+attacks the biggest present lie, compresses the surface toward one coherent
+runtime truth, commits, and reports. The `--count` flag controls how many rounds
+the outer loop runs.
 
 <details>
 <summary>Foundation Dependencies (Loaded with framework)</summary>
@@ -86,19 +90,32 @@ Do not use it to reconstruct prior marble rounds unless the operator explicitly 
 </details>
 
 > The worker sees the tree, not the factory.
-> One round. One fortification. One report. Then leave.
+> One round. One truth-forcing cut. One report. Then leave.
 
 ## Core doctrine
 
-`vc-marbles` is not a reflective swarm.
+`vc-marbles` is not a mini-task implementer.
 
-It is a conveyor of short-lived stabilization workers.
+It is the executor of truth in an already-generated codebase.
+
+It begins after implementation is already in.
+
+Its job is to take the naturally overgenerated output of agentic coding and pack
+it into shape:
+
+- remove drift
+- collapse duplicate truths
+- harden the runtime path
+- expose product decisions hiding behind "code issues"
+- turn "it sort of works" into "this is the actual shape of the system"
 
 A marble worker is intentionally **blind to prior marble history**.
-It works against the **current workspace state** and the **current evidence surface** only.
+It works against the **current workspace state** and the **current evidence
+surface** only.
 
-The loop exists outside the worker.
-The worker must not try to model, narrate, or optimize the loop.
+The loop exists outside the worker. The worker must not try to model, narrate,
+or optimize the loop. The worker exists to force the present tree to tell the
+truth.
 
 ## Why this works
 
@@ -114,6 +131,14 @@ left it in their mental model.
 
 This is not a workaround. This is the design.
 
+And there is a second reason this works:
+
+agentic code generation naturally overproduces. It leaves duplicate surfaces,
+parallel contracts, half-finished abstractions, "helpful" wrappers, fallback
+paths, and uncollapsed naming. Marbles exists to metabolize that excess. It does
+not merely fix bugs. It distills the codebase until one runtime truth starts to
+win.
+
 ## Reception protocol — how the orchestrator briefs the worker
 
 The orchestrating agent (partner, operator) prepares the plan. The implementing
@@ -125,16 +150,19 @@ Good framing:
 
 - "This project needs you. The auth surface is still exposed. Ship the fix."
 - "The installer doesn't bootstrap on bare machines. Make it work end-to-end."
-- "Tests pass but the runtime is fragile. Find the structural weakness and fortify."
+- "The code exists, but the system still lies. Find the structural weakness and make it truthful."
 
 Bad framing:
 
 - "Previous rounds failed to deliver this." (creates parity judgment)
 - "Round 4 of 8, here's what rounds 1-3 did." (reveals mechanism)
 - "The delta from the last round was insufficient." (convergence cosplay)
+- "Claude is sloppy, Codex is better, fix what they botched." (agent contempt poisons perception)
 
 The worker should feel like the best person for the job walking into a project
 that needs them — not like cog #4 on a conveyor belt.
+
+Why-matrix is a map of styles, not a hierarchy of worth.
 
 ## Mandatory entry: `vc-init`
 
@@ -167,15 +195,21 @@ often silent. Instruments find the silent ones. Tests confirm the fix.
 
 ## What this skill does
 
-One invocation of `vc-marbles` performs one bounded stabilization round:
+One invocation of `vc-marbles` performs one bounded truth-convergence round:
 
-1. discover what is fragile **now**
+1. discover what is false, duplicated, drifting, or fragile **now**
 2. select up to **3** high-impact targets
-3. fortify the smallest surface that materially reduces fragility
+3. compress the smallest surface that materially increases truth
 4. run gates
 5. commit
 6. write one machine-diffable **round delta report**
 7. stop
+
+This is not "pick one tiny task and implement it."
+
+The round may be small in surface area, but its purpose is large: reduce
+uncertainty in the codebase and move the system toward one stable model of
+itself.
 
 ## What this skill does not do
 
@@ -186,9 +220,11 @@ Do not:
 - compare yourself to prior workers
 - compute or mention delta, stepper, convergence score, or loop efficiency
 - write strategic plans for the next marble
-- refactor for aesthetics
+- do surface grooming that does not reduce uncertainty or close a failure mode
 - inflate touched surface to make the round look impressive
 - pretend to know the full repo-wide backlog of open fragility
+- treat marbles like post-hoc polishing
+- use the round to perform net-new feature invention when the real need is truth-hardening
 
 If the operator explicitly asks for historical comparison or forensics, that is a different task.
 Default `vc-marbles` execution is blind.
@@ -353,17 +389,19 @@ Prefer:
 - silent failure modes
 - weak boundaries
 - issues that close an entire class of failure
+- places where multiple surfaces disagree about reality
+- places where the code is forcing a hidden product decision without naming it
 
 Avoid:
 
 - broad rewrites
-- style-only cleanup
+- surface-only cleanup
 - speculative architecture changes
 - “while I’m here” edits
 
 ### 3. Fortify
 
-Make the smallest set of changes that materially reduces fragility.
+Make the smallest set of changes that materially increases truth.
 
 Typical fortifications:
 
@@ -371,6 +409,8 @@ Typical fortifications:
 - add missing indexes or reshape a hot query
 - replace swallowed exceptions with actionable handling
 - add smoke tests or gate enforcement
+- collapse duplicated contracts into one authoritative path
+- delete wrappers that create a second lie about the runtime
 - remove a rotten abstraction instead of preserving it
 
 Apply the VetCoders axiom here:
@@ -493,11 +533,24 @@ The external convergence layer depends on stable ids. Do not rename the same iss
 - **Historical self-awareness** — reading prior marble artifacts to sound informed.
 - **Convergence cosplay** — talking about step size, delta, or loop mastery instead of reducing current fragility.
 - **Surface-area vanity** — touching many files to make the round look bigger.
-- **Aesthetic refactors** — cleanup that does not close a failure mode.
+- **Polishing theater** — cleanup, grooming, or taste-work that does not close a failure mode or reduce uncertainty.
 - **Backward-compatibility worship** — preserving rotten contracts that keep the foundation weak.
 - **Narrative inflation** — long explanations that hide a weak gate result.
 - **Parallel contamination** — importing another marble’s context into your round.
 - **Fake omniscience** — pretending this round can see the full global backlog.
+- **Agent contempt** — treating other agents as inferior beings instead of different measurement instruments.
+
+## Epistemic promise
+
+Marbles does not stabilize one patch. Marbles stabilizes the truth of the
+problem.
+
+If multiple rounds converge, that is evidence that the system is revealing a
+real attractor. If multiple rounds diverge, that is also evidence: often the
+code has run out and a product or architectural decision is waiting to be named.
+
+That is why Marbles matters. It is not just a workflow. It is the framework's
+strongest executor of truth in the codebase.
 
 ## Finish condition
 

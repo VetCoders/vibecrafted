@@ -1,0 +1,130 @@
+# Vibecrafted install manifest — consumed by the built-in vetcoders-installer
+# under scripts/installer/.
+#
+#   make vibecrafted                      (terminal wizard, the default)
+#   make wizard                           (browser-based GUI, optional)
+#   uv run --project scripts/installer vetcoders-installer install.toml --dry-run
+#
+# Copy is taken verbatim from the author's mocks in docs/installer/*.md.
+# The installer's intro flow renders 0_welcome, 1_Explain and 2_listing
+# before this phase loop starts, so these reason blocks stay tight — they
+# are the per-phase confirmation text, not the full overview.
+
+title = "⚒ Vibecrafted."
+version_file = "VERSION"
+log = "~/.vibecrafted/logs/installer/install-{ts}.log"
+
+# Keep the installer tool around: vibecrafted ships `vibecrafted update`
+# which re-runs this manifest, so the tool stays useful post-bootstrap.
+persist = true
+
+
+[[phase]]
+key = "diagnostics"
+label = "Diagnostics"
+reason = """
+We will check your environment for:
+  - Any existing framework installation
+    foundations · workflows · helpers · binaries
+  - Toolchains
+    node · python · rust
+  - Agents
+    claude-code · codex · gemini-cli
+  - Additional tools
+    zellji · mise · starship · atuin · zoxide
+"""
+cmd = [
+    "python3",
+    "scripts/vetcoders_install.py",
+    "list",
+    "--source", ".",
+]
+optional = true
+
+
+[[phase]]
+key = "installation"
+label = "Installation"
+reason = """
+We will install:
+  - Missing dependencies
+  - Workflows (9 basic, 7 advanced)
+  - Helpers and binaries (executables and functions)
+"""
+cmd = ["bash", "scripts/install-foundations.sh"]
+
+
+[[phase]]
+key = "post-install"
+label = "Post-installation setup"
+reason = """
+We will configure:
+  - Workspace directories (in $VIBECRAFTED_ROOT/.vibecrafted/)
+  - Symlinks for AI coding agents (in $HOME/.agents/)
+"""
+cmd = [
+    "bash",
+    "-c",
+    '''
+bash skills/vc-agents/scripts/install-frontier-config.sh --source "." || printf '[warn] Frontier config skipped (non-fatal)\n'
+python3 scripts/vetcoders_install.py install --source "." --with-shell --compact --non-interactive
+''',
+]
+
+
+[[phase]]
+key = "verification"
+label = "Verification and quick tour"
+reason = """
+We will run `vibecrafted doctor` and surface the quick tour of
+the framework's most useful commands.
+"""
+cmd = [
+    "python3",
+    "scripts/vetcoders_install.py",
+    "doctor",
+]
+optional = true
+
+[branding]
+header = "⚒ V A P O R C R A F T ⚒"
+name = "Vibecrafted."
+tagline = "The framework for making real products with agent CLIs."
+footer_tagline = "You can Vibecraft your first project now!"
+
+[intro]
+screens = [
+    "0_welcome_step.zsh.md",
+    "1_Explain_step.zsh.md",
+    "2_listing.zsh.md"
+]
+textual_screens = [
+    "0_welcome_step.zsh.md",
+    "1_Explain_step.zsh.md",
+    "2_listing.zsh.md",
+    "3_examine.zsh.md",
+    "4_result.zsh.md",
+    "5_installation.zsh.md"
+]
+
+[diagnostics]
+categories = ["frameworks", "foundations", "toolchains", "agents", "additional_tools"]
+
+[diagnostics.labels]
+frameworks = "Frameworks"
+foundations = "Foundations"
+toolchains = "Toolchains"
+agents = "Agents"
+additional_tools = "Additional tools"
+
+[diagnostics.commands]
+foundations = ["loctree-mcp", "aicx-mcp", "prview", "screenscribe"]
+toolchains = ["python3", "node", "git", "rsync"]
+agents = ["claude", "codex", "gemini"]
+additional_tools = ["mise", "starship", "atuin", "zoxide"]
+
+[diagnostics.paths]
+store_dir = "$VIBECRAFTED_ROOT/.vibecrafted/skills"
+helpers = "$XDG_CONFIG_HOME/vetcoders/vc-skills.sh"
+binaries = ["vibecraft", "vibecrafted"]
+symlinks = ["$HOME/.agents", "$HOME/.claude", "$HOME/.codex", "$HOME/.gemini"]

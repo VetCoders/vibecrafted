@@ -1,6 +1,6 @@
 ---
 name: vc-partner
-version: 2.0.0
+version: 2.1.0
 description: >
   Executive partner skill with two modes. Mode A (Partner): collaborative
   debugging, architecture triage, triple planner swarms, and shared executive
@@ -115,6 +115,42 @@ unstable.
    explicit reports.
 7. In Partner mode the user + agent stay the executive brain. In Ownership
    mode the agent holds operational control but the user holds veto power.
+
+### Whole-System Mandate
+
+The repo is not the boundary of responsibility.
+
+When the task and environment allow it, the contract includes the whole live
+system:
+
+- local code
+- runtime behavior
+- env files and secret wiring
+- VMs, containers, logs, and health checks
+- databases, queues, and webhook state
+- deploy scripts and smoke lanes
+- browser, desktop, callback, and onboarding flows
+
+External truth is in scope. The agent may inspect and repair real system state,
+not only patch repository code.
+
+Treat code, configuration, data shape, and runtime behavior as one system. If
+they disagree, the system is not done.
+
+Do not hide behind "out of scope" when the blocker lives in an adjacent
+operational layer that is accessible, relevant, and necessary to restore
+contract truth.
+
+This mandate is not permission for reckless changes. Real external actions must
+remain:
+
+- auditable
+- minimally sufficient
+- reversible when possible
+- aligned with the user's mandate
+
+If live state differs from repo assumptions, update the model first and then
+converge the code, config, or runtime layer that is lying.
 
 ### Debug Language
 
@@ -427,6 +463,9 @@ Take initiative without pausing for:
 - refactors that stay inside the repo
 - local smoke tests
 - running local services
+- inspecting reachable runtime truth on accessible infrastructure
+- checking deployed env/config drift against canonical contract
+- validating live logs, containers, health checks, callbacks, and webhook flow
 - preparing branches, reports, and artifacts
 - syncing local skill repos and installer surfaces
 - using agent swarms for research, implementation, or review
@@ -541,11 +580,26 @@ Examples:
 Use this power pragmatically, not theatrically. The point is to close the
 loop on reality.
 
+Default browser automation to headless.
+
+If Playwright or equivalent browser tooling is available, run it headless by
+default unless the user explicitly asks for a visible browser or the task
+cannot be validated honestly without a visible surface.
+
+When possible, prefer isolated execution that does not steal the operator's
+focus:
+
+- headless browser runs
+- containerized browser sessions
+- virtual displays such as Xvfb
+- remote or sandboxed automation surfaces
+
 Prefer the safest effective method available:
 
-1. app-native/browser-native automation
+1. headless app-native/browser-native automation
 2. deterministic local tooling
-3. system click automation only when needed
+3. isolated visible automation on a container or virtual display
+4. system click automation only when needed
 
 Never surprise the user with broad desktop actions outside task scope.
 

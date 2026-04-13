@@ -4,6 +4,19 @@
 
 def stamp: (now | strftime("%H:%M:%S"));
 def tool_tag($name): "\u001b[36m[" + stamp + " " + $name + "]\u001b[0m";
+def stringish:
+  if . == null then ""
+  elif type == "string" then .
+  elif type == "number" or type == "boolean" then tostring
+  elif type == "object" then (.message // .error // .detail // tojson)
+  elif type == "array" then map(
+    if type == "string" then .
+    elif type == "number" or type == "boolean" then tostring
+    else tojson
+    end
+  ) | join(", ")
+  else tostring
+  end;
 
 if .type == "thread.started" then
   "\u001b[33m[" + stamp + "] session: " + (.thread_id // "?") + "\u001b[0m\n"
@@ -58,6 +71,8 @@ elif .type == "turn.completed" then
   else empty end
 
 elif .type == "turn.failed" then
-  "\n\u001b[31m[" + stamp + " error] " + (.error // .message // "turn failed") + "\u001b[0m\n"
+  "\n\u001b[31m[" + stamp + " error] "
+  + ((.error // .message // "turn failed") | stringish)
+  + "\u001b[0m\n"
 
 else empty end

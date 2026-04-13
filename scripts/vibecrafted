@@ -102,6 +102,14 @@ _has_skill() {
   return 1
 }
 
+_is_marbles_control_subcommand() {
+  local candidate="${1:-}"
+  case "$candidate" in
+    pause|stop|resume|session|inspect|delete) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 _skill_candidates() {
   local skill="$1"
   local runtime="${2:-}"
@@ -117,8 +125,8 @@ _skill_candidates() {
   fi
 
   printf '%s\n' \
-    "$crafted_skills/${skill}/SKILL.md" \
     "$crafted_tools/skills/${skill}/SKILL.md" \
+    "$crafted_skills/${skill}/SKILL.md" \
     "$HOME/.agents/skills/${skill}/SKILL.md"
 }
 
@@ -146,15 +154,25 @@ _helper_candidates() {
   if [[ -n "$repo_source" ]]; then
     printf '%s\n' "$repo_source/skills/vc-agents/shell/vetcoders.sh"
   fi
+  # Prefer the staged control plane over the mutable shared skill store so a
+  # freshly updated launcher cannot be shadowed by older installed helpers.
   printf '%s\n' \
+    "$crafted_tools/skills/vc-agents/shell/vetcoders.sh" \
     "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" \
     "$crafted_skills/vc-agents/shell/vetcoders.sh" \
-    "$crafted_tools/skills/vc-agents/shell/vetcoders.sh" \
     "$repo_helper"
 }
 
 _ensure_helpers_loaded() {
   local helper
+  local repo_source=""
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  if [[ -n "$repo_source" ]]; then
+    export VIBECRAFTED_PREFER_REPO_SPAWN=1
+    [[ -n "${VIBECRAFTED_ROOT:-}" ]] || export VIBECRAFTED_ROOT="$repo_source"
+  else
+    unset VIBECRAFTED_PREFER_REPO_SPAWN
+  fi
   while IFS= read -r helper; do
     [[ -r "$helper" ]] || continue
     # shellcheck disable=SC1090
@@ -227,6 +245,7 @@ _print_skill_specific_flags() {
 
 _print_ship_path() {
   printf '  %bvibecrafted dou claude --prompt "Audit launch readiness"%b\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted decorate codex --prompt "Polish the release surface"%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted hydrate codex --prompt "Package the product"%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted release codex --prompt "Prepare release steps"%b\n' "$_cyan" "$_reset"
 }
@@ -244,6 +263,10 @@ cmd_skill_help() {
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted %s %s [flags]\n' "$skill" "$agent"
   printf '  %s %s [flags]\n' "$wrapper" "$agent"
+  if [[ "$skill" == "marbles" ]]; then
+    printf '  vibecrafted marbles <pause|stop|resume|session|inspect|delete> [args]\n'
+    printf '  vc-marbles <pause|stop|resume|session|inspect|delete> [args]\n'
+  fi
   if [[ "$skill" == "justdo" ]]; then
     printf '  Alias: vibecrafted implement <agent> [flags] / vc-implement <agent> [flags]\n'
   fi
@@ -257,6 +280,7 @@ cmd_skill_help() {
     marbles)
       printf '  vibecrafted marbles codex --count 3 --depth 3\n'
       printf '  vc-marbles claude --prompt "Loop until clean"\n'
+      printf '  vc-marbles resume marb-134707\n'
       ;;
     followup)
       printf '  vibecrafted followup codex --prompt "Audit this implementation"\n'
@@ -337,15 +361,22 @@ cmd_dashboard_help() {
   printf '\n'
   printf '%b⚒%b  %bdashboard%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  Launch an optional repo-owned Zellij dashboard layout.\n'
+  printf '  Thin shim over native Zellij for operator session management.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted dashboard [vc-dashboard|vc-workflow|vc-marbles|vc-research|vibecrafted]\n'
+  printf '  vibecrafted dashboard [layout]          Open/switch to a dashboard layout\n'
+  printf '  vibecrafted dashboard ls                List active Zellij sessions\n'
+  printf '  vibecrafted dashboard switch <name>     Switch session (inside Zellij) or attach (outside)\n'
+  printf '  vibecrafted dashboard attach <name>     Attach to a session from outside Zellij\n'
+  printf '  vibecrafted dashboard kill <name>       Kill a Zellij session\n'
+  printf '\n'
+  printf '%bLayouts:%b  vc-dashboard (default), vc-marbles, vc-workflow, vc-research, vibecrafted\n' "$_bold" "$_reset"
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted dashboard\n'
-  printf '  vibecrafted dashboard vc-marbles\n'
-  printf '  vibecrafted dashboard vibecrafted\n'
+  printf '  vibecrafted dashboard                   # default dashboard\n'
+  printf '  vibecrafted dashboard ls                # list sessions\n'
+  printf '  vibecrafted dashboard vc-marbles        # marbles layout\n'
+  printf '  vibecrafted dashboard switch my-session  # switch/attach\n'
   printf '\n'
 }
 
@@ -366,6 +397,175 @@ cmd_resume_help() {
   printf '\n'
 }
 
+cmd_telemetry_help() {
+  printf '\n'
+  printf '%b⚒%b  %btelemetry%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Smoke the marbles telemetry path through the installed command deck.\n'
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  telemetry smoke [--agent <claude|codex|gemini>] [--count <n>] [--root <path>] [--no-watch|--watch]\n'
+  printf '  vibecrafted telemetry smoke [--agent <claude|codex|gemini>] [--count <n>] [--root <path>] [--no-watch|--watch]\n'
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  telemetry smoke --count 1 --no-watch\n'
+  printf '  telemetry smoke --agent claude --count 2 --watch\n'
+  printf '\n'
+}
+
+_telemetry_smoke_root() {
+  local requested_root="${1:-}"
+
+  if [[ -n "$requested_root" ]]; then
+    _expand_home_path "$requested_root"
+    return 0
+  fi
+
+  mkdir -p "$crafted_home/tmp"
+  mktemp -d "$crafted_home/tmp/telemetry-smoke.XXXXXX"
+}
+
+_telemetry_smoke_prepare_repo() {
+  local target_root="$1"
+
+  mkdir -p "$target_root"
+  if ! git -C "$target_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "$target_root" init -q
+  fi
+
+  git -C "$target_root" config --get user.name >/dev/null 2>&1 || \
+    git -C "$target_root" config user.name "Vibecrafted Telemetry"
+  git -C "$target_root" config --get user.email >/dev/null 2>&1 || \
+    git -C "$target_root" config user.email "telemetry@local"
+}
+
+_telemetry_smoke_plan() {
+  local target_root="$1"
+  local plan_ts plan_path
+
+  plan_ts="$(date +%Y%m%d_%H%M%S)"
+  mkdir -p "$target_root/.vibecrafted/plans"
+  plan_path="$target_root/.vibecrafted/plans/telemetry-smoke-${plan_ts}.md"
+  cat > "$plan_path" <<'EOF'
+---
+focus: telemetry smoke
+priority: P0
+---
+
+This is a bounded telemetry smoke run.
+Prove the marbles runtime can operate in this workspace without recursion.
+
+1. Create `SMOKE_OK.md` at the repo root with a short note that includes the current working directory.
+2. Write the required report to the exact report path from the prompt.
+3. Make exactly one git commit for the smoke marker and include the report file if it lives inside this repo.
+4. Do not run `telemetry smoke` or any other nested spawn command.
+5. Stop after the report and commit are complete.
+EOF
+  printf '%s\n' "$plan_path"
+}
+
+cmd_telemetry_smoke() {
+  local agent="codex"
+  local count="1"
+  local root=""
+  local runtime="headless"
+  local marbles_script=""
+  local smoke_root=""
+  local smoke_plan=""
+  local telemetry_args=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --agent)
+        shift
+        [[ $# -gt 0 ]] || {
+          echo "Missing value for --agent" >&2
+          return 1
+        }
+        agent="$1"
+        ;;
+      --count)
+        shift
+        [[ $# -gt 0 ]] || {
+          echo "Missing value for --count" >&2
+          return 1
+        }
+        count="$1"
+        ;;
+      --root)
+        shift
+        [[ $# -gt 0 ]] || {
+          echo "Missing value for --root" >&2
+          return 1
+        }
+        root="$1"
+        ;;
+      --watch)
+        runtime="terminal"
+        ;;
+      --no-watch)
+        runtime="headless"
+        ;;
+      --help|-h|help)
+        cmd_telemetry_help
+        return 0
+        ;;
+      *)
+        printf '%b[error]%b Unknown telemetry smoke flag: %s\n' "$_red" "$_reset" "$1" >&2
+        printf '\n' >&2
+        cmd_telemetry_help >&2
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  _has_agent "$agent" || {
+    printf '%b[error]%b Unknown agent: %s\n' "$_red" "$_reset" "$agent" >&2
+    return 1
+  }
+  _ensure_helpers_loaded || return 1
+  marbles_script="$(_vetcoders_spawn_script "$agent" "marbles_spawn.sh")" || return 1
+  smoke_root="$(_telemetry_smoke_root "$root")"
+  _telemetry_smoke_prepare_repo "$smoke_root"
+  smoke_plan="$(_telemetry_smoke_plan "$smoke_root")"
+  printf '%b[telemetry]%b smoke root: %s\n' "$_copper" "$_reset" "$smoke_root"
+  printf '%b[telemetry]%b smoke plan: %s\n' "$_copper" "$_reset" "$smoke_plan"
+  telemetry_args=(--agent "$agent" --runtime "$runtime" --count "$count" --root "$smoke_root")
+  [[ "$runtime" == "headless" ]] && telemetry_args+=(--no-watch)
+  telemetry_args+=(--file "$smoke_plan")
+  (
+    # Smoke runs must start from a fresh marbles context even when they are
+    # launched from inside another agent/session.
+    unset VIBECRAFTED_MARBLES_RUN_ID VIBECRAFTED_RUN_ID VIBECRAFTED_RUN_LOCK
+    unset VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME VIBECRAFTED_LOOP_NR
+    unset VIBECRAFTED_OPERATOR_SESSION
+    unset SPAWN_AGENT SPAWN_ROOT SPAWN_PLAN SPAWN_RUN_ID SPAWN_RUN_LOCK
+    unset SPAWN_LOOP_NR SPAWN_SKILL_CODE SPAWN_SKILL_NAME
+    bash "$marbles_script" "${telemetry_args[@]}"
+  )
+}
+
+cmd_telemetry() {
+  local subcommand="${1:-help}"
+  shift || true
+
+  case "$subcommand" in
+    help|-h|--help)
+      cmd_telemetry_help
+      ;;
+    smoke)
+      cmd_telemetry_smoke "$@"
+      ;;
+    *)
+      printf '%b[error]%b Unknown telemetry subcommand: %s\n' "$_red" "$_reset" "$subcommand" >&2
+      printf '\n' >&2
+      cmd_telemetry_help >&2
+      return 1
+      ;;
+  esac
+}
+
 cmd_help() {
   local topic="${1:-}"
   case "$topic" in
@@ -379,6 +579,10 @@ cmd_help() {
       ;;
     dashboard|mc|mission-control)
       cmd_dashboard_help
+      return
+      ;;
+    telemetry)
+      cmd_telemetry_help
       return
       ;;
     resume)
@@ -403,8 +607,8 @@ cmd_help() {
   printf '\n'
   printf '%b⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. %s%b\n' "$_bold$_copper" "$ver" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  The Founders'"'"' Framework\n'
-  printf '  A convergence-driven system for shipping software with AI agents.\n'
+  printf '  Release engine for AI-built software.\n'
+  printf '  Ship AI-built software without the vibe hangover.\n'
   printf '\n'
   printf '%bFront door:%b\n' "$_bold" "$_reset"
   printf '  %bvibecrafted help%b                      Show the command deck\n' "$_cyan" "$_reset"
@@ -412,6 +616,7 @@ cmd_help() {
   printf '  %bvibecrafted help%b <topic>              Help for a skill, agent, or command\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted init%b [agent]              Start an interactive init session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard%b [layout]        Launch an optional repo-owned Zellij dashboard\n' "$_cyan" "$_reset"
+  printf '  %btelemetry smoke%b [flags]              Smoke the marbles telemetry path\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b <skill> <agent> [flags]   Run a framework skill\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b <agent> <mode> [args]     implement/research/review/plan/prompt/observe\n' "$_cyan" "$_reset"
@@ -431,6 +636,7 @@ cmd_help() {
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted init claude\n'
   printf '  vibecrafted dashboard vc-marbles\n'
+  printf '  telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
   printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
   printf '  vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
@@ -457,8 +663,8 @@ cmd_help_full() {
   printf '\n'
   printf '%b⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. %s%b (Full Reference)\n' "$_bold$_copper" "$ver" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  The Founders'"'"' Framework\n'
-  printf '  A convergence-driven system for shipping software with AI agents.\n'
+  printf '  Release engine for AI-built software.\n'
+  printf '  Ship AI-built software without the vibe hangover.\n'
   printf '\n'
   printf '%b=== PIPELINE (canonical order) ===%b\n' "$_bold" "$_reset"
   printf '\n'
@@ -489,9 +695,16 @@ cmd_help_full() {
   printf '  %bvibecrafted <agent> prompt%b    <plan.md>   Free-form prompt with context\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted <agent> observe%b   --last      Check last agent report/transcript\n' "$_cyan" "$_reset"
   printf '\n'
+  printf '%b=== TELEMETRY ===%b\n' "$_bold" "$_reset"
+  printf '\n'
+  printf '  %btelemetry smoke%b [flags]                Smoke the headless marbles telemetry path\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted telemetry smoke%b [flags]    Same entrypoint through the main deck\n' "$_cyan" "$_reset"
+  printf '\n'
   printf '%b=== OPERATOR SURFACE ===%b\n' "$_bold" "$_reset"
   printf '\n'
-  printf '  %bvibecrafted dashboard%b [layout]        Launch repo-owned Zellij dashboard (%bvc-dashboard%b default)\n' "$_cyan" "$_reset" "$_bold" "$_reset"
+  printf '  %bvibecrafted dashboard%b [layout]        Open/switch to a Zellij dashboard\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard ls%b              List active Zellij sessions\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard switch%b <name>   Switch to session (Zellij-native)\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted start%b [layout]            Alias for %bvibecrafted dashboard%b\n' "$_cyan" "$_reset" "$_cyan" "$_reset"
   printf '\n'
   printf '  Agents: %bclaude%b · %bcodex%b · %bgemini%b\n' "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset"
@@ -510,8 +723,10 @@ cmd_help_full() {
   printf '  %bvibecrafted help%b                      Compact command deck\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted help --full%b               This full reference\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted init%b [agent]              Interactive init session\n' "$_cyan" "$_reset"
+  printf '  %btelemetry smoke%b [flags]              Smoke the marbles telemetry path\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted update%b                     Pull latest + reinstall\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted doctor%b                    Installation health check\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted version%b                   Print version\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
@@ -544,11 +759,13 @@ cmd_help_full() {
   printf '\n'
   printf '  vibecrafted init claude\n'
   printf '  vibecrafted dashboard vc-workflow\n'
+  printf '  telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
   printf '  vibecrafted workflow claude --file /path/to/brief.md\n'
   printf '  vibecrafted marbles codex --count 3 --depth 3\n'
   printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
   printf '  vibecrafted dou claude\n'
+  printf '  vibecrafted decorate codex\n'
   printf '  vibecrafted hydrate codex\n'
   printf '  vibecrafted release codex\n'
   printf '  vibecrafted prune codex\n'
@@ -614,6 +831,54 @@ cmd_dashboard() {
     cmd_dashboard_help
     return 0
   fi
+
+  # Thin shim subcommands — delegate directly to Zellij without loading
+  # the full helper layer. This keeps ls/switch/attach/kill instant.
+  case "${1:-}" in
+    ls|list|sessions)
+      command -v zellij >/dev/null 2>&1 || {
+        printf '%b[error]%b zellij is required.\n' "$_red" "$_reset" >&2; return 1
+      }
+      zellij list-sessions
+      return
+      ;;
+    switch)
+      shift
+      command -v zellij >/dev/null 2>&1 || {
+        printf '%b[error]%b zellij is required.\n' "$_red" "$_reset" >&2; return 1
+      }
+      [[ -n "${1:-}" ]] || { printf '%b[error]%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
+      if [[ -n "${ZELLIJ+set}" ]]; then
+        zellij action switch-session "$1"
+      else
+        zellij attach "$1"
+      fi
+      return
+      ;;
+    attach)
+      shift
+      command -v zellij >/dev/null 2>&1 || {
+        printf '%b[error]%b zellij is required.\n' "$_red" "$_reset" >&2; return 1
+      }
+      [[ -n "${1:-}" ]] || { printf '%b[error]%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
+      if [[ -n "${ZELLIJ+set}" ]]; then
+        zellij action switch-session "$1"
+      else
+        zellij attach "$1"
+      fi
+      return
+      ;;
+    kill)
+      shift
+      command -v zellij >/dev/null 2>&1 || {
+        printf '%b[error]%b zellij is required.\n' "$_red" "$_reset" >&2; return 1
+      }
+      [[ -n "${1:-}" ]] || { printf '%b[error]%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
+      zellij kill-session "$1"
+      return
+      ;;
+  esac
+
   local previous_repo_zellij_pref="${VIBECRAFTED_PREFER_REPO_ZELLIJ-}"
   local status
   _ensure_helpers_loaded || return 1
@@ -665,6 +930,114 @@ cmd_uninstall() {
     return 1
   }
   make -C "$(dirname "$makefile")" uninstall
+}
+
+_fetch_channel_version() {
+  local ref="${1:-main}"
+  local channel_url="https://vibecrafted.io/channel/${ref}.json"
+  local payload=""
+  payload="$(curl -fsSL "$channel_url" 2>/dev/null)" || return 1
+  python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('version',''),d.get('archive_url',''))" <<< "$payload" 2>/dev/null || return 1
+}
+
+_post_update_cleanup() {
+  # Remove known stale files that may survive across version transitions.
+  local tools_dir="${crafted_tools:-$HOME/.vibecrafted/tools/vibecrafted-current}"
+  local stale_candidates=(
+    "$tools_dir/scripts/vibecraft"
+    "$tools_dir/scripts/vc-implement"
+  )
+  local removed=0
+  for f in "${stale_candidates[@]}"; do
+    if [[ -e "$f" ]]; then
+      rm -f "$f"
+      (( removed++ ))
+    fi
+  done
+  if (( removed )); then
+    printf '  %bCleaned %d stale file(s) from previous install.%b\n' "$_dim" "$removed" "$_reset"
+  fi
+}
+
+_post_update_banner() {
+  local old_ver="$1"
+  local new_ver
+  new_ver="$(_version)"
+  _post_update_cleanup
+  if [[ "$new_ver" != "$old_ver" ]]; then
+    printf '\n  %bUpdated:%b %s -> %b%s%b\n' "$_bold" "$_reset" "$old_ver" "$_green" "$new_ver" "$_reset"
+  fi
+  printf '  Run %bvibecrafted doctor%b to verify the update.\n\n' "$_cyan" "$_reset"
+}
+
+cmd_update() {
+  local makefile="" repo_source="" installed_ver="" channel_ref="main"
+  local force=0
+  for _u_arg in "$@"; do
+    case "$_u_arg" in
+      --force|-f) force=1 ;;
+      --ref) : ;;  # consumed below
+      --ref=*) channel_ref="${_u_arg#--ref=}" ;;
+    esac
+  done
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+
+  installed_ver="$(_version)"
+  printf '\n%b⚒  Vibecrafted Update%b\n' "$_bold$_copper" "$_reset"
+  printf '  Installed: %b%s%b\n' "$_cyan" "$installed_ver" "$_reset"
+
+  # Try to show available version from channel manifest.
+  local channel_info="" available_ver="" available_url=""
+  if channel_info="$(_fetch_channel_version "$channel_ref" 2>/dev/null)"; then
+    available_ver="${channel_info%% *}"
+    available_url="${channel_info#* }"
+    if [[ -n "$available_ver" ]]; then
+      printf '  Available: %b%s%b\n' "$_green" "$available_ver" "$_reset"
+      if [[ "$installed_ver" == "$available_ver" ]] && (( ! force )); then
+        printf '  %b(up to date — use --force to reinstall)%b\n\n' "$_dim" "$_reset"
+        return 0
+      fi
+    fi
+  fi
+
+  local update_status=0
+
+  for candidate in \
+    "${repo_source:+$repo_source/Makefile}" \
+    "$crafted_tools/Makefile" \
+    "$(_repo_root 2>/dev/null)/Makefile"; do
+    [[ -n "$candidate" && -f "$candidate" ]] && makefile="$candidate" && break
+  done
+
+  if [[ -n "$makefile" ]]; then
+    make -C "$(dirname "$makefile")" update
+    update_status=$?
+    _post_update_banner "$installed_ver"
+    return "$update_status"
+  fi
+
+  # No Makefile found — attempt direct tarball update via install.sh.
+  local install_sh=""
+  for candidate in \
+    "${crafted_tools:+$crafted_tools/install.sh}" \
+    "${repo_source:+$repo_source/install.sh}"; do
+    [[ -n "$candidate" && -f "$candidate" ]] && install_sh="$candidate" && break
+  done
+
+  if [[ -n "$install_sh" ]]; then
+    printf '  Tarball install detected — running install.sh --ref %s\n\n' "$channel_ref"
+    bash "$install_sh" --ref "$channel_ref"
+    update_status=$?
+    _post_update_banner "$installed_ver"
+    return "$update_status"
+  fi
+
+  # Last resort: fetch install.sh from the web.
+  printf '  No local install surface found — fetching install.sh from vibecrafted.io\n\n' >&2
+  curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --ref "$channel_ref"
+  update_status=$?
+  _post_update_banner "$installed_ver"
+  return "$update_status"
 }
 
 cmd_agents() {
@@ -735,6 +1108,12 @@ run_skill() {
     return
   fi
 
+  if [[ "$skill" == "marbles" ]] && _is_marbles_control_subcommand "$agent"; then
+    _ensure_helpers_loaded || return 1
+    _run_helper "marbles-$agent" "$@"
+    return
+  fi
+
   if [[ "$agent" == "dashboard" ]]; then
     cmd_dashboard "vc-${skill}" "$@"
     return
@@ -784,6 +1163,14 @@ run_wrapper() {
     cmd_agents "$@"
     return
   fi
+  if [[ "$wrapper" == "vc-dashboard" ]]; then
+    cmd_dashboard "$@"
+    return
+  fi
+  if [[ "$wrapper" == "telemetry" ]]; then
+    cmd_telemetry "$@"
+    return
+  fi
   local skill="${wrapper#vc-}"
   [[ "$skill" != "implement" ]] || skill="justdo"
   _has_skill "$skill" || {
@@ -829,8 +1216,10 @@ main() {
     init) cmd_init "$@" ;;
     resume) cmd_resume "$@" ;;
     doctor|check) cmd_doctor ;;
-    dashboard|mc|mission-control) cmd_dashboard "$@" ;;
+    dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
+    telemetry) cmd_telemetry "$@" ;;
     stats|status) cmd_stats ;;
+    update|upgrade) cmd_update "$@" ;;
     uninstall|remove) cmd_uninstall ;;
     version|--version|-v) printf 'vibecrafted %s\n' "$(_version)" ;;
     agents) cmd_agents "$@" ;;

@@ -333,7 +333,7 @@ log "skill helper telemetry smoke"
 # shellcheck disable=SC2016
 skill_output="$(
   env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" VETCODERS_SPAWN_RUNTIME=headless \
-    bash -c 'cd "$1"; source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; codex-marbles --prompt "telemetry smoke" --count 1' _ "$work_repo"
+    bash -c 'cd "$1"; source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; codex-marbles --count 1 --prompt "telemetry smoke"' _ "$work_repo"
 )"
 skill_report="$(printf '%s\n' "$skill_output" | sed -n 's/^Agent launched\. Report will land at: //p' | tail -n 1)"
 [[ -n "$skill_report" ]] || die "skill helper did not report output path"
@@ -383,16 +383,15 @@ assert_not_contains "$repo_root/docs/FAQ-ANSWERED.md" 'truth as of March 2026'
 [[ ! -e "$repo_root/skills/vc-subagents/SKILL.md" ]] || die 'vc-subagents should not exist'
 if [[ -e "$repo_root/docs/index.html" ]]; then
   assert_not_contains "$repo_root/docs/index.html" 'Canonical osascript Terminal spawn'
-  assert_contains "$repo_root/docs/index.html" 'vibecrafted init claude'
-  assert_contains "$repo_root/docs/index.html" 'vibecrafted workflow claude --prompt "Plan and implement auth module"'
-  assert_contains "$repo_root/docs/index.html" 'vibecrafted marbles codex --count 3 --depth 3'
-  assert_not_contains "$repo_root/docs/index.html" 'vc-init claude'
+  assert_contains "$repo_root/docs/index.html" 'https://vibecrafted.io/'
+  assert_contains "$repo_root/docs/index.html" 'window.location.replace("https://vibecrafted.io/")'
+  assert_not_contains "$repo_root/docs/index.html" "The Founders' Framework"
 fi
 assert_contains "$repo_root/docs/QUICK_START.md" 'vibecrafted init claude'
 assert_contains "$repo_root/docs/QUICK_START.md" 'vibecrafted justdo codex --prompt "Add user authentication with JWT"'
-assert_contains "$repo_root/docs/presence/quickstart.html" 'vibecrafted init claude'
-assert_contains "$repo_root/docs/presence/quickstart.html" 'vibecrafted workflow claude --prompt "Plan and implement auth module"'
-assert_not_contains "$repo_root/docs/presence/quickstart.html" 'vc-init claude'
+assert_contains "$repo_root/docs/presence/quickstart.html" 'https://vibecrafted.io/en/quickstart/'
+assert_contains "$repo_root/docs/presence/quickstart.html" 'window.location.replace("https://vibecrafted.io/en/quickstart/")'
+assert_not_contains "$repo_root/docs/presence/quickstart.html" 'vibecrafted workflow claude --prompt "Plan and implement auth module"'
 [[ -e "$repo_root/skills/vc-suite-showcase.html" ]] && die 'vc-suite-showcase.html should not exist (was mv to docs/index.html)'
 
 log "portable checks passed"

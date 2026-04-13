@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILLS_SYNC = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "skills_sync.sh"
+INSTALL_SHELL = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "install-shell.sh"
 
 
 def _write_stub_command(bin_dir: Path, name: str, body: str) -> None:
@@ -59,3 +60,39 @@ def test_skills_sync_with_shell_targets_canonical_helper_and_both_shells(
     assert "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" in log
     assert ".bashrc" in log
     assert ".zshrc" in log
+
+
+def test_install_shell_shim_prefers_current_control_plane_before_home_store(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    config = tmp_path / "config"
+    home.mkdir()
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(config)
+
+    subprocess.run(
+        [
+            "bash",
+            str(INSTALL_SHELL),
+            "--source",
+            str(REPO_ROOT),
+            "--no-zshrc",
+            "--no-bashrc",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    shim = (config / "vetcoders" / "vc-skills.sh").read_text(encoding="utf-8")
+    tools_path = (
+        '"$crafted_home/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh"'
+    )
+    home_path = '"$crafted_home/skills/vc-agents/shell/vetcoders.sh"'
+
+    assert shim.index(tools_path) < shim.index(home_path)

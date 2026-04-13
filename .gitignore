@@ -2,6 +2,11 @@
 **/.DS_Store
 .ai-agents/
 
+# Built-in installer venv (vetcoders-installer runtime, created by `uv sync`)
+scripts/installer/.venv/
+/uv.lock
+scripts/installer/**/__pycache__/
+
 # AI Context
 .ai-context/*
 /.claude
@@ -35,3 +40,6 @@ aicx-dashboard.html
 /tmp
 /dist
 /docs/superpowers
+*.backup
+/docs/workforce
+vibecrafted-io-link

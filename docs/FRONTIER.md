@@ -3,7 +3,7 @@
 ## What This Is
 
 Frontier config is the lightweight operator layer that still belongs inside
-the core `1.2.1` framework surface:
+the current framework surface:
 
 - `starship` for prompt context
 - `atuin` for searchable history

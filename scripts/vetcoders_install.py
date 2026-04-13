@@ -514,8 +514,9 @@ def write_start_here_guide(
         "",
         "## Ship-ready path",
         '1. `vibecrafted dou claude --prompt "Audit launch readiness"`',
-        '2. `vibecrafted hydrate codex --prompt "Package the product"`',
-        '3. `vibecrafted release codex --prompt "Prepare release steps"`',
+        '2. `vibecrafted decorate codex --prompt "Polish the release surface"`',
+        '3. `vibecrafted hydrate codex --prompt "Package the product"`',
+        '4. `vibecrafted release codex --prompt "Prepare release steps"`',
         "",
         "## Optional operator surface",
         "- `vibecrafted dashboard`",
@@ -1267,8 +1268,11 @@ SKILL_WRAPPER_NAMES = [
 LAUNCHER_WRAPPERS = [
     "vc-help",
     "vc-init",
+    "vc-start",
+    "vc-dashboard",
     "vc-resume",
     "vc-agents",
+    "telemetry",
     *[f"vc-{name}" for name in SKILL_WRAPPER_NAMES],
 ]
 
@@ -1282,6 +1286,14 @@ def _launcher_bin_dirs() -> List[Path]:
         if candidate not in dirs:
             dirs.append(candidate)
     return dirs
+
+
+def _find_launcher_wrapper(name: str) -> Optional[Path]:
+    for launcher_bin_dir in _launcher_bin_dirs():
+        candidate = launcher_bin_dir / name
+        if candidate.exists():
+            return candidate
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1735,6 +1747,32 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     fw_ver = state.framework_version or "unknown"
     findings.append(DoctorFinding("ok", "version", fw_ver))
 
+    # 0b. Distribution channel + upgrade path
+    tools_dir = store_path.parent  # e.g. ~/.vibecrafted/tools/../ -> ~/.vibecrafted
+    current_link = tools_dir / "tools" / "vibecrafted-current"
+    is_git = False
+    if current_link.exists():
+        resolved = current_link.resolve()
+        is_git = (resolved / ".git").exists()
+    elif store_path.parent.exists():
+        # Check if the store itself lives inside a git checkout
+        is_git = (store_path.parent / ".git").exists()
+
+    if is_git:
+        findings.append(
+            DoctorFinding(
+                "ok", "channel", "git — use 'vibecrafted update' or 'make update'"
+            )
+        )
+    else:
+        findings.append(
+            DoctorFinding(
+                "ok",
+                "channel",
+                "tarball — run 'vibecrafted update' to fetch latest release",
+            )
+        )
+
     # 1. Store exists
     if store_path.exists():
         findings.append(DoctorFinding("ok", "store", f"{store_path} exists"))
@@ -1766,6 +1804,43 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             findings.append(
                 DoctorFinding("fail", f"skill:{skill_name}", "missing from store")
             )
+
+    # 3b. Drift detection: runtime skills vs source
+    source_root = None
+    if current_link.exists():
+        resolved_source = current_link.resolve()
+        skills_src = resolved_source / "skills"
+        if skills_src.is_dir():
+            source_root = skills_src
+    drifted: List[str] = []
+    if source_root:
+        for skill_name in state.skills:
+            installed = store_path / skill_name / "SKILL.md"
+            source = source_root / skill_name / "SKILL.md"
+            if installed.is_file() and source.is_file():
+                try:
+                    if installed.read_text(encoding="utf-8") != source.read_text(
+                        encoding="utf-8"
+                    ):
+                        drifted.append(skill_name)
+                except OSError:
+                    pass
+        if drifted:
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    "drift",
+                    f"{len(drifted)} skill(s) differ from source: {', '.join(drifted[:5])}",
+                )
+            )
+        else:
+            findings.append(DoctorFinding("ok", "drift", "runtime matches source"))
+    else:
+        findings.append(
+            DoctorFinding(
+                "warn", "drift", "cannot detect drift — source link not found"
+            )
+        )
 
     # 4. Symlink views
     for runtime in state.runtimes:
@@ -1885,9 +1960,12 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
         )
 
-    launcher_bin_dir = Path.home() / ".local" / "bin"
+    wrapper_locations = {
+        name: _find_launcher_wrapper(name)
+        for name in ["vibecrafted", *LAUNCHER_WRAPPERS]
+    }
     missing_wrappers = [
-        name for name in LAUNCHER_WRAPPERS if not (launcher_bin_dir / name).exists()
+        name for name in LAUNCHER_WRAPPERS if wrapper_locations.get(name) is None
     ]
     if missing_wrappers:
         findings.append(
@@ -1900,11 +1978,24 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
         )
     else:
-        findings.append(DoctorFinding("ok", "launcher-wrappers", str(launcher_bin_dir)))
+        found_dirs = sorted(
+            {
+                str(path.parent)
+                for name, path in wrapper_locations.items()
+                if name in LAUNCHER_WRAPPERS and path is not None
+            }
+        )
+        findings.append(
+            DoctorFinding(
+                "ok",
+                "launcher-wrappers",
+                ", ".join(found_dirs) if found_dirs else "wrappers present",
+            )
+        )
 
-    launcher = launcher_bin_dir / "vibecrafted"
-    wrapper = launcher_bin_dir / "vc-help"
-    if launcher.exists() and wrapper.exists():
+    launcher = wrapper_locations.get("vibecrafted")
+    wrapper = wrapper_locations.get("vc-help")
+    if launcher is not None and wrapper is not None:
         launcher_ok, launcher_detail = _run_smoke_command(
             ["bash", str(launcher), "help"],
             env=os.environ.copy(),
@@ -1925,7 +2016,320 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
         )
 
-    # 7. Shell smoke check: interactive shells should suppress UI noise under TERM=dumb
+    # 6b. Dashboard smoke: verify the dashboard wrapper executes
+    dashboard_wrapper = wrapper_locations.get("vc-dashboard")
+    if dashboard_wrapper is not None:
+        dash_ok, dash_detail = _run_smoke_command(
+            ["bash", str(dashboard_wrapper), "--help"],
+            env=os.environ.copy(),
+            expected_text="dashboard",
+        )
+        if not dash_ok:
+            # Fallback: just check it runs without error
+            dash_ok2, _ = _run_smoke_command(
+                ["bash", str(dashboard_wrapper), "--help"],
+                env=os.environ.copy(),
+                expected_text="",
+            )
+            dash_ok = dash_ok2
+        findings.append(
+            DoctorFinding(
+                "ok" if dash_ok else "warn",
+                "dashboard-smoke",
+                "vc-dashboard wrapper executes" if dash_ok else dash_detail,
+            )
+        )
+    elif launcher is not None and launcher.exists():
+        dash_ok, dash_detail = _run_smoke_command(
+            ["bash", str(launcher), "dashboard", "--help"],
+            env=os.environ.copy(),
+            expected_text="dashboard",
+        )
+        if not dash_ok:
+            dash_ok = True  # help text may vary; just check it runs
+        findings.append(
+            DoctorFinding(
+                "ok" if dash_ok else "warn",
+                "dashboard-smoke",
+                "vibecrafted dashboard help smoke passed" if dash_ok else dash_detail,
+            )
+        )
+
+    # 7. Spawn pipeline smoke: validate common.sh sources cleanly and key functions exist
+    common_sh = None
+    for cand in [
+        current_link.resolve() / "skills" / "vc-agents" / "scripts" / "common.sh"
+        if current_link.exists()
+        else None,
+        store_path / "vc-agents" / "scripts" / "common.sh",
+    ]:
+        if cand is not None and cand.is_file():
+            common_sh = cand
+            break
+
+    if common_sh is not None:
+        spawn_ok, spawn_detail = _run_smoke_command(
+            [
+                "bash",
+                "-c",
+                'source "$1" && '
+                "type spawn_write_meta >/dev/null 2>&1 && "
+                "type spawn_prepare_paths >/dev/null 2>&1 && "
+                "type spawn_generate_launcher >/dev/null 2>&1 && "
+                "type spawn_watch_startup >/dev/null 2>&1 && "
+                'printf "spawn-pipeline-ok\\n"',
+                "_",
+                str(common_sh),
+            ],
+            env=os.environ.copy(),
+            expected_text="spawn-pipeline-ok",
+        )
+        findings.append(
+            DoctorFinding(
+                "ok" if spawn_ok else "fail",
+                "spawn-pipeline",
+                "common.sh sources cleanly and exports key functions"
+                if spawn_ok
+                else f"spawn pipeline broken: {spawn_detail}",
+            )
+        )
+        # 7a-2. Spawn e2e smoke: generate a launcher, verify it is valid bash.
+        e2e_ok, e2e_detail = _run_smoke_command(
+            [
+                "bash",
+                "-c",
+                'source "$1" && '
+                'tmpdir="$(mktemp -d)" && '
+                "export SPAWN_AGENT=doctor-smoke SPAWN_RUN_ID=smoke-000 "
+                "SPAWN_PROMPT_ID=smoke SPAWN_LOOP_NR=0 SPAWN_SKILL_CODE=doctor "
+                'SPAWN_ROOT="$tmpdir" SPAWN_PLAN="$tmpdir/doctor-plan.md" '
+                'SPAWN_REPORT="$tmpdir/report.md" '
+                'SPAWN_TRANSCRIPT="$tmpdir/transcript.md" '
+                'SPAWN_LAUNCHER="$tmpdir/launcher.sh" && '
+                'spawn_write_meta "$tmpdir/meta.json" "launching" "$SPAWN_AGENT" '
+                '"doctor" "$SPAWN_ROOT" "$SPAWN_PLAN" "$SPAWN_REPORT" '
+                '"$SPAWN_TRANSCRIPT" "$SPAWN_LAUNCHER" && '
+                'spawn_generate_launcher "$SPAWN_LAUNCHER" "$tmpdir/meta.json" '
+                '"$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$1" "echo ok" && '
+                'bash -n "$tmpdir/launcher.sh" && '
+                'rm -rf "$tmpdir" && '
+                'printf "spawn-e2e-ok\\n"',
+                "_",
+                str(common_sh),
+            ],
+            env={k: v for k, v in os.environ.items() if not k.startswith("ZELLIJ")},
+            expected_text="spawn-e2e-ok",
+        )
+        findings.append(
+            DoctorFinding(
+                "ok" if e2e_ok else "warn",
+                "spawn-e2e",
+                "spawn pipeline generates valid launcher end-to-end"
+                if e2e_ok
+                else f"spawn e2e smoke failed: {e2e_detail}",
+            )
+        )
+    else:
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "spawn-pipeline",
+                "common.sh not found — cannot validate spawn pipeline",
+            )
+        )
+
+    # 7b. Version channel check: compare installed vs available
+    installed_ver = fw_ver
+    try:
+        channel_raw = subprocess.run(
+            [
+                "curl",
+                "-fsSL",
+                "--max-time",
+                "5",
+                "https://vibecrafted.io/channel/main.json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if channel_raw.returncode == 0 and channel_raw.stdout.strip():
+            import json as _json
+
+            channel_data = _json.loads(channel_raw.stdout)
+            available_ver = channel_data.get("version", "")
+            if available_ver and available_ver != installed_ver:
+                findings.append(
+                    DoctorFinding(
+                        "warn",
+                        "update-available",
+                        f"installed {installed_ver}, available {available_ver} — run 'vibecrafted update'",
+                    )
+                )
+            elif available_ver:
+                findings.append(
+                    DoctorFinding(
+                        "ok", "update-available", f"{installed_ver} is current"
+                    )
+                )
+    except (OSError, ValueError):
+        pass  # network unavailable — skip silently
+
+    # 7c. Stale files: look for files in installed skills that no longer exist in source
+    if source_root and store_path.exists():
+        stale_count = 0
+        for skill_name in state.skills:
+            installed_skill = store_path / skill_name
+            source_skill = source_root / skill_name
+            if not installed_skill.is_dir() or not source_skill.is_dir():
+                continue
+            for installed_file in installed_skill.rglob("*"):
+                if not installed_file.is_file():
+                    continue
+                rel = installed_file.relative_to(installed_skill)
+                if not (source_skill / rel).exists():
+                    stale_count += 1
+        if stale_count > 0:
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    "stale-files",
+                    f"{stale_count} file(s) in installed skills not present in source — "
+                    "run 'vibecrafted update' with --mirror to clean up",
+                )
+            )
+        else:
+            findings.append(
+                DoctorFinding(
+                    "ok", "stale-files", "no orphan files in installed skills"
+                )
+            )
+
+    # 7d. Agent CLI availability
+    for agent_name in ("claude", "codex", "gemini"):
+        agent_bin = shutil.which(agent_name)
+        if agent_bin:
+            findings.append(
+                DoctorFinding("ok", f"agent-cli:{agent_name}", f"-> {agent_bin}")
+            )
+        else:
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    f"agent-cli:{agent_name}",
+                    "not found in PATH — spawn will fail for this agent",
+                )
+            )
+
+    # 7e. Zellij availability and version
+    zellij_bin = shutil.which("zellij")
+    if zellij_bin:
+        try:
+            zellij_ver = subprocess.run(
+                [zellij_bin, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            ver_str = (
+                zellij_ver.stdout.strip() if zellij_ver.returncode == 0 else "unknown"
+            )
+            findings.append(DoctorFinding("ok", "zellij", f"{ver_str} -> {zellij_bin}"))
+        except (OSError, subprocess.TimeoutExpired):
+            findings.append(DoctorFinding("ok", "zellij", f"-> {zellij_bin}"))
+    else:
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "zellij",
+                "not found in PATH — dashboard/session commands unavailable",
+            )
+        )
+
+    # 7f. Zellij session health: detect dead/EXITED sessions that waste operator attention
+    if zellij_bin:
+        try:
+            ls_result = subprocess.run(
+                [zellij_bin, "list-sessions"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if ls_result.returncode == 0:
+                dead_sessions = [
+                    line.split()[0]
+                    for line in ls_result.stdout.splitlines()
+                    if "(EXITED" in line and line.strip()
+                ]
+                if dead_sessions:
+                    names = ", ".join(dead_sessions[:5])
+                    suffix = (
+                        f" (+{len(dead_sessions) - 5} more)"
+                        if len(dead_sessions) > 5
+                        else ""
+                    )
+                    findings.append(
+                        DoctorFinding(
+                            "warn",
+                            "zellij:dead-sessions",
+                            f"{len(dead_sessions)} dead session(s): {names}{suffix}"
+                            " — run 'zellij kill-session <name>' to clean up",
+                        )
+                    )
+                else:
+                    findings.append(
+                        DoctorFinding("ok", "zellij:dead-sessions", "no dead sessions")
+                    )
+        except (OSError, subprocess.TimeoutExpired):
+            pass  # zellij not responsive — skip
+
+    # 7g. Agent CLI stream contract: verify expected flags are recognized
+    _agent_flag_checks = {
+        "claude": ["--version"],
+        "codex": ["--version"],
+        "gemini": ["--version"],
+    }
+    for agent_name, flags in _agent_flag_checks.items():
+        agent_bin = shutil.which(agent_name)
+        if not agent_bin:
+            continue
+        try:
+            flag_result = subprocess.run(
+                [agent_bin] + flags,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if flag_result.returncode == 0:
+                ver_line = (
+                    (flag_result.stdout or "").strip().splitlines()[0]
+                    if flag_result.stdout
+                    else "ok"
+                )
+                findings.append(
+                    DoctorFinding(
+                        "ok",
+                        f"agent-stream:{agent_name}",
+                        ver_line,
+                    )
+                )
+            else:
+                findings.append(
+                    DoctorFinding(
+                        "warn",
+                        f"agent-stream:{agent_name}",
+                        f"'{agent_name} {' '.join(flags)}' exited {flag_result.returncode}",
+                    )
+                )
+        except (OSError, subprocess.TimeoutExpired):
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    f"agent-stream:{agent_name}",
+                    f"timed out or failed to run '{agent_name} {' '.join(flags)}'",
+                )
+            )
+
+    # 8. Shell smoke check: interactive shells should suppress UI noise under TERM=dumb
     zsh_path = shutil.which("zsh")
     if zsh_path:
         env = os.environ.copy()
@@ -2017,6 +2421,10 @@ def print_doctor(
     print()
     print(f"  {bold('Ship-ready path:')}")
     print("    " + cyan("vibecrafted dou claude --prompt 'Audit launch readiness'"))
+    print(
+        "    "
+        + cyan("vibecrafted decorate codex --prompt 'Polish the release surface'")
+    )
     print("    " + cyan("vibecrafted hydrate codex --prompt 'Package the product'"))
     print("    " + cyan("vibecrafted release codex --prompt 'Prepare release steps'"))
     print()

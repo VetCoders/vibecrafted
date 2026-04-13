@@ -71,6 +71,38 @@ def test_operator_layout_does_not_append_nested_vibecrafted_store() -> None:
     )
 
 
+def test_shell_helper_prefers_current_control_plane_over_home_store(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    current_store = (
+        home / ".vibecrafted" / "tools" / "vibecrafted-current" / "skills" / "vc-agents"
+    )
+    stale_store = home / ".vibecrafted" / "skills" / "vc-agents"
+
+    current_store.mkdir(parents=True)
+    stale_store.mkdir(parents=True)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env.pop("VIBECRAFTED_ROOT", None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'cd "{tmp_path}" && source "{HELPER_SCRIPT}"; _vetcoders_spawn_home codex',
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == str(current_store)
+
+
 def test_vc_frontier_paths_mix_repo_prompt_with_companion_zellij(
     tmp_path: Path,
 ) -> None:

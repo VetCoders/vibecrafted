@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -112,6 +114,16 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
+def _org_repo() -> str:
+    remote = subprocess.check_output(
+        ["git", "-C", str(REPO_ROOT), "remote", "get-url", "origin"],
+        text=True,
+    ).strip()
+    match = re.search(r"[:/]([^/]+)/([^/.]+)(?:\.git)?$", remote)
+    assert match
+    return f"{match.group(1)}/{match.group(2)}"
+
+
 def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
@@ -185,6 +197,109 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     assert any("vibecrafted-marbles." in line for line in payload)
 
 
+def test_marbles_manual_spawn_prints_l1_transcript_tail_in_same_terminal(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "zellij-args.txt"
+    run_id = "marb-424242"
+    transcript = tmp_path / "l1.transcript.log"
+    reports_dir = (
+        home
+        / ".vibecrafted"
+        / "artifacts"
+        / _org_repo()
+        / datetime.now().strftime("%Y_%m%d")
+        / "marbles"
+        / "reports"
+    )
+    meta = reports_dir / "fixture.meta.json"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    reports_dir.mkdir(parents=True)
+    _write_capture_command(fake_bin, "zellij", capture_file)
+
+    transcript.write_text(
+        "\n".join(f"line {idx}" for idx in range(1, 21)) + "\n",
+        encoding="utf-8",
+    )
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": f"{run_id}-001",
+                "transcript": str(transcript),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["ZELLIJ"] = "operator"
+    env["VIBECRAFTED_RUN_ID"] = "marb-014521"
+    env["ZELLIJ_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VIBECRAFTED_MARBLES_RUN_ID"] = run_id
+    env["VIBECRAFTED_MARBLES_TAIL_DELAY"] = "0"
+    env["VIBECRAFTED_PREFER_REPO_SPAWN"] = "1"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'source "{HELPER_SCRIPT}"; codex-marbles --prompt "Check runtime" --count 2',
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--- marbles L1 transcript tail" in result.stdout
+    assert "line 6" in result.stdout
+    assert "line 20" in result.stdout
+
+
+def test_spawn_script_prefers_repo_runtime_over_installed_copy(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    installed = home / ".vibecrafted" / "skills" / "vc-agents" / "scripts"
+
+    installed.mkdir(parents=True)
+    (installed / "marbles_spawn.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VIBECRAFTED_PREFER_REPO_SPAWN"] = "1"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "_vetcoders_spawn_script claude marbles_spawn.sh"
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == str(
+        REPO_ROOT / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
+    )
+
+
 def test_vc_start_resume_resurrects_dead_session(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
@@ -216,9 +331,11 @@ def test_vc_start_resume_resurrects_dead_session(tmp_path: Path) -> None:
     )
 
     payload = capture_file.read_text(encoding="utf-8")
-    assert (
-        f"ZELLIJ attach --force-run-commands {_expected_operator_session()}" in payload
-    )
+    # Dead sessions are killed and recreated with the layout file.
+    expected = _expected_operator_session()
+    assert f"kill-session {expected}" in payload
+    assert f"--session {expected}" in payload
+    assert "--new-session-with-layout" in payload
 
 
 def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
@@ -256,7 +373,10 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
 
     payload = capture_file.read_text(encoding="utf-8")
     expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
-    assert f"attach --force-run-commands {expected_session}" in payload
+    # Dead sessions are killed and recreated with the layout file.
+    assert f"kill-session {expected_session}" in payload
+    assert f"--session {expected_session}" in payload
+    assert "--new-session-with-layout" in payload
     assert f"{expected_session}-marbles" not in payload
 
 

@@ -1,10 +1,10 @@
 blank_issues_enabled: false
 contact_links:
   - name: Quick Start
-    url: https://vetcoders.github.io/vibecrafted/presence/quickstart.html
+    url: https://vibecrafted.io/en/quickstart/
     about: Install the framework and run your first workflow before opening a support issue.
   - name: Answered FAQ
-    url: https://vetcoders.github.io/vibecrafted/presence/faq.html
+    url: https://vibecrafted.io/en/faq/
     about: Read the common install, workflow, and architecture answers.
   - name: Security Policy
     url: https://github.com/VetCoders/vibecrafted/blob/main/SECURITY.md

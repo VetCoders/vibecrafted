@@ -111,7 +111,7 @@ qfilter="$(spawn_shell_quote "$SCRIPT_DIR/gemini_stream_filter.jq")"
 # grep '^{' strips non-JSON lines so jq doesn't choke.
 vibecrafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
 qvhome="$(spawn_shell_quote "$vibecrafted_home")"
-launch_cmd="set -o pipefail && cd $qroot && GEMINI_FORCE_FILE_STORAGE=true gemini -p '' -y $model_flag --include-directories $qvhome -o stream-json < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript"
+launch_cmd="set -o pipefail && cd $qroot && { GEMINI_FORCE_FILE_STORAGE=true gemini -p '' -y $model_flag --include-directories $qvhome -o stream-json < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript; pipeline_status=\$?; exit \$pipeline_status; }"
 
 # Combine built-in hooks with caller-provided hooks (marbles chain, etc.)
 combined_success="${gemini_success_hook}${success_hook_extra:+
@@ -133,4 +133,6 @@ chmod +x "$SPAWN_LAUNCHER"
 spawn_print_launch gemini "$mode" "$runtime"
 [[ -n "$model" ]] && printf '  model:  %s\n' "$model" || printf '  model:  (CLI default)\n'
 spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run" "gemini-${VIBECRAFTED_SKILL_NAME:-$mode}"
-printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"
+if [[ "${VIBECRAFTED_SUPPRESS_REPORT_HINT:-0}" != "1" ]]; then
+  printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"
+fi

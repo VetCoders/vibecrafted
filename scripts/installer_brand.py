@@ -10,8 +10,8 @@ FRAMEWORK_STAMP = (
     "\U0001f175\u00b7\U0001f141\u00b7\U0001f130\u00b7\U0001f13c"
     "\u00b7\U0001f134\u00b7\U0001f146\u00b7\U0001f15e\u00b7\U0001f161\u00b7\U0001f17a"
 )
-TAGLINE = "The Founders' Framework"
-PRODUCT_LINE = "A convergence-driven system for shipping software with AI agents."
+TAGLINE = "Release engine for AI-built software."
+PRODUCT_LINE = "Ship AI-built software without the vibe hangover."
 FOOTER_BRANDING = "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents (c)2024-2026 VetCoders"
 
 

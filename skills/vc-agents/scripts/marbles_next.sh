@@ -36,6 +36,52 @@ case "$report_sync_timeout_s" in
 esac
 report_poll_s=5
 
+_state_json_edit() {
+  local mutator="$1"
+  shift
+
+  command -v python3 >/dev/null 2>&1 || return 1
+
+  STATE_JSON_MUTATOR="$mutator" python3 - "$state_file" "$@" <<'PY'
+import datetime
+import fcntl
+import json
+import os
+import sys
+import tempfile
+
+state_path = sys.argv[1]
+args = sys.argv[2:]
+mutator = os.environ["STATE_JSON_MUTATOR"]
+
+lock = open(state_path + ".lock", "a+", encoding="utf-8")
+try:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        with open(state_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+
+    exec(mutator, {"datetime": datetime}, {"payload": payload, "args": args})
+
+    dir_path = os.path.dirname(state_path) or "."
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=os.path.basename(state_path) + ".", dir=dir_path
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+        os.replace(tmp_path, state_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+finally:
+    lock.close()
+PY
+}
+
 _loop_child_plan() {
   local loop_nr="$1"
   spawn_marbles_child_plan_path "$store" "$ancestor_plan" "$loop_nr"
@@ -194,6 +240,64 @@ _update_lock() {
   fi
 }
 
+_refresh_state_steering_fields() {
+  # NOTE: does NOT update ancestor_mtime — that field tracks the mtime baseline
+  # for steering detection.  The baseline is consumed (updated) after the
+  # steering check in the main loop via _consume_ancestor_mtime_signal.
+  if [[ -f "$state_file" ]]; then
+    if ! _state_json_edit "$(cat <<'PY'
+payload["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+payload["god_plan"] = args[0]
+payload["ancestor_plan"] = args[1]
+payload["plan"] = args[1]
+PY
+)" "$god_plan" "$ancestor_plan"; then
+      printf '    [warn] state refresh failed (python exit %d) — loop continues with stale state\n' "$?" >&2
+    fi
+  fi
+}
+
+_consume_ancestor_mtime_signal() {
+  local current_mtime=""
+  current_mtime="$(spawn_ancestor_mtime_iso "$ancestor_plan")"
+  if [[ -n "$current_mtime" && -f "$state_file" ]]; then
+    _state_json_edit "$(cat <<'PY'
+payload["ancestor_mtime"] = args[0]
+PY
+)" "$current_mtime" >/dev/null || true
+  fi
+}
+
+_rewrite_loop_plan_frontmatter() {
+  local loop_plan="$1"
+  local loop_agent="$2"
+  local loop_model="$3"
+
+  [[ -f "$loop_plan" ]] || return 0
+
+  python3 - "$loop_plan" "$loop_agent" "$loop_model" <<'PY'
+import pathlib
+import re
+import sys
+
+plan, agent, model = sys.argv[1:4]
+text = pathlib.Path(plan).read_text(encoding="utf-8")
+m = re.match(r"^---\n(.*?\n)---\n", text, re.DOTALL)
+if not m:
+    raise SystemExit(0)
+fm = m.group(1)
+fm = re.sub(r"^agent:.*$", f"agent: {agent}", fm, flags=re.MULTILINE)
+if model:
+    if re.search(r"^model:", fm, re.MULTILINE):
+        fm = re.sub(r"^model:.*$", f"model: {model}", fm, flags=re.MULTILINE)
+    else:
+        fm += f"model: {model}\n"
+elif re.search(r"^model:", fm, re.MULTILINE):
+    fm = re.sub(r"^model:.*\n", "", fm, flags=re.MULTILINE)
+pathlib.Path(plan).write_text(f"---\n{fm}---\n{text[m.end():]}", encoding="utf-8")
+PY
+}
+
 _write_missing_report_failure() {
   local loop_nr="$1"
   local reason="$2"
@@ -330,25 +434,14 @@ This is the final loop. Your verified report MUST include:
 - Be honest about uncertainty — flag anything you cannot verify
 - Keep the verified report concise and actionable"
 
-  if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$state_file" "$loop_nr" <<'PY'
-import datetime
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-
+  if [[ -f "$state_file" ]]; then
+    _state_json_edit "$(cat <<'PY'
 payload["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 for loop in payload.get("loops", []):
-    if loop.get("loop") == int(sys.argv[2]):
+    if loop.get("loop") == int(args[0]):
         loop["verification_status"] = "pending"
-
-with open(sys.argv[1] + ".tmp", "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2)
-    handle.write("\n")
 PY
-    mv "$state_file.tmp" "$state_file" 2>/dev/null || true
+)" "$loop_nr" >/dev/null || true
   fi
 
   printf '    🔍 Verification L%s → session %s\n' "$loop_nr" "${sid:0:13}…"
@@ -358,6 +451,125 @@ PY
     gemini) nohup gemini --resume "$sid" "$prompt" >/dev/null 2>&1 & ;;
     *) printf '    ⚠ Unknown loop agent %s — skipping verification\n' "$loop_agent" ;;
   esac
+}
+
+_write_spawn_failure_artifacts() {
+  local loop_nr="$1"
+  local loop_agent="$2"
+  local loop_plan="$3"
+  local reason="$4"
+  local exit_code="${5:-1}"
+  local loop_run_id="${run_id}-$(printf '%03d' "$loop_nr")"
+  local stamp=""
+  local base=""
+  local report_path=""
+  local transcript_path=""
+  local meta_path=""
+  local prompt_id="marbles-ancestor_L${loop_nr}_$(date +%Y%m%d)"
+
+  stamp="$(spawn_timestamp)"
+  base="$store/reports/${stamp}_marbles-${ancestor_slug}_L${loop_nr}_${loop_agent}"
+  report_path="${base}.md"
+  transcript_path="${base}.transcript.log"
+  meta_path="${base}.meta.json"
+
+  mkdir -p "$store/reports"
+
+  spawn_write_frontmatter "$transcript_path" "$loop_agent" "unknown" "failed"
+  cat >> "$transcript_path" <<TXT
+Scheduling failure before loop ${loop_nr} could launch.
+Reason: ${reason}
+Exit code: ${exit_code}
+Run ID: ${loop_run_id}
+Plan: ${loop_plan}
+TXT
+
+  spawn_write_frontmatter "$report_path" "$loop_agent" "unknown" "failed"
+  cat >> "$report_path" <<TXT
+Marbles failed before loop ${loop_nr} could launch.
+
+- Reason: ${reason}
+- Exit code: ${exit_code}
+- Planned agent: ${loop_agent}
+- Planned run_id: ${loop_run_id}
+- Plan: ${loop_plan}
+- Ancestor: ${ancestor_plan}
+TXT
+
+  SPAWN_PROMPT_ID="$prompt_id" \
+  SPAWN_RUN_ID="$loop_run_id" \
+  SPAWN_LOOP_NR="$loop_nr" \
+  SPAWN_SKILL_CODE="impl" \
+  spawn_write_meta \
+    "$meta_path" \
+    "failed" \
+    "$loop_agent" \
+    "implement" \
+    "$root_dir" \
+    "$loop_plan" \
+    "$report_path" \
+    "$transcript_path" \
+    "$scripts_dir/${loop_agent}_spawn.sh"
+
+  SPAWN_PROMPT_ID="$prompt_id" \
+  SPAWN_RUN_ID="$loop_run_id" \
+  SPAWN_LOOP_NR="$loop_nr" \
+  SPAWN_SKILL_CODE="impl" \
+  spawn_finish_meta "$meta_path" "failed" "$exit_code"
+
+  printf '    ⚠ Next loop L%s failed before launch metadata stabilized (%s, exit %s)\n' \
+    "$loop_nr" "$reason" "$exit_code"
+}
+
+_launch_next_loop() {
+  local loop_nr="$1"
+  local loop_agent="$2"
+  local loop_model="$3"
+  local loop_plan="$4"
+  local loop_run_id="${run_id}-$(printf '%03d' "$loop_nr")"
+  local q_state=""
+  local q_root=""
+  local q_runtime=""
+  local q_scripts=""
+  local q_lock=""
+  local q_store=""
+  local success_hook=""
+  local failure_hook=""
+  local spawn_args=()
+
+  _update_lock current "$loop_nr"
+  printf '\n\033[38;5;173m ⚒  Marbles loop %s/%s starting...\033[0m\n' "$loop_nr" "$total_count"
+
+  q_state="$(spawn_shell_quote "$state_dir")"
+  q_root="$(spawn_shell_quote "$root_dir")"
+  q_runtime="$(spawn_shell_quote "$runtime")"
+  q_scripts="$(spawn_shell_quote "$scripts_dir")"
+  q_lock="$(spawn_shell_quote "$session_lock")"
+  q_store="$(spawn_shell_quote "$store")"
+
+  success_hook="bash $q_scripts/marbles_next.sh $q_state $total_count $loop_nr $run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
+  failure_hook="bash $q_scripts/marbles_next.sh --failed $q_state $total_count $loop_nr $run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
+
+  spawn_args=(
+    --mode implement
+    --runtime "$runtime"
+    --root "$root_dir"
+    --success-hook "$success_hook"
+    --failure-hook "$failure_hook"
+  )
+  if [[ -n "$loop_model" && "$loop_agent" != "codex" ]]; then
+    spawn_args+=(--model "$loop_model")
+  fi
+
+  VIBECRAFTED_LOOP_NR="$loop_nr" \
+  VIBECRAFTED_RUN_ID="$loop_run_id" \
+  VIBECRAFTED_SKILL_CODE="marb" \
+  VIBECRAFTED_SKILL_NAME="marbles" \
+  VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right \
+  VIBECRAFTED_MARBLES_TAB_NAME="${VIBECRAFTED_MARBLES_TAB_NAME:-}" \
+  VIBECRAFTED_STORE_DIR="$store" \
+  VIBECRAFTED_STORE_ROOT="$root_dir" \
+  bash "$scripts_dir/${loop_agent}_spawn.sh" "${spawn_args[@]}" "$loop_plan"
 }
 
 current_agent="$(_read_loop_agent "$current")"
@@ -405,6 +617,19 @@ else
   exit 0
 fi
 
+# Capture ancestor_mtime BEFORE refresh so the steering check below can detect
+# whether the child modified ancestor.md during this loop.
+_pre_refresh_ancestor_mtime=""
+if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
+  _pre_refresh_ancestor_mtime="$(python3 -c "
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as f:
+    print(json.load(f).get('ancestor_mtime', ''))
+" "$state_file")"
+fi
+
+_refresh_state_steering_fields
+
 if [[ $next -gt $total_count ]]; then
   convergence="$store/reports/$(spawn_timestamp)_marbles-${ancestor_slug}_CONVERGENCE.md"
 
@@ -449,44 +674,102 @@ fi
 
 _launch_verification "$current" 0
 
-next_agent="$(spawn_frontmatter_field "$ancestor_plan" "agent")"
-[[ -n "$next_agent" ]] || next_agent="$current_agent"
+# --- Resolve next-loop agent and model ---
+# Sources, in priority order:
+#   1. Ancestor steering: if the child modified ancestor.md (mtime changed)
+#      AND set a different agent than the session seed, honour explicit steering.
+#   2. Rotation schedule: if mode is not "single", compute the scheduled agent.
+#   3. Ancestor raw agent (unsteered seed) / current agent fallback.
+# Model follows the same hierarchy: steering override → ancestor raw → empty.
+_rotation_mode="single"
+_seed_agent=""
+# Use the mtime captured BEFORE _refresh_state_steering_fields updated it.
+# After refresh, state.json.ancestor_mtime == current file mtime, hiding
+# changes the child made during this loop.
+_stored_ancestor_mtime="$_pre_refresh_ancestor_mtime"
+if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
+  read -r _rotation_mode _seed_agent < <(python3 - "$state_file" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as f:
+    d = json.load(f)
+print(d.get("rotation", "single"), d.get("agent", ""))
+PY
+  )
+fi
+
+next_plan="$(_loop_child_plan "$next")"
+next_plan_tmp="${next_plan}.tmp"
+rm -f "$next_plan_tmp"
+spawn_marbles_write_child_plan "$ancestor_plan" "$next_plan_tmp"
+
+_ancestor_agent="$(spawn_frontmatter_field "$next_plan_tmp" "agent")"
+_ancestor_model="$(spawn_frontmatter_field "$next_plan_tmp" "model")"
+
+# Determine if ancestor.md was explicitly steered by the previous child.
+# Steering requires: (a) ancestor has a non-empty agent, (b) it differs from
+# the session seed, and (c) ancestor.md mtime changed since session start
+# (or no stored mtime exists for backward compat).
+_ancestor_steered=0
+if [[ -n "$_ancestor_agent" && -n "$_seed_agent" && "$_ancestor_agent" != "$_seed_agent" ]]; then
+  _current_ancestor_mtime="$(spawn_ancestor_mtime_iso "$ancestor_plan")"
+  if [[ -z "$_stored_ancestor_mtime" ]]; then
+    # No stored mtime — trust the diff (backward compat with older state files)
+    _ancestor_steered=1
+  elif [[ "$_current_ancestor_mtime" != "$_stored_ancestor_mtime" ]]; then
+    _ancestor_steered=1
+  fi
+fi
+
+next_agent=""
+next_model=""
+_steering_source=""
+
+if (( _ancestor_steered )); then
+  next_agent="$_ancestor_agent"
+  next_model="$_ancestor_model"
+  _steering_source="ancestor-override ($next_agent via child steering)"
+elif [[ "$_rotation_mode" != "single" && -n "$_rotation_mode" ]]; then
+  _rotation_base="${_seed_agent:-${_ancestor_agent:-$current_agent}}"
+  next_agent="$(spawn_rotation_schedule_agent "$_rotation_mode" "$_rotation_base" "$next")"
+  next_model="$_ancestor_model"
+  _steering_source="rotation-${_rotation_mode} (base=$_rotation_base, loop=$next → $next_agent)"
+else
+  next_model="$_ancestor_model"
+  _steering_source="seed-fallback"
+fi
+
+# Fallbacks: ancestor raw agent, then current agent
+if [[ -z "$next_agent" ]]; then
+  next_agent="${_ancestor_agent:-$current_agent}"
+  [[ -n "$_steering_source" && "$_steering_source" != "seed-fallback" ]] || \
+    _steering_source="seed ($next_agent)"
+fi
+
+printf '    ↳ steering: %s\n' "$_steering_source"
+
+# Consume the mtime signal so the next round sees only changes made by this child.
+_consume_ancestor_mtime_signal
+
 if [[ ! "$next_agent" =~ ^(claude|codex|gemini)$ ]]; then
+  rm -f "$next_plan_tmp"
   _write_invalid_ancestor_failure "$next" "$next_agent"
   exit 0
 fi
-next_model="$(spawn_frontmatter_field "$ancestor_plan" "model")"
 
-_update_lock current "$next"
-printf '\n\033[38;5;173m ⚒  Marbles loop %s/%s starting...\033[0m\n' "$next" "$total_count"
+_rewrite_loop_plan_frontmatter "$next_plan_tmp" "$next_agent" "$next_model"
+mv "$next_plan_tmp" "$next_plan"
 
-next_plan="$(_loop_child_plan "$next")"
-spawn_marbles_write_child_plan "$ancestor_plan" "$next_plan"
-
-q_state="$(spawn_shell_quote "$state_dir")"
-q_root="$(spawn_shell_quote "$root_dir")"
-q_runtime="$(spawn_shell_quote "$runtime")"
-q_scripts="$(spawn_shell_quote "$scripts_dir")"
-q_lock="$(spawn_shell_quote "$session_lock")"
-q_store="$(spawn_shell_quote "$store")"
-
-success_hook="bash $q_scripts/marbles_next.sh $q_state $total_count $next $run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
-failure_hook="bash $q_scripts/marbles_next.sh --failed $q_state $total_count $next $run_id $q_root $q_runtime $q_scripts $q_lock $q_store"
-
-export VIBECRAFTED_LOOP_NR=$next
-export VIBECRAFTED_RUN_ID="${run_id}-$(printf '%03d' "$next")"
-export VIBECRAFTED_SKILL_CODE="marb"
-export VIBECRAFTED_SKILL_NAME="marbles"
-
-spawn_args=(
-  --mode implement
-  --runtime "$runtime"
-  --root "$root_dir"
-  --success-hook "$success_hook"
-  --failure-hook "$failure_hook"
-)
-if [[ -n "$next_model" && "$next_agent" != "codex" ]]; then
-  spawn_args+=(--model "$next_model")
+launch_rc=0
+_launch_next_loop "$next" "$next_agent" "$next_model" "$next_plan" || launch_rc=$?
+if (( launch_rc != 0 )); then
+  next_run_id="${run_id}-$(printf '%03d' "$next")"
+  if [[ -z "$(spawn_find_meta_for_run_id "$store/reports" "$next_run_id")" ]]; then
+    _write_spawn_failure_artifacts \
+      "$next" \
+      "$next_agent" \
+      "$next_plan" \
+      "next-loop spawn failed before meta.json was created" \
+      "$launch_rc"
+  fi
+  exit "$launch_rc"
 fi
-
-VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right VIBECRAFTED_STORE_DIR="$store" bash "$scripts_dir/${next_agent}_spawn.sh" "${spawn_args[@]}" "$next_plan"

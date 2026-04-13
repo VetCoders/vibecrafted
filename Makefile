@@ -2,20 +2,25 @@
 
 PYTHON   ?= python3
 INSTALLER := scripts/vetcoders_install.py
+GUI_INSTALLER := scripts/installer_gui.py
+MANIFEST := install.toml
+INSTALLER_DIR := scripts/installer
 SHELL_INSTALLER := skills/vc-agents/scripts/install-shell.sh
 SOURCE   := $(CURDIR)
 BRANCH   ?= main
 
-.PHONY: help vibecrafted check test install skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks bundle foundations foundations-check
+.PHONY: help vibecrafted gui-install wizard check test install skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks bundle bundle-check foundations foundations-check semgrep
 
 help:
 	@printf "\n"
 	@printf "  \033[1m\033[38;5;173m⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework\033[0m\n"
 	@printf "  ─────────────────────────────────────\n"
 	@printf "\n"
-	@printf "  \033[36m▸\033[0m  make vibecrafted   \033[2mSafely install or update the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework (Orchestrator)\033[0m\n"
+	@printf "  \033[36m▸\033[0m  make vibecrafted   \033[2mTerminal-native installer wizard (default shell-first front door)\033[0m\n"
+	@printf "  \033[36m▸\033[0m  make wizard        \033[2mBrowser-based guided installer (optional GUI surface)\033[0m\n"
+	@printf "  \033[36m▸\033[0m  make gui-install   \033[2mAlias for the browser-based guided installer\033[0m\n"
 	@printf "\n"
-	@printf "  \033[33m◆\033[0m  make install       \033[2mSkills + shell helpers (Direct)\033[0m\n"
+	@printf "  \033[33m◆\033[0m  make install       \033[2mNon-interactive install routed through the same runner with --yes\033[0m\n"
 	@printf "  \033[33m◇\033[0m  make skills        \033[2mSkills only\033[0m\n"
 	@printf "  \033[33m◇\033[0m  make helpers       \033[2mShell helpers only\033[0m\n"
 	@printf "  \033[33m◇\033[0m  make foundations   \033[2mInstall loctree + aicx binaries\033[0m\n"
@@ -27,6 +32,7 @@ help:
 	@printf "  \033[32m↻\033[0m  make update        \033[2mPull latest + re-install\033[0m\n"
 	@printf "  \033[32m◇\033[0m  make list          \033[2mShow bundle + runtime foundations\033[0m\n"
 	@printf "  \033[32m◇\033[0m  make bundle        \033[2mRefresh marketplace plugin bundle\033[0m\n"
+	@printf "  \033[32m◇\033[0m  make bundle-check  \033[2mFail if the committed marketplace bundle drifted from repo truth\033[0m\n"
 	@printf "  \033[32m✓\033[0m  make test          \033[2mRun installer + marketplace pytest gates\033[0m\n"
 	@printf "  \033[32m✓\033[0m  make check         \033[2mRun basic linters on shell scripts\033[0m\n"
 	@printf "\n"
@@ -42,12 +48,25 @@ help:
 	@printf "\n"
 
 vibecrafted: init-hooks
-	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell
+	@if ! command -v uv >/dev/null 2>&1; then \
+		echo "bootstrapping uv..."; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		export PATH="$$HOME/.local/bin:$$PATH"; \
+	fi
+	@uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST)
+
+wizard: init-hooks
+	@$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"
+
+gui-install: wizard
 
 install: init-hooks
-	@bash scripts/install-foundations.sh
-	@bash skills/vc-agents/scripts/install-frontier-config.sh --source "$(SOURCE)" || printf '\033[33m[warn]\033[0m Frontier config install skipped (non-fatal)\n'
-	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --non-interactive
+	@if ! command -v uv >/dev/null 2>&1; then \
+		echo "bootstrapping uv..."; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+		export PATH="$$HOME/.local/bin:$$PATH"; \
+	fi
+	@uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST) --yes
 
 skills:
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --non-interactive
@@ -76,6 +95,18 @@ list:
 bundle:
 	@$(PYTHON) scripts/build_marketplace_bundle.py --output "$(SOURCE)/vibecrafted-framework.plugin"
 
+bundle-check:
+	@tmp_root="$${TMPDIR:-/tmp}"; \
+	tmp_bundle="$$(mktemp "$$tmp_root/vibecrafted-bundle.XXXXXX.plugin")"; \
+	trap 'rm -f "$$tmp_bundle"' EXIT; \
+	$(PYTHON) scripts/build_marketplace_bundle.py --output "$$tmp_bundle"; \
+	if cmp -s "$$tmp_bundle" "$(SOURCE)/vibecrafted-framework.plugin"; then \
+		echo "Bundle is current."; \
+	else \
+		echo "Bundle drift detected. Run 'make bundle'."; \
+		exit 1; \
+	fi
+
 semgrep:
 	@semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity .
 
@@ -87,11 +118,16 @@ test:
 	fi
 
 update:
-	@printf "Pulling origin/$(BRANCH)...\n"
-	@git fetch origin
-	@git checkout $(BRANCH) -- . 2>/dev/null || git merge --ff-only origin/$(BRANCH)
-	@printf "Re-installing...\n"
-	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --non-interactive
+	@if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
+		printf "Git repo detected — pulling origin/$(BRANCH)...\n"; \
+		git fetch origin; \
+		git checkout "$(BRANCH)" -- . 2>/dev/null || git merge --ff-only "origin/$(BRANCH)"; \
+		printf "Re-installing...\n"; \
+		$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --mirror --non-interactive; \
+	else \
+		printf "Tarball install — re-running bootstrap installer...\n"; \
+		bash "$(SOURCE)/install.sh" --ref "$(BRANCH)"; \
+	fi
 
 uninstall:
 	@$(PYTHON) $(INSTALLER) uninstall

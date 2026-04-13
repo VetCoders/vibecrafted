@@ -181,6 +181,17 @@ def test_install_launcher_dedupes_zshrc_path_entries(
     assert zshrc_content.count(path_line) == 1
     assert zshrc_content.count("# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher") == 1
     assert (home / ".local" / "bin" / "vibecrafted").exists()
+    for launcher_bin in (home / ".local" / "bin", home / ".vibecrafted" / "bin"):
+        for wrapper_name in (
+            "vc-help",
+            "vc-start",
+            "vc-dashboard",
+            "vc-resume",
+            "telemetry",
+        ):
+            wrapper_path = launcher_bin / wrapper_name
+            assert wrapper_path.is_symlink()
+            assert wrapper_path.readlink() == Path("vibecrafted")
 
 
 def test_pipeline_category_describes_release_not_removed_ship_skill() -> None:

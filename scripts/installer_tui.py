@@ -494,7 +494,7 @@ def handle_key(state: InstallerState, key: str | None) -> InstallerState:
         state.should_quit = True
         return state
 
-    if key in {"left", "up", "backspace"}:
+    if key in {"left", "backspace"}:
         if state.install_running:
             state.status_message = (
                 "Back navigation is disabled while install is running."
@@ -502,7 +502,7 @@ def handle_key(state: InstallerState, key: str | None) -> InstallerState:
             return state
         return goto_step(state, state.step - 1)
 
-    if key not in {"right", "down", "enter"}:
+    if key not in {"right", "enter"}:
         return state
 
     if state.step < DIAGNOSTICS_STEP:
@@ -734,7 +734,7 @@ def _render_listing(console: Any, state: InstallerState, width: int) -> None:
         [
             (
                 "Diagnostics",
-                "Check the framework surface, required foundations, toolchains, agent CLIs, and the prompt/history sidecars that ship with core 1.2.1.",
+                "Check the current framework surface, required foundations, toolchains, agent CLIs, and the prompt/history sidecars that ship with the control plane.",
             ),
             (
                 "Install",

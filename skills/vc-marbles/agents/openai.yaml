@@ -1,4 +1,4 @@
 interface:
   display_name: "VC Marbles"
-  short_description: "Iterative convergence loops"
-  default_prompt: "Use $vc-marbles to run adaptive denoising loops until P0=P1=P2=0. Each loop: measure, target gaps, fix, denoise, score."
+  short_description: "$vc-marbles is Truth-convergence executor. Use when implementation already exists but the codebase still lies."
+  default_prompt: 'The overgenerated surfaces, drift between runtime paths, false certainty from one-shot agent output, or a product that "_works_" while remaining fragile.'

@@ -1,5 +1,13 @@
 # Vibecraftedٜ - The Marbles
 
+## Canonical Split
+
+- Worker contract: [SKILL.md](./SKILL.md)
+- Operator memory and convergence routing: [RECEPTION.md](./RECEPTION.md)
+
+The worker stays blind.
+Reception remembers.
+
 ## For Founders and Agentosceptic Developers
 
 _This section explains what Marbles does and why it earns your trust.

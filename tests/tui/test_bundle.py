@@ -14,8 +14,8 @@ def test_parse_listing_metadata_reads_current_registry_fields() -> None:
 
     assert metadata.homepage == "https://vibecrafted.io/"
     assert metadata.repository == "https://github.com/VetCoders/vibecrafted"
-    assert metadata.documentation == "https://vibecrafted.io/presence/quickstart.html"
-    assert metadata.faq == "https://vibecrafted.io/presence/faq.html"
+    assert metadata.documentation == "https://vibecrafted.io/en/quickstart/"
+    assert metadata.faq == "https://vibecrafted.io/en/faq/"
     assert metadata.license.startswith("Business Source License 1.1")
     assert "codex" in metadata.keywords
 
@@ -48,6 +48,8 @@ def test_write_bundle_uses_current_metadata_and_skill_inventory(tmp_path: Path) 
     assert "skills/vc-ship/SKILL.md" not in members
     assert "skills/vc-ownership/SKILL.md" not in members
     assert "skills/vc-screenscribe/SKILL.md" not in members
+    assert "docs/RELEASE_KICKOFF.md" in members
+    assert "docs/SUBMISSION_FORMS.md" in members
 
 
 def test_framework_playground_uses_vibecrafted_command_deck() -> None:

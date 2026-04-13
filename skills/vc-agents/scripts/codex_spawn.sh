@@ -87,10 +87,9 @@ qroot="$(spawn_shell_quote "$SPAWN_ROOT")"
 qruntime="$(spawn_shell_quote "$runtime_input")"
 qreport="$(spawn_shell_quote "$SPAWN_REPORT")"
 qtranscript="$(spawn_shell_quote "$SPAWN_TRANSCRIPT")"
-
-# Codex --json emits JSONL events. jq filter extracts readable text + tool tags + session ID.
-qfilter="$(spawn_shell_quote "$SCRIPT_DIR/codex_stream_filter.jq")"
-launch_cmd="set -o pipefail && cd $qroot && codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript ; echo ; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true"
+qraw="$(spawn_shell_quote "${SPAWN_TRANSCRIPT%.log}.raw.jsonl")"
+qbridge="$(spawn_shell_quote "$SCRIPT_DIR/codex_stream_bridge.py")"
+launch_cmd="set -o pipefail && cd $qroot && { codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qruntime 2>&1 | python3 $qbridge --transcript $qtranscript --raw $qraw; pipeline_status=\$?; if [[ ! -s $qreport ]]; then if [[ \$pipeline_status -eq 0 ]]; then _codex_status='completed'; _codex_note='Codex completed without writing a standalone report file.'; else _codex_status='failed'; _codex_note='Codex failed before writing a standalone report file.'; fi; spawn_write_frontmatter $qreport \"\$SPAWN_AGENT\" 'unknown' \"\$_codex_status\"; { printf '%s\n' \"\$_codex_note\"; printf '%s\n' 'See transcript for the full event stream:'; printf '%s\n' $qtranscript; } >> $qreport; fi; echo; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
 
 # shellcheck disable=SC2016
 codex_success_hook='
@@ -133,4 +132,6 @@ spawn_generate_launcher "$SPAWN_LAUNCHER" \
 chmod +x "$SPAWN_LAUNCHER"
 spawn_print_launch codex "$mode" "$runtime"
 spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run" "codex-${VIBECRAFTED_SKILL_NAME:-$mode}"
-printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"
+if [[ "${VIBECRAFTED_SUPPRESS_REPORT_HINT:-0}" != "1" ]]; then
+  printf 'Agent launched. Report will land at: %s\n' "$SPAWN_REPORT"
+fi

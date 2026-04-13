@@ -1,7 +1,8 @@
 # Contributing to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.
 
 We build tools for AI agents to build tools.
-This framework created itself. You can help it create the next version.
+We sharpen the release layer that comes after AI has already produced the repo.
+Help keep the installer, launch surface, and product truth stronger than the draft.
 
 ## The Living Tree Rule
 

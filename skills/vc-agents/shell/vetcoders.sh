@@ -10,15 +10,21 @@ _vetcoders_spawn_home() {
   local tool="$1"
   local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
   local crafted_store="$crafted_home/skills/vc-agents"
-  if [[ -d "$crafted_store" ]]; then
-    printf '%s' "$crafted_store"
+  local current_store="$crafted_home/tools/vibecrafted-current/skills/vc-agents"
+  local repo_root
+  repo_root="${VIBECRAFTED_ROOT:-$(_vetcoders_repo_root)}"
+  if [[ -d "$repo_root/skills/vc-agents" && -f "$repo_root/VERSION" && -f "$repo_root/scripts/vibecrafted" ]]; then
+    printf '%s/skills/vc-agents' "$repo_root"
     return 0
   fi
 
-  local repo_root
-  repo_root="${VIBECRAFTED_ROOT:-$(_vetcoders_repo_root)}"
-  if [[ -d "$repo_root/skills/vc-agents" ]]; then
-    printf '%s/skills/vc-agents' "$repo_root"
+  if [[ -d "$current_store" ]]; then
+    printf '%s' "$current_store"
+    return 0
+  fi
+
+  if [[ -d "$crafted_store" ]]; then
+    printf '%s' "$crafted_store"
     return 0
   fi
 
@@ -56,6 +62,102 @@ _vetcoders_org_repo() {
   else
     printf '%s\n' "$(basename "$root")"
   fi
+}
+
+_vetcoders_store_dir() {
+  local root="${1:-$(_vetcoders_repo_root)}"
+  local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+  local date_dir
+  date_dir="$(date +%Y_%m%d)"
+  printf '%s/artifacts/%s/%s\n' "$crafted_home" "$(_vetcoders_org_repo "$root")" "$date_dir"
+}
+
+_vetcoders_tmp_dir() {
+  local root="${1:-$(_vetcoders_repo_root)}"
+  local dir
+  dir="$(_vetcoders_store_dir "$root")/tmp"
+  mkdir -p "$dir"
+  printf '%s\n' "$dir"
+}
+
+_vetcoders_tmp_script_path() {
+  local prefix="$1"
+  local root="${2:-$(_vetcoders_repo_root)}"
+  local dir stamp context
+
+  dir="$(_vetcoders_tmp_dir "$root")" || return 1
+  stamp="$(_vetcoders_spawn_timestamp)"
+  context="${VIBECRAFTED_RUN_ID:-${VIBECRAFTED_SKILL_CODE:-$(_vetcoders_session_base_name)}}"
+  context="$(printf '%s' "$context" | tr -cs '[:alnum:]._-' '-')"
+  context="${context#-}"
+  context="${context%-}"
+  [[ -n "$context" ]] || context="session"
+
+  mktemp "${dir%/}/${prefix}.${stamp}_${context}.XXXXXX"
+}
+
+_vetcoders_find_meta_for_run_id() {
+  local reports_dir="$1"
+  local target_run_id="$2"
+  python3 - "$reports_dir" "$target_run_id" <<'PY'
+import json
+import os
+import sys
+
+reports_dir, target_run_id = sys.argv[1:3]
+if not os.path.isdir(reports_dir):
+    sys.exit(0)
+
+for name in sorted(os.listdir(reports_dir)):
+    if not name.endswith(".meta.json"):
+        continue
+    path = os.path.join(reports_dir, name)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except Exception:
+        continue
+    if payload.get("run_id") == target_run_id:
+        print(path)
+        break
+PY
+}
+
+_vetcoders_marbles_tail_delay() {
+  printf '%s\n' "${VIBECRAFTED_MARBLES_TAIL_DELAY:-5}"
+}
+
+_vetcoders_tail_marbles_l1_transcript() {
+  local root="$1"
+  local marbles_run_id="$2"
+  local reports_dir loop_run_id meta_path transcript_path delay_s
+
+  reports_dir="$(_vetcoders_store_dir "$root")/marbles/reports"
+  loop_run_id="${marbles_run_id}-001"
+  delay_s="$(_vetcoders_marbles_tail_delay)"
+
+  # Only sleep if there is a reports dir to poll — skip the delay entirely
+  # on headless/test paths where the meta file will never appear.
+  [[ -d "$reports_dir" ]] || return 0
+  sleep "$delay_s"
+
+  meta_path="$(_vetcoders_find_meta_for_run_id "$reports_dir" "$loop_run_id" 2>/dev/null || true)"
+  [[ -n "$meta_path" && -f "$meta_path" ]] || return 0
+
+  transcript_path="$(
+    python3 - "$meta_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    payload = json.load(fh)
+print(payload.get("transcript") or "", end="")
+PY
+  )"
+  [[ -n "$transcript_path" && -f "$transcript_path" ]] || return 0
+
+  printf '\n--- marbles L1 transcript tail (%s) ---\n' "$transcript_path"
+  tail -n 15 "$transcript_path" 2>/dev/null || true
 }
 
 _vetcoders_session_base_name() {
@@ -156,6 +258,33 @@ _vetcoders_skill_prefix() {
 _vetcoders_generate_run_id() {
   local prefix="$1"
   printf '%s-%s\n' "$prefix" "$(date +%H%M%S)"
+}
+
+_vetcoders_spawn_timestamp() {
+  if [[ -n "${VIBECRAFTED_SPAWN_TS:-}" ]]; then
+    printf '%s\n' "${VIBECRAFTED_SPAWN_TS}"
+  else
+    date +%Y%m%d_%H%M
+  fi
+}
+
+_vetcoders_marbles_store_dir() {
+  local root="$1"
+  if cd "$root" && git remote get-url origin >/dev/null 2>&1; then
+    printf '%s/marbles\n' "$(_vetcoders_store_dir "$root")"
+  else
+    printf '%s/.vibecrafted/marbles\n' "$root"
+  fi
+}
+
+_vetcoders_marbles_l1_report_path() {
+  local root="$1"
+  local stamp="$2"
+  local tool="$3"
+  printf '%s/reports/%s_marbles-ancestor_L1_%s.md\n' \
+    "$(_vetcoders_marbles_store_dir "$root")" \
+    "$stamp" \
+    "$tool"
 }
 
 _vetcoders_has_ambient_spawn_context() {
@@ -448,16 +577,78 @@ _vetcoders_ensure_zellij_session() {
     return 1
   }
 
+  local inside_zellij=0
+  # Align with spawn_in_zellij_context: ZELLIJ_PANE_ID or ZELLIJ being set
+  # (even ZELLIJ=0 is a valid pane index inside Zellij).
+  [[ -n "${ZELLIJ_PANE_ID:-}" || -n "${ZELLIJ+set}" ]] && inside_zellij=1
+
+  local current_session="${ZELLIJ_SESSION_NAME:-}"
+
+  # Already in the target session — nothing to do.
+  if (( inside_zellij )) && [[ "$current_session" == "$session_name" ]]; then
+    return 0
+  fi
+
   case "$(_vetcoders_zellij_session_state "$session_name")" in
     live)
-      zellij "$@" attach "$session_name"
+      if (( inside_zellij )); then
+        zellij action switch-session "$session_name"
+      else
+        zellij "$@" attach "$session_name"
+      fi
       ;;
     dead)
-      zellij "$@" attach --force-run-commands "$session_name"
+      # Dead (EXITED) sessions cannot be switched to — kill and recreate.
+      zellij kill-session "$session_name" 2>/dev/null || true
+      if [[ -n "$layout_file" ]]; then
+        if (( inside_zellij )); then
+          env -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
+            zellij --session "$session_name" --new-session-with-layout "$layout_file" &
+          local bg_pid_dead=$!
+          local wait_dead=0
+          while (( wait_dead < 20 )); do
+            [[ "$(_vetcoders_zellij_session_state "$session_name")" == "live" ]] && break
+            sleep 0.25
+            ((wait_dead+=1))
+          done
+          kill "$bg_pid_dead" 2>/dev/null || true
+          wait "$bg_pid_dead" 2>/dev/null || true
+          zellij action switch-session "$session_name"
+        else
+          zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+        fi
+      else
+        # No layout — try force-run which may resurrect the session.
+        if (( inside_zellij )); then
+          echo "Session '$session_name' is dead and no layout is available to recreate it." >&2
+          return 1
+        else
+          zellij "$@" attach --force-run-commands "$session_name"
+        fi
+      fi
       ;;
     *)
       if [[ -n "$layout_file" ]]; then
-        zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+        if (( inside_zellij )); then
+          # Create the session in the background with Zellij env stripped to
+          # prevent nested-client panic, then switch to it.
+          env -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
+            zellij --session "$session_name" --new-session-with-layout "$layout_file" &
+          local bg_pid=$!
+          # Wait briefly for session to appear.
+          local wait_i=0
+          while (( wait_i < 20 )); do
+            [[ "$(_vetcoders_zellij_session_state "$session_name")" == "live" ]] && break
+            sleep 0.25
+            ((wait_i+=1))
+          done
+          # Kill the background client now that the session server is alive.
+          kill "$bg_pid" 2>/dev/null || true
+          wait "$bg_pid" 2>/dev/null || true
+          zellij action switch-session "$session_name"
+        else
+          zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+        fi
       else
         echo "Layout file missing and session not found." >&2
         return 1
@@ -531,13 +722,15 @@ _vetcoders_spawn_into_operator_session() {
 
   command -v zellij >/dev/null 2>&1 || return 1
   # zellij rejects inline command args carrying shell-quoted multibyte
-  # prompt content (printf '%q' + Polish UTF-8). Temp script keeps path ASCII-safe.
-  cmd_script="$(mktemp "${TMPDIR:-/tmp}/vc-spawn-cmd.XXXXXX")"
+  # prompt content (printf '%q' + Polish UTF-8). Store the wrapper under the
+  # vibecrafted artifact tree so it survives resurrect/attach and leaves a
+  # readable trail for debugging.
+  cmd_script="$(_vetcoders_tmp_script_path "vc-spawn-cmd" "$root_dir")"
   _vetcoders_write_command_script "$cmd_script" "$command_text" || return 1
   zellij --session "$session_name" action new-tab \
     --name "$tab_name" \
     --cwd "$root_dir" \
-    -- "$cmd_script"
+    -- "$cmd_script" >/dev/null
 }
 
 _vetcoders_frontier_candidates() {
@@ -760,6 +953,8 @@ _vetcoders_wrap_atuin() {
 
 _vetcoders_wrap_atuin
 
+_vetcoders_known_dashboard_layouts=(vc-dashboard vc-marbles vc-workflow vc-research vibecrafted)
+
 _vetcoders_dashboard_layout_name() {
   local requested="${1:-vc-dashboard}"
   case "$requested" in
@@ -768,27 +963,28 @@ _vetcoders_dashboard_layout_name() {
     workflow|vc-workflow) printf 'vc-workflow\n' ;;
     research|vc-research) printf 'vc-research\n' ;;
     vibecrafted) printf 'vibecrafted\n' ;;
-    *) printf '%s\n' "$requested" ;;
+    *)
+      echo "Unknown dashboard layout: $requested" >&2
+      echo "Available layouts: ${_vetcoders_known_dashboard_layouts[*]}" >&2
+      return 1
+      ;;
   esac
 }
 
 _vetcoders_dashboard_layout_file() {
   local layout_name
-  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")" || return 1
   _vetcoders_frontier_file "zellij/layouts/${layout_name}.kdl"
 }
 
 _vetcoders_dashboard_session_name() {
   local layout_name slug base_session run_id
   _vetcoders_normalize_ambient_context
-  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")" || return 1
   base_session="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
   run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
-  if [[ -n "$run_id" ]]; then
-    printf '%s\n' "$base_session"
-    return 0
-  fi
-  if [[ "$layout_name" == "vibecrafted" ]]; then
+  # Default and vibecrafted layouts use the canonical operator session directly.
+  if [[ -n "$run_id" || "$layout_name" == "vibecrafted" || "$layout_name" == "vc-dashboard" ]]; then
     printf '%s\n' "$base_session"
     return 0
   fi
@@ -797,9 +993,54 @@ _vetcoders_dashboard_session_name() {
 }
 
 _vetcoders_launch_dashboard() {
+  local first_arg="${1:-}"
+
+  # Thin shim subcommands — delegate directly to native Zellij.
+  case "$first_arg" in
+    ls|list|sessions)
+      command -v zellij >/dev/null 2>&1 || {
+        echo "zellij is required." >&2; return 1
+      }
+      zellij list-sessions
+      return
+      ;;
+    switch)
+      shift
+      command -v zellij >/dev/null 2>&1 || {
+        echo "zellij is required." >&2; return 1
+      }
+      if [[ -n "${ZELLIJ+set}" ]]; then
+        zellij action switch-session "${1:?session name required}"
+      else
+        zellij attach "${1:?session name required}"
+      fi
+      return
+      ;;
+    attach)
+      shift
+      command -v zellij >/dev/null 2>&1 || {
+        echo "zellij is required." >&2; return 1
+      }
+      if [[ -n "${ZELLIJ+set}" ]]; then
+        zellij action switch-session "${1:?session name required}"
+      else
+        zellij attach "${1:?session name required}"
+      fi
+      return
+      ;;
+    kill)
+      shift
+      command -v zellij >/dev/null 2>&1 || {
+        echo "zellij is required." >&2; return 1
+      }
+      zellij kill-session "${1:?session name required}"
+      return
+      ;;
+  esac
+
   local layout_name layout_file session_name repo_source repo_zellij_dir
   _vetcoders_normalize_ambient_context
-  layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")"
+  layout_name="$(_vetcoders_dashboard_layout_name "${first_arg}")" || return 1
   (( $# )) && shift
 
   command -v zellij >/dev/null 2>&1 || {
@@ -817,9 +1058,6 @@ _vetcoders_launch_dashboard() {
   }
 
   if [[ "${VIBECRAFTED_PREFER_REPO_ZELLIJ:-0}" == "1" ]]; then
-    # Use the git-derived repo root, not frontier source root, so that an
-    # ambient VIBECRAFTED_ROOT pointing at a different repo cannot hijack the
-    # config dir when the launcher explicitly asked for repo-local zellij.
     repo_source="$(_vetcoders_repo_root)"
     repo_zellij_dir="$repo_source/config/zellij"
     if [[ -d "$repo_zellij_dir" && -f "$repo_zellij_dir/config.kdl" ]]; then
@@ -1007,8 +1245,12 @@ _vetcoders_write_command_script() {
     shell_bin="$(command -v bash)"
   fi
 
+  # Keep the temp script stable on disk: zellij can re-run or resurrect panes
+  # against the original command path, so self-deleting wrappers break attach
+  # and respawn semantics.
+  mkdir -p "$(dirname "$script_path")"
   # shellcheck disable=SC2016
-  printf '#!/usr/bin/env bash\nset -euo pipefail\ntrap '\''rm -f "$0"'\'' EXIT\n%s -lc %s\n' \
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n%s -lc %s\n' \
     "$(_vetcoders_shell_quote "$shell_bin")" \
     "$(_vetcoders_shell_quote "$command_text")" \
     > "$script_path"
@@ -1325,7 +1567,8 @@ gemini-hydrate() { _vetcoders_skill gemini hydrate "$@"; }
 _vetcoders_marbles() {
   local tool="$1"
   shift
-  local script marbles_cmd quoted_args operator_session
+  local script marbles_cmd quoted_args quoted_env operator_session root_dir marbles_run_id runtime launch_ts launch_report
+  local -a marbles_env
   script="$(_vetcoders_spawn_script "$tool" "marbles_spawn.sh")" || return 1
   _vetcoders_parse_contract "$@" || return 1
   [[ -z "$_vetcoders_contract_session" ]] || {
@@ -1349,20 +1592,34 @@ _vetcoders_marbles() {
   # shellcheck disable=SC2031
   export VIBECRAFTED_SKILL_CODE="marb"
 
-  local marbles_args=(--agent "$tool" --runtime "$(_vetcoders_effective_runtime)")
+  root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
+  marbles_run_id="${VIBECRAFTED_MARBLES_RUN_ID:-$(_vetcoders_generate_run_id "marb")}"
+  runtime="$(_vetcoders_effective_runtime)"
+  marbles_env=(VIBECRAFTED_MARBLES_RUN_ID="$marbles_run_id")
+  local marbles_args=(--agent "$tool" --runtime "$runtime")
+  local source_args=()
   [[ -n "$_vetcoders_contract_root" ]] && marbles_args+=(--root "$_vetcoders_contract_root")
   [[ -n "$_vetcoders_contract_count" ]] && marbles_args+=(--count "$_vetcoders_contract_count")
 
   if [[ -n "$_vetcoders_contract_file" ]]; then
-    marbles_args+=(--file "$_vetcoders_contract_file")
+    source_args=(--file "$_vetcoders_contract_file")
   elif [[ -n "$_vetcoders_contract_prompt" ]]; then
-    marbles_args+=(--prompt "$_vetcoders_contract_prompt")
+    source_args=(--prompt "$_vetcoders_contract_prompt")
   else
-    marbles_args+=(--depth "${_vetcoders_contract_depth:-3}")
+    source_args=(--depth "${_vetcoders_contract_depth:-3}")
   fi
+  if [[ "$runtime" == "headless" ]]; then
+    marbles_args+=(--no-watch)
+    launch_ts="$(_vetcoders_spawn_timestamp)"
+    launch_report="$(_vetcoders_marbles_l1_report_path "$root_dir" "$launch_ts" "$tool")"
+    marbles_env+=(VIBECRAFTED_SPAWN_TS="$launch_ts" VIBECRAFTED_SUPPRESS_REPORT_HINT=1)
+    printf 'Agent launched. Report will land at: %s\n' "$launch_report"
+  fi
+  marbles_args+=("${source_args[@]}")
 
+  quoted_env="$(_vetcoders_shell_quote_join "${marbles_env[@]}")"
   quoted_args="$(_vetcoders_shell_quote_join "${marbles_args[@]}")"
-  marbles_cmd="bash $(_vetcoders_shell_quote "$script") ${quoted_args}"
+  marbles_cmd="env ${quoted_env} bash $(_vetcoders_shell_quote "$script") ${quoted_args}"
   operator_session="${VIBECRAFTED_OPERATOR_SESSION:-}"
   if [[ -z "$operator_session" ]] && _vetcoders_in_zellij; then
     operator_session="$(_vetcoders_current_zellij_session_name)"
@@ -1373,24 +1630,31 @@ _vetcoders_marbles() {
 
   # Inside zellij: marbles gets its own tab — operator's workspace stays clean.
   # Temp script keeps zellij args ASCII-safe (no inline UTF-8 prompt bytes).
-  if _vetcoders_in_zellij && command -v zellij >/dev/null 2>&1; then
-    local cmd_script
+  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && _vetcoders_in_zellij && command -v zellij >/dev/null 2>&1; then
+    local cmd_script marbles_tab_name
     export VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
-    cmd_script="$(mktemp "${TMPDIR:-/tmp}/vibecrafted-marbles.XXXXXX")"
+    marbles_tab_name="marbles-${marbles_run_id}"
+    export VIBECRAFTED_MARBLES_TAB_NAME="$marbles_tab_name"
+    marbles_env+=(VIBECRAFTED_MARBLES_TAB_NAME="$marbles_tab_name")
+    quoted_env="$(_vetcoders_shell_quote_join "${marbles_env[@]}")"
+    marbles_cmd="env ${quoted_env} bash $(_vetcoders_shell_quote "$script") ${quoted_args}"
+    cmd_script="$(_vetcoders_tmp_script_path "vibecrafted-marbles" "$root_dir")"
     _vetcoders_write_command_script "$cmd_script" "$marbles_cmd" || return 1
     zellij action new-tab \
-      --name "marbles" \
-      --cwd "${_vetcoders_contract_root:-$(_vetcoders_repo_root)}" \
-      -- "$cmd_script"
-  elif [[ "$(_vetcoders_effective_runtime)" =~ ^(terminal|visible)$ ]]; then
-    _vetcoders_prepare_operator_runtime "$(_vetcoders_effective_runtime)" || return 1
+      --name "$marbles_tab_name" \
+      --cwd "$root_dir" \
+      -- "$cmd_script" >/dev/null || return 1
+    _vetcoders_tail_marbles_l1_transcript "$root_dir" "$marbles_run_id"
+  elif [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
+    _vetcoders_prepare_operator_runtime "$runtime" || return 1
     if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
-      _vetcoders_spawn_into_operator_session "marbles" "$marbles_cmd"
+      _vetcoders_spawn_into_operator_session "marbles" "$marbles_cmd" || return 1
+      _vetcoders_tail_marbles_l1_transcript "$root_dir" "$marbles_run_id"
     else
-      bash "$script" "${marbles_args[@]}"
+      env "${marbles_env[@]}" bash "$script" "${marbles_args[@]}"
     fi
   else
-    bash "$script" "${marbles_args[@]}"
+    env "${marbles_env[@]}" bash "$script" "${marbles_args[@]}"
   fi
 }
 
@@ -1463,6 +1727,8 @@ marbles-stop()    { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh
 marbles-resume()  { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" resume "$@"; }
 marbles-session() { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" session "$@"; }
 marbles-inspect() { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" inspect "$@"; }
+marbles-delete()  { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" delete "$@"; }
+marbles-gc()      { local s; s="$(_vetcoders_spawn_script claude "marbles_ctl.sh")" && bash "$s" gc "$@"; }
 
 codex-decorate() { _vetcoders_skill codex decorate "$@"; }
 claude-decorate() { _vetcoders_skill claude decorate "$@"; }

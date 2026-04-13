@@ -86,10 +86,10 @@ _vibecrafted_helper_candidates() {
   printf '%s\n' \
     "$repo_root/skills/vc-agents/shell/vetcoders.sh" \
     "$repo_root/skills/vc-agents/shell/vetcoders.zsh" \
-    "\$crafted_home/skills/vc-agents/shell/vetcoders.sh" \
-    "\$crafted_home/skills/vc-agents/shell/vetcoders.zsh" \
     "\$crafted_home/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh" \
-    "\$crafted_home/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.zsh"
+    "\$crafted_home/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.zsh" \
+    "\$crafted_home/skills/vc-agents/shell/vetcoders.sh" \
+    "\$crafted_home/skills/vc-agents/shell/vetcoders.zsh"
 }
 
 _vibecrafted_source_helper() {

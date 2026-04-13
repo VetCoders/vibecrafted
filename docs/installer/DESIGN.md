@@ -1,5 +1,10 @@
 # UV-Style Installer Transformation
 
+> Status note (2026-04-10): the public shipping front door is now the
+> browser-guided installer at `scripts/installer_gui.py`, not a full-screen TUI.
+> Keep this file as a reference for compact output rhythm and installer trust
+> surfaces, not as the canonical public onboarding contract.
+
 ## Goal
 
 Transform the𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installer from a 3-screen wall of text into a
@@ -243,7 +248,7 @@ Verification:
   why you need it, or why you should use it.
   If you are here you probably already know what that.
   If not - you can read about it here:
-  https://vetcoders.github.io/vibecrafted
+  https://vibecrafted.io
 ```
 
 III. Action prompt or progress bar
@@ -292,7 +297,7 @@ III. Action prompt or progress bar
   why you need it, or why you should use it.
   If you are here you probably already know what that.
   If not - you can read about it here:
-  https://vetcoders.github.io/vibecrafted
+  https://vibecrafted.io
 
                 Press ⏎ Enter to proceed or Esc to quit
 ─────────────────────────────────────────────────────────

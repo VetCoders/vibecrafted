@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import json
+import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMMON_SH = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "common.sh"
+CLAUDE_SPAWN_SH = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "claude_spawn.sh"
+CODEX_SPAWN_SH = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "codex_spawn.sh"
+CODEX_STREAM_BRIDGE = (
+    REPO_ROOT / "skills" / "vc-agents" / "scripts" / "codex_stream_bridge.py"
+)
+CODEX_STREAM_FILTER = (
+    REPO_ROOT / "skills" / "vc-agents" / "scripts" / "codex_stream_filter.jq"
+)
 
 
 def _bash(script: str) -> subprocess.CompletedProcess[str]:
@@ -90,6 +101,44 @@ def test_generated_launcher_runs_from_spawn_root(tmp_path: Path) -> None:
     assert report.read_text(encoding="utf-8").strip() == str(root_dir)
 
 
+def test_generated_launcher_fails_fast_on_invalid_hook_syntax(tmp_path: Path) -> None:
+    launcher = tmp_path / "launch.sh"
+    meta = tmp_path / "meta.json"
+    report = tmp_path / "report.txt"
+    transcript = tmp_path / "trace.log"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'''
+            set -euo pipefail
+            source "{COMMON_SH}"
+            export SPAWN_ROOT="{tmp_path}"
+            export SPAWN_AGENT="claude"
+            export SPAWN_PROMPT_ID="prompt-123"
+            export SPAWN_RUN_ID="run-123"
+            export SPAWN_LOOP_NR="1"
+            export SPAWN_SKILL_CODE="marb"
+            cmd='printf "ok\\n" > "{report}"'
+            bad_hook="echo '"
+            spawn_write_meta "{meta}" "launching" "claude" "marbles" "{tmp_path}" "{launcher}" "{report}" "{transcript}" "{launcher}"
+            spawn_generate_launcher "{launcher}" "{meta}" "{report}" "{transcript}" "{COMMON_SH}" "$cmd" "" "$bad_hook"
+            ''',
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Generated launcher has invalid shell syntax" in result.stderr
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["exit_code"] == 1
+
+
 def test_spawn_watch_startup_reports_pass_and_dashboard_hint(tmp_path: Path) -> None:
     meta = tmp_path / "meta.json"
     report = tmp_path / "report.md"
@@ -117,7 +166,9 @@ def test_spawn_watch_startup_reports_pass_and_dashboard_hint(tmp_path: Path) -> 
     assert "vibecrafted dashboard" in result.stdout
 
 
-def test_spawn_watch_startup_reports_failure_and_dashboard_hint(tmp_path: Path) -> None:
+def test_spawn_watch_startup_reports_failure_without_dashboard_hint(
+    tmp_path: Path,
+) -> None:
     meta = tmp_path / "meta.json"
     report = tmp_path / "report.md"
     transcript = tmp_path / "trace.log"
@@ -142,7 +193,7 @@ def test_spawn_watch_startup_reports_failure_and_dashboard_hint(tmp_path: Path) 
     )
 
     assert "Startup check: failed in the first 1s." in result.stdout
-    assert "vibecrafted dashboard" in result.stdout
+    assert "vibecrafted dashboard" not in result.stdout
 
 
 def test_spawn_watch_startup_reports_still_launching_when_quiet(
@@ -170,6 +221,258 @@ def test_spawn_watch_startup_reports_still_launching_when_quiet(
     assert "vibecrafted dashboard" in result.stdout
 
 
+def test_spawn_watch_startup_can_probe_without_echoing_transcript(
+    tmp_path: Path,
+) -> None:
+    meta = tmp_path / "meta.json"
+    report = tmp_path / "report.md"
+    transcript = tmp_path / "trace.log"
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        export SPAWN_AGENT="codex"
+        export SPAWN_PROMPT_ID="prompt-123"
+        export SPAWN_RUN_ID="run-123"
+        export SPAWN_SKILL_CODE="impl"
+        export VIBECRAFTED_STARTUP_WATCH_ECHO=0
+        spawn_write_meta "{meta}" "launching" "codex" "implement" "{tmp_path}" "{tmp_path / "plan.md"}" "{report}" "{transcript}" "{tmp_path / "launcher.sh"}"
+        spawn_write_frontmatter "{transcript}" "codex" "unknown" "transcript"
+        (
+          sleep 0.2
+          printf '[12:40:43] session: 54865595-899c-4402-b957-911433e46199\\nWorking...\\n' >> "{transcript}"
+        ) &
+        spawn_watch_startup "{meta}" "{transcript}" "{report}" 1
+        '''
+    )
+
+    assert "Startup check: passed in the first 1s." in result.stdout
+    assert "session: 54865595-899c-4402-b957-911433e46199" not in result.stdout
+    assert "Working..." not in result.stdout
+
+
+def test_codex_stream_filter_handles_structured_turn_failed_payload() -> None:
+    payload = (
+        '{"type":"turn.failed","error":{"message":"stream exploded","code":"EPIPE"}}\n'
+    )
+
+    result = subprocess.run(
+        ["jq", "-rj", "-f", str(CODEX_STREAM_FILTER)],
+        check=True,
+        cwd=REPO_ROOT,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "stream exploded" in result.stdout
+    assert "cannot be added" not in result.stderr
+
+
+def test_codex_stream_bridge_tolerates_turn_abort_and_malformed_json(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "trace.log"
+    raw = tmp_path / "trace.raw.jsonl"
+    payload = "\n".join(
+        [
+            '{"type":"thread.started","thread_id":"fake-session-001"}',
+            '{"type":"turn.aborted","message":"refresh token already used"}',
+            '{"type":"item.completed"',
+        ]
+    )
+
+    subprocess.run(
+        [
+            "python3",
+            str(CODEX_STREAM_BRIDGE),
+            "--transcript",
+            str(transcript),
+            "--raw",
+            str(raw),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        input=payload,
+        capture_output=True,
+        text=True,
+    )
+
+    transcript_text = transcript.read_text(encoding="utf-8")
+    raw_text = raw.read_text(encoding="utf-8")
+    assert "session: fake-session-001" in transcript_text
+    assert "refresh token already used" in transcript_text
+    assert '{"type":"item.completed"' in transcript_text
+    assert payload in raw_text
+
+
+def test_codex_spawn_marks_meta_failed_when_codex_emits_non_json_auth_error(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    fake_bin = tmp_path / "bin"
+    plan = tmp_path / "plan.md"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    plan.write_text("# Plan\n", encoding="utf-8")
+
+    fake_codex = fake_bin / "codex"
+    fake_codex.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'report=""',
+                "while [[ $# -gt 0 ]]; do",
+                '  case "$1" in',
+                '    --output-last-message) shift; report="$1" ;;',
+                "  esac",
+                "  shift || true",
+                "done",
+                "cat >/dev/null || true",
+                'printf "Your access token could not be refreshed because your refresh token was already used.\\n" >&2',
+                "exit 17",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "VIBECRAFTED_HOME": str(crafted_home),
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "VIBECRAFTED_INLINE_STARTUP_WATCH": "0",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(CODEX_SPAWN_SH),
+            "--runtime",
+            "headless",
+            "--root",
+            str(REPO_ROOT),
+            str(plan),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Agent launched. Report will land at:" in result.stdout
+
+    meta_files: list[Path] = []
+    deadline = time.time() + 5
+    artifacts_root = crafted_home / "artifacts"
+    while time.time() < deadline:
+        meta_files = list(artifacts_root.rglob("*_plan_codex.meta.json"))
+        if meta_files:
+            payload = json.loads(meta_files[0].read_text(encoding="utf-8"))
+            if payload.get("status") in {"completed", "failed"}:
+                break
+        time.sleep(0.1)
+
+    assert meta_files, "codex spawn did not write meta.json"
+    meta_payload = json.loads(meta_files[0].read_text(encoding="utf-8"))
+    assert meta_payload["status"] == "failed"
+    assert meta_payload["exit_code"] == 17
+
+    report_file = meta_files[0].with_name(
+        meta_files[0].name.replace(".meta.json", ".md")
+    )
+    assert report_file.exists()
+    assert (
+        "Codex failed before writing a standalone report file."
+        in report_file.read_text(encoding="utf-8")
+    )
+    transcript_file = meta_files[0].with_name(
+        meta_files[0].name.replace(".meta.json", ".transcript.log")
+    )
+    assert "refresh token was already used" in transcript_file.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_claude_spawn_marks_meta_failed_when_stream_has_no_json(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    fake_bin = tmp_path / "bin"
+    plan = tmp_path / "plan.md"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    plan.write_text("# Plan\n", encoding="utf-8")
+
+    fake_claude = fake_bin / "claude"
+    fake_claude.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "cat >/dev/null || true",
+                'printf "Not logged in · Please run /login\\n" >&2',
+                "exit 19",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fake_claude.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "VIBECRAFTED_HOME": str(crafted_home),
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "VIBECRAFTED_INLINE_STARTUP_WATCH": "0",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(CLAUDE_SPAWN_SH),
+            "--runtime",
+            "headless",
+            "--root",
+            str(REPO_ROOT),
+            str(plan),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Agent launched. Report will land at:" in result.stdout
+
+    meta_files: list[Path] = []
+    deadline = time.time() + 5
+    artifacts_root = crafted_home / "artifacts"
+    while time.time() < deadline:
+        meta_files = list(artifacts_root.rglob("*_plan_claude.meta.json"))
+        if meta_files:
+            payload = json.loads(meta_files[0].read_text(encoding="utf-8"))
+            if payload.get("status") in {"completed", "failed"}:
+                break
+        time.sleep(0.1)
+
+    assert meta_files, "claude spawn did not write meta.json"
+    meta_payload = json.loads(meta_files[0].read_text(encoding="utf-8"))
+    assert meta_payload["status"] == "failed"
+    assert meta_payload["exit_code"] != 0
+
+
 def test_generated_launcher_includes_startup_watch(tmp_path: Path) -> None:
     launcher = tmp_path / "launch.sh"
     meta = tmp_path / "meta.json"
@@ -193,7 +496,10 @@ def test_generated_launcher_includes_startup_watch(tmp_path: Path) -> None:
     )
 
     body = launcher.read_text(encoding="utf-8")
-    assert 'spawn_watch_startup "$meta" "$transcript" "$report" &' in body
+    assert (
+        'VIBECRAFTED_STARTUP_WATCH_ECHO=0 spawn_watch_startup "$meta" "$transcript" "$report" &'
+        in body
+    )
     assert 'wait "$startup_watch_pid"' in body
 
 
@@ -275,6 +581,95 @@ def test_generated_launcher_preserves_operator_session_contract(tmp_path: Path) 
 
     payload = report.read_text(encoding="utf-8").splitlines()
     assert payload == [operator_session, "right"]
+
+
+def test_generated_launcher_completes_meta_before_success_hook_failure(
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "launch.sh"
+    meta = tmp_path / "meta.json"
+    report = tmp_path / "report.txt"
+    transcript = tmp_path / "trace.log"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'''
+            set -euo pipefail
+            source "{COMMON_SH}"
+            export SPAWN_ROOT="{tmp_path}"
+            export SPAWN_AGENT="claude"
+            export SPAWN_PROMPT_ID="prompt-123"
+            export SPAWN_RUN_ID="marb-014520-002"
+            export SPAWN_LOOP_NR="2"
+            export SPAWN_SKILL_CODE="marb"
+            cmd='printf "ok\\n" > "{report}"'
+            spawn_write_meta "{meta}" "launching" "claude" "marbles" "{tmp_path}" "{launcher}" "{report}" "{transcript}" "{launcher}"
+            spawn_generate_launcher "{launcher}" "{meta}" "{report}" "{transcript}" "{COMMON_SH}" "$cmd" "" "exit 23"
+            chmod +x "{launcher}"
+            bash "{launcher}"
+            ''',
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 23
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["status"] == "completed"
+    assert payload["exit_code"] == 0
+
+
+def test_generated_launcher_marks_meta_failed_before_failure_hook(
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "launch.sh"
+    meta = tmp_path / "meta.json"
+    report = tmp_path / "report.txt"
+    transcript = tmp_path / "trace.log"
+    failure_seen = tmp_path / "failure-meta.json"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'''
+            set -euo pipefail
+            source "{COMMON_SH}"
+            export SPAWN_ROOT="{tmp_path}"
+            export SPAWN_AGENT="claude"
+            export SPAWN_PROMPT_ID="prompt-123"
+            export SPAWN_RUN_ID="marb-014520-002"
+            export SPAWN_LOOP_NR="2"
+            export SPAWN_SKILL_CODE="marb"
+            cmd='printf "boom\\n" >&2; exit 23'
+            failure_hook='python3 - <<'"'"'PY'"'"'
+import json
+from pathlib import Path
+Path("{failure_seen}").write_text(Path("{meta}").read_text(encoding="utf-8"), encoding="utf-8")
+PY'
+            spawn_write_meta "{meta}" "launching" "claude" "marbles" "{tmp_path}" "{launcher}" "{report}" "{transcript}" "{launcher}"
+            spawn_generate_launcher "{launcher}" "{meta}" "{report}" "{transcript}" "{COMMON_SH}" "$cmd" "" "" "$failure_hook"
+            chmod +x "{launcher}"
+            bash "{launcher}"
+            ''',
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 23
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["exit_code"] == 23
+    failure_payload = json.loads(failure_seen.read_text(encoding="utf-8"))
+    assert failure_payload["status"] == "failed"
+    assert failure_payload["exit_code"] == 23
 
 
 def test_spawn_prepare_paths_generates_real_run_context_when_missing(
@@ -368,11 +763,63 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
     assert "workflow" in payload
 
 
+def test_spawn_in_operator_session_suppresses_zellij_tab_number_output(
+    tmp_path: Path,
+) -> None:
+    run_id = "marb-014520"
+    operator_session = _expected_operator_session(run_id)
+    launcher = tmp_path / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    capture_file = tmp_path / "zellij-args.txt"
+    zellij = fake_bin / "zellij"
+    zellij.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
+                'printf "7\\n"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    zellij.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'''
+            set -euo pipefail
+            export PATH="{fake_bin}:$PATH"
+            export CAPTURE_FILE="{capture_file}"
+            export VIBECRAFTED_RUN_ID="{run_id}"
+            export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
+            export SPAWN_ROOT="{tmp_path}"
+            source "{COMMON_SH}"
+            spawn_in_operator_session "{launcher}" "workflow"
+            ''',
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout == ""
+
+
 def test_spawn_in_operator_session_new_tab_opens_monitor_and_disables_inline_watch(
     tmp_path: Path,
 ) -> None:
     run_id = "rsch-014520"
     operator_session = _expected_operator_session(run_id)
+    expected_tmp_root = tmp_path / ".vibecrafted" / "tmp"
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
@@ -444,16 +891,17 @@ def test_spawn_in_operator_session_new_tab_opens_monitor_and_disables_inline_wat
     )
     assert monitor_script_match is not None
     monitor_script = Path(monitor_script_match.group(1))
+    assert monitor_script.parent == expected_tmp_root
     monitor_body = monitor_script.read_text(encoding="utf-8")
-    assert "trap 'rm -f \"$0\"' EXIT" in monitor_body
+    assert "trap 'rm -f \"$0\"' EXIT" not in monitor_body
     assert (
         "Your vibecrafted session %s invoked the %s run that landed in %s %s."
         in monitor_body
     )
     assert "spawn_watch_startup" in monitor_body
 
-    workflow_cmd = Path(workflow_call[workflow_call.index("--") + 1]).read_text(
-        encoding="utf-8"
-    )
+    workflow_script = Path(workflow_call[workflow_call.index("--") + 1])
+    assert workflow_script.parent == expected_tmp_root
+    workflow_cmd = workflow_script.read_text(encoding="utf-8")
     assert "VIBECRAFTED_INLINE_STARTUP_WATCH=0" in workflow_cmd
     assert str(launcher) in workflow_cmd

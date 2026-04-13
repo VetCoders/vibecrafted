@@ -1,5 +1,8 @@
 scan_timeout = 20
-command_timeout = 120
+# Raised from 120ms because Python Framework cold-start ("--version") on
+# macOS can easily cross half a second on first invocation and was spamming
+# starship timeout warnings.
+command_timeout = 2000
 add_newline = true
 
 format = """$time$fill$jobs$cmd_duration
@@ -49,6 +52,10 @@ format = '[$symbol$version( \($virtualenv\))]($style) '
 style = "bold yellow"
 detect_extensions = ["py"]
 detect_files = ["requirements.txt", "pyproject.toml", "Pipfile"]
+# Pin the binary starship uses for version discovery. Default fallback chain
+# would probe `/opt/homebrew/opt/python/libexec/bin/python` (Framework python)
+# which is slow enough to trip command_timeout.
+python_binary = ["python3"]
 
 [nodejs]
 symbol = "node "

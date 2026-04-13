@@ -1,307 +1,122 @@
-# Architecture Plan:𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer TUI
+# Installer Shipping Plan
 
-## Problem Statement
+Current truth as of 2026-04-10:
 
-`scripts/installer_tui.py` is currently a hand-rolled terminal renderer built on `termios`, `select`, and `print`. It
-can fake a step flow, but it is not a real TUI surface and it does not match the installer mockups in
-`docs/installer/*.md`. The current shape also shells into `vetcoders_install.py --compact --non-interactive`, which
-means the interactive UI and the installation truth are split across two different execution paths.
+- Public front door: browser-guided installer in `scripts/installer_gui.py`
+- Public CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui`
+- Local human entrypoint: `make vibecrafted`
+- Automation entrypoint: `curl -fsSL https://vibecrafted.io/install.sh | bash`
+- Mutation engine: `scripts/vetcoders_install.py`
+- Operator-grade reference surface: `scripts/installer_tui.py`
 
-We need one real installer architecture that can do three things at once:
+This file replaces the older "rewrite the installer around a full Textual TUI"
+roadmap. That plan was useful exploration, but it is no longer the shipping
+shape.
 
-- give interactive users a proper alternate-screen wizard with stable header, body, footer, and live progress
-- keep non-interactive bootstrap and portable checks working without a TTY
-- share one installation engine between TUI and CLI so we stop duplicating behavior and stop lying about what the
-  installer is doing
-- move task orchestration onto a reproducible substrate instead of letting `make`, shell wrappers, and UI entrypoints
-  drift apart
+## Decision
 
-## Visual Identity
+The effortless install path now follows the TwinSweep-style GUI line, not the
+`rmcp-memex`-style TUI line.
 
-- **Material metaphor:** dark steel control surface with copper accents and disciplined mono terminal chrome
-- **Color strategy:** copper for action/brand, steel/graphite for structure, green for healthy state, amber for warning,
-  red for hard failure, dim gray for hints and paths
-- **Typography strategy:** mono for all UI chrome, status, navigation, and system output; keep decorative vapor header
-  as a brand accent, not as the primary reading surface
-- **Tone:** koleżeński, fachowy, operator-to-operator; informative but never apologetic, never defensive, never
-  “compliance form”
-- **Dark/light:** dark-first only for the TUI; CLI summary continues to degrade cleanly to plain text in non-TTY
-  environments
+Why this won:
 
-## Key Architectural Decisions
+- it gives founders and less terminal-native operators a lower-friction first run
+- it creates a better marketplace and launch-day demo surface
+- it keeps the install truth readable instead of burying it in terminal chrome
+- it reuses the same compact installation engine used by automation
+- it still allows the TUI branch to inform the wizard rhythm without becoming the
+  public onboarding contract
 
-### Decision 1: Rewrite the interactive installer on Textual, not on manual `tty` rendering
+## What we kept from each reference
 
-**Choice:** Replace the current `scripts/installer_tui.py` render loop with a real Textual app.
-**Trade-off:** Adds a Python UI dependency and forces a sharper separation between state, engine, and view code.
-**Why:** The current Python renderer is an imitation of a TUI, not a TUI. Textual gives us real alternate-screen
-lifecycle, layout, key bindings, focus handling, workers, resize handling, and testability. This keeps the
-implementation in Python next to the existing installer logic, while borrowing architectural discipline from the
-`rmcp-mux` and `rmcp-memex` wizard patterns.
+### From `rmcp-memex`
 
-### Decision 2: Extract a shared installer engine and event model out of `vetcoders_install.py`
+The useful inheritance from [`src/tui/mod.rs`](/Users/polyversai/Libraxis/01_deployed_libraxis_vm/rmcp-memex/src/tui/mod.rs)
+is the wizard rhythm:
 
-**Choice:** Move diagnostics, plan construction, install stages, and doctor verification into a shared service layer
-that emits structured events.
-**Trade-off:** Requires refactoring the current monolithic verbose/compact flow before the TUI can become first-class.
-**Why:** A real TUI cannot depend on shelling out to `--compact` mode and scraping text. The TUI and the compact CLI
-should both consume the same event stream and the same install plan. This is the cut that turns the installer into a
-product surface instead of a pile of print statements.
+- welcome
+- detection / preflight
+- settings / choices
+- health check
+- summary
+- explicit finish state
 
-### Decision 3: Keep two front doors, but only one installation truth
+That repo proves the value of a disciplined step-based flow. It does **not**
+need to dictate Vibecrafted's public install surface.
 
-**Choice:** Interactive TTY sessions always enter the Textual TUI. Non-interactive sessions continue to bypass TUI and
-call the installer engine through compact CLI mode.
-**Trade-off:** We keep two presentation layers instead of pretending one surface can satisfy both humans and automation.
-**Why:** This preserves the working bootstrap contract in `install.sh` and `scripts/check-portable.sh`, while
-guaranteeing that humans always get the real installer experience. The shared engine prevents drift between the two
-modes.
+### From `TwinSweep`
 
-### Decision 4: Existing `config/mise.toml` becomes the canonical task substrate; `make` stays as a compatibility shim
+The useful inheritance from [`twinsweep/macos_app.py`](/Users/polyversai/Libraxis/TwinSweep/twinsweep/macos_app.py)
+and [`twinsweep/server.py`](/Users/polyversai/Libraxis/TwinSweep/twinsweep/server.py)
+is the effortless GUI handoff:
 
-**Choice:** Promote the existing `config/mise.toml` from “config payload” to the real task/runtime substrate, and move
-the installer entrypoints onto named tasks such as `installer:tui`, `installer:compact`, and `doctor`.
-**Trade-off:** Adds one more explicit dependency to the framework substrate and requires task migration discipline.
-**Why:** Our own research already converged on `mise` as the missing keystone for reproducible tooling and task
-execution. The file already exists in `config/`, but runtime truth says it is not yet the canonical entrypoint: plain
-`mise tasks ls` from repo root returns nothing. `mise` should own tool/runtime/task determinism; the installer TUI
-should own the interactive surface. A `tui-runner.mjs`-style launcher can still exist later as an operator deck, but it
-should launch canonical `mise run ...` tasks, not become the installer architecture itself.
+- launch locally without demanding that the operator "live in the terminal"
+- use a health-checked local web surface as the interaction layer
+- keep the heavy lifting in the existing runtime instead of duplicating logic in
+  a second installer implementation
 
-### Decision 5: The mockups define a fixed chrome and step-specific widgets, not a linear print log
+That pattern matches Vibecrafted's release promise better than a TUI-first
+story.
 
-**Choice:** Implement the installer as a persistent chrome with:
-
-- fixed header hero
-- dynamic middle region composed per step
-- fixed action strip
-- fixed footer/help strip
-
-Diagnostics and installation become structured panes with live state and details toggles. Welcome, explain, and listing
-remain centered narrative steps.
-**Trade-off:** More widget code than a simple print loop, and more explicit UI state.
-**Why:** This directly matches the mockups in `docs/installer/0_welcome_step.zsh.md` through
-`docs/installer/5_installation.zsh.md`. It also aligns with the `rmcp-*` wizard pattern: explicit step enum, explicit
-app state, explicit per-step renderer.
-
-### Decision 6: Consent gates happen before mutation; installation becomes a staged pipeline
-
-**Choice:** Split the flow into:
-
-- read-only discovery
-- explicit checklist/consent
-- backup/install/link/helper/apply
-- verification/result
-
-No filesystem mutation occurs before the checklist step is approved.
-**Trade-off:** Slightly more state transitions and one more layer of plan serialization.
-**Why:** This matches the trust contract in the mockups and the product promise. The installer should explain what
-changes and why it matters, but it should not touch the machine before the user approves the exact plan.
-
-## Scope Boundaries
-
-### Phase 1: MVP (This Cycle)
-
-**In scope:**
-
-- Replace the current fake TUI with a real Textual wizard
-- Extract a shared installer engine from `vetcoders_install.py`
-- Implement the six installer steps from `docs/installer/*.md`
-- Keep `install.sh` behavior: TTY -> TUI, non-TTY -> compact CLI
-- Promote `config/mise.toml` into the canonical task/runtime substrate
-- Stream real diagnostics and install progress into the interactive UI
-- Preserve compact summary mode for automation and logs
-- Add a real install log pointer and explicit result screen
-
-**Out of scope:**
-
-- Auto-installing missing foundations that are currently only detected and reported
-- A Rust rewrite of the installer
-- A Node/Blessed rewrite of the installer
-- Marketplace-grade art direction inside the TUI beyond the existing brand language
-- Reworking shell helper semantics or the install payload itself
-
-**Explicitly out of scope:**
-
-- Further investment in the current `termios`/`select` pseudo-TUI
-- Building the shipping installer surface on `vista`’s Node stack
-- Treating a `tui-runner.mjs` clone as the installer architecture instead of as a launcher shell
-- Treating `--compact` text output as the source of truth for interactive mode
-
-## Architecture Overview
+## Shipping Architecture
 
 ```text
 install.sh
-  |
-  +-- interactive TTY ------------------------------+
-  |                                                 |
-  |   make vibecrafted                              |
-  |     -> mise run installer:tui                   |
-  |     -> scripts/installer_tui.py                 |
-  |     -> Textual App                              |
-  |           -> installer.engine                   |
-  |           -> installer.model/events             |
-  |           -> installer.brand                    |
-  |           -> installer.widgets.*                |
-  |                                                 |
-  +-- non-interactive ------------------------------+
-                                                    |
-      python3 scripts/vetcoders_install.py install --compact --non-interactive
-           -> installer.engine
-           -> installer.model/events
-           -> compact event sink / summary renderer
+  ├─ stages a repo snapshot into $VIBECRAFTED_ROOT/.vibecrafted/tools/
+  ├─ `--gui` → scripts/installer_gui.py
+  │            ├─ browser-based guided surface
+  │            ├─ preflight diagnostics + category cards
+  │            └─ compact install steps reused from the real installer
+  └─ default / automation → scripts/vetcoders_install.py --compact --non-interactive
 ```
 
-### Proposed module layout
+Supporting truth:
 
-```text
-scripts/
-  installer/
-    __init__.py
-    brand.py
-    model.py          # Step enum, plan dataclasses, diagnostic rows, install result
-    events.py         # Structured progress events
-    engine.py         # Shared diagnostics + plan + install pipeline
-    compact.py        # Compact CLI renderer/event sink
-    tui_app.py        # Textual app and screen controller
-    widgets/
-      chrome.py
-      welcome.py
-      explain.py
-      listing.py
-      diagnostics.py
-      checklist.py
-      installation.py
-      result.py
-  installer_tui.py    # Tiny launch shim into installer.tui_app
-  vetcoders_install.py  # CLI adapter over installer.engine
-config/mise.toml       # canonical task/runtime substrate
-```
+- `installer_gui.py` is the public human surface
+- `installer_tui.py` still contributes diagnostics, helper-path logic, and
+  operator-friendly summaries
+- `vetcoders_install.py` remains the one mutation engine
+- `install.sh` is responsible for selecting the correct front door
 
-### Reference patterns we are deliberately borrowing
+## Public Contract
 
-- `vista/scripts/tui/scripts-runner.mjs`
-  - useful for split-pane operator UX, status bar, hints, and “command deck” feel
-  - useful as a future operator deck or launcher shell
-  - not suitable as the shipping installer implementation because the installer core is Python and the mockups want a
-    wizard, not a script browser
-- `ScreenScribe/screenscribe/cli.py`
-  - useful for branded CLI surfaces, Rich composition, and non-TUI fallbacks
-  - not enough alone for a full-screen installer wizard
-- `rmcp-mux/src/wizard/mod.rs` + `rmcp-mux/src/wizard/ui.rs`
-  - best reference for a real wizard architecture: step enum, app state, per-panel renderers, alternate screen, event
-    loop
-- `rmcp-memex/src/tui/app.rs` + `rmcp-memex/src/tui/ui.rs`
-  - best reference for step titles, footer help contract, and explicit render-by-step composition
+Every release surface should agree on these points:
 
-## Task Breakdown
+- promise: `Release engine for AI-built software.`
+- supporting line: `Ship AI-built software without the vibe hangover.`
+- primary CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui`
+- secondary CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash`
+- first verification step after install: `vibecrafted doctor`
 
-Each task is agent-ready. Agents can execute in parallel once the shared engine contract exists.
+## Explicit Non-Goals
 
-### Task 1: Freeze the installer domain model
+These are not the shipping priority:
 
-**Produces:** `scripts/installer/model.py`, `scripts/installer/events.py`, unit tests for plan/event serialization
-**Depends on:** None
-**Owner:** Python core agent
-**Acceptance:** Diagnostics, checklist items, runtime selections, install stages, and final result can be represented
-without printing any UI text.
+- turning the public install path into a Textual rewrite
+- making TUI the default onboarding contract
+- maintaining two equally primary public install stories
+- letting docs, portal, installer, and marketplace copy drift into different
+  descriptions of the product
 
-### Task 2: Extract the shared installer engine
+## Where TUI Still Matters
 
-**Produces:** `scripts/installer/engine.py`, refactor of `vetcoders_install.py` to consume the engine
-**Depends on:** Task 1
-**Owner:** Python installer agent
-**Acceptance:** `install`, `doctor`, and compact summary mode run through shared engine calls instead of duplicating
-logic inside the CLI file.
+TUI is still valuable when we need:
 
-### Task 3: Replace the pseudo-TUI with a Textual app shell
+- operator-facing diagnostics in terminal-heavy environments
+- a future expert deck for advanced runtime inspection
+- compact local fallback when browser launch is undesirable
 
-**Produces:** `scripts/installer/tui_app.py`, launch shim rewrite in `scripts/installer_tui.py`
-**Depends on:** Tasks 1-2
-**Owner:** TUI agent
-**Acceptance:** Interactive sessions open a real alternate-screen UI with stable header, content area, footer, key
-bindings, resize safety, and quit handling.
+That makes TUI a secondary expert surface, not the first thing a new adopter
+should see.
 
-### Task 4: Promote `config/mise.toml` into the canonical task surface
+## Done Definition
 
-**Produces:** updated `config/mise.toml`, thin `Makefile` wrappers, installer task naming contract
-**Depends on:** Task 2
-**Owner:** Tooling/substrate agent
-**Acceptance:** `make vibecrafted` can become a thin shim over `mise run installer:tui`, non-interactive flows have a
-canonical `mise run installer:compact`, and task naming no longer lives in ad-hoc shell glue. The repo root must also
-resolve those tasks cleanly, either by moving/symlinking the file to canonical discovery or by exporting one official
-`MISE_CONFIG_FILE` path.
+The installer work is "done" for release when:
 
-### Task 5: Implement the six mockup-driven installer screens
+1. the guided GUI path is the public human default
+2. the compact path remains clean for CI and automation
+3. `doctor` validates the staged install truth
+4. the portal, docs, README, and marketplace packet all point to the same
+   install contract
 
-**Produces:** `scripts/installer/widgets/*.py`, mapped to `docs/installer/0..5`
-**Depends on:** Task 3
-**Owner:** TUI agent
-**Acceptance:** Welcome, explain, listing, diagnostics, checklist, installation, and result states visually map to the
-mockups and fit within a normal terminal without becoming a text wall.
-
-### Task 6: Stream real diagnostics and installation events into the UI
-
-**Produces:** worker wiring between Textual app and installer engine, progress panes, details toggle
-**Depends on:** Tasks 2, 3, and 5
-**Owner:** Integration agent
-**Acceptance:** The diagnostics step shows structured status from real checks; the installation step shows live progress
-and retained summary lines without scraping compact stdout.
-
-### Task 7: Align compact CLI and logs with the same engine
-
-**Produces:** `scripts/installer/compact.py`, cleanup of compact footer/result rendering
-**Depends on:** Task 2
-**Owner:** CLI agent
-**Acceptance:** `python3 scripts/vetcoders_install.py install --compact --non-interactive` remains portable, readable,
-and sourced from the same event stream as the TUI.
-
-### Task 8: Wire bootstrap and release gates around the new surface
-
-**Produces:** updates to `install.sh`, `Makefile`, `scripts/check-portable.sh`, TTY smoke tests
-**Depends on:** Tasks 3-7
-**Owner:** Release/QA agent
-**Acceptance:** Interactive `install.sh` always opens the TUI, non-interactive bootstrap still passes, and the release
-path stops lying about installer readiness.
-
-## Test Gates
-
-- **Engine unit tests:** plan construction, diagnostics grouping, event emission, and result aggregation
-- **Textual pilot/snapshot tests:** each screen renders its chrome and key content without crashing
-- **Portable smoke:** `bash scripts/check-portable.sh` passes in non-interactive mode
-- **Interactive smoke:** pseudo-TTY launch proves `install.sh` and `make vibecrafted` open the TUI, not the compact CLI
-- **Dry-run install:**
-  `python3 scripts/vetcoders_install.py install --source . --with-shell --compact --non-interactive --dry-run` remains
-  green
-- **Real-path verification:** install -> doctor -> uninstall -> restore on a temp HOME
-- **UX contract:** no mutation before checklist consent, and no shell file writes unless the user explicitly enables the
-  helper layer
-
-## Living Tree Note
-
-This plan replaces a moving target. The current `scripts/installer_tui.py` should be treated as transitional and should
-not receive more polish passes. If the plan changes:
-
-1. Date the change
-2. Record whether the driver was product truth, runtime truth, or release truth
-3. Update the task dependencies if the shared engine boundary moves
-4. Re-run portable and interactive gates before claiming convergence
-
-## Running This Plan
-
-1. Stop investing in the current pseudo-TUI
-2. Cut the shared engine out of `vetcoders_install.py`
-3. Stand up the Textual app shell with fixed chrome
-4. Port screens one by one from the mockups
-5. Wire the real event stream into diagnostics and installation
-6. Re-run portable and interactive gates
-
-## Quick Win
-
-The smallest sharp move is **Task 1 + Task 4A**:
-
-- define the installer plan/event dataclasses
-- make `config/mise.toml` visible as the actual repo task surface from root
-
-Once those exist, the fake TUI loses its leverage immediately, because the real Textual surface can be built against
-stable installer truth and launched through a canonical substrate instead of scraping printed summaries.
+If those surfaces disagree, the installer is not done, even if the code runs.

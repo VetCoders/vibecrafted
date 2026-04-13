@@ -19,6 +19,12 @@ PLUGIN_NAME = "vibecrafted-framework"
 FIXED_ZIP_DATE_TIME = (2026, 3, 30, 0, 0, 0)
 DEFAULT_FILE_MODE = 0o100644
 IGNORED_PATH_PARTS = {".DS_Store", "__pycache__", ".pytest_cache"}
+SUPPORT_DOC_PATHS = (
+    "docs/QUICK_START.md",
+    "docs/FAQ.md",
+    "docs/RELEASE_KICKOFF.md",
+    "docs/SUBMISSION_FORMS.md",
+)
 
 
 @dataclass(frozen=True)
@@ -191,15 +197,11 @@ def build_bundle_bytes(repo_root: Path) -> bytes:
         "README.md": listing_path.read_text(encoding="utf-8").rstrip() + "\n",
         "LICENSE": (repo_root / "LICENSE").read_text(encoding="utf-8").rstrip() + "\n",
         "VERSION": version + "\n",
-        "docs/QUICK_START.md": (repo_root / "docs" / "QUICK_START.md")
-        .read_text(encoding="utf-8")
-        .rstrip()
-        + "\n",
-        "docs/FAQ.md": (repo_root / "docs" / "FAQ.md")
-        .read_text(encoding="utf-8")
-        .rstrip()
-        + "\n",
     }
+    for relative_path in SUPPORT_DOC_PATHS:
+        generated_files[relative_path] = (repo_root / relative_path).read_text(
+            encoding="utf-8"
+        ).rstrip() + "\n"
 
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as bundle:

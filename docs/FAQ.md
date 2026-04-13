@@ -2,7 +2,7 @@
 
 Public-facing answers for the questions people ask before they trust the framework.
 
-For the public HTML version, see https://vibecrafted.io/presence/faq.html.
+For the public HTML version, see https://vibecrafted.io/en/faq/.
 For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 
 ## Installation
@@ -14,6 +14,9 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 - **Can I install without editing my shell config?**
   Yes. You can opt out of shell-helper installation and source
   `${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh` manually when you want the helpers in your current session.
+
+- **Do you have a guided GUI install path?**
+  Yes. Run `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui` to stage the control plane and open the browser-based installer. It bootstraps foundations first, then runs the same compact installer truth used by automation. If you are already in the repo, use `make vibecrafted` or `make gui-install`.
 
 - **What does `make doctor` check?**
   The doctor verifies the central store, helper availability, symlink health, optional foundations, and shell quietness.
