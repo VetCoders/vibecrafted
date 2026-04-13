@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # Marbles CTL — control interface for active marbles sessions.
-# Subcommands: pause, stop, resume, session, inspect
+# Subcommands: pause, stop, resume, session, inspect, delete
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
@@ -28,11 +28,32 @@ Commands:
   resume <run_id>         Resume paused session
   session [--json]        List active sessions
   inspect <run_id>        Show full state for a session
+  delete <run_id>         Archive a session under marbles/deleted/<run_id>
   gc [--dry-run|--hard]   Clean up stale sessions (default: mark as gc)
 EOF
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────
+_session_dir_for_run_id() {
+  local rid="$1"
+  local direct="$MARBLES_DIR/$rid"
+  if [[ -d "$direct" ]]; then
+    printf '%s\n' "$direct"
+    return 0
+  fi
+
+  local candidate
+  shopt -s nullglob
+  for candidate in "$MARBLES_DIR"/*/"$rid"; do
+    [[ -d "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    shopt -u nullglob
+    return 0
+  done
+  shopt -u nullglob
+  return 1
+}
+
 _find_active_sessions() {
   find "$MARBLES_DIR" -maxdepth 2 -name "state.json" 2>/dev/null | while IFS= read -r sf; do
     local dir
@@ -187,7 +208,9 @@ PY
 cmd_inspect() {
   local rid="${1:-}"
   [[ -n "$rid" ]] || spawn_die "Usage: marbles_ctl.sh inspect <run_id>"
-  local sf="$MARBLES_DIR/$rid/state.json"
+  local session_dir
+  session_dir="$(_session_dir_for_run_id "$rid")" || spawn_die "No state found for $rid"
+  local sf="$session_dir/state.json"
   [[ -f "$sf" ]] || spawn_die "No state found for $rid"
 
   python3 - "$sf" <<'PY'
@@ -233,6 +256,104 @@ if loops:
 
 print()
 PY
+}
+
+cmd_delete() {
+  local rid="${1:-}"
+  [[ -n "$rid" ]] || spawn_die "Usage: marbles_ctl.sh delete <run_id>"
+
+  mkdir -p "$MARBLES_DIR"
+
+  local session_dir
+  session_dir="$(_session_dir_for_run_id "$rid")" || spawn_die "No session found for $rid"
+
+  local current_parent
+  current_parent="$(dirname "$session_dir")"
+
+  local target_state="deleted"
+  local target_parent="$MARBLES_DIR/$target_state"
+  local target_dir="$target_parent/$rid"
+
+  if [[ "$session_dir" == "$target_dir" ]]; then
+    printf '%bSession %s is already archived in %s%b\n' "$_dim" "$rid" "$target_state" "$_reset"
+    return 0
+  fi
+  [[ ! -e "$target_dir" ]] || spawn_die "Target archive path already exists: $target_dir"
+
+  local state_file="$session_dir/state.json"
+  [[ -f "$state_file" ]] || spawn_die "No state found for $rid"
+
+  local session_meta status watcher_alive
+  session_meta=$(python3 - "$state_file" <<'PY'
+import json
+import os
+import sys
+
+status = "?"
+alive = 0
+
+try:
+    with open(sys.argv[1]) as handle:
+        payload = json.load(handle)
+    status = str(payload.get("status", "?"))
+    pid = payload.get("watcher_pid")
+    if pid is not None:
+        try:
+            pid = int(pid)
+        except Exception:
+            pid = None
+    if pid is not None:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            alive = 0
+        except PermissionError:
+            alive = 1
+        else:
+            alive = 1
+except Exception:
+    pass
+
+print(f"{status}\t{alive}")
+PY
+)
+  IFS=$'\t' read -r status watcher_alive <<< "$session_meta"
+  case "$status" in
+    initialized|promise|confirmed|running|paused)
+      if [[ "$watcher_alive" == "1" ]]; then
+        printf '%bSession %s appears live; stop it first%b\n' "$_yellow" "$rid" "$_reset" >&2
+        return 1
+      fi
+      ;;
+  esac
+
+  mkdir -p "$target_parent"
+  mv "$session_dir" "$target_dir"
+
+  python3 - "$target_dir/state.json" "$status" "$session_dir" "$target_state" <<'PY'
+import datetime
+import json
+import sys
+
+state_path, previous_status, archived_from, target_state = sys.argv[1:5]
+archived_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+with open(state_path) as handle:
+    payload = json.load(handle)
+
+payload["previous_status"] = previous_status
+payload["status"] = target_state
+payload["archived_from"] = archived_from
+payload["archived_at"] = archived_at
+payload["updated_at"] = archived_at
+payload["deleted_at"] = archived_at
+
+with open(state_path, "w") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
+
+  printf '%b✓ %s → %s/%s%b\n' "$_green" "$rid" "$target_state" "$rid" "$_reset"
 }
 
 cmd_gc() {
@@ -341,7 +462,8 @@ case "$cmd" in
   resume)  cmd_resume "$@" ;;
   session) cmd_session "$@" ;;
   inspect) cmd_inspect "$@" ;;
+  delete)  cmd_delete "$@" ;;
   gc)      cmd_gc "$@" ;;
   -h|--help|"") usage ;;
-  *) spawn_die "Unknown command: $cmd. Use: pause, stop, resume, session, inspect, gc" ;;
+  *) spawn_die "Unknown command: $cmd. Use: pause, stop, resume, session, inspect, delete, gc" ;;
 esac
