@@ -546,6 +546,69 @@ def test_skill_wrapper_help_is_human_readable_without_agent(tmp_path: Path) -> N
     assert "vc-followup <claude|codex|gemini> [flags]" in result.stdout
 
 
+def test_marbles_help_lists_delete_control_subcommand() -> None:
+    result = subprocess.run(
+        [str(LAUNCHER), "marbles", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert (
+        "vibecrafted marbles <pause|stop|resume|session|inspect|delete> [args]"
+        in result.stdout
+    )
+    assert (
+        "vc-marbles <pause|stop|resume|session|inspect|delete> [args]" in result.stdout
+    )
+
+
+def test_marbles_delete_control_subcommand_routes_to_helper(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    wrapper = tmp_path / "vibecrafted"
+    capture_file = tmp_path / "marbles-delete-args.txt"
+    helper = (
+        home
+        / ".vibecrafted"
+        / "tools"
+        / "vibecrafted-current"
+        / "skills"
+        / "vc-agents"
+        / "shell"
+        / "vetcoders.sh"
+    )
+
+    home.mkdir()
+    wrapper.symlink_to(LAUNCHER)
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    helper.write_text(
+        "\n".join(
+            [
+                "marbles-delete() {",
+                '  printf "%s\\n" "$@" > "$CAPTURE_FILE"',
+                "}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    subprocess.run(
+        ["bash", str(wrapper), "marbles", "delete", "marb-424242"],
+        check=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert payload == ["marb-424242"]
+
+
 def test_agent_subcommand_help_lists_modes() -> None:
     result = subprocess.run(
         [str(LAUNCHER), "codex", "--help"],

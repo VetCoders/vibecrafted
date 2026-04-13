@@ -105,7 +105,7 @@ _has_skill() {
 _is_marbles_control_subcommand() {
   local candidate="${1:-}"
   case "$candidate" in
-    pause|stop|resume|session|inspect) return 0 ;;
+    pause|stop|resume|session|inspect|delete) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -264,8 +264,8 @@ cmd_skill_help() {
   printf '  vibecrafted %s %s [flags]\n' "$skill" "$agent"
   printf '  %s %s [flags]\n' "$wrapper" "$agent"
   if [[ "$skill" == "marbles" ]]; then
-    printf '  vibecrafted marbles <pause|stop|resume|session|inspect> [args]\n'
-    printf '  vc-marbles <pause|stop|resume|session|inspect> [args]\n'
+    printf '  vibecrafted marbles <pause|stop|resume|session|inspect|delete> [args]\n'
+    printf '  vc-marbles <pause|stop|resume|session|inspect|delete> [args]\n'
   fi
   if [[ "$skill" == "justdo" ]]; then
     printf '  Alias: vibecrafted implement <agent> [flags] / vc-implement <agent> [flags]\n'
