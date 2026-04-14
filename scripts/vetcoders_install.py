@@ -5,7 +5,7 @@ Subcommands:
     install         Install the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skill bundle
     doctor          Verify installation health
     list            Show available 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills and the runtime substrate beneath them
-    uninstall       Remove 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills, symlinks, and helpers
+    uninstall       Remove 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills, views, launchers, and helpers
     restore         Restore pre-install state from backup
 
 Usage:
@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -984,20 +985,19 @@ def create_backup(
                 shutil.copytree(src, dst, symlinks=True)
             anything_backed = True
 
-    # Back up per-runtime entries that are copies (not symlinks)
+    # Back up per-runtime entries exactly as they exist (dirs or symlinks)
     for rt in runtimes:
         rt_skills = runtime_skills_dir(rt)
         if not rt_skills.exists():
             continue
         for name in bundle_names:
             entry = rt_skills / name
-            if entry.exists() and not entry.is_symlink():
+            if entry.exists() or entry.is_symlink():
                 dst = backup_dir / "runtimes" / rt / name
                 if dry_run:
                     print(f"  {dim('backup')} {entry} -> {dst}")
                 else:
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(entry, dst, symlinks=True)
+                    _copy_path_to_backup(entry, dst)
                 anything_backed = True
 
     # Back up orphaned vc-* entries before pruning so restore can bring them back.
@@ -1022,6 +1022,17 @@ def create_backup(
         else:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(helper_file, dst)
+        anything_backed = True
+
+    # Back up launchers/wrappers from both portable and legacy bin surfaces.
+    for launcher_bin_dir, entry in collect_installed_launchers():
+        dst = (
+            backup_dir / "launchers" / _launcher_dir_key(launcher_bin_dir) / entry.name
+        )
+        if dry_run:
+            print(f"  {dim('backup')} {entry} -> {dst}")
+        else:
+            _copy_path_to_backup(entry, dst)
         anything_backed = True
 
     # Back up RC files
@@ -1276,6 +1287,19 @@ LAUNCHER_WRAPPERS = [
     *[f"vc-{name}" for name in SKILL_WRAPPER_NAMES],
 ]
 
+LEGACY_LAUNCHER_NAMES = [
+    "marble-pack",
+    "aicx-pack",
+]
+
+FRAMEWORK_LAUNCHER_MARKERS = (
+    "vibecrafted",
+    ".vibecrafted",
+    "vc-agents",
+    "vetcoders",
+    "scripts/vibecraft",
+)
+
 
 def _launcher_bin_dirs() -> List[Path]:
     dirs: List[Path] = []
@@ -1294,6 +1318,108 @@ def _find_launcher_wrapper(name: str) -> Optional[Path]:
         if candidate.exists():
             return candidate
     return None
+
+
+def _uninstall_rc_entries() -> List[Tuple[str, str]]:
+    return [
+        (_shell_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
+        (_shell_source_line(), "VetCoders shell helpers"),
+        (_old_zshrc_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
+        (_old_zshrc_source_line(), "VetCoders shell helpers"),
+        (_launcher_path_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher"),
+    ]
+
+
+def _rc_has_framework_install_hints(rcfile: Path) -> bool:
+    if not rcfile.exists():
+        return False
+    try:
+        content = rcfile.read_text()
+    except OSError:
+        return False
+    for line, comment in _uninstall_rc_entries():
+        if line in content or (comment and f"# {comment}" in content):
+            return True
+    return False
+
+
+def _launcher_dir_key(launcher_bin_dir: Path) -> str:
+    if launcher_bin_dir == vibecrafted_home() / "bin":
+        return "portable-bin"
+    if launcher_bin_dir == Path.home() / ".local" / "bin":
+        return "local-bin"
+    return (
+        re.sub(r"[^a-z0-9]+", "-", str(launcher_bin_dir).lower()).strip("-")
+        or "launcher-bin"
+    )
+
+
+def _launcher_dir_from_key(key: str) -> Optional[Path]:
+    mapping = {
+        "portable-bin": vibecrafted_home() / "bin",
+        "local-bin": Path.home() / ".local" / "bin",
+    }
+    return mapping.get(key)
+
+
+def _launcher_file_contains_framework_markers(path: Path) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        payload = path.read_text(encoding="utf-8", errors="ignore")[:8192].lower()
+    except OSError:
+        return False
+    return any(marker in payload for marker in FRAMEWORK_LAUNCHER_MARKERS)
+
+
+def _is_framework_managed_launcher(entry: Path) -> bool:
+    name = entry.name.lower()
+    explicit_names = {
+        "vibecrafted",
+        "vibecraft",
+        *[wrapper.lower() for wrapper in LAUNCHER_WRAPPERS],
+        *[legacy.lower() for legacy in LEGACY_LAUNCHER_NAMES],
+    }
+    if name in explicit_names:
+        return True
+
+    if entry.is_symlink():
+        try:
+            target_name = Path(os.readlink(entry)).name.lower()
+        except OSError:
+            target_name = ""
+        if target_name in {"vibecrafted", "vibecraft"}:
+            return True
+        try:
+            resolved = entry.resolve(strict=False)
+        except OSError:
+            resolved = None
+        if resolved is not None:
+            if resolved.name.lower() in {"vibecrafted", "vibecraft"}:
+                return True
+            if _launcher_file_contains_framework_markers(resolved):
+                return True
+
+    hinted_name = (
+        name.startswith("vc-") or name.startswith("vibecraft") or name.endswith("-pack")
+    )
+    if hinted_name and _launcher_file_contains_framework_markers(entry):
+        return True
+
+    return False
+
+
+def collect_installed_launchers() -> List[Tuple[Path, Path]]:
+    launchers: List[Tuple[Path, Path]] = []
+    for launcher_bin_dir in _launcher_bin_dirs():
+        if not launcher_bin_dir.exists():
+            continue
+        for entry in sorted(launcher_bin_dir.iterdir()):
+            if not (entry.is_symlink() or entry.is_file()):
+                continue
+            if _is_framework_managed_launcher(entry):
+                launchers.append((launcher_bin_dir, entry))
+    return launchers
 
 
 # ---------------------------------------------------------------------------
@@ -3468,6 +3594,15 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     state = InstallState.load(store_path)
     dry_run = args.dry_run
     bundle = set(_known_bundle_names())
+    helper_file = _helper_target_path()
+    legacy_file = _helper_legacy_path()
+    helper_paths = [hf for hf in (helper_file, legacy_file) if hf.exists()]
+    launchers = collect_installed_launchers()
+    rc_cleanup_targets = [
+        Path.home() / rcname
+        for rcname in (".zshrc", ".bashrc")
+        if _rc_has_framework_install_hints(Path.home() / rcname)
+    ]
 
     # Use manifest if available, otherwise use bundle names
     skill_names = state.skills if state.skills else [n for n in bundle]
@@ -3479,14 +3614,31 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
     print(f"\n{bold('𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Uninstall')}\n")
 
-    if not skill_names:
-        print(dim("Nothing to uninstall — no manifest and no known skills found."))
+    if not (skill_names or launchers or helper_paths or rc_cleanup_targets):
+        print(
+            dim(
+                "Nothing to uninstall — no tracked skills, launchers, helpers, or shell hooks found."
+            )
+        )
         return 0
 
-    print(f"  Will remove {len(skill_names)} skills from:")
-    print(f"    Store: {store_path}")
-    for rt in runtimes:
-        print(f"    Symlinks: $VIBECRAFTED_ROOT/.{rt}/skills/")
+    if skill_names:
+        print(f"  Will remove {len(skill_names)} skills from:")
+        print(f"    Store: {store_path}")
+        for rt in runtimes:
+            print(f"    Symlinks: $VIBECRAFTED_ROOT/.{rt}/skills/")
+    if launchers:
+        print("  Will remove launcher commands from:")
+        for launcher_bin_dir in _launcher_bin_dirs():
+            print(f"    Launchers: {launcher_bin_dir}")
+    if helper_paths:
+        print("  Will remove helper files:")
+        for hf in helper_paths:
+            print(f"    Helper: {hf}")
+    if rc_cleanup_targets:
+        print("  Will clean shell startup files:")
+        for rcfile in rc_cleanup_targets:
+            print(f"    RC: {rcfile}")
     print()
 
     if _IS_TTY and not dry_run:
@@ -3535,49 +3687,59 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     print()
 
     # Remove shell helpers
-    helper_file = _helper_target_path()
-    legacy_file = _helper_legacy_path()
-    any_helper = helper_file.exists() or legacy_file.exists()
+    any_helper = bool(helper_paths)
     if any_helper:
         print(bold("Removing shell helpers..."))
-        for hf in (helper_file, legacy_file):
-            if hf.exists():
-                if dry_run:
-                    print(f"  {dim('rm')} {hf}")
-                else:
-                    hf.unlink()
-                    print(f"  {dim('-')} {hf}")
+        for hf in helper_paths:
+            if dry_run:
+                print(f"  {dim('rm')} {hf}")
+            else:
+                hf.unlink()
+                print(f"  {dim('-')} {hf}")
+        print()
 
-        # Remove source lines from both .zshrc and .bashrc
-        source_entries = [
-            (_shell_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
-            (_shell_source_line(), "VetCoders shell helpers"),
-            (_old_zshrc_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
-            (_old_zshrc_source_line(), "VetCoders shell helpers"),
-            (_launcher_path_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher"),
-        ]
-        for rcname in (".zshrc", ".bashrc"):
-            rcfile = Path.home() / rcname
-            if not rcfile.exists():
+    if launchers:
+        print(bold("Removing launcher commands..."))
+        for _launcher_bin_dir, entry in launchers:
+            if dry_run:
+                print(f"  {dim('rm')} {entry}")
+            else:
+                if entry.is_symlink() or entry.is_file():
+                    entry.unlink(missing_ok=True)
+                elif entry.is_dir():
+                    shutil.rmtree(entry)
+                print(f"  {dim('-')} {entry}")
+        print()
+
+    # Always scrub launcher PATH/source hints even if the helper files were already gone.
+    cleaned_rc_files = 0
+    for rcname in (".zshrc", ".bashrc"):
+        rcfile = Path.home() / rcname
+        if not rcfile.exists():
+            continue
+        content = rcfile.read_text()
+        changed = False
+        for line, comment in _uninstall_rc_entries():
+            if line not in content and (not comment or f"# {comment}" not in content):
                 continue
-            content = rcfile.read_text()
-            changed = False
-            for line, comment in source_entries:
-                if line not in content and (
-                    not comment or f"# {comment}" not in content
-                ):
-                    continue
-                if not _is_writable(rcfile):
-                    print(f"  {WARN} {rcfile} is locked — cannot remove source line")
-                    break
-                elif dry_run:
-                    print(f"  {dim('remove source line from')} {rcfile}")
-                else:
-                    content, removed = _strip_rc_entry(content, line, comment)
-                    changed = changed or removed > 0
-            if changed and not dry_run:
-                rcfile.write_text(content)
-                print(f"  {dim('-')} source line from {rcfile}")
+            if not _is_writable(rcfile):
+                print(
+                    f"  {WARN} {rcfile} is locked — cannot remove launcher/source hints"
+                )
+                break
+            if dry_run:
+                print(f"  {dim('remove source line from')} {rcfile}")
+                changed = True
+                continue
+            content, removed = _strip_rc_entry(content, line, comment)
+            changed = changed or removed > 0
+        if changed and not dry_run:
+            rcfile.write_text(content)
+            print(f"  {dim('-')} source line from {rcfile}")
+            cleaned_rc_files += 1
+        elif changed:
+            cleaned_rc_files += 1
+    if cleaned_rc_files:
         print()
 
     # Remove manifest
@@ -3695,6 +3857,31 @@ def cmd_restore(args: argparse.Namespace) -> int:
                 restored += 1
         print()
 
+    launcher_backup = backup_dir / "launchers"
+    if launcher_backup.is_dir():
+        print(bold("Restoring launcher commands..."))
+        for key_dir in sorted(launcher_backup.iterdir()):
+            if not key_dir.is_dir():
+                continue
+            launcher_bin_dir = _launcher_dir_from_key(key_dir.name)
+            if launcher_bin_dir is None:
+                print(f"  {WARN} Unknown launcher backup target: {key_dir.name}")
+                continue
+            launcher_bin_dir.mkdir(parents=True, exist_ok=True)
+            for entry in sorted(key_dir.iterdir()):
+                if not (entry.is_dir() or entry.is_symlink() or entry.is_file()):
+                    continue
+                dst = launcher_bin_dir / entry.name
+                if dry_run:
+                    print(f"  {dim('restore')} {dst}")
+                else:
+                    _restore_path_from_backup(entry, dst)
+                    if dst.is_file() and not dst.is_symlink():
+                        dst.chmod(0o755)
+                    print(f"  {OK} {dst}")
+                restored += 1
+        print()
+
     # Remove manifest (since we're reverting to pre-install state)
     state_file = store_path / STATE_FILE
     if state_file.exists() and not dry_run:
@@ -3789,7 +3976,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # uninstall
     p_uninstall = sub.add_parser(
-        "uninstall", help="Remove 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills, views, and helpers"
+        "uninstall", help="Remove 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills, views, launchers, and helpers"
     )
     p_uninstall.add_argument(
         "--dry-run", "-n", action="store_true", help="Show what would be done"
