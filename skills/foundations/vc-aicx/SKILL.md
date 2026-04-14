@@ -31,7 +31,14 @@ for the _why_, not just a blind dump of _how_.
    sidecar metadata for selective re-entry.
    b) The cli reference: - the full reference can be retrieved by calling `aicx --help`.
    c) The legacy methods - **`aicx_refs(hours=<retrieval_hours>, project="<project>", strict=true)`** — list stored context files - **`aicx_rank(project=<project>, hours=168, strict=true, top=5)`** — prioritize densest chunks
+
    > These are the legacy entry points. No longer recommended as `aicx_search` provides all their functionality and more.
+
+2. `aicx intents` (cli):
+   Extracts project intents, outcomes, tasks, and architectural decisions from session histories into structured formats.
+   - Example extraction: `aicx intents -p <ProjectName> --emit json | tee intents.json`
+   - Summarize with jq: `jq 'map(.kind) | group_by(.) | map({kind: .[0], count: length})' intents.json`
+   - List recent intents: `jq -r '.[] | select(.kind == "intent") | "[\\(.date)] \(.agent): \(.summary[0:150])..." ' intents.json | sort -r | head -n 15`
 
 ## What to understand:
 

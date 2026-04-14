@@ -121,6 +121,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
 
         python3 - "$MARBLES_SPAWN_CAPTURE" "$SPAWN_PLAN" "$SPAWN_REPORT" "$success_hook" "$failure_hook" "$agent" "$model" "$SPAWN_RUN_ID" "$SPAWN_LOOP_NR" <<'PY'
         import json
+        import os
         import pathlib
         import sys
 
@@ -134,6 +135,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
             "model": model,
             "run_id": run_id,
             "loop": int(loop_nr or "0"),
+            "suppress_report_hint": os.environ.get("VIBECRAFTED_SUPPRESS_REPORT_HINT", ""),
         }
         capture_path = pathlib.Path(capture)
         capture_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1142,6 +1144,50 @@ def test_marbles_watcher_waits_for_meta_completion_before_advancing(
 
     events = _load_spawn_events(capture_file)
     assert len(events) == 2
+    assert all(event["suppress_report_hint"] == "1" for event in events)
+
+
+def test_marbles_no_watch_keeps_report_hint_enabled(
+    tmp_path: Path,
+) -> None:
+    scripts_dir, capture_file = _prepare_fake_marbles_bundle(tmp_path)
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    home.mkdir()
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+
+    subprocess.run(
+        [
+            "bash",
+            str(scripts_dir / "marbles_spawn.sh"),
+            "--agent",
+            "gemini",
+            "--count",
+            "1",
+            "--runtime",
+            "headless",
+            "--no-watch",
+            "--prompt",
+            "Keep the extra report hint outside watcher mode",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    events = _load_spawn_events(capture_file)
+    assert len(events) == 1
+    assert events[0]["suppress_report_hint"] == ""
 
 
 def test_marbles_watcher_does_not_consume_failed_fallback_report(

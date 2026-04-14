@@ -2,7 +2,6 @@
 set -euo pipefail
 
 export VIBECRAFTED_OPERATOR_MODE=1
-export VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=down
 
 shell_bin="${SHELL:-}"
 if [[ -z "$shell_bin" || ! -x "$shell_bin" ]]; then
@@ -24,5 +23,9 @@ printf 'Spawn policy:\n'
 printf '  normal workflows -> launcher opens below this pane\n'
 printf '  marbles -> state launcher opens below, loop panes grow to the right\n'
 printf '\n'
+
+if [[ -x "$SCRIPT_DIR/restore-orphaned.sh" ]]; then
+  bash "$SCRIPT_DIR/restore-orphaned.sh" &
+fi
 
 exec "$shell_bin" -l

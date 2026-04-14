@@ -10,6 +10,10 @@ Terminal-native path for the human kickoff:
 curl -fsSL https://vibecrafted.io/install.sh | bash
 ```
 
+The bootstrap explains what it will do and asks before proceeding on an
+attended terminal. Pass `--yes` if you want to pre-approve that bootstrap
+prompt.
+
 This path stages the control plane, bootstraps the foundation layer, and runs
 the compact installer truth used by automation as well.
 

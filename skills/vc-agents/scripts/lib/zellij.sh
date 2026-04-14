@@ -90,7 +90,7 @@ spawn_in_marbles_tab() {
   [[ -n "$marbles_tab" ]] || return 1
 
   # Capture operator's current tab before switching.
-  original_tab="$(spawn_current_tab_name)"
+  original_tab="${ZELLIJ_TAB_NAME:-$(spawn_current_tab_name)}"
 
   cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
   spawn_write_command_script "$cmd_script" "$launch_cmd"

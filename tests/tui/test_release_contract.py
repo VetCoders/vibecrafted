@@ -8,11 +8,12 @@ PROMISE = "release engine for ai-built software"
 TAGLINE = "ship ai-built software without the vibe hangover"
 PRIMARY_CTA = "curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui"
 SECONDARY_CTA = "curl -fsSL https://vibecrafted.io/install.sh | bash"
+TRUST_PROMISE = "explains what it will do and asks before proceeding"
 
 EXPECTED_COPY = {
-    "README.md": (PROMISE, TAGLINE, PRIMARY_CTA, SECONDARY_CTA),
+    "README.md": (PROMISE, TAGLINE, PRIMARY_CTA, SECONDARY_CTA, TRUST_PROMISE),
     "docs/MARKETPLACE_LISTING.md": (PROMISE,),
-    "docs/QUICK_START.md": (PRIMARY_CTA, SECONDARY_CTA),
+    "docs/QUICK_START.md": (PRIMARY_CTA, SECONDARY_CTA, TRUST_PROMISE),
     "docs/RELEASE_KICKOFF.md": (PROMISE, PRIMARY_CTA, SECONDARY_CTA),
     "docs/SUBMISSION_FORMS.md": (PROMISE, PRIMARY_CTA, SECONDARY_CTA),
     "docs/installer/SCAFFOLD.md": (PROMISE, PRIMARY_CTA, SECONDARY_CTA),

@@ -245,7 +245,14 @@ if [[ -n "$ancestor_model" && "$agent" != "codex" ]]; then
 fi
 
 if (( use_watcher )); then
-  VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right VIBECRAFTED_STORE_DIR="$store" VIBECRAFTED_STORE_ROOT="$root_dir" bash "$SCRIPT_DIR/${agent}_spawn.sh" "${spawn_args[@]}" "$l1_plan" &
+  # The watcher redraws the last three status lines in place. Suppress the
+  # extra report-path hint from the child spawn so long paths do not get
+  # interleaved into that redraw surface.
+  VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right \
+    VIBECRAFTED_STORE_DIR="$store" \
+    VIBECRAFTED_STORE_ROOT="$root_dir" \
+    VIBECRAFTED_SUPPRESS_REPORT_HINT=1 \
+    bash "$SCRIPT_DIR/${agent}_spawn.sh" "${spawn_args[@]}" "$l1_plan" &
 
   exec bash "$SCRIPT_DIR/marbles_watcher.sh" \
     "$marbles_run_id" "$state_dir" "$count" \

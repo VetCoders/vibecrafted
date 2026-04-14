@@ -133,6 +133,9 @@ Retrieve stored chunks by steering metadata (frontmatter fields).
 Filters by run_id, prompt_id, agent, kind, project, and/or date range using
 sidecar metadata — no filesystem grep needed.
 
+c) The `aicx intents` CLI capability:
+A powerful feature to extract all agent intents, outcomes, tasks, and decisions from the project history into a structured JSON file (e.g., `aicx intents -p <project> --emit json | tee intents.json`). Use `jq` to summarize them and grasp the project's strategic direction instantly.
+
 The full reference for the binaries can be found in the `vc-aicx` SKILL which offers
 a detailed information and use-cases or simply by calling `aicx --help`.
 
