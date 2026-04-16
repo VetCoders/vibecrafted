@@ -195,14 +195,13 @@ def test_makefile_vibecrafted_dry_run_keeps_path_before_uv_run(
     assert "export PATH=" in out, out
     assert "uv run --project" in out, out
 
-    # The `fi` and the export must be joined by `; \` — a blank line in
-    # `make -n` output separates independent shells.
-    idx_fi = out.find("\tfi;")
+    # The PATH export and `uv run` must stay in a single shell chunk.
     idx_export = out.find("export PATH=")
     idx_uv = out.find("uv run --project")
-    assert idx_fi != -1 and idx_export != -1 and idx_uv != -1
-    # No blank line between `fi;` and `uv run` — same shell.
-    segment = out[idx_fi:idx_uv]
+    assert idx_export != -1 and idx_uv != -1
+    assert idx_export < idx_uv
+    # No blank line between `export PATH` and `uv run` — same shell.
+    segment = out[idx_export:idx_uv]
     assert "\n\n" not in segment, (
         "Detected shell boundary between `fi` and `uv run` in make -n "
         f"output; PATH export would not survive. Segment:\n{segment!r}"
@@ -219,10 +218,11 @@ def test_makefile_install_dry_run_keeps_path_before_uv_run(
     assert "uv run --project" in out, out
     assert "--yes" in out, out
 
-    idx_fi = out.find("\tfi;")
+    idx_export = out.find("export PATH=")
     idx_uv = out.find("uv run --project")
-    assert idx_fi != -1 and idx_uv != -1
-    segment = out[idx_fi:idx_uv]
+    assert idx_export != -1 and idx_uv != -1
+    assert idx_export < idx_uv
+    segment = out[idx_export:idx_uv]
     assert "\n\n" not in segment, (
         "Detected shell boundary between `fi` and `uv run` in install "
         f"recipe make -n output. Segment:\n{segment!r}"
