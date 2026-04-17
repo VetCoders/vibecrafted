@@ -38,12 +38,11 @@ fn run_app(config: vibecrafted_operator::config::AppConfig) -> anyhow::Result<()
                 .checked_sub(last_tick.elapsed())
                 .unwrap_or(Duration::ZERO);
 
-            if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    if handle_key(&mut app, key)? {
-                        break;
-                    }
-                }
+            if event::poll(timeout)?
+                && let Event::Key(key) = event::read()?
+                && handle_key(&mut app, key)?
+            {
+                break;
             }
 
             if last_tick.elapsed() >= app.config.tick_rate {
@@ -72,13 +71,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
 
     match app.focus {
         LaunchFocus::EditPrompt => match key.code {
-            KeyCode::Esc => {
+            KeyCode::Esc | KeyCode::Enter => {
                 app.focus = LaunchFocus::Browse;
-                return Ok(false);
-            }
-            KeyCode::Enter => {
-                app.focus = LaunchFocus::Browse;
-                return Ok(false);
             }
             KeyCode::Backspace => {
                 app.launch_prompt.pop();

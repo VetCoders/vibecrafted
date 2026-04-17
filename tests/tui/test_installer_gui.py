@@ -73,6 +73,16 @@ def test_preflight_payload_summarizes_diagnostics(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr(installer_gui, "run_diagnostics", lambda: diagnostics)
     monkeypatch.setattr(
         installer_gui,
+        "sync_state",
+        lambda: {
+            "active_runs": [],
+            "recent_runs": [],
+            "warnings": [],
+            "events": [],
+        },
+    )
+    monkeypatch.setattr(
+        installer_gui,
         "start_here_path",
         lambda: tmp_path / "guide" / "START_HERE.md",
     )
@@ -81,6 +91,9 @@ def test_preflight_payload_summarizes_diagnostics(monkeypatch, tmp_path: Path) -
         "helper_layer_path",
         lambda: tmp_path / ".config" / "vetcoders" / "vc-skills.sh",
     )
+    skill_store = tmp_path / ".vibecrafted" / "skills"
+    (skill_store / "vc-init").mkdir(parents=True)
+    monkeypatch.setattr(installer_gui, "framework_store_dir", lambda: skill_store)
 
     controller = installer_gui.InstallController(str(tmp_path))
     payload = controller.preflight_payload()
@@ -95,6 +108,13 @@ def test_preflight_payload_summarizes_diagnostics(monkeypatch, tmp_path: Path) -
         "Bootstrap foundations",
         "Install Vibecrafted",
     ]
+    assert payload["launcher_defaults"]["workflows"] == [
+        "workflow",
+        "research",
+        "review",
+        "marbles",
+    ]
+    assert payload["control_plane"]["skills_ready"] == 1
     assert payload["status"]["completed"] is False
 
 
@@ -139,6 +159,19 @@ def test_build_html_renders_wizard_shell() -> None:
                     "command": "python3 scripts/vetcoders_install.py install --compact",
                 },
             ],
+            "control_plane": {
+                "active_runs": [],
+                "recent_runs": [],
+                "warnings": [],
+                "events": [],
+                "helper_path": "~/.config/vetcoders/vc-skills.sh",
+                "skills_ready": 3,
+            },
+            "launcher_defaults": {
+                "workflows": ["workflow", "research", "review", "marbles"],
+                "agents": ["claude", "codex", "gemini"],
+                "runtimes": ["headless", "terminal", "visible"],
+            },
             "categories": [],
             "status": {"completed": False, "running": False, "output": []},
         }
@@ -152,6 +185,51 @@ def test_build_html_renders_wizard_shell() -> None:
     assert "height: calc(100dvh - 36px);" in html
     assert "overflow: hidden;" in html
     assert "-webkit-overflow-scrolling: touch;" in html
-    assert "grid-template-rows: auto minmax(0, 1fr);" in html
+    assert "grid-template-rows: auto auto minmax(0, 1fr) auto;" in html
     assert "document.addEventListener('keydown'" in html
     assert "activeSlide?.querySelector('.slide-body')?.scrollTo" in html
+    assert 'id="launcher-form"' in html
+    assert 'id="active-run-list"' in html
+    assert "Vibecrafted Control Plane" in html
+
+
+def test_launch_workflow_returns_control_plane_payload(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        installer_gui,
+        "normalize_launch_spec",
+        lambda payload, source_dir: {"payload": payload, "source_dir": source_dir},
+    )
+    monkeypatch.setattr(
+        installer_gui,
+        "launch_workflow",
+        lambda spec, source_dir, env=None: {
+            "accepted": True,
+            "message": "launched",
+            "spec": spec,
+            "source_dir": source_dir,
+            "env_path": env.get("PATH", "") if env else "",
+        },
+    )
+    monkeypatch.setattr(
+        installer_gui,
+        "sync_state",
+        lambda: {
+            "active_runs": [{"run_id": "run-1"}],
+            "recent_runs": [],
+            "warnings": [],
+            "events": [],
+        },
+    )
+    monkeypatch.setattr(
+        installer_gui, "framework_store_dir", lambda: tmp_path / "skills"
+    )
+    controller = installer_gui.InstallController(str(tmp_path))
+
+    ok, payload = controller.launch_workflow({"skill": "workflow", "prompt": "Ship it"})
+
+    assert ok is True
+    assert payload["accepted"] is True
+    assert payload["spec"]["payload"]["skill"] == "workflow"
+    assert payload["source_dir"] == str(tmp_path)

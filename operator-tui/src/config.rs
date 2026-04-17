@@ -41,11 +41,6 @@ pub fn parse_args() -> anyhow::Result<CliOptions> {
                     .ok_or_else(|| anyhow::anyhow!("--state-root requires a value"))?;
                 options.state_root = Some(PathBuf::from(value));
             }
-            "--state-root=" => {
-                return Err(anyhow::anyhow!(
-                    "--state-root= is not supported; use --state-root <dir>"
-                ));
-            }
             _ if arg.starts_with("--state-root=") => {
                 options.state_root = Some(PathBuf::from(arg.trim_start_matches("--state-root=")));
             }

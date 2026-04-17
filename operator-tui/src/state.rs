@@ -2,7 +2,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -16,10 +16,17 @@ pub struct ControlPlaneState {
 
 impl ControlPlaneState {
     pub fn load(root: impl AsRef<Path>) -> io::Result<Self> {
-        let root = root.as_ref().to_path_buf();
-        let runs = load_runs(&root)?;
-        let events = load_events(&root)?;
-        Ok(Self { root, runs, events })
+        let requested_root = root.as_ref().to_path_buf();
+        let Some(root) = SafeControlPlaneRoot::new(root.as_ref())? else {
+            return Ok(Self::empty(requested_root));
+        };
+        let runs = root.load_runs()?;
+        let events = root.load_events()?;
+        Ok(Self {
+            root: root.as_path().to_path_buf(),
+            runs,
+            events,
+        })
     }
 
     pub fn empty(root: impl AsRef<Path>) -> Self {
@@ -154,7 +161,7 @@ pub fn render_runs(state: &ControlPlaneState) -> Vec<RenderedRun> {
         })
         .collect();
 
-    runs.sort_by(|left, right| compare_runs(left, right, now));
+    runs.sort_by(compare_runs);
     runs
 }
 
@@ -188,22 +195,19 @@ pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
             RunKind::Completed
         };
     }
-
     if is_active_like(&state) {
         if is_stale(heartbeat, now) {
             return RunKind::Stalled;
         }
         return RunKind::Active;
     }
-
     if is_recent(heartbeat, now) {
         return RunKind::Recent;
     }
-
     RunKind::Unknown
 }
 
-fn compare_runs(left: &RenderedRun, right: &RenderedRun, now: DateTime<Utc>) -> Ordering {
+fn compare_runs(left: &RenderedRun, right: &RenderedRun) -> Ordering {
     left.kind
         .sort_rank()
         .cmp(&right.kind.sort_rank())
@@ -216,24 +220,6 @@ fn compare_runs(left: &RenderedRun, right: &RenderedRun, now: DateTime<Utc>) -> 
             )
         })
         .then_with(|| left.snapshot.run_id.cmp(&right.snapshot.run_id))
-        .then_with(|| {
-            let left_recent = is_recent(
-                left.snapshot
-                    .updated_at
-                    .as_deref()
-                    .and_then(parse_timestamp),
-                now,
-            );
-            let right_recent = is_recent(
-                right
-                    .snapshot
-                    .updated_at
-                    .as_deref()
-                    .and_then(parse_timestamp),
-                now,
-            );
-            right_recent.cmp(&left_recent)
-        })
 }
 
 fn compare_timestamp(left: &Option<String>, right: &Option<String>) -> Ordering {
@@ -270,99 +256,112 @@ fn age_label(snapshot: &RunSnapshot, now: DateTime<Utc>) -> String {
         .unwrap_or_else(|| "age unknown".to_string())
 }
 
-fn load_runs(root: &Path) -> io::Result<Vec<RunSnapshot>> {
-    let mut snapshots = HashMap::<String, RunSnapshot>::new();
-    for path in run_snapshot_files(root)? {
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        let parsed: Result<RunSnapshot, _> = serde_json::from_str(&text);
-        if let Ok(snapshot) = parsed {
-            snapshots.insert(snapshot.run_id.clone(), snapshot);
-        }
-    }
-    Ok(snapshots.into_values().collect())
+#[derive(Debug, Clone)]
+struct SafeControlPlaneRoot {
+    path: PathBuf,
 }
 
-fn load_events(root: &Path) -> io::Result<Vec<RunEvent>> {
-    let mut events = Vec::new();
-    for path in event_stream_files(root)? {
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
+impl SafeControlPlaneRoot {
+    fn new(root: &Path) -> io::Result<Option<Self>> {
+        if !root.exists() {
+            return Ok(None);
+        }
+        let canonical = fs::canonicalize(root)?;
+        if canonical.is_dir() {
+            Ok(Some(Self { path: canonical }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn as_path(&self) -> &Path {
+        &self.path
+    }
+
+    fn runs_dir(&self) -> PathBuf {
+        self.path.join("runs")
+    }
+
+    fn event_stream_path(&self) -> PathBuf {
+        self.path.join("events.jsonl")
+    }
+
+    fn run_snapshot_files(&self) -> io::Result<Vec<PathBuf>> {
+        let runs_dir = self.runs_dir();
+        let mut files = Vec::new();
+        if !runs_dir.exists() {
+            return Ok(files);
+        }
+        for entry in fs::read_dir(runs_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if !is_json_file(&path) {
+                continue;
+            }
+            let Some(path) = self.safe_file(&path)? else {
+                continue;
+            };
+            files.push(path);
+        }
+        Ok(files)
+    }
+
+    fn load_runs(&self) -> io::Result<Vec<RunSnapshot>> {
+        let mut snapshots = HashMap::<String, RunSnapshot>::new();
+        for path in self.run_snapshot_files()? {
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let parsed: Result<RunSnapshot, _> = serde_json::from_str(&text);
+            if let Ok(snapshot) = parsed {
+                snapshots.insert(snapshot.run_id.clone(), snapshot);
+            }
+        }
+        Ok(snapshots.into_values().collect())
+    }
+
+    fn load_events(&self) -> io::Result<Vec<RunEvent>> {
+        let path = self.event_stream_path();
+        let Some(path) = self.safe_file(&path)? else {
+            return Ok(Vec::new());
         };
+        let Ok(text) = fs::read_to_string(&path) else {
+            return Ok(Vec::new());
+        };
+        let mut events = Vec::new();
         for line in text.lines().filter(|line| !line.trim().is_empty()) {
             if let Ok(event) = serde_json::from_str::<RunEvent>(line) {
                 events.push(event);
             }
         }
+        Ok(events)
     }
-    Ok(events)
-}
 
-fn run_snapshot_files(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let runs_dir = root.join("runs");
-    safe_child_files(&runs_dir, root, |path| {
-        path.extension().and_then(|ext| ext.to_str()) == Some("json")
-    })
-}
-
-fn event_stream_files(root: &Path) -> io::Result<Vec<PathBuf>> {
-    let events_path = root.join("events.jsonl");
-    if !events_path.is_file() {
-        return Ok(Vec::new());
-    }
-    let Some(path) = sanitize_control_plane_path(root, &events_path)? else {
-        return Ok(Vec::new());
-    };
-    Ok(vec![path])
-}
-
-fn safe_child_files<F>(directory: &Path, root: &Path, predicate: F) -> io::Result<Vec<PathBuf>>
-where
-    F: Fn(&Path) -> bool,
-{
-    let mut files = Vec::new();
-    if !directory.is_dir() {
-        return Ok(files);
-    }
-    let mut seen = HashSet::new();
-    for entry in fs::read_dir(directory)? {
-        let Ok(entry) = entry else {
-            continue;
+    fn safe_file(&self, path: &Path) -> io::Result<Option<PathBuf>> {
+        let meta = match fs::symlink_metadata(path) {
+            Ok(meta) => meta,
+            Err(_) => return Ok(None),
         };
-        if !entry.file_type().is_file() {
-            continue;
+        if meta.file_type().is_symlink() {
+            return Ok(None);
         }
-        let path = entry.path();
-        if !predicate(&path) {
-            continue;
-        }
-        let Some(path) = sanitize_control_plane_path(root, &path)? else {
-            continue;
+        let Some(parent) = path.parent() else {
+            return Ok(None);
         };
-        if seen.insert(path.clone()) {
-            files.push(path);
+        if fs::symlink_metadata(parent)?.file_type().is_symlink() {
+            return Ok(None);
+        }
+        let canonical = fs::canonicalize(path)?;
+        if canonical.starts_with(&self.path) {
+            Ok(Some(canonical))
+        } else {
+            Ok(None)
         }
     }
-    Ok(files)
 }
 
-fn sanitize_control_plane_path(root: &Path, candidate: &Path) -> io::Result<Option<PathBuf>> {
-    let canonical_root = if root.exists() {
-        fs::canonicalize(root)?
-    } else {
-        return Ok(None);
-    };
-    let canonical_candidate = if candidate.exists() {
-        fs::canonicalize(candidate)?
-    } else {
-        return Ok(None);
-    };
-    if canonical_candidate.starts_with(&canonical_root) {
-        Ok(Some(canonical_candidate))
-    } else {
-        Ok(None)
-    }
+fn is_json_file(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("json")
 }
 
 fn parse_timestamp(raw: &str) -> Option<DateTime<Utc>> {

@@ -56,10 +56,6 @@ impl App {
         self.runs.get(self.selected)
     }
 
-    pub fn run_count(&self) -> usize {
-        self.runs.len()
-    }
-
     pub fn set_launch_kind(&mut self, kind: LaunchKind) {
         self.launch_kind = kind;
         self.launch_prompt = default_prompt(kind);
@@ -136,10 +132,10 @@ impl App {
             "completed",
             "unknown",
         ] {
-            if let Some(count) = counts.get(label) {
-                if *count > 0 {
-                    parts.push(format!("{label} {count}"));
-                }
+            if let Some(count) = counts.get(label)
+                && *count > 0
+            {
+                parts.push(format!("{label} {count}"));
             }
         }
         parts.join(" | ")
@@ -205,27 +201,21 @@ impl App {
         let Some(run) = self.selected_run() else {
             return Vec::new();
         };
-        let mut lines = Vec::new();
         if run.recent_events.is_empty() {
-            lines.push("No recent events for this run.".to_string());
-            return lines;
+            return vec!["No recent events for this run.".to_string()];
         }
-        for event in &run.recent_events {
-            let message = event.message.as_deref().unwrap_or(event.kind.as_str());
-            lines.push(format!("{} {}", event.ts, message));
-        }
-        lines
+        run.recent_events
+            .iter()
+            .map(|event| {
+                let message = event.message.as_deref().unwrap_or(event.kind.as_str());
+                format!("{} {}", event.ts, message)
+            })
+            .collect()
     }
 
     pub fn prompt_lines(&self) -> Vec<String> {
-        let commands = match self.launch_kind {
-            LaunchKind::Workflow => "workflow",
-            LaunchKind::Research => "research",
-            LaunchKind::Review => "review",
-            LaunchKind::Marbles => "marbles",
-        };
         let mut lines = vec![
-            format!("kind: {}", commands),
+            format!("kind: {}", self.launch_kind.label()),
             format!("agent: {}", self.selected_agent()),
             format!("prompt: {}", self.launch_prompt),
             "keys: 1 workflow | 2 research | 3 review | 4 marbles | a agent | e edit prompt | Enter launch".to_string(),

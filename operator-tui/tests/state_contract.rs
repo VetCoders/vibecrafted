@@ -5,6 +5,9 @@ use tempfile::tempdir;
 use vibecrafted_operator::launch::{build_launch_command, LaunchKind, LaunchRequest};
 use vibecrafted_operator::state::{classify_run, ControlPlaneState, RunKind, RunSnapshot};
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 #[test]
 fn loads_runs_and_events_from_control_plane_state() {
     let dir = tempdir().unwrap();
@@ -36,6 +39,26 @@ fn loads_runs_and_events_from_control_plane_state() {
     assert_eq!(state.events.len(), 1);
     assert_eq!(state.runs[0].run_id, "run-a");
     assert_eq!(state.events[0].kind, "heartbeat");
+}
+
+#[test]
+fn ignores_symlink_escapes_in_control_plane_root() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("runs")).unwrap();
+    let external = tempdir().unwrap();
+    let escaped = external.path().join("escaped.json");
+    fs::write(
+        &escaped,
+        r#"{"run_id":"escape","state":"active","updated_at":"2026-04-16T10:00:00Z"}"#,
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    symlink(&escaped, root.join("runs/symlink.json")).unwrap();
+
+    let state = ControlPlaneState::load(root).unwrap();
+    assert!(state.runs.is_empty());
 }
 
 #[test]

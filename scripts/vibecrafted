@@ -196,6 +196,55 @@ _run_helper() {
   return 1
 }
 
+_installer_gui_script() {
+  local repo_source candidate
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  for candidate in \
+    "${repo_source:+$repo_source/scripts/installer_gui.py}" \
+    "$crafted_tools/scripts/installer_gui.py" \
+    "$(_script_repo_root)/scripts/installer_gui.py"; do
+    [[ -f "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+_control_plane_script() {
+  local repo_source candidate
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  for candidate in \
+    "${repo_source:+$repo_source/scripts/control_plane_state.py}" \
+    "$crafted_tools/scripts/control_plane_state.py" \
+    "$(_script_repo_root)/scripts/control_plane_state.py"; do
+    [[ -f "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+_sync_control_plane_best_effort() {
+  local script_path
+  script_path="$(_control_plane_script 2>/dev/null || true)"
+  [[ -n "$script_path" ]] || return 0
+  python3 "$script_path" sync >/dev/null 2>&1 || true
+}
+
+_operator_tui_dir() {
+  local repo_source candidate
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  for candidate in \
+    "${repo_source:+$repo_source/operator-tui}" \
+    "$crafted_tools/operator-tui" \
+    "$(_script_repo_root)/operator-tui"; do
+    [[ -d "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
 _is_help_flag() {
   local candidate="${1:-}"
   [[ "$candidate" == "--help" || "$candidate" == "-h" || "$candidate" == "help" ]]
@@ -389,6 +438,36 @@ cmd_dashboard_help() {
   printf '\n'
 }
 
+cmd_gui_help() {
+  printf '\n'
+  printf '%b⚒%b  %bgui%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Launch the localhost-only Python control plane.\n'
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted gui [--source <path>] [--host <host>] [--port <port>] [--no-open]\n'
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted gui\n'
+  printf '  vibecrafted gui --no-open --port 4173\n'
+  printf '\n'
+}
+
+cmd_tui_help() {
+  printf '\n'
+  printf '%b⚒%b  %btui%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Launch the Rust operator console over the shared control-plane state.\n'
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted tui [--state-root <dir>] [--deck <path>] [--tick-ms <ms>]\n'
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted tui\n'
+  printf '  vibecrafted tui --tick-ms 500\n'
+  printf '\n'
+}
+
 cmd_resume_help() {
   printf '\n'
   printf '%b⚒%b  %bresume%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
@@ -575,6 +654,58 @@ cmd_telemetry() {
   esac
 }
 
+cmd_gui() {
+  local gui_script repo_source
+  if _is_help_flag "${1:-}"; then
+    cmd_gui_help
+    return 0
+  fi
+  gui_script="$(_installer_gui_script 2>/dev/null || true)"
+  [[ -n "$gui_script" ]] || {
+    printf '%b[error]%b installer_gui.py not found.\n' "$_red" "$_reset" >&2
+    return 1
+  }
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  [[ -n "$repo_source" ]] || repo_source="$(cd "$(dirname "$gui_script")/.." && pwd)"
+  _sync_control_plane_best_effort
+  python3 "$gui_script" --source "$repo_source" "$@"
+}
+
+cmd_tui() {
+  local tui_dir manifest_path binary_path deck_path state_root
+  if _is_help_flag "${1:-}"; then
+    cmd_tui_help
+    return 0
+  fi
+  tui_dir="$(_operator_tui_dir 2>/dev/null || true)"
+  [[ -n "$tui_dir" ]] || {
+    printf '%b[error]%b operator-tui crate not found in the current source tree.\n' "$_red" "$_reset" >&2
+    return 1
+  }
+
+  manifest_path="$tui_dir/Cargo.toml"
+  binary_path="$tui_dir/target/debug/vibecrafted-operator"
+  deck_path="$(_repo_source_root 2>/dev/null || true)"
+  [[ -n "$deck_path" ]] || deck_path="$(cd "$tui_dir/.." && pwd)"
+  deck_path="$deck_path/scripts/vibecrafted"
+  state_root="$crafted_home/control_plane"
+
+  _sync_control_plane_best_effort
+
+  if [[ -x "$binary_path" ]]; then
+    "$binary_path" --state-root "$state_root" --deck "$deck_path" "$@"
+    return $?
+  fi
+
+  command -v cargo >/dev/null 2>&1 || {
+    printf '%b[error]%b cargo is required to build the Rust operator console.\n' "$_red" "$_reset" >&2
+    printf '  Expected manifest: %s\n' "$manifest_path" >&2
+    return 1
+  }
+
+  cargo run --manifest-path "$manifest_path" -- --state-root "$state_root" --deck "$deck_path" "$@"
+}
+
 cmd_help() {
   local topic="${1:-}"
   case "$topic" in
@@ -588,6 +719,14 @@ cmd_help() {
       ;;
     dashboard|mc|mission-control)
       cmd_dashboard_help
+      return
+      ;;
+    gui)
+      cmd_gui_help
+      return
+      ;;
+    tui)
+      cmd_tui_help
       return
       ;;
     telemetry)
@@ -624,6 +763,8 @@ cmd_help() {
   printf '  %bvibecrafted help --full%b               Full reference (all skills, modes, aliases)\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted help%b <topic>              Help for a skill, agent, or command\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted init%b [agent]              Start an interactive init session\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted gui%b                       Launch the localhost control plane\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted tui%b                       Launch the Rust operator console\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard%b [layout]        Launch an optional repo-owned Zellij dashboard\n' "$_cyan" "$_reset"
   printf '  %btelemetry smoke%b [flags]              Smoke the marbles telemetry path\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b <skill> <agent> [flags]   Run an agent-scoped framework skill\n' "$_cyan" "$_reset"
@@ -646,6 +787,8 @@ cmd_help() {
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted init claude\n'
+  printf '  vibecrafted gui --no-open\n'
+  printf '  vibecrafted tui\n'
   printf '  vibecrafted dashboard vc-marbles\n'
   printf '  telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
@@ -692,6 +835,8 @@ cmd_help_full() {
   printf '%b=== FIRST 5 MINUTES ===%b\n' "$_bold" "$_reset"
   printf '\n'
   printf '  %bvibecrafted init claude%b\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted gui%b\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted tui%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted workflow claude --prompt "Plan and implement <task>"%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted justdo codex --prompt "Ship <task>"%b\n' "$_cyan" "$_reset"
   _print_ship_path
@@ -724,6 +869,8 @@ cmd_help_full() {
   printf '  %bvibecrafted dashboard ls%b              List active Zellij sessions\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard switch%b <name>   Switch to session (Zellij-native)\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted start%b [layout]            Alias for %bvibecrafted dashboard%b\n' "$_cyan" "$_reset" "$_cyan" "$_reset"
+  printf '  %bvibecrafted gui%b                       Public/local-web launch + observe surface\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted tui%b                       Rust operator console over shared state\n' "$_cyan" "$_reset"
   printf '\n'
   printf '  Agents: %bclaude%b · %bcodex%b · %bgemini%b\n' "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset"
   printf '\n'
@@ -741,6 +888,8 @@ cmd_help_full() {
   printf '  %bvibecrafted help%b                      Compact command deck\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted help --full%b               This full reference\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted init%b [agent]              Interactive init session\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted gui%b                       Launch the localhost control plane\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted tui%b                       Launch the Rust operator console\n' "$_cyan" "$_reset"
   printf '  %btelemetry smoke%b [flags]              Smoke the marbles telemetry path\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
@@ -776,6 +925,8 @@ cmd_help_full() {
   printf '%b=== EXAMPLES ===%b\n' "$_bold" "$_reset"
   printf '\n'
   printf '  vibecrafted init claude\n'
+  printf '  vibecrafted gui\n'
+  printf '  vibecrafted tui\n'
   printf '  vibecrafted dashboard vc-workflow\n'
   printf '  telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
@@ -1191,6 +1342,14 @@ run_wrapper() {
     cmd_dashboard "$@"
     return
   fi
+  if [[ "$wrapper" == "vc-gui" ]]; then
+    cmd_gui "$@"
+    return
+  fi
+  if [[ "$wrapper" == "vc-tui" ]]; then
+    cmd_tui "$@"
+    return
+  fi
   if [[ "$wrapper" == "telemetry" ]]; then
     cmd_telemetry "$@"
     return
@@ -1239,6 +1398,8 @@ main() {
     start) cmd_start "$@" ;;
     init) cmd_init "$@" ;;
     resume) cmd_resume "$@" ;;
+    gui) cmd_gui "$@" ;;
+    tui) cmd_tui "$@" ;;
     doctor|check) cmd_doctor ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
     telemetry) cmd_telemetry "$@" ;;
