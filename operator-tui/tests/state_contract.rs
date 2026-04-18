@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -118,13 +119,21 @@ fn builds_existing_command_deck_launches() {
 
 #[test]
 fn marbles_launches_keep_runtime_root_and_loop_controls() {
+    let previous = env::var_os("ZELLIJ_CONFIG_DIR");
+    unsafe {
+        env::remove_var("ZELLIJ_CONFIG_DIR");
+    }
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    fs::create_dir_all(root.join("config/zellij")).unwrap();
+    fs::write(root.join("config/zellij/config.kdl"), "layout {}\n").unwrap();
     let deck = Path::new("/usr/bin/vibecrafted");
     let request = LaunchRequest {
         kind: LaunchKind::Marbles,
         agent: "codex".to_string(),
         prompt: "Converge on the operator surface.".to_string(),
         runtime: LaunchRuntime::Terminal,
-        root: Some("/tmp/repo".into()),
+        root: Some(root.to_path_buf()),
         count: Some(4),
         depth: Some(7),
     };
@@ -134,23 +143,99 @@ fn marbles_launches_keep_runtime_root_and_loop_controls() {
         .iter()
         .map(|value| value.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
-    assert_eq!(
-        args,
-        vec![
-            "marbles",
-            "codex",
-            "--count",
-            "4",
-            "--depth",
-            "7",
-            "--prompt",
-            "Converge on the operator surface.",
-            "--runtime",
-            "terminal",
-            "--root",
-            "/tmp/repo",
-        ]
+    let expected_deck_cmd = format!(
+        "exec '/usr/bin/vibecrafted' 'marbles' 'codex' '--count' '4' '--depth' '7' '--prompt' 'Converge on the operator surface.' '--runtime' 'terminal' '--root' '{}'",
+        root.to_string_lossy()
     );
+
+    if cfg!(target_os = "macos") {
+        assert_eq!(command.program, Path::new("open"));
+        assert!(args.starts_with(&[
+            "-na".to_string(),
+            "/Applications/Ghostty.app".to_string(),
+            "--args".to_string(),
+            "-e".to_string(),
+            "zellij".to_string(),
+        ]));
+    } else {
+        assert_eq!(command.program, Path::new("ghostty"));
+        assert!(args.starts_with(&["-e".to_string(), "zellij".to_string()]));
+    }
+
+    assert!(args.windows(2).any(|pair| {
+        pair == [
+            "--config-dir".to_string(),
+            root.join("config/zellij").to_string_lossy().into_owned(),
+        ]
+    }));
+    assert!(args.iter().any(|value| value == "--layout-string"));
+    assert!(args.iter().any(|value| value == "options"));
+    assert!(args.iter().any(|value| value == "--show-release-notes"));
+    assert!(args.iter().any(|value| value == "--show-startup-tips"));
+
+    let layout = args
+        .iter()
+        .position(|value| value == "--layout-string")
+        .and_then(|index| args.get(index + 1))
+        .expect("layout string");
+    assert!(layout.contains("pane name=\"launch\""));
+    assert!(layout.contains("command=\"bash\""));
+    assert!(layout.contains(&format!("cwd=\"{}\"", root.to_string_lossy())));
+    assert!(layout.contains("export ZELLIJ_CONFIG_DIR="));
+    assert!(layout.contains(&expected_deck_cmd));
+
+    match previous {
+        Some(value) => unsafe {
+            env::set_var("ZELLIJ_CONFIG_DIR", value);
+        },
+        None => unsafe {
+            env::remove_var("ZELLIJ_CONFIG_DIR");
+        },
+    }
+}
+
+#[test]
+fn terminal_launches_preserve_explicit_zellij_config_dir() {
+    let deck = Path::new("/usr/bin/vibecrafted");
+    let explicit = Path::new("/tmp/custom-zellij");
+    let previous = env::var_os("ZELLIJ_CONFIG_DIR");
+    // This test temporarily pins process env to verify that operator-tui
+    // respects an already configured frontier location.
+    unsafe {
+        env::set_var("ZELLIJ_CONFIG_DIR", explicit);
+    }
+    let request = LaunchRequest {
+        kind: LaunchKind::Workflow,
+        agent: "codex".to_string(),
+        prompt: "Ship the launcher.".to_string(),
+        runtime: LaunchRuntime::Terminal,
+        root: Some("/tmp/workspace".into()),
+        count: Some(3),
+        depth: Some(3),
+    };
+
+    let command = build_launch_command(deck, &request);
+    let args = command
+        .args
+        .iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let layout = args
+        .iter()
+        .position(|value| value == "--layout-string")
+        .and_then(|index| args.get(index + 1))
+        .expect("layout string");
+
+    assert!(layout.contains("export ZELLIJ_CONFIG_DIR='/tmp/custom-zellij'"));
+
+    match previous {
+        Some(value) => unsafe {
+            env::set_var("ZELLIJ_CONFIG_DIR", value);
+        },
+        None => unsafe {
+            env::remove_var("ZELLIJ_CONFIG_DIR");
+        },
+    }
 }
 
 #[test]
@@ -269,6 +354,8 @@ fn prompt_lines_include_human_kind_copy_and_command_preview() {
 
     let lines = app.prompt_lines();
     assert!(lines.iter().any(|line| line.contains("Research swarm")));
-    assert!(lines.iter().any(|line| line.contains("command: /usr/bin/vibecrafted research")));
+    assert!(lines.iter().any(|line| line.contains("command:")
+        && line.contains("zellij")
+        && line.contains("research")));
     assert!(lines.iter().any(|line| line.contains("cycle agent")));
 }

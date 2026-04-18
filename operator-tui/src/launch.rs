@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -36,9 +37,7 @@ impl LaunchKind {
             LaunchKind::Workflow => {
                 "Best default. Examine the surface, plan the cut, then implement."
             }
-            LaunchKind::Research => {
-                "Send a research pass first when the shape is still unclear."
-            }
+            LaunchKind::Research => "Send a research pass first when the shape is still unclear.",
             LaunchKind::Review => {
                 "Audit an existing surface for risk, regressions, and weak claims."
             }
@@ -124,11 +123,22 @@ impl LaunchCommand {
         command.stdin(Stdio::inherit());
         command.stdout(Stdio::inherit());
         command.stderr(Stdio::inherit());
-        command.spawn().context("failed to launch command deck")
+        command.spawn().context("failed to spawn launch command")
     }
 }
 
 pub fn build_launch_command(deck: impl AsRef<Path>, request: &LaunchRequest) -> LaunchCommand {
+    let deck = deck.as_ref();
+    if matches!(
+        request.runtime,
+        LaunchRuntime::Terminal | LaunchRuntime::Visible
+    ) {
+        return build_ghostty_launch_command(deck, request);
+    }
+    build_deck_launch_command(deck, request)
+}
+
+fn build_deck_launch_command(deck: &Path, request: &LaunchRequest) -> LaunchCommand {
     let mut args: Vec<OsString> = vec![request.kind.label().into()];
     match request.kind {
         LaunchKind::Workflow | LaunchKind::Review => {
@@ -163,7 +173,129 @@ pub fn build_launch_command(deck: impl AsRef<Path>, request: &LaunchRequest) -> 
         args.push(root.as_os_str().to_os_string());
     }
     LaunchCommand {
-        program: deck.as_ref().to_path_buf(),
+        program: deck.to_path_buf(),
         args,
     }
+}
+
+fn build_ghostty_launch_command(deck: &Path, request: &LaunchRequest) -> LaunchCommand {
+    let zellij_layout = build_zellij_layout_string(deck, request);
+    let zellij_config_dir = resolved_zellij_config_dir(request.root.as_deref());
+
+    if cfg!(target_os = "macos") {
+        let mut args = vec![
+            "-na".into(),
+            ghostty_macos_app().into(),
+            "--args".into(),
+            "-e".into(),
+            "zellij".into(),
+        ];
+        if let Some(config_dir) = zellij_config_dir {
+            args.push("--config-dir".into());
+            args.push(config_dir.into_os_string());
+        }
+        args.push("--layout-string".into());
+        args.push(zellij_layout.into());
+        args.push("options".into());
+        args.push("--show-release-notes".into());
+        args.push("false".into());
+        args.push("--show-startup-tips".into());
+        args.push("false".into());
+        return LaunchCommand {
+            program: "open".into(),
+            args,
+        };
+    }
+
+    let mut args = vec!["-e".into(), "zellij".into()];
+    if let Some(config_dir) = zellij_config_dir {
+        args.push("--config-dir".into());
+        args.push(config_dir.into_os_string());
+    }
+    args.push("--layout-string".into());
+    args.push(zellij_layout.into());
+    args.push("options".into());
+    args.push("--show-release-notes".into());
+    args.push("false".into());
+    args.push("--show-startup-tips".into());
+    args.push("false".into());
+    LaunchCommand {
+        program: "ghostty".into(),
+        args,
+    }
+}
+
+fn build_zellij_layout_string(deck: &Path, request: &LaunchRequest) -> String {
+    let mut layout = format!(
+        "layout {{ tab name={} focus=true {{ pane name={} focus=true command={} ",
+        kdl_quote(&format!("Operator {}", request.kind.human_title())),
+        kdl_quote("launch"),
+        kdl_quote("bash"),
+    );
+    if let Some(root) = request.root.as_deref() {
+        layout.push_str(&format!("cwd={} ", kdl_quote(&root.to_string_lossy())));
+    }
+    layout.push_str("{ args ");
+    layout.push_str(&kdl_quote("-lc"));
+    layout.push(' ');
+    layout.push_str(&kdl_quote(&build_pane_shell_command(deck, request)));
+    layout.push_str(" } } } }");
+    layout
+}
+
+fn build_pane_shell_command(deck: &Path, request: &LaunchRequest) -> String {
+    let mut parts = Vec::new();
+    if let Some(config_dir) = resolved_zellij_config_dir(request.root.as_deref()) {
+        parts.push(format!(
+            "export ZELLIJ_CONFIG_DIR={}",
+            shell_quote(&config_dir.to_string_lossy())
+        ));
+    }
+    parts.push(format!(
+        "exec {}",
+        shell_join(deck, &build_deck_launch_command(deck, request).args)
+    ));
+    parts.join("; ")
+}
+
+fn resolved_zellij_config_dir(root: Option<&Path>) -> Option<PathBuf> {
+    if let Some(explicit) = env::var_os("ZELLIJ_CONFIG_DIR").filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(explicit));
+    }
+    let root = root?;
+    let repo_config_dir = root.join("config/zellij");
+    repo_config_dir
+        .join("config.kdl")
+        .is_file()
+        .then_some(repo_config_dir)
+}
+
+fn ghostty_macos_app() -> &'static str {
+    if Path::new("/Applications/Ghostty.app").exists() {
+        "/Applications/Ghostty.app"
+    } else {
+        "Ghostty"
+    }
+}
+
+fn shell_join(program: &Path, args: &[OsString]) -> String {
+    let mut parts = Vec::with_capacity(args.len() + 1);
+    parts.push(shell_quote(&program.to_string_lossy()));
+    parts.extend(
+        args.iter()
+            .map(|value| shell_quote(&value.to_string_lossy())),
+    );
+    parts.join(" ")
+}
+
+fn shell_quote(raw: &str) -> String {
+    format!("'{}'", raw.replace('\'', "'\"'\"'"))
+}
+
+fn kdl_quote(raw: &str) -> String {
+    let escaped = raw
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!("\"{escaped}\"")
 }
