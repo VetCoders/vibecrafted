@@ -79,10 +79,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
             KeyCode::Backspace => {
                 app.launch_prompt.pop();
             }
-            KeyCode::Char(c) => {
-                if !key.modifiers.contains(KeyModifiers::CONTROL) {
-                    app.launch_prompt.push(c);
-                }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.launch_prompt.push(c);
             }
             _ => {}
         },

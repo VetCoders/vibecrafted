@@ -156,6 +156,69 @@ def test_bridge_formats_agent_message_into_transcript(tmp_path: Path) -> None:
     assert json.loads(raw.strip()) == event
 
 
+def test_bridge_can_echo_rendered_output_to_stdout(tmp_path: Path) -> None:
+    event = {
+        "type": "item.completed",
+        "item": {"type": "agent_message", "text": "Visible in pane"},
+    }
+    transcript = tmp_path / "transcript.txt"
+    raw = tmp_path / "raw.jsonl"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(BRIDGE_PATH),
+            "--transcript",
+            str(transcript),
+            "--raw",
+            str(raw),
+            "--echo-stdout",
+        ],
+        input=json.dumps(event) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    assert "Visible in pane" in proc.stdout
+    assert "Visible in pane" in transcript.read_text(encoding="utf-8")
+
+
+def test_bridge_main_handles_keyboard_interrupt_cleanly(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """KeyboardInterrupt inside the stdin loop should return 130 without crashing."""
+    transcript = tmp_path / "transcript.txt"
+    raw = tmp_path / "raw.jsonl"
+
+    class _InterruptingStdin:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(BRIDGE_PATH),
+            "--transcript",
+            str(transcript),
+            "--raw",
+            str(raw),
+            "--echo-stdout",
+        ],
+    )
+    monkeypatch.setattr(sys, "stdin", _InterruptingStdin())
+
+    rc = BRIDGE.main()
+
+    assert rc == 130
+    transcript_text = transcript.read_text(encoding="utf-8")
+    assert "interrupted by operator" in _strip_ansi(transcript_text)
+
+
 # ---------------------------------------------------------------------------
 # Unit-level — format_event / stringish / truncate_block
 # ---------------------------------------------------------------------------

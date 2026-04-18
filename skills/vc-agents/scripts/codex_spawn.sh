@@ -89,9 +89,15 @@ qreport="$(spawn_shell_quote "$SPAWN_REPORT")"
 qtranscript="$(spawn_shell_quote "$SPAWN_TRANSCRIPT")"
 qraw="$(spawn_shell_quote "${SPAWN_TRANSCRIPT%.log}.raw.jsonl")"
 qbridge="$(spawn_shell_quote "$SCRIPT_DIR/codex_stream_bridge.py")"
+bridge_flags=""
+case "$runtime" in
+  terminal|visible)
+    bridge_flags="--echo-stdout"
+    ;;
+esac
 # Keep fallback report creation in launcher hooks, not inside the child `bash -c`
 # shell, because sourced spawn helpers are not inherited there as functions.
-launch_cmd="set -o pipefail && cd $qroot && { codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qruntime 2>&1 | python3 $qbridge --transcript $qtranscript --raw $qraw; pipeline_status=\$?; echo; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
+launch_cmd="set -o pipefail && cd $qroot && { codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qreport - < $qruntime 2>&1 | python3 $qbridge --transcript $qtranscript --raw $qraw ${bridge_flags}; pipeline_status=\$?; echo; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
 
 # shellcheck disable=SC2016
 codex_success_hook='
