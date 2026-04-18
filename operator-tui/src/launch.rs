@@ -2,6 +2,7 @@ use anyhow::Context;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchKind {
@@ -22,11 +23,54 @@ impl LaunchKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LaunchRuntime {
+    Headless,
+    #[default]
+    Terminal,
+    Visible,
+}
+
+impl LaunchRuntime {
+    pub fn label(self) -> &'static str {
+        match self {
+            LaunchRuntime::Headless => "headless",
+            LaunchRuntime::Terminal => "terminal",
+            LaunchRuntime::Visible => "visible",
+        }
+    }
+
+    pub fn cycle(self) -> Self {
+        match self {
+            LaunchRuntime::Headless => LaunchRuntime::Terminal,
+            LaunchRuntime::Terminal => LaunchRuntime::Visible,
+            LaunchRuntime::Visible => LaunchRuntime::Headless,
+        }
+    }
+}
+
+impl FromStr for LaunchRuntime {
+    type Err = anyhow::Error;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "headless" => Ok(Self::Headless),
+            "terminal" => Ok(Self::Terminal),
+            "visible" => Ok(Self::Visible),
+            other => Err(anyhow::anyhow!(
+                "unsupported runtime: {other} (expected headless|terminal|visible)"
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchRequest {
     pub kind: LaunchKind,
     pub agent: String,
     pub prompt: String,
+    pub runtime: LaunchRuntime,
+    pub root: Option<PathBuf>,
     pub count: Option<u32>,
     pub depth: Option<u32>,
 }
@@ -85,6 +129,12 @@ pub fn build_launch_command(deck: impl AsRef<Path>, request: &LaunchRequest) -> 
                 args.push(request.prompt.clone().into());
             }
         }
+    }
+    args.push("--runtime".into());
+    args.push(request.runtime.label().into());
+    if let Some(root) = request.root.as_ref() {
+        args.push("--root".into());
+        args.push(root.as_os_str().to_os_string());
     }
     LaunchCommand {
         program: deck.as_ref().to_path_buf(),

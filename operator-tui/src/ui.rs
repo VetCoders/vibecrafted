@@ -12,7 +12,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(4),
             Constraint::Min(10),
-            Constraint::Length(8),
+            Constraint::Length(11),
         ])
         .split(root);
 
@@ -32,7 +32,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     draw_detail(frame, right[0], app);
     draw_events(frame, right[1], app);
-    draw_launch(frame, vertical[2], app);
+    draw_footer(frame, vertical[2], app);
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -54,6 +54,10 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled("arrows move", Style::default().fg(Color::Cyan)),
         Span::raw("  "),
         Span::styled("1-4 launch kind", Style::default().fg(Color::Magenta)),
+        Span::raw("  "),
+        Span::styled("v runtime", Style::default().fg(Color::Yellow)),
+        Span::raw("  "),
+        Span::styled("d deep controls", Style::default().fg(Color::Blue)),
     ];
 
     let chunks = Layout::default()
@@ -150,6 +154,15 @@ fn draw_events(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(events, area);
 }
 
+fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+        .split(area);
+    draw_launch(frame, chunks[0], app);
+    draw_deep_controls(frame, chunks[1], app);
+}
+
 fn draw_launch(frame: &mut Frame, area: Rect, app: &App) {
     let prompt_style = if app.focus == LaunchFocus::EditPrompt {
         Style::default()
@@ -177,6 +190,11 @@ fn draw_launch(frame: &mut Frame, area: Rect, app: &App) {
                 format!("kind: {}", app.launch_kind.label()),
                 Style::default().fg(Color::Magenta),
             ),
+            Span::raw("  "),
+            Span::styled(
+                format!("runtime: {}", app.launch_runtime.label()),
+                Style::default().fg(Color::Yellow),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Prompt: ", Style::default().fg(Color::Gray)),
@@ -187,7 +205,16 @@ fn draw_launch(frame: &mut Frame, area: Rect, app: &App) {
             Span::raw("  "),
             Span::styled("a cycle agent", Style::default().fg(Color::Cyan)),
             Span::raw("  "),
+            Span::styled("v cycle runtime", Style::default().fg(Color::Yellow)),
+            Span::raw("  "),
             Span::styled("e edit prompt", Style::default().fg(Color::Yellow)),
+        ]),
+        Line::from(vec![
+            Span::styled("Root: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                app.config.launch_root.to_string_lossy().into_owned(),
+                Style::default().fg(Color::White),
+            ),
         ]),
     ];
 
@@ -195,6 +222,18 @@ fn draw_launch(frame: &mut Frame, area: Rect, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Launch panel"))
         .wrap(Wrap { trim: false });
     frame.render_widget(launch, area);
+}
+
+fn draw_deep_controls(frame: &mut Frame, area: Rect, app: &App) {
+    let lines = app
+        .deep_control_lines()
+        .into_iter()
+        .map(Line::from)
+        .collect::<Vec<_>>();
+    let panel = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::ALL).title("Selected run"))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(panel, area);
 }
 
 fn status_style(kind: RunKind) -> Style {

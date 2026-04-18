@@ -1,9 +1,16 @@
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use tempfile::tempdir;
-use vibecrafted_operator::launch::{build_launch_command, LaunchKind, LaunchRequest};
-use vibecrafted_operator::state::{classify_run, ControlPlaneState, RunKind, RunSnapshot};
+use vibecrafted_operator::app::{App, DeepAction, LaunchFocus};
+use vibecrafted_operator::config::AppConfig;
+use vibecrafted_operator::launch::{
+    LaunchKind, LaunchRequest, LaunchRuntime, build_launch_command,
+};
+use vibecrafted_operator::state::{
+    ControlPlaneState, RenderedRun, RunKind, RunSnapshot, classify_run,
+};
 
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -94,6 +101,8 @@ fn builds_existing_command_deck_launches() {
         kind: LaunchKind::Research,
         agent: "claude".to_string(),
         prompt: "Investigate the state format.".to_string(),
+        runtime: LaunchRuntime::Headless,
+        root: Some("/tmp/vibecrafted".into()),
         count: Some(3),
         depth: Some(3),
     };
@@ -101,4 +110,107 @@ fn builds_existing_command_deck_launches() {
     assert_eq!(command.program, deck);
     assert_eq!(command.args[0], "research");
     assert_eq!(command.args[1], "--prompt");
+    assert_eq!(command.args[3], "--runtime");
+    assert_eq!(command.args[4], "headless");
+    assert_eq!(command.args[5], "--root");
+    assert_eq!(command.args[6], "/tmp/vibecrafted");
+}
+
+#[test]
+fn marbles_launches_keep_runtime_root_and_loop_controls() {
+    let deck = Path::new("/usr/bin/vibecrafted");
+    let request = LaunchRequest {
+        kind: LaunchKind::Marbles,
+        agent: "codex".to_string(),
+        prompt: "Converge on the operator surface.".to_string(),
+        runtime: LaunchRuntime::Terminal,
+        root: Some("/tmp/repo".into()),
+        count: Some(4),
+        depth: Some(7),
+    };
+    let command = build_launch_command(deck, &request);
+    let args = command
+        .args
+        .iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        args,
+        vec![
+            "marbles",
+            "codex",
+            "--count",
+            "4",
+            "--depth",
+            "7",
+            "--prompt",
+            "Converge on the operator surface.",
+            "--runtime",
+            "terminal",
+            "--root",
+            "/tmp/repo",
+        ]
+    );
+}
+
+#[test]
+fn deep_controls_expose_attach_resume_and_artifacts() {
+    let snapshot = RunSnapshot {
+        run_id: "run-42".to_string(),
+        session_id: Some("sess-42".to_string()),
+        agent: Some("codex".to_string()),
+        skill: Some("workflow".to_string()),
+        mode: Some("implement".to_string()),
+        state: Some("running".to_string()),
+        status: None,
+        started_at: Some("2026-04-16T10:00:00Z".to_string()),
+        updated_at: Some("2026-04-16T10:02:00Z".to_string()),
+        last_heartbeat: Some("2026-04-16T10:03:00Z".to_string()),
+        root: Some("/tmp/repo".to_string()),
+        operator_session: Some("repo-run-42".to_string()),
+        latest_report: Some("/tmp/repo/report.md".to_string()),
+        latest_transcript: Some("/tmp/repo/transcript.log".to_string()),
+        last_error: None,
+        extra: Default::default(),
+    };
+    let run = RenderedRun {
+        snapshot,
+        kind: RunKind::Active,
+        age_label: "1m ago".to_string(),
+        recent_events: Vec::new(),
+    };
+    let app = App {
+        config: AppConfig {
+            state_root: "/tmp/state".into(),
+            command_deck: "/usr/bin/vibecrafted".into(),
+            launch_root: "/tmp/repo".into(),
+            launch_runtime: LaunchRuntime::Terminal,
+            tick_rate: Duration::from_millis(250),
+        },
+        state: ControlPlaneState::empty("/tmp/state"),
+        runs: vec![run],
+        selected: 0,
+        launch_kind: LaunchKind::Workflow,
+        launch_agent: 0,
+        launch_prompt: "Ship it".to_string(),
+        launch_runtime: LaunchRuntime::Terminal,
+        focus: LaunchFocus::Browse,
+        status_line: String::new(),
+        launch_history: Vec::new(),
+        deep_selected: 0,
+    };
+
+    assert_eq!(
+        app.deep_actions(),
+        vec![
+            DeepAction::AttachSession("repo-run-42".to_string()),
+            DeepAction::ResumeSession {
+                agent: "codex".to_string(),
+                session: "sess-42".to_string(),
+            },
+            DeepAction::OpenReport("/tmp/repo/report.md".into()),
+            DeepAction::OpenTranscript("/tmp/repo/transcript.log".into()),
+            DeepAction::OpenRoot("/tmp/repo".into()),
+        ]
+    );
 }

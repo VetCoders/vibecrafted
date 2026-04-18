@@ -460,10 +460,11 @@ cmd_tui_help() {
   printf '  Launch the Rust operator console over the shared control-plane state.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted tui [--state-root <dir>] [--deck <path>] [--tick-ms <ms>]\n'
+  printf '  vibecrafted tui [--state-root <dir>] [--deck <path>] [--root <path>] [--runtime <headless|terminal|visible>] [--tick-ms <ms>]\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted tui\n'
+  printf '  vibecrafted tui --runtime headless\n'
   printf '  vibecrafted tui --tick-ms 500\n'
   printf '\n'
 }

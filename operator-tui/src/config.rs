@@ -1,3 +1,4 @@
+use crate::launch::LaunchRuntime;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -6,6 +7,8 @@ use std::time::Duration;
 pub struct CliOptions {
     pub state_root: Option<PathBuf>,
     pub command_deck: Option<PathBuf>,
+    pub launch_root: Option<PathBuf>,
+    pub launch_runtime: Option<LaunchRuntime>,
     pub tick_ms: u64,
 }
 
@@ -14,6 +17,8 @@ impl Default for CliOptions {
         Self {
             state_root: None,
             command_deck: None,
+            launch_root: None,
+            launch_runtime: None,
             tick_ms: 250,
         }
     }
@@ -23,6 +28,8 @@ impl Default for CliOptions {
 pub struct AppConfig {
     pub state_root: PathBuf,
     pub command_deck: PathBuf,
+    pub launch_root: PathBuf,
+    pub launch_runtime: LaunchRuntime,
     pub tick_rate: Duration,
 }
 
@@ -57,6 +64,28 @@ pub fn parse_args() -> anyhow::Result<CliOptions> {
                     .unwrap_or_default();
                 options.command_deck = Some(PathBuf::from(value));
             }
+            "--root" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--root requires a value"))?;
+                options.launch_root = Some(PathBuf::from(value));
+            }
+            _ if arg.starts_with("--root=") => {
+                options.launch_root = Some(PathBuf::from(arg.trim_start_matches("--root=")));
+            }
+            "--runtime" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--runtime requires a value"))?;
+                options.launch_runtime = Some(value.parse::<LaunchRuntime>()?);
+            }
+            _ if arg.starts_with("--runtime=") => {
+                let value = arg
+                    .split_once('=')
+                    .map(|(_, value)| value)
+                    .unwrap_or_default();
+                options.launch_runtime = Some(value.parse::<LaunchRuntime>()?);
+            }
             "--tick-ms" => {
                 let value = args
                     .next()
@@ -72,9 +101,14 @@ pub fn parse_args() -> anyhow::Result<CliOptions> {
 }
 
 pub fn build_config(options: CliOptions) -> AppConfig {
+    let command_deck = options.command_deck.unwrap_or_else(default_command_deck);
     AppConfig {
         state_root: options.state_root.unwrap_or_else(default_state_root),
-        command_deck: options.command_deck.unwrap_or_else(default_command_deck),
+        launch_root: options
+            .launch_root
+            .unwrap_or_else(|| default_launch_root(&command_deck)),
+        launch_runtime: options.launch_runtime.unwrap_or_default(),
+        command_deck,
         tick_rate: Duration::from_millis(options.tick_ms.max(50)),
     }
 }
@@ -110,6 +144,23 @@ pub fn default_command_deck() -> PathBuf {
     PathBuf::from("vibecrafted")
 }
 
+pub fn default_launch_root(command_deck: &Path) -> PathBuf {
+    if let Some(value) = env::var_os("VIBECRAFTED_ROOT").filter(|value| !value.is_empty()) {
+        return PathBuf::from(value);
+    }
+    if command_deck.file_name().and_then(|name| name.to_str()) == Some("vibecrafted")
+        && command_deck
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            == Some("scripts")
+        && let Some(root) = command_deck.parent().and_then(Path::parent)
+    {
+        return root.to_path_buf();
+    }
+    env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
 fn home_dir() -> String {
     env::var("HOME").unwrap_or_else(|_| ".".to_string())
 }
@@ -118,11 +169,15 @@ fn print_help() {
     println!("Vibecrafted operator console");
     println!();
     println!("Usage:");
-    println!("  vibecrafted-operator [--state-root <dir>] [--deck <path>] [--tick-ms <ms>]");
+    println!(
+        "  vibecrafted-operator [--state-root <dir>] [--deck <path>] [--root <path>] [--runtime <headless|terminal|visible>] [--tick-ms <ms>]"
+    );
     println!();
     println!("Options:");
     println!("  --state-root <dir>   Control-plane state root under VIBECRAFTED_HOME");
     println!("  --deck <path>        Command deck binary or script to launch workflows");
+    println!("  --root <path>        Workspace root passed through to launched workflows");
+    println!("  --runtime <kind>     Launch runtime (headless|terminal|visible)");
     println!("  --tick-ms <ms>       Refresh cadence for the TUI (default: 250)");
 }
 

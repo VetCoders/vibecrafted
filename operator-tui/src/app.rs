@@ -1,12 +1,45 @@
-use crate::config::{path_display, AppConfig};
-use crate::launch::{build_launch_command, LaunchCommand, LaunchKind, LaunchRequest};
-use crate::state::{render_runs, ControlPlaneState, RenderedRun, RunKind};
+use crate::config::{AppConfig, path_display};
+use crate::launch::{
+    LaunchCommand, LaunchKind, LaunchRequest, LaunchRuntime, build_launch_command,
+};
+use crate::state::{ControlPlaneState, RenderedRun, RunKind, render_runs};
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchFocus {
     Browse,
     EditPrompt,
+    DeepControls,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeepAction {
+    AttachSession(String),
+    ResumeSession { agent: String, session: String },
+    OpenReport(PathBuf),
+    OpenTranscript(PathBuf),
+    OpenRoot(PathBuf),
+}
+
+impl DeepAction {
+    pub fn label(&self) -> String {
+        match self {
+            DeepAction::AttachSession(session) => {
+                format!("Attach operator session: vibecrafted dashboard attach {session}")
+            }
+            DeepAction::ResumeSession { agent, session } => {
+                format!("Resume agent session: vibecrafted resume {agent} --session {session}")
+            }
+            DeepAction::OpenReport(path) => {
+                format!("Open latest report: {}", path.to_string_lossy())
+            }
+            DeepAction::OpenTranscript(path) => {
+                format!("Open latest transcript: {}", path.to_string_lossy())
+            }
+            DeepAction::OpenRoot(path) => format!("Open run root: {}", path.to_string_lossy()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -18,9 +51,11 @@ pub struct App {
     pub launch_kind: LaunchKind,
     pub launch_agent: usize,
     pub launch_prompt: String,
+    pub launch_runtime: LaunchRuntime,
     pub focus: LaunchFocus,
     pub status_line: String,
     pub launch_history: Vec<String>,
+    pub deep_selected: usize,
 }
 
 impl App {
@@ -28,6 +63,7 @@ impl App {
         let state = ControlPlaneState::load(&config.state_root)
             .unwrap_or_else(|_| ControlPlaneState::empty(&config.state_root));
         let runs = render_runs(&state);
+        let launch_runtime = config.launch_runtime;
         let mut app = Self {
             config,
             state,
@@ -36,9 +72,11 @@ impl App {
             launch_kind: LaunchKind::Workflow,
             launch_agent: 0,
             launch_prompt: default_prompt(LaunchKind::Workflow),
+            launch_runtime,
             focus: LaunchFocus::Browse,
             status_line: String::new(),
             launch_history: Vec::new(),
+            deep_selected: 0,
         };
         app.sync_selection();
         Ok(app)
@@ -66,6 +104,10 @@ impl App {
         self.launch_agent = (self.launch_agent + 1) % agents().len();
     }
 
+    pub fn cycle_runtime(&mut self) {
+        self.launch_runtime = self.launch_runtime.cycle();
+    }
+
     pub fn selected_agent(&self) -> &'static str {
         agents()[self.launch_agent]
     }
@@ -75,6 +117,8 @@ impl App {
             kind: self.launch_kind,
             agent: self.selected_agent().to_string(),
             prompt: self.launch_prompt.clone(),
+            runtime: self.launch_runtime,
+            root: Some(self.config.launch_root.clone()),
             count: Some(3),
             depth: Some(3),
         }
@@ -114,6 +158,15 @@ impl App {
     pub fn sync_selection(&mut self) {
         if self.selected >= self.runs.len() && !self.runs.is_empty() {
             self.selected = self.runs.len() - 1;
+        }
+        let deep_len = self.deep_actions().len();
+        if deep_len == 0 {
+            self.deep_selected = 0;
+            if self.focus == LaunchFocus::DeepControls {
+                self.focus = LaunchFocus::Browse;
+            }
+        } else if self.deep_selected >= deep_len {
+            self.deep_selected = deep_len - 1;
         }
     }
 
@@ -166,6 +219,9 @@ impl App {
                 snapshot.operator_session.as_deref().unwrap_or("none")
             ),
         ];
+        if let Some(session_id) = snapshot.session_id.as_deref() {
+            lines.push(format!("session_id: {session_id}"));
+        }
 
         if let Some(root) = snapshot.root.as_deref() {
             lines.push(format!("root: {root}"));
@@ -217,8 +273,10 @@ impl App {
         let mut lines = vec![
             format!("kind: {}", self.launch_kind.label()),
             format!("agent: {}", self.selected_agent()),
+            format!("runtime: {}", self.launch_runtime.label()),
+            format!("root: {}", path_display(&self.config.launch_root)),
             format!("prompt: {}", self.launch_prompt),
-            "keys: 1 workflow | 2 research | 3 review | 4 marbles | a agent | e edit prompt | Enter launch".to_string(),
+            "keys: 1 workflow | 2 research | 3 review | 4 marbles | a agent | v runtime | e edit prompt | Enter launch".to_string(),
         ];
         if let Some(last) = self.launch_history.last() {
             lines.push(format!("last launch: {last}"));
@@ -231,6 +289,96 @@ impl App {
             .iter()
             .filter(|run| matches!(run.kind, RunKind::Active | RunKind::Stalled))
             .count()
+    }
+
+    pub fn deep_actions(&self) -> Vec<DeepAction> {
+        let Some(run) = self.selected_run() else {
+            return Vec::new();
+        };
+        let snapshot = &run.snapshot;
+        let mut actions = Vec::new();
+        if let Some(session) = snapshot
+            .operator_session
+            .as_ref()
+            .filter(|value| !value.is_empty())
+        {
+            actions.push(DeepAction::AttachSession(session.clone()));
+        }
+        if let (Some(agent), Some(session)) = (
+            snapshot.agent.as_ref().filter(|value| !value.is_empty()),
+            snapshot
+                .session_id
+                .as_ref()
+                .filter(|value| !value.is_empty()),
+        ) {
+            actions.push(DeepAction::ResumeSession {
+                agent: agent.clone(),
+                session: session.clone(),
+            });
+        }
+        if let Some(report) = snapshot
+            .latest_report
+            .as_ref()
+            .filter(|value| !value.is_empty())
+        {
+            actions.push(DeepAction::OpenReport(PathBuf::from(report)));
+        }
+        if let Some(transcript) = snapshot
+            .latest_transcript
+            .as_ref()
+            .filter(|value| !value.is_empty())
+        {
+            actions.push(DeepAction::OpenTranscript(PathBuf::from(transcript)));
+        }
+        if let Some(root) = snapshot.root.as_ref().filter(|value| !value.is_empty()) {
+            actions.push(DeepAction::OpenRoot(PathBuf::from(root)));
+        }
+        actions
+    }
+
+    pub fn selected_deep_action(&self) -> Option<DeepAction> {
+        self.deep_actions().get(self.deep_selected).cloned()
+    }
+
+    pub fn move_deep_selection(&mut self, delta: isize) {
+        let len = self.deep_actions().len();
+        if len == 0 {
+            self.deep_selected = 0;
+            return;
+        }
+        let len = len as isize;
+        let mut index = self.deep_selected as isize + delta;
+        if index < 0 {
+            index = len - 1;
+        }
+        if index >= len {
+            index = 0;
+        }
+        self.deep_selected = index as usize;
+    }
+
+    pub fn deep_control_lines(&self) -> Vec<String> {
+        let actions = self.deep_actions();
+        if actions.is_empty() {
+            return vec![
+                "Deep controls".to_string(),
+                "No attach/resume/report actions are available for the selected run.".to_string(),
+            ];
+        }
+        let mut lines = vec![
+            "Deep controls".to_string(),
+            "Enter runs the selected action. Esc returns to browse.".to_string(),
+            String::new(),
+        ];
+        lines.extend(actions.iter().enumerate().map(|(idx, action)| {
+            let prefix = if self.focus == LaunchFocus::DeepControls && idx == self.deep_selected {
+                "▶"
+            } else {
+                " "
+            };
+            format!("{prefix} {}", action.label())
+        }));
+        lines
     }
 }
 
