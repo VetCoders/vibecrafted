@@ -1,14 +1,17 @@
 ---
 name: vc-release
-version: 0.1.0
+version: 0.2.0
 description: >
-  Ship code to market: release mechanics, financial awareness, legal basics,
-  deployment reality. Trigger phrases: "release", "ship to market", "publish",
+  Final outward ship skill. Turns "done in the repo" into "safe, visible, deployable,
+  discoverable, and launchable in the world." Covers release mechanics, deployment
+  topology, reverse-proxy defaults, Semgrep-gated security hygiene, domain and DNS
+  wiring, SEO/indexability, verification challenges, onboarding truth, and post-release
+  smoke checks. Trigger phrases: "release", "ship to market", "publish",
   "deploy to production", "vc-release", "go live", "launch", "wypuść wersję",
-  "deploy", "release prep", "launch path".
+  "deploy", "release prep", "launch path", "launch checklist", "production checklist".
 ---
 
-# vc-release: Ship to Market
+# vc-release: Ship It Without Lying
 
 ## Operator Entry
 
@@ -46,12 +49,13 @@ artifact and `--prompt` for inline intent.
 
 ```bash
 vibecrafted release codex --prompt 'Prepare v1.2.1 release'
-vc-release claude --prompt 'Tag and publish to crates.io'
+vc-release claude --prompt 'Ship the web surface safely behind Caddy'
 vibecrafted release gemini --file /path/to/release-checklist.md
 ```
 
-This is where "done in the repo" meets "done in the world." You're moving code from your machine to people's machines.
-That's not abstract—it's financial, legal, and operational reality.
+This is where "done in the repo" meets "done in the world."
+Release is not ceremony. Release is an operational, security, visibility, and
+adoption contract.
 
 ## Pipeline Position
 
@@ -66,188 +70,326 @@ Release is the final skill in the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. 
 - `vc-decorate` has ensured visual coherence
 - `vc-hydrate` has packaged distribution artifacts, SEO, and onboarding
 
-Release takes those hydrated artifacts and pushes them into the world:
-tags, changelogs, registry publishes, deployment, and go-to-market.
+Release takes those hydrated artifacts and makes them real:
 
-## Release Mechanics: The Real Work
+- tags and changelogs
+- registry or binary publication
+- deployment topology selection
+- proxy and TLS configuration
+- domain / DNS / verification wiring
+- indexability and public visibility
+- release-gated security checks
+- post-release smoke verification
 
-**Git workflow:**
+## Core Rule
 
-- Tag the exact commit. `git tag -a v1.2.3 -m "Release 1.2.3"` Not "v1.2.3-rc" unless you mean it.
-- Changelog is non-negotiable. Include what changed, why it matters, breaking changes explicit.
-- Push tags: `git push origin v1.2.3`
+**If the release canon below is not satisfied, release is a no-op.**
 
-**GitHub Releases:**
+Do not confuse "I can deploy it" with "it is safe, visible, and ready to meet strangers."
 
-- Automated: GitHub Actions creates the release artifact on tag push.
-- Manual: Click Releases, Draft New, attach binaries, link to changelog, publish.
-- Artifact names matter. `myapp-v1.2.3-linux-x86_64.tar.gz` tells users what they're downloading.
+## The Release Canon
 
-**Language-specific publishing:**
+Every release should be checked against these planes:
 
-- npm: `npm publish` after version bump. Scope matters (`@org/package`). Publish to npm, not your server.
-- Crates (Rust): `cargo publish` after `Cargo.toml` version bump. Check `cargo.io` first—names are claimed.
-- PyPI: Build wheel+sdist, then `twine upload`. Or use `poetry publish`.
-- Docker: Tag, push to registry. Consider multi-arch builds (amd64 + arm64).
+1. **Artifact truth** — versions, tags, changelog, published outputs
+2. **Deployment truth** — topology, proxying, healthchecks, restart behavior
+3. **Security truth** — Semgrep, exposed surfaces, headers, auth, secret handling
+4. **Domain truth** — DNS, canonical host, TLS, redirects, verification challenges
+5. **Visibility truth** — SEO, indexability, social cards, sitemap, robots, public metadata
+6. **Onboarding truth** — install path, first run, docs, screenshots, quickstart, buyer path
 
-None of this is optional if you want real adoption.
+If any plane is missing, call it out explicitly and block release unless the
+user knowingly accepts the risk.
 
-## Financial Awareness: You're Running a Business Now
+## Artifact Canon
 
-**Distribution costs:**
+**Git and versioning**
 
-- Hosting a download server: ~$20/month for bandwidth you'll actually use.
-- CDN (Cloudflare, Fastly): Free tier works until you don't. Then ~$0.02 per GB. Scale matters.
-- Docker registry: Docker Hub free tier gets rate-limited. Paid: ~$7/month for private repos.
-- npm bandwidth: Free unless you egregiously abuse it. But every download costs npm money.
+- Tag the exact commit: `git tag -a v1.2.3 -m "Release 1.2.3"`
+- Push the tag: `git push origin v1.2.3`
+- Changelog is mandatory
+- Published version must match repo version, badges, docs, and website references
 
-**Pricing model reality:**
+**Published outputs**
 
-- Open source means free, but free is not free to you. Support costs money (time).
-- Freemium works if you have a clear paid tier. Don't list it and pretend it's open source.
-- Enterprise license model: dual-license the code, charge enterprises. Works if your code solves enterprise problems.
+- npm: `npm publish` only after version bump and package sanity checks
+- crates.io: `cargo publish` only after package metadata and README sanity checks
+- PyPI: build wheel + sdist, then publish
+- GitHub Release: attach exact artifacts, with boring and descriptive filenames
+- Docker: tag exact version and optionally `latest`, but do not ship `latest` alone as identity
 
-**ROI thinking:**
+**Artifact naming**
 
-- How much time did you spend? Is the market's willingness to pay worth it?
-- If you're shipping a library, ROI is often indirect: reputation, hiring signal, future revenue.
-- If it's a product, break-even is the minimum milestone.
+- Good: `myapp-v1.2.3-linux-x86_64.tar.gz`
+- Bad: `release.zip`
 
-## Legal Basics: Not Optional
+## Deployment Topology Matrix
 
-**LICENSE file:**
+Choose one topology intentionally.
 
-- MIT? Simple, permissive, safe default.
-- Apache 2.0? More explicit indemnity language. Enterprise prefers this.
-- GPL? Viral license—anyone using your code must also open-source. Know what you're signing.
-- Proprietary? Then don't claim open source.
-- Custom? Don't. Use a standard license or talk to a lawyer.
+### Caddy
 
-**SECURITY.md:**
+Use when:
 
-- Include it. Tells security researchers how to report vulnerabilities responsibly.
-- Format: email, PGP key (if you're serious), disclosure timeline.
-- Example: "Email security@yoursite.com with details. We'll acknowledge within 48h, fix within 14 days."
+- solo operator or small team
+- one app or a few simple upstreams
+- automatic HTTPS is desired
+- minimal operator burden matters
 
-**Privacy and terms of service:**
+Best default for:
 
-- If you collect data (telemetry, analytics, user accounts), have a privacy policy.
-- If your software is user-facing, have terms of service. Liability disclaimers matter.
-- GDPR-aware if you serve Europe. CCPA-aware if you serve California.
+- MVP web apps
+- landing pages + app proxy
+- internal tools made public carefully
 
-**README.md—also legal armor:**
+### Nginx
 
-- Explicit about what this does and doesn't do.
-- "This tool is provided as-is. We make no guarantees about production use."
-- If it's new/beta, say so. Users need to know.
+Use when:
 
-## Deployment Reality: Caddy vs Docker vs Nginx
+- you already operate Nginx confidently
+- you need advanced reverse-proxy behavior
+- you are handling many upstreams or more specialized tuning
 
-This is where most people get lost. Let's be concrete.
+Best for:
 
-**Nginx:**
+- established ops stacks
+- larger web/API estates
 
-- Use when: You're running a web server at scale, reverse proxying multiple services, need extreme performance.
-- Setup: VPS, config files, manage certs yourself (or letsencrypt).
-- Cost: Free software, but operator cost is high. You're managing it.
-- Best for: APIs, web apps serving thousands, teams with ops experience.
+### Docker
 
-**Docker:**
+Use when:
 
-- Use when: You want reproducible deployment, isolation, cloud-native thinking.
-- Setup: Write Dockerfile, push to registry, orchestrate with Compose or Kubernetes.
-- Cost: Free runtime, but registry/compute costs are real.
-- Best for: Startups, teams shipping fast, anything you'll deploy to multiple clouds.
+- reproducibility matters
+- deployment environment is heterogeneous
+- you want a portable unit for preview/staging/prod
 
-**Caddy:**
+Best for:
 
-- Use when: You want "it just works," automatic HTTPS, simple config.
-- Setup: Single binary, JSON or text config, built-in reverse proxy.
-- Cost: Free, tiny footprint, minimal operational overhead.
-- Best for: Single-server deployments, hobby projects, MVP phase, new teams.
+- startups
+- multi-env deployments
+- teams that need parity between local and prod
 
-**Decision tree:**
+### Safe recommendation ladder
 
-- Do you have DevOps people? → Kubernetes + Docker
-- Do you have a team? → Docker + Compose
-- Are you solo? → Caddy or static hosting
-- Do you already run Nginx? → Keep it, it's fine
-- Are you at "how do we even deploy this?" stage? → Caddy + VPS is your answer
+- simplest real launch: static hosting or Caddy
+- app + worker + db: Docker + reverse proxy
+- existing mature infra: Nginx or current platform standard
 
-## Post-Release Verification: Users Will Find Bugs You Didn't
+Do not choose a stack because it sounds impressive. Choose the smallest stack
+that is honest for the product.
 
-**Install path works:**
+## Deployment Safety Defaults
 
-- Try installing from scratch. Not from your repo, from published artifacts.
-- `npm install @yourorg/package` from a clean directory.
-- `docker run yourimage:latest` with nothing pre-loaded.
-- Follow your own README. If you get lost, users will too.
+These defaults should be assumed unless there is a specific reason not to.
 
-**Docs resolve:**
+- Bind app services to `127.0.0.1` by default
+- Do not expose app processes directly on `0.0.0.0` unless they are intentionally public
+- Terminate TLS at a deliberate proxy or ingress
+- Prefer reverse proxy to raw app port exposure
+- Prefer internal Docker network over host-published ports for private services
+- Use environment injection at runtime, not secrets baked into images
+- Require `/health` or equivalent health endpoint for deployed services
+- Require graceful shutdown / restart handling
+- Require non-root containers where possible
+- Require `.dockerignore` and no secret files in image context
 
-- All links in your docs should work. Check them.
-- API docs generated? Rebuild them. Broken examples are reputation damage.
-- Quickstart example: Run it cold. If it fails, fix it or update it.
+**Red flags**
 
-**Brand coherence check:**
+- admin/debug panel bound publicly by accident
+- public service on `:3000` / `:5173` / `:8000` without proxy and TLS
+- CORS set to `*` on authenticated APIs
+- stacktraces or framework banners exposed publicly
+- `.env` or backup files web-accessible
 
-- Does the product look like a product or like a repo?
-- Is there a representation surface (./presence/, landing page, or equivalent)?
-- Do all public surfaces use consistent palette, fonts, tone?
-- Does the install experience match the product's visual identity?
-- If the product appears in another product's navbar (like loctree), does it visually belong?
+## Reverse Proxy and Exposure Doctrine
 
-**Users can actually onboard:**
+Release must explicitly answer:
 
-- One person outside your team: ask them to use your product cold.
-- Where do they get stuck? That's your fix list.
-- Friction = support load.
+- what hostname is canonical
+- what process is public
+- what process is private
+- where TLS terminates
+- how HTTP redirects to HTTPS
+- how websockets and forwarded headers are handled
 
-## Go-to-Market: Code Alone Ships Nothing
+Minimum reverse-proxy expectations:
 
-**Launch announcements:**
+- `Host` and forwarding headers preserved intentionally
+- websocket upgrade support if the app needs it
+- sane timeout and body-size settings
+- redirect `www`/apex according to canonical decision
+- 80 -> 443 redirect when public HTTPS is intended
 
-- Twitter/X: Short hook, link to release notes.
-- Hacker News: If it's novel enough. Follow the guidelines.
-- Reddit: Relevant communities only. Spam kills trust.
-- Product Hunt: Coordinate for day-of launch. Requires prep.
-- Email: If you have a list, use it.
+Public internet exposure is a decision, not a default.
 
-**Community outreach:**
+## Semgrep Release Gate
 
-- Changelog.com will link you if it's interesting.
-- Lobsters accepts substantive posts about new tech.
-- Indie Hackers: Good audience for indie projects.
-- GitHub Trending: Happens naturally if people star your repo.
+Semgrep should be part of the release canon, not an optional extra.
 
-**Documentation site deploy:**
+Before release:
 
-- Static site: Vercel, Netlify, GitHub Pages. Free, fast, reliable.
-- Build from README: Use mdbook, docusaurus, or mkdocs.
-- Deploy automatically: CI/CD on every docs change.
-- Custom domain: ~$12/year, worth it for credibility.
+- run Semgrep against the app surface
+- record critical and high findings
+- block release on unresolved critical findings unless the user explicitly overrides
 
-**Key metric: Can a stranger find your code, understand what it does, and use it in 5 minutes?** If no, you haven't
-shipped. You've just uploaded files.
+Minimum classes to care about:
 
-## The Shipping Mindset
+- auth / authorization bypasses
+- insecure secret handling
+- shell / command injection seams
+- SSRF
+- path traversal
+- unsafe file serving
+- weak input validation on dangerous sinks
+- insecure deserialization or eval-like behavior
+- framework debug/dev endpoints left enabled
 
-Release is not the end. It's the beginning of learning from real users. But the mechanics above—tags, changelogs, legal
-clarity, deployment reality—separate projects that sustain from projects that die.
+If Semgrep is unavailable in the environment, say so explicitly and run the
+closest safe equivalent. But the release report must say that the Semgrep gate
+was not actually satisfied.
 
-Ship it clean. Ship it documented. Ship it with a plan for what comes next.
+## Domain and DNS Canon
+
+If the product has any public surface, release should verify:
+
+- domain is registered and intended
+- DNS points to the correct target
+- canonical host is chosen (`www` vs apex)
+- redirects match the canonical host
+- TLS certificate resolves cleanly
+- staging and prod domains are not confused
+
+Also check:
+
+- no stale preview domains still advertised as primary
+- no mismatched favicon / title / og:image leaking old product identity
+- no broken `/.well-known/*` paths needed by verifiers or app clients
+
+## Verification Challenges and Ownership Proofs
+
+Public products often need ownership proofs. Release should verify or prepare:
+
+- Search Console verification
+- Bing Webmaster verification
+- domain verification challenge files or TXT records
+- Apple/Google/other ecosystem well-known verification endpoints
+- any "monkey challenge" / challenge-response proof files required by infra or platforms
+
+If a product depends on domain ownership proof and the challenge path is missing,
+the release is not done.
+
+## SEO and Visibility Canon
+
+Release should treat visibility as a hard checklist, not a nice-to-have.
+
+### Minimum page-level requirements
+
+- descriptive `<title>`
+- meta description
+- one real `<h1>`
+- crawlable content in initial HTML or a truthful fallback
+- canonical URL
+- Open Graph tags
+- Twitter card tags
+- correct status code
+- noindex only when intentional
+
+### Minimum site-level requirements
+
+- `robots.txt`
+- `sitemap.xml`
+- canonical host strategy
+- consistent internal linking
+- no broken docs or marketing links
+- favicon and social preview assets
+
+### Indexability checks
+
+- `curl` the page and verify meaningful content exists without relying purely on JS
+- confirm the route is not accidentally blocked by `robots.txt`
+- confirm meta robots is not `noindex` unless intentional
+- confirm canonical points to the intended public URL
+
+### Domain visibility checks
+
+- docs site resolves
+- landing page resolves
+- primary CTA resolves
+- install instructions point to real public artifacts
+- social share preview is not broken
+
+If a stranger cannot discover, understand, and try the product quickly, release
+is still incomplete.
+
+## Onboarding Truth
+
+Release must verify the first-user path:
+
+- install from published artifacts, not from the repo
+- follow the public quickstart cold
+- verify screenshots and demos match reality
+- ensure the app or CLI starts without dev-only assumptions
+- ensure errors are human-readable
+
+The path from stranger -> installer -> first successful use is part of release.
+
+## Post-Release Smoke Verification
+
+After release, verify:
+
+- public URL resolves
+- TLS is valid
+- health endpoint passes
+- core action works
+- install path works from scratch
+- docs and CTA links resolve
+- published version matches the running/released one
+
+If possible, verify with one cold environment, not the warmed-up dev machine.
+
+## Financial and Legal Reality
+
+Release also means reality:
+
+- hosting and bandwidth costs are understood
+- registry or CDN limits are known
+- LICENSE is correct
+- SECURITY.md exists
+- privacy policy / terms exist if user data is involved
+
+Do not market proprietary behavior as open source, and do not collect data
+without saying so.
 
 ## Anti-Patterns
 
-- Publishing without running `vc-dou` first (shipping an incomplete product surface)
-- Skipping `vc-hydrate` artifacts (no install path, no SEO, no onboarding)
-- Tagging without a changelog (users cannot assess the upgrade)
-- Deploying without post-release verification (install path test is mandatory)
-- Treating release as a one-time event (it is a repeatable process)
-- Running release on a chaotic tree or unmerged branch without explicit user approval
+- Publishing without `vc-dou`
+- Skipping hydration and assuming people will "figure it out"
+- Releasing with no Semgrep or equivalent security gate
+- Exposing services publicly on `0.0.0.0` without deliberate proxy/TLS design
+- Shipping with broken canonical domain or redirect logic
+- Forgetting verification challenge files / TXT records
+- Shipping a JS-only empty shell that crawlers cannot understand
+- Tagging without a changelog
+- Deploying without post-release smoke checks
+- Treating release as a one-time ceremony instead of a repeatable operational discipline
+
+## Final Principle
+
+Release is the phase where technical debt becomes public truth.
+
+Ship it only when:
+
+- it is safe enough
+- it is visible enough
+- it is installable enough
+- it is understandable enough
+- and the deployment story is boring enough to trust
+
+If not, the honest result of `vc-release` is not "done."
+It is "blocked, for these exact reasons."
 
 ---
 
-_"The code is done. The packaging is done. Now ship it to people."_
+_"Done in the repo" is not "done in the world."_
 
 _Vibecrafted with AI Agents by VetCoders (c)2024-2026 VetCoders_

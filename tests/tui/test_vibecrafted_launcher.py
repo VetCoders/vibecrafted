@@ -646,6 +646,56 @@ def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
     assert "--tick-ms 500" in tui_args
 
 
+def test_tui_uses_vc_operator_from_path_when_local_build_missing(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    installed_root = home / ".vibecrafted"
+    launcher = installed_root / "bin" / "vibecrafted"
+    current_root = installed_root / "tools" / "vibecrafted-current"
+    fake_bin = tmp_path / "bin"
+    python_capture = tmp_path / "python3-calls.txt"
+    tui_capture = tmp_path / "tui-calls.txt"
+
+    home.mkdir(parents=True)
+    fake_bin.mkdir()
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
+    launcher.chmod(0o755)
+    (current_root / "scripts").mkdir(parents=True, exist_ok=True)
+    (current_root / "operator-tui" / "target" / "debug").mkdir(
+        parents=True, exist_ok=True
+    )
+    (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
+    (current_root / "scripts" / "control_plane_state.py").write_text(
+        "#!/usr/bin/env python3\n", encoding="utf-8"
+    )
+    (current_root / "scripts" / "vibecrafted").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+    )
+    _write_fake_python3(fake_bin, python_capture)
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(python_capture)
+    _write_capture_script(fake_bin / "vc-operator", tui_capture)
+
+    subprocess.run(
+        ["bash", str(launcher), "tui", "--runtime", "headless"],
+        check=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert (
+        f"{current_root / 'scripts' / 'control_plane_state.py'} sync"
+        in python_capture.read_text(encoding="utf-8")
+    )
+    tui_args = tui_capture.read_text(encoding="utf-8")
+    assert "--runtime headless" in tui_args
+    assert f"--deck {current_root / 'scripts' / 'vibecrafted'}" in tui_args
+
+
 def test_skill_subcommand_help_is_human_readable_without_agent() -> None:
     result = subprocess.run(
         [str(LAUNCHER), "justdo", "--help"],

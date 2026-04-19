@@ -287,7 +287,11 @@ impl App {
     pub fn prompt_lines(&self) -> Vec<String> {
         let command_preview = self.launch_command().command_line();
         let mut lines = vec![
-            format!("{}  {}", self.launch_kind.human_title(), self.launch_kind.human_description()),
+            format!(
+                "{}  {}",
+                self.launch_kind.human_title(),
+                self.launch_kind.human_description()
+            ),
             format!(
                 "agent: {}  runtime: {}",
                 self.selected_agent(),
@@ -439,9 +443,15 @@ impl App {
 pub fn default_prompt(kind: LaunchKind) -> String {
     match kind {
         LaunchKind::Workflow => "Plan and implement the task I am looking at now.".to_string(),
-        LaunchKind::Research => "Research the task I am looking at now and report the ground truth.".to_string(),
-        LaunchKind::Review => "Review the selected surface and call out concrete risks.".to_string(),
-        LaunchKind::Marbles => "Run a convergence loop on the selected surface until the lies are exposed.".to_string(),
+        LaunchKind::Research => {
+            "Research the task I am looking at now and report the ground truth.".to_string()
+        }
+        LaunchKind::Review => {
+            "Review the selected surface and call out concrete risks.".to_string()
+        }
+        LaunchKind::Marbles => {
+            "Run a convergence loop on the selected surface until the lies are exposed.".to_string()
+        }
     }
 }
 

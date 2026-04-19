@@ -270,14 +270,6 @@ fn resolved_zellij_config_dir(root: Option<&Path>) -> Option<PathBuf> {
         .then_some(repo_config_dir)
 }
 
-fn ghostty_macos_app() -> &'static str {
-    if Path::new("/Applications/Ghostty.app").exists() {
-        "/Applications/Ghostty.app"
-    } else {
-        "Ghostty"
-    }
-}
-
 fn shell_join(program: &Path, args: &[OsString]) -> String {
     let mut parts = Vec::with_capacity(args.len() + 1);
     parts.push(shell_quote(&program.to_string_lossy()));

@@ -259,7 +259,8 @@ _skill_summary() {
     hydrate) printf 'Packaging and go-to-market hydration.\n' ;;
     justdo) printf 'Autonomous end-to-end implementation when the thing simply needs to ship.\n' ;;
     marbles) printf 'Counterexample loop that keeps fixing what is still wrong until the surface is clean.\n' ;;
-    partner) printf 'Collaborative debugging, architecture triage, or full ownership mode.\n' ;;
+    ownership) printf 'Full-spectrum ownership mode for end-to-end delivery.\n' ;;
+    partner) printf 'Collaborative debugging, architecture triage, and shared executive reasoning.\n' ;;
     prune) printf 'Runtime and publish-cone cleanup with hard cuts and proof.\n' ;;
     release) printf 'Release mechanics, deployment reality, and ship-readiness work.\n' ;;
     research) printf 'Triple-agent research pass for ground truth before implementation.\n' ;;
@@ -673,30 +674,39 @@ cmd_gui() {
 }
 
 cmd_tui() {
-  local tui_dir manifest_path binary_path deck_path state_root
+  local tui_dir manifest_path binary_path external_binary deck_path state_root
   if _is_help_flag "${1:-}"; then
     cmd_tui_help
     return 0
   fi
   tui_dir="$(_operator_tui_dir 2>/dev/null || true)"
-  [[ -n "$tui_dir" ]] || {
-    printf '%b[error]%b operator-tui crate not found in the current source tree.\n' "$_red" "$_reset" >&2
-    return 1
-  }
-
-  manifest_path="$tui_dir/Cargo.toml"
-  binary_path="$tui_dir/target/debug/vibecrafted-operator"
+  [[ -n "$tui_dir" ]] && manifest_path="$tui_dir/Cargo.toml"
+  [[ -n "$tui_dir" ]] && binary_path="$tui_dir/target/debug/vibecrafted-operator"
+  external_binary="$(command -v vc-operator 2>/dev/null || true)"
   deck_path="$(_repo_source_root 2>/dev/null || true)"
-  [[ -n "$deck_path" ]] || deck_path="$(cd "$tui_dir/.." && pwd)"
+  if [[ -z "$deck_path" && -n "$tui_dir" ]]; then
+    deck_path="$(cd "$tui_dir/.." && pwd)"
+  fi
+  [[ -n "$deck_path" ]] || deck_path="$(_script_repo_root)"
   deck_path="$deck_path/scripts/vibecrafted"
   state_root="$crafted_home/control_plane"
 
   _sync_control_plane_best_effort
 
-  if [[ -x "$binary_path" ]]; then
+  if [[ -n "${binary_path:-}" && -x "$binary_path" ]]; then
     "$binary_path" --state-root "$state_root" --deck "$deck_path" "$@"
     return $?
   fi
+
+  if [[ -n "$external_binary" ]]; then
+    "$external_binary" --state-root "$state_root" --deck "$deck_path" "$@"
+    return $?
+  fi
+
+  [[ -n "$tui_dir" ]] || {
+    printf '%b[error]%b operator-tui crate not found in the current source tree and vc-operator is not installed.\n' "$_red" "$_reset" >&2
+    return 1
+  }
 
   command -v cargo >/dev/null 2>&1 || {
     printf '%b[error]%b cargo is required to build the Rust operator console.\n' "$_red" "$_reset" >&2

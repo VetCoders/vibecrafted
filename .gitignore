@@ -46,3 +46,5 @@ aicx-dashboard.html
 vibecrafted-io-link
 /operator-tui/target
 /artifacts
+/operator-tui/*.md
+!/operator-tui/README.md

@@ -41,3 +41,6 @@ cargo run --manifest-path operator-tui/Cargo.toml -- --state-root "$VIBECRAFTED_
 #   --runtime terminal
 #   --root /path/to/repo
 ```
+
+If you install the crate as a binary, it exposes both `vibecrafted-operator`
+and the shorter `vc-operator` entrypoint.

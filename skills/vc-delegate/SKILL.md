@@ -54,27 +54,28 @@ When using native subagents, default to the same frontier as the parent agent.
 
 Why:
 
-- same-named native delegation preserves the closest reasoning style to the parent
-- it maximizes context locality and cache reuse opportunities
-- on the same repo and task family, this is usually the best cost-to-quality default
+- Same-named native delegation preserves the closest reasoning style to the parent.
+- It maximizes context locality and cache reuse opportunities.
+- On the same repo and task family, this is usually the best cost-to-quality default.
 
 Default:
 
-- Codex parent -> Codex native subagent
-- Claude parent -> Claude native subagent
-- Gemini parent -> Gemini native subagent
+- Parent model -> the same exact native model, when available.
+- If the exact model is unavailable, use the nearest native equivalent and say so explicitly.
+
+> “Parent model" means the same concrete model identity, not merely the same vendor or family.
 
 Exceptions:
 
-- Codex: you may delegate to `gpt-5.3-codex-spark` with `xhigh` when the task benefits from extreme speed. Treat Spark as a fast execution tier; the parent agent remains responsible for final quality.
-- Claude: for extensive long-running tasks prefer `opus[1m]`; for easier or lighter tasks prefer `sonnet[1m]`.
-- Gemini: if `gemini-3.1-pro-preview` is unavailable or unstable during peak demand, fallback native delegation to `auto-gemini-3`.
+- Codex: You may delegate to `gpt-5.3-codex-spark` with `xhigh` when the task benefits from extreme speed. Treat Spark as a fast execution tier; the parent agent remains responsible for final quality.
+- Claude: For extensive long-running tasks, prefer `opus[1m]`; for easier or lighter tasks, prefer `sonnet[1m]`.
+- Gemini: If `gemini-3.1-pro-preview` is unavailable or unstable during peak demand, fallback native delegation to `auto-gemini-3`.
 
 Rule:
 
-- default to same-named native agents first
-- use cross-model exceptions intentionally, never casually
-- if you trade down for speed or availability, recover quality in the parent orchestration pass
+- Default to same-named native agents first.
+- Use cross-model exceptions intentionally, never casually.
+- If you trade down for speed or availability, recover quality in the parent orchestration pass.
 
 ## Escalation Direction
 
@@ -86,19 +87,17 @@ outgrown native delegation.
 If a native delegated task becomes too extensive, too cross-cutting, or too
 dependent on model-specific orchestration, it should not fake completion.
 
-Instead it must:
+Instead, it must:
 
-- report that the task has exceeded native delegation scope
-- return to the parent operator
-- let the parent operator decide whether to escalate into `vc-agents`
+- report that the task has exceeded native delegation scope, or
+- return to the parent operator, or
+- escalate into `vc-agents`.
 
-Only the operator agent may escalate work into `vc-agents`.
+Escalation into `vc-agents`:
 
-Reason:
-
-- `vc-agents` is not a generic recursion mechanism
-- it is a deliberate operator decision based on the `vc-why-matrix`
-- once a fleet agent has been chosen, that choice must remain stable unless the operator explicitly changes it
+- by principle, `vc-agents` is not a generic recursion mechanism.
+- it is a deliberate operator decision based on the `vc-why-matrix`.
+- once a fleet agent has been chosen, that choice must remain stable unless the operator explicitly changes it.
 
 ## Scope Boundary
 

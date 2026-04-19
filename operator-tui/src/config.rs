@@ -172,6 +172,9 @@ fn print_help() {
     println!(
         "  vibecrafted-operator [--state-root <dir>] [--deck <path>] [--root <path>] [--runtime <headless|terminal|visible>] [--tick-ms <ms>]"
     );
+    println!(
+        "  vc-operator           [--state-root <dir>] [--deck <path>] [--root <path>] [--runtime <headless|terminal|visible>] [--tick-ms <ms>]"
+    );
     println!();
     println!("Options:");
     println!("  --state-root <dir>   Control-plane state root under VIBECRAFTED_HOME");
