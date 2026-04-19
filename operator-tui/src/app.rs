@@ -177,6 +177,7 @@ impl App {
 
     pub fn set_active_tab(&mut self, tab: AppTab) {
         self.active_tab = tab.index();
+        self.focus = LaunchFocus::Browse;
     }
 
     pub fn set_launch_kind(&mut self, kind: LaunchKind) {

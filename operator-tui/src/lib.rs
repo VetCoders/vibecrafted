@@ -371,4 +371,15 @@ mod tests {
 
         assert_eq!(app.focus, LaunchFocus::EditPrompt);
     }
+
+    #[test]
+    fn set_active_tab_resets_focus_to_browse() {
+        let mut app = sample_app();
+        app.focus = LaunchFocus::EditPrompt;
+
+        app.set_active_tab(AppTab::Controls);
+
+        assert_eq!(app.active_tab(), AppTab::Controls);
+        assert_eq!(app.focus, LaunchFocus::Browse);
+    }
 }
