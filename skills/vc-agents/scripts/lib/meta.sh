@@ -1,5 +1,26 @@
 #!/usr/bin/env bash
 
+spawn_control_plane_script() {
+  local candidate
+  for candidate in \
+    "${VIBECRAFTED_ROOT:-}/scripts/control_plane_state.py" \
+    "${HOME}/.vibecrafted/tools/vibecrafted-current/scripts/control_plane_state.py" \
+    "$(spawn_repo_root 2>/dev/null)/scripts/control_plane_state.py"
+  do
+    [[ -n "$candidate" && -f "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+spawn_sync_control_plane() {
+  local script_path
+  script_path="$(spawn_control_plane_script 2>/dev/null || true)"
+  [[ -n "$script_path" ]] || return 0
+  python3 "$script_path" sync >/dev/null 2>&1 || true
+}
+
 spawn_find_meta_for_run_id() {
   local reports_dir="$1"
   local target_run_id="$2"
@@ -100,6 +121,7 @@ with open(meta_path, "w", encoding="utf-8") as fh:
     json.dump(payload, fh, indent=2, ensure_ascii=False)
     fh.write("\n")
 PY
+  spawn_sync_control_plane
 }
 
 spawn_finish_meta() {
@@ -149,4 +171,5 @@ with open(meta_path, "w", encoding="utf-8") as fh:
     json.dump(payload, fh, indent=2, ensure_ascii=False)
     fh.write("\n")
 PY
+  spawn_sync_control_plane
 }

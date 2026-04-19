@@ -3,17 +3,19 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF_USAGE'
-Usage: install.sh [--gui] [--ref <branch>] [--archive-url <url> | --archive-file <path>] [--tools-dir <dir>] [make-target]
+Usage: install.sh [--gui] [--yes] [--ref <branch>] [--archive-url <url> | --archive-file <path>] [--tools-dir <dir>] [make-target]
 
 Bootstrap a local 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. source snapshot into $VIBECRAFTED_ROOT/.vibecrafted/tools and then
 run a local staged install path from that copy.
 
 Use `--gui` when you want the browser-based guided installer.
+Use `--yes` to skip the attended bootstrap confirmation prompt.
 Non-interactive runs without `--gui` bypass the browser and call the compact installer directly.
 
 Examples:
   curl -fsSL https://vibecrafted.io/install.sh | bash
   curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
+  curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --yes
   curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --ref develop
   bash install.sh doctor
   bash install.sh --archive-file /tmp/vibecrafted.tar.gz vibecrafted
@@ -33,6 +35,14 @@ is_interactive_session() {
   [[ -t 0 && -t 1 ]]
 }
 
+has_attended_tty() {
+  if exec 9<>/dev/tty 2>/dev/null; then
+    exec 9>&- 9<&- || true
+    return 0
+  fi
+  return 1
+}
+
 default_vibecrafted_home() {
   if [[ -n "${VIBECRAFTED_HOME:-}" ]]; then
     printf '%s\n' "$VIBECRAFTED_HOME"
@@ -43,6 +53,71 @@ default_vibecrafted_home() {
 
 sanitize_ref() {
   printf '%s' "$1" | tr '/:@ ' '----' | tr -cd '[:alnum:]._-' 
+}
+
+bootstrap_next_step() {
+  if [[ "$target" == "vibecrafted" && "$use_gui" == "1" ]]; then
+    printf '%s\n' "launch the guided installer UI"
+    return
+  fi
+
+  if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
+    printf '%s\n' "run the compact installer"
+    return
+  fi
+
+  if [[ "$target" == "vibecrafted" ]]; then
+    printf '%s\n' "run the terminal-native installer wizard"
+    return
+  fi
+
+  printf "run make target '%s'\n" "$target"
+}
+
+prompt_attended_consent() {
+  local source_description next_step response
+
+  [[ "$auto_yes" == "1" ]] && return 0
+  has_attended_tty || return 0
+
+  if [[ -n "$archive_file" ]]; then
+    source_description="unpack local archive: $archive_file"
+  else
+    source_description="download snapshot: $archive_url"
+  fi
+  next_step="$(bootstrap_next_step)"
+
+  {
+    printf '\n'
+    printf 'This bootstrap will:\n'
+    printf '  • %s\n' "$source_description"
+    printf '  • stage the control plane under %s\n' "$staged_dir"
+    printf '  • refresh the current symlink at %s\n' "$current_link"
+    printf '  • %s\n' "$next_step"
+    printf '\n'
+    printf 'Nothing will be staged or installed until you say yes.\n'
+  } > /dev/tty
+
+  while true; do
+    printf 'Proceed? [y/N] ' > /dev/tty
+    if ! IFS= read -r response < /dev/tty; then
+      printf '\nBootstrap cancelled: no confirmation received.\n' > /dev/tty
+      exit 1
+    fi
+    case "$response" in
+      [yY]|[yY][eE][sS])
+        printf '\n' > /dev/tty
+        return 0
+        ;;
+      ""|[nN]|[nN][oO])
+        printf '\nCancelled. Nothing was staged or installed.\n' > /dev/tty
+        exit 0
+        ;;
+      *)
+        printf 'Please answer yes or no.\n' > /dev/tty
+        ;;
+    esac
+  done
 }
 
 vibecrafted_home="$(default_vibecrafted_home)"
@@ -56,11 +131,15 @@ archive_file=""
 tools_dir="$default_tools_dir"
 target="vibecrafted"
 use_gui=0
+auto_yes=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --gui)
       use_gui=1
+      ;;
+    --yes|-y)
+      auto_yes=1
       ;;
     --ref)
       shift
@@ -134,6 +213,13 @@ else
   [[ -f "$archive_file" ]] || die "Archive file not found: $archive_file"
 fi
 
+safe_ref="$(sanitize_ref "$ref")"
+[[ -n "$safe_ref" ]] || safe_ref="current"
+staged_dir="$tools_dir/vibecrafted-$safe_ref"
+current_link="$tools_dir/vibecrafted-current"
+
+prompt_attended_consent
+
 mkdir -p "$tools_dir"
 
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-bootstrap.XXXXXX")"
@@ -206,10 +292,6 @@ else
 fi
 [[ -n "$source_dir" ]] || die "Could not find extracted source directory"
 
-safe_ref="$(sanitize_ref "$ref")"
-[[ -n "$safe_ref" ]] || safe_ref="current"
-staged_dir="$tools_dir/vibecrafted-$safe_ref"
-current_link="$tools_dir/vibecrafted-current"
 incoming_dir="$tools_dir/.incoming-$safe_ref-$$"
 
 rm -rf "$incoming_dir"
@@ -223,12 +305,13 @@ info "  $staged_dir"
 info "Current control plane:"
 info "  $current_link"
 
-# Extract version from the archive URL or staged Makefile for the post-install banner.
+# Read canonical VERSION file from the staged source tree for the post-install banner.
+# The repo ships VERSION at the root; fall back to 'unknown' if absent (e.g. custom tarballs).
 _installed_version=""
-if [[ -f "$staged_dir/Makefile" ]]; then
-  _installed_version="$(grep -oP 'VERSION\s*:?=\s*\K\S+' "$staged_dir/Makefile" 2>/dev/null || true)"
+if [[ -f "$staged_dir/VERSION" ]]; then
+  _installed_version="$(tr -d '[:space:]' < "$staged_dir/VERSION" 2>/dev/null || true)"
 fi
-[[ -n "$_installed_version" ]] || _installed_version="$(basename "$archive_url" .tar.gz 2>/dev/null || echo 'unknown')"
+[[ -n "$_installed_version" ]] || _installed_version="unknown"
 
 post_install_banner() {
   printf '\n'

@@ -10,6 +10,11 @@ def test_makefile_keeps_terminal_first_and_gui_fallback() -> None:
     `make wizard` is the optional browser-based GUI surface, and
     `make install` routes through the same vetcoders-installer runner
     with auto-approve for automation parity.
+
+    The `vibecrafted` and `install` recipes must also keep the uv bootstrap
+    and the `uv run` invocation inside one shell stanza, otherwise the
+    `export PATH=...` from the bootstrap leg dies before `uv run` sees it
+    (each `@`-prefixed recipe line spawns a fresh shell). See P1-01.
     """
     text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
@@ -30,14 +35,38 @@ def test_makefile_keeps_terminal_first_and_gui_fallback() -> None:
     )[0]
     install_block = text.split("install: init-hooks", 1)[1].split("\nskills:", 1)[0]
 
+    # The terminal-native front door must end its single shell stanza with
+    # `uv run ... vetcoders-installer $(MANIFEST)`.
     assert (
-        "@uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST)"
+        "uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST)"
         in vibecrafted_block
     )
+    # Bootstrap + PATH export + uv run must live in ONE shell stanza.
+    # Shape: the last `\` continuation chain must hold both the fi-terminator
+    # and the `uv run` line so PATH survives the shell boundary.
+    assert 'export PATH="$$HOME/.local/bin:$$PATH"' in vibecrafted_block
+    assert "fi; \\" in vibecrafted_block, (
+        "vibecrafted recipe must chain the uv bootstrap `fi` into the same "
+        "shell as `uv run` via `fi; \\`"
+    )
+
     assert '@$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"' in wizard_block
+
     # make install routes through the same runner with --yes auto-approve,
     # so humans (make vibecrafted) and automation (make install) share one engine.
     assert (
-        "@uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST) --yes"
+        "uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST) --yes"
         in install_block
     )
+    assert 'export PATH="$$HOME/.local/bin:$$PATH"' in install_block
+    assert "fi; \\" in install_block, (
+        "install recipe must chain the uv bootstrap `fi` into the same "
+        "shell as `uv run` via `fi; \\`"
+    )
+
+
+def test_bundle_check_uses_portable_mktemp_template() -> None:
+    text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert 'mktemp "$$tmp_root/vibecrafted-bundle.XXXXXX"' in text
+    assert 'mktemp "$$tmp_root/vibecrafted-bundle.XXXXXX.plugin"' not in text

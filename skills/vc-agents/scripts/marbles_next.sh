@@ -424,6 +424,12 @@ This is the final loop. Your verified report MUST include:
 - **Convergence verdict**: Has the codebase converged? (yes/no/partial)
 - **Remaining issues**: Any P0/P1 still open after all loops
 - **Next workflow recommendation**: What should the team do next (e.g., ship, another marbles run with different focus, manual review of specific area)
+
+## State-Delta Summary (Reverse Prompt)
+Generate a multidimensional 'Reverse Prompt' or 'State-Delta Summary' capturing your true synthesized understanding of the codebase after this execution cycle.
+- Explain how you got from the initial prompt (point A) to the current ground truth (point B).
+- What architectural decisions or edge cases were forced by reality?
+- Provide a precise, reproducible path to the current state that future agents can consume via the AICX intents engine to prevent context loss.
 "
   fi
 
@@ -566,7 +572,7 @@ _launch_next_loop() {
   VIBECRAFTED_SKILL_CODE="marb" \
   VIBECRAFTED_SKILL_NAME="marbles" \
   VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right \
-  VIBECRAFTED_MARBLES_TAB_NAME="${VIBECRAFTED_MARBLES_TAB_NAME:-}" \
+  VIBECRAFTED_MARBLES_TAB_NAME="${VIBECRAFTED_MARBLES_TAB_NAME:-marbles}" \
   VIBECRAFTED_STORE_DIR="$store" \
   VIBECRAFTED_STORE_ROOT="$root_dir" \
   bash "$scripts_dir/${loop_agent}_spawn.sh" "${spawn_args[@]}" "$loop_plan"

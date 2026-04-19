@@ -44,6 +44,38 @@ def _write_fake_command(bin_dir: Path, name: str, capture_file: Path) -> None:
     script.chmod(0o755)
 
 
+def _write_capture_script(script_path: Path, capture_file: Path) -> None:
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'printf "%s\\n" "$*" >> "{capture_file}"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+
+
+def _write_fake_python3(bin_dir: Path, capture_file: Path) -> None:
+    script = bin_dir / "python3"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'printf "%s\\n" "$*" >> "$CAPTURE_FILE"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
 def _write_fake_marbles_spawn(script_path: Path) -> None:
     script_path.parent.mkdir(parents=True, exist_ok=True)
     script_path.write_text(
@@ -514,6 +546,156 @@ def test_repo_launcher_is_directly_executable() -> None:
     assert "START_HERE.md" in result.stdout
 
 
+def test_installed_launcher_gui_uses_python_control_plane_surface(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    installed_root = home / ".vibecrafted"
+    launcher = installed_root / "bin" / "vibecrafted"
+    current_root = installed_root / "tools" / "vibecrafted-current"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "python3-calls.txt"
+
+    home.mkdir(parents=True)
+    fake_bin.mkdir()
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
+    launcher.chmod(0o755)
+    (current_root / "scripts").mkdir(parents=True, exist_ok=True)
+    (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
+    (current_root / "scripts" / "installer_gui.py").write_text(
+        "#!/usr/bin/env python3\n", encoding="utf-8"
+    )
+    (current_root / "scripts" / "control_plane_state.py").write_text(
+        "#!/usr/bin/env python3\n", encoding="utf-8"
+    )
+    _write_fake_python3(fake_bin, capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    subprocess.run(
+        ["bash", str(launcher), "gui", "--no-open", "--port", "4173"],
+        check=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+    payload = capture_file.read_text(encoding="utf-8")
+    assert f"{current_root / 'scripts' / 'control_plane_state.py'} sync" in payload
+    assert (
+        f"{current_root / 'scripts' / 'installer_gui.py'} --source {current_root} --no-open --port 4173"
+        in payload
+    )
+
+
+def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    installed_root = home / ".vibecrafted"
+    launcher = installed_root / "bin" / "vibecrafted"
+    current_root = installed_root / "tools" / "vibecrafted-current"
+    fake_bin = tmp_path / "bin"
+    python_capture = tmp_path / "python3-calls.txt"
+    tui_capture = tmp_path / "tui-calls.txt"
+
+    home.mkdir(parents=True)
+    fake_bin.mkdir()
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
+    launcher.chmod(0o755)
+    (current_root / "scripts").mkdir(parents=True, exist_ok=True)
+    (current_root / "operator-tui" / "target" / "debug").mkdir(
+        parents=True, exist_ok=True
+    )
+    (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
+    (current_root / "scripts" / "control_plane_state.py").write_text(
+        "#!/usr/bin/env python3\n", encoding="utf-8"
+    )
+    (current_root / "scripts" / "vibecrafted").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+    )
+    _write_fake_python3(fake_bin, python_capture)
+    _write_capture_script(
+        current_root / "operator-tui" / "target" / "debug" / "vibecrafted-operator",
+        tui_capture,
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(python_capture)
+
+    subprocess.run(
+        ["bash", str(launcher), "tui", "--tick-ms", "500"],
+        check=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert (
+        f"{current_root / 'scripts' / 'control_plane_state.py'} sync"
+        in python_capture.read_text(encoding="utf-8")
+    )
+    tui_args = tui_capture.read_text(encoding="utf-8")
+    assert f"--state-root {installed_root / 'control_plane'}" in tui_args
+    assert f"--deck {current_root / 'scripts' / 'vibecrafted'}" in tui_args
+    assert "--tick-ms 500" in tui_args
+
+
+def test_tui_uses_vc_operator_from_path_when_local_build_missing(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    installed_root = home / ".vibecrafted"
+    launcher = installed_root / "bin" / "vibecrafted"
+    current_root = installed_root / "tools" / "vibecrafted-current"
+    fake_bin = tmp_path / "bin"
+    python_capture = tmp_path / "python3-calls.txt"
+    tui_capture = tmp_path / "tui-calls.txt"
+
+    home.mkdir(parents=True)
+    fake_bin.mkdir()
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
+    launcher.chmod(0o755)
+    (current_root / "scripts").mkdir(parents=True, exist_ok=True)
+    (current_root / "operator-tui" / "target" / "debug").mkdir(
+        parents=True, exist_ok=True
+    )
+    (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
+    (current_root / "scripts" / "control_plane_state.py").write_text(
+        "#!/usr/bin/env python3\n", encoding="utf-8"
+    )
+    (current_root / "scripts" / "vibecrafted").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+    )
+    _write_fake_python3(fake_bin, python_capture)
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(python_capture)
+    _write_capture_script(fake_bin / "vc-operator", tui_capture)
+
+    subprocess.run(
+        ["bash", str(launcher), "tui", "--runtime", "headless"],
+        check=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert (
+        f"{current_root / 'scripts' / 'control_plane_state.py'} sync"
+        in python_capture.read_text(encoding="utf-8")
+    )
+    tui_args = tui_capture.read_text(encoding="utf-8")
+    assert "--runtime headless" in tui_args
+    assert f"--deck {current_root / 'scripts' / 'vibecrafted'}" in tui_args
+
+
 def test_skill_subcommand_help_is_human_readable_without_agent() -> None:
     result = subprocess.run(
         [str(LAUNCHER), "justdo", "--help"],
@@ -621,6 +803,7 @@ def test_agent_subcommand_help_lists_modes() -> None:
     assert "Plan-based helper modes for codex." in result.stdout
     assert "implement <plan.md>" in result.stdout
     assert "observe   --last" in result.stdout
+    assert "await     --last" in result.stdout
 
 
 def test_dashboard_subcommand_launches_repo_owned_zellij_layout(tmp_path: Path) -> None:

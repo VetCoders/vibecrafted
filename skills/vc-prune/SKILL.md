@@ -62,6 +62,8 @@ This skill asks a sharp question: **what must survive for runtime truth, and wha
 The goal is not cosmetic cleanup. The goal is to reduce the product surface so we can actually stabilize what remains.
 We apply the VetCoders Axiom here: **Aggressive pruning with belief in the VCS archive over 'keep it just in case'.** Dead code is not necessarily _bad_ code; it is often a graveyard of incredibly valuable ideas that simply didn't find a finale. But its place is in the Git archive, not polluting the runtime. If you need it later, revive it. Until then—cut it without sentiment.
 
+And a second axiom from the VetCoders charter, equally load-bearing here: **Move on over backward compatibility. If a local abstraction is rotten and blocks stabilization, cut it cleanly instead of preserving garbage.** Backward compatibility is optional, not sacred. Preserving bad architecture because it exists is the default failure mode of careful engineers — and it is exactly what `vc-prune` is built to defeat. A feature that is gated, stubbed, never built in CI, and still pulling transitive vulnerabilities into the lockfile is garbage. Cut it. The dependency graph is part of runtime truth too.
+
 ## Core Contract
 
 - For any non-trivial prune, external `vc-agents` is the default first move.

@@ -1398,6 +1398,18 @@ _vetcoders_observe() {
   bash "$script" "$tool" "$@"
 }
 
+_vetcoders_await() {
+  local tool="${1:-}"
+  shift || true
+  local script
+  script="$(_vetcoders_spawn_script "${tool:-codex}" "await.sh")" || return 1
+  if [[ -n "$tool" ]]; then
+    bash "$script" "$tool" "$@"
+  else
+    bash "$script" "$@"
+  fi
+}
+
 codex-review() {
   _vetcoders_spawn_plan codex review "$1" --runtime "$(_vetcoders_default_runtime)"
 }
@@ -1462,12 +1474,24 @@ codex-observe() {
   _vetcoders_observe codex "$@"
 }
 
+codex-await() {
+  _vetcoders_await codex "$@"
+}
+
 claude-observe() {
   _vetcoders_observe claude "$@"
 }
 
+claude-await() {
+  _vetcoders_await claude "$@"
+}
+
 gemini-observe() {
   _vetcoders_observe gemini "$@"
+}
+
+gemini-await() {
+  _vetcoders_await gemini "$@"
 }
 
 _vetcoders_skill() {
@@ -1506,7 +1530,9 @@ _vetcoders_skill() {
   local spawn_args=(--runtime "$(_vetcoders_effective_runtime)")
   [[ -n "$_vetcoders_contract_root" ]] && spawn_args+=(--root "$_vetcoders_contract_root")
   (
+    # shellcheck disable=SC2030
     export VIBECRAFTED_RUN_ID="$run_id"
+    # shellcheck disable=SC2030
     export VIBECRAFTED_RUN_LOCK="$run_lock"
     # shellcheck disable=SC2030
     export VIBECRAFTED_SKILL_CODE="$skill_code"
@@ -1522,6 +1548,211 @@ _vetcoders_skill_entry() {
   local skill="$2"
   shift 2
   _vetcoders_skill "$tool" "$skill" "$@"
+}
+
+_vetcoders_research_launcher_path() {
+  local tool="$1"
+  local prompt_file="$2"
+  local root="$3"
+  local run_id="$4"
+  local run_lock="$5"
+  local runtime="$6"
+  local script output launcher
+
+  script="$(_vetcoders_spawn_script "$tool" "${tool}_spawn.sh")" || return 1
+  output="$(
+    env \
+      VIBECRAFTED_RUN_ID="$run_id" \
+      VIBECRAFTED_RUN_LOCK="$run_lock" \
+      VIBECRAFTED_SKILL_CODE="rsch" \
+      VIBECRAFTED_SKILL_NAME="research" \
+      bash "$script" --dry-run --mode implement --runtime "$runtime" --root "$root" "$prompt_file" 2>&1
+  )" || {
+    printf '%s\n' "$output" >&2
+    return 1
+  }
+
+  launcher="$(printf '%s\n' "$output" | awk -F': ' '/Dry run mode: launcher generated only:/ {print $NF}' | tail -1)"
+  [[ -n "$launcher" && -f "$launcher" ]] || {
+    printf 'Could not resolve %s research launcher.\n' "$tool" >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  }
+  printf '%s\n' "$launcher"
+}
+
+_vetcoders_write_research_layout() {
+  local layout_file="$1"
+  local claude_script="$2"
+  local codex_script="$3"
+  local gemini_script="$4"
+
+  cat > "$layout_file" <<EOF
+layout {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="compact-bar"
+        }
+        children
+        pane size=1 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+
+    tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Research" {
+        pane split_direction="vertical" {
+            pane name="synthesis" size="55%" focus=true command="zsh"
+            pane split_direction="horizontal" size="45%" {
+                pane name="claude" command="bash" {
+                    args "$claude_script"
+                }
+                pane name="codex" command="bash" {
+                    args "$codex_script"
+                }
+                pane name="gemini" command="bash" {
+                    args "$gemini_script"
+                }
+            }
+        }
+    }
+}
+EOF
+}
+
+_vetcoders_research_help() {
+  cat <<'HELP'
+⚒  research
+─────────────────────────────────────────
+Triple-agent research swarm launcher (claude + codex + gemini).
+
+Usage:
+  vc-research --prompt "Question to research"
+  vc-research --file /path/to/plan.md
+
+Common flags:
+  -p, --prompt <text>            Inline prompt
+  -f, --file <path.md>           Input file as prompt context
+  --runtime <runtime>             Runtime backend (terminal|headless|visible)
+  --root <path>                   Root workspace for this research run
+
+Examples:
+  vc-research --prompt "Compare API alternatives for oauth libraries"
+  vc-research --file /path/to/research-plan.md
+  vibecrafted research --prompt "State of the art for MCP streaming"
+
+Do not pass an agent to vc-research.
+Use `vibecrafted <agent> research <plan.md>` if you intentionally need single-agent mode.
+HELP
+}
+
+_vetcoders_research() {
+  local first_arg="${1:-}"
+  local inherited_run_id inherited_run_lock
+  local prompt root run_id run_lock runtime prompt_file layout_file
+  local claude_launcher codex_launcher gemini_launcher
+  local claude_cmd codex_cmd gemini_cmd session_name
+
+  for _arg in "$@"; do
+    case "$_arg" in
+      help|-h|--help)
+        _vetcoders_research_help
+        return 0
+        ;;
+    esac
+  done
+
+  case "$first_arg" in
+    claude|codex|gemini)
+    printf 'vc-research is a triple-agent swarm launcher. Do not pass %s.\n' "$first_arg" >&2
+    printf 'Use vc-research --prompt "..." or vc-research --file /path/to/plan.md.\n' >&2
+    printf 'If you intentionally want one researcher, use vibecrafted <agent> research <plan.md>.\n' >&2
+    return 1
+      ;;
+  esac
+
+  _vetcoders_parse_contract "$@" || return 1
+  [[ -z "$_vetcoders_contract_count" ]] || {
+    echo "--count is only supported by vibecrafted marbles." >&2
+    return 1
+  }
+  [[ -z "$_vetcoders_contract_depth" ]] || {
+    echo "--depth is only supported by vibecrafted marbles." >&2
+    return 1
+  }
+  [[ -z "$_vetcoders_contract_session" ]] || {
+    echo "--session is only supported by vibecrafted resume." >&2
+    return 1
+  }
+  [[ -n "$_vetcoders_contract_prompt" || -n "$_vetcoders_contract_file" ]] || {
+    echo "vc-research requires --prompt or --file." >&2
+    return 1
+  }
+
+  prompt="$(_vetcoders_compose_skill_prompt "research" "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1
+  root="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
+  runtime="$(_vetcoders_effective_runtime)"
+  prompt_file="$(_vetcoders_prompt_file "research" "$prompt")" || return 1
+
+  inherited_run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
+  inherited_run_lock="$(_vetcoders_effective_run_lock 2>/dev/null || true)"
+  run_id="$inherited_run_id"
+  [[ -n "$run_id" ]] || run_id="$(_vetcoders_generate_run_id "rsch")"
+  run_lock="$inherited_run_lock"
+  if [[ -z "$run_lock" || ! -f "$run_lock" ]]; then
+    run_lock="$(_vetcoders_create_run_lock "$run_id" "swarm" "research" "$root")" || return 1
+  fi
+
+  claude_launcher="$(_vetcoders_research_launcher_path claude "$prompt_file" "$root" "$run_id" "$run_lock" "$runtime")" || return 1
+  codex_launcher="$(_vetcoders_research_launcher_path codex "$prompt_file" "$root" "$run_id" "$run_lock" "$runtime")" || return 1
+  gemini_launcher="$(_vetcoders_research_launcher_path gemini "$prompt_file" "$root" "$run_id" "$run_lock" "$runtime")" || return 1
+
+  if [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
+    _vetcoders_prepare_operator_runtime "$runtime" || return 1
+    command -v zellij >/dev/null 2>&1 || {
+      echo "vc-research requires zellij for the shared research tab layout." >&2
+      return 1
+    }
+
+    session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
+    [[ -n "$session_name" ]] || {
+      echo "Could not determine the operator zellij session." >&2
+      return 1
+    }
+
+    claude_cmd="$(_vetcoders_tmp_script_path "vc-research-claude" "$root")"
+    codex_cmd="$(_vetcoders_tmp_script_path "vc-research-codex" "$root")"
+    gemini_cmd="$(_vetcoders_tmp_script_path "vc-research-gemini" "$root")"
+    layout_file="$(_vetcoders_tmp_script_path "vc-research-layout" "$root").kdl"
+
+    _vetcoders_write_command_script "$claude_cmd" "bash $(_vetcoders_shell_quote "$claude_launcher")" || return 1
+    _vetcoders_write_command_script "$codex_cmd" "bash $(_vetcoders_shell_quote "$codex_launcher")" || return 1
+    _vetcoders_write_command_script "$gemini_cmd" "bash $(_vetcoders_shell_quote "$gemini_launcher")" || return 1
+    _vetcoders_write_research_layout "$layout_file" "$claude_cmd" "$codex_cmd" "$gemini_cmd"
+
+    # Intended exports to env for the zellij child process — false-positive SC2031.
+    # shellcheck disable=SC2031
+    export VIBECRAFTED_RUN_ID="$run_id"
+    # shellcheck disable=SC2031
+    export VIBECRAFTED_RUN_LOCK="$run_lock"
+    # shellcheck disable=SC2031
+    export VIBECRAFTED_SKILL_CODE="rsch"
+    # shellcheck disable=SC2031
+    export VIBECRAFTED_SKILL_NAME="research"
+    zellij --session "$session_name" action new-tab --layout "$layout_file" >/dev/null
+    printf 'Research swarm launched in shared tab (run_id=%s).\n' "$run_id"
+    _vetcoders_await "" --describe "$claude_launcher" "$codex_launcher" "$gemini_launcher" || true
+    printf '\nAwait:\n\n'
+    printf 'vc-research-await --run-id %s\n' "$run_id"
+    return 0
+  fi
+
+  printf 'Research swarm prepared (run_id=%s), but runtime %s does not use the shared zellij layout.\n' "$run_id" "$runtime"
+  printf 'Launchers:\n'
+  printf '  claude: %s\n' "$claude_launcher"
+  printf '  codex:  %s\n' "$codex_launcher"
+  printf '  gemini: %s\n' "$gemini_launcher"
+  printf '\nAwait:\n\n'
+  printf 'vc-research-await --run-id %s\n' "$run_id"
 }
 
 _vetcoders_skill_init() {
@@ -1633,17 +1864,27 @@ _vetcoders_marbles() {
   if [[ "$runtime" =~ ^(terminal|visible)$ ]] && _vetcoders_in_zellij && command -v zellij >/dev/null 2>&1; then
     local cmd_script marbles_tab_name
     export VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
-    marbles_tab_name="marbles-${marbles_run_id}"
+    marbles_tab_name="marbles"
     export VIBECRAFTED_MARBLES_TAB_NAME="$marbles_tab_name"
     marbles_env+=(VIBECRAFTED_MARBLES_TAB_NAME="$marbles_tab_name")
     quoted_env="$(_vetcoders_shell_quote_join "${marbles_env[@]}")"
     marbles_cmd="env ${quoted_env} bash $(_vetcoders_shell_quote "$script") ${quoted_args}"
     cmd_script="$(_vetcoders_tmp_script_path "vibecrafted-marbles" "$root_dir")"
     _vetcoders_write_command_script "$cmd_script" "$marbles_cmd" || return 1
-    zellij action new-tab \
-      --name "$marbles_tab_name" \
+    
+    local original_tab
+    original_tab="${ZELLIJ_TAB_NAME:-}"
+    
+    zellij action go-to-tab-name "$marbles_tab_name" --create >/dev/null 2>&1 || true
+    zellij action new-pane \
+      --name "$marbles_run_id" \
       --cwd "$root_dir" \
       -- "$cmd_script" >/dev/null || return 1
+      
+    if [[ -n "$original_tab" ]]; then
+      zellij action go-to-tab-name "$original_tab" >/dev/null 2>&1 || true
+    fi
+    
     _vetcoders_tail_marbles_l1_transcript "$root_dir" "$marbles_run_id"
   elif [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
     _vetcoders_prepare_operator_runtime "$runtime" || return 1
@@ -1809,6 +2050,8 @@ gemini-skill-release() { _vetcoders_skill_entry gemini release "$@"; }
 codex-skill-research() { _vetcoders_skill_entry codex research "$@"; }
 claude-skill-research() { _vetcoders_skill_entry claude research "$@"; }
 gemini-skill-research() { _vetcoders_skill_entry gemini research "$@"; }
+vc-research() { _vetcoders_research "$@"; }
+vc-research-await() { _vetcoders_await "" --research "$@"; }
 
 codex-skill-review() { _vetcoders_skill_entry codex review "$@"; }
 claude-skill-review() { _vetcoders_skill_entry claude review "$@"; }
@@ -1833,9 +2076,8 @@ Research:  research (triple-agent) | delegate (in-session)
 Quality:   review | prune
 Video:     screenscribe (foundation)
 
-Spawn helpers (× claude, codex, gemini):
+Spawn helpers (per agent):
   <agent>-implement <plan.md>    Full implementation from plan
-  <agent>-research <plan.md>     Research swarm
   <agent>-review <plan.md>       PR review
   <agent>-plan <plan.md>         Planning only
   <agent>-prompt "text"          Quick one-shot prompt
@@ -1850,6 +2092,11 @@ Spawn helpers (× claude, codex, gemini):
   <agent>-justdo                 Autonomous e2e implementation
   <agent>-partner                Collaborative partner mode
   <agent>-observe --last         Check last report
+  <agent>-await --last           Wait for metadata completion + summary
+
+Swarm launchers:
+  vc-research --prompt "text"    Triple-agent research swarm
+  vc-research-await --last       Wait for the latest research swarm
 
 Command deck:
   vibecrafted help               Main command surface

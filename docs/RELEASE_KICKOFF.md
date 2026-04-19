@@ -56,17 +56,18 @@ about what the product is.
    as a separate lane from this repo commit. Minimum rebuild command:
 
    ```bash
-   pnpm --dir ~/Libraxis/01_deployed_libraxis_vm/vibecrafted-io/site build
+   pnpm --dir "<vibecrafted-io-checkout>/site" build
    ```
 
-   Minimum drift checks before any public launch:
+   Minimum drift checks before any public launch (run from your
+   `vibecrafted-io` checkout):
 
    ```bash
    rg -n "Interactive terminals always enter the installer TUI|curl -fsSL https://vibecrafted.io/install.sh \\| bash$" \
-     ~/Libraxis/01_deployed_libraxis_vm/vibecrafted-io/README.md \
-     ~/Libraxis/01_deployed_libraxis_vm/vibecrafted-io/docs/install.sh \
-     ~/Libraxis/01_deployed_libraxis_vm/vibecrafted-io/docs/QUICK_START.md \
-     ~/Libraxis/01_deployed_libraxis_vm/vibecrafted-io/site/src
+     README.md \
+     docs/install.sh \
+     docs/QUICK_START.md \
+     site/src
    ```
 
    If that grep still finds old TUI-only or direct-only wording in the portal

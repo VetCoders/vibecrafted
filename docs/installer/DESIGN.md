@@ -58,7 +58,7 @@ Total: ~80+ lines. User scrolls past everything to see the result.
 
   ⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer
   ─────────────────────────────────
-  Source: /Users/maciejgad/hosted/VetCoders/vetcoders-skills
+  Source: ~/hosted/VetCoders/vetcoders-skills
   Version: 1.0.4
 
 Bundle contents:
@@ -108,7 +108,7 @@ System check:
   [optional] zsh (not found — helpers will use bash only)
 Agent runtimes:
   [ok] codex -> /opt/homebrew/bin/codex
-  [ok] claude -> /Users/maciejgad/.local/bin/claude
+  [ok] claude -> ~/.local/bin/claude
   [ok] gemini -> /opt/homebrew/bin/gemini
 
   Note: gemini-cli in some versions duplicates the workflows, inheriting
@@ -121,13 +121,13 @@ Select runtimes for symlink views:
     [ ] 4. gemini
 
 Runtime Foundations:
-  [ok] aicx-mcp -> /Users/maciejgad/.cargo/bin/aicx-mcp
+  [ok] aicx-mcp -> ~/.cargo/bin/aicx-mcp
        AICX MCP server for session history and memory recovery
-  [ok] loctree-mcp -> /Users/maciejgad/.cargo/bin/loctree-mcp
+  [ok] loctree-mcp -> ~/.cargo/bin/loctree-mcp
        Structural code mapping MCP server
-  [ok] prview -> /Users/maciejgad/.cargo/bin/prview
+  [ok] prview -> ~/.cargo/bin/prview
        PR review artifact generator
-  [ok] screenscribe -> /Users/maciejgad/.local/bin/screenscribe
+  [ok] screenscribe -> ~/.local/bin/screenscribe
        Screencast analysis — turns narrated recordings into structured engineering findings
   [ok] mise -> /opt/homebrew/bin/mise
        Repo-owned toolchain, environment, and task substrate
@@ -141,14 +141,14 @@ Runtime Foundations:
 Enable the shell helper layer (bash + zsh)? [y/N] y
 
 Plan:
-  Skills:    16 -> /Users/maciejgad/.vibecrafted/skills
+  Skills:    16 -> ~/.vibecrafted/skills
   Runtimes:  agents, claude, codex (symlink views)
   Shell:     yes
 
 Install this plan? [Y/n] y
 
 Saving current state...
-  [ok] Backup saved: /Users/maciejgad/.vibecrafted/skills/.backup/20260328_152106
+  [ok] Backup saved: ~/.vibecrafted/skills/.backup/20260328_152106
 
 Installing shared skills...
   -> vc-agents
@@ -169,9 +169,9 @@ Installing shared skills...
   -> vc-workflow
 
 Linking agent views...
-  agents -> /Users/maciejgad/.agents/skills
-  claude -> /Users/maciejgad/.claude/skills
-  codex -> /Users/maciejgad/.codex/skills
+  agents -> ~/.agents/skills
+  claude -> ~/.claude/skills
+  codex -> ~/.codex/skills
 
 Orphaned skills detected (no longer in bundle):
   [dir] store/vc-screenscribe
@@ -184,12 +184,12 @@ Remove orphaned skills? [Y/n] y
 
 Installing shell helper...
 Installing VetCoders shell helpers
-  source: /Users/maciejgad/hosted/VetCoders/vetcoders-skills/skills/vc-agents/shell/vetcoders.sh
-  target: /Users/maciejgad/.config/vetcoders/vc-skills.sh
-  /Users/maciejgad/.zshrc: already sourced
+  source: ~/hosted/VetCoders/vetcoders-skills/skills/vc-agents/shell/vetcoders.sh
+  target: ~/.config/vetcoders/vc-skills.sh
+  ~/.zshrc: already sourced
 
 
-  [ok] Install manifest saved to /Users/maciejgad/.vibecrafted/skills/.vc-install.json
+  [ok] Install manifest saved to ~/.vibecrafted/skills/.vc-install.json
 
 Verification:
   [ok] All checks passed
@@ -525,7 +525,7 @@ Look at how `uv` (https://github.com/astral-sh/uv) handles install output:
 - Errors break out of compact mode with full detail
 
 At the end of the task, write your final human-readable report to this exact path:
-/Users/maciejgad/.vibecrafted/artifacts/VetCoders/vibecrafted/2026_0328/reports/20260328_0458_0510_uv-style-installe
+~/.vibecrafted/artifacts/VetCoders/vibecrafted/2026_0328/reports/20260328_0458_0510_uv-style-installe
 r_implement_claude.md
 
 Keep streaming useful progress to stdout while you work. If you cannot write a

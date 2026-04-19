@@ -72,6 +72,29 @@ def test_runtime_prompt_guards_report_path_from_bare_slash(tmp_path: Path) -> No
     assert f"\n{report_path}\n" not in payload
 
 
+def test_runtime_prompt_includes_vc_agents_worker_charter(tmp_path: Path) -> None:
+    source_file = tmp_path / "source.md"
+    runtime_file = tmp_path / "runtime.md"
+    report_path = tmp_path / "report.md"
+    source_file.write_text("# Prompt\n", encoding="utf-8")
+
+    _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        export SPAWN_RUN_ID="run-123"
+        export SPAWN_PROMPT_ID="prompt-123"
+        spawn_build_runtime_prompt "{source_file}" "{runtime_file}" "{report_path}" codex
+        '''
+    )
+
+    payload = runtime_file.read_text(encoding="utf-8")
+    assert "## VC Agents Worker Charter" in payload
+    assert "Do NOT invoke vc-agents" in payload
+    assert "do not reinterpret it" in payload
+    assert "record the boundary clearly in your report" in payload
+
+
 def test_generated_launcher_runs_from_spawn_root(tmp_path: Path) -> None:
     root_dir = tmp_path / "project"
     root_dir.mkdir()
@@ -812,6 +835,160 @@ def test_spawn_in_operator_session_suppresses_zellij_tab_number_output(
     )
 
     assert result.stdout == ""
+
+
+def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
+    tmp_path: Path,
+) -> None:
+    run_id = "marb-014520"
+    operator_session = _expected_operator_session(run_id)
+    launcher = tmp_path / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    capture_file = tmp_path / "zellij-calls.txt"
+    zellij = fake_bin / "zellij"
+    zellij.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "{",
+                '  printf -- "--CALL--\\n"',
+                '  printf "%s\\n" "$@"',
+                '} >> "$CAPTURE_FILE"',
+                'if [[ "${1:-}" == "action" && "${2:-}" == "list-tabs" ]]; then',
+                '  printf \'[{"name":"operator-tab","tab_id":2},{"name":"marbles","tab_id":7}]\\n\'',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then',
+                '  printf "terminal_13\\n"',
+                "  exit 0",
+                "fi",
+                'printf "12\\n"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    zellij.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'''
+            set -euo pipefail
+            export PATH="{fake_bin}:$PATH"
+            export CAPTURE_FILE="{capture_file}"
+            export ZELLIJ=1
+            export ZELLIJ_PANE_ID=terminal_1
+            export ZELLIJ_SESSION_NAME="{operator_session}"
+            export ZELLIJ_TAB_NAME="operator-tab"
+            export VIBECRAFTED_RUN_ID="{run_id}"
+            export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
+            export VIBECRAFTED_MARBLES_TAB_NAME="marbles"
+            export SPAWN_ROOT="{tmp_path}"
+            export SPAWN_LOOP_NR=1
+            source "{COMMON_SH}"
+            spawn_in_zellij_pane "{launcher}" "workflow"
+            ''',
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout == ""
+    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    assert len(calls) == 2
+    assert calls[0][:3] == ["action", "list-tabs", "--json"]
+    assert calls[1][:2] == ["action", "new-pane"]
+    assert "--tab-id" in calls[1]
+    assert "7" in calls[1]
+    assert not any("go-to-tab-name" in call for call in calls)
+
+
+def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
+    transcript = tmp_path / "trace.log"
+    transcript.write_text("hello\n", encoding="utf-8")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    capture_file = tmp_path / "zellij-calls.txt"
+    zellij = fake_bin / "zellij"
+    zellij.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "{",
+                '  printf -- "--CALL--\\n"',
+                '  printf "%s\\n" "$@"',
+                '} >> "$CAPTURE_FILE"',
+                'if [[ "${1:-}" == "action" && "${2:-}" == "current-tab-info" ]]; then',
+                '  printf \'{"name":"operator-tab","tab_id":9}\\n\'',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then',
+                '  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then',
+                '  printf "terminal_99\\n"',
+                "  exit 0",
+                "fi",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    zellij.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'''
+            set -euo pipefail
+            export PATH="{fake_bin}:$PATH"
+            export CAPTURE_FILE="{capture_file}"
+            export ZELLIJ=1
+            export ZELLIJ_PANE_ID=terminal_1
+            export ZELLIJ_SESSION_NAME="operator-session"
+            export ZELLIJ_TAB_NAME="operator-tab"
+            export SPAWN_AGENT="gemini"
+            export VIBECRAFTED_SPAWN_PROBE_SECONDS=1
+            export VIBECRAFTED_SPAWN_PROBE_DELAY_SECONDS=0
+            source "{COMMON_SH}"
+            spawn_probe "{transcript}"
+            sleep 0.2
+            ''',
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout == ""
+    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    assert any(call[:3] == ["action", "current-tab-info", "--json"] for call in calls)
+    assert any(
+        call[:4] == ["action", "list-panes", "--json", "--state"] for call in calls
+    )
+    probe_calls = [call for call in calls if call[:2] == ["action", "new-pane"]]
+    assert len(probe_calls) == 1
+    probe_call = probe_calls[0]
+    assert "--floating" in probe_call
+    assert "--tab-id" in probe_call
+    assert "9" in probe_call
+    assert "--name" in probe_call
+    assert "probe-gemini" in probe_call
+    assert any(call[:3] == ["action", "focus-pane-id", "terminal_42"] for call in calls)
 
 
 def test_spawn_in_operator_session_new_tab_opens_monitor_and_disables_inline_watch(

@@ -365,7 +365,12 @@ cmd_gc() {
     case "$1" in
       --dry-run) dry_run=1 ;;
       --hard) hard=1 ;;
-      --stale-minutes) shift; stale_minutes="$1" ;;
+      --stale-minutes)
+        shift
+        [[ $# -gt 0 ]] || spawn_die "--stale-minutes requires a positive integer value"
+        [[ "$1" =~ ^[1-9][0-9]*$ ]] || spawn_die "--stale-minutes must be a positive integer (got: $1)"
+        stale_minutes="$1"
+        ;;
       *) spawn_die "Unknown gc option: $1" ;;
     esac
     shift

@@ -1,4 +1,4 @@
 interface:
   display_name: "VC Agents"
   short_description: "Spawn external agent fleet via portable scripts"
-  default_prompt: "Use $vc-agents to split work into parallel tracks, write plans to .vibecrafted/plans/, and spawn codex/claude/gemini subagents."
+  default_prompt: "Use $vc-agents to choose the right external worker through the vc-why-matrix, write plans to .vibecrafted/plans/, and spawn codex/claude/gemini workers. External orchestration belongs only to the operator; spawned workers must not recurse into vc-agents."

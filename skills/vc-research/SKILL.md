@@ -1,6 +1,6 @@
 ---
 name: vc-research
-version: 1.2.0
+version: 1.3.0
 description: >
   Standalone triple-agent research skill. Co-define the problem with the user,
   write a research plan, then spawn claude + codex + gemini simultaneously on the
@@ -37,20 +37,20 @@ vc-start
 Then launch this workflow through the command deck, not raw `skills/.../*.sh` paths:
 
 ```bash
-vibecrafted <workflow> <agent> \
+vibecrafted <workflow> \
   --<options> <values> \
   --<parameters> <values> \
   --file '/path/to/plan.md'
 ```
 
 ```bash
-vc-<workflow> <agent> \
+vc-<workflow> \
   --<options> <values> \
   --<parameters> <values> \
   --prompt '<prompt>'
 ```
 
-If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
+If `vc-<workflow>` is invoked outside Zellij, the framework will attach
 or create the operator session and run that workflow in a new tab. Replace
 `<workflow>` with this skill's name. Prefer `--file` for an existing plan or
 artifact and `--prompt` for inline intent.
@@ -58,9 +58,9 @@ artifact and `--prompt` for inline intent.
 ### Concrete dispatch examples
 
 ```bash
-vibecrafted research claude --prompt 'Compare auth libraries for Tauri desktop'
-vc-research codex --prompt 'State of the art for MCP streaming transports'
-vibecrafted research gemini --file /path/to/research-plan.md
+vibecrafted research --prompt 'Compare auth libraries for Tauri desktop'
+vc-research --prompt 'State of the art for MCP streaming transports'
+vibecrafted research --file /path/to/research-plan.md
 ```
 
 <details>
@@ -188,16 +188,23 @@ Canonical operator-facing launch path goes through the command deck:
 ```bash
 PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md"
 
-vc-research claude --file "$PLAN"
-vc-research codex --file "$PLAN"
-vc-research gemini --file "$PLAN"
+vc-research --file "$PLAN"
 ```
 
 The repo-owned spawn scripts remain the internal engine behind that surface. Do
 not document raw `bash skills/...spawn.sh` paths as the operator entrypoint.
 
-All three get the same plan. All three work independently. This is intentional —
-divergence between reports reveals blind spots.
+The launcher opens one shared Zellij research tab using `vc-research.kdl`,
+keeps a common `run_id`, and starts claude + codex + gemini against the same
+plan. This is intentional — divergence between reports reveals blind spots.
+
+Research observability is mandatory.
+`vc-research` is not "running" just because three panes appeared.
+Immediately after spawn, the operator should get a launch card with the shared
+`run_id`, plan path, report/meta paths, and the exact await command.
+
+That launch card is the default surface.
+`observe --last` is a drilldown tool, not the primary source of truth.
 
 ### Step 4 — Collect reports
 
@@ -209,13 +216,33 @@ $VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_
 $VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<ts>_research-plan_gemini.md
 ```
 
-Wait for all three. Use the observe scripts:
+Wait for all three through the dedicated runtime helper, not by hand-rolled
+snippets.
+The standard operator move is:
+
+```bash
+vc-research-await --run-id <run_id>
+```
+
+If you just launched the latest research swarm and want the newest one, this is
+also valid:
+
+```bash
+vc-research-await --last
+```
+
+If you need transcript-level inspection while the swarm is still running, use
+the observer helpers:
 
 ```bash
 vibecrafted claude observe --last
 vibecrafted codex observe --last
 vibecrafted gemini observe --last
 ```
+
+Do not treat manual `observe --last` calls as sufficient observability for the
+workflow itself. The workflow should expose its state through launch metadata,
+the await helper, and durable report paths by default.
 
 ### Step 5 — Synthesize
 
@@ -310,7 +337,7 @@ research │                         │
 
 ## Anti-Patterns
 
-- Spawning only one agent (defeats the purpose — use workflow Phase 2 instead)
+- Passing `claude|codex|gemini` to `vc-research` (defeats the purpose — the launcher is the swarm)
 - Giving each agent different questions (they must answer the SAME questions
   independently for triangulation to work)
 - Skipping synthesis and just concatenating reports (the value is in the delta)

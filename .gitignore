@@ -10,6 +10,7 @@ scripts/installer/**/__pycache__/
 # AI Context
 .ai-context/*
 /.claude
+**/.claude/
 /*.png
 /__pycache__
 /scripts/__pycache__
@@ -43,3 +44,7 @@ aicx-dashboard.html
 *.backup
 /docs/workforce
 vibecrafted-io-link
+/operator-tui/target
+/artifacts
+/operator-tui/*.md
+!/operator-tui/README.md

@@ -1,14 +1,14 @@
 // VibeCrafted Zellij Configuration
-// Brandowana konfiguracja terminala multiplexer dla VibeCrafted framework.
+// Branded terminal multiplexer configuration for the VibeCrafted framework.
 // VibeCrafted with AI Agents (c)2026 VetCoders
 
 // ─── Theme ──────────────────────────────────────────────────────────────────────
-// Kolory zbudowane wokół ciemnego tła z akcentami amber/gold (rzemiosło)
-// i cyan (technologia). Utrzymany kontrast dla czytelności w każdych warunkach.
+// Colors built around a dark base with amber/gold accents (craft)
+// and cyan (technology). Contrast stays readable in all conditions.
 themes {
     vibecrafted {
-        fg 220 215 186         // warm cream — tekst główny
-        bg 30 30 36            // graphite — tło sesji
+        fg 220 215 186         // warm cream — primary text
+        bg 30 30 36            // graphite — session background
         black 20 20 24         // deep night — pane borders
         white 235 230 210      // parchment — bright text
         red 204 36 29          // alert red — errors, close actions
@@ -34,8 +34,8 @@ styled_underlines true
 auto_layout true
 
 // ─── Session Resilience ─────────────────────────────────────────────────────────
-// Sesja przeżywa zamknięcie terminala (detach zamiast kill).
-// Serializacja pozwala na resurrect po restarcie.
+// The session survives terminal closure by detaching instead of killing.
+// Serialization allows resurrection after restart.
 on_force_close "detach"
 session_serialization true
 serialize_pane_viewport true
@@ -60,8 +60,8 @@ plugins {
 }
 
 // ─── Keybindings ────────────────────────────────────────────────────────────────
-// Alt surface zwolniony dla polskich znaków diakrytycznych.
-// Quick-actions przeniesione na Ctrl+Shift.
+// The Alt layer is freed up for Polish diacritics.
+// Quick actions move to Ctrl+Shift.
 keybinds {
     shared_except "locked" {
         unbind "Alt f" "Alt n" "Alt i" "Alt o"
@@ -86,12 +86,20 @@ keybinds {
         bind "Ctrl Shift p" { TogglePaneInGroup; }
         bind "Ctrl Shift g" { ToggleGroupMarking; }
 
-        // Session mode jako confirmation gate przed Quit.
+        // Session mode acts as a confirmation gate before Quit.
         bind "Ctrl Shift q" { SwitchToMode "Session"; }
     }
 
-    // Ctrl+Q zamyka bieżący focus, nie sesję.
+    // Ctrl+Q closes the current focus, not the whole session.
     shared_except "locked" "tab" "session" {
+        bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }
+    }
+
+    // Locked mode also closes the current focus instead of the session.
+    // Without this override, the default Zellij
+    // `shared { bind "Ctrl q" { Quit; } }` leaked into locked mode
+    // and killed the full Zellij instance instead of a single pane.
+    locked {
         bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }
     }
 

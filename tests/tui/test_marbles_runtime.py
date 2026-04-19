@@ -121,6 +121,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
 
         python3 - "$MARBLES_SPAWN_CAPTURE" "$SPAWN_PLAN" "$SPAWN_REPORT" "$success_hook" "$failure_hook" "$agent" "$model" "$SPAWN_RUN_ID" "$SPAWN_LOOP_NR" <<'PY'
         import json
+        import os
         import pathlib
         import sys
 
@@ -134,6 +135,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
             "model": model,
             "run_id": run_id,
             "loop": int(loop_nr or "0"),
+            "suppress_report_hint": os.environ.get("VIBECRAFTED_SUPPRESS_REPORT_HINT", ""),
         }
         capture_path = pathlib.Path(capture)
         capture_path.parent.mkdir(parents=True, exist_ok=True)
@@ -386,7 +388,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_zellij(
     assert "1" in payload
     assert "--prompt" in payload
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
-    assert "new-tab" in zellij_payload
+    assert "new-pane" in zellij_payload
     assert any("vibecrafted-marbles." in line for line in zellij_payload)
     assert any(str(expected_tmp_root) in line for line in zellij_payload)
     assert not any("//vibecrafted-marbles." in line for line in zellij_payload)
@@ -1014,15 +1016,13 @@ def test_marbles_materializes_failed_loop_when_child_spawn_dies_before_meta(
     state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
 
     assert state["status"] == "failed"
-    assert [loop["status"] for loop in state["loops"]] == ["done", "failed"]
+    assert [loop["status"] for loop in state["loops"]] == ["confirmed", "promise"]
     failed_loop = state["loops"][1]
-    assert failed_loop["failure_reason"] == "spawn-failed"
     assert failed_loop["loop"] == 2
-    assert failed_loop["report"]
-    assert Path(failed_loop["report"]).exists()
-    assert "failed before loop 2 could launch" in Path(failed_loop["report"]).read_text(
-        encoding="utf-8"
-    )
+    assert "report" not in failed_loop
+    assert "failure_reason" not in failed_loop
+    assert Path(failed_loop["transcript"]).exists()
+    assert "failure surfaced from launch metadata" in result.stdout
 
     meta_records = subprocess.run(
         [
@@ -1137,11 +1137,55 @@ def test_marbles_watcher_waits_for_meta_completion_before_advancing(
     state = json.loads((state_dirs[0] / "state.json").read_text(encoding="utf-8"))
 
     assert state["status"] == "completed"
-    assert [loop["status"] for loop in state["loops"]] == ["done", "done"]
+    assert [loop["status"] for loop in state["loops"]] == ["confirmed", "confirmed"]
     assert "no meta.json within" not in result.stdout
 
     events = _load_spawn_events(capture_file)
     assert len(events) == 2
+    assert all(event["suppress_report_hint"] == "1" for event in events)
+
+
+def test_marbles_no_watch_keeps_report_hint_enabled(
+    tmp_path: Path,
+) -> None:
+    scripts_dir, capture_file = _prepare_fake_marbles_bundle(tmp_path)
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    home.mkdir()
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+
+    subprocess.run(
+        [
+            "bash",
+            str(scripts_dir / "marbles_spawn.sh"),
+            "--agent",
+            "gemini",
+            "--count",
+            "1",
+            "--runtime",
+            "headless",
+            "--no-watch",
+            "--prompt",
+            "Keep the extra report hint outside watcher mode",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    events = _load_spawn_events(capture_file)
+    assert len(events) == 1
+    assert events[0]["suppress_report_hint"] == ""
 
 
 def test_marbles_watcher_does_not_consume_failed_fallback_report(
@@ -1189,10 +1233,11 @@ def test_marbles_watcher_does_not_consume_failed_fallback_report(
     state = json.loads((state_dirs[0] / "state.json").read_text(encoding="utf-8"))
 
     assert state["status"] == "failed"
-    assert [loop["status"] for loop in state["loops"]] == ["failed"]
+    assert [loop["status"] for loop in state["loops"]] == ["promise"]
     failed_loop = state["loops"][0]
-    assert failed_loop["failure_reason"] == "spawn-failed"
-    assert failed_loop["report"]
+    assert "report" not in failed_loop
+    assert "failure_reason" not in failed_loop
+    assert Path(failed_loop["transcript"]).exists()
     assert "report ✓" not in result.stdout
     assert "failed" in result.stdout
 

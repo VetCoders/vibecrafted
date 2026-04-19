@@ -102,6 +102,9 @@ Prefer the guided browser path when you are onboarding a founder, PM, or less te
 curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
 ```
 
+Both entrypoints use the same trust-first bootstrap: it explains what it will do and asks before proceeding on an attended terminal. Pass `--yes` when you
+want to pre-approve that bootstrap prompt.
+
 The guided path stages the local control plane, bootstraps the foundation layer, runs the same compact installer truth used by automation, and leaves a readable `START_HERE.md` behind.
 
 Use the direct compact path when you are scripting the install or you already know you want the terminal-only flow:
@@ -109,6 +112,9 @@ Use the direct compact path when you are scripting the install or you already kn
 ```bash
 curl -fsSL https://vibecrafted.io/install.sh | bash
 ```
+
+The bootstrap prints the snapshot source, staging location, and next installer
+step before it stages or installs anything on your machine.
 
 Inside a local checkout, `make vibecrafted` opens the terminal-native installer wizard — the built-in `vetcoders-installer` runner driven from `install.toml`, with reason + consent per phase and cargo-style sticky progress. `make install` routes through the same runner with auto-approve, so automation and humans share one engine.
 

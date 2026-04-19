@@ -4,7 +4,8 @@ Current truth as of 2026-04-10:
 
 - Public front door: browser-guided installer in `scripts/installer_gui.py`
 - Public CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui`
-- Local human entrypoint: `make vibecrafted`
+- Local terminal-native entrypoint: `make vibecrafted`
+- Local browser GUI entrypoint: `make wizard` (alias: `make gui-install`)
 - Automation entrypoint: `curl -fsSL https://vibecrafted.io/install.sh | bash`
 - Mutation engine: `scripts/vetcoders_install.py`
 - Operator-grade reference surface: `scripts/installer_tui.py`
@@ -15,8 +16,10 @@ shape.
 
 ## Decision
 
-The effortless install path now follows the TwinSweep-style GUI line, not the
-`rmcp-memex`-style TUI line.
+The public install story follows the TwinSweep-style GUI line, not the
+`rmcp-memex`-style TUI line. Inside a local checkout, we still keep the
+shell-first `make vibecrafted` entrypoint so repo-native operators can stay in
+terminal flow.
 
 Why this won:
 
@@ -31,8 +34,7 @@ Why this won:
 
 ### From `rmcp-memex`
 
-The useful inheritance from [`src/tui/mod.rs`](/Users/polyversai/Libraxis/01_deployed_libraxis_vm/rmcp-memex/src/tui/mod.rs)
-is the wizard rhythm:
+The useful inheritance from `rmcp-memex/src/tui/mod.rs` is the wizard rhythm:
 
 - welcome
 - detection / preflight
@@ -46,9 +48,8 @@ need to dictate Vibecrafted's public install surface.
 
 ### From `TwinSweep`
 
-The useful inheritance from [`twinsweep/macos_app.py`](/Users/polyversai/Libraxis/TwinSweep/twinsweep/macos_app.py)
-and [`twinsweep/server.py`](/Users/polyversai/Libraxis/TwinSweep/twinsweep/server.py)
-is the effortless GUI handoff:
+The useful inheritance from `TwinSweep/twinsweep/macos_app.py` and
+`TwinSweep/twinsweep/server.py` is the effortless GUI handoff:
 
 - launch locally without demanding that the operator "live in the terminal"
 - use a health-checked local web surface as the interaction layer

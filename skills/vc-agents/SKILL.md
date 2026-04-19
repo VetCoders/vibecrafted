@@ -1,6 +1,6 @@
 ---
 name: vc-agents
-version: 3.0.0
+version: 3.1.0
 description: >
   Spawn external specialized AI agents from the user's fleet (Codex, Claude, Gemini).
   Use this when you need parallel execution, deep isolation, or task-specific cognitive 
@@ -8,7 +8,7 @@ description: >
   Trigger: "vc-agents", "/vc-agents", "delegate to agents", "spawn".
 ---
 
-# vc-agents — The Unified Execution Fleet
+# vc-agents — The External Execution Fleet
 
 ## Operator Entry
 
@@ -54,23 +54,12 @@ vibecrafted gemini implement /path/to/plan.md
 
 A single agent session carries immense context. Attempting to execute every small rewrite, forensic deep-dive, or radical structural shift in-thread causes prompt bloat and dilutes your focus.
 
-`vc-agents` is the unified delegation layer. You identify the structural gap, pick the right mind for the job from the **`vc-why-matrix`**, choose the appropriate execution mode (Terminal vs Native Task), spin up the autonomous worker, and return to your main orchestration.
+`vc-agents` is the external delegation layer. You identify the structural gap,
+pick the right mind for the job from the **`vc-why-matrix`**, spawn the
+autonomous external worker, and return to your main orchestration.
 
-## Execution Modes (Terminal vs Native)
-
-| Capability      | Native Task Delegation (Fallback)   | Terminal Agent Swarm (Default)               |
-| --------------- | ----------------------------------- | -------------------------------------------- |
-| **Execution**   | Claude Task tool (in-process)       | Portable scripts (out-of-process)            |
-| **Agents**      | Claude subagents only               | Claude + Codex + Gemini                      |
-| **Parallelism** | Multiple Task calls in one message  | Multiple Terminal windows                    |
-| **Robustness**  | Limited by context window           | Full agent session per task                  |
-| **Environment** | Inherits parent env                 | Clean Terminal env                           |
-| **Best for**    | Small bounded work, native fallback | Default choice; large or model-specific work |
-
-**Rule of Thumb:**
-
-1. Default to **Terminal Agent Swarms** for robustness and cognitive-specific choices.
-2. Fallback to **Native Task Delegation** for very small tasks, quick in-thread verification, or when external Terminal processes are unavailable.
+This skill is only for external workers. Native in-process delegation belongs to
+`vc-delegate`, not here.
 
 ## The `vc-why-matrix`
 
@@ -105,6 +94,34 @@ You do not spawn agents blindly. You pick the cognitive profile required for the
 - **Delegate, do not micromanage:** Do not produce 15-point bureaucratic checklists for the spawned agent. Write a high-level plan with `Goal`, `Scope`, and `Acceptance Criteria`. Let them figure out the _how_.
 - **The Living Tree:** Agents must know they operate in a live system. Ensure your spawn plan states: _"You are working on a living tree. Concurrent changes are expected. Adapt proactively."_
 - **Full Replacement over Scar Tissue:** Tell your agents they are empowered to rewrite broken abstractions. Sometimes a full replacement is cleaner than patching over bad prototype code.
+
+## Escalation Authority
+
+`vc-agents` is an operator-level orchestration layer.
+
+The decision to use `vc-agents` already encodes `vc-why-matrix` intent:
+the operator selected a specific model family and cognitive profile for the
+mission.
+
+Because of that:
+
+- spawned fleet agents must not call `vc-agents` again on their own
+- spawned fleet agents must not re-open model selection or launch a second external fleet
+- spawned fleet agents must not reinterpret the `vc-why-matrix`
+- escalation into `vc-agents` belongs exclusively to the operator agent
+
+If a spawned worker discovers that the mission surface is wider, more parallel,
+or less bounded than expected, it should not self-escalate outward.
+
+Instead it must:
+
+- complete the assigned mission as far as honestly possible
+- record the boundary it encountered
+- name the unresolved surface clearly in its report
+- leave any orchestration change to the operator
+
+A fleet worker may reveal orchestration pressure.
+It may not act on it.
 
 ## Plan template
 
@@ -155,13 +172,11 @@ Living tree note:
 - Coordination mode: <solo on this stage / parallel with other agents on this stage>
 - You do not need to inspect other agents' plans unless this plan explicitly tells you to.
 - If this plan explicitly calls for a stabilization checkpoint, commit your own changes locally without push and continue on the current branch.
+- You are an execution unit, not orchestration authority: do not invoke `vc-agents`, do not reopen frontier selection, and do not reinterpret the `vc-why-matrix`.
+- If the mission reveals a wider unresolved surface, report that boundary clearly and leave orchestration changes to the operator.
 ```
 
 ## Spawn commands
-
-The launch path depends on your chosen Execution Mode.
-
-### Mode 1: Terminal Agent Swarm (Default)
 
 The operator-facing launch path for out-of-process delegation goes through the
 `vibecrafted` command deck or the `vc-<workflow>` helper. The repo-owned spawn
@@ -190,20 +205,6 @@ vibecrafted gemini implement "$PLAN"
 
 If these tools are unavailable, stop pretending spawn is correctly configured and say so explicitly.
 
-### Mode 2: Native Task Delegation (Fallback)
-
-If you chose native delegation for a small or constrained task, invoke the `Task` tool directly rather than calling a shell script.
-
-```
-Task(
-  subagent_type: "general-purpose",
-  description: "<3-5 word summary>",
-  prompt: "<full plan content from plan file>"
-)
-```
-
-Wait for the subagent to report its findings directly back into your chat context.
-
 ## Output convention
 
 - Plans: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<timestamp>_<slug>.md` or another stable per-task
@@ -212,17 +213,50 @@ Wait for the subagent to report its findings directly back into your chat contex
 - Transcripts: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<slug>_<agent>.transcript.log`
 - Metadata: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_<slug>_<agent>.meta.json`
 
+Every spawn should surface a launch card immediately after dispatch.
+That card should expose at least:
+
+- `run_id`
+- chosen agent / model family
+- plan path
+- report path
+- transcript path
+- metadata path
+
+If the operator cannot see those paths, observability is incomplete even if the
+agent is technically running.
+
 ## Observation
 
 Observe progress through durable artifacts in `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
 
-If your environment exposes the observer helper, the standard check is:
+The default check is metadata-first, not pane-first.
+Use the dedicated runtime helper to wait on metadata completion and print the
+final summary:
+
+```bash
+vibecrafted codex await --run-id <run_id>
+```
+
+For the most recent run of a given agent:
+
+```bash
+vibecrafted codex await --last
+```
+
+For multiple spawned workers, pass their launcher or metadata paths directly to
+the helper and let it wait on all of them together.
+
+If your environment exposes the observer helper, use it for transcript-level
+inspection or debugging:
 
 ```bash
 vibecrafted codex observe --last
 ```
 
-Use the equivalent agent observer when needed.
+Use the equivalent agent observer when needed, but do not rely on `observe` as
+the only status surface. `vc-agents` should remain operable from durable
+artifacts even when the operator is not staring at the live panes.
 
 ## Quality gate expectations
 

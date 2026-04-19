@@ -178,8 +178,8 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     env["CAPTURE_FILE"] = str(capture_file)
     env["ZELLIJ"] = "operator"
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
+    env["VIBECRAFTED_MARBLES_RUN_ID"] = "marb-014520"
     env["ZELLIJ_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
-
     subprocess.run(
         [
             "bash",
@@ -192,8 +192,9 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert "new-tab" in payload
-    assert "--direction" not in payload
+    assert "new-pane" in payload
+    assert "--name" in payload
+    assert "marb-014520" in payload
     assert any("vibecrafted-marbles." in line for line in payload)
 
 

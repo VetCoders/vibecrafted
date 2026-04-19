@@ -118,6 +118,12 @@ spawn_build_runtime_prompt() {
   local run_id="${SPAWN_RUN_ID:-unknown}"
   cat >> "$runtime_file" <<EOF_LABEL
 ---
+## VC Agents Worker Charter
+- You are a spawned vc-agents worker: an execution unit, not orchestration authority.
+- Do NOT invoke vc-agents, do NOT launch another external fleet, and do NOT reopen frontier selection.
+- The operator already made the vc-why-matrix choice for this mission; do not reinterpret it.
+- If the task reveals a wider unresolved surface, complete the assigned mission as far as honestly possible and record the boundary clearly in your report.
+
 ## Exit Contract
 - **COMMIT**: mandatory. One commit when done.
 - **REPORT**: mandatory. Write to the report path given at the end of this prompt.

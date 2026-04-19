@@ -95,3 +95,70 @@ def test_marbles_delete_refuses_live_session(tmp_path: Path) -> None:
     assert session_dir.is_dir()
     assert not archived_dir.exists()
     assert "appears live; stop it first" in result.stderr
+
+
+def _gc_env(tmp_path: Path) -> dict[str, str]:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    (crafted_home / "marbles").mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    return env
+
+
+def test_marbles_gc_rejects_missing_stale_minutes_value(tmp_path: Path) -> None:
+    """Missing value must surface as a clean usage error, not a `set -u` abort."""
+    result = subprocess.run(
+        ["bash", str(MARBLES_CTL), "gc", "--stale-minutes"],
+        check=False,
+        cwd=REPO_ROOT,
+        env=_gc_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "--stale-minutes requires a positive integer value" in result.stderr
+    # Must not be the bash `set -u` trap.
+    assert "unbound variable" not in result.stderr
+
+
+def test_marbles_gc_rejects_non_integer_stale_minutes(tmp_path: Path) -> None:
+    result = subprocess.run(
+        ["bash", str(MARBLES_CTL), "gc", "--stale-minutes", "abc"],
+        check=False,
+        cwd=REPO_ROOT,
+        env=_gc_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "--stale-minutes must be a positive integer" in result.stderr
+    assert "abc" in result.stderr
+
+
+def test_marbles_gc_rejects_non_positive_stale_minutes(tmp_path: Path) -> None:
+    for bad_value in ("0", "-5"):
+        result = subprocess.run(
+            ["bash", str(MARBLES_CTL), "gc", "--stale-minutes", bad_value],
+            check=False,
+            cwd=REPO_ROOT,
+            env=_gc_env(tmp_path),
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, f"value {bad_value!r} should be rejected"
+        assert "--stale-minutes must be a positive integer" in result.stderr
+
+
+def test_marbles_gc_accepts_valid_stale_minutes_dry_run(tmp_path: Path) -> None:
+    """Valid --stale-minutes + --dry-run must still run cleanly on an empty store."""
+    result = subprocess.run(
+        ["bash", str(MARBLES_CTL), "gc", "--stale-minutes", "30", "--dry-run"],
+        check=False,
+        cwd=REPO_ROOT,
+        env=_gc_env(tmp_path),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

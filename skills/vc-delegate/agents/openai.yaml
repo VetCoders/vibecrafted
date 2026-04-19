@@ -1,4 +1,4 @@
 interface:
   display_name: "VC Delegate"
   short_description: "Native in-session subagent delegation"
-  default_prompt: "Use $vc-delegate to delegate small bounded tasks to Claude subagents via the Task tool without Terminal spawning."
+  default_prompt: "Use $vc-delegate as the operator doctrine for small bounded native delegation. Default to same-named native subagents, use the documented Codex/Claude/Gemini exceptions intentionally, and if the task outgrows native scope, return control to the operator instead of recursing into vc-agents."

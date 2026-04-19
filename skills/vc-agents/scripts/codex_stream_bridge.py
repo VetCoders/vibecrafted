@@ -130,6 +130,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--transcript", required=True)
     parser.add_argument("--raw", required=True)
+    parser.add_argument(
+        "--echo-stdout",
+        action="store_true",
+        help="Mirror rendered transcript events to stdout for live pane streaming.",
+    )
     args = parser.parse_args()
 
     transcript_path = Path(args.transcript)
@@ -140,27 +145,41 @@ def main() -> int:
         transcript_path.open("a", encoding="utf-8") as transcript,
         raw_path.open("a", encoding="utf-8") as raw,
     ):
-        for raw_line in sys.stdin:
-            append(raw, raw_line)
-            stripped = raw_line.lstrip()
-            if not stripped.startswith("{"):
-                append(
-                    transcript, raw_line if raw_line.endswith("\n") else raw_line + "\n"
-                )
-                continue
+        try:
+            for raw_line in sys.stdin:
+                append(raw, raw_line)
+                stripped = raw_line.lstrip()
+                if not stripped.startswith("{"):
+                    passthrough = (
+                        raw_line if raw_line.endswith("\n") else raw_line + "\n"
+                    )
+                    append(transcript, passthrough)
+                    if args.echo_stdout:
+                        append(sys.stdout, passthrough)
+                    continue
 
-            try:
-                event = json.loads(raw_line)
-            except json.JSONDecodeError:
-                append(
-                    transcript,
-                    raw_line if raw_line.endswith("\n") else raw_line + "\n",
-                )
-                continue
+                try:
+                    event = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    append(
+                        transcript,
+                        raw_line if raw_line.endswith("\n") else raw_line + "\n",
+                    )
+                    continue
 
-            rendered = format_event(event)
-            if rendered:
-                append(transcript, rendered)
+                rendered = format_event(event)
+                if rendered:
+                    append(transcript, rendered)
+                    if args.echo_stdout:
+                        append(sys.stdout, rendered)
+        except KeyboardInterrupt:
+            interrupted = (
+                f"\n\x1b[31m[{stamp()} abort] interrupted by operator\x1b[0m\n"
+            )
+            append(transcript, interrupted)
+            if args.echo_stdout:
+                append(sys.stdout, interrupted)
+            return 130
 
     return 0
 

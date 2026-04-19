@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Skrypt migracyjny dla legacy katalogów z `.ai-agents/`
-# Wykonuje "twardą" przeprowadzkę legacy katalogów z `.ai-agents/`
-# do centralnego archiwum $VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
-# Przenosi wyłącznie foldery: plans, pipeline, reports, tmp
-# Pozostawia nietknięte ewentualne inne pliki w .ai-agents/ (np. GUIDELINES.md)
+# Migration script for legacy `.ai-agents/` directories.
+# Performs a "hard" move of legacy `.ai-agents/` folders
+# into the central archive at $VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/
+# Moves only these folders: plans, pipeline, reports, tmp
+# Leaves any other files in .ai-agents/ untouched (for example GUIDELINES.md)
 #
-# Użycie:
+# Usage:
 #   ./migrate_agents_workspace.sh [--dry-run] [dir1 dir2 ...]
-#   Domyślnie przeszukuje $VIBECRAFTED_ROOT/ albo bieżący katalog
+#   By default it scans $VIBECRAFTED_ROOT/ or the current directory
 #
-# Do weryfikacji org/repo można też użyć: zsh -ic 'repo-full'
+# To verify org/repo you can also run: zsh -ic 'repo-full'
 
 default_vibecrafted_home() {
   if [[ -n "${VIBECRAFTED_HOME:-}" ]]; then
@@ -36,7 +36,7 @@ default_search_root() {
 VIBECRAFTED_HOME="$(default_vibecrafted_home)"
 DEFAULT_SEARCH_ROOT="$(default_search_root)"
 
-# Parsowanie argumentów: pierwszy arg może być --dry-run, reszta to katalogi
+# Argument parsing: the first argument may be --dry-run, the rest are directories
 DRY_RUN=""
 SEARCH_DIRS=()
 for arg in "$@"; do
@@ -58,8 +58,8 @@ echo "  Searching: ${SEARCH_DIRS[*]}"
 echo "  ─────────────────────────────────────────────────────────"
 echo ""
 
-# Wyciąga datę z nazwy pliku (format: 20260324_...) -> 2026_0324
-# Jeśli nie ma daty w nazwie -> "legacy"
+# Extract the date from a filename (format: 20260324_...) -> 2026_0324
+# If the filename has no date prefix, fall back to "legacy"
 extract_date_prefix() {
   local fname="$1"
   local date_part
@@ -71,13 +71,13 @@ extract_date_prefix() {
   fi
 }
 
-# Wyciąga datę z najnowszego pliku w katalogu (dla subdirów w pipeline/)
+# Extract the date from the newest file in a directory (for subdirs in pipeline/)
 newest_date_in_dir() {
   local dir="$1"
   local dirname_base
   dirname_base="$(basename "$dir")"
 
-  # Najpierw szukamy daty w plikach wewnątrz
+  # First try to find the date from files inside the directory.
   local newest_file
   # shellcheck disable=SC2012
   newest_file="$(ls -t "$dir" 2>/dev/null | head -1)" || true
@@ -90,13 +90,13 @@ newest_date_in_dir() {
     fi
   fi
 
-  # Fallback: data z nazwy samego katalogu (np. 20260307_loct_dist_...)
+  # Fallback: use the directory name itself (for example 20260307_loct_dist_...)
   local dir_date
   dir_date="$(extract_date_prefix "$dirname_base")"
   echo "$dir_date"
 }
 
-# Przenosi pojedynczy plik do właściwego katalogu dat
+# Move a single file into the correct date bucket.
 move_file() {
   local file="$1"
   local target_base="$2"
@@ -116,7 +116,7 @@ move_file() {
   fi
 }
 
-# Przenosi subdirectory (np. pipeline/<slug>/) według daty najnowszego pliku
+# Move a subdirectory (for example pipeline/<slug>/) using the newest file date.
 move_subdir() {
   local subdir="$1"
   local target_base="$2"
@@ -140,11 +140,11 @@ move_subdir() {
 find "${SEARCH_DIRS[@]}" -maxdepth 4 -type d -name ".ai-agents" 2>/dev/null | while read -r agents_dir; do
   repo_root="$(dirname "$agents_dir")"
 
-  # Pobierz <org>/<repo> z git remote
+  # Derive <org>/<repo> from the git remote.
   org_repo="$(cd "$repo_root" && git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+)/([^/.]+)(\.git)?$|\1/\2|' || true)"
 
   if [[ -z "$org_repo" ]]; then
-    # Fallback jeśli repo nie ma origina – używamy nazwy katalogu
+    # Fallback when the repo has no origin remote: use the directory name.
     org_repo="local/$(basename "$repo_root")"
   fi
 
@@ -156,14 +156,14 @@ find "${SEARCH_DIRS[@]}" -maxdepth 4 -type d -name ".ai-agents" 2>/dev/null | wh
   for folder in plans pipeline reports tmp; do
     src_dir="$agents_dir/$folder"
 
-    # Skupiamy się TYLKO na rzeczywistych katalogach, omijamy puste i symlinki
+    # Only process real directories; skip empty paths and symlinks.
     if [[ -d "$src_dir" && ! -L "$src_dir" ]]; then
 
-      # Sprawdzamy czy katalog nie jest pusty
+      # Check whether the directory is empty.
       if [ "$(ls -A "$src_dir" 2>/dev/null)" ]; then
 
         if [[ "$DRY_RUN" == "--dry-run" ]]; then
-          # W trybie dry-run pokazujemy co by się stało
+          # In dry-run mode, only show what would happen.
           for item in "$src_dir"/*; do
             [[ -e "$item" ]] || continue
             if [[ -d "$item" ]]; then
@@ -173,7 +173,7 @@ find "${SEARCH_DIRS[@]}" -maxdepth 4 -type d -name ".ai-agents" 2>/dev/null | wh
             fi
           done
         else
-          # Prawdziwa migracja: plik po pliku z routingiem po dacie
+          # Real migration: move file by file with date-based routing.
           for item in "$src_dir"/*; do
             [[ -e "$item" ]] || continue
             if [[ -d "$item" ]]; then
@@ -183,13 +183,13 @@ find "${SEARCH_DIRS[@]}" -maxdepth 4 -type d -name ".ai-agents" 2>/dev/null | wh
             fi
           done
 
-          # Usuwamy pustą strukturę po migracji
+          # Remove empty directories left behind after migration.
           find "$src_dir" -depth -type d -empty -delete 2>/dev/null || true
 
-          # P1: Symlink wsteczny TYLKO dla reports/ — stare ścieżki nie złamią się
+          # Compatibility symlink only for reports/ so old paths do not break.
           if [[ "$folder" == "reports" && ! -e "$src_dir" ]]; then
-            # Linkujemy do najnowszego katalogu dat w reports
-            # (symlink do target_base/*/reports nie ma sensu, więc linkujemy do latest)
+            # Point to the newest reports directory.
+            # Linking to target_base/*/reports is not meaningful, so link to latest.
             latest_reports="$(find "$target_base" -type d -name "reports" | sort -r | head -1)" || true
             if [[ -n "$latest_reports" ]]; then
               ln -sf "$latest_reports" "$src_dir"
@@ -201,13 +201,13 @@ find "${SEARCH_DIRS[@]}" -maxdepth 4 -type d -name ".ai-agents" 2>/dev/null | wh
         fi
         moved_something=true
       else
-        # Folder jest pusty, sam folder (bez plików) możemy po prostu zutylizować
+        # If the folder is empty, remove the directory itself.
         if [[ "$DRY_RUN" != "--dry-run" ]]; then
           rmdir "$src_dir" 2>/dev/null || true
         fi
       fi
     elif [[ -L "$src_dir" ]]; then
-      # Posprzątanie śmieciowych symlinków po dawnych testach migracji
+      # Clean up stray symlinks left by old migration tests.
       warn "$folder stands as symlink, removing link."
       if [[ "$DRY_RUN" != "--dry-run" ]]; then
         rm "$src_dir" 2>/dev/null || true
@@ -222,8 +222,8 @@ find "${SEARCH_DIRS[@]}" -maxdepth 4 -type d -name ".ai-agents" 2>/dev/null | wh
 done
 
 echo ""
-echo "  Przeprowadzka zakonczona."
+echo "  Migration completed."
 if [[ "$DRY_RUN" == "--dry-run" ]]; then
-  echo "  (Dzialal tryb symulacji: --dry-run. Aby dokonac przeniesin, uruchom skrypt bez --dry-run!)"
+  echo "  (Simulation mode was active: --dry-run. Run the script without --dry-run to perform the move.)"
 fi
 echo ""

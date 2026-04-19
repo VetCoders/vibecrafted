@@ -15,11 +15,12 @@ Answers from the trenches. This is the truth as of April 2026.
   non-VetCoders skills there, it leaves them alone. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills are symlinked into `$HOME/.agents/skills/` (and
   others) so your agents "see" them, but the source of truth remains in `$VIBECRAFTED_ROOT/.vibecrafted/`.
 
-- **Why does `make vibecrafted` open a guided installer instead of just installing silently?**
-  Because the default human front door should show the machine shape before it mutates it. `make vibecrafted` now opens
-  the browser-based guided installer, which checks foundations, streams the repo-owned compact installer, and leaves a
-  plain-language `START_HERE.md` behind. For a direct non-interactive install path, use `make install` or call
-  `python3 scripts/vetcoders_install.py install --source "$PWD" --non-interactive`.
+- **Why does `make vibecrafted` run an interactive installer wizard instead of just installing silently?**
+  Because the default human front door should show the machine shape before it mutates it. `make vibecrafted` runs the
+  terminal-native installer wizard — the shell-first default front door. It checks foundations, streams the repo-owned
+  compact installer truth, and leaves a plain-language `START_HERE.md` behind. If you prefer the browser surface,
+  run `make wizard` (or its alias `make gui-install`). For a direct non-interactive install path, use `make install` or
+  call `python3 scripts/vetcoders_install.py install --source "$PWD" --non-interactive`.
 
 - **Can I install 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. without giving it write access to my shell rc files?**
   Yes. You can opt-out of the shell-helper layer during the interactive install. You'll just need to manually source the

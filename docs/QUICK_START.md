@@ -4,26 +4,33 @@ You have an AI-built repo. You want to ship it without the vibe hangover.
 
 ## 1. Install
 
-Guided browser path for the human kickoff:
-
-```bash
-curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
-```
-
-This path stages the control plane, bootstraps the foundation layer, runs the same compact installer truth used by automation, and leaves a readable `START_HERE.md` behind.
-
-Direct compact path for automation or terminal-native installs:
+Terminal-native path for the human kickoff:
 
 ```bash
 curl -fsSL https://vibecrafted.io/install.sh | bash
+```
+
+The bootstrap explains what it will do and asks before proceeding on an
+attended terminal. Pass `--yes` if you want to pre-approve that bootstrap
+prompt.
+
+This path stages the control plane, bootstraps the foundation layer, and runs
+the compact installer truth used by automation as well.
+
+Optional browser-guided path for operators who prefer a GUI:
+
+```bash
+curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
 ```
 
 Non-destructive. Interactive. Tells you what it does before it does it.
 Asks before touching your shell config. Everything reversible with
 `make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current uninstall`.
 
-Inside a local checkout, `make vibecrafted` opens the guided installer and `make install` stays direct/non-interactive.
-If you prefer the terminal-native fallback, run `make wizard`.
+Inside a local checkout, `make vibecrafted` runs the terminal-native installer
+wizard (default shell-first front door) and `make install` stays
+direct/non-interactive. If you prefer the browser-guided surface, run
+`make wizard` or the alias `make gui-install`.
 
 After install, open a new terminal or:
 

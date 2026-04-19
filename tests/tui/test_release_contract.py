@@ -8,11 +8,12 @@ PROMISE = "release engine for ai-built software"
 TAGLINE = "ship ai-built software without the vibe hangover"
 PRIMARY_CTA = "curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui"
 SECONDARY_CTA = "curl -fsSL https://vibecrafted.io/install.sh | bash"
+TRUST_PROMISE = "explains what it will do and asks before proceeding"
 
 EXPECTED_COPY = {
-    "README.md": (PROMISE, TAGLINE, PRIMARY_CTA, SECONDARY_CTA),
+    "README.md": (PROMISE, TAGLINE, PRIMARY_CTA, SECONDARY_CTA, TRUST_PROMISE),
     "docs/MARKETPLACE_LISTING.md": (PROMISE,),
-    "docs/QUICK_START.md": (PRIMARY_CTA, SECONDARY_CTA),
+    "docs/QUICK_START.md": (PRIMARY_CTA, SECONDARY_CTA, TRUST_PROMISE),
     "docs/RELEASE_KICKOFF.md": (PROMISE, PRIMARY_CTA, SECONDARY_CTA),
     "docs/SUBMISSION_FORMS.md": (PROMISE, PRIMARY_CTA, SECONDARY_CTA),
     "docs/installer/SCAFFOLD.md": (PROMISE, PRIMARY_CTA, SECONDARY_CTA),
@@ -33,9 +34,10 @@ def test_release_contract_stays_polarized_across_public_surfaces() -> None:
     assert not errors, "\n".join(errors)
 
 
-def test_installer_reference_stays_gui_first_and_mock_aligned() -> None:
-    text = (REPO_ROOT / "docs/installer/REFERENCE.md").read_text(encoding="utf-8")
-    normalized = text.casefold()
+def test_installer_reference_keeps_public_gui_and_local_shell_contract() -> None:
+    reference = (REPO_ROOT / "docs/installer/REFERENCE.md").read_text(encoding="utf-8")
+    scaffold = (REPO_ROOT / "docs/installer/SCAFFOLD.md").read_text(encoding="utf-8")
+    normalized = reference.casefold()
 
     for expected in (
         "twinsweep",
@@ -45,3 +47,16 @@ def test_installer_reference_stays_gui_first_and_mock_aligned() -> None:
         "no page scroll",
     ):
         assert expected in normalized
+
+    for text in (reference, scaffold):
+        assert "Local terminal-native entrypoint: `make vibecrafted`" in text
+        assert "Local browser GUI entrypoint: `make wizard`" in text
+
+    assert (
+        "`make vibecrafted`\n  Runs the terminal-native installer wizard from a local checkout."
+        in reference
+    )
+    assert (
+        "`make wizard` / `make gui-install`\n  Open the browser-guided installer from a local checkout when you want the GUI surface."
+        in reference
+    )

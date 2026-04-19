@@ -44,6 +44,142 @@ spawn_in_target_zellij_session() {
   [[ "$(spawn_current_zellij_session_name)" == "$target_session" ]]
 }
 
+spawn_current_tab_id() {
+  local raw=""
+  command -v zellij >/dev/null 2>&1 || return 1
+  raw="$(zellij action current-tab-info --json 2>/dev/null || true)"
+  python3 - "$raw" <<'PY'
+import json
+import sys
+
+raw = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+if not raw:
+    raise SystemExit(1)
+try:
+    payload = json.loads(raw)
+except Exception:
+    raise SystemExit(1)
+
+if isinstance(payload, list):
+    payload = payload[0] if payload else {}
+if not isinstance(payload, dict):
+    raise SystemExit(1)
+
+for key in ("tab_id", "id", "position", "index"):
+    value = payload.get(key)
+    if value not in (None, ""):
+        print(value)
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+spawn_tab_id_by_name() {
+  local tab_name="${1:-}"
+  local raw=""
+  [[ -n "$tab_name" ]] || return 1
+  command -v zellij >/dev/null 2>&1 || return 1
+  raw="$(zellij action list-tabs --json 2>/dev/null || true)"
+  python3 - "$tab_name" "$raw" <<'PY'
+import json
+import sys
+
+target_name = sys.argv[1]
+raw = (sys.argv[2] if len(sys.argv) > 2 else "").strip()
+if not raw:
+    raise SystemExit(1)
+try:
+    payload = json.loads(raw)
+except Exception:
+    raise SystemExit(1)
+
+def extract_tab_id(node):
+    for key in ("tab_id", "id", "position", "index"):
+        value = node.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+def visit(node):
+    if isinstance(node, dict):
+        name = node.get("name")
+        if name in (None, ""):
+            name = node.get("tab_name")
+        if str(name or "") == target_name:
+            tab_id = extract_tab_id(node)
+            if tab_id is not None:
+                print(tab_id)
+                return True
+        for value in node.values():
+            if visit(value):
+                return True
+    elif isinstance(node, list):
+        for value in node:
+            if visit(value):
+                return True
+    return False
+
+if not visit(payload):
+    raise SystemExit(1)
+PY
+}
+
+spawn_current_focused_pane_id() {
+  local raw=""
+  command -v zellij >/dev/null 2>&1 || return 1
+  raw="$(zellij action list-panes --json --state 2>/dev/null || true)"
+  python3 - "$raw" <<'PY'
+import json
+import sys
+
+raw = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+if not raw:
+    raise SystemExit(1)
+try:
+    payload = json.loads(raw)
+except Exception:
+    raise SystemExit(1)
+
+def is_truthy(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return False
+
+def pane_id(node):
+    for key in ("pane_id", "id"):
+        value = node.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+def visit(node):
+    if isinstance(node, dict):
+        focused = node.get("is_focused")
+        if focused is None:
+            focused = node.get("focused")
+        if is_truthy(focused):
+            pid = pane_id(node)
+            if pid is not None:
+                print(pid)
+                return True
+        for value in node.values():
+            if visit(value):
+                return True
+    elif isinstance(node, list):
+        for value in node:
+            if visit(value):
+                return True
+    return False
+
+if not visit(payload):
+    raise SystemExit(1)
+PY
+}
+
 spawn_pane_direction() {
   # Grid policy: 4 per row, 8 per tab, 9th opens new tab.
   # Uses SPAWN_LOOP_NR (marbles) or VIBECRAFTED_PANE_SEQ (manual).
@@ -77,47 +213,59 @@ spawn_current_tab_name() {
 }
 
 spawn_in_marbles_tab() {
-  # Route a pane into the dedicated marbles tab, then restore operator focus.
+  # Route a pane into the dedicated marbles tab without stealing operator focus.
   # Called only when SPAWN_LOOP_NR > 0 AND VIBECRAFTED_MARBLES_TAB_NAME is set.
   local launcher="$1"
   local pane_name="$2"
   local direction="$3"
   local marbles_tab="${VIBECRAFTED_MARBLES_TAB_NAME:-}"
-  local original_tab=""
+  local original_tab_id=""
+  local marbles_tab_id=""
   local cmd_script=""
   local launch_cmd="bash '$launcher'"
+  local pane_direction="$direction"
 
   [[ -n "$marbles_tab" ]] || return 1
 
-  # Capture operator's current tab before switching.
-  original_tab="$(spawn_current_tab_name)"
+  if [[ "$pane_direction" == "new-tab" ]]; then
+    pane_direction="right"
+  fi
 
   cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
   spawn_write_command_script "$cmd_script" "$launch_cmd"
 
-  # Focus (or create) the marbles tab.
-  zellij action go-to-tab-name "$marbles_tab" --create 2>/dev/null || true
+  marbles_tab_id="$(spawn_tab_id_by_name "$marbles_tab" 2>/dev/null || true)"
+  if [[ -z "$marbles_tab_id" ]]; then
+    original_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
+    zellij action go-to-tab-name "$marbles_tab" --create >/dev/null 2>&1 || true
+    marbles_tab_id="$(spawn_tab_id_by_name "$marbles_tab" 2>/dev/null || true)"
+    if [[ -n "$original_tab_id" ]]; then
+      zellij action go-to-tab-by-id "$original_tab_id" >/dev/null 2>&1 || true
+    fi
+  fi
 
-  # Create the pane inside the marbles tab.  Even when grid policy says
-  # new-tab, inside marbles context we add a pane to the existing marbles
-  # tab to keep everything grouped.
-  if [[ "$direction" == "new-tab" ]]; then
+  # Create the pane inside the marbles tab. If tab-id lookup fails, keep a
+  # conservative fallback path that restores the active tab by stable ID.
+  if [[ -n "$marbles_tab_id" ]]; then
     zellij action new-pane \
-      --direction right \
+      --tab-id "$marbles_tab_id" \
+      --direction "$pane_direction" \
       --name "$pane_name" \
       --cwd "${SPAWN_ROOT:-$(pwd)}" \
       -- "$cmd_script" >/dev/null
   else
+    if [[ -z "$original_tab_id" ]]; then
+      original_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
+    fi
+    zellij action go-to-tab-name "$marbles_tab" --create >/dev/null 2>&1 || true
     zellij action new-pane \
-      --direction "$direction" \
+      --direction "$pane_direction" \
       --name "$pane_name" \
       --cwd "${SPAWN_ROOT:-$(pwd)}" \
       -- "$cmd_script" >/dev/null
-  fi
-
-  # Restore operator's focus to their original tab.
-  if [[ -n "$original_tab" ]]; then
-    zellij action go-to-tab-name "$original_tab" 2>/dev/null || true
+    if [[ -n "$original_tab_id" ]]; then
+      zellij action go-to-tab-by-id "$original_tab_id" >/dev/null 2>&1 || true
+    fi
   fi
 
   return 0
@@ -227,6 +375,7 @@ spawn_in_operator_session() {
 spawn_probe() {
   local transcript_path="$1"
   local probe_seconds="${VIBECRAFTED_SPAWN_PROBE_SECONDS:-15}"
+  local probe_delay="${VIBECRAFTED_SPAWN_PROBE_DELAY_SECONDS:-2}"
   local agent_name="${SPAWN_AGENT:-agent}"
 
   # Skip if disabled or not in zellij
@@ -235,14 +384,33 @@ spawn_probe() {
   command -v zellij >/dev/null 2>&1 || return 0
   [[ -n "$transcript_path" ]] || return 0
 
-  # Brief delay for transcript file to appear
+  # Brief delay for transcript file to appear; a short floating probe surfaces
+  # startup logs on the currently occupied tab and then closes.
   (
-    sleep 2
+    local focused_pane_id=""
+    local focused_tab_id=""
+    local -a probe_cmd=()
+    sleep "$probe_delay"
     [[ -f "$transcript_path" ]] || exit 0
-    zellij run --floating --close-on-exit \
-      --width 20% --x 80% --y 10% --height 40% \
-      --name "probe-${agent_name}" \
-      -- timeout "$probe_seconds" tail -f "$transcript_path" \
-      2>/dev/null || true
+    focused_pane_id="$(spawn_current_focused_pane_id 2>/dev/null || true)"
+    focused_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
+    probe_cmd=(
+      zellij action new-pane
+      --floating
+      --close-on-exit
+      --width 20%
+      --x 80%
+      --y 10%
+      --height 40%
+      --name "probe-${agent_name}"
+    )
+    if [[ -n "$focused_tab_id" ]]; then
+      probe_cmd+=(--tab-id "$focused_tab_id")
+    fi
+    probe_cmd+=(-- timeout "$probe_seconds" tail -f "$transcript_path")
+    "${probe_cmd[@]}" >/dev/null 2>&1 || true
+    if [[ -n "$focused_pane_id" ]]; then
+      zellij action focus-pane-id "$focused_pane_id" >/dev/null 2>&1 || true
+    fi
   ) &
 }

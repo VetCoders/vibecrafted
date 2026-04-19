@@ -228,6 +228,7 @@ _record_loop_done() {
   local p1="${5:-}"
   local p2="${6:-}"
   local score="${7:-}"
+  local meta_path="${8:-}"
   if command -v python3 >/dev/null 2>&1; then
     _state_json_edit "$(cat <<'PY'
 loop_nr = int(args[0])
@@ -237,7 +238,19 @@ p0 = int(args[3]) if args[3] else None
 p1 = int(args[4]) if args[4] else None
 p2 = int(args[5]) if args[5] else None
 score = int(args[6]) if args[6] else None
+meta_path = args[7] if len(args) > 7 else ""
 now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+telemetry = {}
+if meta_path and os.path.isfile(meta_path):
+    try:
+        with open(meta_path, "r", encoding="utf-8") as fh:
+            m = json.load(fh)
+            if "usage" in m: telemetry["usage"] = m["usage"]
+            if "tools" in m: telemetry["tools"] = m["tools"]
+            if "model" in m: telemetry["model"] = m["model"]
+    except Exception:
+        pass
 
 payload["updated_at"] = now
 for loop in payload.get("loops", []):
@@ -247,10 +260,12 @@ for loop in payload.get("loops", []):
         loop["duration_s"] = duration
         loop["completed_at"] = now
         loop["metrics"] = {"p0": p0, "p1": p1, "p2": p2, "score": score}
+        if telemetry:
+            loop["telemetry"] = telemetry
 
 payload.setdefault("trajectory", []).append(score)
 PY
-)" "$loop_nr" "$report" "$duration" "$p0" "$p1" "$p2" "$score" >/dev/null || true
+)" "$loop_nr" "$report" "$duration" "$p0" "$p1" "$p2" "$score" "$meta_path" >/dev/null || true
   fi
 }
 
@@ -284,6 +299,7 @@ _record_loop_failed() {
   local duration="$3"
   local report_path="${4:-}"
   local exit_code="${5:-}"
+  local meta_path="${6:-}"
   if command -v python3 >/dev/null 2>&1; then
     _state_json_edit "$(cat <<'PY'
 loop_nr = int(args[0])
@@ -291,7 +307,19 @@ reason = args[1]
 duration = int(args[2])
 report_path = args[3]
 exit_code = int(args[4]) if args[4] else None
+meta_path = args[5] if len(args) > 5 else ""
 now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+telemetry = {}
+if meta_path and os.path.isfile(meta_path):
+    try:
+        with open(meta_path, "r", encoding="utf-8") as fh:
+            m = json.load(fh)
+            if "usage" in m: telemetry["usage"] = m["usage"]
+            if "tools" in m: telemetry["tools"] = m["tools"]
+            if "model" in m: telemetry["model"] = m["model"]
+    except Exception:
+        pass
 
 payload["status"] = "failed"
 payload["updated_at"] = now
@@ -305,8 +333,10 @@ for loop in payload.get("loops", []):
             loop["report"] = report_path
         if exit_code is not None:
             loop["exit_code"] = exit_code
+        if telemetry:
+            loop["telemetry"] = telemetry
 PY
-)" "$loop_nr" "$reason" "$duration" "$report_path" "$exit_code" >/dev/null || true
+)" "$loop_nr" "$reason" "$duration" "$report_path" "$exit_code" "$meta_path" >/dev/null || true
   fi
 }
 
@@ -452,6 +482,132 @@ _report_frontmatter_status() {
   local report="$1"
   [[ -f "$report" ]] || return 0
   spawn_frontmatter_field "$report" "status"
+}
+
+_marbles_failure_hint() {
+  local report_path="$1"
+  local transcript_path="$2"
+  local meta_path="$3"
+  local hint=""
+
+  hint="$(
+    python3 - "$report_path" "$transcript_path" "$meta_path" <<'PY'
+import json
+import os
+import re
+import sys
+
+report_path, transcript_path, meta_path = sys.argv[1:4]
+
+keyword_re = re.compile(
+    r"\b(error|failed|failure|exception|traceback|reason|exit code|not found|permission denied|killed|timed out|denied|cannot)\b",
+    re.IGNORECASE,
+)
+
+
+def strip_ansi(line: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line)
+
+
+def normalize(line: str) -> str:
+    return strip_ansi(line).strip()
+
+
+def pick_from_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return ""
+
+    # Skip YAML frontmatter if present.
+    frontmatter = 0
+    if lines and lines[0].strip() == "---":
+        frontmatter = 1
+
+    last = ""
+    signal = ""
+    for line in lines:
+        l = line.strip()
+        if frontmatter == 1:
+            if l == "---":
+                frontmatter = 2
+            continue
+        if l == "---":
+            continue
+
+        cleaned = normalize(line)
+        if not cleaned:
+            continue
+        if cleaned.startswith("#"):
+            continue
+        if cleaned.startswith("---"):
+            continue
+
+        last = cleaned
+        if keyword_re.search(cleaned):
+            signal = cleaned
+
+    if signal:
+        return signal
+    return last
+
+
+def pick_from_meta(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            meta = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+    if not isinstance(meta, dict):
+        return ""
+
+    if meta.get("error"):
+        return f"reason: {meta['error']}"
+
+    candidate_fields = []
+    for key in ("reason", "message", "status", "launcher", "exit_code"):
+        value = meta.get(key, "")
+        if value == "" or value is None:
+            continue
+        if key == "status":
+            candidate_fields.append(f"{key}: {value}")
+        else:
+            candidate_fields.append(f"{key}: {value}")
+
+    if candidate_fields:
+        return " | ".join(candidate_fields[:3])
+    return ""
+
+
+hint = pick_from_text(report_path)
+if not hint:
+    hint = pick_from_text(transcript_path)
+if not hint:
+    hint = pick_from_meta(meta_path)
+
+if hint:
+    print(hint)
+PY
+  )"
+
+  hint="${hint//$'\n'/ }"
+  hint="$(printf '%s' "$hint" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  printf '%s' "$hint"
+}
+
+_marbles_truncate_hint() {
+  local hint="$1"
+  local max_len="${2:-200}"
+  local fallback=""
+
+  if [[ ${#hint} -gt $max_len ]]; then
+    fallback="${hint:0:$max_len-3}..."
+    printf '%s' "$fallback"
+  else
+    printf '%s' "$hint"
+  fi
 }
 
 _wait_for_loop_meta() {
@@ -673,6 +829,7 @@ PY
   actual_report_hint="$(spawn_read_meta_field "$meta_path" "report")"
   actual_meta_status="$(spawn_read_meta_field "$meta_path" "status")"
   actual_exit_code="$(spawn_read_meta_field "$meta_path" "exit_code")"
+  failure_hint="$(_marbles_failure_hint "$actual_report_hint" "$actual_transcript" "$meta_path")"
   # Trust the meta's agent over the pre-resolved child plan agent — the plan
   # may not exist yet when the watcher enters this loop (race with marbles_next).
   actual_meta_agent="$(spawn_read_meta_field "$meta_path" "agent")"
@@ -685,8 +842,11 @@ PY
     loop_end=$(date +%s)
     duration=$((loop_end - loop_start))
     duration_fmt="$(printf '%dm %02ds' $((duration/60)) $((duration%60)))"
-    _record_loop_failed "$loop_nr" "spawn-failed" "$duration" "$actual_report_hint" "$actual_exit_code"
+    _record_loop_failed "$loop_nr" "spawn-failed" "$duration" "$actual_report_hint" "$actual_exit_code" "$meta_path"
     detail="$duration_fmt  failed before report"
+    if [[ -n "$failure_hint" ]]; then
+      detail="$detail  - $(_marbles_truncate_hint "$failure_hint" 220)"
+    fi
     if [[ -n "$actual_exit_code" ]]; then
       detail="$detail  exit ${actual_exit_code}"
     fi
@@ -733,8 +893,14 @@ PY
 
     if (( wait_status == 4 )); then
       exit_code_hint="$(spawn_read_meta_field "$meta_path" "exit_code")"
-      _record_loop_failed "$loop_nr" "spawn-failed" "$duration" "$actual_report_hint" "$exit_code_hint"
+      if [[ -z "$failure_hint" ]]; then
+        failure_hint="$(_marbles_failure_hint "$actual_report_hint" "$actual_transcript" "$meta_path")"
+      fi
+      _record_loop_failed "$loop_nr" "spawn-failed" "$duration" "$actual_report_hint" "$exit_code_hint" "$meta_path"
       detail="$duration_fmt  failed before report"
+      if [[ -n "$failure_hint" ]]; then
+        detail="$detail  - $(_marbles_truncate_hint "$failure_hint" 220)"
+      fi
       if [[ -n "$exit_code_hint" ]]; then
         detail="$detail  exit ${exit_code_hint}"
       fi
@@ -770,6 +936,12 @@ PY
     fi
     _record_loop_failed "$loop_nr" "$failure_reason" "$duration" "$actual_report" "$exit_code_hint"
     detail="$duration_fmt  failed before convergence report"
+    if [[ -z "$failure_hint" ]]; then
+      failure_hint="$(_marbles_failure_hint "$actual_report" "$actual_transcript" "$meta_path")"
+    fi
+    if [[ -n "$failure_hint" ]]; then
+      detail="$detail  - $(_marbles_truncate_hint "$failure_hint" 220)"
+    fi
     if [[ -n "$exit_code_hint" ]]; then
       detail="$detail  exit ${exit_code_hint}"
     fi
@@ -780,7 +952,7 @@ PY
   fi
 
   read -r p0 p1 p2 score <<< "$(_extract_metrics "$actual_report")"
-  _record_loop_done "$loop_nr" "$actual_report" "$duration" "$p0" "$p1" "$p2" "$score"
+  _record_loop_done "$loop_nr" "$actual_report" "$duration" "$p0" "$p1" "$p2" "$score" "$meta_path"
 
   detail="$duration_fmt"
   if [[ -n "$p0" || -n "$p1" || -n "$p2" ]]; then
@@ -840,7 +1012,12 @@ elif (( failed )); then
   printf '\n %b⚒  Failed · loop failure at L%s/%s · %s%b\n' "$_bold$_red" "$failed_loop" "$total_count" "$total_fmt" "$_reset"
   printf '%b──────────────────────────────────%b\n' "$_steel" "$_reset"
   printf '  %s\n' "$(_render_chain "$completed_loops" "$total_count")"
-  printf '  loop consumed truthfully; failure surfaced from launch metadata\n'
+  failed_summary_hint="$(_marbles_failure_hint "$actual_report_hint" "$actual_transcript" "$meta_path")"
+  if [[ -n "$failed_summary_hint" ]]; then
+    printf '  loop consumed truthfully; failure surfaced as: %s\n' "$failed_summary_hint"
+  else
+    printf '  loop consumed truthfully; failure surfaced from launch metadata\n'
+  fi
 elif (( stopped )); then
   _update_status "stopped"
   printf '\n %b⚒  Stopped · %s%b\n' "$_bold$_yellow" "$total_fmt" "$_reset"
