@@ -1,0 +1,4 @@
+interface:
+  display_name: "VC Intents"
+  short_description: "Operator-side intention-to-runtime truth audit for checking which planned implementations actually landed in code."
+  default_prompt: "Pull recent project intents from aicx, reduce them to a bounded implementation checklist, then verify each item against the live repo as done, partial, missing, superseded, or non-code."

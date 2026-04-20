@@ -5,6 +5,10 @@ edition = "2024"
 license = "MIT"
 authors = ["VetCoders"]
 description = "Rust operator console for Vibecrafted"
+readme = "README.md"
+homepage = "https://vibecrafted.io"
+repository = "https://github.com/VetCoders/vibecrafted"
+documentation = "https://docs.rs/vibecrafted-operator"
 
 [dependencies]
 anyhow = "1"
@@ -16,4 +20,3 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
-

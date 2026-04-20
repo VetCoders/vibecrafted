@@ -1,7 +1,7 @@
 ---
 name: vc-init
-version: 4.1.0
-description: >-
+version: 4.2.0
+description: >
   Technical due diligence before stabilization. The vibe-coding weekend 
   got the app to launch. Now we find the taped-together auth, god tables, and silent 
   failures. Init equips the agent with Perception, Intentions, and Security/Stability Ground Truth.
@@ -60,7 +60,7 @@ vibecrafted init gemini --prompt 'Bootstrap context for the payments module'
 - [vc-aicx](../foundations/vc-aicx/SKILL.md) — primary memory and steerability index.
 </details>
 
-> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 is the ansfwer for the failure of vibe coding
+> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 is the answer for the failure of vibe coding
 > and vibe coders community (that newer grew up unfortunately)
 > stuck in the 80/20 <-> 20/80 trap; look the reference:
 > [MANIFESTO_EN.md](https://raw.githubusercontent.com/VetCoders/vibecrafted/refs/heads/main/docs/runtime/MANIFESTO_EN.md)
@@ -85,12 +85,9 @@ path before we touch a single line of code.
 
 ## Pipeline Position
 
-```
-scaffold → [INIT] → workflow → followup → marbles → dou → decorate → hydrate → release
-           ^^^^^^
-```
+`vc-init` isn’t just a step; it’s a carefully crafted pipeline designed to give you a comprehensive, tool-driven understanding of your repository. This is much more than just a standard agentic init pipeline.
 
-Init is the first real act of every session. Everything downstream depends on the quality of due diligence achieved here.
+Init is the first important action in every session. The quality of the work you do here will affect everything that follows.
 
 ## When To Use
 
@@ -107,7 +104,7 @@ If you are tempted to skip init because "it's a small task" — that is exactly 
 
 ## The Triad of Diligence
 
-### Sense 1: Intentions (over RAG)
+### Sense 1: Intentions (through `aicx intents` retrieval)
 
 Pull historical context from previous AI sessions for this project. We are looking
 for the _why_, not just a blind dump of _how_. Understand:
@@ -120,11 +117,13 @@ Retrieve the context of the decisions, then verify their current truth in Sense 
 
 You have access to both `aicx` (cli) and `aicx-mcp` (stdio and streamable-http):
 a) the dual mode (stdio + streamable-http) allows for flexible and versatile
-integration with various AI frameworks - the streamable-http mode is particularly useful for session retrieval from remote
+integration with various AI frameworks - the streamable-http mode is particularly useful for
+session retrieval from remote
 sources (e.g. other workstations or users' remote agents) so do not rely only on
 your local retrieval having configured the remote aicx-mcp http endpoint
 b) the mcp reference: - `mcp_aicx_aicx_rank`
-Rank stored AI session chunks by content quality. Shows signal density, noise ratio, and quality labels (HIGH/MEDIUM/LOW/NOISE) per chunk. Use --strict
+Rank stored AI session chunks by content quality. Shows signal density, noise ratio, and quality
+labels (HIGH/MEDIUM/LOW/NOISE) per chunk. Use --strict
 to filter noise. - `mcp_aicx_aicx_search`
 Fuzzy search across stored AI session chunks. Returns quality-scored results
 with matched lines. Supports Polish diacritics normalization and optional
@@ -134,22 +133,26 @@ Filters by run_id, prompt_id, agent, kind, project, and/or date range using
 sidecar metadata — no filesystem grep needed.
 
 c) The `aicx intents` CLI capability:
-A powerful feature to extract all agent intents, outcomes, tasks, and decisions from the project history into a structured JSON file (e.g., `aicx intents -p <project> --emit json | tee intents.json`). Use `jq` to summarize them and grasp the project's strategic direction instantly.
+A powerful feature to extract all human and agent intents, outcomes, tasks, and decisions from
+the project history into a structured JSON file (e.g., `aicx intents -p <project> --emit json | 
+tee intents.json`). Use `jq` to summarize them and grasp the project's strategic direction
+instantly.
 
-The full reference for the binaries can be found in the `vc-aicx` SKILL which offers
-a detailed information and use-cases or simply by calling `aicx --help`.
+The full reference for the `aicx intents` engine lays in the `vc-intents` skill and the tool
+description can be found in the `vc-aicx` SKILL which offers a detailed information and use-
+cases or simply by calling `aicx --help`.
 
 ### Sense 2: Perception (over memory)
 
-`loctree` v0.8.16 Features
+`loctree-ast` v0.8.16+ Features
 
-Shipping maps, reports, and runtime truth for living codebases.
-Loctree is no longer just dead-code detection. It is context
-extraction, structural analysis, Tauri contract verification, bundle
-intelligence, artifact generation, and MCP-native codebase perception.
+Get shipping maps, reports, and runtime insights for your living codebases.
+Loctree is more than just finding dead code; it’s about understanding the context, analyzing the structure, checking Tauri contracts, getting bundle intelligence, creating artifacts, and seeing how your codebase works with MCP.
 
-`loct` (cli) and `loctree-mcp` (stdio) — the primary tool for structural analysis
-Each tool is a different fidelity. Use them in order of breadth:
+`loctree-mcp` (stdio) — this is the main tool for looking at the structure.
+Each tool has its own level of detail.
+
+Use the tools in the order they’re listed, from broad to specific.
 
 1. The look from step back and get the thorough structural overview:
 
