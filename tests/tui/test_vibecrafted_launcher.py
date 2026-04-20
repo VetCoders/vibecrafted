@@ -5,6 +5,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO_ROOT / "scripts" / "vibecrafted"
 
@@ -99,6 +101,23 @@ def _write_fake_helper(script_path: Path, spawn_script: Path) -> None:
             [
                 "_vetcoders_spawn_script() {",
                 f'  printf "%s\\n" "{spawn_script}"',
+                "}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_generic_skill_helper(script_path: Path) -> None:
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text(
+        "\n".join(
+            [
+                "_vetcoders_skill_entry() {",
+                '  printf "%s\\n" "$1" "$2" > "$CAPTURE_FILE"',
+                "  shift 2",
+                '  printf "%s\\n" "$@" >> "$CAPTURE_FILE"',
                 "}",
             ]
         )
@@ -726,6 +745,49 @@ def test_skill_wrapper_help_is_human_readable_without_agent(tmp_path: Path) -> N
     assert "followup" in result.stdout
     assert "Post-implementation audit" in result.stdout
     assert "vc-followup <claude|codex|gemini> [flags]" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("skill", "prompt"),
+    [
+        ("intents", "Audit what from the plan really landed"),
+        ("ownership", "Take the repo from diagnosis to finished surface"),
+    ],
+)
+def test_generic_skill_fallback_routes_unwrapped_skills(
+    tmp_path: Path, skill: str, prompt: str
+) -> None:
+    home = tmp_path / "home"
+    wrapper = tmp_path / "vibecrafted"
+    capture_file = tmp_path / "generic-skill-args.txt"
+    helper = (
+        home
+        / ".vibecrafted"
+        / "tools"
+        / "vibecrafted-current"
+        / "skills"
+        / "vc-agents"
+        / "shell"
+        / "vetcoders.sh"
+    )
+
+    home.mkdir()
+    wrapper.symlink_to(LAUNCHER)
+    _write_generic_skill_helper(helper)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    subprocess.run(
+        ["bash", str(wrapper), skill, "codex", "--prompt", prompt],
+        check=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert payload == ["codex", skill, "--prompt", prompt]
 
 
 def test_marbles_help_lists_delete_control_subcommand() -> None:

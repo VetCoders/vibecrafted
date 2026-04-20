@@ -70,20 +70,23 @@ Your agent now has orientation instead of assumptions.
 vibecrafted justdo codex --prompt "Add user authentication with JWT"
 ```
 
-`vibecrafted justdo` chains the entire pipeline through `vc-justdo`:
+`vibecrafted justdo` runs the autonomous delivery contract in `vc-justdo`:
 
-- **Craft** — examines the repo, researches the approach, implements
-- **Converge** — runs marbles loops: _"what is still wrong?"_ → fix → repeat
-- **Ship** — checks product surface, decorates it, packages it, and prepares the release path
+- **Orient** — map the repo, load prior intent, and choose the smallest shape that works
+- **Implement** — make the change, add tests, and integrate with the live runtime
+- **Converge** — run followup, then `vc-marbles` if P0 or P1 findings remain
+- **Return** — hand back a verified surface with the next truthful move called out
 
 ## 5. Run phases individually
 
 ```bash
 vibecrafted scaffold claude --prompt "Plan the auth architecture"   # vc-scaffold
 vibecrafted init claude                                             # vc-init
+vibecrafted intents codex --prompt "Audit what from the plan landed" # vc-intents
 vibecrafted workflow claude --prompt "Plan and implement auth"      # vc-workflow
 vibecrafted review codex --prompt "Audit the auth changes"          # vc-review
 vibecrafted marbles codex --count 3 --depth 3                       # vc-marbles
+vibecrafted ownership codex --prompt "Take this surface to done"    # vc-ownership
 vibecrafted dou claude --prompt "Audit launch readiness"            # vc-dou
 vibecrafted decorate codex --prompt "Polish the surface"            # vc-decorate
 vibecrafted hydrate codex --prompt "Package the product"            # vc-hydrate
@@ -118,6 +121,9 @@ remaining accusation.
 
 Type `vibecrafted help` for the command deck. Once shell helpers are loaded,
 `vc-` wrappers stay available as shortcuts.
+
+For the full route inventory, see [SKILLS](./SKILLS.md). For the framework-wide
+flow map, see [WORKFLOWS](./WORKFLOWS.md).
 
 Preparing the public launch surface and directory submissions?
 Use [Release Kickoff](./RELEASE_KICKOFF.md) together with

@@ -27,7 +27,7 @@ _reset='\033[0m'
 
 _agents=(claude codex gemini)
 _modes=(implement research review plan prompt observe await)
-_skills=(decorate delegate dou followup hydrate justdo marbles partner prune release research review scaffold workflow)
+_skills=(decorate delegate dou followup hydrate intents justdo marbles ownership partner prune release research review scaffold workflow)
 
 _script_repo_root() {
   local script_dir
@@ -257,6 +257,7 @@ _skill_summary() {
     dou) printf 'Definition of Undone audit across the product surface.\n' ;;
     followup) printf 'Post-implementation audit for gaps, regressions, and next moves.\n' ;;
     hydrate) printf 'Packaging and go-to-market hydration.\n' ;;
+    intents) printf 'Plan-to-runtime truth audit across prior intent and present repo state.\n' ;;
     justdo) printf 'Autonomous end-to-end implementation when the thing simply needs to ship.\n' ;;
     marbles) printf 'Counterexample loop that keeps fixing what is still wrong until the surface is clean.\n' ;;
     ownership) printf 'Full-spectrum ownership mode for end-to-end delivery.\n' ;;
@@ -751,11 +752,15 @@ cmd_help() {
       cmd_resume_help
       return
       ;;
+    agents)
+      cmd_agents
+      return
+      ;;
     implement)
       cmd_skill_help "justdo"
       return
       ;;
-    decorate|delegate|dou|followup|hydrate|justdo|marbles|partner|prune|release|research|review|scaffold|workflow)
+    decorate|delegate|dou|followup|hydrate|intents|justdo|marbles|ownership|partner|prune|release|research|review|scaffold|workflow)
       cmd_skill_help "$topic"
       return
       ;;
@@ -789,6 +794,10 @@ cmd_help() {
   printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted doctor%b                    Verify installation health\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
+  printf '\n'
+  printf '%bSkill inventory (18 live directories):%b\n' "$_bold" "$_reset"
+  printf '  Core: init · scaffold · workflow · followup · marbles · dou · decorate · hydrate · release\n'
+  printf '  Support: agents · delegate · intents · justdo · ownership · partner · prune · research · review\n'
   printf '\n'
   printf '%bStart here:%b\n' "$_bold" "$_reset"
   printf '  If you want the simplest path, skip the dashboard and use plain commands:\n'
@@ -890,8 +899,11 @@ cmd_help_full() {
   printf '\n'
   printf '%b=== ADDITIONAL SKILLS ===%b\n' "$_bold" "$_reset"
   printf '\n'
+  printf '  %bagents%b     External fleet delegation contract via agent modes\n' "$_copper" "$_reset"
+  printf '  %bintents%b    Plan-to-runtime truth audit\n' "$_copper" "$_reset"
   printf '  %bpartner%b    Collaborative debugging and architecture triage\n' "$_copper" "$_reset"
   printf '  %bjustdo%b     Autonomous end-to-end implementation\n' "$_copper" "$_reset"
+  printf '  %bownership%b  Full-spectrum take-the-wheel delivery\n' "$_copper" "$_reset"
   printf '  %bdelegate%b   In-session native subagent delegation\n' "$_copper" "$_reset"
   printf '  %bresearch%b   Triple-agent research (claude + codex + gemini)\n' "$_copper" "$_reset"
   printf '  %breview%b     Full PR review pipeline\n' "$_copper" "$_reset"
@@ -945,8 +957,10 @@ cmd_help_full() {
   printf '  telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
   printf '  vibecrafted workflow claude --file /path/to/brief.md\n'
+  printf '  vibecrafted intents codex --prompt "Audit what from the plan really landed"\n'
   printf '  vibecrafted marbles codex --count 3 --depth 3\n'
   printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
+  printf '  vibecrafted ownership codex --prompt "Take the repo from diagnosis to finished surface"\n'
   printf '  vibecrafted dou claude\n'
   printf '  vibecrafted decorate codex\n'
   printf '  vibecrafted hydrate codex\n'
@@ -1330,8 +1344,18 @@ run_skill() {
     return 1
   }
 
+  local helper_name="${agent}-skill-${skill}"
   _ensure_helpers_loaded || return 1
-  _run_helper "${agent}-skill-${skill}" "$@"
+  if command -v "$helper_name" >/dev/null 2>&1; then
+    _run_helper "$helper_name" "$@"
+    return
+  fi
+  if command -v _vetcoders_skill_entry >/dev/null 2>&1; then
+    _vetcoders_skill_entry "$agent" "$skill" "$@"
+    return
+  fi
+  printf '%b[error]%b Missing helper %s and no generic skill entry is available.\n' "$_red" "$_reset" "$helper_name" >&2
+  return 1
 }
 
 run_wrapper() {
@@ -1445,7 +1469,7 @@ main() {
       run_mode "$cmd" "$mode" "$@"
       ;;
     implement) run_skill "justdo" "$@" ;;
-    decorate|delegate|dou|followup|hydrate|justdo|marbles|partner|prune|release|research|review|scaffold|workflow)
+    decorate|delegate|dou|followup|hydrate|intents|justdo|marbles|ownership|partner|prune|release|research|review|scaffold|workflow)
       run_skill "$cmd" "$@"
       ;;
     *)
