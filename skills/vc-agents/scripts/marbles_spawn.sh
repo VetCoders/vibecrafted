@@ -80,7 +80,22 @@ root_dir="${root:-$(spawn_repo_root)}"
 store="$(spawn_marbles_store_dir "$root_dir")"
 mkdir -p "$store/plans" "$store/reports"
 
-marbles_run_id="${VIBECRAFTED_MARBLES_RUN_ID:-marb-$(date +%H%M%S)}"
+# Honour inherited run_id ONLY when a parent spawn placed it deliberately.
+# A leaked env var from a previous zellij window/session must not clobber a
+# fresh spawn with a recycled id.
+marbles_run_id="${VIBECRAFTED_MARBLES_RUN_ID:-}"
+if [[ -n "$marbles_run_id" ]]; then
+  candidate_state_dir="$(spawn_marbles_state_dir "$marbles_run_id")"
+  if [[ -e "$candidate_state_dir" && -z "${VIBECRAFTED_MARBLES_RESUME:-}" ]]; then
+    printf 'warn: VIBECRAFTED_MARBLES_RUN_ID=%s already has state at %s — minting a fresh id (set VIBECRAFTED_MARBLES_RESUME=1 to reuse)\n' \
+      "$marbles_run_id" "$candidate_state_dir" >&2
+    marbles_run_id=""
+  fi
+fi
+if [[ -z "$marbles_run_id" ]]; then
+  # Same PID-suffixed format as _vetcoders_generate_run_id; keep shapes identical across entry points.
+  marbles_run_id="marb-$(date +%H%M%S)-$$"
+fi
 state_dir="$(spawn_marbles_state_dir "$marbles_run_id")"
 state_file="$state_dir/state.json"
 god_plan="$state_dir/god.md"

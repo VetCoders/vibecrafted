@@ -53,7 +53,9 @@ spawn_skill_prefix() {
 
 spawn_generate_run_id() {
   local prefix="${1:-impl}"
-  printf '%s-%s\n' "$prefix" "$(date +%H%M%S)"
+  # PID suffix defuses same-second collisions when parallel spawns race.
+  # Keep identical shape to _vetcoders_generate_run_id so downstream regex/matchers agree.
+  printf '%s-%s-%s\n' "$prefix" "$(date +%H%M%S)" "$$"
 }
 
 spawn_marbles_state_dir() {

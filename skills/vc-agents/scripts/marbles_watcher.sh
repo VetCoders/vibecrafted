@@ -60,7 +60,11 @@ try:
     except (OSError, json.JSONDecodeError):
         payload = {}
 
-    exec(mutator, {"datetime": datetime}, {"payload": payload, "args": args})
+    exec(
+        mutator,
+        {"datetime": datetime, "json": json, "os": os},
+        {"payload": payload, "args": args},
+    )
 
     dir_path = os.path.dirname(state_path) or "."
     fd, tmp_path = tempfile.mkstemp(
@@ -340,54 +344,31 @@ PY
   fi
 }
 
-_record_verification_done() {
+_record_verification_pending() {
   local loop_nr="$1"
-  local verified_report="$2"
+
   if command -v python3 >/dev/null 2>&1; then
     _state_json_edit "$(cat <<'PY'
 payload["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 for loop in payload.get("loops", []):
-    if loop.get("loop") == int(args[0]):
-        loop["verification_status"] = "completed"
-        loop["verified_report"] = args[1]
-PY
-)" "$loop_nr" "$verified_report" >/dev/null || true
-  fi
-}
-
-_bg_poll_verification() {
-  local loop_nr="$1"
-  local report_path="$2"
-  local verified_path=""
-  local max_wait=600
-  local elapsed=0
-
-  [[ -n "$report_path" ]] || return 0
-  verified_path="${report_path%.md}_verified.md"
-
-  while (( elapsed < max_wait )); do
-    if [[ -s "$verified_path" ]]; then
-      _record_verification_done "$loop_nr" "$verified_path"
-      printf '    %b✓ verified%b  L%s → %s\n' "$_green" "$_reset" "$loop_nr" "$(basename "$verified_path")"
-      return 0
-    fi
-    sleep 10
-    (( elapsed += 10 ))
-  done
-
-  if command -v python3 >/dev/null 2>&1 && [[ -f "$state_file" ]]; then
-    _state_json_edit "$(cat <<'PY'
-payload["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-for loop in payload.get("loops", []):
-    if loop.get("loop") == int(args[0]) and loop.get("verification_status") == "pending":
-        loop["verification_status"] = "timed_out"
+    if loop.get("loop") == int(args[0]) and loop.get("verification_status") != "completed":
+        loop["verification_status"] = "pending"
 PY
 )" "$loop_nr" >/dev/null || true
   fi
-  printf '    %b⚠ verification timed out%b  L%s\n' "$_yellow" "$_reset" "$loop_nr"
 }
 
-_verification_pids=()
+_start_verification_watch() {
+  local loop_nr="$1"
+  local report_path="$2"
+
+  [[ -n "$report_path" ]] || return 0
+  [[ -f "$SCRIPT_DIR/marbles_verify_watch.sh" ]] || return 0
+
+  _record_verification_pending "$loop_nr"
+  nohup bash "$SCRIPT_DIR/marbles_verify_watch.sh" \
+    "$state_file" "$loop_nr" "$report_path" >/dev/null 2>&1 &
+}
 
 _render_chain() {
   local current="$1"
@@ -567,14 +548,11 @@ def pick_from_meta(path: str) -> str:
         return f"reason: {meta['error']}"
 
     candidate_fields = []
-    for key in ("reason", "message", "status", "launcher", "exit_code"):
+    for key in ("reason", "message"):
         value = meta.get(key, "")
         if value == "" or value is None:
             continue
-        if key == "status":
-            candidate_fields.append(f"{key}: {value}")
-        else:
-            candidate_fields.append(f"{key}: {value}")
+        candidate_fields.append(f"{key}: {value}")
 
     if candidate_fields:
         return " | ".join(candidate_fields[:3])
@@ -808,7 +786,9 @@ PY
   loop_start=$(date +%s)
 
   meta_path=""
-  if ! meta_path="$(_wait_for_loop_meta "$loop_nr" "$meta_timeout_s")"; then
+  if meta_path="$(_wait_for_loop_meta "$loop_nr" "$meta_timeout_s")"; then
+    :
+  else
     meta_status=$?
     loop_end=$(date +%s)
     duration=$((loop_end - loop_start))
@@ -875,7 +855,9 @@ PY
 
   wait_status=0
   if [[ -z "$actual_report" ]]; then
-    if ! actual_report="$(_wait_for_report_path "$actual_report_hint" "$report_timeout_s" "$actual_transcript" "$meta_path")"; then
+    if actual_report="$(_wait_for_report_path "$actual_report_hint" "$report_timeout_s" "$actual_transcript" "$meta_path")"; then
+      :
+    else
       wait_status=$?
     fi
   fi
@@ -961,8 +943,7 @@ PY
   fi
   _render_loop_phase "$loop_nr" "done" "$detail"
 
-  _bg_poll_verification "$loop_nr" "$actual_report" &
-  _verification_pids+=($!)
+  _start_verification_watch "$loop_nr" "$actual_report"
 
   if [[ "${p0:-}" == "0" && "${p1:-}" == "0" && "${p2:-}" == "0" ]] \
      && [[ -n "$p0" && -n "$p1" && -n "$p2" ]]; then
@@ -1031,20 +1012,19 @@ else
   [[ -n "$trajectory" ]] && printf '  %s\n' "$trajectory"
 fi
 
-if (( ${#_verification_pids[@]} > 0 )); then
-  printf '\n  %bverification:%b ' "$_dim" "$_reset"
-  for _vpid in "${_verification_pids[@]}"; do
-    if kill -0 "$_vpid" 2>/dev/null; then
-      _vwait=0
-      while kill -0 "$_vpid" 2>/dev/null && (( _vwait < 30 )); do
-        sleep 5
-        (( _vwait += 5 ))
-      done
-    fi
-  done
+verification_grace_s="${VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S:-30}"
+case "$verification_grace_s" in
+  ''|*[!0-9]*)
+    verification_grace_s=30
+    ;;
+esac
 
-  if command -v python3 >/dev/null 2>&1 && [[ -f "$state_file" ]]; then
-    python3 - "$state_file" <<'PY'
+if command -v python3 >/dev/null 2>&1 && [[ -f "$state_file" ]]; then
+  printf '\n  %bverification:%b ' "$_dim" "$_reset"
+  if (( verification_grace_s > 0 )); then
+    sleep "$verification_grace_s"
+  fi
+  python3 - "$state_file" <<'PY'
 import json
 import sys
 
@@ -1070,14 +1050,9 @@ if timed:
     parts.append(f"{timed} timed out")
 print(", ".join(parts) if parts else "none tracked")
 PY
-  fi
 fi
 
 printf '\n  lock released: %s\n' "$run_id"
 printf '%b──────────────────────────────────%b\n\n' "$_steel" "$_reset"
-
-for _vpid in "${_verification_pids[@]:-}"; do
-  kill "$_vpid" 2>/dev/null || true
-done
 
 rm -f "$session_lock" 2>/dev/null || true

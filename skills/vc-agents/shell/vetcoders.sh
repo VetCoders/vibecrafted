@@ -324,7 +324,9 @@ _vetcoders_skill_prefix() {
 
 _vetcoders_generate_run_id() {
   local prefix="$1"
-  printf '%s-%s\n' "$prefix" "$(date +%H%M%S)"
+  # PID suffix defuses same-second collisions when parallel spawns race.
+  # Format stays "prefix-HHMMSS-..." so existing regex matchers keep working.
+  printf '%s-%s-%s\n' "$prefix" "$(date +%H%M%S)" "$$"
 }
 
 _vetcoders_spawn_timestamp() {

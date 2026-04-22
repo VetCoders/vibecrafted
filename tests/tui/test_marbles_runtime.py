@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -70,6 +71,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
         "common.sh",
         "marbles_spawn.sh",
         "marbles_watcher.sh",
+        "marbles_verify_watch.sh",
         "marbles_next.sh",
     ):
         source = REPO_ROOT / "skills" / "vc-agents" / "scripts" / name
@@ -154,7 +156,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
         status: transcript
         ---
 
-        session: fake-${agent}-${SPAWN_LOOP_NR}
+        session: 019dad3e-8f9c-000${SPAWN_LOOP_NR}
         working...
         EOF
 
@@ -188,7 +190,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
         P2: 0
         EOF
 
-        if [[ "$report_status" == "completed" ]]; then
+        if [[ "$report_status" == "completed" && "${MARBLES_TEST_SKIP_VERIFIED_REPORT_LOOP:-}" != "${SPAWN_LOOP_NR:-0}" ]]; then
           cp "$SPAWN_REPORT" "${SPAWN_REPORT%.md}_verified.md"
         fi
 
@@ -1016,16 +1018,20 @@ def test_marbles_materializes_failed_loop_when_child_spawn_dies_before_meta(
     state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
 
     assert state["status"] == "failed"
-    assert [loop["status"] for loop in state["loops"]] == ["confirmed", "promise"]
+    assert [loop["status"] for loop in state["loops"]] == ["done", "failed"]
     failed_loop = state["loops"][1]
     assert failed_loop["loop"] == 2
-    assert "report" not in failed_loop
-    assert "failure_reason" not in failed_loop
+    assert failed_loop["report"].endswith("_L2_codex.md")
+    assert failed_loop["failure_reason"] == "spawn-failed"
+    assert failed_loop["exit_code"] == 42
     assert Path(failed_loop["transcript"]).exists()
     assert (
         "failure surfaced from launch metadata" in result.stdout
         or "failure surfaced as:" in result.stdout
     )
+    assert "Exit code: 42" in result.stdout
+    assert "Traceback" not in result.stderr
+    assert "NameError" not in result.stderr
 
     meta_records = subprocess.run(
         [
@@ -1140,7 +1146,7 @@ def test_marbles_watcher_waits_for_meta_completion_before_advancing(
     state = json.loads((state_dirs[0] / "state.json").read_text(encoding="utf-8"))
 
     assert state["status"] == "completed"
-    assert [loop["status"] for loop in state["loops"]] == ["confirmed", "confirmed"]
+    assert [loop["status"] for loop in state["loops"]] == ["done", "done"]
     assert "no meta.json within" not in result.stdout
 
     events = _load_spawn_events(capture_file)
@@ -1236,13 +1242,73 @@ def test_marbles_watcher_does_not_consume_failed_fallback_report(
     state = json.loads((state_dirs[0] / "state.json").read_text(encoding="utf-8"))
 
     assert state["status"] == "failed"
-    assert [loop["status"] for loop in state["loops"]] == ["promise"]
+    assert [loop["status"] for loop in state["loops"]] == ["failed"]
     failed_loop = state["loops"][0]
-    assert "report" not in failed_loop
-    assert "failure_reason" not in failed_loop
+    assert failed_loop["report"].endswith("_L1_codex.md")
+    assert failed_loop["failure_reason"] == "spawn-failed"
+    assert failed_loop["exit_code"] == 17
     assert Path(failed_loop["transcript"]).exists()
     assert "report ✓" not in result.stdout
     assert "failed" in result.stdout
 
     events = _load_spawn_events(capture_file)
     assert len(events) == 1
+
+
+def test_marbles_verification_poll_survives_watcher_exit_without_job_noise(
+    tmp_path: Path,
+) -> None:
+    scripts_dir, capture_file = _prepare_fake_marbles_bundle(tmp_path)
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    home.mkdir()
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
+    env["MARBLES_TEST_SKIP_VERIFIED_REPORT_LOOP"] = "1"
+    env["VIBECRAFTED_MARBLES_VERIFICATION_TIMEOUT_S"] = "1"
+    env["VIBECRAFTED_MARBLES_VERIFICATION_POLL_S"] = "1"
+    env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "1"
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(scripts_dir / "marbles_spawn.sh"),
+            "--agent",
+            "gemini",
+            "--count",
+            "1",
+            "--runtime",
+            "headless",
+            "--prompt",
+            "Leave verification to the detached watcher",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    state_dirs = list((crafted_home / "marbles").iterdir())
+    assert len(state_dirs) == 1
+    state_path = state_dirs[0] / "state.json"
+
+    deadline = time.monotonic() + 5
+    verification_status = ""
+    while time.monotonic() < deadline:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        verification_status = state["loops"][0].get("verification_status", "")
+        if verification_status == "timed_out":
+            break
+        time.sleep(0.2)
+
+    assert verification_status == "timed_out"
+    assert "Terminated: 15" not in result.stdout
+    assert "Terminated: 15" not in result.stderr
