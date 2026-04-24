@@ -69,8 +69,9 @@ Bundle contents:
     - vc-dou
     - vc-followup
     - vc-hydrate
+    - vc-implement
     - vc-init
-    - vc-justdo
+    - vc-justdo (legacy alias of vc-implement)
     - vc-marbles
     - vc-partner
     - vc-prune
@@ -88,16 +89,17 @@ Select skills to install:
     [x] 4. vc-dou
     [x] 5. vc-followup
     [x] 6. vc-hydrate
-    [x] 7. vc-init
-    [x] 8. vc-justdo
-    [x] 9. vc-marbles
-    [x] 10. vc-partner
-    [x] 11. vc-prune
-    [x] 12. vc-release
-    [x] 13. vc-research
-    [x] 14. vc-review
-    [x] 15. vc-scaffold
-    [x] 16. vc-workflow
+    [x] 7. vc-implement
+    [x] 8. vc-init
+    [x] 9. vc-justdo  (legacy alias of vc-implement)
+    [x] 10. vc-marbles
+    [x] 11. vc-partner
+    [x] 12. vc-prune
+    [x] 13. vc-release
+    [x] 14. vc-research
+    [x] 15. vc-review
+    [x] 16. vc-scaffold
+    [x] 17. vc-workflow
 
 System check:
   [ok] python3 -> /opt/homebrew/bin/python3
@@ -157,8 +159,9 @@ Installing shared skills...
   -> vc-dou
   -> vc-followup
   -> vc-hydrate
+  -> vc-implement
   -> vc-init
-  -> vc-justdo
+  -> vc-justdo (legacy alias of vc-implement)
   -> vc-marbles
   -> vc-partner
   -> vc-prune

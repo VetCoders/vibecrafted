@@ -68,7 +68,7 @@ After scaffolding produces a plan, the pipeline continues:
 
 - `vc-init` bootstraps agent context
 - `vc-workflow` executes the ERi pipeline (Examine → Research → Implement)
-- `vc-justdo` can consume the scaffold plan for autonomous end-to-end execution
+- `vc-implement` (legacy alias `vc-justdo`) can consume the scaffold plan for autonomous end-to-end execution
 
 ## The Mission
 
@@ -217,7 +217,7 @@ That's it. No polishing. No prettifying. Just working plans.
 
 - **vc-init** — bootstraps agent context after scaffolding
 - **vc-workflow** — executes the ERi pipeline on scaffold tasks
-- **vc-justdo** — autonomous execution that can consume scaffold plans
+- **vc-implement** (legacy alias **vc-justdo**) — autonomous execution that can consume scaffold plans
 - **vc-research** — standalone triple-agent research for unknowns found during scaffolding
 - **vc-release** — the end of the pipeline; scaffold's product identity decisions feed into release brand checks
 

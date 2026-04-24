@@ -2133,6 +2133,13 @@ codex-skill-justdo() { _vetcoders_skill_entry codex justdo "$@"; }
 claude-skill-justdo() { _vetcoders_skill_entry claude justdo "$@"; }
 gemini-skill-justdo() { _vetcoders_skill_entry gemini justdo "$@"; }
 
+# vc-implement is the front-face brand for vc-justdo. Both helper families hit
+# the same dispatcher (skill id stays "justdo" so run_id prefix, locks, and
+# already-trained agents keep working unchanged).
+codex-skill-implement() { _vetcoders_skill_entry codex justdo "$@"; }
+claude-skill-implement() { _vetcoders_skill_entry claude justdo "$@"; }
+gemini-skill-implement() { _vetcoders_skill_entry gemini justdo "$@"; }
+
 codex-skill-marbles() { _vetcoders_marbles codex "$@"; }
 claude-skill-marbles() { _vetcoders_marbles claude "$@"; }
 gemini-skill-marbles() { _vetcoders_marbles gemini "$@"; }
@@ -2219,6 +2226,7 @@ vc-hydrate() { _vetcoders_skill_wrapper hydrate "$@"; }
 vc-init() { _vetcoders_skill_wrapper init "$@"; }
 vc-intents() { _vetcoders_skill_wrapper intents "$@"; }
 vc-justdo() { _vetcoders_skill_wrapper justdo "$@"; }
+vc-implement() { _vetcoders_skill_wrapper justdo "$@"; }
 vc-marbles() { _vetcoders_skill_wrapper marbles "$@"; }
 vc-ownership() { _vetcoders_skill_wrapper ownership "$@"; }
 vc-partner() { _vetcoders_skill_wrapper partner "$@"; }
@@ -2234,7 +2242,7 @@ vc-help() {
 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework — Skills & Helpers
 
 Pipeline:  scaffold → init → workflow → followup → marbles → dou → decorate → hydrate → release
-Modes:     partner (collaborative) | justdo (autonomous)
+Modes:     partner (collaborative) | implement (autonomous, alias: justdo)
 Research:  research (triple-agent) | delegate (in-session)
 Quality:   review | prune
 Video:     screenscribe (foundation)
@@ -2252,7 +2260,8 @@ Spawn helpers (per agent):
   <agent>-decorate               Visual polish
   <agent>-release                Ship to market
   <agent>-prune                  Repo pruning
-  <agent>-justdo                 Autonomous e2e implementation
+  <agent>-skill-implement        Autonomous e2e implementation (vc-implement)
+  <agent>-justdo                 Autonomous e2e implementation (legacy alias)
   <agent>-partner                Collaborative partner mode
   <agent>-observe --last         Check last report
   <agent>-await --last           Wait for metadata completion + summary

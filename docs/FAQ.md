@@ -44,9 +44,10 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 
 ## Workflow and Operations
 
-- **When should I use `vc-justdo`?**
-  Use it when the task is clear and you want the agent to take ownership end-to-end. Use the phase skills individually
-  when you want more supervisory control.
+- **When should I use `vc-implement` (legacy alias `vc-justdo`)?**
+  Use it when the task is clear and you want the agent to take ownership end-to-end. `vc-implement` is the canonical
+  name; `vc-justdo` keeps working for agents already wired to it. Use the phase skills individually when you want more
+  supervisory control.
 
 - **Can I run 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. in CI/CD?**
   Yes. The direct install path is non-interactive, and review/followup/release flows are shaped to work as repeatable

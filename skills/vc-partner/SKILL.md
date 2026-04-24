@@ -403,10 +403,11 @@ Use `vc-ownership`.
 Escalate to `vc-workflow` when the structure is clear but the team wants a more
 formal Examine → Research → Implement lane.
 
-### Escalate to `vc-justdo`
+### Escalate to `vc-implement` (legacy alias: `vc-justdo`)
 
-Escalate to `vc-justdo` when the problem is already well-shaped and the user no
-longer wants shared steering.
+Escalate to `vc-implement` when the problem is already well-shaped and the user
+no longer wants shared steering. Both `vc-implement` and `vc-justdo` invoke the
+same autonomous flow.
 
 ---
 

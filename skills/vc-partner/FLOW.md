@@ -9,7 +9,7 @@ flowchart TD
     C --> D{What next?}
     D -->|small bounded cut| E[Escalate to vc-delegate]
     D -->|parallel field work| F[Escalate to vc-agents]
-    D -->|ready to execute| G[Hand off to vc-workflow or vc-justdo]
+    D -->|ready to execute| G[Hand off to vc-workflow or vc-implement]
     D -->|needs more review| H[Return plan and open questions]
     E --> H
     F --> H
@@ -27,7 +27,7 @@ flowchart TD
 
 - Small native cut inside the same session -> `vibecrafted delegate <agent>`
 - Need separate execution units -> `vc-agents`
-- Ready for autonomous implementation -> `vibecrafted justdo <agent>`
+- Ready for autonomous implementation -> `vibecrafted implement <agent>` (legacy alias: `justdo`)
 
 ### Session artifacts
 

@@ -268,7 +268,7 @@ If gate fails, commit message says `Gate: fail` and next round starts with the r
 ```
 $VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/
 ├── plans/                    # Original task plans
-├── reports/                  # justdo/workflow reports
+├── reports/                  # implement/workflow reports (legacy: justdo/workflow)
 ├── marbles/
 │   ├── plans/                # Per-loop plan copies (L1, L2, ...)
 │   └── reports/              # Per-loop reports + CONVERGENCE.md

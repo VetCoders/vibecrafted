@@ -513,7 +513,7 @@ def write_start_here_guide(
         "## Simplest path",
         "1. `vibecrafted init claude`",
         '2. `vibecrafted workflow claude --prompt "Plan and implement <task>"`',
-        '3. `vibecrafted justdo codex --prompt "Ship <task>"`',
+        '3. `vibecrafted implement codex --prompt "Ship <task>"`',
         "",
         "## Ship-ready path",
         '1. `vibecrafted dou claude --prompt "Audit launch readiness"`',
@@ -1508,6 +1508,7 @@ SKILL_WRAPPER_NAMES = [
     "dou",
     "followup",
     "hydrate",
+    "implement",
     "intents",
     "justdo",
     "marbles",
@@ -2790,7 +2791,7 @@ def print_doctor(
         "    "
         + cyan("vibecrafted workflow claude --prompt 'Plan and implement <task>'")
     )
-    print("    " + cyan("vibecrafted justdo codex --prompt 'Ship <task>'"))
+    print("    " + cyan("vibecrafted implement codex --prompt 'Ship <task>'"))
     print()
     print(f"  {bold('Ship-ready path:')}")
     print("    " + cyan("vibecrafted dou claude --prompt 'Audit launch readiness'"))

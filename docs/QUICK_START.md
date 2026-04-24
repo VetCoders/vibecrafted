@@ -67,10 +67,11 @@ Your agent now has orientation instead of assumptions.
 ## 4. Build something
 
 ```bash
-vibecrafted justdo codex --prompt "Add user authentication with JWT"
+vibecrafted implement codex --prompt "Add user authentication with JWT"
+# legacy alias still works: vibecrafted justdo codex --prompt "..."
 ```
 
-`vibecrafted justdo` runs the autonomous delivery contract in `vc-justdo`:
+`vibecrafted implement` (alias: `justdo`) runs the autonomous delivery contract in `vc-implement`:
 
 - **Orient** — map the repo, load prior intent, and choose the smallest shape that works
 - **Implement** — make the change, add tests, and integrate with the live runtime

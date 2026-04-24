@@ -96,8 +96,8 @@ Answers from the trenches. This is the truth as of April 2026.
   you through the process.
 
 - **Why is there no `vc-test` skill?**
-  Testing isn't a "skill"—it's a requirement of _every_ skill. `vc-workflow`, `vc-justdo`, and `vc-marbles` all have
-  testing and validation baked into their "Execution" and "Validate" phases.
+  Testing isn't a "skill"—it's a requirement of _every_ skill. `vc-workflow`, `vc-implement` (legacy alias `vc-justdo`),
+  and `vc-marbles` all have testing and validation baked into their "Execution" and "Validate" phases.
 
 - **What is the Definition of Undone and why is it not the Definition of Done?**
   Definition of Done (DoD) is about checking boxes. **Definition of Undone (DoU)** is about exposing the gaps you
@@ -176,10 +176,10 @@ Answers from the trenches. This is the truth as of April 2026.
   A single iteration (followup + fix) takes 2-5 minutes. A task typically converges in 2-4 loops. Massive refactors
   might take 10+.
 
-- **When should I use `vc-justdo` vs running individual skills manually?**
-  Use `vc-justdo` when the task is clear and you want the agent to take full ownership from research to final
+- **When should I use `vc-implement` (legacy alias `vc-justdo`) vs running individual skills manually?**
+  Use `vc-implement` when the task is clear and you want the agent to take full ownership from research to final
   convergence. Use individual skills (init → workflow → followup) when you want to supervise the architectural "cuts" at
-  each step.
+  each step. The legacy `vc-justdo` name still resolves to the same skill, so already-trained agents keep working.
 
 - **How do I know when convergence is "done"?**
   When P0=0, P1=0, and P2=0 in the `vc-followup` report, and the Build/Lint/Test gates are all green. That's the signal

@@ -1,6 +1,6 @@
 {
-  "name": "VC JustDo",
-  "description": "For when you're done planning. Skip the pipeline, just do the thing. Use /vc-justdo to invoke.",
+  "name": "VC JustDo (legacy alias of vc-implement)",
+  "description": "Legacy alias of vc-implement, kept for agents already wired to /vc-justdo. Same autonomous end-to-end implementation flow. Prefer /vc-implement going forward.",
   "author": {
     "name": "VetCoders",
     "email": "hello@vetcoders.io"

@@ -25,7 +25,7 @@ flowchart TD
     E --> F[workflow]
 
     D --> F[workflow]
-    D --> G[justdo]
+    D --> G[implement]
     D --> H[partner]
     D --> I[intents]
     D --> J[review]
@@ -64,9 +64,9 @@ flowchart TD
 
 | Surface                      | Start here                                               | Usually chains into                                                          |
 | ---------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| New idea or vague scope      | `vibecrafted scaffold <agent>`                           | `workflow`, `partner`, `justdo`                                              |
-| First repo contact           | `vibecrafted init <agent>`                               | `workflow`, `justdo`, `partner`, `review`, `intents`                         |
-| Autonomous delivery          | `vibecrafted justdo <agent>`                             | `followup`, `marbles`, optionally `dou` / `decorate` / `hydrate` / `release` |
+| New idea or vague scope      | `vibecrafted scaffold <agent>`                           | `workflow`, `partner`, `implement`                                           |
+| First repo contact           | `vibecrafted init <agent>`                               | `workflow`, `implement`, `partner`, `review`, `intents`                      |
+| Autonomous delivery          | `vibecrafted implement <agent>` (alias: `justdo`)        | `followup`, `marbles`, optionally `dou` / `decorate` / `hydrate` / `release` |
 | Shared steering              | `vibecrafted partner <agent>`                            | `delegate`, `agents`, `workflow`, `ownership`                                |
 | Truth audit vs original plan | `vibecrafted intents <agent>`                            | `review`, `marbles`, `ownership`                                             |
 | Launch-readiness gap finding | `vibecrafted dou <agent>`                                | `hydrate`, `decorate`, `release`                                             |

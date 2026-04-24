@@ -8,7 +8,7 @@ flowchart TD
     B --> C[Map existing repo or greenfield assumptions]
     C --> D[Draft phases, risks, and leverage points]
     D --> E{What next?}
-    E -->|implementation path chosen| F[Hand off to vc-workflow or vc-justdo]
+    E -->|implementation path chosen| F[Hand off to vc-workflow or vc-implement]
     E -->|needs collaboration| G[Hand off to vc-partner]
     E -->|plan only| H[Write scaffold report]
     F --> H
@@ -24,7 +24,7 @@ flowchart TD
 
 ### Escalation edges
 
-- Plan is ready for execution -> `vibecrafted workflow <agent>` or `justdo`
+- Plan is ready for execution -> `vibecrafted workflow <agent>` or `implement` (legacy alias: `justdo`)
 - Shared steering is still needed -> `vibecrafted partner <agent>`
 - The repo already exists and needs truth before planning -> `vibecrafted init <agent>`
 

@@ -24,7 +24,7 @@ flowchart TD
 ### Escalation edges
 
 - Shared steering is needed before implementation -> `vibecrafted partner <agent>`
-- The best shape is already obvious and should be shipped directly -> `vibecrafted justdo <agent>`
+- The best shape is already obvious and should be shipped directly -> `vibecrafted implement <agent>` (legacy alias: `justdo`)
 - Validation finds remaining P0/P1s -> `vibecrafted marbles <agent>`
 
 ### Session artifacts

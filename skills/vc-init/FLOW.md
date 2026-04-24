@@ -23,7 +23,7 @@ flowchart TD
 
 - Need planning next -> `vibecrafted scaffold <agent>` or `workflow`
 - Need collaborative steering -> `vibecrafted partner <agent>`
-- Need direct delivery next -> `vibecrafted justdo <agent>`
+- Need direct delivery next -> `vibecrafted implement <agent>` (legacy alias: `justdo`)
 
 ### Session artifacts
 

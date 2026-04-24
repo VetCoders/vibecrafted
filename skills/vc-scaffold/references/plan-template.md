@@ -6,7 +6,7 @@ Use this template for planning output. Strip out the comments in your actual out
 ---
 run_id: <generated-unique-id>
 agent: <claude|codex|gemini>
-skill: <vc-scaffold|vc-workflow|vc-justdo>
+skill: <vc-scaffold|vc-workflow|vc-implement>
 project: <repo-name>
 status: pending
 created: <ISO-8601 timestamp>

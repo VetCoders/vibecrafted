@@ -27,7 +27,7 @@ flowchart TD
 ### Escalation edges
 
 - Research is complete and the team wants a plan -> `vibecrafted scaffold <agent>`
-- Research is complete and execution should start -> `vibecrafted workflow <agent>` or `justdo`
+- Research is complete and execution should start -> `vibecrafted workflow <agent>` or `implement` (legacy alias: `justdo`)
 - Research needs one strong owner instead of a swarm -> `vibecrafted <agent> research <plan.md>`
 
 ### Session artifacts

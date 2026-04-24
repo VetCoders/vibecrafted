@@ -1,0 +1,8 @@
+{
+  "name": "VC Implement",
+  "description": "For when you're done planning. Skip the pipeline, just ship the thing — full autonomous end-to-end implementation. Use /vc-implement to invoke. Legacy alias: /vc-justdo.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}
