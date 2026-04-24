@@ -32,6 +32,27 @@ def test_discover_bundle_skills_tracks_live_skill_surface() -> None:
     assert "vc-screenscribe" not in skill_names
 
 
+def test_top_level_skill_dirs_are_live_skills_or_foundations() -> None:
+    allowed_non_skill_dirs = {"foundations"}
+    offenders: list[str] = []
+
+    for path in sorted((bundle.REPO_ROOT / "skills").iterdir()):
+        if not path.is_dir() or path.name in allowed_non_skill_dirs:
+            continue
+
+        missing = [
+            marker
+            for marker in ("SKILL.md", "FLOW.md")
+            if not (path / marker).is_file()
+        ]
+        if missing:
+            offenders.append(
+                f"{path.relative_to(bundle.REPO_ROOT)} missing {', '.join(missing)}"
+            )
+
+    assert not offenders, "\n".join(offenders)
+
+
 def test_write_bundle_uses_current_metadata_and_skill_inventory(tmp_path: Path) -> None:
     output_path = tmp_path / bundle.OUTPUT_FILENAME
 

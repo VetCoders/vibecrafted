@@ -32,6 +32,7 @@ def test_compact_help_uses_release_engine_contract(tmp_path: Path) -> None:
 
     assert "Release engine for AI-built software." in output
     assert "Ship AI-built software without the vibe hangover." in output
+    assert "Skill inventory (18 live skills):" in output
     assert "Founders' Framework" not in output
     assert 'vibecrafted decorate codex --prompt "Polish the release surface"' in output
 

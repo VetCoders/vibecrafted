@@ -797,7 +797,7 @@ cmd_help() {
   printf '  %bvibecrafted doctor%b                    Verify installation health\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
   printf '\n'
-  printf '%bSkill inventory (18 live directories):%b\n' "$_bold" "$_reset"
+  printf '%bSkill inventory (18 live skills):%b\n' "$_bold" "$_reset"
   printf '  Core: init · scaffold · workflow · followup · marbles · dou · decorate · hydrate · release\n'
   printf '  Support: agents · delegate · intents · justdo · ownership · partner · prune · research · review\n'
   printf '\n'
