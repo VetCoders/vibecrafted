@@ -917,6 +917,32 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
     assert f"- ANCESTOR: {state_dir / 'ancestor.md'}" in convergence
 
 
+def test_marbles_contract_docs_forbid_worker_worktree_escape() -> None:
+    checked_files = [
+        REPO_ROOT / "skills" / "vc-marbles" / "SKILL.md",
+        REPO_ROOT / "skills" / "vc-marbles" / "RECEPTION.md",
+        REPO_ROOT / "workflows" / "MARBLES.md",
+    ]
+    forbidden = [
+        "create or use a `git worktree`",
+        "creates a `git worktree`",
+        "worktree escape hatch",
+        "current repo/worktree path",
+        "Work only inside your assigned tree, worktree, or lane.",
+    ]
+
+    offenders = []
+    for path in checked_files:
+        text = path.read_text(encoding="utf-8")
+        offenders.extend(
+            f"{path.relative_to(REPO_ROOT)} contains {phrase!r}"
+            for phrase in forbidden
+            if phrase in text
+        )
+
+    assert not offenders, "\n".join(offenders)
+
+
 def test_marbles_no_watch_still_creates_god_and_ancestor_contract(
     tmp_path: Path,
 ) -> None:

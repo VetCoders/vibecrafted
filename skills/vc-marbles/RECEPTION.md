@@ -164,7 +164,7 @@ Reception is the only place where this state is remembered.
 
 The next worker may receive only:
 
-- current repo/worktree path
+- current operator-assigned substrate path
 - operator constraints
 - at most one short target hint derived from the dominant remaining cluster
 
@@ -216,7 +216,7 @@ Escalate to operator review when:
 - gate fails twice on the same cluster
 - `delta_weighted < 0` twice in a row
 - parallel candidates conflict structurally
-- the branch/worktree situation stops safe continuation
+- the assigned substrate or branch situation stops safe continuation
 - external dependency or product decision blocks progress
 
 ## Operator note
@@ -236,7 +236,7 @@ That is where convergence lives.
 
 ```mermaid
 flowchart LR
-    A[Current repo/worktree state] --> B1[Blind Marble Worker A]
+    A[Current assigned substrate state] --> B1[Blind Marble Worker A]
     A --> B2[Blind Marble Worker B]
     A --> B3[Blind Marble Worker C]
 

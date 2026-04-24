@@ -205,7 +205,9 @@ NEVER create branches in the user's repo-root.
 ```
 
 The branch is the operator's decision. If the agent believes the branch is wrong,
-it creates a `git worktree` and works there. Parallel agents depend on branch stability.
+it stops and returns control to the operator/runtime layer with a substrate
+failure. Parallel agents depend on branch stability, and a worker must not solve
+substrate invalidity by moving sideways.
 
 **Violation consequences:** Concurrent agents on the same living tree lose coherence.
 Commits land on wrong branches. Merge conflicts proliferate. The operator loses trust.
@@ -229,7 +231,7 @@ during a marbles run. Other agents' work was disrupted. Guard was added to
 | L2+ opens new pane          | Pane proliferation in watcher tab   | Missing `SPAWN_DIRECTION=right` in `marbles_next.sh` | Fix: add direction env var                                        |
 | Agent hijacks stale tab     | Agent unresponsive, watcher timeout | Operator didn't close old tabs                       | Fix: always `new-pane`, never reuse; cleanup after convergence    |
 | Count overflow              | 4 agents on 3-count run             | Timeout counted as iteration                         | Fix: `_wait_for_loop_report()` guard — no report = no advance     |
-| Branch switch mid-run       | Living tree disrupted               | No branch guard in skill                             | Fix: hard rule in SKILL.md + worktree escape hatch                |
+| Branch switch mid-run       | Living tree disrupted               | No branch guard in skill                             | Fix: hard rule in SKILL.md + substrate failure handoff            |
 
 ### Operator Hygiene
 

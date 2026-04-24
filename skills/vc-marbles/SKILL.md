@@ -308,7 +308,7 @@ Do not:
 - rewrite their lanes
 - merge their narrative into yours
 
-Work only inside your assigned tree, worktree, or lane.
+Work only inside your operator-assigned substrate.
 
 ## Branch and tree guard
 
@@ -317,7 +317,9 @@ Work only inside your assigned tree, worktree, or lane.
 The operator chose the current branch.
 That decision is not yours to revisit.
 
-If the current path is unusable, create or use a `git worktree`.
+Never create or move to a worktree during a marbles worker run.
+If the current path is too poisoned to continue safely, return control to the
+operator/runtime layer and name the substrate failure in the report.
 The repo-root branch is sacred because concurrent work may depend on it.
 
 ## Commit rule
