@@ -107,7 +107,7 @@ factors = {
     "years": 24 * 365,
 }
 
-def created_hours(line: str) -> float | None:
+def created_hours(line):
     match = created_re.search(line)
     if not match:
       return None

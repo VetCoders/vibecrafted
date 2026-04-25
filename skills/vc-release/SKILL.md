@@ -224,13 +224,36 @@ Public internet exposure is a decision, not a default.
 
 ## Semgrep Release Gate
 
-Semgrep should be part of the release canon, not an optional extra.
+Semgrep is part of the release canon. It is not optional, and the release
+report must carry the evidence.
+
+The canonical command for this repo is:
+
+```bash
+make semgrep
+```
+
+It is wired the same way the local pre-commit and pre-push hooks run it
+(`semgrep scan --config auto --error --quiet --exclude-rule \
+html.security.audit.missing-integrity.missing-integrity .`),
+so a green local hook gives the same answer as the release gate. The hooks
+live in `scripts/hooks/pre-commit` and `scripts/hooks/pre-push` and are
+activated through `make init-hooks`.
 
 Before release:
 
-- run Semgrep against the app surface
-- record critical and high findings
-- block release on unresolved critical findings unless the user explicitly overrides
+- run `make semgrep` against the full repo surface
+- record findings with rule id, severity, file, and line range
+- classify each finding by dataflow boundary, not by file location:
+  - tainted-path / LFI sinks → fix at a validated root object, not by
+    scattered `if` guards
+  - ReDoS-prone regex → bounded parsing or safe regex shape
+  - header / object merge unsafety → explicit allowlist and immutable
+    input boundary
+  - command / shell construction → parameterized invocation, never string
+    concatenation across an untrusted seam
+- block release on any unresolved blocking finding unless the user
+  explicitly accepts the risk in writing inside the release report
 
 Minimum classes to care about:
 
@@ -238,15 +261,19 @@ Minimum classes to care about:
 - insecure secret handling
 - shell / command injection seams
 - SSRF
-- path traversal
+- path traversal / LFI
 - unsafe file serving
 - weak input validation on dangerous sinks
 - insecure deserialization or eval-like behavior
+- ReDoS-prone regular expressions
+- unsafe header / object merge patterns
 - framework debug/dev endpoints left enabled
 
-If Semgrep is unavailable in the environment, say so explicitly and run the
-closest safe equivalent. But the release report must say that the Semgrep gate
-was not actually satisfied.
+If Semgrep is genuinely unavailable in the environment, say so explicitly,
+run the closest safe equivalent (`uvx semgrep` is the documented fallback
+in `Makefile` and the hooks), and record in the release report that the
+Semgrep gate was not actually satisfied. Silence is not an acceptable
+answer.
 
 ## Domain and DNS Canon
 
@@ -335,17 +362,81 @@ The path from stranger -> installer -> first successful use is part of release.
 
 ## Post-Release Smoke Verification
 
-After release, verify:
+After release, verify from a cold path. The dev machine is not a witness.
 
+Required checks:
+
+- install from the **published artifact**, not from a local checkout, not
+  from a side-loaded tarball, not from a development branch
+  - npm: `npm install` in a fresh directory against the published version
+  - cargo: `cargo install <crate>` from crates.io
+  - PyPI: `pip install <pkg>` in a fresh venv
+  - GitHub Release: download the attached archive and run its installer
+  - Docker: `docker run` the published tag from a clean cache
 - public URL resolves
-- TLS is valid
+- TLS is valid and matches the canonical host
 - health endpoint passes
-- core action works
-- install path works from scratch
+- core action works end to end
 - docs and CTA links resolve
 - published version matches the running/released one
+- onboarding screenshots/demos still match what the cold installer produces
 
-If possible, verify with one cold environment, not the warmed-up dev machine.
+The release report must name the exact artifact source used for the smoke
+(registry URL, tag, digest, or download URL). "It worked on my repo" does
+not satisfy this gate.
+
+## Release Report Contract
+
+Every `vc-release` run must produce a release report that carries actual
+evidence, not vibes. A release report cannot honestly say "done" without
+the four mandatory sections below. If any section is missing, the release
+is **blocked** until it is filled in or the user accepts the gap in
+writing.
+
+The canonical template lives at
+[`references/release-report-template.md`](references/release-report-template.md).
+
+### Mandatory sections
+
+1. **Security gate**
+   - command run (`make semgrep` or documented equivalent)
+   - exit status and finding count
+   - per-finding classification: rule id, severity, file, line range,
+     dataflow boundary (path / regex / merge / shell / auth / other)
+   - resolution per finding (fixed in commit X, accepted with reason Y,
+     deferred with tracking issue Z)
+   - explicit statement when the gate was not actually satisfied
+2. **Exposed surface inventory**
+   - listening ports and bind addresses (default `127.0.0.1`, document
+     every `0.0.0.0` exception)
+   - reverse proxy in front (Caddy, Nginx, cloud LB, none) and where TLS
+     terminates
+   - authentication boundaries (public, session, token, mTLS, none) per
+     surface
+   - response headers added or stripped at the edge (HSTS, CSP, frame
+     options, CORS allowlist)
+   - secret materialization path (env injection at runtime, never baked
+     into images, never committed)
+3. **Deployment mode decision**
+   - the chosen topology, picked from one of: static hosting, Caddy,
+     Nginx, Docker (compose / orchestrator), or _other_ with explicit
+     justification
+   - reason this topology is the smallest honest fit for the product
+   - rollback story: how to revert to the previous version without
+     manual heroics
+4. **Post-release install smoke**
+   - artifact source used for the smoke (registry URL, tag, digest,
+     download URL — never `file://` from the working tree)
+   - command sequence executed from a clean environment
+   - first-run output evidence (exit code, version banner, health check)
+   - any drift between documented quickstart and observed behaviour
+
+### Sign-off
+
+The report is signed off only when all four sections are populated and
+each has objective evidence attached or referenced. A green Semgrep gate
+without an exposed-surface inventory is not a sign-off. A topology
+decision without a smoke run is not a sign-off. Truth is cumulative.
 
 ## Financial and Legal Reality
 

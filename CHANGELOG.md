@@ -5,6 +5,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Added
+
+- `vc-release` Release Report Contract: every release report now requires
+  four mandatory sections — security gate (Semgrep), exposed surface
+  inventory (ports, proxies, auth, headers, secrets), deployment mode
+  decision, and post-release install smoke from the **published**
+  artefact (not the working tree). Canonical template lives at
+  `skills/vc-release/references/release-report-template.md`.
+- `skills/vc-release/references/deployment-reality.md` gains an
+  "Exposed Surface Inventory" matrix (process, bind, port, proxy, TLS,
+  auth, edge headers, secret materialization) so the inventory has a
+  doctrine to reference.
+- `tests/tui/test_release_contract.py` adds two locks: the four
+  mandatory sections in `skills/vc-release/SKILL.md` plus the surface
+  inventory tokens in `deployment-reality.md`. Future drift fails the
+  pytest gate.
+
+### Changed
+
+- `skills/vc-release/SKILL.md` Semgrep release gate now points at the
+  canonical `make semgrep` (mirrored by `scripts/hooks/pre-commit` and
+  `scripts/hooks/pre-push`), classifies findings by dataflow boundary
+  (path / regex / merge / shell / auth / other), and treats silent
+  unavailability as a release block.
+- `skills/vc-release/SKILL.md` Post-release smoke now requires a cold
+  install from the published artefact source (registry URL, tag,
+  digest, or download URL) and forbids using the local checkout as the
+  witness.
+- `docs/runtime/CONTRACT.md` quality gate section references the
+  canonical `make semgrep` invocation and links the Release Report
+  Contract.
+- `docs/RELEASE_KICKOFF.md` adds `make semgrep` to the kickoff gate
+  block and links the release report template plus the deployment
+  reality matrix.
+- `README.md` release-flow paragraph names the four-section release
+  report and links the doctrine + template.
+
 ## 1.4.1 — 2026-04-22
 
 ### Added

@@ -170,3 +170,47 @@ Do you already know Nginx?
 - **100%:** Kubernetes across clouds.
 
 Pick the level you can sustain. A broken deployment hurts worse than slow deployment.
+
+---
+
+## Exposed Surface Inventory
+
+The release report has to declare every public surface the product
+exposes. This is not a meta-checklist; it is the actual artefact that an
+AppSec, Semgrep, or platform reviewer will read first.
+
+For each service the release ships, capture:
+
+- **Process** — name (`api`, `worker`, `admin`, etc.) and the runtime
+  user it executes as.
+- **Bind address** — `127.0.0.1` is the default. Every `0.0.0.0` is a
+  decision and must justify itself in writing.
+- **Port** — exact integer, not "the usual one". Document conflicts with
+  other services on the same host.
+- **Public?** — yes or no. Internal-only services must not be reachable
+  from the internet.
+- **Proxy in front** — Caddy, Nginx, cloud load balancer, or `none`.
+  `none` for a public service is a red flag.
+- **TLS terminator** — proxy, app, or none. App-terminated TLS only when
+  there is a reason; otherwise terminate at the proxy.
+- **Auth boundary** — public, session cookie, bearer token, mTLS, or
+  none. Match this against the route map; an `admin` surface marked
+  `none` is the canonical foot-gun.
+- **Edge headers** — what the proxy adds (`HSTS`, `CSP`, `X-Frame-Options`,
+  `Referrer-Policy`, `Permissions-Policy`, CORS allowlist) and what it
+  strips. Inheriting framework defaults silently is not a description.
+- **Secret materialization** — how each secret arrives at runtime: env
+  injection on start, secrets-manager fetch, init-container, or none.
+  Secrets baked into images are not allowed.
+
+Red-flag patterns the inventory must explicitly negate:
+
+- admin or debug surface bound publicly by accident
+- public service on `:3000` / `:5173` / `:8000` without proxy and TLS
+- `CORS: *` on an authenticated API
+- stack traces or framework banners reachable from the public internet
+- `.env` or backup files served by a static handler
+- secrets present in build artefacts (`docker history`, `npm pack`, sdist)
+
+If the table contains a row the operator cannot justify, the deployment
+is not ready. Walk it back, not forward.

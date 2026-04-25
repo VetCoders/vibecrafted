@@ -150,6 +150,14 @@ vibecrafted hydrate codex --prompt "Package the product"
 vibecrafted release codex --prompt "Prepare release steps"
 ```
 
+`vibecrafted release` enforces a four-section release report — Semgrep
+security gate (`make semgrep`), exposed surface inventory, deployment
+mode decision, and post-release install smoke from the **published**
+artifact. The doctrine lives in
+[`skills/vc-release/SKILL.md`](skills/vc-release/SKILL.md) and the
+canonical template lives in
+[`skills/vc-release/references/release-report-template.md`](skills/vc-release/references/release-report-template.md).
+
 ---
 
 ## For Founders

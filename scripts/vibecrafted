@@ -726,6 +726,7 @@ cmd_tui() {
 
   [[ -n "$tui_dir" ]] || {
     printf '%b[error]%b operator-tui crate not found in the current source tree and vc-operator is not installed.\n' "$_red" "$_reset" >&2
+    printf '  To install the experimental TUI, run: cargo install vc-operator\n' >&2
     return 1
   }
 

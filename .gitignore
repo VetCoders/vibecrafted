@@ -48,3 +48,4 @@ vibecrafted-io-link
 /artifacts
 /operator-tui/*.md
 !/operator-tui/README.md
+*.log
