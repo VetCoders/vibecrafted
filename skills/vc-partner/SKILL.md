@@ -80,6 +80,10 @@ One skill, one stance: shared executive brain.
 If the user wants the agent to take the wheel and drive end-to-end, that is no
 longer Partner mode. Escalate to `vc-ownership`.
 
+Partner mode can produce plans and implementation choices, but it does not
+silently mean delegation. Delegation starts only when the operator explicitly
+invokes a delegation path or approves a concrete delegated cut.
+
 ---
 
 ## Shared Contract

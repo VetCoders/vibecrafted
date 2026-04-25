@@ -1,16 +1,17 @@
 ---
 name: vc-prview
 description: >
-  Full PR review pipeline: generate prview-rs artifacts then produce a findings-max
-  audit. Use when the user asks to "review PR", "analyze branch", "run prview",
-  "sprawdź PR", "zrób review", "audit PR", "daj findings", "zbadaj branch",
-  "artifact pack", "PR quality check", "merge gate", "findings-max", "deep review",
-  or needs structured PR artifacts with line-level analysis for AI review pipelines.
+  Bounded PR, branch, commit-range, or artifact-pack review pipeline: generate
+  prview-rs artifacts then produce a findings-max audit. Use when the user asks
+  to "review PR", "analyze branch", "run prview", "sprawdź PR", "zrób review",
+  "audit PR", "daj findings", "zbadaj branch", "artifact pack", "PR quality
+  check", "merge gate", "findings-max", "deep review", or needs structured diff
+  artifacts with line-level analysis for AI review pipelines.
 metadata:
   short-description: "Generate + audit PR artifacts, findings-max (v1)"
 ---
 
-# vc-prview — PR Review Pipeline (Generate + Audit)
+# vc-prview — Bounded Review Pipeline (Generate + Audit)
 
 Two-phase skill: **Phase 1** generates structured artifacts with prview-rs,
 **Phase 2** squeezes maximum findings from them. Output: P-leveled findings

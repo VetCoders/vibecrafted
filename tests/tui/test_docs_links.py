@@ -57,3 +57,19 @@ def test_docs_html_local_links_and_assets_exist() -> None:
         errors.extend(collector.errors)
 
     assert not errors, "\n".join(errors)
+
+
+def test_skill_docs_pin_command_deck_semantics() -> None:
+    skills = (DOCS_ROOT / "SKILLS.md").read_text(encoding="utf-8")
+    workflows = (DOCS_ROOT / "WORKFLOWS.md").read_text(encoding="utf-8")
+
+    assert "`vc-implement` / `vibecrafted implement` is the official" in skills
+    assert "`vc-justdo`, `vibecrafted justdo`" in skills
+    assert "`vc-review` needs a bounded review target" in skills
+    assert "`vc-followup` is intentionally broader" in skills
+    assert "`vc-partner` keeps the user and agent in shared steering" in skills
+    assert "`vc-ownership`\n  means the agent takes operational ownership" in skills
+
+    assert "`vibecrafted implement` is the canonical autonomous delivery" in workflows
+    assert "`vc-review` reviews a bounded target" in workflows
+    assert "`vc-partner` is shared steering with the user" in workflows

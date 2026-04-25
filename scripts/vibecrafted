@@ -27,7 +27,7 @@ _reset='\033[0m'
 
 _agents=(claude codex gemini)
 _modes=(implement research review plan prompt observe await)
-_skills=(decorate delegate dou followup hydrate intents justdo marbles ownership partner prune release research review scaffold workflow)
+_skills=(decorate delegate dou followup hydrate implement intents justdo marbles ownership partner prune release research review scaffold workflow)
 
 _script_repo_root() {
   local script_dir
@@ -255,17 +255,18 @@ _skill_summary() {
     decorate) printf 'Visual finishing and UX coherence pass.\n' ;;
     delegate) printf 'Native in-session subagent delegation.\n' ;;
     dou) printf 'Definition of Undone audit across the product surface.\n' ;;
-    followup) printf 'Post-implementation audit for gaps, regressions, and next moves.\n' ;;
+    followup) printf 'Post-implementation direction audit for gaps, drift, regressions, and next leverage.\n' ;;
     hydrate) printf 'Packaging and go-to-market hydration.\n' ;;
+    implement) printf 'Autonomous end-to-end implementation with followup and marbles built in.\n' ;;
     intents) printf 'Plan-to-runtime truth audit across prior intent and present repo state.\n' ;;
-    justdo) printf 'Autonomous end-to-end implementation when the thing simply needs to ship.\n' ;;
+    justdo) printf 'Legacy alias for vc-implement, kept for existing agents and scripts.\n' ;;
     marbles) printf 'Counterexample loop that keeps fixing what is still wrong until the surface is clean.\n' ;;
-    ownership) printf 'Full-spectrum ownership mode for end-to-end delivery.\n' ;;
-    partner) printf 'Collaborative debugging, architecture triage, and shared executive reasoning.\n' ;;
+    ownership) printf 'Full-spectrum operational ownership across code, runtime, docs, packaging, and ship surface.\n' ;;
+    partner) printf 'Collaborative debugging, architecture triage, and shared executive reasoning with the user in the loop.\n' ;;
     prune) printf 'Runtime and publish-cone cleanup with hard cuts and proof.\n' ;;
     release) printf 'Release mechanics, deployment reality, and ship-readiness work.\n' ;;
     research) printf 'Triple-agent research pass for ground truth before implementation.\n' ;;
-    review) printf 'Full review pipeline with findings-first output.\n' ;;
+    review) printf 'Bounded PR, branch, commit-range, or artifact-pack review with findings-first output.\n' ;;
     scaffold) printf 'Founder-first architecture planning from a vague idea.\n' ;;
     workflow) printf 'Examine -> Research -> Implement pipeline.\n' ;;
     *) printf 'Framework skill.\n' ;;
@@ -305,22 +306,27 @@ cmd_skill_help() {
   local skill="$1"
   local agent="${2:-<claude|codex|gemini>}"
   local wrapper="vc-$skill"
+  local display_skill="$skill"
 
   if [[ "$skill" == "research" ]]; then
     agent=""
   fi
+  if [[ "$skill" == "justdo" ]]; then
+    display_skill="implement"
+    wrapper="vc-implement"
+  fi
 
   printf '\n'
-  printf '%b⚒%b  %b%s%b\n' "$_copper" "$_reset" "$_bold" "$skill" "$_reset"
+  printf '%b⚒%b  %b%s%b\n' "$_copper" "$_reset" "$_bold" "$display_skill" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
   printf '  %s' "$(_skill_summary "$skill")"
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   if [[ -n "$agent" ]]; then
-    printf '  vibecrafted %s %s [flags]\n' "$skill" "$agent"
+    printf '  vibecrafted %s %s [flags]\n' "$display_skill" "$agent"
     printf '  %s %s [flags]\n' "$wrapper" "$agent"
   else
-    printf '  vibecrafted %s [flags]\n' "$skill"
+    printf '  vibecrafted %s [flags]\n' "$display_skill"
     printf '  %s [flags]\n' "$wrapper"
   fi
   if [[ "$skill" == "marbles" ]]; then
@@ -328,14 +334,22 @@ cmd_skill_help() {
     printf '  vc-marbles <pause|stop|resume|session|inspect|delete> [args]\n'
   fi
   if [[ "$skill" == "justdo" ]]; then
-    printf '  Alias: vibecrafted implement <agent> [flags] / vc-implement <agent> [flags]\n'
+    printf '  Legacy alias: vibecrafted justdo %s [flags] / vc-justdo %s [flags]\n' "$agent" "$agent"
+  fi
+  if [[ "$skill" == "implement" ]]; then
+    printf '  Legacy alias: vibecrafted justdo %s [flags] / vc-justdo %s [flags]\n' "$agent" "$agent"
   fi
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   case "$skill" in
+    implement)
+      printf '  vibecrafted implement codex --prompt "Ship the feature"\n'
+      printf '  vc-implement claude --file /path/to/brief.md\n'
+      ;;
     justdo)
-      printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
-      printf '  vibecrafted implement claude --file /path/to/brief.md\n'
+      printf '  vibecrafted implement codex --prompt "Ship the feature"\n'
+      printf '  vc-implement claude --file /path/to/brief.md\n'
+      printf '  vibecrafted justdo codex --prompt "Ship the feature"  # legacy alias\n'
       ;;
     marbles)
       printf '  vibecrafted marbles codex --count 3 --depth 3\n'
@@ -343,7 +357,7 @@ cmd_skill_help() {
       printf '  vc-marbles resume marb-134707\n'
       ;;
     followup)
-      printf '  vibecrafted followup codex --prompt "Audit this implementation"\n'
+      printf '  vibecrafted followup codex --prompt "Audit post-implementation direction"\n'
       printf '  vc-followup claude --file /path/to/brief.md\n'
       ;;
     workflow)
@@ -351,7 +365,8 @@ cmd_skill_help() {
       printf '  vc-workflow codex --file /path/to/brief.md\n'
       ;;
     review)
-      printf '  vibecrafted review codex --prompt "Review this branch"\n'
+      printf '  vibecrafted review codex --prompt "Review PR #14"\n'
+      printf '  vibecrafted review gemini --prompt "Review HEAD~10..HEAD"\n'
       printf '  vc-review claude --file /path/to/pr-brief.md\n'
       ;;
     research)
@@ -383,7 +398,7 @@ cmd_agent_help() {
   printf '%bModes:%b\n' "$_bold" "$_reset"
   printf '  implement <plan.md>            Execute a plan file\n'
   printf '  research  <plan.md>            Research a topic or plan file\n'
-  printf '  review    <plan.md>            Review code or architecture\n'
+  printf '  review    <plan.md>            Review a bounded PR, branch, commit range, or artifact pack\n'
   printf '  plan      <plan.md>            Generate an implementation plan\n'
   printf '  prompt    <plan.md>            Free-form prompt with plan context\n'
   printf '  observe   --last               Check the last report or transcript\n'
@@ -759,7 +774,7 @@ cmd_help() {
       return
       ;;
     implement)
-      cmd_skill_help "justdo"
+      cmd_skill_help "implement"
       return
       ;;
     decorate|delegate|dou|followup|hydrate|intents|justdo|marbles|ownership|partner|prune|release|research|review|scaffold|workflow)
@@ -797,15 +812,16 @@ cmd_help() {
   printf '  %bvibecrafted doctor%b                    Verify installation health\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted uninstall%b                 Reverse the install\n' "$_cyan" "$_reset"
   printf '\n'
-  printf '%bSkill inventory (18 live skills):%b\n' "$_bold" "$_reset"
-  printf '  Core: init · scaffold · workflow · followup · marbles · dou · decorate · hydrate · release\n'
-  printf '  Support: agents · delegate · intents · justdo · ownership · partner · prune · research · review\n'
+  printf '%bSkill inventory (18 live skills + 1 compatibility alias):%b\n' "$_bold" "$_reset"
+  printf '  Core: init · scaffold · workflow · implement · followup · marbles · dou · decorate · hydrate · release\n'
+  printf '  Support: agents · delegate · intents · ownership · partner · prune · research · review\n'
+  printf '  Compatibility: justdo is a legacy alias for implement\n'
   printf '\n'
   printf '%bStart here:%b\n' "$_bold" "$_reset"
   printf '  If you want the simplest path, skip the dashboard and use plain commands:\n'
   printf '  %bvibecrafted init claude%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted workflow claude --prompt "Plan and implement <task>"%b\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted justdo codex --prompt "Ship <task>"%b\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted implement codex --prompt "Ship <task>"%b\n' "$_cyan" "$_reset"
   printf '  When you are ready to ship, run the full path:\n'
   _print_ship_path
   printf '  Dashboard is optional. Your plain-language guide lives at %b%s/START_HERE.md%b.\n' "$_cyan" "$crafted_home" "$_reset"
@@ -817,7 +833,7 @@ cmd_help() {
   printf '  vibecrafted dashboard marbles\n'
   printf '  telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
-  printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
+  printf '  vibecrafted implement codex --prompt "Ship the feature"\n'
   printf '  vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
   printf '  vibecrafted codex observe --last\n'
   printf '  vibecrafted resume claude --session <id> --prompt "Continue"\n'
@@ -850,7 +866,7 @@ cmd_help_full() {
   printf '  %bscaffold%b   → Plan architecture from a vague idea\n' "$_copper" "$_reset"
   printf '  %binit%b       → Orient: history, eyes, verify\n' "$_copper" "$_reset"
   printf '  %bworkflow%b   → Examine → Research → Implement\n' "$_copper" "$_reset"
-  printf '  %bfollowup%b   → Audit implementation gaps\n' "$_copper" "$_reset"
+  printf '  %bfollowup%b   → Audit post-implementation direction, gaps, and drift\n' "$_copper" "$_reset"
   printf '  %bmarbles%b    → Convergence loop (counterexample elimination)\n' "$_copper" "$_reset"
   printf '  %bdou%b        → Definition of Undone audit\n' "$_copper" "$_reset"
   printf '  %bdecorate%b   → Visual finishing and UX coherence\n' "$_copper" "$_reset"
@@ -863,7 +879,7 @@ cmd_help_full() {
   printf '  %bvibecrafted gui%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted tui%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted workflow claude --prompt "Plan and implement <task>"%b\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted justdo codex --prompt "Ship <task>"%b\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted implement codex --prompt "Ship <task>"%b\n' "$_cyan" "$_reset"
   _print_ship_path
   printf '  Dashboard is optional. The plain-language guide lives at %b%s/START_HERE.md%b.\n' "$_cyan" "$crafted_home" "$_reset"
   printf '\n'
@@ -871,7 +887,7 @@ cmd_help_full() {
   printf '\n'
   printf '  %bvibecrafted <agent> implement%b <plan.md>   Execute a plan file\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted <agent> research%b  <plan.md>   Single-agent research mode\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted <agent> review%b    <plan.md>   Review code or architecture\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted <agent> review%b    <plan.md>   Review bounded code artifacts\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted <agent> plan%b      <plan.md>   Generate an implementation plan\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted <agent> prompt%b    <plan.md>   Free-form prompt with context\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted <agent> observe%b   --last      Check last agent report/transcript\n' "$_cyan" "$_reset"
@@ -904,12 +920,12 @@ cmd_help_full() {
   printf '\n'
   printf '  %bagents%b     External fleet delegation contract via agent modes\n' "$_copper" "$_reset"
   printf '  %bintents%b    Plan-to-runtime truth audit\n' "$_copper" "$_reset"
-  printf '  %bpartner%b    Collaborative debugging and architecture triage\n' "$_copper" "$_reset"
-  printf '  %bjustdo%b     Autonomous end-to-end implementation\n' "$_copper" "$_reset"
-  printf '  %bownership%b  Full-spectrum take-the-wheel delivery\n' "$_copper" "$_reset"
+  printf '  %bimplement%b  Autonomous end-to-end implementation (vc-implement)\n' "$_copper" "$_reset"
+  printf '  %bpartner%b    Shared steering and executive reasoning with the user\n' "$_copper" "$_reset"
+  printf '  %bownership%b  Full-spectrum operational ownership and delivery\n' "$_copper" "$_reset"
   printf '  %bdelegate%b   In-session native subagent delegation\n' "$_copper" "$_reset"
   printf '  %bresearch%b   Triple-agent research (claude + codex + gemini)\n' "$_copper" "$_reset"
-  printf '  %breview%b     Full PR review pipeline\n' "$_copper" "$_reset"
+  printf '  %breview%b     Bounded PR, branch, commit-range, or artifact-pack review\n' "$_copper" "$_reset"
   printf '  %bprune%b      Runtime/publish cone extraction\n' "$_copper" "$_reset"
   printf '\n'
   printf '%b=== MANAGEMENT ===%b\n' "$_bold" "$_reset"
@@ -930,6 +946,7 @@ cmd_help_full() {
   printf '%b=== ALIASES ===%b\n' "$_bold" "$_reset"
   printf '\n'
   printf '  %bstats%b = status       %bcheck%b = doctor       %bremove%b = uninstall\n' "$_dim" "$_reset" "$_dim" "$_reset" "$_dim" "$_reset"
+  printf '  %bjustdo%b = legacy alias for implement       %bvc-justdo%b = legacy alias for vc-implement\n' "$_dim" "$_reset" "$_dim" "$_reset"
   printf '\n'
   printf '%b=== SKILL FLAGS (uniform contract) ===%b\n' "$_bold" "$_reset"
   printf '\n'
@@ -962,7 +979,7 @@ cmd_help_full() {
   printf '  vibecrafted workflow claude --file /path/to/brief.md\n'
   printf '  vibecrafted intents codex --prompt "Audit what from the plan really landed"\n'
   printf '  vibecrafted marbles codex --count 3 --depth 3\n'
-  printf '  vibecrafted justdo codex --prompt "Ship the feature"\n'
+  printf '  vibecrafted implement codex --prompt "Ship the feature"\n'
   printf '  vibecrafted ownership codex --prompt "Take the repo from diagnosis to finished surface"\n'
   printf '  vibecrafted dou claude\n'
   printf '  vibecrafted decorate codex\n'
@@ -1371,7 +1388,7 @@ run_mode() {
     case "$mode" in
       implement) printf '  Execute a plan file with the agent.\n  Usage: vibecrafted %s implement <plan.md>\n' "$agent" ;;
       research)  printf '  Research a topic using the agent.\n  Usage: vibecrafted %s research <plan.md>\n' "$agent" ;;
-      review)    printf '  Review code or architecture.\n  Usage: vibecrafted %s review <plan.md>\n' "$agent" ;;
+      review)    printf '  Review a bounded PR, branch, commit range, or artifact pack.\n  Usage: vibecrafted %s review <plan.md>\n' "$agent" ;;
       plan)      printf '  Generate an implementation plan.\n  Usage: vibecrafted %s plan <plan.md>\n' "$agent" ;;
       prompt)    printf '  Free-form prompt with plan context.\n  Usage: vibecrafted %s prompt <plan.md>\n' "$agent" ;;
       observe)   printf '  Check the last agent report or transcript.\n  Usage: vibecrafted %s observe --last\n' "$agent" ;;
@@ -1442,6 +1459,8 @@ run_skill() {
     return 1
   }
 
+  local dispatch_skill="$skill"
+  [[ "$dispatch_skill" != "implement" ]] || dispatch_skill="justdo"
   local helper_name="${agent}-skill-${skill}"
   _ensure_helpers_loaded || return 1
   if command -v "$helper_name" >/dev/null 2>&1; then
@@ -1449,7 +1468,7 @@ run_skill() {
     return
   fi
   if command -v _vetcoders_skill_entry >/dev/null 2>&1; then
-    _vetcoders_skill_entry "$agent" "$skill" "$@"
+    _vetcoders_skill_entry "$agent" "$dispatch_skill" "$@"
     return
   fi
   printf '%b[error]%b Missing helper %s and no generic skill entry is available.\n' "$_red" "$_reset" "$helper_name" >&2
@@ -1496,7 +1515,6 @@ run_wrapper() {
     return
   fi
   local skill="${wrapper#vc-}"
-  [[ "$skill" != "implement" ]] || skill="justdo"
   _has_skill "$skill" || {
     printf '%b[error]%b Unknown wrapper: %s\n' "$_red" "$_reset" "$wrapper" >&2
     return 1
@@ -1566,7 +1584,7 @@ main() {
       }
       run_mode "$cmd" "$mode" "$@"
       ;;
-    implement) run_skill "justdo" "$@" ;;
+    implement) run_skill "implement" "$@" ;;
     decorate|delegate|dou|followup|hydrate|intents|justdo|marbles|ownership|partner|prune|release|research|review|scaffold|workflow)
       run_skill "$cmd" "$@"
       ;;

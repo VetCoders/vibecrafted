@@ -2,14 +2,17 @@
 name: vc-review
 version: 1.0.0
 description: >
-  Full PR review pipeline: generate prview-rs artifacts then produce a findings-max
-  audit. Use when the user asks to "review PR", "analyze branch", "run prview",
-  "sprawdź PR", "zrób review", "audit PR", "daj findings", "zbadaj branch",
-  "artifact pack", "PR quality check", "merge gate", "findings-max", "deep review",
-  or needs structured PR artifacts with line-level analysis for AI review pipelines.
+  Bounded code review pipeline: review a PR, branch diff, commit range, or
+  generated artifact pack, then produce findings-first output with concrete
+  evidence. Use when the user asks to "review PR", "analyze branch", "run
+  prview", "sprawdź PR", "zrób review", "audit PR", "daj findings", "zbadaj
+  branch", "artifact pack", "PR quality check", "merge gate", "findings-max",
+  "deep review", or needs structured diff artifacts with line-level analysis
+  for AI review pipelines. Do not use this as a synonym for post-implementation
+  direction audit; that is `vc-followup`.
 ---
 
-# vc-review — Code Review Pipeline (Generate + Audit)
+# vc-review — Bounded Code Review Pipeline (Generate + Audit)
 
 ## Operator Entry
 
@@ -40,21 +43,26 @@ vc-<workflow> <agent> \
 
 If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
 or create the operator session and run that workflow in a new tab. Replace
-`<workflow>` with this skill's name. `vc-review` may also prefer `--pr` or
-other review-specific inputs; keep the same launcher contract and use the most
-truthful flag for the review surface.
+`<workflow>` with this skill's name. `vc-review` must have a bounded target:
+a PR, branch diff, commit range, or generated review artifact pack. It may also
+prefer `--pr` or other review-specific inputs; keep the same launcher contract
+and use the most truthful flag for the review surface.
 
 ### Concrete dispatch examples
 
 ```bash
 vibecrafted review claude --prompt 'Review PR #4'
-vc-review codex --prompt 'Deep review of release/v1.2.1 branch'
+vc-review codex --prompt 'Deep review of release/v1.2.1 branch against main'
+vibecrafted review codex --prompt 'Review HEAD~10..HEAD'
 vibecrafted review gemini --file /path/to/pr-artifacts-pack.md
 ```
 
 Two-phase skill: **Phase 1** generates structured artifacts with prview-rs,
 **Phase 2** squeezes maximum findings from them. Output: P-leveled findings
 with evidence + before-merge TODO checklist.
+
+Use `vc-followup` instead when the target is not a bounded diff/artifact and
+the real question is whether the implementation direction is healthy.
 
 Binary: `prview` (resolve via `command -v prview`; do not assume cargo path)
 Source: `https://github.com/VetCoders/prview-rs`

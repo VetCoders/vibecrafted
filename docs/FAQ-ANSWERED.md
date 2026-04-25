@@ -181,6 +181,12 @@ Answers from the trenches. This is the truth as of April 2026.
   convergence. Use individual skills (init → workflow → followup) when you want to supervise the architectural "cuts" at
   each step. The legacy `vc-justdo` name still resolves to the same skill, so already-trained agents keep working.
 
+- **What is the difference between `vc-review` and `vc-followup`?**
+  `vc-review` is bounded: give it a PR, branch diff, commit range, or review artifact pack and expect findings-first
+  review output. `vc-followup` is post-implementation and directional: use it when a pass has landed and you need to know
+  what drift remains, whether the trajectory is healthy, and what the next move should be across code, runtime, UX, docs,
+  packaging, or launch readiness.
+
 - **How do I know when convergence is "done"?**
   When P0=0, P1=0, and P2=0 in the `vc-followup` report, and the Build/Lint/Test gates are all green. That's the signal
   to stop.

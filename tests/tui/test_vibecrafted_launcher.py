@@ -908,7 +908,26 @@ def test_tui_uses_vc_operator_from_path_when_local_build_missing(
     assert f"--deck {current_root / 'scripts' / 'vibecrafted'}" in tui_args
 
 
-def test_skill_subcommand_help_is_human_readable_without_agent() -> None:
+def test_implement_help_is_the_canonical_autonomous_delivery_surface() -> None:
+    result = subprocess.run(
+        [str(LAUNCHER), "implement", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "implement" in result.stdout
+    assert "Autonomous end-to-end implementation" in result.stdout
+    assert "vibecrafted implement <claude|codex|gemini> [flags]" in result.stdout
+    assert "vc-implement <claude|codex|gemini> [flags]" in result.stdout
+    assert (
+        "Legacy alias: vibecrafted justdo <claude|codex|gemini> [flags]"
+        in result.stdout
+    )
+
+
+def test_justdo_help_points_back_to_implement() -> None:
     result = subprocess.run(
         [str(LAUNCHER), "justdo", "--help"],
         check=True,
@@ -918,20 +937,66 @@ def test_skill_subcommand_help_is_human_readable_without_agent() -> None:
     )
 
     assert "justdo" in result.stdout
-    assert "Autonomous end-to-end implementation" in result.stdout
-    assert "vibecrafted justdo <claude|codex|gemini> [flags]" in result.stdout
-    assert "vibecrafted implement <agent> [flags]" in result.stdout
+    assert "Legacy alias for vc-implement" in result.stdout
+    assert "vibecrafted implement <claude|codex|gemini> [flags]" in result.stdout
+    assert "vc-implement <claude|codex|gemini> [flags]" in result.stdout
+    assert (
+        "Legacy alias: vibecrafted justdo <claude|codex|gemini> [flags]"
+        in result.stdout
+    )
+
+
+def test_compact_help_teaches_implement_before_legacy_alias() -> None:
+    result = subprocess.run(
+        [str(LAUNCHER), "help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Core: init · scaffold · workflow · implement" in result.stdout
+    assert "Compatibility: justdo is a legacy alias for implement" in result.stdout
+    assert 'vibecrafted implement codex --prompt "Ship <task>"' in result.stdout
+    assert 'vibecrafted justdo codex --prompt "Ship <task>"' not in result.stdout
+
+
+def test_review_and_followup_help_separate_bounded_review_from_direction_audit() -> (
+    None
+):
+    review = subprocess.run(
+        [str(LAUNCHER), "review", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    followup = subprocess.run(
+        [str(LAUNCHER), "followup", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Bounded PR, branch, commit-range, or artifact-pack review" in review.stdout
+    assert 'vibecrafted review codex --prompt "Review PR #14"' in review.stdout
+    assert "Post-implementation direction audit" in followup.stdout
+    assert (
+        'vibecrafted followup codex --prompt "Audit post-implementation direction"'
+        in followup.stdout
+    )
 
 
 @pytest.mark.parametrize(
     ("wrapper_name", "skill", "description"),
     [
-        ("vc-followup", "followup", "Post-implementation audit"),
+        ("vc-followup", "followup", "Post-implementation direction audit"),
         ("vc-intents", "intents", "Plan-to-runtime truth audit"),
         (
             "vc-ownership",
             "ownership",
-            "Full-spectrum ownership mode for end-to-end delivery",
+            "Full-spectrum operational ownership",
         ),
     ],
 )

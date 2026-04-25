@@ -66,8 +66,10 @@ flowchart TD
 | ---------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | New idea or vague scope      | `vibecrafted scaffold <agent>`                           | `workflow`, `partner`, `implement`                                           |
 | First repo contact           | `vibecrafted init <agent>`                               | `workflow`, `implement`, `partner`, `review`, `intents`                      |
-| Autonomous delivery          | `vibecrafted implement <agent>` (alias: `justdo`)        | `followup`, `marbles`, optionally `dou` / `decorate` / `hydrate` / `release` |
+| Autonomous delivery          | `vibecrafted implement <agent>`                          | `followup`, `marbles`, optionally `dou` / `decorate` / `hydrate` / `release` |
 | Shared steering              | `vibecrafted partner <agent>`                            | `delegate`, `agents`, `workflow`, `ownership`                                |
+| Bounded review               | `vibecrafted review <agent>`                             | `followup`, `marbles`                                                        |
+| Post-implementation audit    | `vibecrafted followup <agent>`                           | `marbles`, `dou`, `decorate`, `hydrate`, `release`                           |
 | Truth audit vs original plan | `vibecrafted intents <agent>`                            | `review`, `marbles`, `ownership`                                             |
 | Launch-readiness gap finding | `vibecrafted dou <agent>`                                | `hydrate`, `decorate`, `release`                                             |
 | Explicit ship path           | `vibecrafted decorate <agent>` or `hydrate` or `release` | `release`                                                                    |
@@ -82,6 +84,16 @@ flowchart TD
   `$artifact_root/marbles/`.
 - `make vibecrafted` and `make wizard` are installer entry points, not skill
   execution paths; they exist to get the command deck and wrappers onto the machine.
+- `vibecrafted implement` is the canonical autonomous delivery command. The
+  `justdo` command and `vc-justdo` helper remain legacy aliases for installed
+  agents and old prompts, not the official front face.
+- `vc-review` reviews a bounded target such as PR 14, `HEAD~10..HEAD`, a branch
+  diff, or a generated artifact pack. Use `vc-followup` when the question is
+  broader: where the implementation is heading, what still feels unfinished,
+  and what the next move should be.
+- `vc-partner` is shared steering with the user. `vc-ownership` is operational
+  ownership by the agent. Both can produce plans; neither silently means
+  delegation unless the operator explicitly invokes a delegation path.
 
 ## Next reading
 

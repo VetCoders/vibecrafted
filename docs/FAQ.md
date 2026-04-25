@@ -49,6 +49,11 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
   name; `vc-justdo` keeps working for agents already wired to it. Use the phase skills individually when you want more
   supervisory control.
 
+- **When should I use `vc-review` instead of `vc-followup`?**
+  Use `vc-review` for a bounded review target: a PR, branch diff, commit range, or artifact pack. Use `vc-followup`
+  after implementation when you need a broader direction audit across code, runtime, UX, docs, packaging, and the next
+  highest-leverage move.
+
 - **Can I run 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. in CI/CD?**
   Yes. The direct install path is non-interactive, and review/followup/release flows are shaped to work as repeatable
   gates.

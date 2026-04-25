@@ -6,7 +6,7 @@ description: >
   exists and the team needs to evaluate whether the work is heading in the
   right direction, what gaps remain, what drift was introduced, and what the
   next highest-leverage move should be. This is not the same as bounded
-  `vc-review`: followup is trajectory-aware, postimplementational, and may
+  `vc-review`: followup is trajectory-aware, post-implementation, and may
   inspect code, runtime behavior, UX, docs, or packaging without requiring a
   single artifact like a PR or commit range as its frame. Trigger phrases:
   "follow-up check", "followup audit", "czy sa jeszcze luki",
@@ -64,7 +64,7 @@ It is intentionally broader than `vc-review`.
 - a commit range
 - a review artifact pack
 
-`vc-followup` evaluates the postimplementation state of the work, even when
+`vc-followup` evaluates the post-implementation state of the work, even when
 there is no single canonical artifact to review.
 
 ## When To Use
@@ -75,7 +75,7 @@ Use `vc-followup` when:
 - a task is "working" but still feels off
 - agents finished a pass and you want to see what remains open
 - you want a next-move recommendation after implementation
-- you need a postimplementation audit across code, runtime, UX, docs, or packaging
+- you need a post-implementation audit across code, runtime, UX, docs, or packaging
 
 Do not use `vc-followup` when:
 
@@ -97,7 +97,7 @@ In those cases, use `vc-review` or `vc-research`.
 - whether the current direction deserves continuation, correction, or escalation
 
 The result should not read like a code review.
-It should read like a postimplementation trajectory check.
+It should read like a post-implementation trajectory check.
 
 ## Output Shape
 

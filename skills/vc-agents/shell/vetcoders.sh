@@ -2241,19 +2241,19 @@ vc-help() {
   cat <<'HELP'
 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework — Skills & Helpers
 
-Pipeline:  scaffold → init → workflow → followup → marbles → dou → decorate → hydrate → release
-Modes:     partner (collaborative) | implement (autonomous, alias: justdo)
+Pipeline:  scaffold → init → workflow → implement → followup → marbles → dou → decorate → hydrate → release
+Modes:     partner (shared steering) | ownership (take the wheel)
 Research:  research (triple-agent) | delegate (in-session)
-Quality:   review | prune
+Quality:   review (bounded diff/PR/commit) | followup (post-implementation direction) | prune
 Video:     screenscribe (foundation)
 
 Spawn helpers (per agent):
   <agent>-implement <plan.md>    Full implementation from plan
-  <agent>-review <plan.md>       PR review
+  <agent>-review <plan.md>       Bounded PR, branch, commit-range, or artifact review
   <agent>-plan <plan.md>         Planning only
   <agent>-prompt "text"          Quick one-shot prompt
   <agent>-scaffold                Architecture planning
-  <agent>-followup               Post-implementation audit
+  <agent>-followup               Post-implementation direction audit
   <agent>-dou                    Definition of Undone audit
   <agent>-hydrate                Market packaging
   <agent>-marbles                Convergence loop
@@ -2261,8 +2261,8 @@ Spawn helpers (per agent):
   <agent>-release                Ship to market
   <agent>-prune                  Repo pruning
   <agent>-skill-implement        Autonomous e2e implementation (vc-implement)
-  <agent>-justdo                 Autonomous e2e implementation (legacy alias)
-  <agent>-partner                Collaborative partner mode
+  <agent>-justdo                 Legacy alias for autonomous e2e implementation
+  <agent>-partner                Collaborative partner mode with the user in the loop
   <agent>-observe --last         Check last report
   <agent>-await --last           Wait for metadata completion + summary
 

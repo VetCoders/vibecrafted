@@ -68,7 +68,6 @@ Your agent now has orientation instead of assumptions.
 
 ```bash
 vibecrafted implement codex --prompt "Add user authentication with JWT"
-# legacy alias still works: vibecrafted justdo codex --prompt "..."
 ```
 
 `vibecrafted implement` runs the autonomous delivery contract in `vc-implement`
