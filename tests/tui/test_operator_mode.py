@@ -453,6 +453,7 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
 
     payload = capture_file.read_text(encoding="utf-8")
     assert "OSA " in payload
+    assert "zellij attach" in payload
     assert "new-session-with-layout" in payload
     assert re.search(r"\bv-[0-9a-f]{4}-fwup-\d{6}-\d+\b", payload)
 
@@ -506,6 +507,7 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
     assert result.stdout.strip().endswith(expected_session)
     payload = capture_file.read_text(encoding="utf-8")
     assert f"kill-session {expected_session}" in payload
+    assert "zellij attach" in payload
     assert "--new-session-with-layout" in payload and expected_session in payload
     assert "OSA " in payload
     # Session name appears in the osascript zellij command (possibly escaped)
