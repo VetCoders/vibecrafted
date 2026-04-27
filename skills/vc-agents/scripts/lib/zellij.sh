@@ -224,11 +224,17 @@ spawn_in_marbles_tab() {
   local cmd_script=""
   local launch_cmd="bash '$launcher'"
   local pane_direction="$direction"
+  local pane_lifecycle_args=(--stacked)
 
   [[ -n "$marbles_tab" ]] || return 1
 
   if [[ "$pane_direction" == "new-tab" ]]; then
     pane_direction="right"
+  fi
+  # Hard invariant: marbles workers live with their orchestrator tab. Stacking
+  # preserves that locality without turning long runs into 5px columns.
+  if [[ "${VIBECRAFTED_ZELLIJ_CLOSE_AGENT_PANES:-0}" == "1" ]]; then
+    pane_lifecycle_args+=(--close-on-exit)
   fi
 
   cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
@@ -251,6 +257,7 @@ spawn_in_marbles_tab() {
       --tab-id "$marbles_tab_id" \
       --direction "$pane_direction" \
       --name "$pane_name" \
+      "${pane_lifecycle_args[@]}" \
       --cwd "${SPAWN_ROOT:-$(pwd)}" \
       -- "$cmd_script" >/dev/null
   else
@@ -261,6 +268,7 @@ spawn_in_marbles_tab() {
     zellij action new-pane \
       --direction "$pane_direction" \
       --name "$pane_name" \
+      "${pane_lifecycle_args[@]}" \
       --cwd "${SPAWN_ROOT:-$(pwd)}" \
       -- "$cmd_script" >/dev/null
     if [[ -n "$original_tab_id" ]]; then

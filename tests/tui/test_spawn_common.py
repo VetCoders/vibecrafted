@@ -1384,7 +1384,79 @@ def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
     assert calls[1][:2] == ["action", "new-pane"]
     assert "--tab-id" in calls[1]
     assert "7" in calls[1]
+    assert "--stacked" in calls[1]
+    assert "--close-on-exit" not in calls[1]
     assert not any("go-to-tab-name" in call for call in calls)
+
+
+def test_spawn_in_zellij_pane_marbles_tab_can_close_agent_panes(
+    tmp_path: Path,
+) -> None:
+    run_id = "marb-014520"
+    operator_session = _expected_operator_session(run_id)
+    launcher = tmp_path / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    capture_file = tmp_path / "zellij-calls.txt"
+    zellij = fake_bin / "zellij"
+    zellij.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "{",
+                '  printf -- "--CALL--\\n"',
+                '  printf "%s\\n" "$@"',
+                '} >> "$CAPTURE_FILE"',
+                'if [[ "${1:-}" == "action" && "${2:-}" == "list-tabs" ]]; then',
+                '  printf \'[{"name":"marbles","tab_id":7}]\\n\'',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then',
+                '  printf "terminal_13\\n"',
+                "  exit 0",
+                "fi",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    zellij.chmod(0o755)
+
+    subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'''
+            set -euo pipefail
+            export PATH="{fake_bin}:$PATH"
+            export CAPTURE_FILE="{capture_file}"
+            export ZELLIJ=1
+            export ZELLIJ_PANE_ID=terminal_1
+            export ZELLIJ_SESSION_NAME="{operator_session}"
+            export VIBECRAFTED_RUN_ID="{run_id}"
+            export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
+            export VIBECRAFTED_MARBLES_TAB_NAME="marbles"
+            export VIBECRAFTED_ZELLIJ_CLOSE_AGENT_PANES=1
+            export SPAWN_ROOT="{tmp_path}"
+            export SPAWN_LOOP_NR=1
+            source "{COMMON_SH}"
+            spawn_in_zellij_pane "{launcher}" "workflow"
+            ''',
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    assert calls[1][:2] == ["action", "new-pane"]
+    assert "--stacked" in calls[1]
+    assert "--close-on-exit" in calls[1]
 
 
 def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:

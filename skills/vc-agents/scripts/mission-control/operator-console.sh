@@ -23,7 +23,7 @@ printf '  vibecrafted review codex -f /path/to/plan.md\n'
 printf '\n'
 printf 'Spawn policy:\n'
 printf '  normal workflows -> launcher opens below this pane\n'
-printf '  marbles -> state launcher opens below, loop panes grow to the right\n'
+printf '  marbles -> worker panes stay stacked with their orchestrator\n'
 printf '\n'
 
 if [[ -x "$SCRIPT_DIR/zellij-gc.sh" ]]; then
