@@ -112,6 +112,9 @@ Research mode is read-only for the source repository by default.
   applying it.
 - Reports and plans still go under the run-scoped research directory:
   `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/research/<run_id>/`.
+- Codex workers must write the full markdown report to the given report path
+  through the filesystem before exiting. The `codex exec --output-last-message`
+  final message is only a completion note, not the durable research report.
 
 ## The 6-Step Research Flow
 

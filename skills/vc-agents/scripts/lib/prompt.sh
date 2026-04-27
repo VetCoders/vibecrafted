@@ -160,9 +160,12 @@ EOF_RESEARCH_CONTRACT
   if [[ "$agent" == "codex" ]]; then
     cat >> "$runtime_file" <<'EOF_CODEX_RESEARCH'
 
-## Final Message
-- Make your final assistant message the complete markdown report verbatim, including frontmatter, findings, sources, synthesis, and open questions.
-- Do not end with a pointer-only handoff such as "see the report path"; the final message must stand alone as the full report.
+## Codex Report Write Contract
+- You are launched through `codex exec --output-last-message`, so your final assistant message is NOT the durable research artifact.
+- Before exiting, write the COMPLETE markdown report to the exact `Report path` above using a shell command such as a heredoc (`cat > "$REPORT_PATH" <<'EOF' ... EOF`) or an equivalent filesystem write.
+- The report file itself must contain the full frontmatter, findings, evidence, synthesis, and open questions. Do not rely on streamed intermediate messages or the final assistant message to carry report content.
+- After writing, verify the file exists and is non-trivial with `wc -c "$REPORT_PATH"` and a short `sed -n '1,40p' "$REPORT_PATH"` check.
+- Your final assistant message may be a short completion note, but it must not be the only place where the report exists.
 EOF_CODEX_RESEARCH
   fi
 }

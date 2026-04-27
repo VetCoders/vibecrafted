@@ -128,6 +128,20 @@ def test_vc_research_generated_worker_prompts_do_not_leak_launcher_semantics(
         for needle in forbidden:
             assert needle not in payload
 
+    codex_payloads = [
+        worker_prompt.read_text(encoding="utf-8")
+        for worker_prompt in worker_prompts
+        if "## Codex Report Write Contract" in worker_prompt.read_text(encoding="utf-8")
+    ]
+    assert len(codex_payloads) == 1
+    assert "`codex exec --output-last-message`" in codex_payloads[0]
+    assert (
+        "write the COMPLETE markdown report to the exact `Report path`"
+        in codex_payloads[0]
+    )
+    assert "using a shell command such as a heredoc" in codex_payloads[0]
+    assert "must not be the only place where the report exists" in codex_payloads[0]
+
 
 def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
     root = tmp_path / "repo"

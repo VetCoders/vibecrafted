@@ -190,9 +190,11 @@ def test_codex_research_prompt_uses_clean_research_payload(
     payload = runtime_file.read_text(encoding="utf-8")
     assert "# Research Prompt" in payload
     assert "Question: How should clean worker prompts behave?" in payload
-    assert "## Final Message" in payload
-    assert "complete markdown report verbatim" in payload
-    assert "final message must stand alone as the full report" in payload
+    assert "## Codex Report Write Contract" in payload
+    assert "`codex exec --output-last-message`" in payload
+    assert "write the COMPLETE markdown report to the exact `Report path`" in payload
+    assert "using a shell command such as a heredoc" in payload
+    assert "must not be the only place where the report exists" in payload
     assert "skill: vc-research" not in payload
     assert "Perform the vc-research skill" not in payload
     assert "## VC Agents Worker Charter" not in payload
@@ -656,6 +658,106 @@ def test_codex_spawn_preserves_standalone_report_when_last_message_is_handoff(
     report_text = report_file.read_text(encoding="utf-8")
     assert "# Full Research Report" in report_text
     assert "This is the durable report body." in report_text
+    assert "Done. Report saved at" not in report_text
+
+    last_message_file = Path(meta_payload["transcript"]).with_suffix(".last-message.md")
+    assert last_message_file.exists()
+    assert "Done. Report saved at" in last_message_file.read_text(encoding="utf-8")
+
+
+def test_codex_research_does_not_copy_pointer_last_message_as_report(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    fake_bin = tmp_path / "bin"
+    plan = tmp_path / "research-plan.md"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    plan.write_text("# Research Plan\n", encoding="utf-8")
+
+    fake_codex = fake_bin / "codex"
+    fake_codex.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'last_message=""',
+                "while [[ $# -gt 0 ]]; do",
+                '  case "$1" in',
+                '    --output-last-message) shift; last_message="${1:-}" ;;',
+                "  esac",
+                "  shift || true",
+                "done",
+                "cat >/dev/null",
+                'if [[ -n "$last_message" ]]; then',
+                '  mkdir -p "$(dirname "$last_message")"',
+                '  cat > "$last_message" <<EOF_LAST',
+                "Done. Report saved at: /tmp/research/codex.md",
+                "EOF_LAST",
+                "fi",
+                'printf \'{"type":"thread.started","thread_id":"fake-session-pointer"}\\n\'',
+                'printf \'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\\n\'',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "VIBECRAFTED_HOME": str(crafted_home),
+        "PATH": f"{fake_bin}:{os.environ.get('PATH', '')}",
+        "VIBECRAFTED_INLINE_STARTUP_WATCH": "0",
+        "VIBECRAFTED_SKILL_CODE": "rsch",
+        "VIBECRAFTED_SKILL_NAME": "research",
+    }
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(CODEX_SPAWN_SH),
+            "--mode",
+            "research",
+            "--runtime",
+            "headless",
+            "--root",
+            str(REPO_ROOT),
+            str(plan),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Agent launched." in result.stdout
+
+    artifacts_root = crafted_home / "artifacts"
+    meta_file, meta_payload = _wait_for_meta_payload(
+        artifacts_root, "*_research-plan_codex.meta.json"
+    )
+
+    assert meta_file is not None, "codex spawn did not write research meta.json"
+    assert meta_payload is not None, "codex spawn did not finish writing meta.json"
+    assert meta_payload["status"] == "failed"
+    assert meta_payload["exit_code"] == 65
+
+    report_file = Path(meta_payload["report"])
+    deadline = time.time() + 5
+    report_text = ""
+    while time.time() < deadline:
+        if report_file.exists():
+            report_text = report_file.read_text(encoding="utf-8")
+            if "Codex failed before writing a standalone report file." in report_text:
+                break
+        time.sleep(0.1)
+    assert report_file.exists()
+    assert "Codex failed before writing a standalone report file." in report_text
     assert "Done. Report saved at" not in report_text
 
     last_message_file = Path(meta_payload["transcript"]).with_suffix(".last-message.md")

@@ -96,13 +96,24 @@ case "$runtime" in
     bridge_flags="--echo-stdout"
     ;;
 esac
+last_message_fallback=""
+missing_report_guard=""
+if [[ "$mode" == "research" || "${VIBECRAFTED_SKILL_NAME:-}" == "research" || "${VIBECRAFTED_SKILL_CODE:-}" == "rsch" || "${VIBECRAFTED_RESEARCH_MODE:-0}" == "1" ]]; then
+  # Research reports must be written as first-class artifacts by the worker.
+  # Copying Codex's final handoff message into the report path creates a false
+  # "completed" report when Codex only says "see the report path".
+  missing_report_guard="if [[ \$pipeline_status -eq 0 && ! -s $qreport ]]; then pipeline_status=65; fi;"
+else
+  last_message_fallback="if [[ \$pipeline_status -eq 0 && ! -s $qreport && -s $qlast_message ]]; then cp $qlast_message $qreport || pipeline_status=\$?; fi;"
+fi
 # Keep fallback report creation in launcher hooks, not inside the child `bash -c`
 # shell, because sourced spawn helpers are not inherited there as functions.
-launch_cmd="set -o pipefail && cd $qroot && { rm -f $qlast_message; codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qlast_message - < $qruntime 2>&1 | python3 $qbridge --transcript $qtranscript --raw $qraw ${bridge_flags}; pipeline_status=\$?; if [[ \$pipeline_status -eq 0 && ! -s $qreport && -s $qlast_message ]]; then cp $qlast_message $qreport || pipeline_status=\$?; fi; echo; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
+launch_cmd="set -o pipefail && cd $qroot && { rm -f $qlast_message; codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qlast_message - < $qruntime 2>&1 | python3 $qbridge --transcript $qtranscript --raw $qraw ${bridge_flags}; pipeline_status=\$?; $last_message_fallback $missing_report_guard echo; { grep -o 'session: [a-f0-9-]*' $qtranscript 2>/dev/null | tail -1 | awk '{print \$2}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
 
 # shellcheck disable=SC2016
 codex_success_hook='
-  if [[ ! -s "$report" ]]; then
+  report_bytes="$(wc -c < "$report" 2>/dev/null || printf 0)"
+  if [[ ! -s "$report" || "$report_bytes" -lt 256 ]]; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "unknown" "completed"
     cat >> "$report" <<TXT
 Codex completed without writing a standalone report file.
@@ -113,12 +124,15 @@ TXT
 
 # shellcheck disable=SC2016
 codex_failure_hook='
-  if [[ ! -s "$report" ]]; then
+  report_bytes="$(wc -c < "$report" 2>/dev/null || printf 0)"
+  if [[ ! -s "$report" || "$report_bytes" -lt 256 ]]; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "unknown" "failed"
     cat >> "$report" <<TXT
 Codex failed before writing a standalone report file.
 See transcript for the full event stream:
 $transcript
+Last message, if present:
+${transcript%.log}.last-message.md
 TXT
   fi'
 
