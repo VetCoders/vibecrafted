@@ -341,7 +341,7 @@ def test_init_claude_uses_interactive_tab_without_print_mode(
 
     command_script = _spawned_command_script(payload)
     script_body = command_script.read_text(encoding="utf-8")
-    assert "claude --verbose --dangerously-skip-permissions " in script_body
+    assert "claude --verbose --permission-mode auto " in script_body
     assert "/vc-init" in script_body
     assert " -p " not in script_body
 
@@ -387,7 +387,7 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
 
     command_script = _spawned_command_script(payload)
     script_body = command_script.read_text(encoding="utf-8")
-    assert "codex --dangerously-bypass-approvals-and-sandbox " in script_body
+    assert "codex --full-auto --no-alt-screen --search " in script_body
     assert "/vc-init" in script_body
     assert "codex exec" not in script_body
 

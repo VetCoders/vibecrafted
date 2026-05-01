@@ -1126,13 +1126,13 @@ _vetcoders_init_command_text() {
 
   case "$tool" in
     claude)
-      printf 'claude --verbose --dangerously-skip-permissions %s' "$quoted_prompt"
+      printf 'claude --verbose --permission-mode auto %s' "$quoted_prompt"
       ;;
     codex)
-      printf 'codex --dangerously-bypass-approvals-and-sandbox %s' "$quoted_prompt"
+      printf 'codex --full-auto --no-alt-screen --search %s' "$quoted_prompt"
       ;;
     gemini)
-      printf 'gemini -y -i %s' "$quoted_prompt"
+      printf '--approval-mode yolo -i %s' "$quoted_prompt"
       ;;
     *)
       echo "Unsupported init agent: $tool" >&2

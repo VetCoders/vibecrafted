@@ -44,6 +44,6 @@ Out of scope:
 
 - Spawn scripts use `zsh -ic` which loads the user's full shell environment. This is by design — agents need the real
   env. Do not run spawns in untrusted environments.
-- `--dangerously-skip-permissions` flags are required for external agents. This is documented and intentional. The
+- `--permission-mode auto` flags are required for external agents. This is documented and intentional. The
   `vc-delegate` skill exists as the safe alternative.
 - No secrets should ever be committed to this repo. Skills read credentials from environment variables only.
