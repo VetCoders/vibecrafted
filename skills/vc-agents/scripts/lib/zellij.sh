@@ -252,10 +252,12 @@ spawn_in_marbles_tab() {
 
   # Create the pane inside the marbles tab. If tab-id lookup fails, keep a
   # conservative fallback path that restores the active tab by stable ID.
+  # Note: zellij 0.44+ rejects --direction together with --stacked. Marbles
+  # intent is the stacked invariant (see comment above), so --direction is
+  # dropped here — zellij decides position within the stack.
   if [[ -n "$marbles_tab_id" ]]; then
     zellij action new-pane \
       --tab-id "$marbles_tab_id" \
-      --direction "$pane_direction" \
       --name "$pane_name" \
       "${pane_lifecycle_args[@]}" \
       --cwd "${SPAWN_ROOT:-$(pwd)}" \
@@ -266,7 +268,6 @@ spawn_in_marbles_tab() {
     fi
     zellij action go-to-tab-name "$marbles_tab" --create >/dev/null 2>&1 || true
     zellij action new-pane \
-      --direction "$pane_direction" \
       --name "$pane_name" \
       "${pane_lifecycle_args[@]}" \
       --cwd "${SPAWN_ROOT:-$(pwd)}" \
