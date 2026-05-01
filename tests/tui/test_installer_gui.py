@@ -303,6 +303,19 @@ def test_resolve_site_dist_respects_env_var(monkeypatch, tmp_path: Path) -> None
     assert controller.site_dist_dir == bundle.resolve()
 
 
+def test_resolve_site_dist_finds_built_sibling_bundle(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source_root = tmp_path / "vibecrafted"
+    source_root.mkdir()
+    _stub_controller_deps(monkeypatch, source_root)
+    bundle = _make_bundle_shape(tmp_path / "vibecrafted-io" / "site" / "dist")
+
+    controller = installer_gui.InstallController(str(source_root))
+
+    assert controller.site_dist_dir == bundle.resolve()
+
+
 def test_resolve_site_dist_returns_none_when_absent(
     monkeypatch, tmp_path: Path
 ) -> None:

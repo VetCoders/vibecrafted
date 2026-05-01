@@ -59,32 +59,45 @@ vibecrafted: init-hooks
 	uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST)
 
 # BUNDLE_DIR accepts an external prebuilt Svelte site/dist tree
-# (e.g. from the sibling vibecrafted-io repo). When empty, the GUI
-# installer falls back to its built-in inline HTML.
+# (e.g. from the sibling vibecrafted-io repo). When empty, `make wizard`
+# first tries to build and serve the sibling site checkout so the local
+# control plane matches the branded install surface; otherwise it falls
+# back to the built-in inline HTML.
 BUNDLE_DIR ?=
 
 wizard: init-hooks
-	@$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"$(if $(BUNDLE_DIR), --bundle-dir "$(BUNDLE_DIR)")
-
-gui-install: wizard
-
-# Development helper: auto-detects the sibling vibecrafted-io checkout,
-# rebuilds the Svelte bundle, and launches the wizard served by the
-# local HTTP server. Use when iterating on the LiveInstaller component.
-wizard-dev: init-hooks
-	@site_repo=""; \
+	@if [ -n "$(BUNDLE_DIR)" ]; then \
+		echo "[wizard] Launching wizard with explicit bundle $(BUNDLE_DIR)"; \
+		$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)" --bundle-dir "$(BUNDLE_DIR)"; \
+		exit 0; \
+	fi; \
+	if [ -n "$$VIBECRAFTED_SITE_BUNDLE" ]; then \
+		echo "[wizard] Using VIBECRAFTED_SITE_BUNDLE=$$VIBECRAFTED_SITE_BUNDLE"; \
+		$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"; \
+		exit 0; \
+	fi; \
+	site_repo=""; \
 	for p in "$(CURDIR)/../vc-runtime/vibecrafted-io" "$(CURDIR)/../vibecrafted-io" "$$HOME/Libraxis/vc-runtime/vibecrafted-io"; do \
 		if [ -d "$$p/site" ]; then site_repo="$$p"; break; fi; \
 	done; \
 	if [ -z "$$site_repo" ]; then \
-		echo "[wizard-dev] vibecrafted-io sibling not found — falling back to inline HTML"; \
+		echo "[wizard] vibecrafted-io sibling not found — falling back to inline HTML"; \
 		$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"; \
 		exit 0; \
 	fi; \
-	echo "[wizard-dev] Building Svelte site at $$site_repo"; \
-	(cd "$$site_repo/site" && pnpm install --frozen-lockfile=false && pnpm run build) || { echo "[wizard-dev] site build failed"; exit 1; }; \
-	echo "[wizard-dev] Launching wizard with bundle from $$site_repo/site/dist"; \
+	echo "[wizard] Building branded install surface at $$site_repo/site"; \
+	if [ ! -d "$$site_repo/site/node_modules" ]; then \
+		(cd "$$site_repo/site" && pnpm install --frozen-lockfile=false) || { echo "[wizard] site dependency install failed — falling back to inline HTML"; $(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"; exit 0; }; \
+	fi; \
+	(cd "$$site_repo/site" && pnpm run build) || { echo "[wizard] site build failed — falling back to inline HTML"; $(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"; exit 0; }; \
+	echo "[wizard] Launching wizard with bundle from $$site_repo/site/dist"; \
 	$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)" --bundle-dir "$$site_repo/site/dist"
+
+gui-install: wizard
+
+# Development helper preserved as an explicit alias for LiveInstaller work.
+# `make wizard` already rebuilds the sibling site when it is available.
+wizard-dev: wizard
 
 install: init-hooks
 	@if ! command -v uv >/dev/null 2>&1; then \

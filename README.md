@@ -12,6 +12,7 @@
 <p align="center">
   <a href="https://vibecrafted.io/">Website</a> ·
   <a href="docs/QUICK_START.md">Quick Start</a> ·
+  <a href="docs/DOCKER.md">Docker</a> ·
   <a href="docs/runtime/MANIFESTO_EN.md">Manifesto</a> ·
   <a href="docs/FAQ.md">FAQ</a>
 </p>
@@ -82,11 +83,11 @@ _(No longer guessing the architecture, but seeing it)._
 
 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. has three typographic signatures — one for each layer of craft:
 
-| Mark                      | Layer              | When to use                              |
-| ------------------------- | ------------------ | ---------------------------------------- |
+| Mark                       | Layer              | When to use                              |
+| -------------------------- | ------------------ | ---------------------------------------- |
 | `⚒🅅·🄸·🄱·🄴·🄲·🅡·🄰·🄵·🅃·🄴·🄳·` | **Produced with**  | Full product built through the framework |
-| `𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭`             | **Designed with**  | Design, UI, visual identity, brand work  |
-| `//𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.`          | **Developed with** | Source code, engineering, infrastructure |
+| `𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭`              | **Designed with**  | Design, UI, visual identity, brand work  |
+| `//𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.`           | **Developed with** | Source code, engineering, infrastructure |
 
 The `` is not decoration. It is the mark.
 
@@ -125,6 +126,16 @@ Verify:
 ```bash
 make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current doctor
 ```
+
+Prefer a containerized operator runtime when you want the framework isolated
+from the host toolchain:
+
+```bash
+docker build -t vetcoders/vibecrafted:local .
+docker run --rm -it -v "$PWD:/workspace" vetcoders/vibecrafted:local version
+```
+
+See [Docker Runtime](docs/DOCKER.md).
 
 ---
 

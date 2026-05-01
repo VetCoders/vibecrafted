@@ -1,0 +1,37 @@
+.git
+.github
+.DS_Store
+**/.DS_Store
+
+.ai-agents
+.claude
+.codex
+.gemini
+.idea
+.playwright-mcp
+.pytest_cache
+.ruff_cache
+.vibecrafted
+.vscode
+
+artifacts
+dist
+output
+tmp
+nohup.out
+
+operator-tui/target
+scripts/installer/.venv
+**/__pycache__
+*.py[cod]
+
+*.backup
+*.log
+*.out
+*.plugin
+*.sha256
+*.zip
+
+# Website and verification screenshots are useful in the repo, not in the
+# operator runtime image.
+*.png

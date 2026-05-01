@@ -407,6 +407,9 @@ class InstallController:
         2. VIBECRAFTED_SITE_BUNDLE env var
         3. <source>/site/dist (authored layout)
         4. <source>/dist (release-tarball layout)
+        5. sibling ../vibecrafted-io/site/dist
+        6. sibling ../vc-runtime/vibecrafted-io/site/dist
+        7. ~/Libraxis/vc-runtime/vibecrafted-io/site/dist
 
         Returns None when no bundle is present; the request handler
         then falls back to the inline HTML.
@@ -418,7 +421,20 @@ class InstallController:
         if env_bundle:
             candidates.append(Path(env_bundle))
         root = Path(self.source_dir)
-        candidates.extend([root / "site" / "dist", root / "dist"])
+        candidates.extend(
+            [
+                root / "site" / "dist",
+                root / "dist",
+                root.parent / "vibecrafted-io" / "site" / "dist",
+                root.parent / "vc-runtime" / "vibecrafted-io" / "site" / "dist",
+                Path.home()
+                / "Libraxis"
+                / "vc-runtime"
+                / "vibecrafted-io"
+                / "site"
+                / "dist",
+            ]
+        )
 
         for candidate in candidates:
             if (candidate / "en" / "install" / "index.html").is_file():

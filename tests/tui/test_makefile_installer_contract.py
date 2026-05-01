@@ -51,7 +51,12 @@ def test_makefile_keeps_terminal_first_and_gui_fallback() -> None:
         "shell as `uv run` via `fi; \\`"
     )
 
-    assert '@$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"' in wizard_block
+    assert '$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"' in wizard_block
+    assert "$$VIBECRAFTED_SITE_BUNDLE" in wizard_block
+    assert "$(CURDIR)/../vibecrafted-io" in wizard_block
+    assert "pnpm run build" in wizard_block
+    assert '--bundle-dir "$$site_repo/site/dist"' in wizard_block
+    assert "wizard-dev: wizard" in text
 
     # make install routes through the same runner with --yes auto-approve,
     # so humans (make vibecrafted) and automation (make install) share one engine.
