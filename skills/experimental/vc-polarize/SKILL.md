@@ -1,0 +1,370 @@
+---
+name: vc-polarize
+version: 0.1.0-experimental
+description: >
+  Experimental post-marbles concept and product truth polarization skill.
+  Use when a concept or product surface has high prism score: the implementation
+  may work, but its truth is smeared across runtime paths, tests, docs,
+  artifacts, public promises, or operator memory. Polarize chooses one axis,
+  rejects competing truths, aligns surfaces, and emits DoU/release handoff.
+  This skill is not operationally real until Loctree exposes a stable CLI/MCP
+  contract for prism/code-smear analysis.
+  Trigger phrases: "polarize", "vc-polarize", "wyostrz", "one sharp truth",
+  "code smear", "prism score", "after marbles", "choose one axis".
+experimental: true
+requires:
+  - stable loctree CLI/MCP prism support
+  - stable loct context task-comparison output
+  - context-corpus sidecar schema for stale-vs-live truth
+---
+
+# vc-polarize — One Sharp Truth After Marbles
+
+> Experimental doctrine.
+> Do not present this as a real workflow until `loctree` has a stable prism
+> score / code-smear CLI and MCP surface.
+
+## Reality Boundary
+
+`vc-polarize` is currently a scaffolded skill, not a finished runtime workflow.
+
+It becomes real only when Loctree can reliably produce and compare context
+packs for one concept across task framings, for example:
+
+```bash
+loct context --with-aicx --task "auth"
+loct context --with-aicx --task "auth core"
+loct context --with-aicx --task "auth core portal"
+```
+
+The missing stable substrate is one of:
+
+```bash
+loct prism --task "auth" --task "auth core" --task "auth core portal"
+loct context --compare-tasks "auth" "auth core" "auth core portal"
+```
+
+Until that exists, this skill may create plans, corpus entries, and decision
+artifacts. It must not claim automated prism scoring or workflow completeness.
+
+## Purpose
+
+`vc-polarize` runs after `vc-marbles` or after a `loct context` prism pack
+shows high conceptual smear.
+
+Marbles asks:
+
+> What is still false, duplicated, fragile, or drifting in the implementation?
+
+Polarize asks:
+
+> Which one concept or product truth should now become authoritative?
+
+The job is to collapse ambiguity into an explicit contract:
+
+- one boundary
+- one owner
+- one runtime proof path
+- one artifact/report truth
+- one public promise when the concept reaches users
+- explicit rejected alternatives
+
+## Core Vocabulary
+
+### Code Smear
+
+A runtime or product concept whose truth is spread across many files, layers,
+docs, tests, artifacts, public surfaces, and operator memory.
+
+Smear is not automatically bad. It becomes dangerous when the spread creates
+competing truths.
+
+### Prism Score
+
+A diagnostic and context-worthiness score for how much a concept refracts across
+different `loct context --task` framings.
+
+High prism score means:
+
+- one local slice will mislead future agents
+- the concept deserves a corpus entry
+- a polarization pass may be needed before release or further implementation
+
+It does **not** mean:
+
+- bad code
+- CI failure
+- shame KPI
+- file-count penalty
+
+### Polarization
+
+The opposite motion from smear. Pick one axis/facet and make runtime, tests,
+docs, artifacts, and public surfaces agree.
+
+## Modes
+
+### Concept Mode
+
+Use when an architectural/runtime concept is smeared.
+
+Examples:
+
+- marbles lifecycle
+- release surface
+- installer public contract
+- research swarm synthesis
+- auth boundary
+- memory/search context
+
+Output: one concept contract and proof path.
+
+### Product Mode
+
+Use when a product/public surface is smeared.
+
+Examples:
+
+- too many audiences
+- split CTA
+- landing page says one thing while install path says another
+- docs overpromise runtime
+- release brief lacks one shippable thesis
+
+Output: one product thesis and DoU/release handoff.
+
+## Pipeline Position
+
+```text
+scaffold -> init -> workflow -> implement -> followup -> marbles -> [POLARIZE] -> dou -> decorate -> hydrate -> release
+```
+
+`vc-polarize` is allowed to read recent marbles reports. This is deliberate.
+`vc-marbles` workers should stay present-tense and avoid prior loop history;
+`vc-polarize` is a synthesis step after convergence evidence exists.
+
+## Operator Entry
+
+Future operator entry, once runtime support exists:
+
+```bash
+vibecrafted polarize codex --prompt 'Polarize the marbles operator surface'
+vc-polarize claude --file /path/to/prism-pack.md
+vibecrafted polarize gemini --prompt 'Choose one launch thesis after marbles'
+```
+
+Experimental/manual entry for now:
+
+```bash
+loct context --with-aicx --task "marbles" > /tmp/polarize/01-marbles.context.md
+loct context --with-aicx --task "marbles operator" > /tmp/polarize/02-marbles-operator.context.md
+loct context --with-aicx --task "marbles operator zellij" > /tmp/polarize/03-marbles-operator-zellij.context.md
+```
+
+No `--count`. No convergence loop. This is not another marbles engine.
+
+## Inputs
+
+Allowed:
+
+- current workspace truth
+- fresh `vc-init` / loctree / AICX evidence
+- prism packs generated by `loct context --with-aicx --task ...`
+- recent marbles reports
+- DoU/release/hydrate/decorate reports when relevant
+- README, quickstart, installer, marketplace, command help, release surfaces
+- operator constraints: buyer, launch channel, forbidden claims, desired boldness
+
+Not allowed:
+
+- unsupported claims
+- averaging competing directions
+- treating prism score as a shame metric
+- using stale context packs as current code truth
+- scoring file count instead of authority drift
+
+## Prism Score V0
+
+Until Loctree provides a stable scorer, use this as manual rubric.
+
+Score each axis from `0` to `3`, total `0..15`.
+
+| Axis                | Meaning                                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Spread              | How many surfaces carry the concept: code, shell env, tests, docs, artifacts, AICX, public copy.                              |
+| Runtime Centrality  | Whether the concept sits on entrypoint, installer, marbles lifecycle, research lifecycle, release, or operator control plane. |
+| Authority Diversity | Whether evidence comes from RepoVerified code, LoctreeDerived structure, tests, AICX/operator memory, public docs.            |
+| Drift Risk          | Likelihood that surfaces disagree or stale artifacts create false truth.                                                      |
+| Closure Evidence    | Whether gates, tests, reports, state files, launch cards, or artifacts make closure machine-checkable.                        |
+
+Bands:
+
+- `0..4`: no corpus entry.
+- `5..8`: local note or Loctree tag.
+- `9..12`: context-corpus entry.
+- `13..15`: canonical doctrine entry plus regression contract.
+
+## Outputs
+
+Recommended artifacts:
+
+```text
+$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/polarize/
+  thesis.md
+  concept-contract.md
+  surface-map.json
+  decision-ledger.md
+  dou-handoff.md
+  release-brief.md
+```
+
+If runtime has no dedicated `polarize/` artifact directory yet, write only the
+normal injected report and include these sections inside it.
+
+## Report Sections
+
+- **Polarized Thesis** — one sentence, no hedge words.
+- **Mode** — `concept` or `product`.
+- **Prism Evidence** — task framings, context pack paths, score axes.
+- **Primary Boundary / Audience** — what wins now.
+- **Rejected Alternatives** — what loses now, and why.
+- **Runtime Proof** — concrete repo/runtime evidence.
+- **Surface Alignment** — current claim/path -> problem -> chosen replacement.
+- **Edits Made** — if implementation was in scope.
+- **Gates Run** — commands, exit status, and what they prove.
+- **DoU Handoff** — what DoU should audit next.
+- **Release Handoff** — what release can honestly ship and what remains blocked.
+
+## Lifecycle
+
+1. **Perceive**
+   Run repo truth checks. Confirm branch, dirty tree, current head, and whether
+   prism packs are stale against live code.
+
+2. **Collect**
+   Read prism packs, latest relevant marbles reports, public/install/release
+   surfaces, and command help.
+
+3. **Score**
+   Use Prism Score V0 or the stable Loctree scorer once it exists.
+
+4. **Choose**
+   Pick one axis to make authoritative. Reject competing axes explicitly.
+
+5. **Align**
+   Edit only surfaces supported by runtime proof. In concept mode, prefer
+   contracts, tests, docs, and artifact schemas. In product mode, align public
+   copy, CTA, onboarding, and release thesis.
+
+6. **Gate**
+   Run narrow gates for touched surfaces and broader gates if release-facing.
+
+7. **Emit**
+   Write polarization artifacts and handoffs.
+
+8. **Stop**
+   Do not continue into DoU, hydrate, decorate, or release unless the operator
+   asked for that chain.
+
+## Context Corpus Contract
+
+Prism context packs should be ingested as immutable examples with sidecars.
+Do not rewrite raw Markdown packs and do not mix them into ordinary AICX
+conversation chunks.
+
+Suggested retention path:
+
+```text
+$HOME/.aicx/context-corpus/<org>/<repo>/<YYYY_MMDD>/loct-context-pack/<batch>/
+  raw/
+  sidecars/
+  index.jsonl
+```
+
+Sidecars must mark stale-vs-live truth:
+
+```json
+{
+  "schema_version": "context_corpus.v1",
+  "artifact_family": "loct-context-pack",
+  "external_batch": "vibecrafted-prism-context-20260502",
+  "truth_status": {
+    "role": "example",
+    "runtime_authoritative": false,
+    "stale_against_current_head": true,
+    "current_head_when_ingested": "ded1e0b"
+  },
+  "learning_use": {
+    "allowed": [
+      "format_examples",
+      "section_order",
+      "authority_labeling",
+      "retrieval_tests"
+    ],
+    "forbidden": ["current_code_truth", "implementation_claims", "gate_status"]
+  }
+}
+```
+
+Runtime truth must always come from fresh `loct context`, fresh repo reads, and
+relevant gates.
+
+## Minimum Gates
+
+Read-only / doctrine-only:
+
+```bash
+git status --short --branch
+```
+
+Docs or skill changes:
+
+```bash
+git diff --check
+```
+
+Command deck/help changes:
+
+```bash
+pytest tests/tui/test_vibecrafted_launcher.py -q
+```
+
+Installer/release-facing changes:
+
+```bash
+make check
+make semgrep
+```
+
+Corpus sidecars:
+
+```bash
+python3 -m json.tool <sidecar>.json
+```
+
+## Failure Modes
+
+- **No prism evidence**: ask for a `loct context --with-aicx --task ...` pack.
+- **No stable Loctree scorer**: remain experimental; do not claim runtime automation.
+- **Runtime cannot support desired promise**: send back to `vc-workflow` or `vc-marbles`.
+- **Two viable axes remain**: emit decision memo; do not average them.
+- **Public surfaces contradict release truth**: block release handoff.
+- **Context pack is stale**: use it as corpus/example evidence only, then regenerate fresh context.
+
+## Anti-Patterns
+
+- "Everyone can use it."
+- One more wrapper instead of one contract.
+- Changing copy without runtime proof.
+- Scoring file count instead of authority drift.
+- Treating prism score as CI failure.
+- Treating old context packs as live code truth.
+- Hiding product choice behind technical cleanup.
+
+## First Real Implementation Path
+
+1. Stabilize `loctree` CLI/MCP support for prism/code-smear comparison.
+2. Ingest known context packs into AICX context corpus with sidecars.
+3. Promote this experimental skill to `skills/vc-polarize/SKILL.md`.
+4. Add generic command-deck wiring.
+5. Run the first real polarization pass on `marbles lifecycle` or `release surface`.
