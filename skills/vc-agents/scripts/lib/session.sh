@@ -63,6 +63,59 @@ spawn_marbles_state_dir() {
   printf '%s/marbles/%s\n' "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}" "$run_id"
 }
 
+spawn_archive_marbles_state_dir() {
+  local run_id="$1"
+  local status="${2:-archived}"
+  local state_dir target_date target_parent target_dir state_file
+
+  [[ -n "$run_id" ]] || return 1
+  state_dir="$(spawn_marbles_state_dir "$run_id")"
+  [[ -d "$state_dir" ]] || return 0
+
+  target_date="$(date -u +%F)"
+  target_parent="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/marbles/_archived/$target_date"
+  target_dir="$target_parent/$run_id"
+  [[ ! -e "$target_dir" ]] || return 1
+
+  mkdir -p "$target_parent"
+  mv "$state_dir" "$target_dir"
+
+  state_file="$target_dir/state.json"
+  if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$state_file" "$status" "$state_dir" "$target_dir" <<'PY' || true
+import datetime
+import json
+import sys
+
+state_path, status, archived_from, target_dir = sys.argv[1:5]
+archived_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+try:
+    with open(state_path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+except Exception:
+    payload = {}
+
+previous_status = payload.get("status", "")
+payload["previous_status"] = previous_status
+payload["status"] = status
+payload["archived_from"] = archived_from
+payload["archived_at"] = archived_at
+payload["updated_at"] = archived_at
+for key in ("plan", "god_plan", "ancestor_plan"):
+    value = payload.get(key)
+    if isinstance(value, str) and value.startswith(archived_from + "/"):
+        payload[key] = target_dir + value[len(archived_from):]
+
+with open(state_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
+  fi
+
+  printf '%s\n' "$target_dir"
+}
+
 spawn_marbles_child_plan_path() {
   local store_dir="$1"
   local ancestor_plan="$2"

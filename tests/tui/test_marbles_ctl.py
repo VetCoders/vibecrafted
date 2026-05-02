@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -44,7 +45,8 @@ def test_marbles_delete_archives_run_directory(tmp_path: Path) -> None:
         text=True,
     )
 
-    archived_dir = crafted_home / "marbles" / "deleted" / "marb-424242"
+    archive_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    archived_dir = crafted_home / "marbles" / "_archived" / archive_day / "marb-424242"
     archived_state = json.loads(
         (archived_dir / "state.json").read_text(encoding="utf-8")
     )
@@ -89,7 +91,8 @@ def test_marbles_delete_refuses_live_session(tmp_path: Path) -> None:
         text=True,
     )
 
-    archived_dir = crafted_home / "marbles" / "deleted" / "marb-live"
+    archive_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    archived_dir = crafted_home / "marbles" / "_archived" / archive_day / "marb-live"
 
     assert result.returncode != 0
     assert session_dir.is_dir()
@@ -162,3 +165,51 @@ def test_marbles_gc_accepts_valid_stale_minutes_dry_run(tmp_path: Path) -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_marbles_gc_auto_archive_moves_stale_state_dir(tmp_path: Path) -> None:
+    env = _gc_env(tmp_path)
+    crafted_home = Path(env["VIBECRAFTED_HOME"])
+    session_dir = crafted_home / "marbles" / "marb-stale"
+    state_file = session_dir / "state.json"
+    _write_state(
+        state_file,
+        {
+            "run_id": "marb-stale",
+            "status": "running",
+            "agent": "codex",
+            "root": "/tmp/worktree",
+            "current_loop": 1,
+            "total_loops": 3,
+            "updated_at": "2000-01-01T00:00:00+00:00",
+        },
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(MARBLES_CTL),
+            "gc",
+            "--auto-archive",
+            "--stale-minutes",
+            "1",
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    archive_day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    archived_dir = crafted_home / "marbles" / "_archived" / archive_day / "marb-stale"
+    archived_state = json.loads(
+        (archived_dir / "state.json").read_text(encoding="utf-8")
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not session_dir.exists()
+    assert archived_dir.is_dir()
+    assert archived_state["status"] == "ghost"
+    assert archived_state["previous_status"] == "running"
+    assert archived_state["archived_from"] == str(session_dir)

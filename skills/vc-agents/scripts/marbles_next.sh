@@ -370,6 +370,7 @@ Loop $loop_nr of $total_count did not produce an observed report.
 CONV
 
   _update_lock status failed
+  _archive_terminal_state "failed"
   printf '\n\033[31m ✗  Marbles blocked at loop %s/%s\033[0m\n' "$loop_nr" "$total_count"
   printf '    Missing report guard: %s\n' "$reason"
   printf '    Convergence: %s\n' "$convergence"
@@ -401,6 +402,7 @@ reason: invalid_ancestor_agent
 CONV
 
   _update_lock status failed
+  _archive_terminal_state "failed"
   printf '\n\033[31m ✗  Marbles blocked before loop %s/%s\033[0m\n' "$loop_nr" "$total_count"
   printf '    Invalid ancestor agent: %s\n' "${invalid_agent:-<empty>}"
   printf '    Convergence: %s\n' "$convergence"
@@ -417,6 +419,14 @@ _collect_reports() {
       printf '%s\n' "$report_path"
     fi
   done
+}
+
+_archive_terminal_state() {
+  local status="$1"
+  if [[ "${VIBECRAFTED_MARBLES_WATCHER:-0}" == "1" ]]; then
+    return 0
+  fi
+  spawn_archive_marbles_state_dir "$run_id" "$status" >/dev/null 2>&1 || true
 }
 
 _launch_verification() {
@@ -611,11 +621,8 @@ _launch_next_loop() {
     --success-hook "$success_hook"
     --failure-hook "$failure_hook"
   )
-  if [[ -n "$loop_model" \
-        && "$loop_agent" != "codex" \
-        && "$loop_model" != "pending" \
-        && "$loop_model" != "unknown" \
-        && "$loop_model" != "null" ]]; then
+  loop_model="$(spawn_clean_model "$loop_model")"
+  if [[ -n "$loop_model" && "$loop_agent" != "codex" ]]; then
     spawn_args+=(--model "$loop_model")
   fi
 
@@ -655,6 +662,7 @@ Check individual loop reports for details.
 CONV
 
   _update_lock status failed
+  _archive_terminal_state "failed"
   printf '\n\033[31m ✗  Marbles failed at loop %s/%s\033[0m\n' "$current" "$total_count"
   printf '    Convergence: %s\n' "$convergence"
   exit 0
@@ -725,6 +733,7 @@ HEADER
 
   _launch_verification "$current" 1
   _update_lock status completed
+  _archive_terminal_state "completed"
   printf '\n\033[32m ✓  Marbles complete: %s loops · %s\033[0m\n' "$total_count" "$run_id"
   printf '    Convergence: %s\n' "$convergence"
   exit 0
@@ -761,10 +770,7 @@ rm -f "$next_plan_tmp"
 spawn_marbles_write_child_plan "$ancestor_plan" "$next_plan_tmp"
 
 _ancestor_agent="$(spawn_frontmatter_field "$next_plan_tmp" "agent")"
-_ancestor_model="$(spawn_frontmatter_field "$next_plan_tmp" "model")"
-case "$_ancestor_model" in
-  pending|unknown|null) _ancestor_model="" ;;
-esac
+_ancestor_model="$(spawn_clean_model "$(spawn_frontmatter_field "$next_plan_tmp" "model")")"
 
 # Determine if ancestor.md was explicitly steered by the previous child.
 # Steering requires: (a) ancestor has a non-empty agent, (b) it differs from
@@ -842,5 +848,7 @@ if (( launch_rc != 0 )); then
       "next-loop spawn failed before meta.json was created" \
       "$launch_rc"
   fi
+  _update_lock status failed
+  _archive_terminal_state "failed"
   exit "$launch_rc"
 fi

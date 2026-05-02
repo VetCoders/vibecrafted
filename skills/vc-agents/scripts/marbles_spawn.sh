@@ -300,11 +300,8 @@ spawn_args=(
   --success-hook "$success_hook"
   --failure-hook "$failure_hook"
 )
-if [[ -n "$ancestor_model" \
-      && "$agent" != "codex" \
-      && "$ancestor_model" != "pending" \
-      && "$ancestor_model" != "unknown" \
-      && "$ancestor_model" != "null" ]]; then
+ancestor_model="$(spawn_clean_model "$ancestor_model")"
+if [[ -n "$ancestor_model" && "$agent" != "codex" ]]; then
   spawn_args+=(--model "$ancestor_model")
 fi
 
@@ -315,6 +312,7 @@ if (( use_watcher )); then
   VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right \
     VIBECRAFTED_STORE_DIR="$store" \
     VIBECRAFTED_STORE_ROOT="$root_dir" \
+    VIBECRAFTED_MARBLES_WATCHER=1 \
     VIBECRAFTED_SUPPRESS_REPORT_HINT=1 \
     bash "$SCRIPT_DIR/${agent}_spawn.sh" "${spawn_args[@]}" "$l1_plan" &
 

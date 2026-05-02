@@ -1707,7 +1707,7 @@ _vetcoders_marbles() {
       zellij action go-to-tab-name "$original_tab" >/dev/null 2>&1 || true
     fi
     
-    _vetcoders_tail_marbles_l1_transcript "$root_dir" "$marbles_run_id"
+    _vetcoders_marbles_emit_probe "$root_dir" "$marbles_run_id" "launched"
   elif [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
     _vetcoders_prepare_operator_runtime "$runtime" || return 1
     if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
@@ -1715,7 +1715,7 @@ _vetcoders_marbles() {
       printf 'Marbles run launched in operator session: %s\n' "$VIBECRAFTED_OPERATOR_SESSION"
       printf '  run_id:  %s\n' "$marbles_run_id"
       printf '  inspect: vc-marbles inspect %s\n' "$marbles_run_id"
-      _vetcoders_tail_marbles_l1_transcript "$root_dir" "$marbles_run_id"
+      _vetcoders_marbles_emit_probe "$root_dir" "$marbles_run_id" "launched"
     else
       env "${marbles_env[@]}" bash "$script" "${marbles_args[@]}"
     fi

@@ -118,6 +118,19 @@ spawn_validate_runtime() {
   esac
 }
 
+# Normalize a model frontmatter value: empty string for placeholders
+# (`pending`, `unknown`, `null`), pass-through otherwise. Used by every
+# marbles dispatch site so a single point of truth gates which model values
+# reach `claude_spawn.sh --model` / `gemini_spawn.sh --model`. Adding a new
+# placeholder token here propagates to every consumer automatically.
+spawn_clean_model() {
+  local raw="${1:-}"
+  case "$raw" in
+    pending|unknown|null) printf '' ;;
+    *) printf '%s' "$raw" ;;
+  esac
+}
+
 spawn_check_shell_syntax() {
   local path="${1:-}"
   local label="${2:-shell script}"

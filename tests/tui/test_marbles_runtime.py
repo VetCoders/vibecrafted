@@ -277,6 +277,17 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
+def _marbles_state_dirs(crafted_home: Path) -> list[Path]:
+    marbles_dir = crafted_home / "marbles"
+    live = [
+        path
+        for path in marbles_dir.iterdir()
+        if path.is_dir() and path.name != "_archived"
+    ]
+    archived = list((marbles_dir / "_archived").glob("*/*"))
+    return live + archived
+
+
 def _org_repo() -> str:
     remote = subprocess.check_output(
         ["git", "-C", str(REPO_ROOT), "remote", "get-url", "origin"],
@@ -693,7 +704,7 @@ def test_marbles_runtime_steers_next_loop_from_ancestor_frontmatter(
         text=True,
     )
 
-    state_dirs = list((crafted_home / "marbles").iterdir())
+    state_dirs = _marbles_state_dirs(crafted_home)
     assert len(state_dirs) == 1
     state_dir = state_dirs[0]
     state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
@@ -712,7 +723,7 @@ def test_marbles_runtime_steers_next_loop_from_ancestor_frontmatter(
 
     events = _load_spawn_events(capture_file)
     assert [event["agent"] for event in events] == ["codex", "gemini"]
-    assert str(state_dir) in str(events[0]["success_hook"])
+    assert state["archived_from"] in str(events[0]["success_hook"])
     assert str(events[0]["plan"]).endswith("marbles-ancestor_L1.md")
     assert str(events[1]["plan"]).endswith("marbles-ancestor_L2.md")
     assert str(events[0]["plan"]) not in str(events[0]["success_hook"])
@@ -759,7 +770,7 @@ def test_marbles_runtime_keeps_ancestor_focus_when_next_plan_write_lags(
         text=True,
     )
 
-    state_dirs = list((crafted_home / "marbles").iterdir())
+    state_dirs = _marbles_state_dirs(crafted_home)
     assert len(state_dirs) == 1
     state = json.loads((state_dirs[0] / "state.json").read_text(encoding="utf-8"))
 
@@ -811,7 +822,7 @@ def test_marbles_runtime_applies_rotation_schedule_without_ancestor_override(
         text=True,
     )
 
-    state_dirs = list((crafted_home / "marbles").iterdir())
+    state_dirs = _marbles_state_dirs(crafted_home)
     assert len(state_dirs) == 1
     state_dir = state_dirs[0]
     state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
@@ -906,7 +917,7 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
         text=True,
     )
 
-    state_dirs = list((crafted_home / "marbles").iterdir())
+    state_dirs = _marbles_state_dirs(crafted_home)
     assert len(state_dirs) == 1
     state_dir = state_dirs[0]
     state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
@@ -965,8 +976,8 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
     assert len(convergence_reports) == 1
     convergence = convergence_reports[0].read_text(encoding="utf-8")
     assert "## Steering Surfaces" in convergence
-    assert f"- GOD: {state_dir / 'god.md'}" in convergence
-    assert f"- ANCESTOR: {state_dir / 'ancestor.md'}" in convergence
+    assert f"- GOD: {state['archived_from']}/god.md" in convergence
+    assert f"- ANCESTOR: {state['archived_from']}/ancestor.md" in convergence
 
 
 def test_marbles_contract_docs_forbid_worker_worktree_escape() -> None:
@@ -1034,12 +1045,13 @@ def test_marbles_no_watch_still_creates_god_and_ancestor_contract(
         text=True,
     )
 
-    state_dirs = list((crafted_home / "marbles").iterdir())
+    state_dirs = _marbles_state_dirs(crafted_home)
     assert len(state_dirs) == 1
     state_dir = state_dirs[0]
     state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
 
-    assert state["status"] == "initialized"
+    assert state["status"] == "completed"
+    assert state["previous_status"] == "initialized"
     assert state["god_plan"] == str(state_dir / "god.md")
     assert state["ancestor_plan"] == str(state_dir / "ancestor.md")
     assert (state_dir / "god.md").exists()
@@ -1047,7 +1059,7 @@ def test_marbles_no_watch_still_creates_god_and_ancestor_contract(
 
     events = _load_spawn_events(capture_file)
     assert len(events) == 1
-    assert str(state_dir) in str(events[0]["success_hook"])
+    assert state["archived_from"] in str(events[0]["success_hook"])
     assert str(events[0]["plan"]).endswith("marbles-ancestor_L1.md")
 
 
@@ -1092,7 +1104,7 @@ def test_marbles_materializes_failed_loop_when_child_spawn_dies_before_meta(
         text=True,
     )
 
-    state_dirs = list((crafted_home / "marbles").iterdir())
+    state_dirs = _marbles_state_dirs(crafted_home)
     assert len(state_dirs) == 1
     state_dir = state_dirs[0]
     state = json.loads((state_dir / "state.json").read_text(encoding="utf-8"))
@@ -1223,7 +1235,7 @@ def test_marbles_watcher_waits_for_meta_completion_before_advancing(
         text=True,
     )
 
-    state_dirs = list((crafted_home / "marbles").iterdir())
+    state_dirs = _marbles_state_dirs(crafted_home)
     assert len(state_dirs) == 1
     state = json.loads((state_dirs[0] / "state.json").read_text(encoding="utf-8"))
 
@@ -1327,7 +1339,7 @@ def test_marbles_watcher_does_not_consume_failed_fallback_report(
         text=True,
     )
 
-    state_dirs = list((crafted_home / "marbles").iterdir())
+    state_dirs = _marbles_state_dirs(crafted_home)
     assert len(state_dirs) == 1
     state = json.loads((state_dirs[0] / "state.json").read_text(encoding="utf-8"))
 
@@ -1386,7 +1398,7 @@ def test_marbles_verification_poll_survives_watcher_exit_without_job_noise(
         text=True,
     )
 
-    state_dirs = list((crafted_home / "marbles").iterdir())
+    state_dirs = _marbles_state_dirs(crafted_home)
     assert len(state_dirs) == 1
     state_path = state_dirs[0] / "state.json"
 

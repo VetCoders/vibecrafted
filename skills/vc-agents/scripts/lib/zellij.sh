@@ -219,7 +219,7 @@ spawn_in_marbles_tab() {
   local pane_name="$2"
   local direction="$3"
   local marbles_tab="${VIBECRAFTED_MARBLES_TAB_NAME:-}"
-  local original_tab_id=""
+  local operator_tab_id=""
   local marbles_tab_id=""
   local cmd_script=""
   local launch_cmd="bash '$launcher'"
@@ -231,9 +231,13 @@ spawn_in_marbles_tab() {
   if [[ "$pane_direction" == "new-tab" ]]; then
     pane_direction="right"
   fi
-  # Hard invariant: marbles workers live with their orchestrator tab. Stacking
-  # preserves that locality without turning long runs into 5px columns.
-  if [[ "${VIBECRAFTED_ZELLIJ_CLOSE_AGENT_PANES:-0}" == "1" ]]; then
+  # Hard invariant: workers stack inside the marbles-${RUN_ID} tab. Operator's
+  # tab stays ZEN. Stacking keeps long runs readable instead of 5px columns.
+  # Backward compat: CLOSE_AGENT_PANES=0 now maps to KEEP for one release.
+  if [[ "${VIBECRAFTED_ZELLIJ_CLOSE_AGENT_PANES:-1}" == "0" ]]; then
+    : "${VIBECRAFTED_ZELLIJ_KEEP_AGENT_PANES:=1}"
+  fi
+  if [[ "${VIBECRAFTED_ZELLIJ_KEEP_AGENT_PANES:-0}" != "1" ]]; then
     pane_lifecycle_args+=(--close-on-exit)
   fi
 
@@ -242,19 +246,19 @@ spawn_in_marbles_tab() {
 
   marbles_tab_id="$(spawn_tab_id_by_name "$marbles_tab" 2>/dev/null || true)"
   if [[ -z "$marbles_tab_id" ]]; then
-    original_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
+    operator_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
     zellij action go-to-tab-name "$marbles_tab" --create >/dev/null 2>&1 || true
     marbles_tab_id="$(spawn_tab_id_by_name "$marbles_tab" 2>/dev/null || true)"
-    if [[ -n "$original_tab_id" ]]; then
-      zellij action go-to-tab-by-id "$original_tab_id" >/dev/null 2>&1 || true
+    if [[ -n "$operator_tab_id" ]]; then
+      zellij action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
     fi
   fi
 
   # Create the pane inside the marbles tab. If tab-id lookup fails, keep a
   # conservative fallback path that restores the active tab by stable ID.
-  # Note: zellij 0.44+ rejects --direction together with --stacked. Marbles
-  # intent is the stacked invariant (see comment above), so --direction is
-  # dropped here — zellij decides position within the stack.
+  # zellij 0.44+ rejects --direction together with --stacked, and the marbles
+  # invariant IS stacked-inside-marbles-tab (see comment above), so we drop
+  # --direction here and let zellij choose stack position.
   if [[ -n "$marbles_tab_id" ]]; then
     zellij action new-pane \
       --tab-id "$marbles_tab_id" \
@@ -263,8 +267,8 @@ spawn_in_marbles_tab() {
       --cwd "${SPAWN_ROOT:-$(pwd)}" \
       -- "$cmd_script" >/dev/null
   else
-    if [[ -z "$original_tab_id" ]]; then
-      original_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
+    if [[ -z "$operator_tab_id" ]]; then
+      operator_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
     fi
     zellij action go-to-tab-name "$marbles_tab" --create >/dev/null 2>&1 || true
     zellij action new-pane \
@@ -272,8 +276,8 @@ spawn_in_marbles_tab() {
       "${pane_lifecycle_args[@]}" \
       --cwd "${SPAWN_ROOT:-$(pwd)}" \
       -- "$cmd_script" >/dev/null
-    if [[ -n "$original_tab_id" ]]; then
-      zellij action go-to-tab-by-id "$original_tab_id" >/dev/null 2>&1 || true
+    if [[ -n "$operator_tab_id" ]]; then
+      zellij action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
     fi
   fi
 

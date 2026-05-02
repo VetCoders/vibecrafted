@@ -326,7 +326,7 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     assert any("vibecrafted-marbles." in line for line in payload)
 
 
-def test_marbles_manual_spawn_prints_l1_transcript_tail_in_same_terminal(
+def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -349,6 +349,11 @@ def test_marbles_manual_spawn_prints_l1_transcript_tail_in_same_terminal(
     fake_bin.mkdir()
     reports_dir.mkdir(parents=True)
     _write_capture_command(fake_bin, "zellij", capture_file)
+    (fake_bin / "osascript").write_text(
+        "#!/usr/bin/env bash\nexit 0\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "osascript").chmod(0o755)
 
     transcript.write_text(
         "\n".join(f"line {idx}" for idx in range(1, 21)) + "\n",
@@ -373,7 +378,7 @@ def test_marbles_manual_spawn_prints_l1_transcript_tail_in_same_terminal(
     env["VIBECRAFTED_RUN_ID"] = "marb-014521"
     env["ZELLIJ_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
     env["VIBECRAFTED_MARBLES_RUN_ID"] = run_id
-    env["VIBECRAFTED_MARBLES_TAIL_DELAY"] = "0"
+    env["VIBECRAFTED_MARBLES_PROBE_TTL"] = "10"
     env["VIBECRAFTED_PREFER_REPO_SPAWN"] = "1"
 
     result = subprocess.run(
@@ -389,9 +394,10 @@ def test_marbles_manual_spawn_prints_l1_transcript_tail_in_same_terminal(
         text=True,
     )
 
-    assert "--- marbles L1 transcript tail" in result.stdout
-    assert "line 6" in result.stdout
-    assert "line 20" in result.stdout
+    assert "--- marbles L1 transcript tail" not in result.stdout
+    assert "line 6" not in result.stdout
+    assert "line 20" not in result.stdout
+    assert result.stderr == ""
 
 
 def test_spawn_script_prefers_repo_runtime_over_installed_copy(tmp_path: Path) -> None:
@@ -549,7 +555,7 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
     assert "OSA " in payload
     assert "zellij attach" in payload
     assert "new-session-with-layout" in payload
-    assert re.search(r"\bv-[0-9a-f]{4}-fwup-\d{6}-\d+\b", payload)
+    assert re.search(r"\bfwup-\d{6}-\d+\b", payload)
 
 
 def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(

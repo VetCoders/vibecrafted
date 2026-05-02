@@ -28,8 +28,9 @@ Commands:
   resume <run_id>         Resume paused session
   session [--json]        List active sessions
   inspect <run_id>        Show full state for a session
-  delete <run_id>         Archive a session under marbles/deleted/<run_id>
-  gc [--dry-run|--hard]   Clean up stale sessions (default: mark as gc)
+  delete <run_id>         Archive a session under marbles/_archived/<date>/<run_id>
+  gc [--dry-run|--hard|--auto-archive]
+                          Clean up stale sessions (default: mark as gc)
 EOF
 }
 
@@ -45,6 +46,12 @@ _session_dir_for_run_id() {
   local candidate
   shopt -s nullglob
   for candidate in "$MARBLES_DIR"/*/"$rid"; do
+    [[ -d "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    shopt -u nullglob
+    return 0
+  done
+  for candidate in "$MARBLES_DIR"/_archived/*/"$rid"; do
     [[ -d "$candidate" ]] || continue
     printf '%s\n' "$candidate"
     shopt -u nullglob
@@ -267,18 +274,10 @@ cmd_delete() {
   local session_dir
   session_dir="$(_session_dir_for_run_id "$rid")" || spawn_die "No session found for $rid"
 
-  local current_parent
-  current_parent="$(dirname "$session_dir")"
-
-  local target_state="deleted"
-  local target_parent="$MARBLES_DIR/$target_state"
-  local target_dir="$target_parent/$rid"
-
-  if [[ "$session_dir" == "$target_dir" ]]; then
-    printf '%bSession %s is already archived in %s%b\n' "$_dim" "$rid" "$target_state" "$_reset"
+  if [[ "$session_dir" == "$MARBLES_DIR/_archived/"* ]]; then
+    printf '%bSession %s is already archived: %s%b\n' "$_dim" "$rid" "$session_dir" "$_reset"
     return 0
   fi
-  [[ ! -e "$target_dir" ]] || spawn_die "Target archive path already exists: $target_dir"
 
   local state_file="$session_dir/state.json"
   [[ -f "$state_file" ]] || spawn_die "No state found for $rid"
@@ -327,44 +326,43 @@ PY
       ;;
   esac
 
-  mkdir -p "$target_parent"
-  mv "$session_dir" "$target_dir"
-
-  python3 - "$target_dir/state.json" "$status" "$session_dir" "$target_state" <<'PY'
+  local archived_dir
+  archived_dir="$(spawn_archive_marbles_state_dir "$rid" "deleted")" || spawn_die "Could not archive $rid"
+  if [[ -f "$archived_dir/state.json" ]] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$archived_dir/state.json" <<'PY' || true
 import datetime
 import json
 import sys
 
-state_path, previous_status, archived_from, target_state = sys.argv[1:5]
-archived_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+state_path = sys.argv[1]
+deleted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-with open(state_path) as handle:
+with open(state_path, encoding="utf-8") as handle:
     payload = json.load(handle)
 
-payload["previous_status"] = previous_status
-payload["status"] = target_state
-payload["archived_from"] = archived_from
-payload["archived_at"] = archived_at
-payload["updated_at"] = archived_at
-payload["deleted_at"] = archived_at
+payload["deleted_at"] = deleted_at
+payload["updated_at"] = deleted_at
 
-with open(state_path, "w") as handle:
+with open(state_path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
+  fi
 
-  printf '%b✓ %s → %s/%s%b\n' "$_green" "$rid" "$target_state" "$rid" "$_reset"
+  printf '%b✓ %s → %s%b\n' "$_green" "$rid" "$archived_dir" "$_reset"
 }
 
 cmd_gc() {
   local dry_run=0
   local hard=0
+  local auto_archive=0
   local stale_minutes="${VIBECRAFTED_MARBLES_STALE_MINUTES:-60}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --dry-run) dry_run=1 ;;
       --hard) hard=1 ;;
+      --auto-archive) auto_archive=1 ;;
       --stale-minutes)
         shift
         [[ $# -gt 0 ]] || spawn_die "--stale-minutes requires a positive integer value"
@@ -378,7 +376,8 @@ cmd_gc() {
 
   mkdir -p "$MARBLES_DIR"
 
-  python3 - "$MARBLES_DIR" "$stale_minutes" "$dry_run" "$hard" <<'PY'
+  python3 - "$MARBLES_DIR" "$stale_minutes" "$dry_run" "$hard" "$auto_archive" <<'PY'
+import datetime
 import json
 import os
 import shutil
@@ -389,6 +388,7 @@ marbles_dir = sys.argv[1]
 stale_minutes = int(sys.argv[2])
 dry_run = sys.argv[3] == "1"
 hard_delete = sys.argv[4] == "1"
+auto_archive = sys.argv[5] == "1"
 stale_threshold = time.time() - (stale_minutes * 60)
 found = 0
 cleaned = 0
@@ -407,15 +407,30 @@ for entry in sorted(os.listdir(marbles_dir)):
     status = state.get("status", "")
     if status in ("completed", "converged", "stopped", "failed", "gc"):
         continue
+    if status in ("initialized", "promise", "confirmed", "running", "paused"):
+        watcher_pid = state.get("watcher_pid")
+        try:
+            watcher_pid = int(watcher_pid)
+        except Exception:
+            watcher_pid = None
+        if watcher_pid is not None:
+            try:
+                os.kill(watcher_pid, 0)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                continue
+            else:
+                continue
 
     # Check staleness: use updated_at or started_at or file mtime
     updated = state.get("updated_at") or state.get("started_at") or ""
     if updated:
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime as dt_datetime
             if updated.endswith("Z"):
                 updated = updated[:-1] + "+00:00"
-            ts = datetime.fromisoformat(updated).timestamp()
+            ts = dt_datetime.fromisoformat(updated).timestamp()
         except Exception:
             ts = os.path.getmtime(state_path)
     else:
@@ -433,6 +448,31 @@ for entry in sorted(os.listdir(marbles_dir)):
 
     if dry_run:
         print(f"  [dry-run] {run_id:<18s} {root:<18s} {agent:<8s} L{current}/{total}  {status}")
+    elif auto_archive:
+        session_dir = os.path.join(marbles_dir, entry)
+        day = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        target_parent = os.path.join(marbles_dir, "_archived", day)
+        target_dir = os.path.join(target_parent, run_id)
+        if os.path.exists(target_dir):
+            print(f"  \033[31m✗ archive exists\033[0m {run_id:<18s} {target_dir}")
+            continue
+        os.makedirs(target_parent, exist_ok=True)
+        shutil.move(session_dir, target_dir)
+        state["previous_status"] = status
+        state["status"] = "ghost"
+        state["gc_reason"] = f"stale ({stale_minutes}m threshold)"
+        state["archived_from"] = session_dir
+        state["archived_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        state["updated_at"] = state["archived_at"]
+        for key in ("plan", "god_plan", "ancestor_plan"):
+            value = state.get(key)
+            if isinstance(value, str) and value.startswith(session_dir + "/"):
+                state[key] = target_dir + value[len(session_dir):]
+        with open(os.path.join(target_dir, "state.json"), "w") as f:
+            json.dump(state, f, indent=2)
+            f.write("\n")
+        cleaned += 1
+        print(f"  \033[33m⚠ archived\033[0m {run_id:<18s} {root:<18s} {agent:<8s} L{current}/{total}")
     elif hard_delete:
         session_dir = os.path.join(marbles_dir, entry)
         shutil.rmtree(session_dir, ignore_errors=True)
@@ -450,7 +490,7 @@ for entry in sorted(os.listdir(marbles_dir)):
 if found == 0:
     print("  (no stale sessions found)")
 elif not dry_run:
-    mode = "deleted" if hard_delete else "marked gc"
+    mode = "archived" if auto_archive else ("deleted" if hard_delete else "marked gc")
     print(f"\n  {cleaned} session(s) {mode}")
 else:
     print(f"\n  {found} session(s) would be affected")

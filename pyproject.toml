@@ -1,2 +1,2 @@
 [tool.uv.workspace]
-members = ["vibecrafted-core"]
+members = ["vibecrafted-core", "vibecrafted-mcp"]

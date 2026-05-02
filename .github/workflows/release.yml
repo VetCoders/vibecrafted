@@ -21,6 +21,8 @@ jobs:
         run: make check
       - name: Install uv
         uses: astral-sh/setup-uv@v6
+      - name: Run Semgrep security gate
+        run: make semgrep
       - name: Run installer tests
         run: make test
       - name: Read version

@@ -22,7 +22,7 @@
       𐄂 screenscribe
       𐄂 rust
       𐄂 codex
-      𐄂 zellji
+      𐄂 zellij
       𐄂 mise
       𐄂 zoxide
 

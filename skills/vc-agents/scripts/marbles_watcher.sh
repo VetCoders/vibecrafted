@@ -749,6 +749,7 @@ timed_out=0
 timed_out_loop=0
 failed=0
 failed_loop=0
+terminal_status=""
 
 for ((loop_nr = 1; loop_nr <= total_count; loop_nr++)); do
   if ! _check_stop; then
@@ -993,6 +994,7 @@ PY
 fi
 
 if (( converged )); then
+  terminal_status="converged"
   _update_status "converged"
   loops_saved=$((total_count - loop_nr))
   printf '\n %b⚒  Converged · %s/%s loops · %s%b\n' "$_bold$_green" "$loop_nr" "$total_count" "$total_fmt" "$_reset"
@@ -1002,6 +1004,7 @@ if (( converged )); then
   printf '  ████████████████████████████████████████████████\n'
   (( loops_saved > 0 )) && printf '\n  loops saved: %s (converged early)\n' "$loops_saved"
 elif (( timed_out )); then
+  terminal_status="failed"
   _update_status "failed"
   completed_loops=$((timed_out_loop - 1))
   printf '\n %b⚒  Failed · timeout at L%s/%s · %s%b\n' "$_bold$_red" "$timed_out_loop" "$total_count" "$total_fmt" "$_reset"
@@ -1009,6 +1012,7 @@ elif (( timed_out )); then
   printf '  %s\n' "$(_render_chain "$completed_loops" "$total_count")"
   printf '  report pathing is meta.json-only; loop not consumed\n'
 elif (( failed )); then
+  terminal_status="failed"
   _update_status "failed"
   completed_loops=$((failed_loop - 1))
   printf '\n %b⚒  Failed · loop failure at L%s/%s · %s%b\n' "$_bold$_red" "$failed_loop" "$total_count" "$total_fmt" "$_reset"
@@ -1021,11 +1025,13 @@ elif (( failed )); then
     printf '  loop consumed truthfully; failure surfaced from launch metadata\n'
   fi
 elif (( stopped )); then
+  terminal_status="stopped"
   _update_status "stopped"
   printf '\n %b⚒  Stopped · %s%b\n' "$_bold$_yellow" "$total_fmt" "$_reset"
   printf '%b──────────────────────────────────%b\n' "$_steel" "$_reset"
   printf '  %s\n' "$(_render_chain "$((loop_nr-1))" "$total_count")"
 else
+  terminal_status="completed"
   _update_status "completed"
   printf '\n %b⚒  Complete · %s loops · %s%b\n' "$_bold$_copper" "$total_count" "$total_fmt" "$_reset"
   printf '%b──────────────────────────────────%b\n' "$_steel" "$_reset"
@@ -1077,3 +1083,10 @@ printf '\n  lock released: %s\n' "$run_id"
 printf '%b──────────────────────────────────%b\n\n' "$_steel" "$_reset"
 
 rm -f "$session_lock" 2>/dev/null || true
+
+if [[ -n "$terminal_status" ]]; then
+  archived_state_dir="$(spawn_archive_marbles_state_dir "$run_id" "$terminal_status" 2>/dev/null || true)"
+  if [[ -n "$archived_state_dir" ]]; then
+    printf '  state archived: %s\n' "$archived_state_dir"
+  fi
+fi

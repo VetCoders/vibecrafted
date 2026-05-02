@@ -174,7 +174,11 @@ bump-major:
 	@$(MAKE) version-bump VERSION=major
 
 semgrep:
-	@semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity .
+	@if command -v semgrep >/dev/null 2>&1; then \
+		semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity .; \
+	else \
+		uvx semgrep scan --config auto --error --quiet --exclude-rule html.security.audit.missing-integrity.missing-integrity .; \
+	fi
 
 test:
 	@if command -v uv >/dev/null 2>&1; then \

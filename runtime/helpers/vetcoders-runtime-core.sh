@@ -176,41 +176,52 @@ for name in sorted(os.listdir(reports_dir)):
 PY
 }
 
-_vetcoders_marbles_tail_delay() {
-  printf '%s\n' "${VIBECRAFTED_MARBLES_TAIL_DELAY:-5}"
+_vetcoders_marbles_probe_ttl() {
+  printf '%s\n' "${VIBECRAFTED_MARBLES_PROBE_TTL:-10}"
 }
 
-_vetcoders_tail_marbles_l1_transcript() {
+_vetcoders_marbles_emit_probe() {
   local root="$1"
   local marbles_run_id="$2"
-  local reports_dir loop_run_id meta_path transcript_path delay_s
+  local status="${3:-launched}"
+  local title body delay_s
 
-  reports_dir="$(_vetcoders_store_dir "$root")/marbles/reports"
-  loop_run_id="${marbles_run_id}-001"
-  delay_s="$(_vetcoders_marbles_tail_delay)"
+  (cd "$root" >/dev/null 2>&1 || true)
+  delay_s="$(_vetcoders_marbles_probe_ttl)"
+  case "$status" in
+    launched)
+      title="Marbles ${marbles_run_id}"
+      body="Run launched · tab: marbles-${marbles_run_id}"
+      ;;
+    done|completed|converged)
+      title="Marbles ${marbles_run_id} ✓"
+      body="Run completed · inspect: vc-marbles inspect ${marbles_run_id}"
+      ;;
+    failed)
+      title="Marbles ${marbles_run_id} ✗"
+      body="Run failed · check tab: marbles-${marbles_run_id}"
+      ;;
+    stopped)
+      title="Marbles ${marbles_run_id}"
+      body="Run stopped · inspect: vc-marbles inspect ${marbles_run_id}"
+      ;;
+    *)
+      title="Marbles ${marbles_run_id}"
+      body="Status: ${status}"
+      ;;
+  esac
 
-  # Only sleep if there is a reports dir to poll — skip the delay entirely
-  # on headless/test paths where the meta file will never appear.
-  [[ -d "$reports_dir" ]] || return 0
-  sleep "$delay_s"
-
-  meta_path="$(_vetcoders_find_meta_for_run_id "$reports_dir" "$loop_run_id" 2>/dev/null || true)"
-  [[ -n "$meta_path" && -f "$meta_path" ]] || return 0
-
-  transcript_path="$(
-    python3 - "$meta_path" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], "r", encoding="utf-8") as fh:
-    payload = json.load(fh)
-print(payload.get("transcript") or "", end="")
-PY
-  )"
-  [[ -n "$transcript_path" && -f "$transcript_path" ]] || return 0
-
-  printf '\n--- marbles L1 transcript tail (%s) ---\n' "$transcript_path"
-  tail -n 15 "$transcript_path" 2>/dev/null || true
+  # Detach: probe must NEVER block the operator shell.
+  (
+    if command -v osascript >/dev/null 2>&1; then
+      osascript -e "display notification \"${body//\"/\\\"}\" with title \"${title//\"/\\\"}\"" >/dev/null 2>&1 || true
+    elif command -v notify-send >/dev/null 2>&1; then
+      notify-send -t "$((delay_s * 1000))" "$title" "$body" >/dev/null 2>&1 || true
+    else
+      printf '\a[marbles %s] %s\n' "$marbles_run_id" "$body" >&2
+    fi
+  ) &
+  disown 2>/dev/null || true
 }
 
 _vetcoders_session_base_name() {
