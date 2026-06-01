@@ -68,6 +68,23 @@ assert_not_contains() {
   fi
 }
 
+print_installer_logs() {
+  local home="$1"
+  local log_dir="$home/.vibecrafted/logs/installer"
+  local log_file
+
+  if [[ ! -d "$log_dir" ]]; then
+    printf '[portable] no installer logs found under %s\n' "$log_dir" >&2
+    return 0
+  fi
+
+  while IFS= read -r log_file; do
+    [[ -f "$log_file" ]] || continue
+    printf '\n[portable] installer log: %s\n' "$log_file" >&2
+    sed -n '1,220p' "$log_file" >&2 || true
+  done < <(find "$log_dir" -type f -name '*.log' -print | sort)
+}
+
 log "syntax checks"
 bash -n \
   "$repo_root/install.sh" \
@@ -112,8 +129,11 @@ tar -czf "$bootstrap_archive" \
   --exclude='output' \
   --exclude='*.png' \
   -C "$repo_root" .
-HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_HOME="$bootstrap_home/.vibecrafted" \
-  bash "$repo_root/install.sh" --archive-file "$bootstrap_archive"
+if ! HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_HOME="$bootstrap_home/.vibecrafted" \
+  bash "$repo_root/install.sh" --archive-file "$bootstrap_archive"; then
+  print_installer_logs "$bootstrap_home"
+  die "root install.sh bootstrap failed"
+fi
 
 require_symlink "$bootstrap_home/.vibecrafted/tools/vibecrafted-current"
 require_file "$bootstrap_home/.vibecrafted/tools/vibecrafted-current/Makefile"
