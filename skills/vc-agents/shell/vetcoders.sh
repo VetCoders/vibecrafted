@@ -1666,7 +1666,7 @@ _vetcoders_print_launch_receipt() {
   local run_id="$3"
   local root="$4"
   local dispatch_rc="${5:-0}"
-  local crafted_home control_json status report transcript launcher
+  local crafted_home control_json receipt_status report transcript launcher
 
   [[ "${VIBECRAFTED_SUPPRESS_LAUNCH_RECEIPT:-0}" != "1" ]] || return 0
   [[ -n "$run_id" ]] || return 0
@@ -1674,8 +1674,8 @@ _vetcoders_print_launch_receipt() {
   crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
   control_json="$crafted_home/control_plane/runs/${run_id}.json"
 
-  status="$(_vetcoders_launch_receipt_field "$control_json" "state")"
-  [[ -n "$status" ]] || status="$(_vetcoders_launch_receipt_field "$control_json" "status")"
+  receipt_status="$(_vetcoders_launch_receipt_field "$control_json" "state")"
+  [[ -n "$receipt_status" ]] || receipt_status="$(_vetcoders_launch_receipt_field "$control_json" "status")"
   report="$(_vetcoders_launch_receipt_field "$control_json" "latest_report")"
   [[ -n "$report" ]] || report="$(_vetcoders_launch_receipt_field "$control_json" "report")"
   transcript="$(_vetcoders_launch_receipt_field "$control_json" "latest_transcript")"
@@ -1689,7 +1689,7 @@ _vetcoders_print_launch_receipt() {
   printf 'skill:      %s\n' "$skill"
   printf 'root:       %s\n' "$root"
   printf 'dispatch:   %s\n' "$dispatch_rc"
-  [[ -z "$status" ]] || printf 'status:     %s\n' "$status"
+  [[ -z "$receipt_status" ]] || printf 'status:     %s\n' "$receipt_status"
   printf 'control:    %s\n' "$control_json"
   [[ -z "$report" ]] || printf 'report:     %s\n' "$report"
   [[ -z "$transcript" ]] || printf 'transcript: %s\n' "$transcript"
