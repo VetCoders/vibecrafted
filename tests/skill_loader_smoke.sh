@@ -200,8 +200,11 @@ fi
 
 printf '\n%s\n' "$(dim '─── phase 3: foundation wrappers ───')"
 
-if [[ ! -d "$FOUNDATIONS_DIR" ]]; then
-  log_fail "foundations dir missing at $FOUNDATIONS_DIR"
+tracked_foundations="$(git -C "$REPO_ROOT" ls-files "$FOUNDATIONS_DIR" 2>/dev/null || true)"
+if [[ -z "$tracked_foundations" ]]; then
+  log_pass "foundation wrappers: repo no longer ships skills/foundations; installer/doctor owns foundation checks"
+elif [[ ! -d "$FOUNDATIONS_DIR" ]]; then
+  log_fail "tracked foundations dir missing at $FOUNDATIONS_DIR"
 else
   shopt -s nullglob
   foundation_count=0

@@ -15,3 +15,9 @@ flowchart TD
 | Entry               | Args                              | Produces                   | Exit             |
 | ------------------- | --------------------------------- | -------------------------- | ---------------- |
 | `vibecraftsmanship` | conceptual/product-quality prompt | doctrine-grounded guidance | routed next move |
+
+## Convergence Rule
+
+Choose the smallest honest path to shipping, then converge through inspection,
+counterexamples, and verification. Report the next truth instead of claiming
+premature completion.

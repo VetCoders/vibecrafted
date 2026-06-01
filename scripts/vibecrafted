@@ -241,7 +241,8 @@ _run_helper() {
   if [[ ! -t 0 || ! -t 1 ]]; then
     printf '  Non-interactive shells should use the standalone bin/vc-* wrappers.\n' >&2
     printf '  Add this repo bin directory to PATH or run scripts/install-foundations.sh:\n' >&2
-    printf "    export PATH=\"%s/bin:\$PATH\"\n" "$(_repo_source_root 2>/dev/null || _script_repo_root)" >&2
+    local path_literal="\$PATH"
+    printf '    export PATH="%s/bin:%s"\n' "$(_repo_source_root 2>/dev/null || _script_repo_root)" "$path_literal" >&2
   fi
   return 1
 }

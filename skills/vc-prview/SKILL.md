@@ -24,6 +24,9 @@ Before using prview artifacts as release or merge truth, run or consume the
 structural perception skill for that pass and must produce or refresh the
 Code-Derived Application Map.
 
+If fresh `vc-init` evidence is absent, perform the init pass first and treat
+review conclusions as blocked until repo truth exists.
+
 Use Loctree to identify load-bearing files and blast radius; use prview to
 audit the requested diff or artifact pack against that current structure.
 

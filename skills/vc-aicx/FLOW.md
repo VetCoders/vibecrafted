@@ -19,3 +19,9 @@ flowchart TD
 | `aicx search`  | query + project/date filters | ranked session chunks             | evidence list     |
 | `aicx intents` | project scope                | structured intent/outcome records | intent map        |
 | `aicx extract` | raw JSON/JSONL/task output   | readable markdown                 | recovered context |
+
+## Evidence Rule
+
+Recovered intent is classified against the live tree as current, stale,
+missing, or contradicted. AICX can explain why a path was taken; current
+Loctree evidence and repo gates decide whether it is still true.

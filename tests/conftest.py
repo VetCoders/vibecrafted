@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -6,3 +7,6 @@ repo_root_str = str(REPO_ROOT)
 
 if repo_root_str not in sys.path:
     sys.path.insert(0, repo_root_str)
+
+os.environ.setdefault("VIBECRAFTED_MARBLES_PROBE_NOTIFY", "0")
+os.environ.setdefault("VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ", "1")

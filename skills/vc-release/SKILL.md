@@ -125,6 +125,16 @@ Minimum classes: auth/authz bypasses, insecure secret handling, shell/command in
 
 If Semgrep unavailable, say so explicitly, run `uvx semgrep` (documented fallback), and record in the report that the gate was not satisfied. Silence is not acceptable.
 
+## Release Report Contract
+
+Every release report must include these mandatory sections and link back to
+`references/release-report-template.md`:
+
+- **Security gate** — `make semgrep` evidence, findings, and unresolved risk.
+- **Exposed surface inventory** — public routes, services, ports, domains, and admin/debug surfaces.
+- **Deployment mode decision** — selected topology, proxy/TLS posture, and rollback path.
+- **Post-release install smoke** — cold-path install/run verification from the published artifact.
+
 ## Domain, DNS, Verification
 
 If the product has any public surface, verify: domain registered and intended, DNS to correct target, canonical host (

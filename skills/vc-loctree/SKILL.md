@@ -21,6 +21,9 @@ description: >
 For repo-specific work, this skill is the structural half of the `vc-init`
 procedure. `Loctree:loctree` must produce or refresh the Code-Derived Application Map before implementation, review, release, pruning, or deletion.
 
+If fresh `vc-init` evidence is absent, perform the init pass first and treat
+workflow-specific repo work as blocked until repo truth exists.
+
 Use repo-view, focus, slice, impact, find, and follow as relevant. If the task
 is not repo-specific, say so explicitly instead of pretending a map exists.
 

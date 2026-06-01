@@ -14,7 +14,59 @@ spawn_require_file() {
 spawn_require_command() {
   local cmd="${1:-}"
   [[ -n "$cmd" ]] || spawn_die "Missing required command name."
+  spawn_prepend_agent_tool_paths
   command -v "$cmd" >/dev/null 2>&1 || spawn_die "Required command not found: $cmd"
+}
+
+spawn_prepend_agent_tool_paths() {
+  local home="${HOME:-}"
+  local crafted_home="${VIBECRAFTED_HOME:-}"
+  local entry found joined
+  local -a contract final
+
+  [[ -n "$crafted_home" ]] || crafted_home="${home:+$home/.vibecrafted}"
+
+  # Mirror Silver's runtime contract for detached agent launchers whose parent
+  # process may not have gone through zsh startup files. This is intentionally
+  # an allowlist: inherited PATH entries do not participate in agent command
+  # resolution.
+  contract=(
+    "${crafted_home:+$crafted_home/bin}"
+    "${home:+$home/.local/bin}"
+    "${home:+$home/.cargo/bin}"
+    "${home:+$home/tools/scripts}"
+    /opt/homebrew/bin
+    /opt/homebrew/sbin
+    /usr/local/bin
+    /usr/bin
+    /bin
+    /usr/sbin
+    /sbin
+  )
+
+  final=()
+  for dir in "${contract[@]}"; do
+    [[ -n "$dir" && -d "$dir" ]] || continue
+    found=0
+    if (( ${#final[@]} > 0 )); then
+      for entry in "${final[@]}"; do
+        [[ "$entry" == "$dir" ]] || continue
+        found=1
+        break
+      done
+    fi
+    (( found )) || final+=("$dir")
+  done
+
+  joined=""
+  for entry in "${final[@]}"; do
+    if [[ -z "$joined" ]]; then
+      joined="$entry"
+    else
+      joined="$joined:$entry"
+    fi
+  done
+  export PATH="$joined"
 }
 
 spawn_require_positive_int() {

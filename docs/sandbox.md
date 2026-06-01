@@ -52,6 +52,18 @@ vc-implement codex --file brief.md --sandbox --sandbox-policy /path/policy.yaml
 The Python adapter records policy values into events. Enforcement belongs to
 the microsandbox runtime because that is the isolation boundary.
 
+Current implementation status:
+
+- `memory_mb` and `cpu` are passed to `sandbox.start(...)`.
+- `network`, `allow_hosts`, `filesystem_root_readonly`, `tmp_writable`, and
+  `mounts` are parsed and recorded into the event stream, but the local Python
+  adapter does not directly enforce them yet.
+- Treat those values as operator intent unless the microsandbox runtime version
+  in use is verified to enforce them.
+
+The adapter must never silently fall back to host execution when `--sandbox`
+was requested.
+
 ## License Matrix
 
 | Component         | Role                               | License Boundary                  |

@@ -23,6 +23,9 @@ AICX memory into a recommendation. `Loctree:loctree` is the default structural
 perception skill for that pass; use it to produce or refresh the
 Code-Derived Application Map before trusting older intent.
 
+If fresh `vc-init` evidence is absent, perform the init pass first and treat
+repo-specific recommendations as blocked until repo truth exists.
+
 AICX explains why prior agents moved. Loctree and current repo gates decide
 whether that intent is still true.
 

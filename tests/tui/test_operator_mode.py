@@ -146,6 +146,7 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
     env.pop("ZELLIJ_CONFIG_DIR", None)
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
@@ -496,6 +497,7 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
@@ -518,12 +520,12 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
 
 def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> None:
     home = tmp_path / "home"
-    fake_bin = tmp_path / "bin"
+    fake_bin = home / ".local" / "bin"
     capture_file = tmp_path / "capture.log"
     session_state_file = tmp_path / "session-state.txt"
 
     home.mkdir()
-    fake_bin.mkdir()
+    fake_bin.mkdir(parents=True)
     _write_stateful_zellij(fake_bin, capture_file, session_state_file)
     _write_fake_osascript(fake_bin, capture_file, session_state_file)
     _write_capture_command(fake_bin, "codex", tmp_path / "unused-codex.txt")
@@ -636,6 +638,7 @@ def test_dashboard_alt_layout_reuses_live_repo_session_instead_of_layout_session
     env["CAPTURE_FILE"] = str(capture_file)
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)

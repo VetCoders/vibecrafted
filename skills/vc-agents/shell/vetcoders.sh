@@ -778,6 +778,9 @@ _vetcoders_require_dashboard_tty() {
   if [[ -t 0 && -t 1 ]]; then
     return 0
   fi
+  if [[ "${VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ:-0}" == "1" ]]; then
+    return 0
+  fi
   echo "vc-dashboard requires a real interactive TTY for Zellij." >&2
   echo "Use an actual terminal window, or run 'vc-dashboard ls' for non-interactive status." >&2
   return 1
@@ -865,7 +868,9 @@ _vetcoders_launch_dashboard() {
     echo "Dashboard zellij config not found for layout: $layout_file" >&2
     return 1
   }
-  export ZELLIJ_CONFIG_DIR="$dashboard_zellij_dir"
+  if [[ -z "${ZELLIJ_CONFIG_DIR:-}" ]]; then
+    export ZELLIJ_CONFIG_DIR="$dashboard_zellij_dir"
+  fi
 
   if [[ "${VIBECRAFTED_PREFER_REPO_ZELLIJ:-0}" == "1" ]]; then
     repo_source="$(_vetcoders_repo_root)"
@@ -944,6 +949,7 @@ _vetcoders_contract_reset() {
   _vetcoders_contract_depth=""
   _vetcoders_contract_runtime=""
   _vetcoders_contract_root=""
+  _vetcoders_contract_dry_run=""
   _vetcoders_contract_tail=""
   _vetcoders_contract_no_aicx=""
   _vetcoders_contract_no_context_corpus=""
@@ -1010,6 +1016,9 @@ _vetcoders_parse_contract() {
         shift
         [[ $# -gt 0 ]] || { echo "Missing value for --root" >&2; return 1; }
         _vetcoders_contract_root="$1"
+        ;;
+      --dry-run)
+        _vetcoders_contract_dry_run=1
         ;;
       --)
         shift
@@ -1694,7 +1703,7 @@ _vetcoders_print_launch_receipt() {
   local run_id="$3"
   local root="$4"
   local dispatch_rc="${5:-0}"
-  local crafted_home control_json status report transcript launcher
+  local crafted_home control_json launch_status report transcript launcher
 
   [[ "${VIBECRAFTED_SUPPRESS_LAUNCH_RECEIPT:-0}" != "1" ]] || return 0
   [[ -n "$run_id" ]] || return 0
@@ -1702,8 +1711,8 @@ _vetcoders_print_launch_receipt() {
   crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
   control_json="$crafted_home/control_plane/runs/${run_id}.json"
 
-  status="$(_vetcoders_launch_receipt_field "$control_json" "state")"
-  [[ -n "$status" ]] || status="$(_vetcoders_launch_receipt_field "$control_json" "status")"
+  launch_status="$(_vetcoders_launch_receipt_field "$control_json" "state")"
+  [[ -n "$launch_status" ]] || launch_status="$(_vetcoders_launch_receipt_field "$control_json" "status")"
   report="$(_vetcoders_launch_receipt_field "$control_json" "latest_report")"
   [[ -n "$report" ]] || report="$(_vetcoders_launch_receipt_field "$control_json" "report")"
   transcript="$(_vetcoders_launch_receipt_field "$control_json" "latest_transcript")"
@@ -1717,7 +1726,7 @@ _vetcoders_print_launch_receipt() {
   printf 'skill:      %s\n' "$skill"
   printf 'root:       %s\n' "$root"
   printf 'dispatch:   %s\n' "$dispatch_rc"
-  [[ -z "$status" ]] || printf 'status:     %s\n' "$status"
+  [[ -z "$launch_status" ]] || printf 'status:     %s\n' "$launch_status"
   printf 'control:    %s\n' "$control_json"
   [[ -z "$report" ]] || printf 'report:     %s\n' "$report"
   [[ -z "$transcript" ]] || printf 'transcript: %s\n' "$transcript"
@@ -2000,6 +2009,7 @@ _vetcoders_skill() {
   fi
   local spawn_args=(--runtime "$(_vetcoders_effective_runtime)")
   [[ -n "$_vetcoders_contract_root" ]] && spawn_args+=(--root "$_vetcoders_contract_root")
+  [[ -n "$_vetcoders_contract_dry_run" ]] && spawn_args+=(--dry-run)
   if [[ "$skill" == "polarize" && "$prism_band" =~ ^(pass|doctrine)$ ]]; then
     local dispatch_output dispatch_status agent_log session_uuid
     agent_log="$(_vetcoders_store_dir "$root")/polarize/$run_id/${tool}.stdout.log"

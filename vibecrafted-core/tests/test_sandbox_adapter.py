@@ -138,6 +138,22 @@ def test_lifecycle_rejects_non_http_health_url(tmp_path: Path) -> None:
     assert lifecycle.is_running() is False
 
 
+def test_lifecycle_reads_valid_msbserver_key(tmp_path: Path) -> None:
+    key_file = tmp_path / "msbserver.key"
+    key_file.write_text("msb_valid\n", encoding="utf-8")
+    lifecycle = MsbserverLifecycle(home=tmp_path / "sandbox")
+
+    assert lifecycle._read_server_key(key_file) == "msb_valid"
+
+
+def test_lifecycle_ignores_invalid_msbserver_key(tmp_path: Path) -> None:
+    key_file = tmp_path / "msbserver.key"
+    key_file.write_text("not-a-msb-key\n", encoding="utf-8")
+    lifecycle = MsbserverLifecycle(home=tmp_path / "sandbox")
+
+    assert lifecycle._read_server_key(key_file) == ""
+
+
 def test_adapter_executes_command_and_emits_spawn_updates(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

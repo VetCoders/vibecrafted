@@ -19,3 +19,8 @@ flowchart TD
 | `prview --pr <n>`                 | PR number    | artifact pack     | review evidence |
 | `prview --with-tests --with-lint` | branch scope | quality artifacts | merge gate      |
 | `vc-prview <agent>`               | prompt/file  | findings report   | bounded audit   |
+
+## Output Rule
+
+Produce findings first, ordered by severity and grounded in file-level evidence.
+Keep summaries secondary to actionable before-merge output.

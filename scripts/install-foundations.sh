@@ -17,7 +17,7 @@ set -euo pipefail
 #   bash scripts/install-foundations.sh --prefix /usr/local  # custom install prefix
 # ---------------------------------------------------------------------------
 
-LOCTREE_VERSION="${LOCTREE_VERSION:-0.8.17}"
+LOCTREE_VERSION="${LOCTREE_VERSION:-0.9.5}"
 LOCTREE_REPO="Loctree/Loctree"
 
 AICX_CRATE="aicx"
@@ -350,8 +350,14 @@ loctree_asset_patterns() {
   case "$os" in
     linux)
       case "$arch" in
-        x86_64)  printf '%s\n' '^loctree-linux-x86_64\.tar\.gz$' ;;
-        aarch64) printf '%s\n' '^loctree-linux-aarch64\.tar\.gz$' ;;
+        x86_64)
+          printf '%s\n' "^loctree-${LOCTREE_VERSION}-x86_64-unknown-linux-gnu\\.tar\\.gz$"
+          printf '%s\n' '^loctree-linux-x86_64\.tar\.gz$'
+          ;;
+        aarch64)
+          printf '%s\n' "^loctree-${LOCTREE_VERSION}-aarch64-unknown-linux-gnu\\.tar\\.gz$"
+          printf '%s\n' '^loctree-linux-aarch64\.tar\.gz$'
+          ;;
         *)       die "No loctree binary for linux/$arch" ;;
       esac
       ;;
@@ -359,6 +365,7 @@ loctree_asset_patterns() {
       case "$arch" in
         x86_64)  printf '%s\n' '^loctree-darwin-x86_64\.tar\.gz$' ;;
         aarch64)
+          printf '%s\n' "^loctree-${LOCTREE_VERSION}-aarch64-apple-darwin\\.tar\\.gz$"
           printf '%s\n' '^loctree-darwin-aarch64\.tar\.gz$'
           printf '%s\n' '^loctree-darwin-aarch64-notarized\.zip$'
           ;;
@@ -641,6 +648,7 @@ install_aicx() {
   if [[ -n "$target" ]] && has_cmd curl; then
     local patterns=(
       "^${asset_prefix}-v[0-9.]+-${target}\\.tar\\.gz$"
+      "^${asset_prefix}-v[0-9.]+-${target}-slim-unsigned\\.tar\\.gz$"
     )
 
     if (( CHECK_ONLY )); then

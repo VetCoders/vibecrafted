@@ -35,3 +35,8 @@ flowchart TD
 - Artifact root: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/`
 - Lock: `$VIBECRAFTED_HOME/locks/<org>/<repo>/<run_id>.lock`
 - Outputs: `reports/audit_report.md`, `reports/audit_requirements_matrix.jsonl`, and `reports/audit_trace.log`
+
+### Evidence Rule
+
+Falsify each claim against code, tests, docs, and runtime evidence. Findings
+come first, ordered by severity; summaries stay secondary.

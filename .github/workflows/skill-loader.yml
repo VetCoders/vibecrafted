@@ -15,6 +15,9 @@ on:
 jobs:
   skill-loader:
     name: skill-loader (${{ matrix.os }})
+    env:
+      # Foundation install may compile aicx from cargo; serial builds avoid runner OOM.
+      CARGO_BUILD_JOBS: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -30,7 +33,13 @@ jobs:
           # protobuf-compiler is required by `cargo install aicx` because the
           # transitive `lance-encoding` crate uses `prost-build`, which shells
           # out to `protoc` at build time.
-          sudo apt-get install -y shellcheck protobuf-compiler
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libclang-dev \
+            libprotobuf-dev \
+            protobuf-compiler \
+            shellcheck
 
       - name: Install shellcheck + protobuf on macOS
         if: runner.os == 'macOS'

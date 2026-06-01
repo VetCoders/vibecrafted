@@ -23,6 +23,9 @@ If the workflow being distilled depends on a repository, run or consume the
 default structural perception skill for that pass and must produce or refresh
 the Code-Derived Application Map.
 
+If fresh `vc-init` evidence is absent, perform the init pass first and treat
+repo-dependent skill writing as blocked until repo truth exists.
+
 If the workflow is not repo-specific, state the no-repo exception and distill
 the interaction evidence directly.
 

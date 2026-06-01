@@ -31,11 +31,12 @@ def test_marbles_emit_probe_detaches_and_keeps_foreground_quiet(tmp_path: Path) 
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     env["PROBE_CAPTURE"] = str(capture)
     env["VIBECRAFTED_MARBLES_PROBE_TTL"] = "10"
+    env["VIBECRAFTED_MARBLES_PROBE_NOTIFY"] = "1"
 
     proc = subprocess.run(
         [
             "bash",
-            "-lc",
+            "-c",
             f'''
             set -euo pipefail
             source "{RUNTIME_CORE}"

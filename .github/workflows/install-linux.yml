@@ -31,6 +31,9 @@ jobs:
   # ---------------------------------------------------------------------------
   ubuntu-native:
     name: install.sh (ubuntu-${{ matrix.runner-version }})
+    env:
+      # `cargo install aicx` is memory-heavy; keep CI runners from OOM-killing rustc.
+      CARGO_BUILD_JOBS: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -67,7 +70,15 @@ jobs:
           # out to `protoc` at build time. Without it the install fails with
           # "Could not find `protoc`". apt-get update already ran in the
           # lint step above for this job.
-          sudo apt-get install -y make python3 python3-venv protobuf-compiler
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libclang-dev \
+            libprotobuf-dev \
+            make \
+            protobuf-compiler \
+            python3 \
+            python3-venv
 
       - name: Run make install (non-interactive)
         run: make install
@@ -98,6 +109,9 @@ jobs:
   debian-bookworm-container:
     name: install.sh (debian-12 container)
     runs-on: ubuntu-latest
+    env:
+      # debian:bookworm-slim runs with limited memory inside the job container.
+      CARGO_BUILD_JOBS: "1"
     container:
       image: debian:bookworm-slim
     # bare debian:bookworm-slim ships dash as /bin/sh and no bash. The first
@@ -123,8 +137,12 @@ jobs:
           apt-get install -y --no-install-recommends \
             bash \
             ca-certificates \
+            build-essential \
+            cmake \
             curl \
             git \
+            libclang-dev \
+            libprotobuf-dev \
             make \
             protobuf-compiler \
             python3 \

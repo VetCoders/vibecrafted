@@ -96,3 +96,5 @@ def test_install_shell_shim_prefers_current_control_plane_before_home_store(
     home_path = '"$crafted_home/skills/vc-agents/shell/vetcoders.sh"'
 
     assert shim.index(tools_path) < shim.index(home_path)
+    assert "/Users/silver/Git/VibeCrafted" not in shim
+    assert "DEV MODE OPT-IN: live repo override via VIBECRAFTED_ROOT" in shim

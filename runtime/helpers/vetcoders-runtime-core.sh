@@ -201,6 +201,8 @@ _vetcoders_marbles_emit_probe() {
   local status="${3:-launched}"
   local title body delay_s
 
+  [[ "${VIBECRAFTED_MARBLES_PROBE_NOTIFY:-1}" == "1" ]] || return 0
+
   (cd "$root" >/dev/null 2>&1 || true)
   delay_s="$(_vetcoders_marbles_probe_ttl)"
   case "$status" in

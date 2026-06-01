@@ -82,6 +82,7 @@ if [[ -n "$pre_hook" ]]; then
   cat >> "$launcher" <<'EOF_LAUNCH'
 spawn_export_frontier_sidecars
 export PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}"
+spawn_prepend_agent_tool_paths
 if [[ "${SPAWN_SKILL_NAME:-}" == "research" || "${SPAWN_SKILL_CODE:-}" == "rsch" || "${VIBECRAFTED_RESEARCH_MODE:-0}" == "1" ]]; then
   export VIBECRAFTED_RESEARCH_MODE=1
   export VIBECRAFTED_NO_GIT_WRITES=1
@@ -140,9 +141,6 @@ if [[ "${VIBECRAFTED_INLINE_STARTUP_WATCH:-1}" != "0" ]]; then
   startup_watch_pid=$!
 fi
 if bash -c "$SPAWN_CMD"; then
-EOF_LAUNCH
-
-  cat >> "$launcher" <<'EOF_LAUNCH'
   spawn_finish_meta "$meta" "completed" "0"
 EOF_LAUNCH
 

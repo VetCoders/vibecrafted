@@ -105,32 +105,33 @@ if [[ "$mode" == "research" || "${VIBECRAFTED_SKILL_NAME:-}" == "research" || "$
 else
   last_message_fallback="if [[ \$pipeline_status -eq 0 && ! -s $qreport && -s $qlast_message ]]; then cp $qlast_message $qreport || pipeline_status=\$?; fi;"
 fi
-# Keep fallback report creation in launcher hooks, not inside the child `bash -c`
-# shell, because sourced spawn helpers are not inherited there as functions.
-launch_cmd="set -o pipefail && cd $qroot && { rm -f $qlast_message; codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qlast_message - < $qruntime 2>&1 | python3 $qbridge --transcript $qtranscript ${bridge_flags}; pipeline_status=\$?; $last_message_fallback $missing_report_guard echo; { grep -oE '\\[[0-9]{2}:[0-9]{2}:[0-9]{2}\\] session: [[:alnum:]-]+' $qtranscript 2>/dev/null | tail -1 | awk '{print \$3}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
+failure_report_fallback="if [[ \$pipeline_status -ne 0 && ! -s $qreport ]]; then { printf '%s\n' '---'; printf 'run_id: %s\n' \"\${SPAWN_RUN_ID:-unknown}\"; printf 'prompt_id: %s\n' \"\${SPAWN_PROMPT_ID:-unknown}\"; printf 'agent: %s\n' \"\${SPAWN_AGENT:-codex}\"; printf 'status: failed\n'; printf '%s\n\n' '---'; printf '%s\n' 'Codex failed before writing a standalone report file.'; printf '%s\n' 'See transcript for the full event stream:'; printf '%s\n' $qtranscript; printf '%s\n' 'Last message, if present:'; printf '%s\n' $qlast_message; } > $qreport; fi;"
+# Failure fallback is emitted inside the child shell before it exits so meta
+# finalization cannot race ahead of the minimal failure report.
+launch_cmd="set -o pipefail && cd $qroot && { rm -f $qlast_message; codex exec -C $qroot --json --dangerously-bypass-approvals-and-sandbox --output-last-message $qlast_message - < $qruntime 2>&1 | python3 $qbridge --transcript $qtranscript ${bridge_flags}; pipeline_status=\$?; $last_message_fallback $missing_report_guard $failure_report_fallback echo; { grep -oE '\\[[0-9]{2}:[0-9]{2}:[0-9]{2}\\] session: [[:alnum:]-]+' $qtranscript 2>/dev/null | tail -1 | awk '{print \$3}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
 
 # shellcheck disable=SC2016
 codex_success_hook='
   if [[ ! -s "$report" ]] || ! awk "BEGIN { body=0; in_front=0 } NR==1 && \$0==\"---\" { in_front=1; next } in_front && \$0==\"---\" { in_front=0; next } in_front { next } NF { body=1 } END { exit body ? 0 : 1 }" "$report"; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "unknown" "completed"
-    cat >> "$report" <<TXT
-Codex completed without writing a standalone report file.
-See transcript for the full event stream:
-$transcript
-TXT
+    {
+      printf "Codex completed without writing a standalone report file.\n"
+      printf "See transcript for the full event stream:\n"
+      printf "%s\n" "$transcript"
+    } >> "$report"
   fi'
 
 # shellcheck disable=SC2016
 codex_failure_hook='
   if [[ ! -s "$report" ]] || ! awk "BEGIN { body=0; in_front=0 } NR==1 && \$0==\"---\" { in_front=1; next } in_front && \$0==\"---\" { in_front=0; next } in_front { next } NF { body=1 } END { exit body ? 0 : 1 }" "$report"; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "unknown" "failed"
-    cat >> "$report" <<TXT
-Codex failed before writing a standalone report file.
-See transcript for the full event stream:
-$transcript
-Last message, if present:
-${transcript%.log}.last-message.md
-TXT
+    {
+      printf "Codex failed before writing a standalone report file.\n"
+      printf "See transcript for the full event stream:\n"
+      printf "%s\n" "$transcript"
+      printf "Last message, if present:\n"
+      printf "%s\n" "${transcript%.log}.last-message.md"
+    } >> "$report"
   fi'
 
 combined_success="${codex_success_hook}${success_hook_extra:+
@@ -150,11 +151,15 @@ spawn_generate_launcher "$SPAWN_LAUNCHER" \
 
 
 chmod +x "$SPAWN_LAUNCHER"
-spawn_print_launch codex "$mode" "$runtime"
+spawn_print_launch codex "$mode" "$runtime" "$dry_run"
 spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run" "codex-${VIBECRAFTED_SKILL_NAME:-$mode}"
 if [[ "${VIBECRAFTED_SUPPRESS_REPORT_HINT:-0}" != "1" ]]; then
-  printf 'Agent launched.\n'
-  bash "$SCRIPT_DIR/await.sh" codex --describe "$SPAWN_LAUNCHER" 2>/dev/null || true
-  printf '\nAwait:\n\n'
-  printf 'vibecrafted codex await --run-id %s\n' "$SPAWN_RUN_ID"
+  if (( dry_run )); then
+    printf 'Dry run: agent not launched.\n'
+  else
+    printf 'Agent launched.\n'
+    bash "$SCRIPT_DIR/await.sh" codex --describe "$SPAWN_LAUNCHER" 2>/dev/null || true
+    printf '\nAwait:\n\n'
+    printf 'vibecrafted codex await --run-id %s\n' "$SPAWN_RUN_ID"
+  fi
 fi

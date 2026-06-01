@@ -27,6 +27,9 @@ editing, planning, or release judgement. `Loctree:loctree` is the default
 structural perception skill for that pass and must produce or refresh the
 Code-Derived Application Map.
 
+If fresh `vc-init` evidence is absent, perform the init pass first and treat
+ScreenScribe repo work as blocked until repo truth exists.
+
 For pure video-analysis runs, state the no-repo exception and use the installed
 ScreenScribe CLI directly.
 

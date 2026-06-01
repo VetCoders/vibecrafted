@@ -154,9 +154,9 @@ schedule, explicit stop condition).
 
 **Detection signal (STOP and enter loop):** if you catch yourself ending
 a turn with "operator's next move" or "waiting for response" while there
-is already-authorized work that can continue under the active operator loop,
-that is missed `/loop` entry. Re-think: schedule a self-paced check, declare
-what you'll do on each tick, stop when the stop condition is met.
+is already-authorized queued work that fits the current scope and stop
+conditions, that is missed `/loop` entry. Re-think: schedule a self-paced
+check, declare what you'll do on each tick, stop when the stop condition is met.
 
 ## Dependencies
 

@@ -20,3 +20,9 @@ flowchart TD
 | Entry           | Args                       | Produces               | Exit                  |
 | --------------- | -------------------------- | ---------------------- | --------------------- |
 | `vc-skillaunch` | completed workflow context | reusable skill package | installed skill draft |
+
+## Validation Rule
+
+The resulting skill must be invokable and followable without hidden context
+from the original conversation. If a future agent needs an unspoken assumption,
+the skill is not done.

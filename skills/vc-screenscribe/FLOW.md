@@ -20,3 +20,9 @@ flowchart TD
 | `screenscribe review`     | video paths       | transcript, findings, report artifacts | review output |
 | `screenscribe preprocess` | video path        | transcript-first bundle                | artifact pack |
 | `vc-screenscribe`         | repo/debug prompt | repo-aware guidance                    | report        |
+
+## Verification Rule
+
+Observed video evidence must become actionable engineering findings. Fixes are
+verified through the relevant ScreenScribe runtime or report gate, not only by
+editing docs.

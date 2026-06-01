@@ -134,12 +134,16 @@ spawn_generate_launcher "$SPAWN_LAUNCHER" \
   "$combined_failure"
 
 chmod +x "$SPAWN_LAUNCHER"
-spawn_print_launch gemini "$mode" "$runtime"
+spawn_print_launch gemini "$mode" "$runtime" "$dry_run"
 [[ -n "$model" ]] && printf '  model:  %s\n' "$model" || printf '  model:  (CLI default)\n'
 spawn_launch "$SPAWN_LAUNCHER" "$runtime" "$dry_run" "gemini-${VIBECRAFTED_SKILL_NAME:-$mode}"
 if [[ "${VIBECRAFTED_SUPPRESS_REPORT_HINT:-0}" != "1" ]]; then
-  printf 'Agent launched.\n'
-  bash "$SCRIPT_DIR/await.sh" gemini --describe "$SPAWN_LAUNCHER" 2>/dev/null || true
-  printf '\nAwait:\n\n'
-  printf 'vibecrafted gemini await --run-id %s\n' "$SPAWN_RUN_ID"
+  if (( dry_run )); then
+    printf 'Dry run: agent not launched.\n'
+  else
+    printf 'Agent launched.\n'
+    bash "$SCRIPT_DIR/await.sh" gemini --describe "$SPAWN_LAUNCHER" 2>/dev/null || true
+    printf '\nAwait:\n\n'
+    printf 'vibecrafted gemini await --run-id %s\n' "$SPAWN_RUN_ID"
+  fi
 fi

@@ -244,7 +244,9 @@ demo-full:
 	@bash scripts/vc-dashboard --html
 
 init-hooks:
-	@if git rev-parse --git-dir >/dev/null 2>&1; then \
+	@if [ "$$CI" = "true" ]; then \
+		echo "CI detected - skipping git hook bootstrap."; \
+	elif git rev-parse --git-dir >/dev/null 2>&1; then \
 		git config core.hooksPath scripts/hooks >/dev/null; \
 		chmod +x scripts/hooks/pre-commit scripts/hooks/pre-push; \
 		command -v uv >/dev/null 2>&1 || { echo "bootstrapping uv..."; curl -LsSf https://astral.sh/uv/install.sh | sh; }; \

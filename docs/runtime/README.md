@@ -58,9 +58,10 @@ delegated work.
 
 ## Documents in this directory
 
-| Document                     | What it covers                                                                                                                                   |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [CONTRACT.md](./CONTRACT.md) | Session ownership, zellij layout, plan templates, living tree rule, spawn commands, output conventions, observation, quality gates, safety rules |
+| Document                                         | What it covers                                                                                                                                   |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [CONTRACT.md](./CONTRACT.md)                     | Session ownership, zellij layout, plan templates, living tree rule, spawn commands, output conventions, observation, quality gates, safety rules |
+| [EXECUTION_SURFACES.md](./EXECUTION_SURFACES.md) | Canonical command surfaces, agent PATH expectations, shell helper boundaries, and sandbox execution notes                                        |
 
 ---
 

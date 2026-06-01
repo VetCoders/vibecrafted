@@ -65,6 +65,159 @@ def _legacy_expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
+def test_spawn_require_command_adds_curated_agent_tool_paths(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    local_bin = home / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    fake_claude = local_bin / "claude"
+    fake_claude.write_text(
+        "#!/usr/bin/env bash\nprintf 'claude-ok\\n'\n", encoding="utf-8"
+    )
+    fake_claude.chmod(0o755)
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export HOME="{home}"
+        export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+        source "{COMMON_SH}"
+        spawn_require_command claude
+        command -v claude
+        '''
+    )
+
+    assert result.stdout.strip() == str(fake_claude)
+
+
+def test_spawn_tool_paths_follow_silver_runtime_contract(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    rogue_bin = tmp_path / "rogue" / "bin"
+    for rel in (
+        "tools/scripts",
+        ".local/bin",
+        ".cargo/bin",
+        ".vibecrafted/bin",
+        ".claude/plugins/cache/example/tool/bin",
+        "bin",
+        "tools",
+        "Git/tools",
+    ):
+        (home / rel).mkdir(parents=True, exist_ok=True)
+    rogue_bin.mkdir(parents=True)
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export HOME="{home}"
+        export PATH="{rogue_bin}:{home / ".vibecrafted" / "bin"}:{home / ".cargo" / "bin"}:{home / ".claude" / "plugins" / "cache" / "example" / "tool" / "bin"}:{home / "tools"}:{home / "bin"}:{home / ".local" / "bin"}:/usr/bin:/bin:/usr/bin"
+        source "{COMMON_SH}"
+        spawn_prepend_agent_tool_paths
+        printf '%s\n' "$PATH" | tr ':' '\n'
+        '''
+    )
+
+    expected_prefix = [
+        str(home / ".vibecrafted" / "bin"),
+        str(home / ".local" / "bin"),
+        str(home / ".cargo" / "bin"),
+        str(home / "tools" / "scripts"),
+    ]
+    if Path("/opt/homebrew/bin").is_dir():
+        expected_prefix.append("/opt/homebrew/bin")
+    if Path("/opt/homebrew/sbin").is_dir():
+        expected_prefix.append("/opt/homebrew/sbin")
+    expected_prefix.extend(
+        [
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+    )
+
+    entries = result.stdout.splitlines()
+    assert entries[: len(expected_prefix)] == expected_prefix
+    assert len(entries) == len(set(entries))
+    assert str(rogue_bin) not in entries
+    assert (
+        str(home / ".claude" / "plugins" / "cache" / "example" / "tool" / "bin")
+        not in entries
+    )
+    assert str(home / "bin") not in entries
+    assert str(home / "tools") not in entries
+    assert str(home / "Git" / "tools") not in entries
+
+
+def test_spawn_require_command_rejects_non_contract_path_entries(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    rogue_bin = tmp_path / "rogue" / "bin"
+    rogue_bin.mkdir(parents=True)
+    fake_claude = rogue_bin / "claude"
+    fake_claude.write_text(
+        "#!/usr/bin/env bash\nprintf 'rogue-claude\\n'\n", encoding="utf-8"
+    )
+    fake_claude.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            _ENV_SANITIZE
+            + f'''
+            set -euo pipefail
+            export HOME="{home}"
+            export PATH="{rogue_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+            source "{COMMON_SH}"
+            spawn_require_command claude
+            ''',
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "Required command not found: claude" in result.stderr
+
+
+def test_skill_dry_run_reaches_spawn_launcher_without_launching(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    plan = tmp_path / "brief.md"
+    plan.write_text("# Brief\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{SHELL_SH}"; '
+                f'vc-followup claude --runtime detached --dry-run --file "{plan}"'
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Dry run mode: launcher generated only:" in result.stdout
+    assert "Dry run: agent not launched." in result.stdout
+    assert "Spawned headless launcher" not in result.stdout
+    assert "Agent launched." not in result.stdout
+
+
 def test_operator_session_groups_spawns_from_same_directory() -> None:
     base = _expected_operator_session()
     legacy_a = _legacy_expected_operator_session("agnt-111111-111")
@@ -211,6 +364,33 @@ def test_generated_launcher_preserves_marbles_watcher_mode(tmp_path: Path) -> No
         "export VIBECRAFTED_MARBLES_WATCHER=${VIBECRAFTED_MARBLES_WATCHER:-1}"
         in result.stdout
     )
+
+
+def test_generated_launcher_preloads_curated_agent_tool_paths(tmp_path: Path) -> None:
+    launcher = tmp_path / "launch.sh"
+    meta = tmp_path / "run.meta.json"
+    report = tmp_path / "report.md"
+    transcript = tmp_path / "transcript.log"
+
+    _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        export SPAWN_ROOT="{REPO_ROOT}"
+        export SPAWN_AGENT=claude
+        export SPAWN_PROMPT_ID=prompt
+        export SPAWN_RUN_ID=fwup-test-001
+        export SPAWN_RUN_LOCK="{tmp_path / "fwup-test.lock"}"
+        export SPAWN_LOOP_NR=0
+        export SPAWN_SKILL_CODE=fwup
+        export SPAWN_SKILL_NAME=followup
+        spawn_generate_launcher "{launcher}" "{meta}" "{report}" "{transcript}" "{COMMON_SH}" "true"
+        '''
+    )
+
+    body = launcher.read_text(encoding="utf-8")
+    assert 'export PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}"' in body
+    assert "spawn_prepend_agent_tool_paths" in body
 
 
 def test_runtime_prompt_includes_vc_agents_worker_charter(tmp_path: Path) -> None:
@@ -697,11 +877,11 @@ def test_codex_spawn_marks_meta_failed_when_codex_emits_non_json_auth_error(
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
-    fake_bin = tmp_path / "bin"
+    fake_bin = home / ".local" / "bin"
     plan = tmp_path / "plan.md"
 
     home.mkdir()
-    fake_bin.mkdir()
+    fake_bin.mkdir(parents=True)
     plan.write_text("# Plan\n", encoding="utf-8")
 
     fake_codex = fake_bin / "codex"
@@ -790,11 +970,11 @@ def test_codex_spawn_preserves_standalone_report_when_last_message_is_handoff(
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
-    fake_bin = tmp_path / "bin"
+    fake_bin = home / ".local" / "bin"
     plan = tmp_path / "research-plan.md"
 
     home.mkdir()
-    fake_bin.mkdir()
+    fake_bin.mkdir(parents=True)
     plan.write_text("# Research Plan\n", encoding="utf-8")
 
     fake_codex = fake_bin / "codex"
@@ -896,11 +1076,11 @@ def test_codex_research_does_not_copy_pointer_last_message_as_report(
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
-    fake_bin = tmp_path / "bin"
+    fake_bin = home / ".local" / "bin"
     plan = tmp_path / "research-plan.md"
 
     home.mkdir()
-    fake_bin.mkdir()
+    fake_bin.mkdir(parents=True)
     plan.write_text("# Research Plan\n", encoding="utf-8")
 
     fake_codex = fake_bin / "codex"
@@ -996,11 +1176,11 @@ def test_claude_spawn_marks_meta_failed_when_stream_has_no_json(
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
-    fake_bin = tmp_path / "bin"
+    fake_bin = home / ".local" / "bin"
     plan = tmp_path / "plan.md"
 
     home.mkdir()
-    fake_bin.mkdir()
+    fake_bin.mkdir(parents=True)
     plan.write_text("# Plan\n", encoding="utf-8")
 
     fake_claude = fake_bin / "claude"

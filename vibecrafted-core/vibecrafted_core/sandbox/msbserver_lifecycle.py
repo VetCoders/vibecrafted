@@ -144,7 +144,7 @@ class MsbserverLifecycle:
         if not candidate.is_file():
             return ""
         value = candidate.read_text(encoding="utf-8").strip()
-        return "" if value.startswith("msb_") else value
+        return value if value.startswith("msb_") else ""
 
 
 def _pid_alive(pid: int) -> bool:
