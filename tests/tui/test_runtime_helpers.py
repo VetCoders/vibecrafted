@@ -137,6 +137,68 @@ def test_vetcoders_keeps_launcher_entrypoints_available() -> None:
     assert "command not found" not in result.stderr
 
 
+def test_vetcoders_helper_source_does_not_prepend_bundled_bin_to_path(
+    tmp_path: Path,
+) -> None:
+    preferred_bin = tmp_path / "preferred" / "bin"
+    preferred_bin.mkdir(parents=True)
+    preferred_vibecrafted = preferred_bin / "vibecrafted"
+    preferred_vibecrafted.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    preferred_vibecrafted.chmod(0o755)
+
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    bundled_bin = staged_home / "bin"
+    bundled_bin.mkdir(parents=True)
+    bundled_vibecrafted = bundled_bin / "vibecrafted"
+    bundled_vibecrafted.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    bundled_vibecrafted.chmod(0o755)
+
+    initial_path = f"{preferred_bin}{os.pathsep}{os.defpath}"
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        'printf "%s\\n" "$PATH"; command -v vibecrafted',
+        {
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+        },
+    )
+
+    assert result.returncode == 0
+    path_after_source, resolved_vibecrafted = result.stdout.strip().splitlines()
+    assert path_after_source == initial_path
+    assert resolved_vibecrafted == str(preferred_vibecrafted)
+
+
+def test_vetcoders_require_zellij_uses_bundled_priority_without_path_leak(
+    tmp_path: Path,
+) -> None:
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    bundled_bin = staged_home / "bin"
+    bundled_bin.mkdir(parents=True)
+    bundled_zellij = bundled_bin / "zellij"
+    bundled_zellij.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    bundled_zellij.chmod(0o755)
+
+    initial_path = os.defpath
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        (
+            "_vetcoders_require_zellij; "
+            'printf "PATH=%s\\n" "$PATH"; '
+            "command -v zellij || true"
+        ),
+        {
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == f"PATH={initial_path}\n"
+
+
 def test_compact_session_name_is_zsh_compatible() -> None:
     if shutil.which("zsh") is None:
         return

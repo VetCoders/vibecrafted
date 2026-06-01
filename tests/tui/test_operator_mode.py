@@ -286,8 +286,10 @@ def test_vc_init_missing_zellij_message_has_fresh_install_path_hint(
 
     assert result.returncode != 0
     assert "zellij is required for the Vibecrafted operator runtime." in result.stderr
-    assert f'export PATH="{crafted_home}/bin:$PATH"' in result.stderr
-    assert f"Expected bundled binary: {crafted_home}/bin/zellij" in result.stderr
+    assert (
+        f"Expected zellij on PATH or bundled at: {crafted_home}/bin/zellij"
+        in result.stderr
+    )
 
 
 def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right(
