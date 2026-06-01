@@ -63,6 +63,7 @@ VIBECRAFTED_HOME="$(default_vibecrafted_home)"
 PREFIX="${VIBECRAFTED_BIN:-$VIBECRAFTED_HOME/bin}"
 CHECK_ONLY=0
 INSTALL_ALL=0
+AGENTS_REQUIRED=0
 TARGETS=()
 
 # ---------------------------------------------------------------------------
@@ -695,7 +696,10 @@ install_aicx() {
     return 1
   fi
 
-  install_from_cargo "$AICX_CRATE" "aicx-mcp"
+  if ensure_rustup; then
+    install_from_cargo "$AICX_CRATE" "aicx-mcp" && return 0
+  fi
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -843,8 +847,10 @@ install_agents() {
 
   if (( installed == total )); then
     ok "All agent CLIs installed ($installed/$total)"
+    return 0
   else
     warn "Agent CLIs: $installed/$total installed"
+    return 1
   fi
 }
 
@@ -1012,7 +1018,7 @@ while [[ $# -gt 0 ]]; do
     loctree)     TARGETS+=("loctree") ;;
     aicx)        TARGETS+=("aicx") ;;
     zellij)      TARGETS+=("zellij") ;;
-    agents)      TARGETS+=("agents") ;;
+    agents)      TARGETS+=("agents"); AGENTS_REQUIRED=1 ;;
     prview)      TARGETS+=("prview") ;;
     sandbox)     TARGETS+=("sandbox") ;;
     iterm2-plugin) TARGETS+=("iterm2-plugin") ;;
@@ -1045,7 +1051,15 @@ for target in "${TARGETS[@]}"; do
     loctree) install_loctree || exit_code=1 ;;
     aicx)    install_aicx    || exit_code=1 ;;
     zellij)  install_zellij  || exit_code=1 ;;
-    agents)  install_agents  || exit_code=1 ;;
+    agents)
+      if ! install_agents; then
+        if (( AGENTS_REQUIRED )); then
+          exit_code=1
+        else
+          warn "Agent CLI bootstrap incomplete; continuing because agents are optional during foundation install."
+        fi
+      fi
+      ;;
     prview)  install_prview  || exit_code=1 ;;
     sandbox) install_sandbox || exit_code=1 ;;
     iterm2-plugin) install_iterm2_plugin || exit_code=1 ;;
