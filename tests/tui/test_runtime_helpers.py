@@ -51,6 +51,22 @@ def _write_fake_loct(fake_bin: Path, score: int, args_file: Path | None = None) 
     fake_loct.chmod(0o755)
 
 
+def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    script = bin_dir / name
+    script.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+            printf "%s\\n" "$@" >> "$CAPTURE_FILE"
+            """
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
 def _install_runtime_probe_helper(helper_root: Path, marker: str) -> None:
     helper_target = helper_root / "runtime" / "helpers" / "vetcoders-runtime-core.sh"
     helper_target.parent.mkdir(parents=True, exist_ok=True)
@@ -196,6 +212,80 @@ def test_vetcoders_require_zellij_uses_bundled_priority_without_path_leak(
     )
 
     assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout == f"PATH={initial_path}\n"
+
+
+def test_dashboard_uses_bundled_zellij_priority_without_path_leak(
+    tmp_path: Path,
+) -> None:
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    capture_file = tmp_path / "zellij-args.txt"
+    _write_capture_command(staged_home / "bin", "zellij", capture_file)
+
+    initial_path = os.defpath
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        '_vetcoders_launch_dashboard ls && printf "PATH=%s\\n" "$PATH"',
+        {
+            "CAPTURE_FILE": str(capture_file),
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert capture_file.read_text(encoding="utf-8").splitlines() == ["list-sessions"]
+    assert result.stdout == f"PATH={initial_path}\n"
+
+
+def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
+    tmp_path: Path,
+) -> None:
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    capture_file = tmp_path / "zellij-args.txt"
+    helper_root = tmp_path / "frontier"
+    helper = (
+        helper_root
+        / "config"
+        / "skills"
+        / "vc-agents"
+        / "scripts"
+        / "vibecrafted-await-watch.sh"
+    )
+    helper.parent.mkdir(parents=True)
+    helper.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    helper.chmod(0o755)
+    (helper_root / "config" / "starship.toml").write_text("", encoding="utf-8")
+
+    _write_capture_command(staged_home / "bin", "zellij", capture_file)
+    _write_capture_command(staged_home / "bin", "jq", tmp_path / "jq-args.txt")
+
+    initial_path = os.defpath
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        (
+            '_vetcoders_maybe_spawn_await_pane codex review run-424242 "$PWD"; '
+            "sleep 1.2; "
+            'printf "PATH=%s\\n" "$PATH"'
+        ),
+        {
+            "CAPTURE_FILE": str(capture_file),
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_ROOT": str(helper_root),
+            "ZELLIJ": "operator",
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert capture_file.exists()
+    payload = capture_file.read_text(encoding="utf-8")
+    assert "action\nnew-pane" in payload
+    assert "--name\nawait:codex:424242" in payload
     assert result.stdout == f"PATH={initial_path}\n"
 
 

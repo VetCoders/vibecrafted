@@ -764,6 +764,9 @@ _vetcoders_dashboard_session_name() {
 }
 
 _vetcoders_launch_dashboard() {
+  local PATH="${PATH:-}"
+  PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
+  export PATH
   local first_arg="${1:-}"
 
   # Thin shim subcommands — delegate directly to native Zellij.
@@ -2009,6 +2012,9 @@ _vetcoders_skill() {
 # prompt_id-based, not run_id-based, so content grep is the only reliable
 # resolver.
 _vetcoders_maybe_spawn_await_pane() {
+  local PATH="${PATH:-}"
+  PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
+  export PATH
   local tool="$1" skill="$2" run_id="$3" root="$4"
   command -v zellij >/dev/null 2>&1 || return 0
   _vetcoders_in_zellij || return 0
@@ -2416,6 +2422,9 @@ junie-hydrate() { _vetcoders_skill junie hydrate "$@"; }
 grok-hydrate() { _vetcoders_skill grok hydrate "$@"; }
 
 _vetcoders_marbles() {
+  local PATH="${PATH:-}"
+  PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
+  export PATH
   local tool="$1"
   shift
   local script marbles_cmd quoted_args quoted_env operator_session root_dir marbles_run_id runtime launch_ts launch_report

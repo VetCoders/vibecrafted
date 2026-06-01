@@ -330,6 +330,56 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     assert any("vibecrafted-marbles." in line for line in payload)
 
 
+def test_marbles_inside_zellij_uses_bundled_zellij_priority(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    bundled_bin = crafted_home / "bin"
+    capture_file = tmp_path / "zellij-args.txt"
+
+    home.mkdir()
+    bundled_bin.mkdir(parents=True)
+    _write_capture_command(bundled_bin, "zellij", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["PATH"] = os.defpath
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["ZELLIJ"] = "operator"
+    env["VIBECRAFTED_RUN_ID"] = "marb-014520"
+    env["VIBECRAFTED_MARBLES_RUN_ID"] = "marb-014520"
+    env["ZELLIJ_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+
+    result = subprocess.run(
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                'codex-marbles --prompt "Check runtime" --count 2 && '
+                'printf "PATH=%s\\n" "$PATH"'
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    payload = capture_file.read_text(encoding="utf-8")
+    assert "new-tab" not in payload
+    assert "new-pane" in payload
+    assert result.stdout.endswith(f"PATH={os.defpath}\n")
+
+
 def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     tmp_path: Path,
 ) -> None:
