@@ -146,7 +146,7 @@ def test_make_version_bump_updates_configured_version_file(tmp_path: Path) -> No
     assert version_file.read_text(encoding="utf-8") == "1.5.0\n"
 
 
-def test_foundations_product_binaries_require_explicit_owner_opt_in() -> None:
+def test_foundations_product_binaries_are_validation_only() -> None:
     text = (REPO_ROOT / "scripts" / "install-foundations.sh").read_text(
         encoding="utf-8"
     )
@@ -160,17 +160,23 @@ def test_foundations_product_binaries_require_explicit_owner_opt_in() -> None:
         1,
     )[0]
 
-    guard = 'if [[ "$OWN_PRODUCT_BINARIES" != "1" ]]; then'
-    assert loctree_block.index(guard) < loctree_block.index(
-        'install_from_bundled "loctree"'
+    forbidden = (
+        "VIBECRAFTED_OWN_PRODUCT_BINARIES",
+        "OWN_PRODUCT_BINARIES",
+        "LOCTREE_VERSION",
+        "AICX_VERSION",
+        "install_from_bundled",
+        "install_from_cargo",
+        "install_from_npm",
+        "github_release_asset_url",
+        "cargo install",
     )
-    assert loctree_block.index(guard) < loctree_block.index(
-        'install_from_cargo "loctree" "loct"'
-    )
-    assert aicx_block.index(guard) < aicx_block.index('install_from_bundled "aicx-mcp"')
-    assert aicx_block.index(guard) < aicx_block.index(
-        'install_from_cargo "$AICX_CRATE" "aicx-mcp"'
-    )
+    for needle in forbidden:
+        assert needle not in loctree_block
+        assert needle not in aicx_block
+
+    assert "Vibecrafted will not install or shadow Loctree binaries." in loctree_block
+    assert "Vibecrafted will not install or shadow AICX binaries." in aicx_block
 
 
 def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:

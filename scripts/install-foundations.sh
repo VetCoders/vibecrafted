@@ -17,13 +17,6 @@ set -euo pipefail
 #   bash scripts/install-foundations.sh --prefix /usr/local  # custom install prefix
 # ---------------------------------------------------------------------------
 
-LOCTREE_VERSION="${LOCTREE_VERSION:-0.9.5}"
-LOCTREE_REPO="Loctree/Loctree"
-
-AICX_CRATE="aicx"
-AICX_REPO="Loctree/aicx"
-AICX_VERSION="${AICX_VERSION:-0.7.3}"
-
 PRVIEW_CRATE="prview"
 PRVIEW_REPO="VetCoders/prview"
 
@@ -77,7 +70,6 @@ VIBECRAFTED_HOME="$(default_vibecrafted_home)"
 VIBECRAFTED_RUNTIME_HOME="$(default_vibecrafted_runtime_home)"
 PREFIX="${VIBECRAFTED_BIN:-$VIBECRAFTED_RUNTIME_HOME/bin}"
 LAUNCHER_PREFIX="${VIBECRAFTED_LAUNCHER_BIN:-$HOME/.local/bin}"
-OWN_PRODUCT_BINARIES="${VIBECRAFTED_OWN_PRODUCT_BINARIES:-0}"
 CHECK_ONLY=0
 INSTALL_ALL=0
 AGENTS_REQUIRED=0
@@ -369,24 +361,6 @@ release_download_url() {
   printf 'https://github.com/%s/releases/download/%s/%s\n' "$repo" "$tag" "$asset"
 }
 
-loctree_direct_asset_url() {
-  local os="$1" arch="$2" target=""
-  case "$os/$arch" in
-    linux/x86_64) target="x86_64-unknown-linux-gnu" ;;
-    linux/aarch64) target="aarch64-unknown-linux-gnu" ;;
-    macos/x86_64) target="x86_64-apple-darwin" ;;
-    macos/aarch64) target="aarch64-apple-darwin" ;;
-    *) return 1 ;;
-  esac
-  release_download_url "$LOCTREE_REPO" "v${LOCTREE_VERSION}" "loctree-${LOCTREE_VERSION}-${target}.tar.gz"
-}
-
-aicx_direct_asset_url() {
-  local target="$1"
-  [[ -n "$target" ]] || return 1
-  release_download_url "$AICX_REPO" "v${AICX_VERSION}" "aicx-v${AICX_VERSION}-${target}-slim-unsigned.tar.gz"
-}
-
 zellij_direct_asset_url() {
   local os="$1" arch="$2" target=""
   case "$os/$arch" in
@@ -397,43 +371,6 @@ zellij_direct_asset_url() {
     *) return 1 ;;
   esac
   release_download_url "$ZELLIJ_REPO" "v${ZELLIJ_VERSION}" "zellij-${target}.tar.gz"
-}
-
-# ---------------------------------------------------------------------------
-# Loctree installer — binary release from GitHub
-# ---------------------------------------------------------------------------
-
-loctree_asset_patterns() {
-  local os="$1" arch="$2"
-  case "$os" in
-    linux)
-      case "$arch" in
-        x86_64)
-          printf '%s\n' "^loctree-${LOCTREE_VERSION}-x86_64-unknown-linux-gnu\\.tar\\.gz$"
-          printf '%s\n' '^loctree-linux-x86_64\.tar\.gz$'
-          ;;
-        aarch64)
-          printf '%s\n' "^loctree-${LOCTREE_VERSION}-aarch64-unknown-linux-gnu\\.tar\\.gz$"
-          printf '%s\n' '^loctree-linux-aarch64\.tar\.gz$'
-          ;;
-        *)       die "No loctree binary for linux/$arch" ;;
-      esac
-      ;;
-    macos)
-      case "$arch" in
-        x86_64)  printf '%s\n' '^loctree-darwin-x86_64\.tar\.gz$' ;;
-        aarch64)
-          printf '%s\n' "^loctree-${LOCTREE_VERSION}-aarch64-apple-darwin\\.tar\\.gz$"
-          printf '%s\n' '^loctree-darwin-aarch64\.tar\.gz$'
-          printf '%s\n' '^loctree-darwin-aarch64-notarized\.zip$'
-          ;;
-        *)       die "No loctree binary for macos/$arch" ;;
-      esac
-      ;;
-    windows)
-      printf '%s\n' '^loctree-windows-x86_64\.exe\.zip$'
-      ;;
-  esac
 }
 
 install_loctree() {
@@ -455,113 +392,14 @@ install_loctree() {
   fi
 
   if (( CHECK_ONLY )); then
-    info "Would validate Loctree product binaries on PATH: loct, loctree, loctree-mcp"
+    info "Would validate Loctree product binaries on PATH: loct, loctree, loctree-mcp."
+    info "Vibecrafted will not install or shadow Loctree binaries."
     return 0
   fi
 
-  if [[ "$OWN_PRODUCT_BINARIES" != "1" ]]; then
-    warn "Loctree is a product dependency, not a Vibecrafted-owned binary."
-    warn "Install or repair it with the Loctree installer/release surface, then rerun this check."
-    warn "Set VIBECRAFTED_OWN_PRODUCT_BINARIES=1 only for an explicit local emergency bootstrap."
-    return 1
-  fi
-
-  local os arch asset url tmpdir patterns_text
-  local patterns=()
-  os="$(detect_os)"
-  arch="$(detect_arch)"
-  patterns_text="$(loctree_asset_patterns "$os" "$arch")"
-  while IFS= read -r pattern; do
-    [[ -n "$pattern" ]] && patterns+=("$pattern")
-  done <<< "$patterns_text"
-
-  has_cmd curl || die "curl is required to download loctree"
-  ensure_prefix
-
-  # --- Attempt 0: bundled tarball (notarized drop-in) ---
-  local bundled_any=0
-  install_from_bundled "loctree" && bundled_any=1 || true
-  install_from_bundled "loct" && bundled_any=1 || true
-  install_from_bundled "loctree-mcp" && bundled_any=1 || true
-  if (( bundled_any )) && loctree_suite_ready; then
-    return 0
-  elif (( bundled_any )); then
-    warn "Bundled Loctree payload was incomplete; trying remote sources."
-  fi
-
-  # --- Attempt 1: prebuilt binary from GH releases ---
-  local binary_ok=0
-  url="$(loctree_direct_asset_url "$os" "$arch" || true)"
-  if [[ -z "$url" ]]; then
-    url="$(github_release_asset_url "$LOCTREE_REPO" "tags/v${LOCTREE_VERSION}" "${patterns[@]}")" || true
-  fi
-  if [[ -n "$url" ]]; then
-    asset="${url##*/}"
-
-    info "Downloading loctree v${LOCTREE_VERSION} for ${os}/${arch}..."
-    tmpdir="$(mktemp -d)"
-    local archive="$tmpdir/$asset"
-    if curl -fsSL -o "$archive" "$url"; then
-      info "Extracting..."
-      if [[ "$asset" == *.zip ]]; then
-        has_cmd unzip || die "unzip required to extract archive"
-        unzip -qo "$archive" -d "$tmpdir/out"
-      else
-        mkdir -p "$tmpdir/out"
-        tar -xzf "$archive" -C "$tmpdir/out"
-      fi
-
-      # Find and install binaries (loctree, loctree-mcp, loct)
-      local found=0
-      while IFS= read -r -d '' bin; do
-        local name
-        name="$(basename "$bin")"
-        case "$name" in
-          loctree|loctree-mcp|loct|loctree.exe|loctree-mcp.exe)
-            cp "$bin" "$PREFIX/$name"
-            chmod +x "$PREFIX/$name"
-            ok "Installed $name -> $PREFIX/$name"
-            found=1
-            ;;
-        esac
-      done < <(find "$tmpdir/out" -type f \( -name 'loctree*' -o -name 'loct' \) -print0 2>/dev/null)
-      rm -rf "$tmpdir"
-
-      # Verify the installed binaries actually load (dyld check). `loct` is
-      # the operator-facing daily CLI, so `loctree-mcp` alone is not enough.
-      if (( found )) && loctree_suite_ready; then
-        ok "Loctree v${LOCTREE_VERSION} installed to $PREFIX"
-        binary_ok=1
-      elif (( found )); then
-        warn "Loctree binary installed but fails to run (missing shared libraries)."
-        warn "Removing broken binaries..."
-        rm -f "$PREFIX/loctree" "$PREFIX/loct" "$PREFIX/loctree-mcp"
-      fi
-    else
-      rm -rf "$tmpdir"
-      warn "Failed to download loctree binary."
-    fi
-  fi
-
-  # Binary path succeeded — done
-  (( binary_ok )) && return 0
-
-  # --- Attempt 2: cargo (will bootstrap rustup if needed) ---
-  info "Trying cargo install path for loctree suite..."
-  if ensure_rustup; then
-    install_from_cargo "loctree" "loct" || true
-    install_from_cargo "loctree" "loctree" || true
-    install_from_cargo "loctree-mcp" "loctree-mcp" || true
-    loctree_suite_ready && return 0
-  fi
-
-  # --- Attempt 3: npm (will bootstrap node if needed) ---
-  info "Trying npm install path for loctree-mcp..."
-  install_from_npm "loctree-mcp" "loctree-mcp" || true
-  loctree_suite_ready && return 0
-
-  warn "All loctree install paths exhausted."
-  warn "Install manually: cargo install loctree && cargo install loctree-mcp"
+  warn "Loctree is a product dependency, not a Vibecrafted-owned binary."
+  warn "Vibecrafted validates Loctree on PATH but does not install, download, cargo-install, npm-install, or shadow it."
+  warn "Repair Loctree through its own checkout/release surface, then rerun this check."
   return 1
 }
 
@@ -631,70 +469,6 @@ install_from_cargo() {
 # aicx installer
 # ---------------------------------------------------------------------------
 
-# aicx pulls llama-cpp-sys-2 which links against llama.cpp via bindgen+cmake.
-# Detect Linux toolchain prereqs early so we don't burn 5+ minutes of cargo
-# compile only to fail on missing libclang. Returns 0 if everything needed
-# for an aicx cargo build is present (or we're on macOS where Apple's
-# toolchain ships them), 1 otherwise.
-aicx_cargo_prereqs_ok() {
-  local os
-  os="$(detect_os)"
-  # macOS + xcode CLT ship clang/libclang/cmake — assume OK.
-  [[ "$os" != "linux" ]] && return 0
-
-  local missing=()
-
-  # libclang: bindgen needs libclang.so. Look in common locations + LIBCLANG_PATH.
-  local found_libclang=0
-  if [[ -n "${LIBCLANG_PATH:-}" && -d "$LIBCLANG_PATH" ]]; then
-    found_libclang=1
-  else
-    local candidate
-    for candidate in \
-      /usr/lib/llvm-*/lib/libclang.so* \
-      /usr/lib/x86_64-linux-gnu/libclang*.so* \
-      /usr/lib/aarch64-linux-gnu/libclang*.so* \
-      /usr/lib64/libclang*.so* \
-      /usr/lib/libclang*.so*; do
-      [[ -e "$candidate" ]] && { found_libclang=1; break; }
-    done
-  fi
-  (( found_libclang )) || missing+=("libclang (libclang-dev / clang-devel)")
-
-  # cmake: llama.cpp build script invokes cmake.
-  has_cmd cmake || missing+=("cmake")
-
-  # C++ compiler: g++ or clang++.
-  has_cmd g++ || has_cmd clang++ || missing+=("g++ or clang++")
-
-  if (( ${#missing[@]} > 0 )); then
-    warn "aicx requires native toolchain dependencies missing on this system:"
-    local item
-    for item in "${missing[@]}"; do
-      warn "    - $item"
-    done
-    warn ""
-    warn "Install them first:"
-    if has_cmd apt-get; then
-      warn "    sudo apt-get install -y libclang-dev cmake build-essential"
-    elif has_cmd dnf; then
-      warn "    sudo dnf install -y clang-devel cmake gcc-c++ make"
-    elif has_cmd pacman; then
-      warn "    sudo pacman -S --needed clang cmake base-devel"
-    elif has_cmd zypper; then
-      warn "    sudo zypper install -y libclang-devel cmake gcc-c++"
-    elif has_cmd apk; then
-      warn "    sudo apk add clang-dev cmake g++ make"
-    else
-      warn "    Use your distro package manager to install: libclang-dev cmake g++"
-    fi
-    warn "Or grab a prebuilt binary directly:"
-    warn "    https://github.com/$AICX_REPO/releases"
-    return 1
-  fi
-  return 0
-}
-
 install_aicx() {
   if has_cmd aicx-mcp; then
     ok "aicx-mcp already installed: $(command -v aicx-mcp)"
@@ -702,108 +476,14 @@ install_aicx() {
   fi
 
   if (( CHECK_ONLY )); then
-    info "Would validate AICX product binaries on PATH: aicx-mcp"
+    info "Would validate AICX product binaries on PATH: aicx-mcp."
+    info "Vibecrafted will not install or shadow AICX binaries."
     return 0
   fi
 
-  if [[ "$OWN_PRODUCT_BINARIES" != "1" ]]; then
-    warn "AICX is a product dependency, not a Vibecrafted-owned binary."
-    warn "Install or repair it with the AICX installer/release surface, then rerun this check."
-    warn "Set VIBECRAFTED_OWN_PRODUCT_BINARIES=1 only for an explicit local emergency bootstrap."
-    return 1
-  fi
-
-  # --- Attempt 0: bundled tarball (notarized drop-in) ---
-  if install_from_bundled "aicx-mcp"; then
-    install_from_bundled "aicx" || true
-    install_from_bundled "aicx-extract" || true
-    return 0
-  fi
-
-  # Try binary release first, fall back to cargo
-  local os arch
-  os="$(detect_os)"
-  arch="$(detect_arch)"
-
-  # aicx may publish platform binaries — try GitHub release
-  local asset_prefix="aicx"
-  local target
-  case "$os" in
-    linux)
-      case "$arch" in
-        x86_64)  target="x86_64-unknown-linux-gnu" ;;
-        aarch64) target="aarch64-unknown-linux-gnu" ;;
-        *)       target="" ;;
-      esac
-      ;;
-    macos)
-      case "$arch" in
-        x86_64)  target="x86_64-apple-darwin" ;;
-        aarch64) target="aarch64-apple-darwin" ;;
-        *)       target="" ;;
-      esac
-      ;;
-    *) target="" ;;
-  esac
-
-  if [[ -n "$target" ]] && has_cmd curl; then
-    local patterns=(
-      "^${asset_prefix}-v[0-9.]+-${target}\\.tar\\.gz$"
-      "^${asset_prefix}-v[0-9.]+-${target}-slim-unsigned\\.tar\\.gz$"
-    )
-
-    if (( CHECK_ONLY )); then
-      info "Would resolve latest aicx release asset for $target"
-      info "Fallback: cargo install $AICX_CRATE"
-      return 0
-    fi
-
-    local tmpdir url
-    tmpdir="$(mktemp -d)"
-
-    url="$(aicx_direct_asset_url "$target" || true)"
-    if [[ -z "$url" ]]; then
-      url="$(github_release_asset_url "$AICX_REPO" "latest" "${patterns[@]}")" || true
-    fi
-
-    if [[ -n "$url" ]] &&
-      curl -fsSL -o "$tmpdir/aicx.tar.gz" "$url" 2>/dev/null; then
-      ensure_prefix
-      mkdir -p "$tmpdir/out"
-      tar -xzf "$tmpdir/aicx.tar.gz" -C "$tmpdir/out"
-      local found=0
-      while IFS= read -r -d '' bin; do
-        local name
-        name="$(basename "$bin")"
-        case "$name" in
-          aicx|aicx-mcp|aicx-extract|aicx.exe|aicx-mcp.exe)
-            cp "$bin" "$PREFIX/$name"
-            chmod +x "$PREFIX/$name"
-            ok "Installed $name -> $PREFIX/$name"
-            found=1
-            ;;
-        esac
-      done < <(find "$tmpdir/out" -type f \( -name 'aicx*' \) -print0 2>/dev/null)
-      rm -rf "$tmpdir"
-      if (( found )); then
-        ok "aicx installed from release"
-        return 0
-      fi
-    fi
-    rm -rf "$tmpdir"
-    info "No matching binary release found, falling back to cargo..."
-  fi
-
-  # Cargo path: aicx pulls llama-cpp-sys-2 (libclang+cmake+C++ at build time).
-  # Bail early with an actionable message instead of compiling for 5 minutes
-  # only to fail at link time with a confusing libclang error.
-  if ! aicx_cargo_prereqs_ok; then
-    return 1
-  fi
-
-  if ensure_rustup; then
-    install_from_cargo "$AICX_CRATE" "aicx-mcp" && return 0
-  fi
+  warn "AICX is a product dependency, not a Vibecrafted-owned binary."
+  warn "Vibecrafted validates AICX on PATH but does not install, download, cargo-install, or shadow it."
+  warn "Repair AICX through its own checkout/release surface, then rerun this check."
   return 1
 }
 
