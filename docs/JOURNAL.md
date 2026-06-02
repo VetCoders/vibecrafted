@@ -212,3 +212,36 @@ Skill/workflow authoring happens in the repo.
 
 Installed copies under `.codex`, `.agents`, or `.vibecrafted` are distribution
 outputs, not manual authoring targets.
+
+## 2026-06-02 - Product Shape Established
+
+`[VC-PRODUCT SHAPE] ESTABLISHED 2026-06-02`
+
+The Runtime 3.0 product shape is established as a factory runtime, not an
+ideology surface. Vibecrafted consumes the methodology internally and exposes a
+durable product contract externally.
+
+Implementation direction:
+
+- Build the runtime around `vibecrafted-{core,mcp,vm,server,app}`.
+- Hard-deprecate `./skills/vc-agents/**` as the source of truth for implement
+  spawning.
+- Prefer the shared lifecycle dispatcher surface, with `vibecrafted-tui` as the
+  operator dispatcher/cockpit and `vibecrafted-core` as the lifecycle engine.
+- Use `vc-polarize` WRITE followed by automatic `vc-audit` READ as the first
+  factory cadence slice.
+- Treat `vc-ship` as a meta-plan and trigger graph, not another loose script.
+- Keep factory internals private: expose trade names, product contracts,
+  status, quality proof, and operator buttons, not the internal recipe.
+
+The target trigger graph is:
+
+```text
+vc-scaffold bu⪮mp vc-implement bu⪮mp vc-review bu⪮mp vc-workflow
+bu⪮mp vc-followup bu⪮mp vc-marbles bu⪮mp vc-audit bu⪮mp vc-polarize
+bu⪮mp vc-dou bu⪮mp vc-hydrate bu⪮mp vc-release
+```
+
+Success condition: one prompt travels this full graph automatically, with
+durable lifecycle events, reports, telemetry, gates, parent-child trigger
+evidence, and operator-button stops only at real trust boundaries.
