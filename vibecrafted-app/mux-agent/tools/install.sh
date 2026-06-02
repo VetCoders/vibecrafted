@@ -50,37 +50,21 @@ chmod +x "$wrapper"
 info "Installed binary: $installed_bin"
 info "Wrapper: $wrapper"
 
-ensure_path_line() {
-  local file="$1"
-  local cargo="$CARGO_BIN"
-  local install="$INSTALL_DIR"
-  local tag="# rust-mux installer"
-
-  if [ ! -w "$file" ]; then
-    warn "Cannot update PATH in $file (not writable). Add manually: export PATH=\"$cargo:$install:\$PATH\""
-    return
-  fi
-
-  if grep -q "rust-mux installer" "$file"; then
-    return
-  fi
-
-  # The literal `$PATH` inside the format string is intentional: this printf
-  # emits a line into the user's rc file as plain text, where `$PATH` will be
-  # expanded at shell-reload time, not at install time.
-  # shellcheck disable=SC2016
-  printf '\n%s\nexport PATH="%s:%s:$PATH"\n' "$tag" "$cargo" "$install" >>"$file"
-  warn "Appended PATH to $file; reload shell or run: source $file"
+print_path_notice() {
+  local missing="$1"
+  warn "$missing is not on PATH."
+  warn "Add it manually if you want shell-wide access:"
+  warn "  export PATH=\"$CARGO_BIN:$INSTALL_DIR:\$PATH\""
 }
 
 case ":$PATH:" in
   *":$CARGO_BIN:"*) :;;
-  *) warn "cargo bin not in PATH; adding to ~/.zshrc"; ensure_path_line "$HOME/.zshrc";;
+  *) print_path_notice "cargo bin";;
 esac
 
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) :;;
-  *) warn "rust-mux wrapper dir not in PATH; adding to ~/.zshrc"; ensure_path_line "$HOME/.zshrc";;
+  *) print_path_notice "rust-mux wrapper dir";;
 esac
 
 info "Done. Try: rust-mux --socket /tmp/mcp.sock --cmd npx -- @modelcontextprotocol/server-memory --tray"

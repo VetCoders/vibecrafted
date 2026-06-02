@@ -28,7 +28,8 @@ Binaries live in `target/release/rust-mux`.
 curl -fsSL https://raw.githubusercontent.com/Loctree/rust-mux/main/tools/install.sh | sh
 ```
 
-- Places wrapper in `$HOME/.local/bin/rust-mux` and ensures PATH contains cargo bin + wrapper dir.
+- Places wrapper in `$HOME/.local/bin/rust-mux`.
+- If cargo bin or the wrapper dir is not on `PATH`, prints the manual `export PATH=...` action; it does not edit shell rc files.
 - Env overrides: `INSTALL_DIR`, `CARGO_HOME`, `MUX_REF` (branch/tag, default main), `MUX_NO_LOCK=1` to skip `--locked`.
 
 ### Built-in proxy (no socat required)

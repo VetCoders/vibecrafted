@@ -331,9 +331,9 @@ operator` crate — see **Changed** above).
 
 ### Added
 
-- `make foundations` — portable installer for loctree and ai-contexters binaries
-  - Downloads pre-built loctree v0.8.17 binaries (notarized/signed) for macOS, Linux, Windows
-  - Installs ai-contexters via GitHub release binary or `cargo install` fallback
+- `make foundations` — portable installer for historical loctree / ai-contexters binaries
+  - Superseded by the product foundation contract: do not use this entry as a current install source
+  - Current runtime foundations are validated on `$PATH`; missing AICX/Loctree should point at the canonical Loctree installer
   - `make foundations-check` for dry-run preview
   - `scripts/install-foundations.sh` works standalone or via Make
 - Python-native `shutil.copytree` fallback when `rsync` is not available

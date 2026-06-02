@@ -170,13 +170,65 @@ def test_foundations_product_binaries_are_validation_only() -> None:
         "install_from_npm",
         "github_release_asset_url",
         "cargo install",
+        "LOCTREE_SOURCE",
+        "AICX_SOURCE",
+        "../loctree-suite",
+        "../aicx",
     )
     for needle in forbidden:
         assert needle not in loctree_block
         assert needle not in aicx_block
 
-    assert "Vibecrafted will not install or shadow Loctree binaries." in loctree_block
-    assert "Vibecrafted will not install or shadow AICX binaries." in aicx_block
+    assert "curl -fsSL $LOCTREE_INSTALL_URL | sh" in loctree_block
+    assert "curl -fsSL $LOCTREE_INSTALL_URL | sh" in aicx_block
+    assert (
+        "will not guess crates, npm packages, or local checkout paths" in loctree_block
+    )
+    assert "will not guess crates, npm packages, or local checkout paths" in aicx_block
+
+
+def test_setup_installer_uses_canonical_foundation_action_only() -> None:
+    installer = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    )
+    skills_sync = (
+        REPO_ROOT / "skills" / "vc-agents" / "scripts" / "skills_sync.sh"
+    ).read_text(encoding="utf-8")
+
+    for name in ("aicx-mcp", "loct", "loctree", "loctree-mcp"):
+        block = installer.split(f'name="{name}"', 1)[1].split("verify_cmd=", 1)[0]
+        assert 'channels=["canonical"]' in block
+        assert "curl -fsSL https://loct.io/install.sh | sh" in block
+        assert '"crates"' not in block
+        assert '"npm"' not in block
+        assert '"github"' not in block
+        assert "LOCTREE_SOURCE" not in block
+        assert "AICX_SOURCE" not in block
+        assert "../loctree-suite" not in block
+        assert "../aicx" not in block
+
+    forbidden = (
+        "install_foundation_cargo",
+        "Install {f.name} with cargo?",
+        "has_cargo = detect_cargo()",
+        "cargo not found — cannot auto-install foundations",
+        "fallback cargo install loctree-mcp",
+        "fallback cargo install ai-contexters",
+    )
+    for needle in forbidden:
+        assert needle not in installer
+        assert needle not in skills_sync
+
+
+def test_installer_publishes_async_dispatch_wrapper() -> None:
+    installer = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    )
+    launcher_block = installer.split("LAUNCHER_WRAPPERS = [", 1)[1].split("\n]", 1)[0]
+
+    assert '"vc-loop"' in launcher_block
+    assert '"vc-dispatch"' in launcher_block
+    assert '"vc-dashboard"' in launcher_block
 
 
 def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:

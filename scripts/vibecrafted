@@ -296,6 +296,20 @@ _loop_script() {
   return 1
 }
 
+_dispatcher_core_dir() {
+  local repo_source candidate
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  for candidate in \
+    "${repo_source:+$repo_source/vibecrafted-core}" \
+    "$crafted_tools/vibecrafted-core" \
+    "$(_script_repo_root)/vibecrafted-core"; do
+    [[ -n "$candidate" && -f "$candidate/vibecrafted_core/dispatcher.py" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
 _sync_control_plane_best_effort() {
   local script_path
   script_path="$(_control_plane_script 2>/dev/null || true)"
@@ -587,6 +601,25 @@ cmd_loop_help() {
   printf '%bWhy:%b\n' "$_bold" "$_reset"
   printf '  The front door stays small; the runtime script owns state, iteration,\n'
   printf '  completion promises, and background await chains for operator sessions.\n'
+  printf '\n'
+}
+
+cmd_dispatch_help() {
+  printf '\n'
+  printf '%b⚒%b  %bdispatch%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Run one worker under the async lifecycle supervisor.\n'
+  printf '  This owns process spawn, transcript capture, artifact validation, and exit status.\n'
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted dispatch run --run-id <id> --root <path> --report <path> --transcript <path> -- <command> [args]\n'
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted dispatch run --run-id demo --root . --report .vibecrafted/report.md --transcript .vibecrafted/trace.log --json -- bash worker.sh\n'
+  printf '\n'
+  printf '%bContract:%b\n' "$_bold" "$_reset"
+  printf '  Exit code is the worker exit code when the worker fails.\n'
+  printf '  Exit code 2 means the worker exited cleanly but the artifact contract failed.\n'
   printf '\n'
 }
 cmd_gui_help() {
@@ -1061,6 +1094,10 @@ cmd_help() {
       cmd_loop_help
       return
       ;;
+    dispatch)
+      cmd_dispatch_help
+      return
+      ;;
     status)
       cmd_status_help
       return
@@ -1124,6 +1161,7 @@ cmd_help() {
   printf '  %bvibecrafted tui%b                       Launch the Rust operator console\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard%b [layout]        Launch an optional repo-owned Zellij dashboard\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted loop%b                      Interactive operator loop + async awaits\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dispatch%b run ...          Async lifecycle supervisor for one worker\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted telemetry smoke%b [flags]  Smoke the marbles telemetry path\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b <skill> <agent> [flags]   Run an agent-scoped framework skill\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b research [--prompt <text>|--file <path>]   Triple-agent research launcher\n' "$_cyan" "$_reset"
@@ -1154,6 +1192,7 @@ cmd_help() {
   printf '  vibecrafted tui\n'
   printf '  vibecrafted dashboard marbles\n'
   printf '  vibecrafted loop start --file /path/to/master-dispatch.md --completion-promise READY\n'
+  printf '  vibecrafted dispatch run --run-id demo --root . --report report.md --transcript trace.log -- bash worker.sh\n'
   printf '  vibecrafted telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
   printf '  vibecrafted implement codex --prompt "Ship the feature"\n'
@@ -1232,6 +1271,7 @@ cmd_help_full() {
   printf '\n'
   printf '  %bvibecrafted dashboard%b [layout]        Open/switch to a Zellij dashboard\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted loop%b                      Interactive operator loop + async awaits\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dispatch%b run ...          Async lifecycle supervisor for one worker\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard ls%b              List active Zellij sessions\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard gc%b [flags]      Prune dead/stale Zellij sessions\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard switch%b <name>   Switch to session (Zellij-native)\n' "$_cyan" "$_reset"
@@ -1260,6 +1300,7 @@ cmd_help_full() {
   printf '  %bvibecrafted init%b [agent]              Interactive init session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted gui%b                       Launch the localhost control plane\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted tui%b                       Launch the Rust operator console\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dispatch%b run ...          Async lifecycle supervisor for one worker\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted telemetry smoke%b [flags]  Smoke the marbles telemetry path\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
@@ -1299,6 +1340,7 @@ cmd_help_full() {
   printf '  vibecrafted gui\n'
   printf '  vibecrafted tui\n'
   printf '  vibecrafted dashboard workflow\n'
+  printf '  vibecrafted dispatch run --run-id demo --root . --report report.md --transcript trace.log -- bash worker.sh\n'
   printf '  vibecrafted telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
   printf '  vibecrafted workflow claude --file /path/to/brief.md\n'
@@ -1345,6 +1387,21 @@ cmd_loop() {
     return 1
   }
   bash "$script_path" "$@"
+}
+
+cmd_dispatch() {
+  local core_dir
+  if _is_help_flag "${1:-}"; then
+    cmd_dispatch_help
+    return 0
+  fi
+  core_dir="$(_dispatcher_core_dir 2>/dev/null || true)"
+  [[ -n "$core_dir" ]] || {
+    printf '%b[error]%b Async dispatcher module not found.\n' "$_red" "$_reset" >&2
+    printf '  Expected vibecrafted-core/vibecrafted_core/dispatcher.py in the source or installed tools tree.\n' >&2
+    return 1
+  }
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.dispatcher "$@"
 }
 
 cmd_init() {
@@ -1860,6 +1917,10 @@ run_wrapper() {
     cmd_loop "$@"
     return
   fi
+  if [[ "$wrapper" == "vc-dispatch" ]]; then
+    cmd_dispatch "$@"
+    return
+  fi
   if [[ "$wrapper" == "vc-gui" ]]; then
     cmd_gui "$@"
     return
@@ -1920,6 +1981,7 @@ main() {
     doctor|check) cmd_doctor ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
     loop) cmd_loop "$@" ;;
+    dispatch|dispatcher) cmd_dispatch "$@" ;;
     telemetry) cmd_telemetry "$@" ;;
     stats|status) cmd_stats ;;
     update|upgrade) cmd_update "$@" ;;

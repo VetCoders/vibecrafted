@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 
+from vibecrafted_core import dispatcher
 from vibecrafted_core.artifacts import validate_artifacts
 from vibecrafted_core.control_plane import read_event_tail
 from vibecrafted_core.lifecycle import RunState, transition_allowed
@@ -68,3 +69,80 @@ def test_async_supervisor_emits_lifecycle_and_validates_artifacts(
     assert "created" in states
     assert "process_spawned" in states
     assert "report_validated" in states
+
+
+def test_dispatcher_cli_runs_full_lifecycle(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    script = tmp_path / "worker.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n"
+        "print('dispatcher lifecycle hello')\n",
+        encoding="utf-8",
+    )
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-test-1",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--require-transcript-output",
+            "--json",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["run_id"] == "disp-test-1"
+    assert payload["artifact_ok"] is True
+    assert payload["state"] == "report_validated"
+    assert "process_spawned" in payload["states"]
+    assert "first_output_seen" in payload["states"]
+    assert "report_validated" in payload["states"]
+    assert "dispatcher lifecycle hello" in transcript.read_text(encoding="utf-8")
+
+
+def test_dispatcher_cli_fails_missing_report_contract(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    transcript = tmp_path / "dispatch.log"
+    script = tmp_path / "worker.py"
+    script.write_text("print('no report here')\n", encoding="utf-8")
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-test-2",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(tmp_path / "missing.md"),
+            "--transcript",
+            str(transcript),
+            "--json",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifact_ok"] is False
+    assert payload["artifact_errors"] == ["report_missing"]
+    assert payload["state"] == "report_missing"

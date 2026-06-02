@@ -4,8 +4,8 @@ set -euo pipefail
 # install-foundations.sh — portable installer for 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. foundation layer
 #
 # Handles:
-#   loctree / loctree-mcp  — validated as external Loctree product binaries
-#   aicx / aicx-mcp       — validated as external AICX product binaries
+#   loctree / loctree-mcp  — required Loctree product binaries via Loctree installer
+#   aicx / aicx-mcp       — required AICX product binaries via Loctree installer
 #   prview                 — cargo install OR binary from GH releases
 #
 # Usage:
@@ -22,6 +22,7 @@ PRVIEW_REPO="VetCoders/prview"
 
 ZELLIJ_REPO="zellij-org/zellij"
 ZELLIJ_VERSION="${ZELLIJ_VERSION:-0.44.3}"
+LOCTREE_INSTALL_URL="${LOCTREE_INSTALL_URL:-https://loct.io/install.sh}"
 
 # Agent CLIs — npm packages when the vendor publishes an official package.
 AGENT_PACKAGES=(
@@ -134,6 +135,15 @@ bundled_bin_root() {
     return
   fi
   printf '%s\n' "$SOURCE_DIR/tools/bin"
+}
+
+_realpath_quiet() {
+  local path="$1"
+  if [[ -d "$path" ]]; then
+    (cd "$path" && pwd -P)
+    return
+  fi
+  return 1
 }
 
 # Attempt 0 for every install_*: copy a drop-in binary from the bundled
@@ -392,14 +402,14 @@ install_loctree() {
   fi
 
   if (( CHECK_ONLY )); then
-    info "Would validate Loctree product binaries on PATH: loct, loctree, loctree-mcp."
-    info "Vibecrafted will not install or shadow Loctree binaries."
+    info "Would install Loctree foundations from canonical installer:"
+    info "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
     return 0
   fi
 
-  warn "Loctree is a product dependency, not a Vibecrafted-owned binary."
-  warn "Vibecrafted validates Loctree on PATH but does not install, download, cargo-install, npm-install, or shadow it."
-  warn "Repair Loctree through its own checkout/release surface, then rerun this check."
+  warn "Loctree foundations are required, but Vibecrafted will not guess crates, npm packages, or local checkout paths."
+  warn "Use the canonical installer, then rerun this check:"
+  warn "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
   return 1
 }
 
@@ -476,14 +486,14 @@ install_aicx() {
   fi
 
   if (( CHECK_ONLY )); then
-    info "Would validate AICX product binaries on PATH: aicx-mcp."
-    info "Vibecrafted will not install or shadow AICX binaries."
+    info "Would install AICX foundations from canonical Loctree installer:"
+    info "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
     return 0
   fi
 
-  warn "AICX is a product dependency, not a Vibecrafted-owned binary."
-  warn "Vibecrafted validates AICX on PATH but does not install, download, cargo-install, or shadow it."
-  warn "Repair AICX through its own checkout/release surface, then rerun this check."
+  warn "AICX foundations are required, but Vibecrafted will not guess crates, npm packages, or local checkout paths."
+  warn "Use the canonical installer, then rerun this check:"
+  warn "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
   return 1
 }
 

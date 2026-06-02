@@ -237,7 +237,9 @@ class Foundation:
         hints = []
         for ch in self.channels:
             pkg = self.packages.get(ch, self.name)
-            if ch == "crates":
+            if ch == "canonical":
+                hints.append(f"Use canonical installer: {pkg}")
+            elif ch == "crates":
                 hints.append(f"cargo install {pkg}")
             elif ch == "brew":
                 hints.append(f"brew install {pkg}")
@@ -256,41 +258,36 @@ FOUNDATIONS: List[Foundation] = [
     Foundation(
         name="aicx-mcp",
         description="AICX MCP server for session history and memory recovery",
-        channels=["crates", "github"],
+        channels=["canonical"],
         packages={
-            "crates": "aicx",
-            "github": "https://github.com/Loctree/aicx/releases",
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
         },
         verify_cmd="aicx-mcp --version",
     ),
     Foundation(
         name="loct",
         description="Loctree operator CLI short command",
-        channels=["crates", "github"],
+        channels=["canonical"],
         packages={
-            "crates": "loctree",
-            "github": "https://github.com/Loctree/Loctree/releases",
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
         },
         verify_cmd="loct --version",
     ),
     Foundation(
         name="loctree",
         description="Loctree structural code mapping CLI",
-        channels=["crates", "github"],
+        channels=["canonical"],
         packages={
-            "crates": "loctree",
-            "github": "https://github.com/Loctree/Loctree/releases",
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
         },
         verify_cmd="loctree --version",
     ),
     Foundation(
         name="loctree-mcp",
         description="Structural code mapping MCP server",
-        channels=["crates", "npm", "github"],
+        channels=["canonical"],
         packages={
-            "crates": "loctree-mcp",
-            "npm": "loctree-mcp",
-            "github": "https://github.com/Loctree/Loctree/releases",
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
         },
         verify_cmd="loctree-mcp --version",
     ),
@@ -546,11 +543,10 @@ def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
         for finding in issues
     ):
         actions.append(
-            "Required foundations are missing. Run `vibecrafted update` to "
-            "re-fetch the toolchain (or "
-            "`bash ~/.local/share/vibecrafted/tools/vibecrafted-current/scripts/install-foundations.sh` "
-            "directly), then re-run `vibecrafted doctor`. "
-            "If you cloned the repo, `make foundations` works too."
+            "Required foundations are missing. Loctree and AICX are product-managed; "
+            "repair them through their own checkout or release surface. Then run "
+            "`bash scripts/install-foundations.sh --check` from this repo to validate "
+            "the boundary and re-run `vibecrafted doctor`."
         )
     if any(
         finding.component.startswith(("runtime:", "symlink:", "stale-copy:"))
@@ -1664,6 +1660,7 @@ LAUNCHER_WRAPPERS = [
     "vc-start",
     "vc-dashboard",
     "vc-loop",
+    "vc-dispatch",
     "vc-resume",
     "vc-agents",
     "telemetry",
@@ -2302,20 +2299,6 @@ def _configure_gemini_plans(dry_run: bool = False) -> None:
 
     gemini_settings.write_text(json.dumps(data, indent=2) + "\n")
     print(f"  {OK} Gemini plan.directory reset (was {plan_dir!r} -> default)")
-
-
-def install_foundation_cargo(foundation: Foundation, dry_run: bool = False) -> bool:
-    """Install a foundation via cargo install. Returns True on success."""
-    pkg = foundation.packages.get("crates", foundation.name)
-    if dry_run:
-        print(f"  {dim('cargo install')} {pkg}")
-        return True
-    print(f"  Installing {bold(pkg)} via cargo...")
-    result = subprocess.run(
-        ["cargo", "install", pkg],
-        capture_output=False,
-    )
-    return result.returncode == 0
 
 
 # ---------------------------------------------------------------------------
@@ -3340,37 +3323,19 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                     args._fnd_checked = True
 
                 missing_foundations = args._missing_foundations
-                has_cargo = detect_cargo()
-
-                if missing_foundations and has_cargo and interactive:
-                    for f in missing_foundations:
-                        if "crates" in f.channels:
-                            label = "required" if f.required else "optional"
-                            if ask_yn(
-                                f"Install {f.name} with cargo? ({label})",
-                                default=f.required,
-                            ):
-                                success = install_foundation_cargo(f, dry_run=dry_run)
-                                installed_foundations[f.name] = {
-                                    "channel": "crates",
-                                    "success": success,
-                                }
-                                if success:
-                                    print(f"  {OK} {f.name} installed")
-                                else:
-                                    print(f"  {MISS} {f.name} installation failed")
+                if (
+                    missing_foundations
+                    and interactive
+                    and not getattr(args, "_fnd_warn_done", False)
+                ):
+                    print(yellow("Missing foundations are not auto-installed here."))
+                    print(
+                        dim(
+                            "Use the owning product or support-tool installer, then rerun diagnostics."
+                        )
+                    )
+                    args._fnd_warn_done = True
                     print()
-                elif missing_foundations and not has_cargo and interactive:
-                    if not getattr(args, "_fnd_warn_done", False):
-                        print(
-                            yellow("cargo not found — cannot auto-install foundations.")
-                        )
-                        print(
-                            dim(
-                                "Install cargo (rustup) first, or install foundations manually."
-                            )
-                        )
-                        args._fnd_warn_done = True
 
                 step += 1
 
@@ -3412,7 +3377,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             # Re-evaluate previous interactive steps to find the closest one
             if step == 4:
                 # Going back from shell helpers
-                if missing_foundations and has_cargo and interactive:
+                if missing_foundations and interactive:
                     step = 3
                 else:
                     step = 2

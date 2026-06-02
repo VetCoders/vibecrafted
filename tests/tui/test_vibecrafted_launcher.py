@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -427,6 +428,95 @@ def test_vc_help_wrapper_forwards_topic_help(tmp_path: Path) -> None:
     assert "Start an interactive repository orientation session" in result.stdout
     assert "vc-init [claude|codex|gemini|agy|junie|grok]" in result.stdout
     assert "Front door:" not in result.stdout
+
+
+def test_dispatch_help_documents_async_lifecycle_contract() -> None:
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "help", "dispatch"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Run one worker under the async lifecycle supervisor" in result.stdout
+    assert "transcript capture" in result.stdout
+    assert "artifact contract failed" in result.stdout
+
+
+def test_dispatch_launcher_runs_async_lifecycle(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    report = tmp_path / "report.md"
+    transcript = tmp_path / "trace.log"
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        "from pathlib import Path\n"
+        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8')\n"
+        "print('launcher dispatcher hello')\n",
+        encoding="utf-8",
+    )
+    home.mkdir()
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(LAUNCHER),
+            "dispatch",
+            "run",
+            "--run-id",
+            "launcher-dispatch-test",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--require-transcript-output",
+            "--json",
+            "--",
+            sys.executable,
+            str(worker),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["run_id"] == "launcher-dispatch-test"
+    assert payload["artifact_ok"] is True
+    assert payload["state"] == "report_validated"
+    assert "process_spawned" in payload["states"]
+    assert "first_output_seen" in payload["states"]
+    assert "report_validated" in payload["states"]
+    assert "launcher dispatcher hello" in transcript.read_text(encoding="utf-8")
+
+
+def test_vetcoders_shell_entrypoint_stays_thin_facade() -> None:
+    facade = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+    lib_dir = facade.parent / "lib"
+    body = facade.read_text(encoding="utf-8")
+
+    assert len(body.splitlines()) <= 120
+    assert lib_dir.is_dir()
+    for module in [
+        "core",
+        "zellij",
+        "prompts",
+        "dispatch_core",
+        "dispatch_wrappers",
+        "research",
+        "marbles",
+        "dispatch",
+    ]:
+        assert f"_vetcoders_source_shell_module {module}" in body
+        assert (lib_dir / f"{module}.sh").is_file()
 
 
 def test_telemetry_wrapper_smokes_headless_marbles_runtime(tmp_path: Path) -> None:

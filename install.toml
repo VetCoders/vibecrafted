@@ -60,7 +60,8 @@ key = "installation"
 label = "Installation"
 reason = """
 We will install:
-  - foundations: loctree, aicx, prview, screenscribe when needed
+  - validate product foundations: loctree and aicx stay product-managed
+  - install or validate framework-owned support tools when needed
   - frontier agent configuration
   - shared skills, shell helpers, launchers, and mirrored agent views
   - the selected runtime horse when RUNTIME=... is provided

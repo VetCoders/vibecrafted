@@ -35,13 +35,13 @@ if command -v aicx >/dev/null 2>&1; then
   printf "  [ok] aicx -> %s\\n" "$(command -v aicx)"
 else
   printf "  [missing] aicx\\n"
-  printf "    fix: prefer GitHub Releases, fallback cargo install ai-contexters\\n"
+  printf "    fix: use canonical foundations installer from https://loct.io/install.sh\\n"
 fi
 if command -v loctree-mcp >/dev/null 2>&1; then
   printf "  [ok] loctree-mcp -> %s\\n" "$(command -v loctree-mcp)"
 else
   printf "  [missing] loctree-mcp\\n"
-  printf "    fix: prefer GitHub Releases, fallback cargo install loctree-mcp\\n"
+  printf "    fix: use canonical foundations installer from https://loct.io/install.sh\\n"
 fi
 if command -v prview >/dev/null 2>&1; then
   printf "  [ok] prview -> %s\\n" "$(command -v prview)"
