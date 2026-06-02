@@ -3176,7 +3176,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     selected_skills = list(skill_names)
     all_runtimes = list(SYMLINK_TARGETS)
     install_shell = cli_with_shell
-    write_shell_rc = args.write_shell_rc
+    write_shell_rc = getattr(args, "write_shell_rc", False)
     installed_foundations: Dict[str, Dict] = {}
 
     while True:
@@ -3771,7 +3771,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     selected_skills = list(skill_names)
     all_runtimes = list(SYMLINK_TARGETS)
     install_shell = cli_with_shell
-    write_shell_rc = args.write_shell_rc
+    write_shell_rc = getattr(args, "write_shell_rc", False)
     installed_foundations: Dict[str, Dict] = {}
 
     # --- System check (critical deps — must fail visibly) ---

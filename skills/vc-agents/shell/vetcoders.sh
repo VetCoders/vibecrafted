@@ -414,7 +414,7 @@ _vetcoders_prepare_operator_runtime() {
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
   local runtime="${1:-$(_vetcoders_default_runtime)}"
-  local session_name layout_file state command_text zellij_bin zellij_cmd zellij_env_prefix
+  local session_name layout_file
   _vetcoders_normalize_ambient_context
   _vetcoders_auto_gc_dead_zellij_sessions
 
@@ -443,43 +443,16 @@ _vetcoders_prepare_operator_runtime() {
   fi
 
   session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
-  command -v zellij >/dev/null 2>&1 || return 0
-  zellij_bin="$(command -v zellij)"
-  zellij_cmd="$(_vetcoders_shell_quote "$zellij_bin")"
-
   layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
-  [[ -n "$layout_file" ]] || return 0
-  local zellij_config_dir="${ZELLIJ_CONFIG_DIR:-${layout_file%/layouts/*}}"
-  zellij_env_prefix=""
-  if [[ -n "$zellij_config_dir" ]]; then
-    zellij_env_prefix="ZELLIJ_CONFIG_DIR=$(_vetcoders_shell_quote "$zellij_config_dir") "
-  fi
+  [[ -n "$layout_file" ]] || return 1
 
-  state="$(_vetcoders_zellij_session_state "$session_name")"
-  case "$state" in
-    live)
-      export VIBECRAFTED_OPERATOR_SESSION="$session_name"
-      return 0
-      ;;
-    dead)
-      "$zellij_bin" kill-session "$session_name" 2>/dev/null || true
-      command_text="${zellij_env_prefix}$zellij_cmd attach \"$session_name\" 2>/dev/null || ${zellij_env_prefix}$zellij_cmd --session \"$session_name\" --new-session-with-layout \"$layout_file\""
-      ;;
-    *)
-      command_text="${zellij_env_prefix}$zellij_cmd attach \"$session_name\" 2>/dev/null || ${zellij_env_prefix}$zellij_cmd --session \"$session_name\" --new-session-with-layout \"$layout_file\""
-      ;;
-  esac
-  if _vetcoders_open_iterm_command "$command_text"; then
-    :
-  elif _vetcoders_open_terminal_command "$command_text"; then
-    :
-  else
+  if _vetcoders_ensure_zellij_session "$session_name" "$layout_file"; then
+    export VIBECRAFTED_OPERATOR_SESSION="$session_name"
     return 0
   fi
 
-  if _vetcoders_wait_for_zellij_session "$session_name"; then
-    export VIBECRAFTED_OPERATOR_SESSION="$session_name"
-  fi
+  printf 'Failed to prepare Zellij operator session: %s\n' "$session_name" >&2
+  return 1
 }
 
 _vetcoders_spawn_into_operator_session() {

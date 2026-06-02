@@ -225,6 +225,73 @@ def test_skill_dry_run_reaches_spawn_launcher_without_launching(tmp_path: Path) 
     assert "Agent launched." not in result.stdout
 
 
+def test_terminal_spawn_refuses_osascript_fallback_when_zellij_fails(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    launcher = tmp_path / "launch.sh"
+    zellij_capture = tmp_path / "zellij.txt"
+    osa_capture = tmp_path / "osascript.txt"
+    home = tmp_path / "home"
+
+    fake_bin.mkdir()
+    home.mkdir()
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    (fake_bin / "zellij").write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                'printf "%s\\n" "$*" >> "$ZELLIJ_CAPTURE"',
+                "exit 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "zellij").chmod(0o755)
+    (fake_bin / "osascript").write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                'cat >> "$OSA_CAPTURE"',
+                "exit 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "osascript").chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            _ENV_SANITIZE
+            + f'''
+            set -euo pipefail
+            export HOME="{home}"
+            export PATH="{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+            export ZELLIJ_CAPTURE="{zellij_capture}"
+            export OSA_CAPTURE="{osa_capture}"
+            export VIBECRAFTED_OPERATOR_SESSION="operator-session"
+            export SPAWN_ROOT="{tmp_path}"
+            source "{COMMON_SH}"
+            spawn_launch "{launcher}" terminal 0 "probe"
+            ''',
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Refusing AppleScript/iTerm fallback" in result.stderr
+    assert zellij_capture.exists()
+    assert not osa_capture.exists()
+
+
 def test_operator_session_groups_spawns_from_same_directory() -> None:
     base = _expected_operator_session()
     legacy_a = _legacy_expected_operator_session("agnt-111111-111")

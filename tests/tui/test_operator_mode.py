@@ -609,8 +609,10 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
     )
 
     payload = capture_file.read_text(encoding="utf-8")
-    assert "OSA " in payload
+    assert "OSA " not in payload
     assert "ZELLIJ ls" in payload
+    assert f"--session {_expected_operator_session()}" in payload
+    assert "--new-session-with-layout" in payload
     assert "vc-spawn-cmd" in payload
     assert re.search(r"\bfwup-\d{6}-\d+\b", payload)
 
@@ -665,10 +667,9 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
     payload = capture_file.read_text(encoding="utf-8")
     assert f"kill-session {expected_session}" in payload
     assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "operator.kdl") in payload
-    assert "zellij attach" in payload
     assert "--new-session-with-layout" in payload and expected_session in payload
-    assert "OSA " in payload
-    # Session name appears in the osascript zellij command (possibly escaped)
+    assert "OSA " not in payload
+    # Session name appears in the direct Zellij lifecycle command.
     assert expected_session in payload
 
 

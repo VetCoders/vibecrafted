@@ -215,13 +215,10 @@ spawn_launch() {
         :
       elif spawn_in_operator_session "$launcher" "$pane_name"; then
         :
-      elif spawn_open_iterm "$launcher" 2>/dev/null; then
-        :
-      elif spawn_osascript_bin >/dev/null 2>&1; then
-        spawn_open_terminal "$launcher"
       else
-        printf 'Runtime fallback: visible Terminal requested, but osascript is unavailable. Running headless.\n' >&2
-        spawn_launch_headless "$launcher"
+        printf 'Failed to launch %s runtime through Zellij. Refusing AppleScript/iTerm fallback.\n' "$runtime" >&2
+        printf 'Use --runtime headless for detached execution or fix the Zellij operator session.\n' >&2
+        return 1
       fi
       ;; 
     headless|background|detached)
