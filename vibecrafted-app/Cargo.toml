@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "mux-agent",
+    "tray-agent",
+    "tui-agent",
+    "shell-agent/ffi",
+    "shell-agent/uniffi-bindgen"
+]
+
+[workspace.package]
+version = "0.2.1"
+edition = "2024"
+authors = ["VetCoders <hello@vetcoders.io>"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+ratatui = "0.30"
+uniffi = "0.30"

@@ -66,10 +66,18 @@ def test_all_layouts_have_new_tab_template() -> None:
         )
 
 
-def test_all_layouts_have_vibecrafted_branding() -> None:
-    """Every layout tab name must use the branded unicode prefix."""
+def test_layout_tab_branding_matches_frame_contract() -> None:
+    """Most layout tabs use the brand prefix; operator avoids duplication.
+
+    vc-frame already brands the session title, so the operator tab should be
+    plain and scan-friendly instead of repeating "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍." twice.
+    """
     for layout_file in sorted(LAYOUTS_DIR.glob("*.kdl")):
         payload = layout_file.read_text(encoding="utf-8")
+        if layout_file.name == "operator.kdl":
+            assert 'tab name="Operator"' in payload
+            assert 'tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Operator"' not in payload
+            continue
         assert "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍." in payload, f"{layout_file.name} missing branded tab name"
 
 

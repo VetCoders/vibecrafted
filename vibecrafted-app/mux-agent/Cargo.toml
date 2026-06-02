@@ -1,0 +1,66 @@
+[package]
+name = "rust-mux"
+version = "0.4.0"
+edition.workspace = true
+authors = ["Maciej Gad <void@div0.space>", "Monika Szymanska <hello@vetcoders.io>"]
+description = "Transport multiplexer for Rust MCP servers — tray, proxy, and runtime supervisor"
+license.workspace = true
+repository = "https://github.com/Loctree/rust-mux"
+homepage = "https://github.com/Loctree/rust-mux"
+documentation = "https://docs.rs/rust-mux"
+readme = "README.md"
+keywords = ["mcp", "multiplexer", "proxy", "tray", "supervisor"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lib]
+name = "rust_mux"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rust-mux"
+path = "src/bin/rust-mux.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "rust-mux-proxy"
+path = "src/bin/rust-mux-proxy.rs"
+required-features = ["cli"]
+
+[features]
+default = ["tray", "cli"]
+tray = ["tray-icon", "image"]
+cli = ["clap", "ratatui", "crossterm", "tracing-subscriber"]
+
+[dependencies]
+anyhow = "1"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+tracing = "0.1"
+notify = "6"
+bytes = "1"
+rmcp = "1.6"
+serde_yaml = "0.9"
+toml = "0.9.1"
+uuid = { version = "1", features = ["v4"] }
+crossbeam-channel = "0.5"
+
+# CLI dependencies (optional)
+clap = { version = "4", features = ["derive"], optional = true }
+ratatui = { version = "0.30", optional = true }
+crossterm = { version = "0.29", optional = true }
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"], optional = true }
+
+# Tray dependencies (optional)
+tray-icon = { version = "0.21.2", optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+libc = "0.2.186"
+
+[dev-dependencies]
+tempfile = "3"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

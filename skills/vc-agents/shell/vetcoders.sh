@@ -422,7 +422,7 @@ _vetcoders_ensure_zellij_session() {
 
 _vetcoders_prepare_operator_runtime() {
   local runtime="${1:-$(_vetcoders_default_runtime)}"
-  local session_name layout_file state command_text
+  local session_name layout_file state command_text zellij_config_dir zellij_env_prefix q_session q_layout
   _vetcoders_normalize_ambient_context
   _vetcoders_auto_gc_dead_zellij_sessions
 
@@ -456,6 +456,15 @@ _vetcoders_prepare_operator_runtime() {
   layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
   [[ -n "$layout_file" ]] || return 0
 
+  zellij_config_dir="$(_vetcoders_dashboard_config_dir_for_layout "$layout_file" 2>/dev/null || true)"
+  if [[ -n "$zellij_config_dir" ]]; then
+    zellij_env_prefix="ZELLIJ_CONFIG_DIR=$(_vetcoders_shell_quote "$zellij_config_dir") "
+  else
+    zellij_env_prefix=""
+  fi
+  q_session="$(_vetcoders_shell_quote "$session_name")"
+  q_layout="$(_vetcoders_shell_quote "$layout_file")"
+
   state="$(_vetcoders_zellij_session_state "$session_name")"
   case "$state" in
     live)
@@ -464,10 +473,10 @@ _vetcoders_prepare_operator_runtime() {
       ;;
     dead)
       zellij kill-session "$session_name" 2>/dev/null || true
-      command_text="zellij attach \"$session_name\" 2>/dev/null || zellij --session \"$session_name\" --new-session-with-layout \"$layout_file\""
+      command_text="${zellij_env_prefix}zellij attach $q_session 2>/dev/null || ${zellij_env_prefix}zellij --session $q_session --new-session-with-layout $q_layout"
       ;;
     *)
-      command_text="zellij attach \"$session_name\" 2>/dev/null || zellij --session \"$session_name\" --new-session-with-layout \"$layout_file\""
+      command_text="${zellij_env_prefix}zellij attach $q_session 2>/dev/null || ${zellij_env_prefix}zellij --session $q_session --new-session-with-layout $q_layout"
       ;;
   esac
   if _vetcoders_open_iterm_command "$command_text"; then

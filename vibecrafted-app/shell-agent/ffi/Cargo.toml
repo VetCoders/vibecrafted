@@ -1,0 +1,21 @@
+[package]
+name = "vibecrafted-shell-ffi"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[dependencies]
+uniffi = "0.30"
+thiserror = "1.0"
+anyhow = "1"
+rust-mux = { path = "../../mux-agent" }
+tray-agent = { path = "../../tray-agent" }
+vibecrafted-operator = { path = "../../tui-agent" }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+
+[build-dependencies]
+uniffi = { version = "0.30", features = ["build"] }
