@@ -3,11 +3,12 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF_USAGE'
-Usage: install-shell.sh [--source <repo-root>] [--dry-run] [--no-zshrc] [--no-bashrc]
+Usage: install-shell.sh [--source <repo-root>] [--dry-run] [--write-rc] [--no-zshrc] [--no-bashrc]
 
 Install the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helper layer. The helpers work in both bash and zsh.
-By default, sources the helper from $HOME/.bashrc and $HOME/.zshrc for shells that are
-available. Use --no-zshrc or --no-bashrc to skip a shell.
+By default, installs the helper shim and prints the rc source line without changing
+shell startup files. Pass --write-rc after explicit user consent to update rc files.
+Use --no-zshrc or --no-bashrc with --write-rc to skip a shell.
 EOF_USAGE
 }
 
@@ -18,6 +19,7 @@ die() {
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 dry_run=0
+write_rc=0
 update_zshrc=1
 update_bashrc=1
 
@@ -30,6 +32,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run|-n)
       dry_run=1
+      ;;
+    --write-rc)
+      write_rc=1
       ;;
     --no-zshrc)
       update_zshrc=0
@@ -163,22 +168,26 @@ _update_rcfile() {
 
 rcfile_touched=0
 
-if (( update_zshrc )); then
+if (( write_rc && update_zshrc )); then
   if command -v zsh >/dev/null 2>&1 || [[ -f "$HOME/.zshrc" ]]; then
     _update_rcfile "$HOME/.zshrc" "zsh"
     rcfile_touched=1
   fi
 fi
 
-if (( update_bashrc )); then
+if (( write_rc && update_bashrc )); then
   if [[ -f "$HOME/.bashrc" ]] || [[ "${SHELL##*/}" == "bash" ]]; then
     _update_rcfile "$HOME/.bashrc" "bash"
     rcfile_touched=1
   fi
 fi
 
-if (( ! rcfile_touched )); then
-  printf '\033[33m[warn]\033[0m No shell rc file was updated automatically.\n'
+if (( ! write_rc )); then
+  printf '\033[33m[warn]\033[0m Shell rc files were not changed automatically.\n'
+  printf '       To opt in, add this line to the rc file you actually use:\n'
+  printf '       %s\n' "$source_line"
+elif (( ! rcfile_touched )); then
+  printf '\033[33m[warn]\033[0m No shell rc file was updated.\n'
   printf '       Add this line manually to the rc file you actually use:\n'
   printf '       %s\n' "$source_line"
 fi

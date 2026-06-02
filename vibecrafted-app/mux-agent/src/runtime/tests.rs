@@ -873,9 +873,18 @@ async fn health_check_fails_for_missing_socket() {
 }
 
 #[tokio::test]
-#[ignore = "opcjonalny test roundtrip z lokalnym ~/.cargo/bin/loctree-mcp (uruchamiany przez make test-full)"]
+#[ignore = "optional roundtrip with LOCTREE_MCP override or product-managed loctree-mcp on PATH"]
 async fn mux_transport_roundtrip_with_loctree_mcp() {
-    let loctree = expand_path("~/.cargo/bin/loctree-mcp");
+    let loctree = env::var("LOCTREE_MCP").map(PathBuf::from).ok().or_else(|| {
+        env::var_os("PATH").and_then(|paths| {
+            env::split_paths(&paths)
+                .map(|path| path.join("loctree-mcp"))
+                .find(|candidate| candidate.exists())
+        })
+    });
+    let Some(loctree) = loctree else {
+        panic!("missing product-managed loctree-mcp on PATH or LOCTREE_MCP override");
+    };
     assert!(
         loctree.exists(),
         "brak binarki referencyjnej: {}",

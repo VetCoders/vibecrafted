@@ -9,6 +9,7 @@ from scripts import vetcoders_install
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_RUNTIME = REPO_ROOT / "scripts" / "install-runtime.sh"
+FOUNDATIONS_SCRIPT = REPO_ROOT / "scripts" / "install-foundations.sh"
 
 
 def test_install_runtime_none_is_noop(tmp_path: Path) -> None:
@@ -76,3 +77,23 @@ def test_runtime_doctor_reports_active_wezterm(monkeypatch, tmp_path: Path) -> N
     assert finding.level == "ok"
     assert finding.component == "runtime:wezterm"
     assert finding.message == f"-> {wezterm}"
+
+
+def test_foundations_default_prefix_uses_xdg_local_share(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env.pop("VIBECRAFTED_BIN", None)
+    env.pop("VIBECRAFTED_RUNTIME_HOME", None)
+    env.pop("XDG_DATA_HOME", None)
+
+    result = subprocess.run(
+        ["bash", str(FOUNDATIONS_SCRIPT), "--check", "agents"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    expected = tmp_path / ".local" / "share" / "vibecrafted" / "bin"
+    assert f"Runtime bin:  {expected}" in result.stdout

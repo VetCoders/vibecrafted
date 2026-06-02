@@ -98,3 +98,57 @@ def test_install_shell_shim_prefers_current_control_plane_before_home_store(
     assert shim.index(tools_path) < shim.index(home_path)
     assert "/Users/silver/Git/VibeCrafted" not in shim
     assert "DEV MODE OPT-IN: live repo override via VIBECRAFTED_ROOT" in shim
+
+
+def test_install_shell_does_not_write_rc_files_without_consent(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config = tmp_path / "config"
+    home.mkdir()
+    zshrc = home / ".zshrc"
+    bashrc = home / ".bashrc"
+    zshrc.write_text("# zsh user config\n", encoding="utf-8")
+    bashrc.write_text("# bash user config\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(config)
+
+    result = subprocess.run(
+        ["bash", str(INSTALL_SHELL), "--source", str(REPO_ROOT)],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert (config / "vetcoders" / "vc-skills.sh").exists()
+    assert zshrc.read_text(encoding="utf-8") == "# zsh user config\n"
+    assert bashrc.read_text(encoding="utf-8") == "# bash user config\n"
+    assert "Shell rc files were not changed automatically." in result.stdout
+
+
+def test_install_shell_writes_rc_files_with_consent(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    config = tmp_path / "config"
+    home.mkdir()
+    zshrc = home / ".zshrc"
+    bashrc = home / ".bashrc"
+    zshrc.write_text("# zsh user config\n", encoding="utf-8")
+    bashrc.write_text("# bash user config\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(config)
+
+    subprocess.run(
+        ["bash", str(INSTALL_SHELL), "--source", str(REPO_ROOT), "--write-rc"],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "vetcoders/vc-skills.sh" in zshrc.read_text(encoding="utf-8")
+    assert "vetcoders/vc-skills.sh" in bashrc.read_text(encoding="utf-8")

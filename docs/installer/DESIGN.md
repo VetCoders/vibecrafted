@@ -123,9 +123,9 @@ Select runtimes for symlink views:
     [ ] 4. gemini
 
 Runtime Foundations:
-  [ok] aicx-mcp -> ~/.cargo/bin/aicx-mcp
+  [ok] aicx-mcp -> <product-managed path>/aicx-mcp
        AICX MCP server for session history and intentions recovery
-  [ok] loctree-mcp -> ~/.cargo/bin/loctree-mcp
+  [ok] loctree-mcp -> <product-managed path>/loctree-mcp
        Structural code mapping MCP server
   [ok] prview -> ~/.cargo/bin/prview
        PR review artifact generator

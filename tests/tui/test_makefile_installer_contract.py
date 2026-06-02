@@ -144,3 +144,73 @@ def test_make_version_bump_updates_configured_version_file(tmp_path: Path) -> No
     assert result.returncode == 0, result.stderr
     assert "Bumped: v1.4.1 -> v1.5.0" in result.stdout
     assert version_file.read_text(encoding="utf-8") == "1.5.0\n"
+
+
+def test_foundations_product_binaries_require_explicit_owner_opt_in() -> None:
+    text = (REPO_ROOT / "scripts" / "install-foundations.sh").read_text(
+        encoding="utf-8"
+    )
+
+    loctree_block = text.split("install_loctree() {", 1)[1].split(
+        "# ---------------------------------------------------------------------------\n# Generic cargo installer",
+        1,
+    )[0]
+    aicx_block = text.split("install_aicx() {", 1)[1].split(
+        "# ---------------------------------------------------------------------------\n# Zellij installer",
+        1,
+    )[0]
+
+    guard = 'if [[ "$OWN_PRODUCT_BINARIES" != "1" ]]; then'
+    assert loctree_block.index(guard) < loctree_block.index(
+        'install_from_bundled "loctree"'
+    )
+    assert loctree_block.index(guard) < loctree_block.index(
+        'install_from_cargo "loctree" "loct"'
+    )
+    assert aicx_block.index(guard) < aicx_block.index('install_from_bundled "aicx-mcp"')
+    assert aicx_block.index(guard) < aicx_block.index(
+        'install_from_cargo "$AICX_CRATE" "aicx-mcp"'
+    )
+
+
+def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:
+    install_shell = (
+        REPO_ROOT / "skills" / "vc-agents" / "scripts" / "install-shell.sh"
+    ).read_text(encoding="utf-8")
+    installer = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "write_rc=0" in install_shell
+    assert "if (( write_rc && update_zshrc )); then" in install_shell
+    assert "if (( write_rc && update_bashrc )); then" in install_shell
+    assert '"--write-shell-rc"' in installer
+    assert "update_rc=write_shell_rc" in installer
+    assert "if write_shell_rc:\n        for rcname in" in installer
+
+
+def test_product_mcp_paths_do_not_hardcode_cargo_bin() -> None:
+    tracked = subprocess.run(
+        ["git", "ls-files"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+
+    offenders = []
+    product_markers = ("loctree-mcp", "aicx-mcp", "rust-memex")
+    cargo_markers = ("~/.cargo/bin", "$HOME/.cargo/bin")
+    for rel in tracked:
+        path = REPO_ROOT / rel
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for line_no, line in enumerate(text.splitlines(), 1):
+            if any(product in line for product in product_markers) and any(
+                cargo in line for cargo in cargo_markers
+            ):
+                offenders.append(f"{rel}:{line_no}: {line.strip()}")
+
+    assert offenders == []

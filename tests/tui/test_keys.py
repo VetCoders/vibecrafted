@@ -154,7 +154,30 @@ def test_strip_rc_entry_removes_duplicate_launcher_blocks() -> None:
     assert "cargo/bin" in cleaned
 
 
-def test_install_launcher_dedupes_zshrc_path_entries(
+def test_install_launcher_leaves_shell_rc_untouched_without_consent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    repo_root = tmp_path / "repo"
+    launcher_src = repo_root / "scripts" / "vibecrafted"
+    zshrc = home / ".zshrc"
+
+    launcher_src.parent.mkdir(parents=True)
+    launcher_src.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    home.mkdir()
+
+    original = "# user config\n"
+    zshrc.write_text(original, encoding="utf-8")
+
+    monkeypatch.setenv("HOME", str(home))
+
+    vetcoders_install._install_launcher(repo_root, dry_run=False)
+
+    assert zshrc.read_text(encoding="utf-8") == original
+    assert (home / ".local" / "bin" / "vibecrafted").is_file()
+
+
+def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / "home"
@@ -176,7 +199,7 @@ def test_install_launcher_dedupes_zshrc_path_entries(
 
     monkeypatch.setenv("HOME", str(home))
 
-    vetcoders_install._install_launcher(repo_root, dry_run=False)
+    vetcoders_install._install_launcher(repo_root, dry_run=False, update_rc=True)
 
     zshrc_content = zshrc.read_text(encoding="utf-8")
     assert zshrc_content.count(path_line) == 1
@@ -218,7 +241,7 @@ def test_install_launcher_replaces_old_blind_local_bin_path(
 
     monkeypatch.setenv("HOME", str(home))
 
-    vetcoders_install._install_launcher(repo_root, dry_run=False)
+    vetcoders_install._install_launcher(repo_root, dry_run=False, update_rc=True)
 
     zshrc_content = zshrc.read_text(encoding="utf-8")
     assert 'export PATH="$HOME/.local/bin:$PATH"' not in zshrc_content.splitlines()

@@ -29,7 +29,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 try:
     from installer_brand import (
@@ -123,7 +123,7 @@ class TeeLogger:
     def __init__(self, log_path: Path, quiet: bool = False):
         self.log = open(log_path, "w", encoding="utf-8")
         self.quiet = quiet
-        self._real_stdout = sys.__stdout__
+        self._real_stdout = sys.__stdout__ if sys.__stdout__ is not None else sys.stdout
 
     def write(self, text: str) -> int:
         self.log.write(text)
@@ -196,7 +196,7 @@ def _compact_checkpoint(
 # Component manifest
 # ---------------------------------------------------------------------------
 
-SKILL_CATEGORIES = {
+SKILL_CATEGORIES: Dict[str, Dict[str, Any]] = {
     "pipeline": {
         "label": "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Pipeline",
         "description": "Core workflow skills: init, workflow, followup, marbles, dou, hydrate, release",
@@ -750,7 +750,7 @@ def get_repo_url(repo_root: Path) -> str:
 
 def discover_skills(repo_root: Path) -> List[Path]:
     """Find all default 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skill directories."""
-    skills = []
+    skills: List[Path] = []
     skills_dir = repo_root / "skills"
     if not skills_dir.exists() or not skills_dir.is_dir():
         return skills
@@ -1358,7 +1358,7 @@ def _doctor_fix_launchers(store_path: Path, state: InstallState) -> List[DoctorF
         ]
 
     try:
-        _install_launcher(source_root, dry_run=False)
+        _install_launcher(source_root, dry_run=False, update_rc=False)
         state.launcher_entries = _snapshot_launcher_entries()
         state.save(store_path)
     except Exception as exc:  # pragma: no cover - repair failures surface here
@@ -3176,6 +3176,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     selected_skills = list(skill_names)
     all_runtimes = list(SYMLINK_TARGETS)
     install_shell = cli_with_shell
+    write_shell_rc = args.write_shell_rc
     installed_foundations: Dict[str, Dict] = {}
 
     while True:
@@ -3388,6 +3389,12 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                         should_proceed = report_helper_conflicts(conflicts, interactive)
                         if not should_proceed:
                             install_shell = False
+                if install_shell and interactive and not write_shell_rc:
+                    write_shell_rc = ask_yn(
+                        "Add helper/PATH lines to shell rc files now?",
+                        default=False,
+                    )
+                    print()
                 step += 1
 
             elif step == 5:
@@ -3432,6 +3439,9 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     print(f"  Skills:    {len(selected_skills)} -> {cyan(str(store_path))}")
     print(f"  Runtimes:  {', '.join(all_runtimes)} {dim('(skill views)')}")
     print(f"  Shell:     {'enabled' if install_shell else 'skipped'}")
+    if install_shell:
+        shell_rc_status = "opt-in write" if write_shell_rc else "manual line only"
+        print(f"  Shell rc:  {shell_rc_status}")
     if dry_run:
         print(f"  Mode:      {yellow('DRY RUN')}")
     print()
@@ -3527,19 +3537,22 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     )
 
     # --- Execute: clean compat and duplicate RC entries ---
-    for rcname in (".bashrc", ".zshrc"):
-        rcfile = Path.home() / rcname
-        if rcfile.exists():
-            rc_content = rcfile.read_text()
-            if not _is_writable(rcfile):
-                print(f"  {WARN} {rcfile} is locked — cannot clean old entries")
-                continue
-            cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
-            if removed_rc > 0 and not dry_run:
-                rcfile.write_text(cleaned_rc)
-                print(f"  {OK} Cleaned {removed_rc} old entries from {rcname}")
-            elif removed_rc > 0:
-                print(f"  {dim('would clean')} {removed_rc} old entries from {rcname}")
+    if write_shell_rc:
+        for rcname in (".bashrc", ".zshrc"):
+            rcfile = Path.home() / rcname
+            if rcfile.exists():
+                rc_content = rcfile.read_text()
+                if not _is_writable(rcfile):
+                    print(f"  {WARN} {rcfile} is locked — cannot clean old entries")
+                    continue
+                cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
+                if removed_rc > 0 and not dry_run:
+                    rcfile.write_text(cleaned_rc)
+                    print(f"  {OK} Cleaned {removed_rc} old entries from {rcname}")
+                elif removed_rc > 0:
+                    print(
+                        f"  {dim('would clean')} {removed_rc} old entries from {rcname}"
+                    )
 
     # --- Execute: shell helpers ---
     if install_shell:
@@ -3548,16 +3561,18 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             repo_root / "skills" / "vc-agents" / "scripts" / "install-shell.sh"
         )
         if shell_script.exists():
-            cmd = ["bash", str(shell_script), "--source", str(repo_root)]
+            shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
+            if write_shell_rc:
+                shell_cmd.append("--write-rc")
             if dry_run:
-                cmd.append("--dry-run")
-            subprocess.run(cmd, check=False)
+                shell_cmd.append("--dry-run")
+            subprocess.run(shell_cmd, check=False)
         else:
             print(f"  {WARN} Shell installer not found: {shell_script}")
         print()
 
     # --- Execute: vibecrafted launcher ---
-    _install_launcher(repo_root, dry_run)
+    _install_launcher(repo_root, dry_run, update_rc=write_shell_rc)
 
     # --- Fix Gemini plan.directory if it points into .vibecrafted ---
     _configure_gemini_plans(dry_run)
@@ -3593,11 +3608,11 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         findings = run_doctor(store_path, state)
         guide_path = write_start_here_guide(store_path, state, findings)
         # Print only failures and warnings
-        issues = [f for f in findings if f.level != "ok"]
+        issues = [finding for finding in findings if finding.level != "ok"]
         if issues:
-            for f in issues:
-                icon = WARN if f.level == "warn" else MISS
-                print(f"  {icon} {f.component}: {f.message}")
+            for finding in issues:
+                icon = WARN if finding.level == "warn" else MISS
+                print(f"  {icon} {finding.component}: {finding.message}")
         else:
             print(f"  {OK} All checks passed")
         print(f"  {OK} Start-here guide saved to {guide_path}")
@@ -3608,7 +3623,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     return 0
 
 
-def _install_launcher(repo_root: Path, dry_run: bool) -> None:
+def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -> None:
     """Install vibecrafted launcher to portable and compat bin surfaces."""
     launcher_src = repo_root / "scripts" / "vibecrafted"
     if launcher_src.exists():
@@ -3643,30 +3658,35 @@ def _install_launcher(repo_root: Path, dry_run: bool) -> None:
                     create_symlink(
                         Path("vibecrafted"), launcher_bin_dir / wrapper, dry_run=True
                     )
-        # Ensure $HOME/.local/bin is in PATH via shell rc files
+        # Ensure $HOME/.local/bin is in PATH via shell rc files only when the
+        # caller has explicit consent. Otherwise leave a copyable instruction.
         canonical_path_line = _launcher_path_line()
         path_lines = [canonical_path_line, *_legacy_launcher_path_lines()]
         path_comment = "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher"
-        for rcname in (".bashrc", ".zshrc"):
-            rcfile = Path.home() / rcname
-            if rcfile.exists():
-                content = rcfile.read_text()
-                cleaned = content
-                removed = 0
-                for path_line in path_lines:
-                    cleaned, removed_now = _strip_rc_entry(
-                        cleaned, path_line, path_comment
-                    )
-                    removed += removed_now
-                has_path = _rc_has_vibecrafted_bin_path(cleaned)
-                changed = removed > 0
-                if not has_path:
-                    if cleaned and not cleaned.endswith("\n"):
-                        cleaned += "\n"
-                    cleaned += f"\n# {path_comment}\n{canonical_path_line}\n"
-                    changed = True
-                if changed and not dry_run:
-                    rcfile.write_text(cleaned)
+        if update_rc:
+            for rcname in (".bashrc", ".zshrc"):
+                rcfile = Path.home() / rcname
+                if rcfile.exists():
+                    content = rcfile.read_text()
+                    cleaned = content
+                    removed = 0
+                    for path_line in path_lines:
+                        cleaned, removed_now = _strip_rc_entry(
+                            cleaned, path_line, path_comment
+                        )
+                        removed += removed_now
+                    has_path = _rc_has_vibecrafted_bin_path(cleaned)
+                    changed = removed > 0
+                    if not has_path:
+                        if cleaned and not cleaned.endswith("\n"):
+                            cleaned += "\n"
+                        cleaned += f"\n# {path_comment}\n{canonical_path_line}\n"
+                        changed = True
+                    if changed and not dry_run:
+                        rcfile.write_text(cleaned)
+        else:
+            print("  Shell rc files unchanged. To expose launchers, add:")
+            print(f"    {canonical_path_line}")
         print()
 
 
@@ -3751,6 +3771,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     selected_skills = list(skill_names)
     all_runtimes = list(SYMLINK_TARGETS)
     install_shell = cli_with_shell
+    write_shell_rc = args.write_shell_rc
     installed_foundations: Dict[str, Dict] = {}
 
     # --- System check (critical deps — must fail visibly) ---
@@ -3822,6 +3843,11 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 f"Views    {', '.join(all_runtimes)}",
                 f"Agents   {', '.join(detected_agents) if detected_agents else 'none detected'}",
                 f"Shell    {'enabled' if install_shell else 'skipped'}",
+                (
+                    f"Shell rc {'opt-in write' if write_shell_rc else 'manual line only'}"
+                    if install_shell
+                    else "Shell rc skipped"
+                ),
             ),
         )
 
@@ -3937,16 +3963,17 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             store_path, all_runtimes, dry_run=dry_run, interactive=False
         )
 
-        # Clean compat RC entries
-        for rcname in (".bashrc", ".zshrc"):
-            rcfile = Path.home() / rcname
-            if rcfile.exists():
-                rc_content = rcfile.read_text()
-                if not _is_writable(rcfile):
-                    continue
-                cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
-                if removed_rc > 0 and not dry_run:
-                    rcfile.write_text(cleaned_rc)
+        # Clean compat RC entries only after explicit rc-write consent.
+        if write_shell_rc:
+            for rcname in (".bashrc", ".zshrc"):
+                rcfile = Path.home() / rcname
+                if rcfile.exists():
+                    rc_content = rcfile.read_text()
+                    if not _is_writable(rcfile):
+                        continue
+                    cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
+                    if removed_rc > 0 and not dry_run:
+                        rcfile.write_text(cleaned_rc)
 
         # Shell helpers
         if install_shell:
@@ -3955,10 +3982,12 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 repo_root / "skills" / "vc-agents" / "scripts" / "install-shell.sh"
             )
             if shell_script.exists():
-                cmd = ["bash", str(shell_script), "--source", str(repo_root)]
+                shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
+                if write_shell_rc:
+                    shell_cmd.append("--write-rc")
                 if dry_run:
-                    cmd.append("--dry-run")
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                    shell_cmd.append("--dry-run")
+                result = subprocess.run(shell_cmd, capture_output=True, text=True)
                 # Log the shell installer output
                 if result.stdout:
                     print(result.stdout)
@@ -3987,7 +4016,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         _compact_line(out, green("\u2713"), "Store", store_display)
 
         # Launcher
-        _install_launcher(repo_root, dry_run)
+        _install_launcher(repo_root, dry_run, update_rc=write_shell_rc)
 
         # Fix Gemini plan.directory if it points into .vibecrafted
         _configure_gemini_plans(dry_run)
@@ -4018,12 +4047,12 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             print("Verification:")
             findings = run_doctor(store_path, state)
             guide_path = write_start_here_guide(store_path, state, findings)
-            issues = [f for f in findings if f.level != "ok"]
+            issues = [finding for finding in findings if finding.level != "ok"]
             if issues:
-                for f in issues:
-                    print(f"  [{f.level}] {f.component}: {f.message}")
+                for finding in issues:
+                    print(f"  [{finding.level}] {finding.component}: {finding.message}")
                 # Surface critical issues on compact output too
-                critical = [f for f in issues if f.level == "fail"]
+                critical = [finding for finding in issues if finding.level == "fail"]
                 if critical:
                     _clear_compact_status(out)
                     out.write(f"\n  {red('Issues found')} — check {log_path}\n")
@@ -4680,6 +4709,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     p_install.add_argument(
         "--with-shell", action="store_true", help="Install the shell helper layer"
+    )
+    p_install.add_argument(
+        "--write-shell-rc",
+        action="store_true",
+        help="Opt in to writing helper/PATH lines to shell rc files",
     )
     p_install.add_argument(
         "--tool",
