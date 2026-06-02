@@ -22,7 +22,13 @@ jobs:
         if: matrix.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libclang-dev \
+            protobuf-compiler \
+            rsync \
+            shellcheck
       - name: Install shellcheck on macOS
         if: matrix.os == 'macOS'
         run: brew install shellcheck

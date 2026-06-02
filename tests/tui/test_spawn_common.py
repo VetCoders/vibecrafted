@@ -947,16 +947,16 @@ def test_codex_spawn_marks_meta_failed_when_codex_emits_non_json_auth_error(
 
     report_file = Path(meta_payload["report"])
     deadline = time.time() + 5
+    report_text = ""
     while time.time() < deadline:
         if report_file.exists():
-            break
+            report_text = report_file.read_text(encoding="utf-8")
+            if "Codex failed before writing a standalone report file." in report_text:
+                break
         time.sleep(0.1)
 
     assert report_file.exists()
-    assert (
-        "Codex failed before writing a standalone report file."
-        in report_file.read_text(encoding="utf-8")
-    )
+    assert "Codex failed before writing a standalone report file." in report_text
     transcript_file = meta_file.with_name(
         meta_file.name.replace(".meta.json", ".transcript.log")
     )
