@@ -379,8 +379,20 @@ loctree_asset_patterns() {
 }
 
 install_loctree() {
-  if binary_runs loctree-mcp; then
-    ok "loctree-mcp already installed: $(command -v loctree-mcp)"
+  loctree_suite_ready() {
+    local missing=() bin
+    for bin in loct loctree loctree-mcp; do
+      binary_runs "$bin" || missing+=("$bin")
+    done
+    if (( ${#missing[@]} == 0 )); then
+      return 0
+    fi
+    warn "Loctree incomplete; missing or broken: ${missing[*]}"
+    return 1
+  }
+
+  if loctree_suite_ready; then
+    ok "loctree suite already installed: loct=$(command -v loct), loctree-mcp=$(command -v loctree-mcp)"
     return 0
   fi
 
@@ -403,10 +415,14 @@ install_loctree() {
   ensure_prefix
 
   # --- Attempt 0: bundled tarball (notarized drop-in) ---
-  if install_from_bundled "loctree-mcp"; then
-    install_from_bundled "loctree" || true
-    install_from_bundled "loct" || true
+  local bundled_any=0
+  install_from_bundled "loctree" && bundled_any=1 || true
+  install_from_bundled "loct" && bundled_any=1 || true
+  install_from_bundled "loctree-mcp" && bundled_any=1 || true
+  if (( bundled_any )) && loctree_suite_ready; then
     return 0
+  elif (( bundled_any )); then
+    warn "Bundled Loctree payload was incomplete; trying remote sources."
   fi
 
   # --- Attempt 1: prebuilt binary from GH releases ---
@@ -443,8 +459,9 @@ install_loctree() {
       done < <(find "$tmpdir/out" -type f \( -name 'loctree*' -o -name 'loct' \) -print0 2>/dev/null)
       rm -rf "$tmpdir"
 
-      # Verify the installed binary actually loads (dyld check)
-      if (( found )) && binary_runs loctree; then
+      # Verify the installed binaries actually load (dyld check). `loct` is
+      # the operator-facing daily CLI, so `loctree-mcp` alone is not enough.
+      if (( found )) && loctree_suite_ready; then
         ok "Loctree v${LOCTREE_VERSION} installed to $PREFIX"
         binary_ok=1
       elif (( found )); then
@@ -462,17 +479,21 @@ install_loctree() {
   (( binary_ok )) && return 0
 
   # --- Attempt 2: cargo (will bootstrap rustup if needed) ---
-  info "Trying cargo install path for loctree-mcp..."
+  info "Trying cargo install path for loctree suite..."
   if ensure_rustup; then
-    install_from_cargo "loctree-mcp" "loctree-mcp" && return 0
+    install_from_cargo "loctree" "loct" || true
+    install_from_cargo "loctree" "loctree" || true
+    install_from_cargo "loctree-mcp" "loctree-mcp" || true
+    loctree_suite_ready && return 0
   fi
 
   # --- Attempt 3: npm (will bootstrap node if needed) ---
   info "Trying npm install path for loctree-mcp..."
-  install_from_npm "loctree-mcp" "loctree-mcp" && return 0
+  install_from_npm "loctree-mcp" "loctree-mcp" || true
+  loctree_suite_ready && return 0
 
   warn "All loctree install paths exhausted."
-  warn "Install manually: cargo install loctree-mcp | npm i -g loctree-mcp"
+  warn "Install manually: cargo install loctree && cargo install loctree-mcp"
   return 1
 }
 

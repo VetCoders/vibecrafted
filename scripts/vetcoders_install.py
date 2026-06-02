@@ -261,6 +261,26 @@ FOUNDATIONS: List[Foundation] = [
         verify_cmd="aicx-mcp --version",
     ),
     Foundation(
+        name="loct",
+        description="Loctree operator CLI short command",
+        channels=["crates", "github"],
+        packages={
+            "crates": "loctree",
+            "github": "https://github.com/Loctree/Loctree/releases",
+        },
+        verify_cmd="loct --version",
+    ),
+    Foundation(
+        name="loctree",
+        description="Loctree structural code mapping CLI",
+        channels=["crates", "github"],
+        packages={
+            "crates": "loctree",
+            "github": "https://github.com/Loctree/Loctree/releases",
+        },
+        verify_cmd="loctree --version",
+    ),
+    Foundation(
         name="loctree-mcp",
         description="Structural code mapping MCP server",
         channels=["crates", "npm", "github"],
