@@ -4,7 +4,7 @@ spawn_control_plane_script() {
   local candidate
   for candidate in \
     "${VIBECRAFTED_ROOT:-}/scripts/control_plane_state.py" \
-    "${HOME}/.vibecrafted/tools/vibecrafted-current/scripts/control_plane_state.py" \
+    "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/vibecrafted/tools}/vibecrafted-current/scripts/control_plane_state.py" \
     "$(spawn_repo_root 2>/dev/null)/scripts/control_plane_state.py"
   do
     [[ -n "$candidate" && -f "$candidate" ]] || continue

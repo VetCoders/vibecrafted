@@ -79,7 +79,14 @@ def test_shell_helper_prefers_current_control_plane_over_home_store(
 ) -> None:
     home = tmp_path / "home"
     current_store = (
-        home / ".vibecrafted" / "tools" / "vibecrafted-current" / "skills" / "vc-agents"
+        home
+        / ".local"
+        / "share"
+        / "vibecrafted"
+        / "tools"
+        / "vibecrafted-current"
+        / "skills"
+        / "vc-agents"
     )
     stale_store = home / ".vibecrafted" / "skills" / "vc-agents"
 

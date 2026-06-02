@@ -31,7 +31,7 @@ spawn_frontier_candidates() {
 
   for candidate in \
     "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier" \
-    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/config" \
+    "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/config" \
     "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/config}" \
     "${SPAWN_ROOT:+$SPAWN_ROOT/config}" \
     "${script_root:+$script_root/config}"

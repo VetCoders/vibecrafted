@@ -103,7 +103,10 @@ def test_vetcoders_shim_prefers_runtime_helper_from_repo_root(tmp_path: Path) ->
 def test_vetcoders_shim_prefers_staged_tools_runtime_helper(tmp_path: Path) -> None:
     marker = "runtime-helper-from-staged-tools"
     staged_home = tmp_path / "vibecrafted-home" / ".vibecrafted"
-    staged_root = staged_home / "tools" / "vibecrafted-current"
+    tools_home = (
+        tmp_path / "vibecrafted-home" / ".local" / "share" / "vibecrafted" / "tools"
+    )
+    staged_root = tools_home / "vibecrafted-current"
     _install_runtime_probe_helper(staged_root, marker)
 
     installed_script = (
@@ -115,7 +118,11 @@ def test_vetcoders_shim_prefers_staged_tools_runtime_helper(tmp_path: Path) -> N
     result = _run_vetcoders_helper(
         installed_script,
         'printf "%s\\n" "$(_vetcoders_spawn_home codex)"',
-        {"VIBECRAFTED_HOME": str(staged_home), "VIBECRAFTED_ROOT": ""},
+        {
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_TOOLS_HOME": str(tools_home),
+            "VIBECRAFTED_ROOT": "",
+        },
     )
 
     assert result.returncode == 0
@@ -163,7 +170,8 @@ def test_vetcoders_helper_source_does_not_prepend_bundled_bin_to_path(
     preferred_vibecrafted.chmod(0o755)
 
     staged_home = tmp_path / "home" / ".vibecrafted"
-    bundled_bin = staged_home / "bin"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
+    bundled_bin = runtime_home / "bin"
     bundled_bin.mkdir(parents=True)
     bundled_vibecrafted = bundled_bin / "vibecrafted"
     bundled_vibecrafted.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -190,7 +198,8 @@ def test_vetcoders_require_zellij_uses_bundled_priority_without_path_leak(
     tmp_path: Path,
 ) -> None:
     staged_home = tmp_path / "home" / ".vibecrafted"
-    bundled_bin = staged_home / "bin"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
+    bundled_bin = runtime_home / "bin"
     bundled_bin.mkdir(parents=True)
     bundled_zellij = bundled_bin / "zellij"
     bundled_zellij.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -207,6 +216,7 @@ def test_vetcoders_require_zellij_uses_bundled_priority_without_path_leak(
         {
             "PATH": initial_path,
             "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
             "VIBECRAFTED_ROOT": str(REPO_ROOT),
         },
     )
@@ -220,8 +230,9 @@ def test_dashboard_uses_bundled_zellij_priority_without_path_leak(
     tmp_path: Path,
 ) -> None:
     staged_home = tmp_path / "home" / ".vibecrafted"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
     capture_file = tmp_path / "zellij-args.txt"
-    _write_capture_command(staged_home / "bin", "zellij", capture_file)
+    _write_capture_command(runtime_home / "bin", "zellij", capture_file)
 
     initial_path = os.defpath
     result = _run_vetcoders_helper(
@@ -231,6 +242,7 @@ def test_dashboard_uses_bundled_zellij_priority_without_path_leak(
             "CAPTURE_FILE": str(capture_file),
             "PATH": initial_path,
             "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
             "VIBECRAFTED_ROOT": str(REPO_ROOT),
         },
     )
@@ -245,6 +257,7 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
     tmp_path: Path,
 ) -> None:
     staged_home = tmp_path / "home" / ".vibecrafted"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
     capture_file = tmp_path / "zellij-args.txt"
     helper_root = tmp_path / "frontier"
     helper = (
@@ -260,8 +273,8 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
     helper.chmod(0o755)
     (helper_root / "config" / "starship.toml").write_text("", encoding="utf-8")
 
-    _write_capture_command(staged_home / "bin", "zellij", capture_file)
-    _write_capture_command(staged_home / "bin", "jq", tmp_path / "jq-args.txt")
+    _write_capture_command(runtime_home / "bin", "zellij", capture_file)
+    _write_capture_command(runtime_home / "bin", "jq", tmp_path / "jq-args.txt")
 
     initial_path = os.defpath
     result = _run_vetcoders_helper(
@@ -275,6 +288,7 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
             "CAPTURE_FILE": str(capture_file),
             "PATH": initial_path,
             "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
             "VIBECRAFTED_ROOT": str(helper_root),
             "ZELLIJ": "operator",
         },

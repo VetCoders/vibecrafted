@@ -43,8 +43,11 @@ try:
     )
     from runtime_paths import (
         read_version_file,
-        xdg_config_home,
+        vibecrafted_launcher_bin,
+        vibecrafted_runtime_bin,
+        vibecrafted_tools_home,
         vibecrafted_home,
+        xdg_config_home,
     )
 except (
     ModuleNotFoundError
@@ -60,8 +63,11 @@ except (
     )
     from scripts.runtime_paths import (
         read_version_file,
-        xdg_config_home,
+        vibecrafted_launcher_bin,
+        vibecrafted_runtime_bin,
+        vibecrafted_tools_home,
         vibecrafted_home,
+        xdg_config_home,
     )
 
 # ---------------------------------------------------------------------------
@@ -225,9 +231,6 @@ class Foundation:
         found = shutil.which(self.name)
         if found:
             return found
-        bundled = vibecrafted_home() / "bin" / self.name
-        if bundled.is_file() and os.access(bundled, os.X_OK):
-            return str(bundled)
         return None
 
     def install_hint(self) -> str:
@@ -545,7 +548,7 @@ def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
         actions.append(
             "Required foundations are missing. Run `vibecrafted update` to "
             "re-fetch the toolchain (or "
-            "`bash ~/.vibecrafted/tools/vibecrafted-current/scripts/install-foundations.sh` "
+            "`bash ~/.local/share/vibecrafted/tools/vibecrafted-current/scripts/install-foundations.sh` "
             "directly), then re-run `vibecrafted doctor`. "
             "If you cloned the repo, `make foundations` works too."
         )
@@ -1240,7 +1243,7 @@ def _helper_surface_label(*, zsh_available: Optional[bool] = None) -> str:
 
 
 def _launcher_path_line() -> str:
-    return 'case ":$PATH:" in *":${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/bin:"*) ;; *) export PATH="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/bin:$PATH" ;; esac; case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+    return 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
 
 
 def _legacy_launcher_path_lines() -> List[str]:
@@ -1325,8 +1328,7 @@ def _doctor_fix_rc_files() -> List[DoctorFinding]:
 
 
 def _doctor_launcher_source_root(store_path: Path) -> Optional[Path]:
-    tools_home = store_path.parent
-    current_link = tools_home / "tools" / "vibecrafted-current"
+    current_link = vibecrafted_tools_home() / "vibecrafted-current"
     candidates: List[Path] = [Path(__file__).resolve().parent.parent]
 
     if current_link.exists():
@@ -1683,14 +1685,7 @@ FRAMEWORK_LAUNCHER_MARKERS = (
 
 
 def _launcher_bin_dirs() -> List[Path]:
-    dirs: List[Path] = []
-    for candidate in (
-        vibecrafted_home() / "bin",
-        Path.home() / ".local" / "bin",
-    ):
-        if candidate not in dirs:
-            dirs.append(candidate)
-    return dirs
+    return [vibecrafted_launcher_bin()]
 
 
 def _find_launcher_wrapper(name: str) -> Optional[Path]:
@@ -1730,9 +1725,9 @@ def _rc_has_framework_install_hints(rcfile: Path) -> bool:
 
 
 def _launcher_dir_key(launcher_bin_dir: Path) -> str:
-    if launcher_bin_dir == vibecrafted_home() / "bin":
-        return "portable-bin"
     if launcher_bin_dir == Path.home() / ".local" / "bin":
+        return "local-bin"
+    if launcher_bin_dir == vibecrafted_launcher_bin():
         return "local-bin"
     return (
         re.sub(r"[^a-z0-9]+", "-", str(launcher_bin_dir).lower()).strip("-")
@@ -1742,8 +1737,7 @@ def _launcher_dir_key(launcher_bin_dir: Path) -> str:
 
 def _launcher_dir_from_key(key: str) -> Optional[Path]:
     mapping = {
-        "portable-bin": vibecrafted_home() / "bin",
-        "local-bin": Path.home() / ".local" / "bin",
+        "local-bin": vibecrafted_launcher_bin(),
     }
     return mapping.get(key)
 
@@ -2075,11 +2069,13 @@ def _is_framework_source_root(repo_root: Path) -> bool:
 
 
 def _current_tools_link(shared_home: Path) -> Path:
-    return shared_home / "tools" / "vibecrafted-current"
+    _ = shared_home
+    return vibecrafted_tools_home() / "vibecrafted-current"
 
 
 def _ensure_current_tools_target(shared_home: Path) -> Path:
-    tools_dir = shared_home / "tools"
+    _ = shared_home
+    tools_dir = vibecrafted_tools_home()
     current_link = _current_tools_link(shared_home)
     tools_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2100,7 +2096,7 @@ def _ensure_current_tools_target(shared_home: Path) -> Path:
 def refresh_current_tools(
     repo_root: Path, shared_home: Path, dry_run: bool = False, mirror: bool = False
 ) -> Optional[Path]:
-    """Refresh ~/.vibecrafted/tools/vibecrafted-current from the install source."""
+    """Refresh the runtime tools current-link from the install source."""
     if not _is_framework_source_root(repo_root):
         return None
 
@@ -2397,8 +2393,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     findings.append(DoctorFinding("ok", "version", fw_ver))
 
     # 0b. Distribution channel + upgrade path
-    tools_dir = store_path.parent  # e.g. ~/.vibecrafted/tools/../ -> ~/.vibecrafted
-    current_link = tools_dir / "tools" / "vibecrafted-current"
+    current_link = vibecrafted_tools_home() / "vibecrafted-current"
     is_git = False
     if current_link.exists():
         resolved = current_link.resolve()
@@ -2877,7 +2872,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     # 7e. Zellij availability and version
     zellij_bin = shutil.which("zellij")
     if not zellij_bin:
-        bundled_zellij = vibecrafted_home() / "bin" / "zellij"
+        bundled_zellij = vibecrafted_runtime_bin() / "zellij"
         if bundled_zellij.is_file() and os.access(bundled_zellij, os.X_OK):
             zellij_bin = str(bundled_zellij)
     if zellij_bin:
@@ -3491,7 +3486,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     except (OSError, subprocess.CalledProcessError) as exc:
         print(f"  {MISS} Could not refresh staged tools: {exc}")
         print(
-            "  Stopping install so stale ~/.vibecrafted/tools/vibecrafted-current "
+            "  Stopping install so stale ~/.local/share/vibecrafted/tools/vibecrafted-current "
             "cannot shadow fresh skills."
         )
         return 1
@@ -3619,7 +3614,7 @@ def _install_launcher(repo_root: Path, dry_run: bool) -> None:
     if launcher_src.exists():
         if not dry_run:
             legacy_redirect_src = repo_root / "scripts" / "vibecraft"
-            canonical_bin_dir = vibecrafted_home() / "bin"
+            canonical_bin_dir = vibecrafted_launcher_bin()
             canonical_bin_dir.mkdir(parents=True, exist_ok=True)
             canonical_launcher = canonical_bin_dir / "vibecrafted"
             shutil.copy2(launcher_src, canonical_launcher)
@@ -3883,7 +3878,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             out.write(
                 "\n  "
                 + red("Install stopped")
-                + " — could not refresh ~/.vibecrafted/tools/vibecrafted-current\n"
+                + " — could not refresh ~/.local/share/vibecrafted/tools/vibecrafted-current\n"
             )
             out.write(
                 "  Stale staged tools would shadow fresh skills; check the install log.\n"
@@ -4428,7 +4423,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     artifacts_to_remove = [
         shared_home / "install.log",
         start_here_path(),
-        shared_home / "tools" / "vibecrafted-current",
+        vibecrafted_tools_home() / "vibecrafted-current",
     ]
     removed_artifacts = False
     for art in artifacts_to_remove:

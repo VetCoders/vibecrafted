@@ -580,7 +580,7 @@ spawn_probe_watch() {
   local deadline=$(( $(date +%s) + window ))
   local good=0 bad="" warning="" reason=""
 
-  while [[ $(date +%s) -lt $deadline ]]; do
+  while true; do
     if [[ -f "$transcript" ]]; then
       # GOOD: timestamp line or session UUID present
       if [[ "$good" == "0" ]] && grep -qE '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\]|session: [a-f0-9-]{8,}' "$transcript" 2>/dev/null; then
@@ -621,6 +621,7 @@ spawn_probe_watch() {
       fi
     fi
     [[ -n "$bad" ]] && break
+    [[ $(date +%s) -ge $deadline ]] && break
     sleep 1
   done
 

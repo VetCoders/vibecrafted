@@ -4,15 +4,15 @@ set -euo pipefail
 # install-foundations.sh — portable installer for 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. foundation layer
 #
 # Handles:
-#   loctree / loctree-mcp  — binary from GitHub releases (Loctree/Loctree)
-#   aicx / aicx-mcp       — cargo install OR binary from GH releases
+#   loctree / loctree-mcp  — validated as external Loctree product binaries
+#   aicx / aicx-mcp       — validated as external AICX product binaries
 #   prview                 — cargo install OR binary from GH releases
 #
 # Usage:
-#   bash scripts/install-foundations.sh                   # install all required
-#   bash scripts/install-foundations.sh --all             # install all (including optional)
-#   bash scripts/install-foundations.sh loctree           # install only loctree
-#   bash scripts/install-foundations.sh aicx              # install only aicx / aicx-mcp
+#   bash scripts/install-foundations.sh                   # validate required foundations
+#   bash scripts/install-foundations.sh --all             # validate/install all framework-owned foundations
+#   bash scripts/install-foundations.sh loctree           # validate Loctree product binaries
+#   bash scripts/install-foundations.sh aicx              # validate AICX product binaries
 #   bash scripts/install-foundations.sh --check           # dry-run: show what would install
 #   bash scripts/install-foundations.sh --prefix /usr/local  # custom install prefix
 # ---------------------------------------------------------------------------
@@ -61,8 +61,23 @@ default_vibecrafted_home() {
   printf '%s\n' "$HOME/.vibecrafted"
 }
 
+default_vibecrafted_runtime_home() {
+  if [[ -n "${VIBECRAFTED_RUNTIME_HOME:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_RUNTIME_HOME"
+    return
+  fi
+  if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+    printf '%s\n' "$XDG_DATA_HOME/vibecrafted"
+    return
+  fi
+  printf '%s\n' "$HOME/.local/share/vibecrafted"
+}
+
 VIBECRAFTED_HOME="$(default_vibecrafted_home)"
-PREFIX="${VIBECRAFTED_BIN:-$VIBECRAFTED_HOME/bin}"
+VIBECRAFTED_RUNTIME_HOME="$(default_vibecrafted_runtime_home)"
+PREFIX="${VIBECRAFTED_BIN:-$VIBECRAFTED_RUNTIME_HOME/bin}"
+LAUNCHER_PREFIX="${VIBECRAFTED_LAUNCHER_BIN:-$HOME/.local/bin}"
+OWN_PRODUCT_BINARIES="${VIBECRAFTED_OWN_PRODUCT_BINARIES:-0}"
 CHECK_ONLY=0
 INSTALL_ALL=0
 AGENTS_REQUIRED=0
@@ -299,17 +314,17 @@ install_vc_wrappers() {
   local source_bin="$SOURCE_DIR/bin"
   local name src
   [[ -d "$source_bin" ]] || return 0
-  ensure_prefix
+  mkdir -p "$LAUNCHER_PREFIX"
   for src in "$source_bin"/vc-* "$source_bin"/vibecrafted-resume; do
     [[ -f "$src" ]] || continue
     name="$(basename "$src")"
     if (( CHECK_ONLY )); then
-      info "Would install $name -> $PREFIX/$name"
+      info "Would install $name -> $LAUNCHER_PREFIX/$name"
       continue
     fi
-    cp "$src" "$PREFIX/$name"
-    chmod +x "$PREFIX/$name"
-    ok "Installed $name -> $PREFIX/$name"
+    cp "$src" "$LAUNCHER_PREFIX/$name"
+    chmod +x "$LAUNCHER_PREFIX/$name"
+    ok "Installed $name -> $LAUNCHER_PREFIX/$name"
   done
 }
 
@@ -439,6 +454,18 @@ install_loctree() {
     return 0
   fi
 
+  if (( CHECK_ONLY )); then
+    info "Would validate Loctree product binaries on PATH: loct, loctree, loctree-mcp"
+    return 0
+  fi
+
+  if [[ "$OWN_PRODUCT_BINARIES" != "1" ]]; then
+    warn "Loctree is a product dependency, not a Vibecrafted-owned binary."
+    warn "Install or repair it with the Loctree installer/release surface, then rerun this check."
+    warn "Set VIBECRAFTED_OWN_PRODUCT_BINARIES=1 only for an explicit local emergency bootstrap."
+    return 1
+  fi
+
   local os arch asset url tmpdir patterns_text
   local patterns=()
   os="$(detect_os)"
@@ -447,12 +474,6 @@ install_loctree() {
   while IFS= read -r pattern; do
     [[ -n "$pattern" ]] && patterns+=("$pattern")
   done <<< "$patterns_text"
-
-  if (( CHECK_ONLY )); then
-    info "Would download loctree v${LOCTREE_VERSION} release asset for ${os}/${arch}"
-    info "  Install to: $PREFIX"
-    return 0
-  fi
 
   has_cmd curl || die "curl is required to download loctree"
   ensure_prefix
@@ -678,6 +699,18 @@ install_aicx() {
   if has_cmd aicx-mcp; then
     ok "aicx-mcp already installed: $(command -v aicx-mcp)"
     return 0
+  fi
+
+  if (( CHECK_ONLY )); then
+    info "Would validate AICX product binaries on PATH: aicx-mcp"
+    return 0
+  fi
+
+  if [[ "$OWN_PRODUCT_BINARIES" != "1" ]]; then
+    warn "AICX is a product dependency, not a Vibecrafted-owned binary."
+    warn "Install or repair it with the AICX installer/release surface, then rerun this check."
+    warn "Set VIBECRAFTED_OWN_PRODUCT_BINARIES=1 only for an explicit local emergency bootstrap."
+    return 1
   fi
 
   # --- Attempt 0: bundled tarball (notarized drop-in) ---
@@ -1070,17 +1103,17 @@ usage() {
 Usage: install-foundations.sh [options] [targets...]
 
 Targets:
-  loctree         Install loctree + loctree-mcp (binary from GH releases)
-  aicx            Install aicx / aicx-mcp (binary or cargo)
+  loctree         Validate loctree + loctree-mcp product binaries
+  aicx            Validate aicx / aicx-mcp product binaries
   prview          Install prview (cargo)
   sandbox         Optional microsandbox/libkrun runtime
   iterm2-plugin   vibecrafted iTerm2 / locterm AutoLaunch plugin (macOS, opt-in)
-  (no target)     Install required foundations (loctree + aicx); macOS gets iTerm2 plugin prompt
+  (no target)     Validate required foundations; install only framework-owned tools
 
 Options:
   --all        Install all foundations (including optional)
   --check      Dry-run: show what would be installed
-  --prefix DIR Install binaries to DIR (default: $PREFIX)
+  --prefix DIR Install framework-owned runtime binaries to DIR (default: $PREFIX)
   --help       Show this help
 EOF
 }
@@ -1119,7 +1152,8 @@ fi
 
 printf '\n\033[1m  Foundation Installer\033[0m\n'
 printf '  ─────────────────────\n'
-printf '  Prefix: %s\n\n' "$PREFIX"
+printf '  Runtime bin:  %s\n' "$PREFIX"
+printf '  Launcher bin: %s\n\n' "$LAUNCHER_PREFIX"
 
 exit_code=0
 for target in "${TARGETS[@]}"; do
@@ -1151,11 +1185,11 @@ if (( exit_code == 0 )) && (( !CHECK_ONLY )); then
   printf '\033[1mFoundation install complete.\033[0m\n'
   # Remind about PATH
   case ":$PATH:" in
-    *":$PREFIX:"*) ;;
+    *":$LAUNCHER_PREFIX:"*) ;;
     *)
       printf '\n\033[33mAdd to your shell profile:\033[0m\n'
       # shellcheck disable=SC2016 # $PATH is literal output for the user
-      printf '  export PATH="%s:$PATH"\n\n' "$PREFIX"
+      printf '  export PATH="%s:$PATH"\n\n' "$LAUNCHER_PREFIX"
       ;;
   esac
 fi

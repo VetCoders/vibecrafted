@@ -22,7 +22,32 @@ def xdg_config_home() -> Path:
     return resolve_env_path("XDG_CONFIG_HOME", Path.home() / ".config")
 
 
+def xdg_data_home() -> Path:
+    return resolve_env_path("XDG_DATA_HOME", Path.home() / ".local" / "share")
+
+
 def vibecrafted_home() -> Path:
     if "VIBECRAFTED_HOME" in os.environ and os.environ["VIBECRAFTED_HOME"]:
         return Path(os.environ["VIBECRAFTED_HOME"]).expanduser()
     return Path.home() / ".vibecrafted"
+
+
+def vibecrafted_runtime_home() -> Path:
+    return resolve_env_path("VIBECRAFTED_RUNTIME_HOME", xdg_data_home() / "vibecrafted")
+
+
+def vibecrafted_tools_home() -> Path:
+    return resolve_env_path(
+        "VIBECRAFTED_TOOLS_HOME",
+        vibecrafted_runtime_home() / "tools",
+    )
+
+
+def vibecrafted_runtime_bin() -> Path:
+    return resolve_env_path(
+        "VIBECRAFTED_RUNTIME_BIN", vibecrafted_runtime_home() / "bin"
+    )
+
+
+def vibecrafted_launcher_bin() -> Path:
+    return resolve_env_path("VIBECRAFTED_LAUNCHER_BIN", Path.home() / ".local" / "bin")

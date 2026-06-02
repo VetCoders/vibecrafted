@@ -109,8 +109,9 @@ def test_refresh_current_tools_mirrors_shadowing_files(
 ) -> None:
     source = tmp_path / "source"
     crafted_home = tmp_path / "home" / ".vibecrafted"
-    old_target = crafted_home / "tools" / "vibecrafted-main"
-    current_link = crafted_home / "tools" / "vibecrafted-current"
+    runtime_tools = tmp_path / "home" / ".local" / "share" / "vibecrafted" / "tools"
+    old_target = runtime_tools / "vibecrafted-main"
+    current_link = runtime_tools / "vibecrafted-current"
 
     _write_minimal_source(
         source,
@@ -129,6 +130,8 @@ def test_refresh_current_tools_mirrors_shadowing_files(
     current_link.parent.mkdir(parents=True, exist_ok=True)
     current_link.symlink_to(old_target)
     _hide_rsync(monkeypatch)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
 
     refreshed = installer.refresh_current_tools(
         source, crafted_home, dry_run=False, mirror=True
@@ -151,8 +154,9 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
     home = tmp_path / "home"
     source = tmp_path / "checkout"
     crafted_home = home / ".vibecrafted"
-    old_target = crafted_home / "tools" / "vibecrafted-main"
-    current_link = crafted_home / "tools" / "vibecrafted-current"
+    runtime_tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    old_target = runtime_tools / "vibecrafted-main"
+    current_link = runtime_tools / "vibecrafted-current"
 
     _write_minimal_source(
         source,

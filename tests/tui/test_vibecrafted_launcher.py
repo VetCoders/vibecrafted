@@ -568,14 +568,15 @@ def test_installed_launcher_prefers_current_control_plane_helper_over_home_store
 ) -> None:
     home = tmp_path / "home"
     installed_root = home / ".vibecrafted"
-    launcher = installed_root / "bin" / "vibecrafted"
+    runtime_root = home / ".local" / "share" / "vibecrafted"
+    launcher = home / ".local" / "bin" / "vibecrafted"
     stale_capture = tmp_path / "stale-args.txt"
     fresh_capture = tmp_path / "fresh-args.txt"
     stale_spawn = (
         installed_root / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
     )
     fresh_spawn = (
-        installed_root
+        runtime_root
         / "tools"
         / "vibecrafted-current"
         / "skills"
@@ -585,7 +586,7 @@ def test_installed_launcher_prefers_current_control_plane_helper_over_home_store
     )
     stale_helper = installed_root / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
     fresh_helper = (
-        installed_root
+        runtime_root
         / "tools"
         / "vibecrafted-current"
         / "skills"
@@ -787,9 +788,10 @@ def test_installed_launcher_gui_uses_python_control_plane_surface(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
-    installed_root = home / ".vibecrafted"
-    launcher = installed_root / "bin" / "vibecrafted"
-    current_root = installed_root / "tools" / "vibecrafted-current"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    current_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
     fake_bin = tmp_path / "bin"
     capture_file = tmp_path / "python3-calls.txt"
 
@@ -837,8 +839,10 @@ def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
 ) -> None:
     home = tmp_path / "home"
     installed_root = home / ".vibecrafted"
-    launcher = installed_root / "bin" / "vibecrafted"
-    current_root = installed_root / "tools" / "vibecrafted-current"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    current_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
     fake_bin = tmp_path / "bin"
     python_capture = tmp_path / "python3-calls.txt"
     tui_capture = tmp_path / "tui-calls.txt"
@@ -895,9 +899,10 @@ def test_tui_uses_vc_operator_from_path_when_local_build_missing(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
-    installed_root = home / ".vibecrafted"
-    launcher = installed_root / "bin" / "vibecrafted"
-    current_root = installed_root / "tools" / "vibecrafted-current"
+    launcher = home / ".local" / "bin" / "vibecrafted"
+    current_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
     fake_bin = tmp_path / "bin"
     python_capture = tmp_path / "python3-calls.txt"
     tui_capture = tmp_path / "tui-calls.txt"
@@ -1161,7 +1166,9 @@ def test_generic_skill_fallback_routes_unwrapped_skills(
     capture_file = tmp_path / "generic-skill-args.txt"
     helper = (
         home
-        / ".vibecrafted"
+        / ".local"
+        / "share"
+        / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
         / "skills"
@@ -1208,7 +1215,9 @@ def test_generic_skill_fallback_routes_skill_wrappers(
     capture_file = tmp_path / "generic-wrapper-args.txt"
     helper = (
         home
-        / ".vibecrafted"
+        / ".local"
+        / "share"
+        / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
         / "skills"
@@ -1275,7 +1284,9 @@ def test_marbles_delete_control_subcommand_routes_to_helper(tmp_path: Path) -> N
     capture_file = tmp_path / "marbles-delete-args.txt"
     helper = (
         home
-        / ".vibecrafted"
+        / ".local"
+        / "share"
+        / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
         / "skills"

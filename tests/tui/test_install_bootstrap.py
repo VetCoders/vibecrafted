@@ -145,7 +145,9 @@ def test_install_sh_attended_pipe_requires_explicit_yes_before_staging(
 
     exit_code, output = _run_with_tty(command, response="n")
 
-    staged_root = home / ".vibecrafted" / "tools" / "vibecrafted-current"
+    staged_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
     assert exit_code == 0
     assert "Nothing will be staged or installed until you say yes." in output
     assert "Proceed? [y/N]" in output
@@ -193,7 +195,9 @@ def test_install_sh_yes_skips_attended_prompt_for_pipe_bootstrap(
 
     exit_code, output = _run_with_tty(command)
 
-    staged_root = home / ".vibecrafted" / "tools" / "vibecrafted-current"
+    staged_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
     assert exit_code == 0
     assert "Proceed? [y/N]" not in output
     assert "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. bootstrap" not in output
@@ -255,7 +259,9 @@ def test_install_sh_runtime_flag_dispatches_staged_runtime_helper(
         env=env,
     )
 
-    staged_root = home / ".vibecrafted" / "tools" / "vibecrafted-current"
+    staged_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
     assert staged_root.is_symlink()
     assert make_capture.read_text(encoding="utf-8") == "install-auto RUNTIME=wezterm\n"
 
@@ -318,7 +324,9 @@ def test_install_sh_archive_install_runs_local_make_target(tmp_path: Path) -> No
         env=env,
     )
 
-    staged_root = home / ".vibecrafted" / "tools" / "vibecrafted-current"
+    staged_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
     assert staged_root.is_symlink()
     assert make_capture.read_text(encoding="utf-8").splitlines() == [
         "--no-print-directory",
@@ -387,7 +395,9 @@ def test_install_sh_gui_bootstrap_runs_local_guided_installer(tmp_path: Path) ->
         env=env,
     )
 
-    staged_root = home / ".vibecrafted" / "tools" / "vibecrafted-current"
+    staged_root = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
     assert staged_root.is_symlink()
     assert python_capture.read_text(encoding="utf-8").splitlines() == [
         str(staged_root / "scripts" / "installer_gui.py"),

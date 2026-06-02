@@ -38,7 +38,7 @@ _vetcoders_runtime_helper_candidates() {
   if [[ -n "$repo_root" ]]; then
     printf '%s/runtime/helpers/vetcoders-runtime-core.sh\n' "$repo_root"
   fi
-  printf '%s/tools/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh\n' "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+  printf '%s/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh\n' "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}"
 }
 
 _vetcoders_source_runtime_helpers() {
@@ -77,11 +77,9 @@ _vetcoders_default_runtime() {
 }
 
 _vetcoders_bundled_bin_dirs() {
-  local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
-  [[ -d "$crafted_home/bin" ]] && printf '%s\n' "$crafted_home/bin"
-  if [[ "$crafted_home" != "$HOME/.vibecrafted" ]]; then
-    [[ -d "$HOME/.vibecrafted/bin" ]] && printf '%s\n' "$HOME/.vibecrafted/bin"
-  fi
+  local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  local runtime_bin="${VIBECRAFTED_RUNTIME_BIN:-${VIBECRAFTED_RUNTIME_HOME:-$xdg_data_home/vibecrafted}/bin}"
+  [[ -d "$runtime_bin" ]] && printf '%s\n' "$runtime_bin"
 }
 
 _vetcoders_path_with_bundled_bin_priority() {
@@ -99,9 +97,10 @@ _vetcoders_path_with_bundled_bin_priority() {
 }
 
 _vetcoders_zellij_missing_message() {
-  local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+  local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  local runtime_bin="${VIBECRAFTED_RUNTIME_BIN:-${VIBECRAFTED_RUNTIME_HOME:-$xdg_data_home/vibecrafted}/bin}"
   echo "zellij is required for the Vibecrafted operator runtime." >&2
-  echo "Expected zellij on PATH or bundled at: $crafted_home/bin/zellij" >&2
+  echo "Expected zellij on PATH or bundled at: $runtime_bin/zellij" >&2
 }
 
 _vetcoders_require_zellij() {
@@ -415,7 +414,7 @@ _vetcoders_prepare_operator_runtime() {
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
   local runtime="${1:-$(_vetcoders_default_runtime)}"
-  local session_name layout_file state command_text zellij_bin zellij_cmd
+  local session_name layout_file state command_text zellij_bin zellij_cmd zellij_env_prefix
   _vetcoders_normalize_ambient_context
   _vetcoders_auto_gc_dead_zellij_sessions
 
@@ -450,6 +449,11 @@ _vetcoders_prepare_operator_runtime() {
 
   layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
   [[ -n "$layout_file" ]] || return 0
+  local zellij_config_dir="${ZELLIJ_CONFIG_DIR:-${layout_file%/layouts/*}}"
+  zellij_env_prefix=""
+  if [[ -n "$zellij_config_dir" ]]; then
+    zellij_env_prefix="ZELLIJ_CONFIG_DIR=$(_vetcoders_shell_quote "$zellij_config_dir") "
+  fi
 
   state="$(_vetcoders_zellij_session_state "$session_name")"
   case "$state" in
@@ -459,10 +463,10 @@ _vetcoders_prepare_operator_runtime() {
       ;;
     dead)
       "$zellij_bin" kill-session "$session_name" 2>/dev/null || true
-      command_text="$zellij_cmd attach \"$session_name\" 2>/dev/null || $zellij_cmd --session \"$session_name\" --new-session-with-layout \"$layout_file\""
+      command_text="${zellij_env_prefix}$zellij_cmd attach \"$session_name\" 2>/dev/null || ${zellij_env_prefix}$zellij_cmd --session \"$session_name\" --new-session-with-layout \"$layout_file\""
       ;;
     *)
-      command_text="$zellij_cmd attach \"$session_name\" 2>/dev/null || $zellij_cmd --session \"$session_name\" --new-session-with-layout \"$layout_file\""
+      command_text="${zellij_env_prefix}$zellij_cmd attach \"$session_name\" 2>/dev/null || ${zellij_env_prefix}$zellij_cmd --session \"$session_name\" --new-session-with-layout \"$layout_file\""
       ;;
   esac
   if _vetcoders_open_iterm_command "$command_text"; then
@@ -513,7 +517,7 @@ _vetcoders_spawn_into_operator_session() {
 _vetcoders_frontier_candidates() {
   local repo_root crafted_sidecar candidate seen=""
   repo_root="$(_vetcoders_repo_root)"
-  crafted_sidecar="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/config"
+  crafted_sidecar="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/config"
 
   for candidate in \
     "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier" \
@@ -560,7 +564,7 @@ _vetcoders_frontier_file() {
 _vetcoders_frontier_source_root() {
   local repo_root crafted_root candidate seen=""
   repo_root="$(_vetcoders_repo_root)"
-  crafted_root="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current"
+  crafted_root="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current"
 
   for candidate in \
     "${VIBECRAFTED_ROOT:-}" \
@@ -917,6 +921,7 @@ _vetcoders_contract_reset() {
   _vetcoders_contract_runtime=""
   _vetcoders_contract_root=""
   _vetcoders_contract_tail=""
+  _vetcoders_contract_dry_run=""
   _vetcoders_contract_no_aicx=""
   _vetcoders_contract_no_context_corpus=""
 }
@@ -957,6 +962,9 @@ _vetcoders_parse_contract() {
         ;;
       --no-context-corpus)
         _vetcoders_contract_no_context_corpus=1
+        ;;
+      --dry-run)
+        _vetcoders_contract_dry_run=1
         ;;
       --session)
         shift
@@ -1970,7 +1978,11 @@ _vetcoders_skill() {
     fi
     prompt="$(_vetcoders_compose_skill_prompt "$skill" "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1
   fi
-  local spawn_args=(--runtime "$(_vetcoders_effective_runtime)")
+  local runtime
+  runtime="$(_vetcoders_effective_runtime)"
+  _vetcoders_prepare_operator_runtime "$runtime" || return 1
+  local spawn_args=(--runtime "$runtime")
+  [[ -z "$_vetcoders_contract_dry_run" ]] || spawn_args+=(--dry-run)
   [[ -n "$_vetcoders_contract_root" ]] && spawn_args+=(--root "$_vetcoders_contract_root")
   if [[ "$skill" == "polarize" && "$prism_band" =~ ^(pass|doctrine)$ ]]; then
     local dispatch_output dispatch_status agent_log session_uuid
@@ -2084,7 +2096,7 @@ _vetcoders_runtime_manifest_path() {
   for candidate in \
     "${VIBECRAFTED_ROOT:-}" \
     "$(_vetcoders_repo_root)" \
-    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current"
+    "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current"
   do
     [[ -n "$candidate" && -f "$candidate/install.toml" ]] || continue
     printf '%s/install.toml\n' "$candidate"

@@ -95,8 +95,8 @@ def test_spawn_tool_paths_follow_silver_runtime_contract(tmp_path: Path) -> None
     for rel in (
         "tools/scripts",
         ".local/bin",
+        ".local/share/vibecrafted/bin",
         ".cargo/bin",
-        ".vibecrafted/bin",
         ".claude/plugins/cache/example/tool/bin",
         "bin",
         "tools",
@@ -109,7 +109,7 @@ def test_spawn_tool_paths_follow_silver_runtime_contract(tmp_path: Path) -> None
         f'''
         set -euo pipefail
         export HOME="{home}"
-        export PATH="{rogue_bin}:{home / ".vibecrafted" / "bin"}:{home / ".cargo" / "bin"}:{home / ".claude" / "plugins" / "cache" / "example" / "tool" / "bin"}:{home / "tools"}:{home / "bin"}:{home / ".local" / "bin"}:/usr/bin:/bin:/usr/bin"
+        export PATH="{rogue_bin}:{home / ".local" / "share" / "vibecrafted" / "bin"}:{home / ".cargo" / "bin"}:{home / ".claude" / "plugins" / "cache" / "example" / "tool" / "bin"}:{home / "tools"}:{home / "bin"}:{home / ".local" / "bin"}:/usr/bin:/bin:/usr/bin"
         source "{COMMON_SH}"
         spawn_prepend_agent_tool_paths
         printf '%s\n' "$PATH" | tr ':' '\n'
@@ -117,7 +117,7 @@ def test_spawn_tool_paths_follow_silver_runtime_contract(tmp_path: Path) -> None
     )
 
     expected_prefix = [
-        str(home / ".vibecrafted" / "bin"),
+        str(home / ".local" / "share" / "vibecrafted" / "bin"),
         str(home / ".local" / "bin"),
         str(home / ".cargo" / "bin"),
         str(home / "tools" / "scripts"),
@@ -187,8 +187,15 @@ def test_spawn_require_command_rejects_non_contract_path_entries(
 def test_skill_dry_run_reaches_spawn_launcher_without_launching(tmp_path: Path) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
+    local_bin = home / ".local" / "bin"
     plan = tmp_path / "brief.md"
     plan.write_text("# Brief\n", encoding="utf-8")
+    local_bin.mkdir(parents=True)
+    fake_claude = local_bin / "claude"
+    fake_claude.write_text(
+        "#!/usr/bin/env bash\nprintf 'claude-ok\\n'\n", encoding="utf-8"
+    )
+    fake_claude.chmod(0o755)
 
     env = os.environ.copy()
     env["HOME"] = str(home)

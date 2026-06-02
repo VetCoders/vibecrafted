@@ -135,8 +135,8 @@ if ! HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_
   die "root install.sh bootstrap failed"
 fi
 
-require_symlink "$bootstrap_home/.vibecrafted/tools/vibecrafted-current"
-require_file "$bootstrap_home/.vibecrafted/tools/vibecrafted-current/Makefile"
+require_symlink "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current"
+require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/Makefile"
 require_file "$bootstrap_home/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh"
 # Helper file lives at canonical location; compat symlink also exists
 require_file "$bootstrap_config_dir/vetcoders/vc-skills.sh"
@@ -152,9 +152,9 @@ HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
 require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh"
 require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/claude_spawn.sh"
 require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/gemini_spawn.sh"
-require_file "$home_dir/.vibecrafted/bin/vibecrafted"
-require_symlink "$home_dir/.vibecrafted/bin/vc-help"
-require_symlink "$home_dir/.vibecrafted/bin/vc-marbles"
+require_file "$home_dir/.local/bin/vibecrafted"
+require_symlink "$home_dir/.local/bin/vc-help"
+require_symlink "$home_dir/.local/bin/vc-marbles"
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
 require_symlink "$home_dir/.gemini/skills/vc-agents"
@@ -347,7 +347,7 @@ jq -e '.liveness == "terminal"' "$codex_meta" >/dev/null || die "codex meta miss
 log "launcher resume smoke"
 resume_capture="$workspace/resume-codex.txt"
 env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" FAKE_CODEX_CAPTURE="$resume_capture" \
-  "$home_dir/.vibecrafted/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
+  "$home_dir/.local/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
 require_file "$resume_capture"
 assert_contains "$resume_capture" 'resume'
 assert_contains "$resume_capture" 'fake-session-001'
@@ -355,7 +355,7 @@ assert_contains "$resume_capture" 'resume smoke'
 
 log "helper bash smoke"
 # shellcheck disable=SC2016
-env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.vibecrafted/bin:$fake_bin:$PATH" \
+env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.local/bin:$fake_bin:$PATH" \
   bash -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
   | grep -Fq 'helper-ok' || die 'bash helper layer not loaded'
 log "skill helper telemetry smoke"
@@ -377,7 +377,7 @@ jq -e '.liveness == "terminal"' "$skill_meta" >/dev/null || die "skill helper di
 if command -v zsh >/dev/null 2>&1; then
   log "helper zsh smoke (bonus)"
   # shellcheck disable=SC2016
-  env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.vibecrafted/bin:$fake_bin:$PATH" \
+  env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.local/bin:$fake_bin:$PATH" \
     zsh -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
     | grep -Fq 'helper-ok' || die 'zsh helper layer not loaded'
 fi

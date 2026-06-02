@@ -94,7 +94,7 @@ def test_cmd_uninstall_removes_launchers_and_compat_pack_wrappers(
     backup_root = store_path / installer.BACKUP_DIR
     latest = (backup_root / "latest").read_text(encoding="utf-8").strip()
     assert (backup_root / latest / "launchers" / "local-bin" / "marble-pack").exists()
-    assert (backup_root / latest / "launchers" / "portable-bin" / "aicx-pack").exists()
+    assert (backup_root / latest / "launchers" / "local-bin" / "aicx-pack").exists()
 
     for launcher_bin_dir in installer._launcher_bin_dirs():
         for removed_name in (

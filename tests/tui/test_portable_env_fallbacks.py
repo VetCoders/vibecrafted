@@ -44,8 +44,9 @@ def test_install_foundations_check_falls_back_to_home_without_vibecrafted_root(
         text=True,
     )
 
-    assert str(home / ".vibecrafted" / "bin") in result.stdout
-    assert "Would download loctree" in result.stdout
+    assert str(home / ".local" / "share" / "vibecrafted" / "bin") in result.stdout
+    assert str(home / ".local" / "bin") in result.stdout
+    assert "Would validate Loctree product binaries" in result.stdout
 
 
 def test_install_foundations_default_treats_agent_cli_bootstrap_as_best_effort(
@@ -56,7 +57,7 @@ def test_install_foundations_default_treats_agent_cli_bootstrap_as_best_effort(
     prefix = tmp_path / "prefix"
     home.mkdir()
 
-    for command in ("loctree", "loctree-mcp", "aicx-mcp", "zellij", "node"):
+    for command in ("loct", "loctree", "loctree-mcp", "aicx-mcp", "zellij", "node"):
         _write_fake_command(fake_bin, command)
     _write_fake_command(
         fake_bin,

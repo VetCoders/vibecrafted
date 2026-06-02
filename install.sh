@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF_USAGE'
 Usage: install.sh [--gui] [--yes] [--runtime <horse>] [--ref <branch>] [--archive-url <url> | --archive-file <path>] [--tools-dir <dir>] [make-target]
 
-Bootstrap a local 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. source snapshot into $VIBECRAFTED_ROOT/.vibecrafted/tools and then
+Bootstrap a local 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. source snapshot into $HOME/.local/share/vibecrafted/tools and then
 run a local staged install path from that copy.
 
 Use `--gui` when you want the browser-based guided installer.
@@ -191,6 +191,18 @@ default_vibecrafted_home() {
   printf '%s\n' "$HOME/.vibecrafted"
 }
 
+default_vibecrafted_runtime_home() {
+  if [[ -n "${VIBECRAFTED_RUNTIME_HOME:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_RUNTIME_HOME"
+    return
+  fi
+  if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+    printf '%s\n' "$XDG_DATA_HOME/vibecrafted"
+    return
+  fi
+  printf '%s\n' "$HOME/.local/share/vibecrafted"
+}
+
 sanitize_ref() {
   printf '%s' "$1" | tr '/:@ ' '----' | tr -cd '[:alnum:]._-' 
 }
@@ -262,7 +274,9 @@ prompt_attended_consent() {
 
 vibecrafted_home="$(default_vibecrafted_home)"
 export VIBECRAFTED_HOME="$vibecrafted_home"
-default_tools_dir="${VIBECRAFTED_TOOLS_HOME:-$vibecrafted_home/tools}"
+vibecrafted_runtime_home="$(default_vibecrafted_runtime_home)"
+export VIBECRAFTED_RUNTIME_HOME="$vibecrafted_runtime_home"
+default_tools_dir="${VIBECRAFTED_TOOLS_HOME:-$vibecrafted_runtime_home/tools}"
 default_ref="${VIBECRAFTED_REF:-main}"
 
 ref="$default_ref"
@@ -407,6 +421,7 @@ preflight_require() {
 preflight_require tar
 preflight_require make
 preflight_require python3
+export VIBECRAFTED_TOOLS_HOME="$tools_dir"
 if [[ -z "$archive_file" ]]; then
   preflight_require curl
 else
@@ -559,7 +574,7 @@ if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
   # installs. Keep the old bootstrap/staging work above, then hand off to the
   # manifest-owned installer so stdout remains compact and the detail lands in
   # the installer log.
-  for _p in "${vibecrafted_home}/bin" "${vibecrafted_home}/tools/node/bin" "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+  for _p in "$HOME/.local/bin" "${tools_dir}/node/bin" "$HOME/.cargo/bin"; do
     case ":${PATH}:" in
       *":${_p}:"*) ;;
       *) [[ -d "$_p" ]] && export PATH="${_p}:${PATH}" ;;
@@ -583,7 +598,7 @@ if [[ "$target" == "vibecrafted" ]]; then
 
   # Make sure user-local binaries (cargo, .local) are visible to the installer's
   # subprocesses — otherwise tools installed outside PATH won't be detected.
-  for _p in "${vibecrafted_home}/bin" "${vibecrafted_home}/tools/node/bin" "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+  for _p in "$HOME/.local/bin" "${tools_dir}/node/bin" "$HOME/.cargo/bin"; do
     case ":${PATH}:" in
       *":${_p}:"*) ;;
       *) [[ -d "$_p" ]] && export PATH="${_p}:${PATH}" ;;

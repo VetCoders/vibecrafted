@@ -190,8 +190,9 @@ def test_run_doctor_uses_bundled_zellij_when_not_on_path(
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
     store_path = crafted_home / "skills"
-    zellij = crafted_home / "bin" / "zellij"
+    zellij = runtime_home / "bin" / "zellij"
 
     store_path.mkdir(parents=True)
     zellij.parent.mkdir(parents=True)
@@ -266,7 +267,7 @@ def test_run_doctor_finds_launchers_outside_local_bin(
     config_home = home / ".config"
     crafted_home = home / ".vibecrafted"
     store_path = crafted_home / "skills"
-    launcher_bin = crafted_home / "bin"
+    launcher_bin = home / ".local" / "bin"
     helper_dir = config_home / "vetcoders"
 
     store_path.mkdir(parents=True)
@@ -339,11 +340,12 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
     config_home = home / ".config"
     store_path = crafted_home / "skills"
     launcher_bin = home / ".local" / "bin"
-    source_root = crafted_home / "tools" / "vibecrafted-main"
-    current_link = crafted_home / "tools" / "vibecrafted-current"
+    source_root = runtime_home / "tools" / "vibecrafted-main"
+    current_link = runtime_home / "tools" / "vibecrafted-current"
 
     store_path.mkdir(parents=True)
     launcher_bin.mkdir(parents=True)
@@ -377,8 +379,8 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     assert exit_code == 0
     assert (launcher_bin / "vc-intents").is_symlink()
     assert (launcher_bin / "vc-ownership").is_symlink()
-    assert (crafted_home / "bin" / "vc-intents").is_symlink()
-    assert (crafted_home / "bin" / "vc-ownership").is_symlink()
+    assert not (crafted_home / "bin" / "vc-intents").exists()
+    assert not (crafted_home / "bin" / "vc-ownership").exists()
 
     refreshed_state = installer.InstallState.load(store_path)
     assert any(
@@ -428,10 +430,11 @@ def test_run_doctor_spawn_e2e_supplies_full_meta_arguments(
     home = tmp_path / "home"
     config_home = home / ".config"
     crafted_home = home / ".vibecrafted"
+    runtime_tools = home / ".local" / "share" / "vibecrafted" / "tools"
     store_path = crafted_home / "skills"
     helper_dir = config_home / "vetcoders"
-    source_root = crafted_home / "tools" / "vibecrafted-main"
-    current_link = crafted_home / "tools" / "vibecrafted-current"
+    source_root = runtime_tools / "vibecrafted-main"
+    current_link = runtime_tools / "vibecrafted-current"
     scripts_dir = source_root / "skills" / "vc-agents" / "scripts"
 
     store_path.mkdir(parents=True)

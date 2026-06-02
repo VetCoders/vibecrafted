@@ -3,8 +3,10 @@
 _vetcoders_spawn_home() {
   local tool="$1"
   local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+  local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  local crafted_tools_home="${VIBECRAFTED_TOOLS_HOME:-$xdg_data_home/vibecrafted/tools}"
   local crafted_store="$crafted_home/skills/vc-agents"
-  local current_store="$crafted_home/tools/vibecrafted-current/skills/vc-agents"
+  local current_store="$crafted_tools_home/vibecrafted-current/skills/vc-agents"
   local repo_root
   repo_root="${VIBECRAFTED_ROOT:-$(_vetcoders_repo_root)}"
   if [[ -d "$repo_root/skills/vc-agents" && -f "$repo_root/VERSION" && -f "$repo_root/scripts/vibecrafted" ]]; then

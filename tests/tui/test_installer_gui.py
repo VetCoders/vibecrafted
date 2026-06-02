@@ -167,19 +167,30 @@ def test_install_runtime_env_prepends_repo_owned_bins(
     monkeypatch, tmp_path: Path
 ) -> None:
     crafted_home = tmp_path / ".vibecrafted"
+    runtime_home = tmp_path / ".local" / "share" / "vibecrafted"
     cargo_bin = tmp_path / ".cargo" / "bin"
-    node_bin = crafted_home / "tools" / "node" / "bin"
-    crafted_bin = crafted_home / "bin"
-    for path in (cargo_bin, node_bin, crafted_bin):
+    local_bin = tmp_path / ".local" / "bin"
+    node_bin = runtime_home / "tools" / "node" / "bin"
+    runtime_bin = runtime_home / "bin"
+    for path in (cargo_bin, local_bin, node_bin, runtime_bin):
         path.mkdir(parents=True)
 
     monkeypatch.setattr(installer_gui, "vibecrafted_home", lambda: crafted_home)
+    monkeypatch.setattr(installer_gui, "vibecrafted_runtime_bin", lambda: runtime_bin)
+    monkeypatch.setattr(
+        installer_gui, "vibecrafted_tools_home", lambda: runtime_home / "tools"
+    )
     monkeypatch.setattr(installer_gui.Path, "home", lambda: tmp_path)
 
     env = installer_gui.install_runtime_env({"PATH": "/usr/bin"})
     pieces = env["PATH"].split(":")
 
-    assert pieces[:3] == [str(cargo_bin), str(node_bin), str(crafted_bin)]
+    assert pieces[:4] == [
+        str(local_bin),
+        str(cargo_bin),
+        str(node_bin),
+        str(runtime_bin),
+    ]
 
 
 def test_build_html_renders_wizard_shell() -> None:

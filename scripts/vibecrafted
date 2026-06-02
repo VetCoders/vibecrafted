@@ -12,8 +12,15 @@ _expand_home_path() {
 }
 
 crafted_home="$(_expand_home_path "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}")"
+if [[ -n "${VIBECRAFTED_RUNTIME_HOME:-}" ]]; then
+  crafted_runtime_home="$(_expand_home_path "$VIBECRAFTED_RUNTIME_HOME")"
+elif [[ -n "${XDG_DATA_HOME:-}" ]]; then
+  crafted_runtime_home="$(_expand_home_path "$XDG_DATA_HOME/vibecrafted")"
+else
+  crafted_runtime_home="$HOME/.local/share/vibecrafted"
+fi
 crafted_skills="$crafted_home/skills"
-crafted_tools="$crafted_home/tools/vibecrafted-current"
+crafted_tools="$(_expand_home_path "${VIBECRAFTED_TOOLS_HOME:-$crafted_runtime_home/tools}")/vibecrafted-current"
 
 _bold='\033[1m'
 _dim='\033[2m'
@@ -1586,7 +1593,7 @@ _run_remote_install_fallback() {
 
 _post_update_cleanup() {
   # Remove known stale files that may survive across version transitions.
-  local tools_dir="${crafted_tools:-$HOME/.vibecrafted/tools/vibecrafted-current}"
+  local tools_dir="${crafted_tools:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}"
   local stale_candidates=(
     "$tools_dir/scripts/vibecraft"
     "$tools_dir/scripts/vc-implement"

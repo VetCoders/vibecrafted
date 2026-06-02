@@ -79,6 +79,8 @@ write_helper_shim() {
 
 _vibecrafted_helper_candidates() {
   local crafted_home="\${VIBECRAFTED_HOME:-\$HOME/.vibecrafted}"
+  local xdg_data_home="\${XDG_DATA_HOME:-\$HOME/.local/share}"
+  local crafted_tools_home="\${VIBECRAFTED_TOOLS_HOME:-\$xdg_data_home/vibecrafted/tools}"
   # DEV MODE OPT-IN: live repo override via VIBECRAFTED_ROOT env.
   # Operator who edits source in-place sets VIBECRAFTED_ROOT=/path/to/repo.
   # Without env set, resolver uses canonical install paths only —
@@ -90,10 +92,10 @@ _vibecrafted_helper_candidates() {
   # CANONICAL INSTALL PATHS (always emitted, operator-agnostic):
   # vibecrafted-current symlinks to the active vibecrafted-<channel> install,
   # so this path stays stable across versions and points at the staged source
-  # tree the installer copied into ~/.vibecrafted/tools/.
+  # tree the installer copied into the XDG data runtime.
   printf '%s\n' \
-    "\$crafted_home/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh" \
-    "\$crafted_home/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.zsh" \
+    "\$crafted_tools_home/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh" \
+    "\$crafted_tools_home/vibecrafted-current/skills/vc-agents/shell/vetcoders.zsh" \
     "\$crafted_home/skills/vc-agents/shell/vetcoders.sh" \
     "\$crafted_home/skills/vc-agents/shell/vetcoders.zsh"
 }

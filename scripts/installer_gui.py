@@ -23,13 +23,21 @@ try:
     from control_plane_launch import launch_workflow, normalize_launch_spec
     from control_plane_state import sync_state
     from installer_brand import PRODUCT_LINE, TAGLINE, VAPOR_HEADER
-    from runtime_paths import read_version_file, vibecrafted_home, xdg_config_home
+    from runtime_paths import (
+        read_version_file,
+        vibecrafted_runtime_bin,
+        vibecrafted_tools_home,
+        vibecrafted_home,
+        xdg_config_home,
+    )
 except ModuleNotFoundError:  # pragma: no cover - depends on entrypoint
     from scripts.control_plane_launch import launch_workflow, normalize_launch_spec
     from scripts.control_plane_state import sync_state
     from scripts.installer_brand import PRODUCT_LINE, TAGLINE, VAPOR_HEADER
     from scripts.runtime_paths import (
         read_version_file,
+        vibecrafted_runtime_bin,
+        vibecrafted_tools_home,
         vibecrafted_home,
         xdg_config_home,
     )
@@ -348,9 +356,10 @@ def install_runtime_env(base_env: dict[str, str] | None = None) -> dict[str, str
     path_entries = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
 
     candidates = [
-        vibecrafted_home() / "bin",
-        vibecrafted_home() / "tools" / "node" / "bin",
+        vibecrafted_runtime_bin(),
+        vibecrafted_tools_home() / "node" / "bin",
         Path.home() / ".cargo" / "bin",
+        Path.home() / ".local" / "bin",
     ]
     for candidate in candidates:
         candidate_str = str(candidate)

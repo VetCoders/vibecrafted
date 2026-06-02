@@ -91,7 +91,7 @@ def test_install_shell_shim_prefers_current_control_plane_before_home_store(
 
     shim = (config / "vetcoders" / "vc-skills.sh").read_text(encoding="utf-8")
     tools_path = (
-        '"$crafted_home/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh"'
+        '"$crafted_tools_home/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh"'
     )
     home_path = '"$crafted_home/skills/vc-agents/shell/vetcoders.sh"'
 

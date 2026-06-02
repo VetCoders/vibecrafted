@@ -207,7 +207,8 @@ def test_vc_init_finds_bundled_zellij_and_creates_missing_operator_session(
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
-    bundled_bin = crafted_home / "bin"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
+    bundled_bin = runtime_home / "bin"
     fake_bin = tmp_path / "bin"
     capture_file = tmp_path / "capture.log"
     session_state_file = tmp_path / "session-state.txt"
@@ -287,7 +288,7 @@ def test_vc_init_missing_zellij_message_has_fresh_install_path_hint(
     assert result.returncode != 0
     assert "zellij is required for the Vibecrafted operator runtime." in result.stderr
     assert (
-        f"Expected zellij on PATH or bundled at: {crafted_home}/bin/zellij"
+        f"Expected zellij on PATH or bundled at: {home}/.local/share/vibecrafted/bin/zellij"
         in result.stderr
     )
 
@@ -335,7 +336,8 @@ def test_marbles_inside_zellij_uses_bundled_zellij_priority(
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
-    bundled_bin = crafted_home / "bin"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
+    bundled_bin = runtime_home / "bin"
     capture_file = tmp_path / "zellij-args.txt"
 
     home.mkdir()
@@ -608,9 +610,8 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
 
     payload = capture_file.read_text(encoding="utf-8")
     assert "OSA " in payload
-    assert f"ZELLIJ_CONFIG_DIR={REPO_ROOT / 'config' / 'zellij'}" in payload
-    assert "zellij attach" in payload
-    assert "new-session-with-layout" in payload
+    assert "ZELLIJ ls" in payload
+    assert "vc-spawn-cmd" in payload
     assert re.search(r"\bfwup-\d{6}-\d+\b", payload)
 
 
@@ -663,7 +664,7 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
     assert result.stdout.strip().endswith(expected_session)
     payload = capture_file.read_text(encoding="utf-8")
     assert f"kill-session {expected_session}" in payload
-    assert f"ZELLIJ_CONFIG_DIR={REPO_ROOT / 'config' / 'zellij'}" in payload
+    assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "operator.kdl") in payload
     assert "zellij attach" in payload
     assert "--new-session-with-layout" in payload and expected_session in payload
     assert "OSA " in payload

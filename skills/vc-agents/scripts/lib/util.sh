@@ -20,18 +20,18 @@ spawn_require_command() {
 
 spawn_prepend_agent_tool_paths() {
   local home="${HOME:-}"
-  local crafted_home="${VIBECRAFTED_HOME:-}"
+  local xdg_data_home="${XDG_DATA_HOME:-${home:+$home/.local/share}}"
+  local runtime_home="${VIBECRAFTED_RUNTIME_HOME:-${xdg_data_home:+$xdg_data_home/vibecrafted}}"
+  local runtime_bin="${VIBECRAFTED_RUNTIME_BIN:-${runtime_home:+$runtime_home/bin}}"
   local entry found joined
   local -a contract final
-
-  [[ -n "$crafted_home" ]] || crafted_home="${home:+$home/.vibecrafted}"
 
   # Mirror Silver's runtime contract for detached agent launchers whose parent
   # process may not have gone through zsh startup files. This is intentionally
   # an allowlist: inherited PATH entries do not participate in agent command
   # resolution.
   contract=(
-    "${crafted_home:+$crafted_home/bin}"
+    "${runtime_bin:-}"
     "${home:+$home/.local/bin}"
     "${home:+$home/.cargo/bin}"
     "${home:+$home/tools/scripts}"
@@ -124,7 +124,7 @@ spawn_framework_version() {
     "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/VERSION}" \
     "${SPAWN_ROOT:+$SPAWN_ROOT/VERSION}" \
     "${script_root:+$script_root/VERSION}" \
-    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current/VERSION"
+    "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/VERSION"
   do
     [[ -n "$candidate" ]] || continue
     if [[ -f "$candidate" ]]; then
