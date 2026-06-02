@@ -108,3 +108,107 @@ Treat this like a Loctree fail hook, not like harmless background noise:
 
 The current installer diff before compaction is Codex-owned and must be cleaned
 against this journal, not attributed to another worker.
+
+## 2026-06-02 - Checkpoint: Sight, Insight, Ship, Frame
+
+Tags: `VC-CHECKPOINT SAVE`, `VC-PRODUCT`, `VC-FRAME`, `vc-skillaunch`, `loctree`, `aicx`, `vc-ship`
+
+### Trigger
+
+After the shell runtime split and async dispatcher checkpoint, the operator
+started distilling the session through `vc-skillaunch` into the next Loctree and
+`vc-ship` contracts.
+
+This checkpoint records the product shape before any SKILL.md rewrite.
+
+### Decisions
+
+Loctree and AICX are not optional tools.
+
+```text
+Loctree = sight
+AICX    = insight
+```
+
+Together they form an independent two-body perception system and the nucleus of
+every workflow. They are the hub and bearing; the workflows are spokes coming
+out of that center.
+
+Loctree is not an obligation imposed on agents. Loctree is a need: the work
+needs sight before it can move honestly. If Loctree is unavailable, that is a
+framework failure, not a normal fallback mode.
+
+AICX is the complementary insight layer: intent, memory, prior decisions, and
+why the code got this shape.
+
+### Workflow Shape
+
+Current "skills" are already splitting into a larger runtime anatomy:
+
+```text
+skill     = formal interactive instruction
+workflow  = goal procedure and gates
+launcher  = non-interactive runtime entrypoint
+telemetry = fuel for read-write cadence and control plane
+```
+
+Every repo-dependent workflow starts with `vc-init` and a Loctree context
+snapshot. That start is not ceremony; it prevents 20-minute rediscovery loops
+and token burn.
+
+There is no "minimal telemetry." Telemetry is runtime fuel for the read-write
+cadence: observation, decisions, stop reasons, resumption, report synthesis, and
+next work.
+
+### Shipping Shape
+
+If sight and insight are the hub and bearing, `vc-ship` is not just a final
+command. It is the riding surface and steering surface:
+
+```text
+vc-ship = tire + handlebar + saddle
+```
+
+- Tire: contact with reality, release, bundles, distribution, customer surface.
+- Handlebar: direction, stop/go decisions, pipeline selection.
+- Saddle: operator ergonomics for sustained work.
+
+The old runtime shape at or below 3.0.0 may disappear as a form. The intended
+frame is:
+
+```text
+vibecrafted-core   = mechanics / drive
+vibecrafted-mcp    = lever and peephole for agents
+vibecrafted-server = observability and protocol brain
+vibecrafted-app    = cockpit for humans
+vibecrafted-vm     = isolated factory runtime
+```
+
+### Distribution Correction
+
+Bundle-first is the standard product path.
+
+Vibecrafted should normally deliver required Loctree/AICX binaries with the
+bundle. `curl` is fallback, not the primary product path.
+
+This corrects any earlier wording that made `curl -fsSL https://loct.io/install.sh | sh`
+sound like the main foundation delivery model.
+
+### Stop Conditions
+
+These stop the pipeline:
+
+- Loctree unavailable or unable to produce the needed context snapshot.
+- Missing `vc-init` for repo-dependent work.
+- Missing telemetry/report fuel for read-write cadence.
+- Missing product-decision journal entry when shape changed.
+- Red gates.
+- Dirty-tree ownership that cannot be explained.
+- Overclaim in a report or final answer.
+
+### Source Of Truth
+
+Skill/workflow authoring happens in the repo.
+
+Installed copies under `.codex`, `.agents`, or `.vibecrafted` are distribution
+outputs, not manual authoring targets.
