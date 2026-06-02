@@ -2223,6 +2223,8 @@ Triple-agent research swarm launcher (claude + codex + junie by default).
 Usage:
   vc-research --prompt "Question to research"
   vc-research --file /path/to/plan.md
+  vc-research uno <claude|codex|gemini|agy|junie|grok> --prompt "Question to research"
+  vc-research uno <claude|codex|gemini|agy|junie|grok> --file /path/to/plan.md
 
 Common flags:
   -p, --prompt <text>            Inline prompt
@@ -2232,11 +2234,12 @@ Common flags:
 
 Examples:
   vc-research --prompt "Compare API alternatives for oauth libraries"
+  vc-research uno codex --prompt "Probe just one research lane"
   vc-research --file /path/to/research-plan.md
   vibecrafted research --prompt "State of the art for MCP streaming"
 
-Do not pass an agent to vc-research.
-Use `vibecrafted <agent> research <plan.md>` if you intentionally need single-agent mode.
+Do not pass an agent directly to vc-research.
+Use `vc-research uno <agent> ...` if you intentionally need single-agent mode.
 HELP
 }
 
@@ -2244,7 +2247,7 @@ _vetcoders_research() {
   local first_arg="${1:-}"
   local inherited_run_id inherited_run_lock
   local prompt root run_id run_lock runtime run_dir prompt_file layout_file summary_file
-  local session_name agent launcher cmd_file
+  local session_name agent launcher cmd_file research_mode requested_research_agent lock_actor launch_label
   local -a research_agents launchers launcher_entries command_entries
 
   for _arg in "$@"; do
@@ -2256,11 +2259,26 @@ _vetcoders_research() {
     esac
   done
 
+  research_mode="swarm"
+  requested_research_agent=""
+  if [[ "$first_arg" == "uno" ]]; then
+    shift || true
+    requested_research_agent="${1:-}"
+    _vetcoders_has_agent "$requested_research_agent" || {
+      printf 'vc-research uno expects <claude|codex|gemini|agy|junie|grok> as the next argument.\n' >&2
+      printf 'Usage: vc-research uno <agent> --prompt "..." or --file /path/to/plan.md.\n' >&2
+      return 1
+    }
+    shift || true
+    research_mode="uno"
+    first_arg="${1:-}"
+  fi
+
   case "$first_arg" in
     claude|codex|gemini|agy|junie|grok)
     printf 'vc-research is a triple-agent swarm launcher. Do not pass %s.\n' "$first_arg" >&2
     printf 'Use vc-research --prompt "..." or vc-research --file /path/to/plan.md.\n' >&2
-    printf 'If you intentionally want one researcher, use vibecrafted <agent> research <plan.md>.\n' >&2
+    printf 'If you intentionally want one researcher, use vc-research uno %s --prompt "...".\n' "$first_arg" >&2
     return 1
       ;;
   esac
@@ -2293,7 +2311,9 @@ _vetcoders_research() {
   [[ -n "$run_id" ]] || run_id="$(_vetcoders_generate_run_id "rsch")"
   run_lock="$inherited_run_lock"
   if [[ -z "$run_lock" || ! -f "$run_lock" ]]; then
-    run_lock="$(_vetcoders_create_run_lock "$run_id" "swarm" "research" "$root")" || return 1
+    lock_actor="swarm"
+    [[ "$research_mode" == "uno" ]] && lock_actor="$requested_research_agent"
+    run_lock="$(_vetcoders_create_run_lock "$run_id" "$lock_actor" "research" "$root")" || return 1
   fi
 
   run_dir="$(_vetcoders_research_run_dir "$root" "$run_id")"
@@ -2301,15 +2321,19 @@ _vetcoders_research() {
   prompt_file="$(_vetcoders_research_prompt_file "$run_dir" "$prompt")" || return 1
 
   research_agents=()
-  while IFS= read -r agent; do
-    case "$agent" in
-      claude|codex|gemini|agy|junie|grok) research_agents+=("$agent") ;;
-      "") ;;
-      *) printf 'Ignoring unsupported research agent from runtime picking config: %s\n' "$agent" >&2 ;;
-    esac
-  done < <(_vetcoders_research_agents)
-  if (( ${#research_agents[@]} == 0 )); then
-    research_agents=(claude codex junie)
+  if [[ "$research_mode" == "uno" ]]; then
+    research_agents=("$requested_research_agent")
+  else
+    while IFS= read -r agent; do
+      case "$agent" in
+        claude|codex|gemini|agy|junie|grok) research_agents+=("$agent") ;;
+        "") ;;
+        *) printf 'Ignoring unsupported research agent from runtime picking config: %s\n' "$agent" >&2 ;;
+      esac
+    done < <(_vetcoders_research_agents)
+    if (( ${#research_agents[@]} == 0 )); then
+      research_agents=(claude codex junie)
+    fi
   fi
 
   launchers=()
@@ -2365,7 +2389,9 @@ _vetcoders_research() {
     # shellcheck disable=SC2031
     export VIBECRAFTED_RESEARCH_RUN_DIR="$run_dir"
     zellij --session "$session_name" action new-tab --layout "$layout_file" >/dev/null
-    printf 'Research swarm launched in shared tab (run_id=%s).\n' "$run_id"
+    launch_label="Research swarm"
+    [[ "$research_mode" == "uno" ]] && launch_label="Research uno ($requested_research_agent)"
+    printf '%s launched in shared tab (run_id=%s).\n' "$launch_label" "$run_id"
     printf '  run dir: %s\n' "$run_dir"
     printf '  reports: %s\n' "$run_dir/reports"
     printf '  summary: %s\n' "$summary_file"
@@ -2375,7 +2401,9 @@ _vetcoders_research() {
     return 0
   fi
 
-  printf 'Research swarm prepared (run_id=%s), but runtime %s does not use the shared zellij layout.\n' "$run_id" "$runtime"
+  launch_label="Research swarm"
+  [[ "$research_mode" == "uno" ]] && launch_label="Research uno ($requested_research_agent)"
+  printf '%s prepared (run_id=%s), but runtime %s does not use the shared zellij layout.\n' "$launch_label" "$run_id" "$runtime"
   printf 'Run directory: %s\n' "$run_dir"
   printf 'Reports: %s\n' "$run_dir/reports"
   printf 'Summary: %s\n' "$summary_file"

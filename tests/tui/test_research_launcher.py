@@ -23,7 +23,8 @@ def test_vc_research_help_is_pure_help() -> None:
 
     assert result.returncode == 0
     assert "Triple-agent research swarm launcher" in result.stdout
-    assert "Do not pass an agent to vc-research." in result.stdout
+    assert "Do not pass an agent directly to vc-research." in result.stdout
+    assert "vc-research uno <agent>" in result.stdout
     assert "Research swarm launched" not in result.stdout
     assert "command not found" not in result.stdout
     assert "command not found" not in result.stderr
@@ -45,6 +46,64 @@ def test_vc_research_rejects_agent_argument_without_helper_crash() -> None:
     assert "vc-research is a triple-agent swarm launcher" in result.stderr
     assert "command not found" not in result.stdout
     assert "command not found" not in result.stderr
+
+
+def test_vc_research_uno_launches_one_requested_agent(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    crafted_home = tmp_path / "home" / ".vibecrafted"
+
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "vc-research uno codex --runtime headless "
+                f'--root "{root}" --prompt "zbadaj tylko jeden tor"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Research uno (codex) prepared" in result.stdout
+    assert "Research swarm prepared" not in result.stdout
+
+    run_id_match = re.search(r"run_id=(rsch-[^)]+)", result.stdout)
+    run_dir_match = re.search(r"Run directory: (.+)", result.stdout)
+    assert run_id_match is not None, result.stdout
+    assert run_dir_match is not None, result.stdout
+    run_id = run_id_match.group(1)
+    run_dir = Path(run_dir_match.group(1))
+
+    assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
+        "codex.meta.json",
+    ]
+    assert sorted(p.name for p in (run_dir / "tmp").glob("*_launch.sh")) == [
+        "codex_launch.sh",
+    ]
+    assert not list((run_dir / "reports").glob("*.md"))
+
+    meta = json.loads((run_dir / "logs" / "codex.meta.json").read_text())
+    assert meta["run_id"] == run_id
+    assert meta["agent"] == "codex"
+    assert meta["skill_code"] == "rsch"
+    assert meta["mode"] == "research"
+    assert meta["report"] == str(run_dir / "reports" / "codex.md")
+
+    summary = (run_dir / "summary.md").read_text(encoding="utf-8")
+    assert "- Codex:" in summary
+    assert "- Claude:" not in summary
+    assert "- Junie:" not in summary
 
 
 def test_vc_research_generated_worker_prompts_do_not_leak_launcher_semantics(
