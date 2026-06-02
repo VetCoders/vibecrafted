@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+from vibecrafted_core.artifacts import validate_artifacts
+from vibecrafted_core.control_plane import read_event_tail
+from vibecrafted_core.lifecycle import RunState, transition_allowed
+from vibecrafted_core.supervisor_async import AsyncSupervisor
+
+
+def test_lifecycle_transition_table_rejects_backwards_transition() -> None:
+    assert transition_allowed(RunState.CREATED, RunState.PROCESS_SPAWNED)
+    assert not transition_allowed(RunState.REPORT_VALIDATED, RunState.ACTIVE)
+
+
+def test_artifact_validator_reports_missing_report(tmp_path: Path) -> None:
+    meta = tmp_path / "run.meta.json"
+    meta.write_text(json.dumps({"transcript": str(tmp_path / "run.log")}))
+
+    result = validate_artifacts(meta_path=meta)
+
+    assert not result.ok
+    assert result.errors == ("report_missing",)
+    assert result.meta_exists is True
+
+
+def test_async_supervisor_emits_lifecycle_and_validates_artifacts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "report.md"
+    transcript = tmp_path / "transcript.log"
+    script = tmp_path / "worker.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n"
+        "print('hello from async supervisor')\n"
+    )
+    run_id = "asup-test-1"
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id=run_id,
+            command=[sys.executable, str(script)],
+            root=tmp_path,
+            report_path=report,
+            transcript_path=transcript,
+            require_transcript_output=True,
+        )
+    )
+
+    assert handle.exit_code == 0
+    assert handle.artifact_validation is not None
+    assert handle.artifact_validation.ok
+    assert RunState.PROCESS_SPAWNED in handle.states
+    assert RunState.FIRST_OUTPUT_SEEN in handle.states
+    assert RunState.REPORT_VALIDATED in handle.states
+    assert "hello from async supervisor" in transcript.read_text()
+
+    states = [
+        event.get("payload", {}).get("state")
+        for event in read_event_tail(limit=20)
+        if event.get("run_id") == run_id
+    ]
+    assert "created" in states
+    assert "process_spawned" in states
+    assert "report_validated" in states

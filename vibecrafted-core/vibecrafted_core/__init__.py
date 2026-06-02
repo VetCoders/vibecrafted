@@ -17,6 +17,14 @@ from .control_plane import (
 from .events import append_event
 from .doctor import doctor_run, doctor_summary
 from .git import repo_full, repo_full_summary
+from .artifacts import ArtifactValidation, validate_artifacts
+from .lifecycle import (
+    EventKind,
+    RunState,
+    is_final_state,
+    is_negative_state,
+    transition_allowed,
+)
 from .runtime_paths import (
     read_version_file,
     resolve_env_path,
@@ -30,6 +38,7 @@ from .workflow import (
     normalize_launch_spec,
     vibecrafted_launcher,
 )
+from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 
 __version__ = "0.1.0"
 
@@ -95,6 +104,11 @@ __all__ = [
     "ProfileSpec",
     "RunStatus",
     "Event",
+    "EventKind",
+    "ArtifactValidation",
+    "AsyncRunHandle",
+    "AsyncSupervisor",
+    "RunState",
     "WorkflowLaunchSpec",
     "append_event",
     "await_run",
@@ -143,8 +157,12 @@ __all__ = [
     "steal_focus",
     "subscribe_events",
     "sync_state",
+    "is_final_state",
+    "is_negative_state",
+    "transition_allowed",
     "uninstall_profiles",
     "update_block",
+    "validate_artifacts",
     "vibecrafted_home",
     "vibecrafted_launcher",
     "xdg_config_home",
