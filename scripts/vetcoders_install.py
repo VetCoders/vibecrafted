@@ -44,6 +44,7 @@ try:
     from runtime_paths import (
         read_version_file,
         vibecrafted_launcher_bin,
+        vibecrafted_runtime_home,
         vibecrafted_runtime_bin,
         vibecrafted_tools_home,
         vibecrafted_home,
@@ -64,6 +65,7 @@ except (
     from scripts.runtime_paths import (
         read_version_file,
         vibecrafted_launcher_bin,
+        vibecrafted_runtime_home,
         vibecrafted_runtime_bin,
         vibecrafted_tools_home,
         vibecrafted_home,
@@ -2367,6 +2369,159 @@ def describe_dumb_terminal_noise(stdout: str, stderr: str) -> str:
     )
 
 
+def _canonical_store_root() -> Path:
+    return (Path.home() / ".vibecrafted").expanduser()
+
+
+def _canonical_runtime_root() -> Path:
+    return (Path.home() / ".local" / "share" / "vibecrafted").expanduser()
+
+
+def _canonical_launcher_root() -> Path:
+    return (Path.home() / ".local" / "bin").expanduser()
+
+
+def _path_with_tilde(path: Path) -> str:
+    path_text = str(path.expanduser())
+    home_text = str(Path.home())
+    if path_text == home_text:
+        return "~"
+    if path_text.startswith(home_text + os.sep):
+        return "~" + path_text[len(home_text) :]
+    return path_text
+
+
+def _is_subpath(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _runtime_root_contract_findings() -> List[DoctorFinding]:
+    checks = [
+        (
+            "launcher-bin",
+            vibecrafted_launcher_bin().expanduser(),
+            _canonical_launcher_root(),
+            "VIBECRAFTED_LAUNCHER_BIN",
+        ),
+        (
+            "runtime",
+            vibecrafted_runtime_home().expanduser(),
+            _canonical_runtime_root(),
+            "VIBECRAFTED_RUNTIME_HOME",
+        ),
+        (
+            "store",
+            vibecrafted_home().expanduser(),
+            _canonical_store_root(),
+            "VIBECRAFTED_HOME",
+        ),
+    ]
+
+    findings: List[DoctorFinding] = []
+    for component, resolved_path, canonical_path, env_var in checks:
+        if resolved_path == canonical_path:
+            findings.append(
+                DoctorFinding(
+                    "ok",
+                    f"root:{component}",
+                    f"{_path_with_tilde(resolved_path)} (canonical)",
+                )
+            )
+            continue
+
+        override_value = os.environ.get(env_var)
+        override_prefix = f"{env_var}={override_value!r}; " if override_value else ""
+        findings.append(
+            DoctorFinding(
+                "fail",
+                f"root:{component}",
+                f"{override_prefix}resolved to {_path_with_tilde(resolved_path)} but contract requires "
+                f"{_path_with_tilde(canonical_path)}; manual cleanup: restore canonical root, remove stale wrappers "
+                "from ~/.cargo/bin and /usr/local/bin, then rerun installer/doctor.",
+            )
+        )
+    return findings
+
+
+def _foundation_provenance_findings(
+    foundation_name: str, executable_path: Path
+) -> List[DoctorFinding]:
+    findings: List[DoctorFinding] = []
+    canonical_launcher = _canonical_launcher_root()
+    executable = executable_path.expanduser()
+
+    if executable.parent != canonical_launcher:
+        findings.append(
+            DoctorFinding(
+                "fail",
+                f"foundation-provenance:{foundation_name}",
+                f"resolves to {_path_with_tilde(executable)}; expected launcher in {_path_with_tilde(canonical_launcher)}. "
+                "manual cleanup: remove non-canonical launcher and reinstall foundations.",
+            )
+        )
+        return findings
+
+    try:
+        resolved = executable.resolve(strict=False)
+    except OSError:
+        resolved = executable
+
+    for legacy_root in (Path.home() / ".cargo" / "bin", Path("/usr/local/bin")):
+        legacy_root = legacy_root.expanduser()
+        if _is_subpath(resolved, legacy_root):
+            findings.append(
+                DoctorFinding(
+                    "fail",
+                    f"foundation-provenance:{foundation_name}",
+                    f"wrapper {_path_with_tilde(executable)} points to legacy target {_path_with_tilde(resolved)}; "
+                    "manual cleanup: remove ghost wrappers, then reinstall foundations under ~/.local/bin.",
+                )
+            )
+            break
+
+    return findings
+
+
+def _has_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> bool:
+    return any(
+        finding.level == "fail"
+        and (
+            finding.component.startswith("root:")
+            or finding.component.startswith("foundation-provenance:")
+        )
+        for finding in findings
+    )
+
+
+def _pause_for_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> None:
+    if not _has_runtime_contract_failures(findings):
+        return
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+
+    out = sys.stdout if hasattr(sys.stdout, "write") else sys.__stdout__
+    print(file=out)
+    print(f"  {yellow('Runtime contract failed fast.')}\n", file=out)
+    print("  Canonical roots:", file=out)
+    print("    - launcher bin: ~/.local/bin", file=out)
+    print("    - runtime payload: ~/.local/share/vibecrafted", file=out)
+    print("    - store/control: ~/.vibecrafted", file=out)
+    print(file=out)
+    print("  Manual cleanup (no automatic dotfile edits were performed):", file=out)
+    print("    1) remove stale wrappers from ~/.cargo/bin and /usr/local/bin", file=out)
+    print("    2) ensure foundations resolve from ~/.local/bin", file=out)
+    print("    3) rerun 'vibecrafted doctor' or the installer", file=out)
+    print(file=out)
+    try:
+        input("  Press Enter after reviewing cleanup steps, or Ctrl-C to abort: ")
+    except EOFError:
+        print(file=out)
+
+
 def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     """Run full installation health check."""
     findings: List[DoctorFinding] = []
@@ -2415,6 +2570,8 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         findings.append(
             DoctorFinding("warn", "state", "No install manifest — was installer used?")
         )
+
+    findings.extend(_runtime_root_contract_findings())
 
     # 3. Expected skills present
     for skill_name in state.skills:
@@ -2516,6 +2673,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         path = f.is_installed()
         if path:
             findings.append(DoctorFinding("ok", f"foundation:{f.name}", f"-> {path}"))
+            findings.extend(_foundation_provenance_findings(f.name, Path(path)))
         elif f.required:
             findings.append(
                 DoctorFinding(
@@ -3571,6 +3729,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         print(f"  {SKIP} Skipped in dry-run mode")
     else:
         findings = run_doctor(store_path, state)
+        _pause_for_runtime_contract_failures(findings)
         guide_path = write_start_here_guide(store_path, state, findings)
         # Print only failures and warnings
         issues = [finding for finding in findings if finding.level != "ok"]
@@ -4011,6 +4170,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         if not dry_run:
             print("Verification:")
             findings = run_doctor(store_path, state)
+            _pause_for_runtime_contract_failures(findings)
             guide_path = write_start_here_guide(store_path, state, findings)
             issues = [finding for finding in findings if finding.level != "ok"]
             if issues:
@@ -4205,7 +4365,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     )
 
     guide_path = write_start_here_guide(store_path, state, findings)
-    return print_doctor(findings, guide_path=guide_path)
+    exit_code = print_doctor(findings, guide_path=guide_path)
+    _pause_for_runtime_contract_failures(findings)
+    return exit_code
 
 
 # ---------------------------------------------------------------------------

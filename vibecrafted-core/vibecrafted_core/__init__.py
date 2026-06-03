@@ -15,6 +15,11 @@ from .control_plane import (
     sync_state,
 )
 from .events import append_event
+from .capabilities import (
+    ToolCapability,
+    foundation_capabilities,
+    probe_tool,
+)
 from .doctor import doctor_run, doctor_summary
 from .git import repo_full, repo_full_summary
 from .artifacts import ArtifactValidation, validate_artifacts
@@ -36,6 +41,8 @@ from .workflow import (
     build_launch_command,
     launch_workflow,
     normalize_launch_spec,
+    retry_run,
+    stop_run,
     vibecrafted_launcher,
 )
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
@@ -106,6 +113,7 @@ __all__ = [
     "Event",
     "EventKind",
     "ArtifactValidation",
+    "ToolCapability",
     "AsyncRunHandle",
     "AsyncSupervisor",
     "RunState",
@@ -123,6 +131,8 @@ __all__ = [
     "doctor_run",
     "doctor_summary",
     "event_stream_path",
+    "foundation_capabilities",
+    "probe_tool",
     "ftcs_command_executed",
     "ftcs_command_finished",
     "ftcs_command_start",
@@ -136,6 +146,7 @@ __all__ = [
     "launch_workflow",
     "lookup_run",
     "normalize_launch_spec",
+    "retry_run",
     "post_notification",
     "progress",
     "read_event_tail",
@@ -153,6 +164,7 @@ __all__ = [
     "set_mark",
     "set_profile",
     "set_user_var",
+    "stop_run",
     "stable_guid",
     "steal_focus",
     "subscribe_events",

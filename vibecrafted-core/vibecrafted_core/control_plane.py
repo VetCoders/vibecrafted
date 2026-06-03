@@ -6,7 +6,7 @@ import datetime as dt
 import fcntl
 import json
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -14,6 +14,12 @@ from .runtime_paths import vibecrafted_home
 
 
 ACTIVE_STATES = {
+    "created",
+    "process_spawned",
+    "first_output_seen",
+    "active",
+    "artifact_seen",
+    "report_started",
     "initialized",
     "launching",
     "promise",
@@ -23,13 +29,28 @@ ACTIVE_STATES = {
     "stalled",
 }
 FINAL_STATES = {
+    "report_validated",
     "completed",
+    "closed",
     "converged",
     "stopped",
+    "blocked",
     "failed",
+    "report_missing",
+    "report_invalid",
+    "contract_failed",
+    "recovery_required",
     "timed_out",
     "gc",
     "ghost",
+}
+BLOCKED_STATES = {
+    "blocked",
+    "stalled",
+    "report_missing",
+    "report_invalid",
+    "contract_failed",
+    "recovery_required",
 }
 SKILL_CODE_MAP = {
     "agnt": "agents",
@@ -80,6 +101,7 @@ class RunStatus:
     session_id: str = ""
     current_loop: int | None = None
     total_loops: int | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -191,6 +213,113 @@ def _state_health(state: str, updated_at: str) -> str:
     return "active"
 
 
+def _operator_state(run: dict[str, Any]) -> str:
+    state = str(run.get("state") or "")
+    artifact_ok = run.get("artifact_ok")
+    artifact_errors = list(run.get("artifact_errors") or [])
+    exit_code = _coerce_int(run.get("exit_code"))
+
+    if state in BLOCKED_STATES:
+        return "blocked"
+    if state in {"failed", "process_dead", "ghost"}:
+        return "failed"
+    if exit_code not in (None, 0):
+        return "failed"
+    if state in {"report_validated", "completed", "closed"}:
+        if artifact_ok is False or artifact_errors:
+            return "blocked"
+        return "completed"
+    if artifact_ok is False or artifact_errors:
+        return "blocked"
+    return "running"
+
+
+def _artifact_projection(
+    run: dict[str, Any], previous: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    report = str(run.get("latest_report") or "")
+    transcript = str(run.get("latest_transcript") or "")
+    state = str(run.get("state") or "")
+    result = dict(run)
+    errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
+    artifact_ok = run.get("artifact_ok")
+
+    if report:
+        report_path = Path(report)
+        try:
+            if not report_path.exists():
+                if "report_missing" not in errors:
+                    errors.append("report_missing")
+            elif report_path.stat().st_size == 0 and "report_invalid" not in errors:
+                errors.append("report_invalid")
+        except OSError:
+            if "report_invalid" not in errors:
+                errors.append("report_invalid")
+    elif state in {"report_validated", "completed", "closed"}:
+        if "report_missing" not in errors:
+            errors.append("report_missing")
+
+    transcript_bytes: int | None = None
+    transcript_growth: int | None = None
+    if transcript:
+        transcript_path = Path(transcript)
+        try:
+            if transcript_path.exists():
+                transcript_bytes = transcript_path.stat().st_size
+                previous_bytes = _coerce_int((previous or {}).get("transcript_bytes"))
+                if previous_bytes is not None:
+                    transcript_growth = max(transcript_bytes - previous_bytes, 0)
+                else:
+                    transcript_growth = transcript_bytes
+        except OSError:
+            transcript_bytes = None
+            transcript_growth = None
+
+    if artifact_ok is None:
+        artifact_ok = len(errors) == 0
+    else:
+        artifact_ok = bool(artifact_ok) and len(errors) == 0
+
+    if errors:
+        gate = "failed"
+    elif state in {"report_validated", "completed", "closed"}:
+        gate = "validated"
+    else:
+        gate = "pending"
+
+    result["artifact_ok"] = artifact_ok
+    result["artifact_errors"] = errors
+    result["artifact_gate"] = gate
+    result["transcript_bytes"] = transcript_bytes
+    result["transcript_growth"] = transcript_growth
+    result["heartbeat_at"] = str(run.get("heartbeat_at") or run.get("updated_at") or "")
+    result["operator_state"] = _operator_state(result)
+    return result
+
+
+def _failure_card(run: dict[str, Any]) -> dict[str, Any] | None:
+    errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
+    state = str(run.get("state") or "")
+    if not errors and state not in BLOCKED_STATES:
+        return None
+
+    return {
+        "code": "runtime_contract_failure",
+        "summary": "Artifact contract or lifecycle precondition failed.",
+        "state": state,
+        "run_id": run.get("run_id"),
+        "artifact_errors": errors,
+        "report": run.get("latest_report") or "",
+        "transcript": run.get("latest_transcript") or "",
+        "last_error": run.get("last_error") or "",
+        "recovery": [
+            "Inspect events tail for the run.",
+            "Validate report/transcript paths and rerun or retry.",
+            "Use vc_run_stop before retry when liveness remains active.",
+        ],
+    }
+
+
 def _session_base_name(root: str) -> str:
     base = Path(root or "vibecrafted").name.lower()
     cleaned = "".join(ch if ch.isalnum() else "-" for ch in base).strip("-")
@@ -250,6 +379,25 @@ def _normalize_agent_meta(path: Path) -> RunStatus | None:
         if exit_code is not None or liveness == "terminal"
         else _state_health(state, updated_at)
     )
+    extra: dict[str, Any] = {}
+    for key in (
+        "runtime",
+        "source_dir",
+        "prompt",
+        "file",
+        "retry_of",
+        "worker_command",
+        "worker_pid",
+        "worker_pgid",
+        "heartbeat_at",
+        "meta",
+        "artifact_ok",
+        "artifact_errors",
+        "artifact_gate",
+        "operator_state",
+    ):
+        if key in payload and payload.get(key) not in (None, ""):
+            extra[key] = payload[key]
     return RunStatus(
         run_id=run_id,
         state=state,
@@ -273,6 +421,7 @@ def _normalize_agent_meta(path: Path) -> RunStatus | None:
         launcher_pid=_coerce_int(payload.get("launcher_pid")),
         completed_at=_safe_iso(str(payload.get("completed_at") or "")),
         session_id=str(payload.get("session_id") or ""),
+        extra=extra,
     )
 
 
@@ -301,6 +450,7 @@ def _normalize_lock(path: Path) -> RunStatus | None:
         source="lock",
         lock_present=True,
         liveness="lock_present",
+        extra={},
     )
 
 
@@ -337,7 +487,134 @@ def _normalize_marbles_state(path: Path) -> RunStatus | None:
         total_loops=int(payload["total_loops"])
         if isinstance(payload.get("total_loops"), int)
         else None,
+        extra={
+            "runtime": str(payload.get("runtime") or "headless"),
+        },
     )
+
+
+def _merge_event_stream(merged: dict[str, RunStatus]) -> dict[str, RunStatus]:
+    stream = event_stream_path()
+    if not stream.exists():
+        return merged
+
+    for line in _read_lines(stream):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        run_id = str(event.get("run_id") or "").strip()
+        if not run_id:
+            continue
+
+        payload = dict(event.get("payload") or {})
+        kind = str(event.get("kind") or "")
+        message = str(event.get("message") or "")
+        ts = _safe_iso(str(event.get("ts") or ""))
+        existing = merged.get(run_id)
+
+        state = str(payload.get("state") or "")
+        if not state and kind.startswith("lifecycle:"):
+            state = kind.split(":", 1)[1]
+        if not state and kind == "launch":
+            state = "created"
+        if not state and kind == "audit:stop" and payload.get("accepted"):
+            state = "stopped"
+        if not state:
+            state = existing.state if existing is not None else "unknown"
+
+        root = str(payload.get("root") or (existing.root if existing else ""))
+        agent = str(payload.get("agent") or (existing.agent if existing else "unknown"))
+        skill = str(payload.get("skill") or (existing.skill if existing else "unknown"))
+        mode = str(payload.get("mode") or (existing.mode if existing else "unknown"))
+        report = str(
+            payload.get("report")
+            or (existing.latest_report if existing is not None else "")
+        )
+        transcript = str(
+            payload.get("transcript")
+            or (existing.latest_transcript if existing is not None else "")
+        )
+        updated_at = ts or (existing.updated_at if existing else "")
+        started_at = str(
+            payload.get("started_at")
+            or (existing.started_at if existing is not None else "")
+            or updated_at
+        )
+        exit_code = _coerce_int(payload.get("exit_code"))
+        if exit_code is None and existing is not None:
+            exit_code = existing.exit_code
+        liveness = str(
+            payload.get("liveness") or (existing.liveness if existing else "")
+        )
+        launcher_pid = _coerce_int(payload.get("launcher_pid"))
+        if launcher_pid is None and existing is not None:
+            launcher_pid = existing.launcher_pid
+        completed_at = str(
+            payload.get("completed_at")
+            or (existing.completed_at if existing is not None else "")
+        )
+        session_id = str(
+            payload.get("session_id")
+            or (existing.session_id if existing is not None else "")
+        )
+
+        extra = dict(existing.extra if existing is not None else {})
+        for key in (
+            "runtime",
+            "source_dir",
+            "prompt",
+            "file",
+            "retry_of",
+            "worker_command",
+            "worker_pid",
+            "worker_pgid",
+            "heartbeat_at",
+            "meta",
+            "artifact_ok",
+            "artifact_errors",
+        ):
+            if key in payload and payload.get(key) not in (None, ""):
+                extra[key] = payload[key]
+
+        last_error = (
+            str(payload.get("error") or "")
+            or (
+                message
+                if state in BLOCKED_STATES or state in {"failed", "ghost"}
+                else ""
+            )
+            or (existing.last_error if existing is not None else "")
+        )
+
+        incoming = RunStatus(
+            run_id=run_id,
+            state=state,
+            agent=agent,
+            skill=skill,
+            mode=mode,
+            root=root,
+            operator_session=operator_session_name(root, run_id),
+            latest_report=report,
+            latest_transcript=transcript,
+            last_error=last_error,
+            updated_at=updated_at,
+            started_at=started_at,
+            health=_state_health(state, updated_at),
+            source="event-stream",
+            lock_present=existing.lock_present if existing is not None else False,
+            exit_code=exit_code,
+            liveness=liveness,
+            launcher_pid=launcher_pid,
+            completed_at=completed_at,
+            session_id=session_id,
+            current_loop=existing.current_loop if existing is not None else None,
+            total_loops=existing.total_loops if existing is not None else None,
+            extra=extra,
+        )
+        merged[run_id] = _merge_status(existing, incoming)
+
+    return merged
 
 
 def _merge_status(existing: RunStatus | None, incoming: RunStatus) -> RunStatus:
@@ -382,6 +659,7 @@ def _merge_status(existing: RunStatus | None, incoming: RunStatus) -> RunStatus:
         total_loops=preferred.total_loops
         if preferred.total_loops is not None
         else existing.total_loops,
+        extra={**existing.extra, **incoming.extra},
     )
 
 
@@ -400,7 +678,11 @@ def _load_existing_snapshots() -> dict[str, dict[str, Any]]:
 
 
 def _status_to_payload(status: RunStatus) -> dict[str, Any]:
-    return asdict(status)
+    payload = asdict(status)
+    extra = payload.pop("extra", {})
+    if isinstance(extra, dict):
+        payload.update(extra)
+    return payload
 
 
 def _run_is_terminal(run: dict[str, Any]) -> bool:
@@ -425,12 +707,38 @@ def _select_run(snapshot: dict[str, Any], run_id: str) -> dict[str, Any] | None:
     return None
 
 
+# Fields that drift between consecutive sync_state() passes without
+# representing a meaningful lifecycle change (timestamps re-derived from the
+# event stream, provenance of the winning source, transcript delta counters).
+# They must be excluded from the idempotency comparison so re-syncing an
+# unchanged run does not emit a spurious "refreshed" event.
+_VOLATILE_TRANSITION_KEYS = frozenset(
+    {
+        "updated_at",
+        "heartbeat_at",
+        "generated_at",
+        "source",
+        "transcript_growth",
+    }
+)
+
+
+def _stable_transition_view(run: dict[str, Any] | None) -> dict[str, Any]:
+    if not run:
+        return {}
+    return {
+        key: value for key, value in run.items() if key not in _VOLATILE_TRANSITION_KEYS
+    }
+
+
 def _record_transition(
     previous: dict[str, Any] | None, current: dict[str, Any]
 ) -> None:
     previous_state = str(previous.get("state") or "") if previous else ""
     current_state = str(current.get("state") or "")
-    if previous_state == current_state and previous == current:
+    if previous_state == current_state and _stable_transition_view(
+        previous
+    ) == _stable_transition_view(current):
         return
     message = (
         f"{current['run_id']} entered {current_state}"
@@ -467,6 +775,11 @@ def _warnings_for_runs(runs: list[dict[str, Any]]) -> list[str]:
         ):
             warnings.append(
                 f"{run['run_id']} still has a live lock but no report artifact yet."
+            )
+        failure_card = run.get("failure_card")
+        if isinstance(failure_card, dict) and failure_card.get("code"):
+            warnings.append(
+                f"{run['run_id']} contract failure: {failure_card.get('code')}"
             )
     return warnings[:6]
 
@@ -551,11 +864,21 @@ def sync_state() -> dict[str, Any]:
                 continue
             merged[status.run_id] = _merge_status(merged.get(status.run_id), status)
 
+        merged = _merge_event_stream(merged)
+
         payload_runs = []
         run_snapshot_dir().mkdir(parents=True, exist_ok=True)
         for run_id, status in merged.items():
-            payload = _status_to_payload(status)
             previous = previous_snapshots.get(run_id)
+            payload = _artifact_projection(_status_to_payload(status), previous)
+            payload["failure_card"] = _failure_card(payload)
+            payload["health"] = _state_health(
+                str(payload.get("state") or ""), str(payload.get("updated_at") or "")
+            )
+            if not payload.get("liveness"):
+                payload["liveness"] = (
+                    "terminal" if _run_is_terminal(payload) else "heartbeat"
+                )
             _record_transition(previous, payload)
             _write_json(_snapshot_path(run_id), payload)
             payload_runs.append(payload)

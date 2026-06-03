@@ -14,6 +14,17 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
+def _pin_canonical_runtime_roots(monkeypatch, home: Path, crafted_home: Path) -> None:
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    monkeypatch.setenv(
+        "VIBECRAFTED_RUNTIME_HOME",
+        str(home / ".local" / "share" / "vibecrafted"),
+    )
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(home / ".local" / "bin"))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+
+
 def test_run_doctor_smokes_helper_and_launcher_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -62,9 +73,8 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     )
     state.save(store_path)
 
-    monkeypatch.setenv("HOME", str(home))
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
     _real_which = shutil.which
     monkeypatch.setattr(
@@ -167,9 +177,8 @@ def test_run_doctor_includes_dashboard_smoke(tmp_path: Path, monkeypatch) -> Non
     )
     state.save(store_path)
 
-    monkeypatch.setenv("HOME", str(home))
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
     _real_which = shutil.which
     monkeypatch.setattr(
@@ -204,8 +213,7 @@ def test_run_doctor_uses_bundled_zellij_when_not_on_path(
     state = installer.InstallState(framework_version="1.5.0")
     state.save(store_path)
 
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
     monkeypatch.setattr(installer.shutil, "which", lambda name: None)
 
@@ -244,8 +252,7 @@ def test_run_doctor_accepts_gemini_help_when_version_flag_exits_nonzero(
     state = installer.InstallState(framework_version="1.5.0")
     state.save(store_path)
 
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
     monkeypatch.setattr(
         installer.shutil,
@@ -316,9 +323,8 @@ def test_run_doctor_finds_launchers_outside_local_bin(
     )
     state.save(store_path)
 
-    monkeypatch.setenv("HOME", str(home))
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
     _real_which = shutil.which
     monkeypatch.setattr(
@@ -369,9 +375,8 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     state = installer.InstallState(framework_version="1.4.1-test")
     state.save(store_path)
 
-    monkeypatch.setenv("HOME", str(home))
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
 
     exit_code = installer.cmd_doctor(Namespace(fix_rc=False, fix_launchers=True))
@@ -414,8 +419,7 @@ def test_run_doctor_ignores_ds_store_in_stale_file_check(
     )
     state.save(store_path)
 
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
 
     findings = installer.run_doctor(store_path, state)
@@ -480,9 +484,8 @@ def test_run_doctor_spawn_e2e_supplies_full_meta_arguments(
     )
     state.save(store_path)
 
-    monkeypatch.setenv("HOME", str(home))
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
     monkeypatch.setattr(installer, "FOUNDATIONS", [])
     _real_which = shutil.which
     monkeypatch.setattr(
@@ -548,9 +551,8 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
         encoding="utf-8",
     )
 
-    monkeypatch.setenv("HOME", str(home))
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
     findings = installer._doctor_fix_rc_files()
 
     assert any(
@@ -564,6 +566,91 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
     assert repaired.count(installer._launcher_path_line()) == 1
     assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers" in repaired
     assert "# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher" in repaired
+
+
+def test_run_doctor_fail_fast_on_runtime_root_drift(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    store_path = crafted_home / "skills"
+    store_path.mkdir(parents=True)
+
+    state = installer.InstallState(framework_version="1.6.0")
+    state.save(store_path)
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home / ".legacy-vibecrafted"))
+    monkeypatch.setenv(
+        "VIBECRAFTED_RUNTIME_HOME",
+        str(home / ".legacy-runtime"),
+    )
+    monkeypatch.setenv("VIBECRAFTED_LAUNCHER_BIN", str(home / ".legacy-bin"))
+    monkeypatch.setattr(installer, "FOUNDATIONS", [])
+
+    findings = installer.run_doctor(store_path, state)
+    indexed = {finding.component: finding for finding in findings}
+
+    assert indexed["root:store"].level == "fail"
+    assert indexed["root:runtime"].level == "fail"
+    assert indexed["root:launcher-bin"].level == "fail"
+    assert "manual cleanup" in indexed["root:store"].message
+
+
+def test_run_doctor_fail_fast_on_foundation_provenance_drift(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    store_path = crafted_home / "skills"
+    store_path.mkdir(parents=True)
+
+    state = installer.InstallState(framework_version="1.6.0")
+    state.save(store_path)
+
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+
+    loct_foundation = installer.Foundation(
+        name="loct",
+        description="Loctree operator CLI short command",
+        channels=["canonical"],
+        packages={"canonical": "curl -fsSL https://loct.io/install.sh | sh"},
+        verify_cmd="loct --version",
+    )
+    monkeypatch.setattr(installer, "FOUNDATIONS", [loct_foundation])
+    monkeypatch.setattr(
+        installer.shutil,
+        "which",
+        lambda name: "/usr/local/bin/loct" if name == "loct" else None,
+    )
+
+    findings = installer.run_doctor(store_path, state)
+    indexed = {finding.component: finding for finding in findings}
+
+    assert indexed["foundation:loct"].level == "ok"
+    assert indexed["foundation-provenance:loct"].level == "fail"
+    assert "manual cleanup" in indexed["foundation-provenance:loct"].message
+
+
+def test_pause_for_runtime_contract_failures_prompts_interactively(monkeypatch) -> None:
+    class _TTY:
+        def isatty(self) -> bool:
+            return True
+
+    prompts: list[str] = []
+    monkeypatch.setattr(installer.sys, "stdin", _TTY())
+    monkeypatch.setattr(installer.sys, "stdout", _TTY())
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt="": prompts.append(prompt) or "",
+    )
+
+    installer._pause_for_runtime_contract_failures(
+        [installer.DoctorFinding("fail", "root:store", "drift")]
+    )
+
+    assert prompts
+    assert "Press Enter" in prompts[0]
 
 
 def test_describe_dumb_terminal_noise_flags_starship_and_stdout() -> None:

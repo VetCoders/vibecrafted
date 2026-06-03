@@ -203,6 +203,67 @@ default_vibecrafted_runtime_home() {
   printf '%s\n' "$HOME/.local/share/vibecrafted"
 }
 
+canonical_vibecrafted_home() {
+  printf '%s\n' "$HOME/.vibecrafted"
+}
+
+canonical_vibecrafted_runtime_home() {
+  printf '%s\n' "$HOME/.local/share/vibecrafted"
+}
+
+canonical_vibecrafted_launcher_bin() {
+  printf '%s\n' "$HOME/.local/bin"
+}
+
+pause_runtime_contract_failure() {
+  if ! is_interactive_session; then
+    return
+  fi
+  printf '\nRuntime root contract failed fast.\n'
+  printf 'Manual cleanup required (no dotfiles were modified automatically):\n'
+  printf '  1) unset conflicting VIBECRAFTED_* root overrides\n'
+  printf '  2) remove stale wrappers from ~/.cargo/bin and /usr/local/bin\n'
+  printf '  3) keep launchers in ~/.local/bin and rerun install\n\n'
+  printf 'Press Enter to continue after reviewing cleanup steps, or Ctrl-C to abort: '
+  read -r _ || true
+}
+
+enforce_runtime_root_contract() {
+  local expected_store expected_runtime expected_launcher
+  local resolved_store resolved_runtime resolved_launcher
+  local failed=0
+
+  expected_store="$(canonical_vibecrafted_home)"
+  expected_runtime="$(canonical_vibecrafted_runtime_home)"
+  expected_launcher="$(canonical_vibecrafted_launcher_bin)"
+
+  resolved_store="$(default_vibecrafted_home)"
+  resolved_runtime="$(default_vibecrafted_runtime_home)"
+  resolved_launcher="${VIBECRAFTED_LAUNCHER_BIN:-$expected_launcher}"
+
+  if [[ "$resolved_store" != "$expected_store" ]]; then
+    printf 'Fail-fast: store root drift detected (%s, expected %s).\n' "$resolved_store" "$expected_store" >&2
+    failed=1
+  fi
+
+  if [[ "$resolved_runtime" != "$expected_runtime" ]]; then
+    printf 'Fail-fast: runtime root drift detected (%s, expected %s).\n' "$resolved_runtime" "$expected_runtime" >&2
+    failed=1
+  fi
+
+  if [[ "$resolved_launcher" != "$expected_launcher" ]]; then
+    printf 'Fail-fast: launcher root drift detected (%s, expected %s).\n' "$resolved_launcher" "$expected_launcher" >&2
+    failed=1
+  fi
+
+  if [[ "$failed" == "1" ]]; then
+    pause_runtime_contract_failure
+    return 1
+  fi
+
+  return 0
+}
+
 sanitize_ref() {
   printf '%s' "$1" | tr '/:@ ' '----' | tr -cd '[:alnum:]._-' 
 }
@@ -356,6 +417,8 @@ case "$runtime" in
     die "Unknown runtime horse: $runtime (expected wezterm, vc-apprt, locterm, microsandbox, none)"
     ;;
 esac
+
+enforce_runtime_root_contract || exit 1
 
 if [[ -z "$archive_url" && -z "$archive_file" ]]; then
   # Resolve latest version from the channel manifest instead of hard-pinning.
@@ -574,7 +637,7 @@ if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
   # installs. Keep the old bootstrap/staging work above, then hand off to the
   # manifest-owned installer so stdout remains compact and the detail lands in
   # the installer log.
-  for _p in "$HOME/.local/bin" "${tools_dir}/node/bin" "$HOME/.cargo/bin"; do
+  for _p in "$HOME/.local/bin" "${tools_dir}/node/bin"; do
     case ":${PATH}:" in
       *":${_p}:"*) ;;
       *) [[ -d "$_p" ]] && export PATH="${_p}:${PATH}" ;;
@@ -598,7 +661,7 @@ if [[ "$target" == "vibecrafted" ]]; then
 
   # Make sure user-local binaries (cargo, .local) are visible to the installer's
   # subprocesses — otherwise tools installed outside PATH won't be detected.
-  for _p in "$HOME/.local/bin" "${tools_dir}/node/bin" "$HOME/.cargo/bin"; do
+  for _p in "$HOME/.local/bin" "${tools_dir}/node/bin"; do
     case ":${PATH}:" in
       *":${_p}:"*) ;;
       *) [[ -d "$_p" ]] && export PATH="${_p}:${PATH}" ;;

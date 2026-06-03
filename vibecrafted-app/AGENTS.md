@@ -1,41 +1,46 @@
-<!-- loctree-doctrine: v1 -->
+<!-- loctree-advise: v1 -->
 
-## **LOCTREE + AICX + VIBECRAFTED — ZŁOTE RUNO**
+## **LOCTREE + AICX + VIBECRAFTED - MAPA PRZED LUPĄ**
 
-> **Loctree first, brak doubt. Grep = potwierdzony hak.**
+> **Loctree first when it helps. Kto nie używa, ten traci kontekst.**
 
-Strukturalna percepcja PRZED każdym sięgnięciem po `grep`/`awk`/`sed`/
-`find`/`Read+offset`. Plus aicx jako historia intencji, vibecrafted jako
-dyscyplina dowodu. Trio jest kanonem.
+Loctree jest domyślną mapą strukturalną dla pracy repo, bo obecna jakość
+narzędzia sprawia, że pomijanie go zwykle kosztuje czas: zależności, blast
+radius, symbole, wejścia runtime, martwe powierzchnie, duplikaty i dokładne
+wystąpienia są widoczne szybciej niż w ręcznym szperaniu. AICX daje historię
+intencji, a Vibecrafted domyka to dyscypliną dowodu.
 
 **Reguła operacyjna:**
 
-- Pierwszy ruch przy każdym strukturalnym pytaniu (kto importuje X,
-  gdzie żyje symbol Y, co pęknie po edycji Z, blast radius, struktura
-  katalogu A) → `loctree-mcp` tool (`context` / `slice` / `impact` /
-  `find` / `focus` / `follow`).
-- Każde sięgnięcie po `grep`/`awk`/`sed`/`find` na rzeczy która
-  **powinna być** loctree-side = **hak**. Zapisz wpis do backlogu
-  (`cuts/loctree-haki.md` per-repo albo operator-managed global).
-- "Doubt" w wyborze tool = anti-pattern. Albo loctree to znajdzie,
-  albo nie umie i wtedy hak + fallback.
-- Sfabrykowane doctriny ("CodeScribe grep-first", "szybciej grepem",
-  "loctree pewnie nie ma") = halucynacja klasy `cutoffflu`. Zakaz.
-- `loctree-mcp` niedostępne? Użyj `loct` cli, ale napisz 'haka'
-  sygnalizującego ten problem.
+- Przy pytaniach strukturalnych (kto importuje X, gdzie żyje symbol Y, co
+  pęknie po edycji Z, blast radius, struktura katalogu A) zaczynaj od
+  `loctree-mcp` (`context` / `repo-view` / `focus` / `slice` / `impact` /
+  `find` / `follow`) albo od `loct` CLI, gdy MCP nie jest dostępne.
+- Przed edycją pliku preferuj `slice(file)`. Przed delete/rename/refactor
+  preferuj `impact(file)`. Przed tworzeniem nowego symbolu preferuj
+  `find(name)`.
+- Do prawdy literalnej używaj `find --literal`, `loct occurrences <ident>` i
+  `loct body <symbol>` zanim wejdziesz w szeroki search tekstowy.
+- `rg`, grep, awk, sed, cat i bezpośrednie czytanie plików są OK jako lupa do
+  lokalnego detalu po mapie albo jako fallback, gdy Loctree nie odpowiada
+  czysto na pytanie.
+- Jeśli Loctree pudłuje, jest stale, za wolne, niewygodne, nie widzi języka,
+  nie łapie ważnej powierzchni albo masz pomysł na usprawnienie, dopisz krótką
+  notatkę do centralnego feedback loga.
 
-**Lokalizacja backloga "Loctree fail":**
+**Centralny feedback log Loctree:**
 
-- Pisz **na końcu** pliku ~/.vibecrafted/loctree/loctree-fail.md
-- Nie twórz na nowo, nie nadpisuj - to plik przeznaczony do appendowania.
-- Nie musisz czytać istniejących wpisów. Jeśli Twój hak jest zgłoszony
-  kolejny raz to sygnał o jego trafności, a nie powielanie.
+- Dopisuj na końcu `~/.vibecrafted/loctree/loctree-fail.md`.
+- Nie twórz pliku od nowa i nie nadpisuj go.
+- Wpis może być bugiem, brakującą funkcją, sugestią UX albo opisem miejsca,
+  gdzie agent musiał zejść do fallbacku. Powtórki są sygnałem priorytetu, nie
+  problemem.
 
-**Dlaczego:** Vista (duet weterynarzy × AI agents) to istniejący proof.
-Loctree perfection skaluje ten model do każdego foundera nieprogramisty
-bez milionów. Continuous backlog closure = warunek wiarygodności tej tezy.
+**Dlaczego:** Loctree zmienia pracę agentów z text rummaging w map-first
+engineering. Celem nie jest teatr posłuszeństwa, tylko mniej błędnych edycji,
+lepszy blast radius, szybsze recovery i uczciwsze decyzje runtime.
 
-<!-- /loctree-doctrine -->
+<!-- /loctree-advise -->
 
 # Vibecrafted Operator Workspace — VetCoders GUIDELINES
 

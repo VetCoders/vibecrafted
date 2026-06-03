@@ -1,270 +1,727 @@
-<!-- loctree-doctrine: v1 -->
+<!-- loctree-advise: v1 -->
 
-## **LOCTREE + AICX + VIBECRAFTED — ZŁOTE RUNO**
+# Loctree + AICX + Vibecrafted Agent Operating Guide
 
-> **Loctree first, brak doubt. Grep = potwierdzony hak.**
+> Loctree gives **sight**.
+>
+> AICX gives **insight**.
+>
+> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. gives **hands to craft products**.
 
-Strukturalna percepcja PRZED każdym sięgnięciem po `grep`/`awk`/`sed`/
-`find`/`Read+offset`. Plus aicx jako historia intencji, vibecrafted jako
-dyscyplina dowodu. Trio jest kanonem.
+This repository should be treated as a living system, not as a loose pile of files.
 
-**Reguła operacyjna:**
+Before making structural assumptions, inspect the map.
 
-- Pierwszy ruch przy każdym strukturalnym pytaniu (kto importuje X,
-  gdzie żyje symbol Y, co pęknie po edycji Z, blast radius, struktura
-  katalogu A) → `loctree-mcp` tool (`context` / `slice` / `impact` /
-  `find` / `focus` / `follow`).
-- Każde sięgnięcie po `grep`/`awk`/`sed`/`find` na rzeczy która
-  **powinna być** loctree-side = **hak**. Zapisz wpis do backlogu
-  (`cuts/loctree-haki.md` per-repo albo operator-managed global).
-- "Doubt" w wyborze tool = anti-pattern. Albo loctree to znajdzie,
-  albo nie umie i wtedy hak + fallback.
-- Sfabrykowane doctriny ("CodeScribe grep-first", "szybciej grepem",
-  "loctree pewnie nie ma") = halucynacja klasy `cutoffflu`. Zakaz.
-- `loctree-mcp` niedostępne? Użyj `loct` cli, ale napisz 'haka'
-  sygnalizującego ten problem.
+Before changing behavior, understand impact.
 
-**Lokalizacja backloga "Loctree fail":**
+Before creating new symbols, check whether the shape already exists.
 
-- Pisz **na końcu** pliku ~/.vibecrafted/loctree/loctree-fail.md
-- Nie twórz na nowo, nie nadpisuj - to plik przeznaczony do appendowania.
-- Nie musisz czytać istniejących wpisów. Jeśli Twój hak jest zgłoszony
-  kolejny raz to sygnał o jego trafności, a nie powielanie.
+Loctree is the default structural map for repository work. Skipping it usually costs time: dependencies, blast radius, symbols, runtime entry points, dead surfaces, duplicates, and exact occurrences are visible faster through Loctree than through manual rummaging.
 
-**Dlaczego:** Vista (duet weterynarzy × AI agents) to istniejący proof.
-Loctree perfection skaluje ten model do każdego foundera nieprogramisty
-bez milionów. Continuous backlog closure = warunek wiarygodności tej tezy.
+AICX preserves intent history and decision context.
 
-<!-- /loctree-doctrine -->
+Vibecrafted closes the loop with proof, discipline, and shipping pressure.
 
-# The 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Manifesto
+---
 
-We do not treat AI like magic.
+# Operating Rule
 
-We treat it like a stochastic engine that can accelerate craft, multiply leverage, and still produce noise if left without structure.
+For structural questions, start with Loctree (**NEW!** `v0.11.3` Now also for
+literal occurrences).
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. exists because fragile prompting is not a development methodology.
-Shipping requires shape.
-Shipping requires taste.
-Shipping requires pressure against chaos.
+### Preferred order
 
-## We believe code is craft
+1. Loctree MCP
+2. Loct CLI
+3. Local tools (`rg`, `grep`, `awk`, `sed`, `cat`)
+4. Manual inspection
+
+### Before editing
+
+| Action        | Preferred Tool |
+| ------------- | -------------- |
+| Edit file     | `slice(file)`  |
+| Delete file   | `impact(file)` |
+| Rename file   | `impact(file)` |
+| Refactor      | `impact(file)` |
+| Create symbol | `find(name)`   |
+
+### Literal truth before assumptions
+
+Use:
+
+- `find --literal`
+- `loct occurrences IDENTIFIER`
+- `loct body SYMBOL`
+
+before broad text search.
+
+### Fallbacks are allowed
+
+Use:
+
+- `rg`
+- `grep`
+- `awk`
+- `sed`
+- `cat`
+
+when Loctree cannot answer cleanly.
+
+---
+
+# Loctree Feedback Loop
+
+If Loctree is:
+
+- wrong
+- stale
+- slow
+- awkward
+- missing language support
+- missing an important surface
+- suggesting an obvious improvement
+
+append a note to:
+
+`~/.vibecrafted/loctree/loctree-fail.md`
+
+### Rules
+
+- Never recreate the file.
+- Never overwrite the file.
+- Always append.
+
+### Valid entries
+
+- bugs
+- missing features
+- UX problems
+- performance issues
+- language coverage issues
+- fallback situations
+
+Repeated reports are signal, not noise.
+
+---
+
+# Why This Matters
+
+Loctree changes agent work from:
+
+> text rummaging
+
+into:
+
+> map-first engineering
+
+The goal is not obedience.
+
+The goal is:
+
+- fewer wrong edits
+- better blast-radius judgement
+- faster recovery
+- more honest runtime decisions
+
+<!-- /loctree-advise -->
+
+---
+
+# Agent Behavior Standard
+
+## Work From Structure Before Text
+
+Start with `vc-init`. Do not assume repository shape from filenames alone.
+
+Always identify:
+
+- subsystem
+- entry points
+- symbols
+- ownership boundaries
+- likely blast radius
+
+Prefer structural inspection over broad search whenever the question is about:
+
+- dependency
+- ownership
+- impact
+- location
+
+You can use raw text search even when:
+
+- the question is literal
+- the question is local
+
+You gain beautiufly curated context around your search. If `loctree-mcp` or
+`loct` cli fail, report it honestly and fall back into `rg`, `grep`, `awk`,
+`sed` or any tool you are familiar with.
+
+---
+
+## Do Not Edit Blind
+
+Before modifying code:
+
+1. Locate the target.
+2. Inspect local implementation.
+3. Inspect callers and dependents.
+4. Check nearby tests, examples, and docs.
+5. Make the smallest coherent change.
+6. Verify through the closest runtime path.
+
+If verification cannot be run:
+
+> Say so explicitly.
+
+---
+
+## Do Not Create Parallel Systems Casually
+
+Before introducing:
+
+- abstractions
+- helpers
+- parsers
+- services
+- commands
+- components
+- config paths
+
+check whether one already exists.
+
+If you introduce a new path:
+
+> Explain why reuse was incorrect.
+
+Avoid duplicate systems created only because the agent did not look hard enough.
+
+---
+
+## Prefer Runtime Truth
+
+Static structure matters.
+
+Runtime behavior decides.
+
+When changing:
+
+- execution
+- configuration
+- packaging
+- CLI behavior
+- API contracts
+- generated artifacts
+
+verify against the real execution path whenever possible.
+
+Passing type checks is useful.
+
+It is not the same thing as product readiness.
+
+---
+
+## Keep The Repository Legible
+
+Prefer changes that improve understanding.
+
+Avoid cleverness that hides shape.
+
+Preserve naming consistency.
+
+Do not bury important behavior inside glue code.
+
+If a file becomes a dumping ground:
+
+> Call it out.
+
+---
+
+## Respect Existing Work
+
+Do not:
+
+- revert
+- delete
+- rewrite
+
+code you do not understand.
+
+Do not assume unfamiliar changes are safe to discard.
+
+If the repository is moving:
+
+> Re-read before acting.
+
+Treat concurrent agents or human work as part of the system.
+
+---
+
+## Use Direct Language In Handoffs
+
+Always state:
+
+- what changed
+- why it changed
+- what was verified
+- what was not verified
+- what remains risky
+- what should be checked next
+
+Do not hide uncertainty.
+
+Do not claim confidence you have not earned.
+
+---
+
+# The Vibecrafted Manifesto
+
+## We Do Not Treat AI Like Magic
+
+We treat it as a stochastic engine that can:
+
+- accelerate craft
+- multiply leverage
+- generate noise
+- has ability to self-correct
+- converge if
+
+if left without structure.
+
+Vibecrafted exists because fragile prompting is not a development methodology.
+
+Shipping requires:
+
+- shape
+- taste
+- pressure against chaos
+
+---
+
+## Code Is Craft
 
 Code is not paperwork.
-Code is not an accidental byproduct of tickets.
-Code is not “done” because a narrow check turned green.
+
+Code is not a byproduct of tickets.
+
+Code is not done because a narrow check turned green.
 
 Code is craft.
 
-Good systems are shaped.
-They are cut, refined, tested against reality, and made legible to the people who must use them.
+Good systems are:
+
+- shaped
+- refined
+- tested against reality
+- made legible
+
 Local elegance is not enough.
+
 Runtime truth matters more than theoretical correctness.
+
 Product truth matters more than internal neatness.
 
-## We believe real builders can come from anywhere
+---
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. was built by people outside the traditional priesthood of software.
+## Real Builders Can Come From Anywhere
+
+Vibecrafted was built by people outside the traditional software priesthood.
+
 That is not an apology.
+
 That is evidence.
 
 The point was never pedigree.
+
 The point was whether the thing could be made real.
 
-We respect clear thinking, real execution, and systems that survive contact with reality.
+We respect:
+
+- clear thinking
+- real execution
+- systems that survive contact with reality
+
 Everything else is costume.
 
-## 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚒𝚗𝚐 is a real engineering mode
+---
 
-What some people dismiss as “vibe coding” becomes powerful only when discipline enters the room.
+## Vibecrafting Is An Engineering Mode
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚒𝚗𝚐 is structured human-AI collaborative engineering [1].
-It is not blind prompting.
-It is not random generation with post-rationalized hope.
-It is a mixed-initiative process with constraints, checkpoints, and ruthless feedback loops [1].
+Vibecrafting is:
 
-Human taste sets the direction.
+> structured human–AI collaborative engineering
+
+It is not:
+
+- blind prompting
+- random generation
+- post-rationalized hope
+
+Human taste sets direction.
+
 Agentic force expands the search space.
+
 Reality decides what survives.
 
-## Marbles is how noise becomes product
+---
 
-Every AI system introduces variance [2].
+## Marbles Turns Noise Into Product
+
+Every AI system introduces variance.
+
 Every generation adds noise.
-That is not failure.
+
 That is physics.
 
-The answer is not faith.
 The answer is convergence.
 
-We loop.
-We inspect.
-We add counterexamples.
-We reduce entropy.
-We keep going until the circle is full.
+We:
 
-Marbles is not repetition for its own sake.
-It is counterexample-guided stochastic convergence [2].
-Early loops remove structural breakage.
-Late loops remove residue, drag, and polish debt.
-The loop ends when the thing stops lying about being done.
+- loop
+- inspect
+- add counterexamples
+- reduce entropy
 
-## Structure comes before output
+until the system stops lying about being done.
 
-Large models are powerful and forgetful.
-They lose the middle.
-They hallucinate continuity.
-They write into local context while breaking global shape.
+Marbles is:
 
-That is why architecture must be externalized [3].
+> counterexample-guided stochastic convergence
 
-Loctree and structural mapping are not accessories.
-They are memory prosthetics.
-They force the system to see the whole before cutting the part.
-Without structure, generation is imitation.
-With structure, generation becomes engineering [3].
+Early loops remove breakage.
 
-## “Done” is a market condition
+Late loops remove polish debt.
+
+---
+
+## Structure Comes Before Output
+
+Large models:
+
+- lose the middle
+- hallucinate continuity
+- break global shape
+
+Architecture must therefore be externalized.
+
+Loctree is not an accessory.
+
+It is a memory prosthetic.
+
+Without structure:
+
+> generation becomes imitation
+
+With structure:
+
+> generation becomes engineering
+
+---
+
+## Done Is A Market Condition
 
 A passing test suite is good.
-A healthy repo is good.
+
+A healthy repository is good.
+
 A clean architecture is good.
 
 None of that is enough.
 
-If nobody can find the product, install it, trust it, understand it, or buy it, then it is not done.
+If nobody can:
 
-This is the Definition of Undone [4].
+- find it
+- install it
+- trust it
+- understand it
+- buy it
 
-Most unfinished products do not fail because the code is impossible.
-They fail because the external surface remains broken:
-the onboarding,
-the docs,
-the install path,
-the discoverability,
-the credibility,
-the conversion path.
+then it is not done.
 
-Shipping begins where technical self-congratulation ends.
+This is the Definition of Undone.
 
-## We prefer the better shape
+Most unfinished products fail because:
 
-We do not preserve bad architecture out of politeness.
-We do not worship backward compatibility when the current shape is actively harmful.
-We do not confuse migration cost with strategic wisdom.
-We do not defend scar tissue because it is old.
+- onboarding breaks
+- docs break
+- install paths break
+- discoverability breaks
+- credibility breaks
 
-If a patch is enough, patch.
-If the shape is wrong, rewrite.
-If the code should not exist, remove it.
+Shipping begins where self-congratulation ends.
 
-A clean cut is often kinder than indefinite maintenance of something broken.
+---
 
-## We work in living systems
+## Prefer The Better Shape
+
+Do not preserve bad architecture out of politeness.
+
+Do not worship compatibility when the shape is harmful.
+
+If a patch is enough:
+
+> patch
+
+If the shape is wrong:
+
+> rewrite
+
+If the code should not exist:
+
+> remove it
+
+A clean cut is often kinder than indefinite maintenance.
+
+---
+
+## Work In Living Systems
 
 Real product trees are alive.
-Other people are editing.
+
+People edit.
+
 Context shifts.
+
 Assumptions go stale.
-The repo is never a museum.
 
-That is not chaos.
-That is the condition of modern building.
+The repository is never a museum.
 
-So we re-read.
-We adapt.
-We avoid stale certainty.
-We do not revert what we do not understand.
-We work with movement, not against it.
+Re-read.
 
-## We optimize for first real users
+Adapt.
+
+Avoid stale certainty.
+
+Do not revert what you do not understand.
+
+Work with movement.
+
+---
+
+## Optimize For First Real Users
 
 Early products do not need theatrical optionality.
-They need one sharp use case.
-One believable promise.
-One path that works.
 
-A blurry platform is often just fear wearing a product costume.
+They need:
 
-We prefer clarity over coverage.
-We prefer one working funnel over a hundred half-ideas.
-We prefer the smallest surface that proves truth.
+- one sharp use case
+- one believable promise
+- one path that works
 
-## We reject false reassurance
+Prefer:
 
-We reject:
+- clarity over coverage
+- one working funnel over many half-ideas
+- the smallest surface that proves truth
+
+---
+
+## Reject False Reassurance
+
+Reject:
 
 - green CI as proof of readiness
 - tiny diffs as proof of wisdom
-- backward compatibility by reflex
-- fake abstractions that only hide confusion
-- framework rituals without payoff
-- internal capability mistaken for external completion
-- parallel systems created to avoid one necessary cleanup
+- compatibility by reflex
+- fake abstractions
+- framework rituals
+- internal capability mistaken for completion
+- parallel systems created to avoid cleanup
+- generated code nobody understands
+- confident answers without verification
 
-A system can be technically impressive and still commercially unfinished.
-It can be elegant and still unusable.
-It can compile and still be dead.
+A system can:
 
-## 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. is not anti-science
+- compile
+- be elegant
+- be technically impressive
 
-It was born from practice, but it stands on real ground.
+and still be dead.
+
+---
+
+## Vibecrafted Is Not Anti-Science
 
 We do not choose between intuition and rigor.
-We use intuition to find shape and rigor to prove it.
 
-SHACE, Marbles, Loctree Mapping, and PSCD are original 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. concepts.
-They were discovered under pressure, not borrowed from papers.
-But they did not emerge in a vacuum.
+We use:
 
-## The job is to ship
+- intuition to discover shape
+- rigor to prove it
 
-Not to impress.
-Not to preserve internal myths.
-Not to accumulate elegant fragments.
+SHACE, Marbles, Loctree Mapping, and PSCD are first-party Vibecrafted concepts.
 
-The job is to turn rough systems into useful, credible, sellable tools.
+---
 
-That means:
-diagnose what is actually wrong,
-reframe toward the better shape,
-cut dead weight,
-implement decisively,
-verify reality,
-and surface the next truth.
+## The Job Is To Ship
+
+The job is not:
+
+- to impress
+- to preserve myths
+- to collect elegant fragments
+
+The job is:
+
+- diagnose
+- reframe
+- cut dead weight
+- implement decisively
+- verify reality
+- surface the next truth
 
 That is the work.
 
-## Final line
+---
+
+# Final Line
 
 Move fast, but with taste.
 
 Be radical when radical is cleaner.
+
 Be practical when practical wins.
+
 Finish the whole thing, not just the code.
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. is for builders who are done pretending that chaos is a process.
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. is for builders who are done pretending chaos is a process.
+
 We craft.
+
 We converge.
+
 We ship.
 
 ---
 
-## Influences
+# Repository-Specific Instructions
 
-1. **Kief Morris; Birgitta Böckeler (Thoughtworks / Martin Fowler, 2026).**
-   _Humans and Agents in Software Engineering Loops_, _Harness Engineering_, _Context Engineering for Coding Agents_.
-   Inspiration for the why-loop / how-loop framing, harness design, and human-guided agent workflows.
+## Project Identity
 
-2. **AST-T5 (2024); GraphCodeBERT (ICLR 2021).**
-   Structure-aware code modeling research showing that models benefit from richer code structure than flat token streams alone.
-   GraphCodeBERT uses data flow, not AST. The distinction matters.
+| Field                      | Value |
+| -------------------------- | ----- |
+| Name                       |       |
+| Purpose                    |       |
+| Primary language and stack |       |
+| Runtime surfaces           |       |
+| Build command              |       |
+| Test command               |       |
+| Lint command               |       |
+| Release command            |       |
+| Generated artifacts        |       |
 
-3. **Ward Cunningham (1992) and later technical debt literature.**
-   Foundation for the debt metaphor and the idea that working code is not the same thing as a healthy, shippable system.
+---
 
-4. **CEGIS / counterexample-guided optimization literature (incl. AAAI 2025).**
-   Inspiration for iterative refinement driven by failure signals, counterexamples, and convergence pressure.
+## Structural Map
 
-5. **𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. / VetCoders.**
-   SHACE, Marbles, Loctree Mapping, and PSCD are original 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. concepts built from practice, not borrowed labels.
+| Area                       | Description |
+| -------------------------- | ----------- |
+| Primary source directories |             |
+| Runtime entry points       |             |
+| Public APIs                |             |
+| Internal-only modules      |             |
+| Configuration files        |             |
+| Persistence or state       |             |
+| External integrations      |             |
+
+---
+
+## Agent Rules For This Repository
+
+### Before Editing
+
+-
+
+### Before Refactoring
+
+-
+
+### Before Deleting
+
+-
+
+### Before Adding Dependencies
+
+-
+
+### Before Changing Public APIs
+
+-
+
+### Before Changing Distribution Artifacts
+
+-
+
+### Before Changing Generated Files
+
+- ***
+
+## Verification Expectations
+
+| Scenario                  | Minimum Verification |
+| ------------------------- | -------------------- |
+| Small edits               |                      |
+| Behavior changes          |                      |
+| Release-impacting changes |                      |
+
+### Known Slow Or Flaky Checks
+
+-
+
+### Checks Requiring Secrets Or External Services
+
+- ***
+
+## Safety Boundaries
+
+Do not modify:
+
+-
+
+Do not delete:
+
+-
+
+Do not globally reformat unless explicitly requested.
+
+Do not change licensing headers or notices without explicit instruction.
+
+Do not add telemetry, network calls, or external services without explicit instruction.
+
+Do not introduce new dependencies without checking:
+
+- license
+- maintenance state
+- necessity
+
+---
+
+## Handoff Format
+
+Every completed task should end with:
+
+### Summary
+
+### Files Changed
+
+### Verification Performed
+
+### Verification Not Performed
+
+### Risks Or Follow-Up
+
+---
+
+# Influences
+
+This operating guide is influenced by:
+
+- human–agent software loops
+- context engineering
+- structure-aware code modeling
+- technical debt research
+- counterexample-guided refinement
+- practical product shipping
+
+SHACE, Marbles, Loctree Mapping, PSCD, and the Vibecrafted operating language are first-party concepts from Vibecrafted / VetCoders practice.

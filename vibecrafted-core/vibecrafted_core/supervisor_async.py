@@ -64,7 +64,21 @@ class AsyncSupervisor:
         if transcript is not None:
             transcript.parent.mkdir(parents=True, exist_ok=True)
 
-        await self._emit(run_id, RunState.CREATED, "async supervisor run created")
+        started_at = _utc_now()
+
+        await self._emit(
+            run_id,
+            RunState.CREATED,
+            "async supervisor run created",
+            payload={
+                "root": str(cwd),
+                "command": list(command),
+                "meta": str(meta_path or ""),
+                "report": str(report_path or ""),
+                "transcript": str(transcript_path or ""),
+                "started_at": started_at.isoformat(),
+            },
+        )
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
@@ -82,7 +96,7 @@ class AsyncSupervisor:
             command=tuple(command),
             root=cwd,
             process=process,
-            started_at=_utc_now(),
+            started_at=started_at,
             meta_path=Path(meta_path) if meta_path is not None else None,
             report_path=Path(report_path) if report_path is not None else None,
             transcript_path=transcript,
@@ -92,7 +106,18 @@ class AsyncSupervisor:
         except ProcessLookupError:
             handle.pgid = None
         self._runs[run_id] = handle
-        await self._transition(handle, RunState.PROCESS_SPAWNED, "process spawned")
+        await self._transition(
+            handle,
+            RunState.PROCESS_SPAWNED,
+            "process spawned",
+            payload={
+                "worker_pid": handle.process.pid,
+                "worker_pgid": handle.pgid,
+                "meta": str(handle.meta_path or ""),
+                "report": str(handle.report_path or ""),
+                "transcript": str(handle.transcript_path or ""),
+            },
+        )
         return handle
 
     async def run(
@@ -127,18 +152,41 @@ class AsyncSupervisor:
             await self._terminate(handle)
             handle.exit_code = handle.process.returncode
             handle.completed_at = _utc_now()
-            await self._transition(handle, RunState.STALLED, "process timed out")
+            await self._transition(
+                handle,
+                RunState.STALLED,
+                "process timed out",
+                payload={
+                    "exit_code": handle.exit_code,
+                    "completed_at": handle.completed_at.isoformat(),
+                    "liveness": "terminal",
+                },
+            )
             return handle
 
         handle.exit_code = handle.process.returncode
         handle.completed_at = _utc_now()
         if handle.exit_code == 0:
-            await self._transition(handle, RunState.COMPLETED, "process completed")
+            await self._transition(
+                handle,
+                RunState.COMPLETED,
+                "process completed",
+                payload={
+                    "exit_code": handle.exit_code,
+                    "completed_at": handle.completed_at.isoformat(),
+                    "liveness": "terminal",
+                },
+            )
         else:
             await self._transition(
                 handle,
                 RunState.FAILED,
                 f"process failed with exit code {handle.exit_code}",
+                payload={
+                    "exit_code": handle.exit_code,
+                    "completed_at": handle.completed_at.isoformat(),
+                    "liveness": "terminal",
+                },
             )
 
         handle.artifact_validation = validate_artifacts(
@@ -154,6 +202,9 @@ class AsyncSupervisor:
             "artifacts inspected",
             payload={
                 "event_kind": EventKind.ARTIFACT.value,
+                "meta": str(handle.meta_path or ""),
+                "report": str(handle.report_path or ""),
+                "transcript": str(handle.transcript_path or ""),
                 **handle.artifact_validation.as_payload(),
             },
         )
@@ -171,7 +222,10 @@ class AsyncSupervisor:
                 handle,
                 failed_state,
                 "artifact contract failed",
-                payload=handle.artifact_validation.as_payload(),
+                payload={
+                    **handle.artifact_validation.as_payload(),
+                    "liveness": "terminal",
+                },
             )
         return handle
 
@@ -187,9 +241,22 @@ class AsyncSupervisor:
             if not handle.first_output_seen:
                 handle.first_output_seen = True
                 await self._transition(
-                    handle, RunState.FIRST_OUTPUT_SEEN, "first output observed"
+                    handle,
+                    RunState.FIRST_OUTPUT_SEEN,
+                    "first output observed",
+                    payload={
+                        "heartbeat_at": _utc_now().isoformat(),
+                    },
                 )
-                await self._transition(handle, RunState.ACTIVE, "process active")
+                await self._transition(
+                    handle,
+                    RunState.ACTIVE,
+                    "process active",
+                    payload={
+                        "liveness": "pid_alive",
+                        "heartbeat_at": _utc_now().isoformat(),
+                    },
+                )
         await handle.process.wait()
 
     async def _terminate(self, handle: AsyncRunHandle) -> None:

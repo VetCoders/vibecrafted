@@ -217,10 +217,42 @@ def test_build_server_registers_tools_and_resources() -> None:
         "vc_launch",
         "vc_run_status",
         "vc_await_run",
+        "vc_run_stop",
+        "vc_run_retry",
+        "vc_run_blocked",
+        "vc_loct_capabilities",
         "vc_init",
     } <= tool_names
     assert any("vibecrafted://board/runs" in uri for uri in resource_uris)
     assert any("vibecrafted://control-plane/events" in uri for uri in resource_uris)
+    assert any("vibecrafted://capabilities/foundations" in uri for uri in resource_uris)
+
+
+def test_vc_loct_capabilities_routes_to_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def _caps(timeout: float = 5.0) -> dict[str, Any]:
+        captured["timeout"] = timeout
+        return {
+            "schema": "vibecrafted.capabilities.v1",
+            "healthy": True,
+            "summary": {"ok": 1, "product_missing": 0, "product_broken": 0},
+            "tools": [{"tool": "loct", "status": "ok"}],
+        }
+
+    monkeypatch.setattr(server._capabilities, "foundation_capabilities", _caps)
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool("vc_loct_capabilities", {"timeout": 2.0})
+
+    payload = _run(_call()).data
+    assert payload["schema"] == "vibecrafted.capabilities.v1"
+    assert captured["timeout"] == 2.0
 
 
 def test_vc_launch_delegates_to_core_workflow(
@@ -424,3 +456,99 @@ def test_vc_run_status_and_await_use_control_plane_meta(
     assert status_payload["run"]["launcher_pid"] == 4242
     assert await_payload["completed"] is True
     assert await_payload["run"]["exit_code"] == 0
+
+
+def test_vc_run_stop_and_retry_route_to_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _stop(run_id: str, *, reason: str = "") -> dict[str, Any]:
+        captured["stop"] = {"run_id": run_id, "reason": reason}
+        return {"accepted": True, "run_id": run_id, "reason": reason}
+
+    def _retry(
+        run_id: str,
+        source_dir: str = ".",
+        *,
+        env: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        captured["retry"] = {
+            "run_id": run_id,
+            "source_dir": source_dir,
+            "home": (env or {}).get("VIBECRAFTED_HOME"),
+        }
+        return {
+            "accepted": True,
+            "run_id": run_id,
+            "retry_run_id": "wflw-010101-0001",
+        }
+
+    def _block(
+        run_id: str,
+        *,
+        reason: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        captured["block"] = {"run_id": run_id, "reason": reason, "note": note}
+        return {"accepted": True, "run_id": run_id, "reason": reason, "note": note}
+
+    monkeypatch.setattr(server._workflow, "stop_run", _stop)
+    monkeypatch.setattr(server._workflow, "retry_run", _retry)
+    monkeypatch.setattr(server._workflow, "block_run", _block)
+
+    home = tmp_path / ".vibecrafted"
+    home.mkdir(parents=True)
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call_stop() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_run_stop",
+                {
+                    "run_id": "wflw-000000-0000",
+                    "reason": "manual-stop",
+                    "home": str(home),
+                },
+            )
+
+    async def _call_retry() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_run_retry",
+                {
+                    "run_id": "wflw-000000-0000",
+                    "source_dir": str(tmp_path / "src"),
+                    "home": str(home),
+                },
+            )
+
+    async def _call_block() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_run_blocked",
+                {
+                    "run_id": "wflw-000000-0000",
+                    "reason": "needs-intervention",
+                    "note": "missing api key",
+                    "home": str(home),
+                },
+            )
+
+    stop_payload = _run(_call_stop()).data
+    retry_payload = _run(_call_retry()).data
+    block_payload = _run(_call_block()).data
+
+    assert stop_payload["accepted"] is True
+    assert stop_payload["run_id"] == "wflw-000000-0000"
+    assert retry_payload["accepted"] is True
+    assert retry_payload["retry_run_id"] == "wflw-010101-0001"
+    assert block_payload["accepted"] is True
+    assert captured["stop"]["reason"] == "manual-stop"
+    assert captured["retry"]["source_dir"] == str(tmp_path / "src")
+    assert captured["retry"]["home"] == str(home)
+    assert captured["block"]["reason"] == "needs-intervention"
+    assert captured["block"]["note"] == "missing api key"

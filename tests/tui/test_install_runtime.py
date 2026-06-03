@@ -8,6 +8,7 @@ from pathlib import Path
 from scripts import vetcoders_install
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+INSTALL_SH = REPO_ROOT / "install.sh"
 INSTALL_RUNTIME = REPO_ROOT / "scripts" / "install-runtime.sh"
 FOUNDATIONS_SCRIPT = REPO_ROOT / "scripts" / "install-foundations.sh"
 
@@ -97,3 +98,47 @@ def test_foundations_default_prefix_uses_xdg_local_share(tmp_path: Path) -> None
 
     expected = tmp_path / ".local" / "share" / "vibecrafted" / "bin"
     assert f"Runtime bin:  {expected}" in result.stdout
+
+
+def test_foundations_fail_fast_on_runtime_root_drift(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["VIBECRAFTED_HOME"] = str(tmp_path / ".vibecrafted")
+    env["VIBECRAFTED_RUNTIME_HOME"] = str(tmp_path / ".legacy-runtime")
+
+    result = subprocess.run(
+        ["bash", str(FOUNDATIONS_SCRIPT), "--check", "agents"],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    merged_output = f"{result.stdout}\n{result.stderr}"
+    assert "Fail-fast: runtime root drift detected" in merged_output
+
+
+def test_install_sh_fail_fast_on_launcher_root_drift(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["VIBECRAFTED_LAUNCHER_BIN"] = str(tmp_path / ".legacy-bin")
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(INSTALL_SH),
+            "--yes",
+            "--archive-file",
+            str(tmp_path / "missing.tar.gz"),
+            "doctor",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    merged_output = f"{result.stdout}\n{result.stderr}"
+    assert "Fail-fast: launcher root drift detected" in merged_output

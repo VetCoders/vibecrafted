@@ -67,6 +67,67 @@ default_vibecrafted_runtime_home() {
   printf '%s\n' "$HOME/.local/share/vibecrafted"
 }
 
+canonical_vibecrafted_home() {
+  printf '%s\n' "$HOME/.vibecrafted"
+}
+
+canonical_vibecrafted_runtime_home() {
+  printf '%s\n' "$HOME/.local/share/vibecrafted"
+}
+
+canonical_vibecrafted_launcher_bin() {
+  printf '%s\n' "$HOME/.local/bin"
+}
+
+pause_runtime_contract_failure() {
+  if ! is_interactive; then
+    return
+  fi
+  printf '\nRuntime root contract failed fast.\n'
+  printf 'Manual cleanup required (no dotfiles were modified automatically):\n'
+  printf '  1) unset conflicting VIBECRAFTED_* root overrides\n'
+  printf '  2) remove stale wrappers from ~/.cargo/bin and /usr/local/bin\n'
+  printf '  3) keep launchers in ~/.local/bin and rerun foundations install\n\n'
+  printf 'Press Enter to continue after reviewing cleanup steps, or Ctrl-C to abort: '
+  read -r _ || true
+}
+
+enforce_runtime_root_contract() {
+  local expected_store expected_runtime expected_launcher
+  local resolved_store resolved_runtime resolved_launcher
+  local failed=0
+
+  expected_store="$(canonical_vibecrafted_home)"
+  expected_runtime="$(canonical_vibecrafted_runtime_home)"
+  expected_launcher="$(canonical_vibecrafted_launcher_bin)"
+
+  resolved_store="$(default_vibecrafted_home)"
+  resolved_runtime="$(default_vibecrafted_runtime_home)"
+  resolved_launcher="${VIBECRAFTED_LAUNCHER_BIN:-$expected_launcher}"
+
+  if [[ "$resolved_store" != "$expected_store" ]]; then
+    warn "Fail-fast: store root drift detected ($resolved_store, expected $expected_store)."
+    failed=1
+  fi
+
+  if [[ "$resolved_runtime" != "$expected_runtime" ]]; then
+    warn "Fail-fast: runtime root drift detected ($resolved_runtime, expected $expected_runtime)."
+    failed=1
+  fi
+
+  if [[ "$resolved_launcher" != "$expected_launcher" ]]; then
+    warn "Fail-fast: launcher root drift detected ($resolved_launcher, expected $expected_launcher)."
+    failed=1
+  fi
+
+  if [[ "$failed" == "1" ]]; then
+    pause_runtime_contract_failure
+    return 1
+  fi
+
+  return 0
+}
+
 VIBECRAFTED_HOME="$(default_vibecrafted_home)"
 VIBECRAFTED_RUNTIME_HOME="$(default_vibecrafted_runtime_home)"
 PREFIX="${VIBECRAFTED_BIN:-$VIBECRAFTED_RUNTIME_HOME/bin}"
@@ -649,6 +710,10 @@ install_agents() {
     return 0
   else
     warn "Agent CLIs: $installed/$total installed"
+    if (( CHECK_ONLY )); then
+      info "Check-only mode: missing agent CLIs are reported but do not fail the run"
+      return 0
+    fi
     return 1
   fi
 }
@@ -825,6 +890,8 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+enforce_runtime_root_contract || exit 1
 
 # Default: install required foundations
 if (( ${#TARGETS[@]} == 0 )); then

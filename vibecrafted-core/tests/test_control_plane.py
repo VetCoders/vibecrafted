@@ -123,3 +123,145 @@ def test_await_run_times_out_when_metadata_missing(
     assert payload["found"] is False
     assert payload["completed"] is False
     assert payload["timed_out"] is True
+
+
+def test_sync_state_projects_event_stream_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "ts": "2026-05-19T00:00:00+00:00",
+                        "run_id": "wflw-111111-1111",
+                        "kind": "launch",
+                        "message": "launch accepted",
+                        "payload": {
+                            "state": "created",
+                            "agent": "claude",
+                            "skill": "workflow",
+                            "mode": "workflow",
+                            "runtime": "headless",
+                            "root": str(tmp_path),
+                            "prompt": "go",
+                            "report": str(tmp_path / "report.md"),
+                            "transcript": str(tmp_path / "run.log"),
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "ts": "2026-05-19T00:00:05+00:00",
+                        "run_id": "wflw-111111-1111",
+                        "kind": "lifecycle:active",
+                        "message": "process active",
+                        "payload": {"state": "active", "liveness": "pid_alive"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+
+    run = snapshot["recent_runs"][0]
+    assert run["run_id"] == "wflw-111111-1111"
+    assert run["state"] == "active"
+    assert run["operator_state"] == "blocked"
+    assert run["artifact_gate"] == "failed"
+    assert "report_missing" in run["artifact_errors"]
+
+
+def test_sync_state_surfaces_failure_card_on_contract_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-05-19T00:01:00+00:00",
+                "run_id": "wflw-222222-2222",
+                "kind": "lifecycle:report_missing",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": "report_missing",
+                    "agent": "codex",
+                    "skill": "workflow",
+                    "mode": "workflow",
+                    "root": str(tmp_path),
+                    "artifact_errors": ["report_missing"],
+                    "liveness": "terminal",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+
+    run = snapshot["recent_runs"][0]
+    assert run["run_id"] == "wflw-222222-2222"
+    assert run["operator_state"] == "blocked"
+    card = run["failure_card"]
+    assert card is not None
+    assert card["code"] == "runtime_contract_failure"
+    assert any("contract failure" in warning for warning in snapshot["warnings"])
+
+
+def test_block_run_lever_pins_terminal_blocked_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vibecrafted_core import workflow
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-05-19T00:02:00+00:00",
+                "run_id": "wflw-333333-3333",
+                "kind": "lifecycle:active",
+                "message": "process active",
+                "payload": {
+                    "state": "active",
+                    "agent": "claude",
+                    "skill": "workflow",
+                    "mode": "workflow",
+                    "root": str(tmp_path),
+                    "liveness": "pid_alive",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = workflow.block_run(
+        "wflw-333333-3333", reason="waiting on operator", note="needs api key"
+    )
+    assert result["accepted"] is True
+
+    snapshot = control_plane.sync_state()
+    run = next(
+        item
+        for bucket in ("active_runs", "recent_runs")
+        for item in (snapshot.get(bucket) or [])
+        if item["run_id"] == "wflw-333333-3333"
+    )
+    assert run["state"] == "blocked"
+    assert run["operator_state"] == "blocked"
+    assert run["health"] == "final"
+    assert run["failure_card"] is not None

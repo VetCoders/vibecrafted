@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from vibecrafted_core import (
+    capabilities as _capabilities,
     control_plane as _control_plane,
     doctor as _doctor,
     git as _git,
@@ -233,6 +234,9 @@ def build_server() -> Any:
             "run_id": run_id,
             "found": run is not None,
             "run": run,
+            "operator_state": (run or {}).get("operator_state", "") if run else "",
+            "artifact_gate": (run or {}).get("artifact_gate", "") if run else "",
+            "failure_card": (run or {}).get("failure_card") if run else None,
         }
 
     @mcp.tool
@@ -249,6 +253,55 @@ def build_server() -> Any:
                 timeout_seconds=timeout_seconds,
                 interval_seconds=interval_seconds,
             )
+
+    @mcp.tool
+    def vc_run_stop(
+        run_id: str,
+        reason: str = "mcp operator stop",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Request graceful stop of an active run with an audit trail event."""
+        with _override_vibecrafted_home(home):
+            return _workflow.stop_run(run_id, reason=reason)
+
+    @mcp.tool
+    def vc_run_retry(
+        run_id: str,
+        source_dir: str = ".",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Retry a terminal run using stored launch metadata and preconditions."""
+        with _override_vibecrafted_home(home):
+            return _workflow.retry_run(
+                run_id,
+                source_dir=source_dir,
+                env=dict(os.environ),
+            )
+
+    @mcp.tool
+    def vc_run_blocked(
+        run_id: str,
+        reason: str = "mcp operator block",
+        note: str = "",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mark an active run as ``blocked`` (needs intervention) with an audit trail."""
+        with _override_vibecrafted_home(home):
+            return _workflow.block_run(run_id, reason=reason, note=note)
+
+    @mcp.tool
+    def vc_loct_capabilities(timeout: float = 5.0) -> dict[str, Any]:
+        """Discover live capabilities of the loctree/aicx product foundations.
+
+        Returns the ``vibecrafted.capabilities.v1`` schema: per-tool presence,
+        real-execution ``runnable`` status (distinguishing ``product_missing``
+        from ``product_broken``), install provenance (canonical ``~/.local/bin``
+        vs. ghost roots), the live ``--version`` string, and the subcommands the
+        currently installed binary exposes. Re-running after a foundation
+        upgrade reflects the new capability surface — the runtime never owns or
+        mutates these external binaries.
+        """
+        return _capabilities.foundation_capabilities(timeout=timeout)
 
     @mcp.tool
     def vc_init(project: str = ".", slim: bool = True) -> dict[str, Any]:
@@ -316,6 +369,11 @@ def build_server() -> Any:
     def event_stream(run_id: str) -> list[dict[str, Any]]:
         """Last 50 events for a specific run from the operator stream."""
         return _read_run_event_tail(run_id, home=None, limit=50)
+
+    @mcp.resource("vibecrafted://capabilities/foundations")
+    def foundation_capabilities_resource() -> dict[str, Any]:
+        """Live ``vibecrafted.capabilities.v1`` discovery for product foundations."""
+        return _capabilities.foundation_capabilities()
 
     return mcp
 

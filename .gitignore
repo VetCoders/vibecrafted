@@ -31,6 +31,7 @@ scripts/installer/**/__pycache__/
 *.py[cod]
 aicx-dashboard.html
 /*.md
+*.txt
 !README.md
 !CHANGELOG.md
 !VERSION
