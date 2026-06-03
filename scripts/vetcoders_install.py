@@ -497,6 +497,7 @@ class InstallState:
     launcher_entries: List[str] = field(default_factory=list)
     helper_files: List[str] = field(default_factory=list)
     foundations: Dict[str, Dict] = field(default_factory=dict)
+    product_tools: Dict[str, Dict[str, str]] = field(default_factory=dict)
     shell_helpers: bool = False
     install_path: str = ""
 
@@ -1600,6 +1601,35 @@ def _snapshot_launcher_entries() -> List[str]:
     return launcher_entries
 
 
+def snapshot_product_tool_state() -> Dict[str, Dict[str, str]]:
+    """Record product dependency commands exactly where PATH resolves them.
+
+    Loctree/AICX/Zellij/etc. are dependencies, not Vibecrafted-owned payload.
+    Discovery must therefore observe the operator's PATH and persist the result;
+    it must not re-home binaries into the launcher bin or replace dev installs.
+    """
+    product_tools: Dict[str, Dict[str, str]] = {}
+    seen: set[str] = set()
+    for foundation in FOUNDATIONS:
+        if foundation.name in seen:
+            continue
+        seen.add(foundation.name)
+        found = foundation.is_installed()
+        if found:
+            product_tools[foundation.name] = {
+                "path": found,
+                "managed_by": "external-path",
+                "required": str(bool(foundation.required)).lower(),
+            }
+        else:
+            product_tools[foundation.name] = {
+                "path": "",
+                "managed_by": "missing",
+                "required": str(bool(foundation.required)).lower(),
+            }
+    return product_tools
+
+
 def _parse_manifest_launchers(
     raw_entries: Sequence[str],
 ) -> List[tuple[Path, Path]]:
@@ -1786,6 +1816,25 @@ def _is_framework_managed_launcher(entry: Path) -> bool:
         return True
 
     return False
+
+
+def _is_replaceable_framework_launcher(entry: Path) -> bool:
+    if not (entry.exists() or entry.is_symlink()):
+        return True
+    if entry.is_symlink():
+        try:
+            target = Path(os.readlink(entry))
+        except OSError:
+            target = Path("")
+        if target.name.lower() in {"vibecrafted", "vibecraft"}:
+            return True
+        try:
+            resolved = entry.resolve(strict=False)
+        except OSError:
+            resolved = None
+        if resolved is not None and _launcher_file_contains_framework_markers(resolved):
+            return True
+    return _launcher_file_contains_framework_markers(entry)
 
 
 def collect_installed_launchers() -> List[Tuple[Path, Path]]:
@@ -2247,7 +2296,7 @@ def prune_legacy_skills(
 
 
 def create_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
-    """Create a symlink, removing any existing entry."""
+    """Create a framework symlink without clobbering unmanaged entries."""
     if target == link:
         if dry_run:
             print(f"  {dim('same-path')} {target}")
@@ -2256,6 +2305,9 @@ def create_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
         print(f"  {dim('ln -s')} {target} -> {link}")
         return
     if link.exists() or link.is_symlink():
+        if not _is_replaceable_framework_launcher(link):
+            print(f"  {WARN} Keeping existing unmanaged launcher: {link}")
+            return
         if link.is_symlink():
             link.unlink()
         elif link.is_dir():
@@ -2263,6 +2315,16 @@ def create_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
         else:
             link.unlink()
     link.symlink_to(target)
+
+
+def _copy_managed_launcher(src: Path, dst: Path) -> bool:
+    if dst.exists() or dst.is_symlink():
+        if not _is_replaceable_framework_launcher(dst):
+            print(f"  {WARN} Keeping existing unmanaged launcher: {dst}")
+            return False
+    shutil.copy2(src, dst)
+    dst.chmod(0o755)
+    return True
 
 
 def _configure_gemini_plans(dry_run: bool = False) -> None:
@@ -3713,6 +3775,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         launcher_entries=_snapshot_launcher_entries(),
         helper_files=_snapshot_helper_files() if install_shell else [],
         foundations=installed_foundations,
+        product_tools=snapshot_product_tool_state(),
         shell_helpers=install_shell,
         install_path=str(store_path),
     )
@@ -3756,13 +3819,11 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
             canonical_bin_dir = vibecrafted_launcher_bin()
             canonical_bin_dir.mkdir(parents=True, exist_ok=True)
             canonical_launcher = canonical_bin_dir / "vibecrafted"
-            shutil.copy2(launcher_src, canonical_launcher)
-            canonical_launcher.chmod(0o755)
+            _copy_managed_launcher(launcher_src, canonical_launcher)
 
             canonical_legacy = canonical_bin_dir / "vibecraft"
             if legacy_redirect_src.exists():
-                shutil.copy2(legacy_redirect_src, canonical_legacy)
-                canonical_legacy.chmod(0o755)
+                _copy_managed_launcher(legacy_redirect_src, canonical_legacy)
 
             for launcher_bin_dir in _launcher_bin_dirs():
                 launcher_bin_dir.mkdir(parents=True, exist_ok=True)
@@ -4158,6 +4219,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             launcher_entries=_snapshot_launcher_entries(),
             helper_files=_snapshot_helper_files() if install_shell else [],
             foundations=installed_foundations,
+            product_tools=snapshot_product_tool_state(),
             shell_helpers=install_shell,
             install_path=str(store_path),
         )

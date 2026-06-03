@@ -368,7 +368,7 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
 
     _write_executable(
         launcher_bin / "vibecrafted",
-        "#!/usr/bin/env bash\nprintf 'stale launcher\\n'\n",
+        "#!/usr/bin/env bash\n# vibecrafted stale launcher\nprintf 'stale launcher\\n'\n",
     )
     (launcher_bin / "vc-help").symlink_to("vibecrafted")
 
@@ -394,6 +394,94 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     findings = installer.run_doctor(store_path, refreshed_state)
     indexed = {finding.component: finding for finding in findings}
     assert indexed["launcher-wrappers"].level == "ok"
+
+
+def test_product_tool_discovery_records_path_without_rehoming(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    store_path = crafted_home / "skills"
+    cargo_bin = home / ".cargo" / "bin"
+    launcher_bin = home / ".local" / "bin"
+    store_path.mkdir(parents=True)
+    cargo_bin.mkdir(parents=True)
+    launcher_bin.mkdir(parents=True)
+
+    _write_executable(cargo_bin / "loct", "#!/usr/bin/env bash\nprintf 'loct-dev\\n'\n")
+    _write_executable(
+        cargo_bin / "zellij", "#!/usr/bin/env bash\nprintf 'zellij-dev\\n'\n"
+    )
+
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    monkeypatch.setenv("PATH", str(cargo_bin))
+    monkeypatch.setattr(
+        installer,
+        "FOUNDATIONS",
+        [
+            installer.Foundation(
+                name="loct",
+                description="Loctree operator CLI short command",
+                channels=["canonical"],
+                packages={"canonical": "curl -fsSL https://loct.io/install.sh | sh"},
+                verify_cmd="loct --version",
+            ),
+            installer.Foundation(
+                name="zellij",
+                description="Visible terminal workspace surface",
+                channels=["brew", "cargo", "github"],
+                packages={"cargo": "zellij"},
+                verify_cmd="zellij --version",
+            ),
+        ],
+    )
+
+    product_tools = installer.snapshot_product_tool_state()
+
+    assert product_tools["loct"]["path"] == str(cargo_bin / "loct")
+    assert product_tools["loct"]["managed_by"] == "external-path"
+    assert product_tools["zellij"]["path"] == str(cargo_bin / "zellij")
+    assert not (launcher_bin / "loct").exists()
+    assert not (launcher_bin / "zellij").exists()
+
+    state = installer.InstallState(product_tools=product_tools)
+    state.save(store_path)
+    loaded = installer.InstallState.load(store_path)
+
+    assert loaded.product_tools["loct"]["path"] == str(cargo_bin / "loct")
+    assert loaded.product_tools["zellij"]["path"] == str(cargo_bin / "zellij")
+
+
+def test_install_launcher_does_not_overwrite_unmanaged_dev_wrapper(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
+    launcher_bin = home / ".local" / "bin"
+    source_root = runtime_home / "tools" / "vibecrafted-main"
+    (source_root / "scripts").mkdir(parents=True)
+    launcher_bin.mkdir(parents=True)
+
+    _write_executable(
+        source_root / "scripts" / "vibecrafted",
+        (REPO_ROOT / "scripts" / "vibecrafted").read_text(encoding="utf-8"),
+    )
+    unmanaged = launcher_bin / "vc-research"
+    _write_executable(
+        unmanaged,
+        "#!/usr/bin/env bash\nprintf 'my dev wrapper must survive\\n'\n",
+    )
+
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+
+    installer._install_launcher(source_root, dry_run=False, update_rc=False)
+
+    assert unmanaged.read_text(encoding="utf-8").endswith(
+        "my dev wrapper must survive\\n'\n"
+    )
+    assert not unmanaged.is_symlink()
+    assert (launcher_bin / "vc-help").is_symlink()
 
 
 def test_run_doctor_ignores_ds_store_in_stale_file_check(

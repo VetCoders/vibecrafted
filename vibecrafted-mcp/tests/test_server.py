@@ -215,6 +215,7 @@ def test_build_server_registers_tools_and_resources() -> None:
         "vc_doctor",
         "vc_board_status",
         "vc_launch",
+        "vc_run_launch",
         "vc_run_status",
         "vc_await_run",
         "vc_run_stop",
@@ -292,6 +293,61 @@ def test_vc_launch_delegates_to_core_workflow(
         async with Client(mcp) as client:
             return await client.call_tool(
                 "vc_launch",
+                {
+                    "skill": "workflow",
+                    "agent": "codex",
+                    "prompt": "go",
+                    "root": str(tmp_path),
+                    "source_dir": str(tmp_path / "source"),
+                    "home": str(tmp_path / "home"),
+                },
+            )
+
+    result = _run(_call())
+    assert result.data["accepted"] is True
+    assert calls["payload"]["skill"] == "workflow"
+    assert calls["payload"]["agent"] == "codex"
+    assert calls["source_dir"] == str(tmp_path / "source")
+    assert calls["launch_source_dir"] == str(tmp_path / "source")
+
+
+def test_vc_run_launch_alias_delegates_to_core_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: dict[str, Any] = {}
+
+    def _normalize(payload: dict[str, Any], source_dir: str) -> Any:
+        calls["payload"] = payload
+        calls["source_dir"] = source_dir
+        return server._workflow.WorkflowLaunchSpec(
+            agent=payload["agent"],
+            mode=payload.get("mode") or payload["skill"],
+            skill=payload["skill"],
+            prompt=payload["prompt"],
+            file=payload["file"],
+            runtime=payload["runtime"],
+            root=payload["root"],
+        )
+
+    def _launch(
+        spec: Any, source_dir: str, *, env: dict[str, str] | None = None
+    ) -> Any:
+        calls["launch_spec"] = spec
+        calls["launch_source_dir"] = source_dir
+        calls["env_home"] = (env or {}).get("VIBECRAFTED_HOME")
+        return {"accepted": True, "spec": spec.to_payload()}
+
+    monkeypatch.setattr(server._workflow, "normalize_launch_spec", _normalize)
+    monkeypatch.setattr(server._workflow, "launch_workflow", _launch)
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_run_launch",
                 {
                     "skill": "workflow",
                     "agent": "codex",

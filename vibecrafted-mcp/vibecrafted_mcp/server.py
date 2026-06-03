@@ -191,8 +191,7 @@ def build_server() -> Any:
         with _override_vibecrafted_home(home):
             return _control_plane.sync_state()
 
-    @mcp.tool
-    def vc_launch(
+    def _launch_workflow(
         skill: str = "workflow",
         agent: str | None = None,
         prompt: str = "",
@@ -224,6 +223,61 @@ def build_server() -> Any:
         with _override_vibecrafted_home(home):
             spec = _workflow.normalize_launch_spec(payload, source_dir)
             return _workflow.launch_workflow(spec, source_dir, env=dict(os.environ))
+
+    @mcp.tool
+    def vc_launch(
+        skill: str = "workflow",
+        agent: str | None = None,
+        prompt: str = "",
+        file: str = "",
+        runtime: str = "headless",
+        root: str | None = None,
+        source_dir: str = ".",
+        mode: str | None = None,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Launch a workflow through the existing Vibecrafted command deck.
+
+        This is intentionally a thin remote button: launch validation and
+        process creation stay in ``vibecrafted_core.workflow`` and ultimately
+        in ``scripts/vibecrafted`` / ``skills/vc-agents``.
+        """
+        return _launch_workflow(
+            skill=skill,
+            agent=agent,
+            prompt=prompt,
+            file=file,
+            runtime=runtime,
+            root=root,
+            source_dir=source_dir,
+            mode=mode,
+            home=home,
+        )
+
+    @mcp.tool
+    def vc_run_launch(
+        skill: str = "workflow",
+        agent: str | None = None,
+        prompt: str = "",
+        file: str = "",
+        runtime: str = "headless",
+        root: str | None = None,
+        source_dir: str = ".",
+        mode: str | None = None,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Alias of ``vc_launch`` for run-lifecycle naming symmetry."""
+        return _launch_workflow(
+            skill=skill,
+            agent=agent,
+            prompt=prompt,
+            file=file,
+            runtime=runtime,
+            root=root,
+            source_dir=source_dir,
+            mode=mode,
+            home=home,
+        )
 
     @mcp.tool
     def vc_run_status(run_id: str, home: str | None = None) -> dict[str, Any]:
