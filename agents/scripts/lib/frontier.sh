@@ -28,6 +28,9 @@ spawn_frontier_root() {
 spawn_frontier_candidates() {
   local script_root candidate seen=""
   script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd || true)"
+  if [[ ! -f "$script_root/VERSION" && -f "$(dirname "${BASH_SOURCE[0]}")/../../../VERSION" ]]; then
+    script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../" 2>/dev/null && pwd || true)"
+  fi
 
   for candidate in \
     "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/frontier" \

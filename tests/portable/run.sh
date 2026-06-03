@@ -88,14 +88,14 @@ print_installer_logs() {
 log "syntax checks"
 bash -n \
   "$repo_root/install.sh" \
-  "$repo_root/skills/vc-agents/scripts/install.sh" \
-  "$repo_root/skills/vc-agents/scripts/install-shell.sh" \
-  "$repo_root/skills/vc-agents/scripts/skills_sync.sh" \
-  "$repo_root/skills/vc-agents/scripts/observe.sh" \
-  "$repo_root/skills/vc-agents/scripts/common.sh" \
-  "$repo_root/skills/vc-agents/scripts/codex_spawn.sh" \
-  "$repo_root/skills/vc-agents/scripts/claude_spawn.sh" \
-  "$repo_root/skills/vc-agents/scripts/gemini_spawn.sh"
+  "$repo_root/agents/scripts/install.sh" \
+  "$repo_root/agents/scripts/install-shell.sh" \
+  "$repo_root/agents/scripts/skills_sync.sh" \
+  "$repo_root/agents/scripts/observe.sh" \
+  "$repo_root/agents/scripts/common.sh" \
+  "$repo_root/agents/scripts/codex_spawn.sh" \
+  "$repo_root/agents/scripts/claude_spawn.sh" \
+  "$repo_root/agents/scripts/gemini_spawn.sh"
 # Shell helpers are bash-compatible; verify with bash -n
 bash -n "$repo_root/skills/vc-agents/shell/vetcoders.sh"
 # If zsh is available, also verify zsh syntax
@@ -137,30 +137,30 @@ fi
 
 require_symlink "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current"
 require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/Makefile"
-require_file "$bootstrap_home/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh"
+require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/codex_spawn.sh"
 # Helper file lives at canonical location; compat symlink also exists
 require_file "$bootstrap_config_dir/vetcoders/vc-skills.sh"
 require_file "$bootstrap_config_dir/zsh/vc-skills.zsh"
 
 log "install smoke into clean HOME"
 HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
-  bash "$repo_root/skills/vc-agents/scripts/install.sh" \
+  bash "$repo_root/agents/scripts/install.sh" \
   --source "$repo_root" \
   --tool codex --tool claude --tool gemini \
   --with-shell
 
-require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh"
-require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/claude_spawn.sh"
-require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/gemini_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/codex_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/claude_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/gemini_spawn.sh"
 require_file "$home_dir/.local/bin/vibecrafted"
 require_symlink "$home_dir/.local/bin/vc-help"
 require_symlink "$home_dir/.local/bin/vc-marbles"
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
 require_symlink "$home_dir/.gemini/skills/vc-agents"
-require_file "$home_dir/.codex/skills/vc-agents/scripts/codex_spawn.sh"
-require_file "$home_dir/.claude/skills/vc-agents/scripts/claude_spawn.sh"
-require_file "$home_dir/.gemini/skills/vc-agents/scripts/gemini_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/codex_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/claude_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/gemini_spawn.sh"
 # Canonical + compat helper locations
 require_file "$config_dir/vetcoders/vc-skills.sh"
 require_file "$config_dir/zsh/vc-skills.zsh"
@@ -264,9 +264,9 @@ chmod +x "$fake_bin/codex" "$fake_bin/claude" "$fake_bin/gemini"
 common_env=(HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH")
 
 log "headless spawn smoke"
-env "${common_env[@]}" bash "$home_dir/.codex/skills/vc-agents/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
-env "${common_env[@]}" bash "$home_dir/.claude/skills/vc-agents/scripts/claude_spawn.sh" --mode review --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
-env "${common_env[@]}" bash "$home_dir/.gemini/skills/vc-agents/scripts/gemini_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/claude_spawn.sh" --mode review --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/gemini_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
 
 codex_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_codex.meta.json' | sort | tail -n 1)"
 claude_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_claude.meta.json' | sort | tail -n 1)"
@@ -398,7 +398,7 @@ echo rsync "$@"
 EOF_RSYNC
 chmod +x "$fake_bin/rsync"
 
-sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/skills/vc-agents/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
+sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/agents/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
 grep -q "Syncing skills from" <<<"$sync_output" || die "Sync dry-run failed to start"
 grep -q "rsync .* --dry-run" <<<"$sync_output" || die "Sync dry-run didn't pass dry-run to rsync"
 # shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding

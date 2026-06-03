@@ -14,11 +14,11 @@ Then create symlink views inside the remote tool homes:
   $HOME/.gemini/skills
 
 Examples:
-  bash skills/vc-agents/scripts/skills_sync.sh mgbook16
-  bash skills/vc-agents/scripts/skills_sync.sh mgbook16 --tool codex --tool claude
-  bash skills/vc-agents/scripts/skills_sync.sh mgbook16 --dry-run
-  bash skills/vc-agents/scripts/skills_sync.sh mgbook16 --mirror
-  bash skills/vc-agents/scripts/skills_sync.sh mgbook16 --with-shell
+  bash agents/scripts/skills_sync.sh mgbook16
+  bash agents/scripts/skills_sync.sh mgbook16 --tool codex --tool claude
+  bash agents/scripts/skills_sync.sh mgbook16 --dry-run
+  bash agents/scripts/skills_sync.sh mgbook16 --mirror
+  bash agents/scripts/skills_sync.sh mgbook16 --with-shell
 EOF_USAGE
 }
 
@@ -242,10 +242,10 @@ fi
 
 printf 'Verifying shared skill store on %s\n' "$host"
 ssh -n "$host" 'for f in \
-  $HOME/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh \
-  $HOME/.vibecrafted/skills/vc-agents/scripts/claude_spawn.sh \
-  $HOME/.vibecrafted/skills/vc-agents/scripts/gemini_spawn.sh \
-  $HOME/.vibecrafted/skills/vc-agents/scripts/observe.sh; do
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/codex_spawn.sh \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/claude_spawn.sh \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/gemini_spawn.sh \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/observe.sh; do
   if [ -e "$f" ]; then
     echo "OK $f"
   else

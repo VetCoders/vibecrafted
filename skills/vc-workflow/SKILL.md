@@ -66,7 +66,7 @@ scaffold → init → [WORKFLOW] → followup → marbles → dou → decorate �
 
 Canonical artifact root: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/{plans,reports,tmp}/`.
 `CONTEXT.md` and `RESEARCH.md` live in `plans/` as `<ts>_<slug>_CONTEXT.md` and
-`<ts>_<slug>_RESEARCH.md`. `skills/vc-agents/scripts/common.sh`
+`<ts>_<slug>_RESEARCH.md`. `agents/scripts/common.sh`
 `spawn_prepare_paths()` is the source of truth for day-root resolution.
 Repo-local `.vibecrafted/plans` and `.vibecrafted/reports` are convenience
 symlinks only.

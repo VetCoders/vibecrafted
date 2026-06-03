@@ -24,8 +24,8 @@ The current system already has real mechanisms:
 
 - `scripts/vibecrafted` is the command deck.
 - `skills/vc-agents/shell/vetcoders.sh` exposes interactive shell wrappers.
-- `skills/vc-agents/scripts/*_spawn.sh` perform agent-specific launches.
-- `skills/vc-agents/scripts/lib/*.sh` provide shared spawn, meta, lock, prompt,
+- `agents/scripts/*_spawn.sh` perform agent-specific launches.
+- `agents/scripts/lib/*.sh` provide shared spawn, meta, lock, prompt,
   session, zellij, and terminal helpers.
 - `*.meta.json`, reports, transcripts, and locks are already produced.
 - `scripts/control_plane_state.py` already normalizes artifacts into a

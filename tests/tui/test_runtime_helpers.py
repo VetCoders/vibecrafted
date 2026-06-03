@@ -142,6 +142,7 @@ def test_vetcoders_spawn_script_path_stays_command_compatible() -> None:
     assert result.returncode == 0
     spawn_script = Path(result.stdout.strip())
     assert spawn_script.name == "codex_spawn.sh"
+    assert spawn_script.parent == REPO_ROOT / "agents" / "scripts"
     assert spawn_script.is_file()
 
 
@@ -261,12 +262,7 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
     capture_file = tmp_path / "zellij-args.txt"
     helper_root = tmp_path / "frontier"
     helper = (
-        helper_root
-        / "config"
-        / "skills"
-        / "vc-agents"
-        / "scripts"
-        / "vibecrafted-await-watch.sh"
+        helper_root / "config" / "agents" / "scripts" / "vibecrafted-await-watch.sh"
     )
     helper.parent.mkdir(parents=True)
     helper.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -418,6 +414,7 @@ def test_vc_polarize_task_injects_prism_payload(tmp_path: Path) -> None:
         HELPER_SCRIPT,
         (
             f'export PATH="{fake_bin}:$PATH"; '
+            "_vetcoders_default_runtime() { printf 'headless\\n'; }; "
             '_vetcoders_prompt_text() { printf \'%s\' "$3" > "$CAPTURE_FILE"; }; '
             "vc-polarize codex --task 'marbles versus polarize skills: polarize them' --no-context-corpus"
         ),
@@ -509,6 +506,7 @@ def test_polarize_band_pass_high(tmp_path: Path) -> None:
         HELPER_SCRIPT,
         (
             f'export PATH="{fake_bin}:$PATH"; '
+            "_vetcoders_default_runtime() { printf 'headless\\n'; }; "
             '_vetcoders_prompt_text() { printf \'%s\' "$3" > "$CAPTURE_FILE"; printf "session: b63af6c1-dd0e-4d2c-ad31-a52df443f4ad\\n"; }; '
             "vc-polarize codex --task 'pass tier concept' --no-context-corpus"
         ),
@@ -534,6 +532,7 @@ def test_polarize_band_doctrine_max(tmp_path: Path) -> None:
         HELPER_SCRIPT,
         (
             f'export PATH="{fake_bin}:$PATH"; '
+            "_vetcoders_default_runtime() { printf 'headless\\n'; }; "
             '_vetcoders_prompt_text() { printf \'%s\' "$3" > "$CAPTURE_FILE"; printf "session: b63af6c1-dd0e-4d2c-ad31-a52df443f4ad\\n"; }; '
             "vc-polarize codex --task 'doctrine tier concept' --no-context-corpus"
         ),

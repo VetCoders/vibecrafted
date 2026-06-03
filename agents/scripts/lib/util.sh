@@ -119,6 +119,9 @@ spawn_framework_version() {
   local state_version=""
 
   script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd || true)"
+  if [[ ! -f "$script_root/VERSION" && -f "$(dirname "${BASH_SOURCE[0]}")/../../../VERSION" ]]; then
+    script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../" 2>/dev/null && pwd || true)"
+  fi
 
   for candidate in \
     "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/VERSION}" \

@@ -98,7 +98,7 @@ def extract_session_id(agent: str, transcript: str) -> str | None:
     """Extract an agent session id from transcript text.
 
     The primary pattern intentionally mirrors
-    ``skills/vc-agents/scripts/lib/meta.sh``:
+    ``agents/scripts/lib/meta.sh``:
     ``(?:^|[HH:MM:SS] )session: <id>``.
     """
     clean = _ANSI_RE.sub("", transcript or "")

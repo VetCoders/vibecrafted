@@ -284,6 +284,25 @@ _vetcoders_skill() {
 # matches the freshly-launched dispatch's run_id. Worker filename is
 # prompt_id-based, not run_id-based, so content grep is the only reliable
 # resolver.
+_vetcoders_await_watch_helper() {
+  local repo_root crafted_root candidate
+  repo_root="$(_vetcoders_repo_root)"
+  crafted_root="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current"
+
+  for candidate in \
+    "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/agents/scripts/vibecrafted-await-watch.sh}" \
+    "$repo_root/agents/scripts/vibecrafted-await-watch.sh" \
+    "$crafted_root/agents/scripts/vibecrafted-await-watch.sh" \
+    "$(_vetcoders_frontier_file "agents/scripts/vibecrafted-await-watch.sh" 2>/dev/null || true)"
+  do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+
+  return 1
+}
+
 _vetcoders_maybe_spawn_await_pane() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
@@ -294,7 +313,7 @@ _vetcoders_maybe_spawn_await_pane() {
   command -v jq >/dev/null 2>&1 || return 0
 
   local helper
-  helper="$(_vetcoders_frontier_file "skills/vc-agents/scripts/vibecrafted-await-watch.sh" 2>/dev/null || true)"
+  helper="$(_vetcoders_await_watch_helper 2>/dev/null || true)"
   [[ -n "$helper" && -x "$helper" ]] || return 0
 
   # Best effort: short delay so the wrapper has a moment to drop meta.json.

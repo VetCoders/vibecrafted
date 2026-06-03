@@ -8,16 +8,12 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMMON_SH = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "common.sh"
+COMMON_SH = REPO_ROOT / "agents" / "scripts" / "common.sh"
 SHELL_SH = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
-CLAUDE_SPAWN_SH = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "claude_spawn.sh"
-CODEX_SPAWN_SH = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "codex_spawn.sh"
-CODEX_STREAM_BRIDGE = (
-    REPO_ROOT / "skills" / "vc-agents" / "scripts" / "codex_stream_bridge.py"
-)
-CODEX_STREAM_FILTER = (
-    REPO_ROOT / "skills" / "vc-agents" / "scripts" / "codex_stream_filter.jq"
-)
+CLAUDE_SPAWN_SH = REPO_ROOT / "agents" / "scripts" / "claude_spawn.sh"
+CODEX_SPAWN_SH = REPO_ROOT / "agents" / "scripts" / "codex_spawn.sh"
+CODEX_STREAM_BRIDGE = REPO_ROOT / "agents" / "scripts" / "codex_stream_bridge.py"
+CODEX_STREAM_FILTER = REPO_ROOT / "agents" / "scripts" / "codex_stream_filter.jq"
 
 
 # Strip ambient env vars that affect spawn-routing decisions before each
@@ -548,15 +544,15 @@ def test_marbles_dispatch_sites_route_placeholder_filter_through_helper() -> Non
     # marbles_spawn.sh and marbles_next.sh have been collapsed into a single
     # spawn_clean_model() helper. If a future change reintroduces the
     # inline chain, this test fires before the regression ships.
-    spawn_text = (
-        REPO_ROOT / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
-    ).read_text(encoding="utf-8")
-    next_text = (
-        REPO_ROOT / "skills" / "vc-agents" / "scripts" / "marbles_next.sh"
-    ).read_text(encoding="utf-8")
-    util_text = (
-        REPO_ROOT / "skills" / "vc-agents" / "scripts" / "lib" / "util.sh"
-    ).read_text(encoding="utf-8")
+    spawn_text = (REPO_ROOT / "agents" / "scripts" / "marbles_spawn.sh").read_text(
+        encoding="utf-8"
+    )
+    next_text = (REPO_ROOT / "agents" / "scripts" / "marbles_next.sh").read_text(
+        encoding="utf-8"
+    )
+    util_text = (REPO_ROOT / "agents" / "scripts" / "lib" / "util.sh").read_text(
+        encoding="utf-8"
+    )
 
     # Helper exists in exactly one place.
     assert "spawn_clean_model()" in util_text

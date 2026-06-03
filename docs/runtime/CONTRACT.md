@@ -201,21 +201,21 @@ exact same scripts. Always use the portable scripts to ensure maximum compatibil
 
 ```bash
 PLAN="$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement
+bash $VIBECRAFTED_ROOT/agents/scripts/codex_spawn.sh "$PLAN" --mode implement
 ```
 
 ### Claude
 
 ```bash
 PLAN="$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/claude_spawn.sh "$PLAN" --mode implement
+bash $VIBECRAFTED_ROOT/agents/scripts/claude_spawn.sh "$PLAN" --mode implement
 ```
 
 ### Gemini
 
 ```bash
 PLAN="$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode implement
+bash $VIBECRAFTED_ROOT/agents/scripts/gemini_spawn.sh "$PLAN" --mode implement
 ```
 
 If these tools are unavailable, stop pretending spawn is correctly configured and say so explicitly.
@@ -239,7 +239,7 @@ Observe progress through durable artifacts in `$VIBECRAFTED_ROOT/.vibecrafted/ar
 If your environment exposes the observer helper, the standard check is:
 
 ```bash
-bash $VIBECRAFTED_ROOT/skills/vc-agents/scripts/observe.sh codex --last
+bash $VIBECRAFTED_ROOT/agents/scripts/observe.sh codex --last
 ```
 
 Use the equivalent agent observer when needed.

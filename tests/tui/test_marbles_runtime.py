@@ -64,7 +64,7 @@ def _write_replaying_zellij(script_path: Path) -> None:
 def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
-    shutil.copytree(REPO_ROOT / "skills/vc-agents/scripts/lib", scripts_dir / "lib")
+    shutil.copytree(REPO_ROOT / "agents/scripts/lib", scripts_dir / "lib")
 
     for name in (
         "common.sh",
@@ -73,7 +73,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
         "marbles_verify_watch.sh",
         "marbles_next.sh",
     ):
-        source = REPO_ROOT / "skills" / "vc-agents" / "scripts" / name
+        source = REPO_ROOT / "agents" / "scripts" / name
         target = scripts_dir / name
         shutil.copy2(source, target)
         target.chmod(0o755)
@@ -308,9 +308,9 @@ def _org_repo() -> str:
 
 
 def test_marbles_spawn_chains_with_agent_and_ancestor_plan_contract() -> None:
-    script = (
-        REPO_ROOT / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
-    ).read_text(encoding="utf-8")
+    script = (REPO_ROOT / "agents" / "scripts" / "marbles_spawn.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert (
         'success_hook="bash $q_scripts/marbles_next.sh $q_state $count 1 '
@@ -333,9 +333,7 @@ def _run_marbles_prompt(
     tmpdir_root = tmp_path / "tmpdir"
     capture_file = tmp_path / "marbles-args.txt"
     zellij_capture_file = tmp_path / "zellij-args.txt"
-    spawn_script = (
-        crafted_home / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
-    )
+    spawn_script = crafted_home / "agents" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
     fake_bin.mkdir()
@@ -427,9 +425,7 @@ def test_vc_marbles_inside_zellij_prints_launch_receipt(tmp_path: Path) -> None:
     tmpdir_root = tmp_path / "tmpdir"
     capture_file = tmp_path / "marbles-args.txt"
     zellij_capture_file = tmp_path / "zellij-args.txt"
-    spawn_script = (
-        crafted_home / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
-    )
+    spawn_script = crafted_home / "agents" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
     fake_bin.mkdir()
@@ -478,9 +474,7 @@ def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
     isolated_root = tmp_path / "isolated-root"
     capture_file = tmp_path / "marbles-args.txt"
     zellij_capture = tmp_path / "zellij-args.txt"
-    spawn_script = (
-        crafted_home / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
-    )
+    spawn_script = crafted_home / "agents" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
     fake_bin.mkdir()
