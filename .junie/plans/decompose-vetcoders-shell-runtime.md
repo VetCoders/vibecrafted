@@ -103,19 +103,23 @@ Baseline validation already observed during planning:
 ### Key Decisions
 
 1. **Extraction-only refactor with stable names.**
+
    - Keep existing `_vetcoders_*`, `vc-*`, and `<agent>-*` function names to preserve shell compatibility.
    - Avoid adding new aliases unless tests show a public compatibility gap.
 
 2. **Single-direction explicit source order.**
+
    - `vetcoders.sh` owns the source order and modules do not source each other.
    - Shared prerequisites are loaded first, feature modules later.
    - This avoids circular shell dependency problems and keeps compatibility debugging simple.
 
 3. **Façade remains the only compatibility entrypoint.**
+
    - Existing users keep sourcing `skills/vc-agents/shell/vetcoders.sh`.
    - Directly sourcing individual modules is not introduced as a public contract.
 
 4. **Runtime-sensitive extraction happens after low-risk primitives.**
+
    - `quote.sh`, `artifacts.sh`, and `frontier.sh` are extracted first.
    - Zellij/dashboard/operator extraction follows only after syntax and focused tests remain green.
 
