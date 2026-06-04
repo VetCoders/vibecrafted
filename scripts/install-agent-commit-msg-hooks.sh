@@ -90,6 +90,10 @@ for git_dir in "$base_dir"/*/.git; do
     if [ "$dry_run" = "1" ]; then
         continue
     fi
+    if [ "$hook_dir/commit-msg" = "$source_hook" ]; then
+        printf '    already managed by source hook\n'
+        continue
+    fi
     mkdir -p "$hook_dir"
     for source_hook in "${source_hooks[@]}"; do
         hook_name="$(basename "$source_hook")"
