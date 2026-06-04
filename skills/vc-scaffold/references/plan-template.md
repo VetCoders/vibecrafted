@@ -9,6 +9,7 @@ agent: <claude|codex|gemini>
 skill: <vc-scaffold|vc-workflow|vc-implement>
 project: <repo-name>
 status: pending
+vector: <stabilize|implement|recon|e2e> # selects the gate profile = what counts as delivery
 created: <ISO-8601 timestamp>
 ---
 
@@ -73,13 +74,17 @@ Database
 
 ## Task Breakdown
 
-Each task is agent-ready. Agents will execute in parallel when dependencies allow.
+Each task is agent-ready. Agents execute in parallel when dependencies allow. Each task carries a
+`state` marker `[ ] [~] [?] [!] [x]` (see references/measure-core.md); only a delivery-verifier flips
+`[~]→[x]`. vc-operator reads the `state` column to trigger/stop.
 
-### Task 1: [Imperative title]
+### Task 1: [Imperative title]   `state: [ ]`
+**Vector:** [stabilize|implement|recon|e2e]
 **Produces:** [What code/config/tests get created]
 **Depends on:** [Task X, infrastructure ready]
 **Owner:** [Agent skill or human role]
-**Acceptance:** [How we test it]
+**Delivery-verifier:** [the non-fakeable test that flips [~]→[x]; without it the task ships as [?]]
+**Acceptance:** [intent vs baseline — what proves delivery ≈ claim, not just "agent said so"]
 
 Example:
 ```

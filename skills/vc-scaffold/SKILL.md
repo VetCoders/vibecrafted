@@ -1,250 +1,166 @@
 ---
 name: vc-scaffold
-version: 0.1.0
+version: 0.2.0
 description: >
-  Founder-first architecture planning. Takes a vague idea, maps the landscape,
-  produces a scoped build plan. Trigger phrases: "scaffold", "plan this",
-  "architect this", "break this down", "I have an idea", "design the system",
-  "vc-scaffold", "zaplanuj to", "rozrysuj architekturę", "mam pomysł".
+  Founder-first main brainstorm + planwriting — the armored lighthouse (pancerna
+  latarnia) that carries a single cut, multiple cuts, or a whole project into the
+  autonomous VC-ship pipeline. The WRITE entry of the read/write cadence: produces a
+  measurable, self-sufficient plan a fleet executes with the operator absent mid-flight.
+  This skill should be used when the user asks to "scaffold", "plan this", "architect
+  this", "break this down", "I have an idea", "design the system", "vc-scaffold",
+  "zaplanuj to", "rozrysuj architekturę", "mam pomysł".
 ---
 
-# vc-scaffold: Founder-First Architecture Planning
+# vc-scaffold: Founder-First Planning — Pancerna Latarnia
+
+## What this is
+
+Scaffold is the **main brainstorm + planwriting** surface: take a vague idea and produce
+a scoped, **measurable** build plan. It scales across one gate: a **single cut**, **multiple
+cuts**, or a **whole project**. It is the **WRITE entry of the VC-ship read/write cadence** —
+the plan it emits must be **self-sufficient and falsifiable** because in autonomous delivery
+the operator is absent mid-flight and sees only intermediate artifacts. Plan as if no one will
+answer a question after dispatch. Front-load every decision here. See `references/cadence.md`.
+
+The lighthouse orients before the fleet sails; the armor is the verification each cut carries.
 
 ## Operator Entry
 
 ### Living Tree / Worktree Rule
 
-This workflow runs in the operator's current checkout and current branch. Do not create, switch to, or move execution into a git worktree unless the operator explicitly asks for a worktree in this prompt. Generic words like "isolate", "parallel", or "clean branch" are not enough. Re-read files before editing, adapt to concurrent changes, and report a substrate failure if the current tree is too poisoned to continue safely.
-
+This workflow runs in the operator's current checkout and current branch. Do not create, switch
+to, or move execution into a git worktree unless the operator explicitly asks. Generic words like
+"isolate", "parallel", or "clean branch" are not enough. Re-read files before editing, adapt to
+concurrent changes, report a substrate failure if the tree is too poisoned to continue safely.
 See [Living Tree Rule](../LIVING_TREE_RULE.md).
 
-## Canonical Orientation Gate
+### Dispatch
 
-Before this workflow performs repo-specific analysis, planning, implementation, review, release, or delegation, it MUST run or consume the `vc-init` procedure for the assigned repo. If fresh `vc-init` evidence is absent, perform the init pass first and treat workflow-specific work as blocked until repo truth exists.
-
-`Loctree:loctree` is the default structural perception skill for that pass. Use Loctree before grep or docs-driven claims to produce or refresh the Code-Derived Application Map: repo-view, focus, slice, impact, find, and follow as relevant. Search for existing symbols and contracts before creating new ones; run impact before delete or major refactor; run slice before editing.
-
-The point is to find the hooks: load-bearing hubs, twins, dead code, drift, runtime entrypoints, and blast-radius traps. If the task is explicitly non-repo or no-code, state the no-repo exception in the report. Otherwise, missing `vc-init`/Loctree evidence is a process failure.
-
-Operator enters the framework session through:
+Enter the framework session, then launch through the command deck (not raw `skills/.../*.sh`):
 
 ```bash
-vibecrafted start
-# or
-vc-start
-# same default board as: vc-start operator
-```
-
-Then launch this workflow through the command deck, not raw `skills/.../*.sh` paths:
-
-```bash
-vibecrafted <workflow> <agent> \
-  --<options> <values> \
-  --<parameters> <values> \
-  --file '/path/to/plan.md'
-```
-
-```bash
-vc-<workflow> <agent> \
-  --<options> <values> \
-  --<parameters> <values> \
-  --prompt '<prompt>'
-```
-
-If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
-or create the operator session and run that workflow in a new tab. Replace
-`<workflow>` with this skill's name. Prefer `--file` for an existing plan or
-artifact and `--prompt` for inline intent.
-
-### Concrete dispatch examples
-
-```bash
+vibecrafted start            # or: vc-start
 vibecrafted scaffold claude --prompt 'Design the payment system'
 vc-scaffold gemini --prompt 'Plan migration from NextAuth to custom auth'
 vibecrafted scaffold codex --file /path/to/idea-brief.md
 ```
 
-You are the architecture engine for founders who have ideas but no time for corporate design docs. Your job is SCOPE,
-PLAN, and PRODUCE an actionable breakdown that vc-workflow can execute.
+Prefer `--file` for an existing plan/artifact and `--prompt` for inline intent.
+
+## Canonical Orientation Gate (HARD-BLOCK — safety-critical)
+
+Before any repo-specific analysis or planning, run or consume `vc-init` for the assigned repo.
+**This is not a polish step — it is a safety bezpiecznik.** In autonomous VC-ship an agent that
+composes from memory injects silent drift the operator cannot catch live. Therefore: **no plan
+until repo/runtime truth exists.** Missing `vc-init`/Loctree evidence is a process failure, not a
+warning.
+
+`Loctree:loctree` is the default structural perception. Use it before grep or docs-driven claims:
+`repo-view`, `focus`, `slice` (before edit), `impact` (before delete), `find` / `find --literal`
+(before create), `follow` (dead/cycles/twins/hotspots). Find load-bearing hubs, twins, dead code,
+drift, runtime entrypoints, blast-radius traps. If the task is explicitly non-repo/greenfield,
+declare the **no-repo exception** in the report and name the orientation source used instead.
 
 ## Pipeline Position
 
 ```
-[SCAFFOLD] → init → workflow → followup → marbles → dou → decorate → hydrate → release
-^^^^^^^^^^
+[SCAFFOLD] → init → implement → review → workflow → followup → marbles → audit → polarize → dou → hydrate → release
+^^^^^^^^^^   WRITE entry of the read/write cadence (WRITE produces an artifact, READ falsifies it)
 ```
 
-Scaffold is the entry point of the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. pipeline. It runs before `vc-init`
-when the task is new, vague, or requires architectural scoping. If the user
-already has a clear, bounded task, skip scaffold and start with `vc-init`.
+Scaffold is the WRITE entry. If the task is already clear and bounded, skip scaffold and start at
+`vc-init`. The full cadence and the WRITE/READ classification live in `references/cadence.md`.
 
-After scaffolding produces a plan, the pipeline continues:
+## The Five Phases
 
-- `vc-init` bootstraps agent context
-- `vc-workflow` executes the ERi pipeline (Examine → Research → Implement)
-- `vc-implement` (alias `vc-justdo`) can consume the scaffold plan for autonomous end-to-end execution
+Run these in order. Each phase produces the input the next consumes.
 
-## The Mission
+### 1. Orient (research-first)
 
-A founder walks in with a problem or a feature idea. Maybe it's vague. Maybe it's
-"we need real-time collaboration" or "our codebase is unmaintainable" or
-"I have this idea but don't know where to start."
+Pass the Canonical Orientation Gate above. Map the existing landscape: `repo-view` for size/health,
+`focus` on suspect modules, `slice` critical files, `tree` for hotspots, `follow` for dead/cycles.
+Capture the **constraint space** — tech (stack/versions/infra), team (who builds, which languages),
+business (time budget, deadline), scope (MVP vs full vision). Constraints shape everything.
 
-Your job:
+### 2. Falsify (adversarial premise check)
 
-1. **Clarify** what they actually want built
-2. **Map** the existing landscape (codebase, constraints, dependencies)
-3. **Propose** a scoped architecture with clear boundaries
-4. **Break down** work into agent-sized tasks
-5. **Output** a SCAFFOLD.md and task breakdown ready for vc-workflow to consume
+Before committing to a shape, try to **break** the founding assumption. Ask "how would I know this
+is a lie?" The 0-byte-passes-exit-0 lesson: every "it works" must survive a real probe, never a
+green checkmark alone. Surface the failure modes the plan must defend against.
 
-No fluff. No 50-page design docs. Architects ship plans that work.
+### 3. Shape (scale-adaptive)
 
-## The Process
+Decide architecture by **boundaries and decisions** (3-5 that matter, not a thousand details), set
+**scope** (in / out / explicitly out — be ruthless), and define **product identity** (material
+metaphor, color roles, typography, tone, dark/light) — identity is an architectural decision that
+feeds DoU and Decorate later. Then pick the **output shape by scale**: single-cut brief · wave-atlas
 
-### Step 1: Examine What You're Working With
+- tracker · project read/write pipeline. See `references/output-shapes.md`.
 
-If there's an existing codebase:
+### 4. Defend (gates first-class)
 
-- Run `repo-view(project)` to understand size, languages, health
-- Use `focus(directory)` on suspect modules (the messy ones, the hot ones)
-- Use `slice(file)` on critical files to see dependency chains
-- Use `tree(project)` to map directory structure and find LOC hotspots
-- Use `find(name)` to locate key symbols, patterns, or potential conflicts
-- Use `follow(scope)` with scope=all to detect dead code, cycles, twins, hotspots
+Break work into agent-sized cuts (30-120 min). **Every cut carries the measure-core**: a `Vector`
+(stabilize/implement/recon/e2e), the four-term delta (`intent | baseline | claim | delivery`), a
+`state` marker `[ ] [~] [?] [!] [x]`, and a **delivery-verifier** — the non-fakeable test that flips
+`[~]→[x]`. A cut without a verifier ships as `[?]`, never `[x]`. See `references/measure-core.md`.
 
-Spend 15 minutes here. You'll find the constraints that matter.
+### 5. Handoff
 
-### Step 2: Understand the Constraint Space
+Produce the plan from `references/plan-template.md`. **Scaffold owns brainstorm→plan (WRITE);
+vc-operator reads the `state` column for trigger/stop (dispatch).** The plan must speak for itself:
+what is `[x]` vs `[?]`/runtime-pending, with an exact recipe. Save to the task output directory.
 
-From the founder's idea + the codebase reality, ask yourself:
+## Measurement (the armor)
 
-- **Tech constraints**: Stack, frameworks, versions, infrastructure limits
-- **Team constraints**: Who's building this? What languages do they own?
-- **Business constraints**: Time budget, shipping deadline, market pressure
-- **Scope constraints**: MVP vs full vision. What ships in phase 1?
-
-Write these down. They shape everything.
-
-### Step 2.5: Define Product Identity
-
-Before breaking down tasks, establish how the product LOOKS and FEELS.
-This is an architectural decision, not a decoration afterthought.
-
-Define:
-
-- **Material metaphor**: What physical materials represent this product? (steel=precision, wood=craft, stone=foundation,
-  copper=warmth, glass=transparency)
-- **Color strategy**: 3-5 semantic roles (accent, surface, text, muted, success/warning/error)
-- **Typography strategy**: Mono for tools/chrome, serif for narrative/craft, sans for apps/dashboards
-- **Tone**: Surowy? Ciepły? Techniczny? Przyjazny? Clinical?
-- **Dark/light**: Based on product context (dev tools → dark, consumer → light, both → auto)
-
-This feeds into:
-
-- DoU presence generation (if no representation surface exists)
-- Decorate coherence audit (what IS the system to audit against?)
-- Hydrate marketplace packaging (consistent brand across surfaces)
-
-Output: Add a "Visual Identity" section to SCAFFOLD.md with the above decisions.
-Do NOT design the UI. Define the LANGUAGE the UI speaks.
-
-### Step 3: Propose Architecture
-
-Architecture is about **boundaries** and **decisions**:
-
-- How do systems talk to each other? (APIs, events, shared state?)
-- What data moves where? (DBs, caches, message queues?)
-- What's the failure mode if one thing breaks?
-- Can you build one piece without waiting on another?
-
-Make 3-5 key architectural decisions. Not a thousand details. Just the decisions that matter.
-
-### Step 4: Define Scope (In/Out)
-
-Be ruthless. Explicitly say:
-
-- **In Phase 1**: What ships. What's non-negotiable.
-- **Out Phase 1**: What's nice-to-have. What ships later.
-- **Explicitly Out**: What you're NOT doing (so people stop asking).
-
-Scope creep kills startups. Write it down.
-
-### Step 5: Task Breakdown
-
-Break the work into agent-sized chunks (30-120 min tasks):
-
-Each task gets:
-
-- A clear title (imperative)
-- What it produces (code, config, test suite, docs)
-- Dependencies (what must run first)
-- Owner (which agent, or what skills)
-- Acceptance criteria (how you know it's done)
-
-This is what vc-workflow will execute.
-
-### Step 6: Produce SCAFFOLD.md
-
-Use the template in references/plan-template.md. Include:
-
-- The problem statement (what we're solving)
-- Key architectural decisions (3-5 decision with trade-offs)
-- Scope boundaries (in/out/explicitly out)
-- Phase breakdown (what ships in phase 1, 2, 3)
-- Task list (agent-ready tasks)
-- Acceptance criteria (how we test)
-- Living Tree note (so humans understand the plan)
-
-Save it to the task output directory. vc-workflow will read it.
+Every plan unit is claim/outcome-addressable. **Only a verifier flips `[~]→[x]`; a claim never
+reaches `[x]` on its own** — that invariant is what makes the plan measurable instead of optimistic.
+`dou-index = |[x]| / total`; `delta = {[ ],[~],[?],[!]}`; trigger/stop reads the `state` column
+(`[!]`/`[?]` → STOP → recovery-vector; full `[x]` wave → TRIGGER next). **STOP is never surrender —
+it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + markers:
+`references/measure-core.md`.
 
 ## Critical Rules
 
-**No premature optimization.** The best architecture is the one that ships. Bias toward CQRS, event-driven, or layered
-if you're unsure. Don't invent new patterns.
-
-**Map before designing.** If there's existing code, understand it first. The best architecture respects the grain of the
-system.
-
-**Scope is your best friend.** A tight scope with great execution beats a loose scope with mediocre execution every
-single time.
-
-**Write for humans.** vc-workflow is AI but it will hand off to humans. Make the plan readable, the decisions clear, the
-boundaries explicit.
-
-**Keep dependencies shallow.** If task A blocks task B blocks task C, you've broken parallelization. Prefer independent
-workstreams.
+- **Research-first is hard-block, not polish.** No plan from memory; derive from repo/runtime truth.
+- **Measure, don't claim.** A cut is done when its verifier is green, never when an agent says so.
+- **Map before designing.** Respect the grain of the existing system; loctree before assumptions.
+- **Scope is your best friend.** Tight scope + great execution beats loose scope every time.
+- **Write for an absent operator.** The artifact speaks for itself; the next READ falsifies it
+  without a human on the other side.
+- **Keep dependencies shallow.** Prefer independent workstreams; sequential A→B→C kills parallelism.
+- **No premature optimization / no invented patterns.** The best architecture is the one that ships.
 
 ## What Success Looks Like
 
-You're done when:
-
-- A human reads SCAFFOLD.md and says "I could build this"
-- The task breakdown feels achievable (no 400-hour tasks)
-- Scope boundaries are crystal clear
-- Architectural decisions are explicit (not hidden)
-- vc-workflow can pick up the next task without asking for clarification
-
-That's it. No polishing. No prettifying. Just working plans.
+- A cold fleet (or human) executes the plan **without asking a question** mid-flight.
+- Every cut has a `Vector` and a `delivery-verifier`; the `state` column is machine-readable.
+- Scope boundaries are crystal clear; 3-5 architectural decisions explicit with trade-offs.
+- The plan survives an absent operator: `[x]` is earned, `[?]` is honest, nothing is faked.
 
 ## Cross-References
 
-- **vc-init** — bootstraps agent context after scaffolding
-- **vc-workflow** — executes the ERi pipeline on scaffold tasks
-- **vc-implement** (alias **vc-justdo**) — autonomous execution that can consume scaffold plans
-- **vc-research** — standalone triple-agent research for unknowns found during scaffolding
-- **vc-release** — the end of the pipeline; scaffold's product identity decisions feed into release brand checks
+- **vc-init** — bootstraps agent context after scaffolding (the orientation gate).
+- **vc-implement** (alias **vc-justdo**) / **vc-workflow** — WRITE phases that consume scaffold plans.
+- **vc-review · vc-followup · vc-audit · vc-dou** — the READ phases that falsify each WRITE artifact.
+- **vc-operator** — reads the plan's `state` column and conducts the dispatch (trigger/stop).
+- **vc-research** — triple-agent research for unknowns found during Orient/Falsify.
 
 ## Anti-Patterns
 
-- Writing a scaffold without examining the existing codebase (use loctree first)
-- Producing a 50-page design doc instead of a sharp plan
-- Skipping product identity (colors, typography, tone) — this feeds DoU and Decorate later
-- Breaking all work into sequential dependencies (prefer parallel workstreams)
-- Scaffolding when the task is already clear and bounded (just use vc-init + vc-workflow)
+- Planning before the orientation gate (composing architecture from memory = silent drift).
+- A 50-page design doc instead of a sharp, measurable plan.
+- Prose instead of a `state` column — the operator can't trigger/stop on prose.
+- Treating an agent's `[~]` claim as `[x]` without a verifier (the optimism trap).
+- STOP-as-surrender (502-and-die) instead of STOP-as-recovery-vector.
+- Breaking all work into sequential dependencies; skipping product identity.
+
+## Additional Resources
+
+- **`references/measure-core.md`** — `[ ][~][?][!][x]` alphabet, invariant, Vector→Δ, marker taxonomy.
+- **`references/cadence.md`** — VC-ship read/write cadence (order, WRITE/READ, handoff, planning rules).
+- **`references/output-shapes.md`** — the three scale shapes + 12-section dispatch template + tracker.
+- **`references/plan-template.md`** — the SCAFFOLD.md output format (now with Vector + state + verifier).
 
 ---
-
-See references/plan-template.md for the output format.
 
 _𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
