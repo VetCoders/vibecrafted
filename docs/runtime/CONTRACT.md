@@ -67,6 +67,25 @@ provides all the necessary tools to follow this pattern.
   convenience links only. The default store remains
   `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/`.
 
+### Installer Layout Transfer
+
+During the `skills/vc-agents/scripts` → `agents/scripts` transition the
+installer owns a reversible transfer surface:
+
+```bash
+python3 scripts/vetcoders_install.py layout status
+python3 scripts/vetcoders_install.py layout migrate   # legacy store -> current tools
+python3 scripts/vetcoders_install.py layout rollback  # current tools -> legacy store
+```
+
+The transfer is conservative by default. It copies only Vibecrafted framework
+payload between `$HOME/.vibecrafted/skills/vc-agents` and
+`$HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents`, writes a
+ledger entry to `.vc-install.json`, and refuses to overwrite a differing target
+file unless the operator explicitly passes `--force`. Product dependencies such
+as `loct`, `aicx`, and `zellij` stay external PATH discoveries; the layout
+transfer must not re-home or replace those binaries.
+
 ---
 
 ## Mandatory Plan Rules

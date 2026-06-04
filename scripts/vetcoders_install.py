@@ -498,6 +498,7 @@ class InstallState:
     helper_files: List[str] = field(default_factory=list)
     foundations: Dict[str, Dict] = field(default_factory=dict)
     product_tools: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    layout_transfers: List[Dict[str, str]] = field(default_factory=list)
     shell_helpers: bool = False
     install_path: str = ""
 
@@ -2165,6 +2166,185 @@ def refresh_current_tools(
 
     sync_control_plane_tree(repo_root, target, dry_run=dry_run, mirror=mirror)
     return current_link
+
+
+def _legacy_agents_layout_root(store_path: Path) -> Path:
+    return store_path / "vc-agents"
+
+
+def _current_agents_layout_root(store_path: Path, *, create: bool = False) -> Path:
+    current_link = _current_tools_link(store_path)
+    if create:
+        _ensure_current_tools_target(store_path)
+    return current_link / "agents"
+
+
+def _transfer_relative_files(root: Path) -> List[Path]:
+    if not root.exists():
+        return []
+    files: List[Path] = []
+    for item in sorted(root.rglob("*")):
+        if any(
+            part in _CONTROL_PLANE_EXCLUDES for part in item.relative_to(root).parts
+        ):
+            continue
+        if item.is_file() or item.is_symlink():
+            files.append(item.relative_to(root))
+    return files
+
+
+def _same_file_payload(src: Path, dst: Path) -> bool:
+    if src.is_symlink() or dst.is_symlink():
+        try:
+            return os.readlink(src) == os.readlink(dst)
+        except OSError:
+            return False
+    try:
+        return src.read_bytes() == dst.read_bytes()
+    except OSError:
+        return False
+
+
+def _layout_transfer_conflicts(src: Path, dst: Path) -> List[Path]:
+    conflicts: List[Path] = []
+    for rel in _transfer_relative_files(src):
+        target = dst / rel
+        source = src / rel
+        if not (target.exists() or target.is_symlink()):
+            continue
+        if not _same_file_payload(source, target):
+            conflicts.append(rel)
+    return conflicts
+
+
+def _copy_layout_payload(src: Path, dst: Path) -> List[str]:
+    copied: List[str] = []
+    dst.mkdir(parents=True, exist_ok=True)
+    for rel in _transfer_relative_files(src):
+        source = src / rel
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            _remove_path(target)
+        if source.is_symlink():
+            target.symlink_to(os.readlink(source))
+        else:
+            shutil.copy2(source, target)
+        copied.append(str(rel))
+    return copied
+
+
+def _append_layout_transfer(
+    state: InstallState,
+    *,
+    direction: str,
+    status: str,
+    source: Path,
+    target: Path,
+    copied: Sequence[str] = (),
+    conflicts: Sequence[Path] = (),
+) -> None:
+    state.layout_transfers.append(
+        {
+            "direction": direction,
+            "status": status,
+            "source": str(source),
+            "target": str(target),
+            "copied": str(len(copied)),
+            "conflicts": ",".join(str(path) for path in conflicts),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+
+def transfer_agents_layout(
+    store_path: Path,
+    *,
+    direction: str,
+    dry_run: bool = False,
+    force: bool = False,
+) -> Tuple[int, Dict[str, Any]]:
+    """Move the agent script layout between legacy store and current tools.
+
+    This is intentionally conservative: existing target payload with different
+    bytes blocks the transfer unless the operator passes ``--force``. Product
+    tools discovered on PATH are never copied or re-homed here; this only moves
+    Vibecrafted's framework payload between the old and new install layouts.
+    """
+    state = InstallState.load(store_path)
+    if direction == "legacy-to-new":
+        source = _legacy_agents_layout_root(store_path)
+        target = _current_agents_layout_root(store_path, create=not dry_run)
+    elif direction == "new-to-legacy":
+        source = _current_agents_layout_root(store_path, create=False)
+        target = _legacy_agents_layout_root(store_path)
+    else:
+        raise ValueError(f"unsupported layout transfer direction: {direction}")
+
+    if not source.exists():
+        _append_layout_transfer(
+            state,
+            direction=direction,
+            status="blocked",
+            source=source,
+            target=target,
+            conflicts=[Path("source-missing")],
+        )
+        if not dry_run:
+            state.save(store_path)
+        return 1, {
+            "source": source,
+            "target": target,
+            "conflicts": [Path("source-missing")],
+        }
+
+    conflicts = _layout_transfer_conflicts(source, target)
+    if conflicts and not force:
+        _append_layout_transfer(
+            state,
+            direction=direction,
+            status="blocked",
+            source=source,
+            target=target,
+            conflicts=conflicts,
+        )
+        if not dry_run:
+            state.save(store_path)
+        return 1, {"source": source, "target": target, "conflicts": conflicts}
+
+    copied = _transfer_relative_files(source)
+    if not dry_run:
+        copied_names = _copy_layout_payload(source, target)
+        _append_layout_transfer(
+            state,
+            direction=direction,
+            status="completed",
+            source=source,
+            target=target,
+            copied=copied_names,
+            conflicts=conflicts,
+        )
+        state.updated_at = datetime.now(timezone.utc).isoformat()
+        state.save(store_path)
+    return 0, {
+        "source": source,
+        "target": target,
+        "copied": copied,
+        "conflicts": conflicts,
+    }
+
+
+def layout_status(store_path: Path) -> Dict[str, Any]:
+    legacy = _legacy_agents_layout_root(store_path)
+    current = _current_agents_layout_root(store_path, create=False)
+    state = InstallState.load(store_path)
+    return {
+        "legacy": legacy,
+        "legacy_exists": legacy.exists(),
+        "current": current,
+        "current_exists": current.exists(),
+        "last_transfer": state.layout_transfers[-1] if state.layout_transfers else {},
+    }
 
 
 def prune_orphaned_skills(
@@ -4474,6 +4654,74 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: layout
+# ---------------------------------------------------------------------------
+
+
+def cmd_layout(args: argparse.Namespace) -> int:
+    store_path = vibecrafted_home() / "skills"
+    action = getattr(args, "action", "status")
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+
+    if action == "status":
+        status = layout_status(store_path)
+        print(f"\n{bold('Vibecrafted layout transfer status')}\n")
+        print(
+            f"  legacy:  {status['legacy']} ({'exists' if status['legacy_exists'] else 'missing'})"
+        )
+        print(
+            f"  current: {status['current']} ({'exists' if status['current_exists'] else 'missing'})"
+        )
+        if status["last_transfer"]:
+            last = status["last_transfer"]
+            print(
+                "  last:    "
+                f"{last.get('direction', 'unknown')} "
+                f"{last.get('status', 'unknown')} "
+                f"{last.get('updated_at', '')}"
+            )
+        else:
+            print("  last:    none")
+        print()
+        return 0
+
+    direction = {
+        "migrate": "legacy-to-new",
+        "rollback": "new-to-legacy",
+    }.get(action)
+    if direction is None:
+        print(red(f"Unknown layout action: {action}"))
+        return 1
+
+    exit_code, result = transfer_agents_layout(
+        store_path,
+        direction=direction,
+        dry_run=dry_run,
+        force=force,
+    )
+    source = result["source"]
+    target = result["target"]
+    conflicts = result.get("conflicts") or []
+    if exit_code == 0:
+        copied = result.get("copied") or []
+        verb = "would transfer" if dry_run else "transferred"
+        print(f"{OK} layout {verb} {len(copied)} files")
+        print(f"  from: {source}")
+        print(f"  to:   {target}")
+        return 0
+
+    print(f"{WARN} layout transfer blocked")
+    print(f"  from: {source}")
+    print(f"  to:   {target}")
+    for conflict in conflicts:
+        print(f"  conflict: {conflict}")
+    if conflicts and not force:
+        print(dim("  Re-run with --force only if this target is Vibecrafted-managed."))
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: uninstall
 # ---------------------------------------------------------------------------
 
@@ -4953,6 +5201,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--source", default=default_source, help="Repo root (default: auto-detect)"
     )
 
+    # layout transfer
+    p_layout = sub.add_parser(
+        "layout",
+        help="Transfer agent runtime payload between legacy and current install layouts",
+    )
+    p_layout.add_argument(
+        "action",
+        choices=("status", "migrate", "rollback"),
+        nargs="?",
+        default="status",
+        help="status, migrate legacy->current, or rollback current->legacy",
+    )
+    p_layout.add_argument(
+        "--dry-run", "-n", action="store_true", help="Show what would be done"
+    )
+    p_layout.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite conflicting target files; only use for Vibecrafted-managed payload",
+    )
+
     # uninstall
     p_uninstall = sub.add_parser(
         "uninstall", help="Remove 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills, views, launchers, and helpers"
@@ -4978,6 +5247,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return cmd_doctor(args)
     elif args.command == "list":
         return cmd_list(args)
+    elif args.command == "layout":
+        return cmd_layout(args)
     elif args.command == "uninstall":
         return cmd_uninstall(args)
     elif args.command == "restore":

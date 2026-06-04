@@ -452,6 +452,126 @@ def test_product_tool_discovery_records_path_without_rehoming(
     assert loaded.product_tools["zellij"]["path"] == str(cargo_bin / "zellij")
 
 
+def test_layout_migrate_promotes_legacy_agents_scripts_to_current_tools(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
+    store_path = crafted_home / "skills"
+    legacy_agents = store_path / "vc-agents"
+    legacy_scripts = legacy_agents / "scripts"
+    legacy_scripts.mkdir(parents=True)
+    (legacy_agents / "SKILL.md").write_text("legacy skill\n", encoding="utf-8")
+    _write_executable(
+        legacy_scripts / "codex_spawn.sh",
+        "#!/usr/bin/env bash\nprintf 'legacy codex\\n'\n",
+    )
+
+    state = installer.InstallState(framework_version="1.5.0-legacy")
+    state.save(store_path)
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+
+    exit_code = installer.cmd_layout(
+        Namespace(action="migrate", dry_run=False, mirror=False, force=False)
+    )
+
+    current_agents = runtime_home / "tools" / "vibecrafted-current" / "agents"
+    assert exit_code == 0
+    assert (
+        (current_agents / "scripts" / "codex_spawn.sh")
+        .read_text(encoding="utf-8")
+        .startswith("#!/usr/bin/env bash")
+    )
+    assert (current_agents / "SKILL.md").read_text(encoding="utf-8") == "legacy skill\n"
+
+    loaded = installer.InstallState.load(store_path)
+    assert loaded.layout_transfers[-1]["direction"] == "legacy-to-new"
+    assert loaded.layout_transfers[-1]["status"] == "completed"
+    assert loaded.layout_transfers[-1]["source"] == str(legacy_agents)
+    assert loaded.layout_transfers[-1]["target"] == str(current_agents)
+
+
+def test_layout_rollback_restores_new_agents_scripts_to_legacy_store(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
+    store_path = crafted_home / "skills"
+    current_agents = runtime_home / "tools" / "vibecrafted-current" / "agents"
+    current_scripts = current_agents / "scripts"
+    current_scripts.mkdir(parents=True)
+    (current_agents / "SKILL.md").write_text("new skill\n", encoding="utf-8")
+    _write_executable(
+        current_scripts / "claude_spawn.sh",
+        "#!/usr/bin/env bash\nprintf 'new claude\\n'\n",
+    )
+
+    state = installer.InstallState(framework_version="2.0-new")
+    state.save(store_path)
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+
+    exit_code = installer.cmd_layout(
+        Namespace(action="rollback", dry_run=False, mirror=False, force=False)
+    )
+
+    legacy_agents = store_path / "vc-agents"
+    assert exit_code == 0
+    assert (
+        (legacy_agents / "scripts" / "claude_spawn.sh")
+        .read_text(encoding="utf-8")
+        .startswith("#!/usr/bin/env bash")
+    )
+    assert (legacy_agents / "SKILL.md").read_text(encoding="utf-8") == "new skill\n"
+
+    loaded = installer.InstallState.load(store_path)
+    assert loaded.layout_transfers[-1]["direction"] == "new-to-legacy"
+    assert loaded.layout_transfers[-1]["status"] == "completed"
+    assert loaded.layout_transfers[-1]["source"] == str(current_agents)
+    assert loaded.layout_transfers[-1]["target"] == str(legacy_agents)
+
+
+def test_layout_transfer_refuses_unmanaged_target_conflict(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    runtime_home = home / ".local" / "share" / "vibecrafted"
+    store_path = crafted_home / "skills"
+    legacy_agents = store_path / "vc-agents"
+    legacy_scripts = legacy_agents / "scripts"
+    legacy_scripts.mkdir(parents=True)
+    _write_executable(
+        legacy_scripts / "codex_spawn.sh",
+        "#!/usr/bin/env bash\nprintf 'legacy codex\\n'\n",
+    )
+    current_scripts = (
+        runtime_home / "tools" / "vibecrafted-current" / "agents" / "scripts"
+    )
+    current_scripts.mkdir(parents=True)
+    _write_executable(
+        current_scripts / "codex_spawn.sh",
+        "#!/usr/bin/env bash\nprintf 'operator custom codex\\n'\n",
+    )
+
+    state = installer.InstallState(framework_version="1.5.0-legacy")
+    state.save(store_path)
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+
+    exit_code = installer.cmd_layout(
+        Namespace(action="migrate", dry_run=False, mirror=False, force=False)
+    )
+
+    assert exit_code == 1
+    assert "operator custom codex" in (current_scripts / "codex_spawn.sh").read_text(
+        encoding="utf-8"
+    )
+    loaded = installer.InstallState.load(store_path)
+    assert loaded.layout_transfers[-1]["direction"] == "legacy-to-new"
+    assert loaded.layout_transfers[-1]["status"] == "blocked"
+
+
 def test_install_launcher_does_not_overwrite_unmanaged_dev_wrapper(
     tmp_path: Path, monkeypatch
 ) -> None:
