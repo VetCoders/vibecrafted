@@ -4,29 +4,38 @@
 
 ```mermaid
 flowchart TD
-    A[Operator: vibecrafted scaffold claude --prompt 'Plan this system'] --> B[Clarify target outcome and constraints]
-    B --> C[Map existing repo or greenfield assumptions]
-    C --> D[Draft phases, risks, and leverage points]
-    D --> E{What next?}
-    E -->|implementation path chosen| F[Hand off to vc-workflow or vc-implement]
-    E -->|needs collaboration| G[Hand off to vc-partner]
-    E -->|plan only| H[Write scaffold report]
-    F --> H
-    G --> H
+    A[Operator: vibecrafted scaffold claude --prompt 'Plan this'] --> G[Canonical Orientation Gate: vc-init + loctree — HARD-BLOCK]
+    G --> O[1. Orient: map landscape + constraint space]
+    O --> F[2. Falsify: try to break the founding assumption]
+    F --> S[3. Shape: decisions · scope · product identity · output shape by scale]
+    S --> D[4. Defend: agent-sized cuts, each with Vector + state + delivery-verifier]
+    D --> H[5. Handoff: plan with a state column]
+    H --> E{What next?}
+    E -->|WRITE phase| W[vc-implement / vc-workflow consume the plan]
+    E -->|conduct dispatch| OP[vc-operator reads state column → trigger/stop]
+    E -->|shared steering| P[vc-partner]
+    E -->|plan only| R[Write scaffold report]
 ```
+
+## Cadence position
+
+Scaffold is the **WRITE entry** of the VC-ship read/write cadence
+(Scaffold→Implement→Review→Workflow→Follow-up→Marbles→Audit→Polarize→Dou→Hydrate→Release).
+Each WRITE leaves an artifact; the next READ falsifies it. See `references/cadence.md`.
 
 ## Routes
 
-| Entry                          | Args                   | Produces                                   | Exit            |
-| ------------------------------ | ---------------------- | ------------------------------------------ | --------------- |
-| `vibecrafted scaffold <agent>` | `--prompt` or `--file` | scaffold plan/report, transcript, and meta | `0` on dispatch |
-| `vc-scaffold <agent>`          | same                   | same                                       | `0` on dispatch |
+| Entry                          | Args                   | Produces                                              | Exit            |
+| ------------------------------ | ---------------------- | ----------------------------------------------------- | --------------- |
+| `vibecrafted scaffold <agent>` | `--prompt` or `--file` | scaffold plan (with `state` column), transcript, meta | `0` on dispatch |
+| `vc-scaffold <agent>`          | same                   | same                                                  | `0` on dispatch |
 
 ### Escalation edges
 
-- Plan is ready for execution -> `vibecrafted workflow <agent>` or `implement` (alias: `justdo`)
-- Shared steering is still needed -> `vibecrafted partner <agent>`
-- The repo already exists and needs truth before planning -> `vibecrafted init <agent>`
+- Plan ready for execution -> `vibecrafted implement <agent>` (alias `justdo`) or `workflow`
+- Conduct a multi-wave dispatch -> `vibecrafted operator` (reads the `state` column for trigger/stop)
+- Shared steering still needed -> `vibecrafted partner <agent>`
+- Repo already exists and needs truth before planning -> `vibecrafted init <agent>`
 
 ### Session artifacts
 

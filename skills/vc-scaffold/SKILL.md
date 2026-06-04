@@ -93,9 +93,7 @@ green checkmark alone. Surface the failure modes the plan must defend against.
 Decide architecture by **boundaries and decisions** (3-5 that matter, not a thousand details), set
 **scope** (in / out / explicitly out — be ruthless), and define **product identity** (material
 metaphor, color roles, typography, tone, dark/light) — identity is an architectural decision that
-feeds DoU and Decorate later. Then pick the **output shape by scale**: single-cut brief · wave-atlas
-
-- tracker · project read/write pipeline. See `references/output-shapes.md`.
+feeds DoU and Decorate later. Then pick the **output shape by scale**: single-cut brief · wave-atlas+tracker · project read/write pipeline. See `references/output-shapes.md`.
 
 ### 4. Defend (gates first-class)
 
