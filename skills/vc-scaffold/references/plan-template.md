@@ -89,22 +89,27 @@ Each task is agent-ready. Agents execute in parallel when dependencies allow. Ea
 Example:
 ```
 
-Task: Build authentication middleware
+Task: Build authentication middleware state: [ ]
+Vector: implement
 Produces: /middleware/auth.ts, /tests/auth.test.ts
 Depends on: Infrastructure up, database schema
 Owner: Core backend agent
-Acceptance: Middleware rejects invalid tokens, passes valid tokens, tests at 85%+ coverage
+Delivery-verifier: `pnpm test auth` green — rejects invalid tokens, passes valid; flips [~]→[x]
+Acceptance: intent (auth enforced on all routes) vs baseline (routes open); delivery proven by the verifier, not "agent said so"
 
 ```
 
-## Test Gates
+## Test Gates (per Vector profile)
 
-Each phase has gates. Don't move to the next phase unless gates pass.
+Each phase has a delivery-gate selected by its `Vector` (see references/measure-core.md) — the gate
+defines what counts as delivery, so it differs by Vector. Don't advance a phase until its gate flips
+every cut `[~]→[x]`.
 
-- **Unit tests:** 80%+ coverage on core paths
-- **Integration tests:** Services talk to each other correctly
-- **Performance:** P95 latency under [threshold]
-- **Security:** No exposed secrets, auth enforced
+- **implement** → feature works + tests green on core paths
+- **stabilize** → the bleeding stops + a regression/canary gate green (busy ≠ dead)
+- **recon** → map/answer delivered with evidence refs
+- **e2e** → the full path runs end-to-end
+- **always** → no exposed secrets; security gate not skipped (`--no-verify` forbidden)
 
 ## Living Tree Note
 
