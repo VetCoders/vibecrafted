@@ -12,38 +12,44 @@ CMD_ARGS ?= @modelcontextprotocol/server-memory
 STATUS_FILE ?= $(HOME)/.rust-mux/status/$(SERVICE).json
 LOG_LEVEL ?= info
 
+# Help colors
+HELP_C_CYAN   := \033[36m
+HELP_C_GREEN  := \033[32m
+HELP_C_YELLOW := \033[33m
+HELP_C_RESET  := \033[0m
+
 help:
-	@echo "rust-mux targets"
-	@echo "  build             - cargo build"
-	@echo "  release           - cargo build --release"
-	@echo "  check             - cargo check --all-targets --all-features"
-	@echo "  fmt               - cargo fmt --all"
-	@echo "  fmt-check         - cargo fmt -- --check"
-	@echo "  clippy            - cargo clippy --all-targets --all-features -- -D warnings"
-	@echo "  test              - cargo test --all-targets --all-features"
-	@echo "  test-full         - test + opcjonalny pakiet testów transportu (ignored)"
-	@echo "  gates             - fmt-check + clippy + test"
-	@echo ""
-	@echo "Wizard / runtime"
-	@echo "  wizard            - uruchom interaktywny wizard (zapisuje config)"
-	@echo "  wizard-dry-run    - uruchom wizard bez zapisu"
-	@echo "  run               - uruchom mux dla SERVICE z CONFIG"
-	@echo "  run-tray          - uruchom mux z tray + STATUS_FILE"
-	@echo "  proxy             - uruchom rust-mux-proxy dla SOCKET"
-	@echo "  health            - health check dla SERVICE z CONFIG"
-	@echo "  daemon-status     - status wszystkich usług z daemona"
-	@echo "  dashboard         - uruchom tray dashboard (feature: tray)"
-	@echo "  status-file-init  - utwórz katalog dla STATUS_FILE"
-	@echo "  clean-runtime     - usuń SOCKET i STATUS_FILE"
-	@echo ""
-	@echo "Zmienne (override np. 'make run SERVICE=brave-search'):"
-	@echo "  CONFIG=$(CONFIG)"
-	@echo "  SERVICE=$(SERVICE)"
-	@echo "  SOCKET=$(SOCKET)"
-	@echo "  STATUS_FILE=$(STATUS_FILE)"
-	@echo "  CMD=$(CMD)"
-	@echo "  CMD_ARGS=$(CMD_ARGS)"
-	@echo "  LOG_LEVEL=$(LOG_LEVEL)"
+	@printf '\n$(HELP_C_CYAN)%s$(HELP_C_RESET)\n' 'rust-mux targets'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'build' '- cargo build'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'release' '- cargo build --release'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'check' '- cargo check --all-targets --all-features'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'fmt' '- cargo fmt --all'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'fmt-check' '- cargo fmt -- --check'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'clippy' '- cargo clippy --all-targets --all-features -- -D warnings'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'test' '- cargo test --all-targets --all-features'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'test-full' '- test + opcjonalny pakiet testów transportu (ignored)'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'gates' '- fmt-check + clippy + test'
+	@printf '\n'
+	@printf '  $(HELP_C_YELLOW)%s$(HELP_C_RESET)\n' 'WIZARD / RUNTIME'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'wizard' '- uruchom interaktywny wizard (zapisuje config)'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'wizard-dry-run' '- uruchom wizard bez zapisu'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'run' '- uruchom mux dla SERVICE z CONFIG'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'run-tray' '- uruchom mux z tray + STATUS_FILE'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'proxy' '- uruchom rust-mux-proxy dla SOCKET'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'health' '- health check dla SERVICE z CONFIG'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'daemon-status' '- status wszystkich usług z daemona'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'dashboard' '- uruchom tray dashboard (feature: tray)'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'status-file-init' '- utwórz katalog dla STATUS_FILE'
+	@printf '    $(HELP_C_GREEN)%-18s$(HELP_C_RESET) %s\n' 'clean-runtime' '- usuń SOCKET i STATUS_FILE'
+	@printf '\n'
+	@printf '  $(HELP_C_YELLOW)%s$(HELP_C_RESET)\n' "ZMIENNE (OVERRIDE NP. 'MAKE RUN SERVICE=BRAVE-SEARCH')"
+	@printf '%s\n' '  CONFIG=$(CONFIG)'
+	@printf '%s\n' '  SERVICE=$(SERVICE)'
+	@printf '%s\n' '  SOCKET=$(SOCKET)'
+	@printf '%s\n' '  STATUS_FILE=$(STATUS_FILE)'
+	@printf '%s\n' '  CMD=$(CMD)'
+	@printf '%s\n' '  CMD_ARGS=$(CMD_ARGS)'
+	@printf '%s\n' '  LOG_LEVEL=$(LOG_LEVEL)'
 
 build:
 	cargo build

@@ -40,5 +40,11 @@ dmg:
 dmg-signed:
 	@$(MAKE) -C shell-agent dmg-signed
 
+# Help colors
+HELP_C_CYAN   := \033[36m
+HELP_C_GREEN  := \033[32m
+HELP_C_YELLOW := \033[33m
+HELP_C_RESET  := \033[0m
+
 help:
 	@printf '%s\n' 'targets: gates fmt fmt-check lint test check workspace-check clean bindings xcode app app-debug dmg dmg-signed'
