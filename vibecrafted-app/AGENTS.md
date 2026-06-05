@@ -115,13 +115,23 @@ with `make app`; create local or signed DMGs with `make dmg` and
 
 ## Commit Convention
 
-- Title prefix: `[<agent>/<track>] <description>`.
-- For workspace extraction/stabilization: `[codex/vc-operator] <description>`.
-- Multi-file commits need a body with bullet points.
-- Trailer:
+- Subject: `[<agent>/<runtime>] <type>(<scope>): <description>`.
+- For workspace extraction/stabilization:
+  `[codex/vc-operator] feat: <description>`.
+- Multi-file commits need an explanatory body; bullets are preferred when the
+  commit touches unrelated surfaces.
+- Required trailers:
 
 ```text
+[codex/interactive] chore: Polish Makefile help output formatting
+
+Refactors the help target to use structured printf output with aligned command
+descriptions.
+
 Authored-By: codex <agents@vetcoders.io>
+session_id: 019e93be-379d-7303-9ad4-ffae468db99f
+time: 2026-06-05T12:52:47-06:00
+runtime: iterm2
 ```
 
 Forbidden: vendor footers, personal signatures, and

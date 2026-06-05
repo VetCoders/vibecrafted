@@ -331,6 +331,7 @@ HUSKY_PREPUSH_SECRETS=${pp_secrets}
 # ── Commit-msg ──────────────────────────────────────────────────────
 HUSKY_COMMIT_MSG_CONVENTIONAL=1
 HUSKY_COMMIT_MSG_ALLOW_AGENT_PREFIX=1
+HUSKY_COMMIT_MSG_REQUIRE_AGENT_RUNTIME=1
 HUSKY_COMMIT_MSG_SUBJECT_MAX=100
 
 # ── Pre-merge-commit ───────────────────────────────────────────────

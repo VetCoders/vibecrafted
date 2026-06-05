@@ -447,7 +447,10 @@ def render_frontmatter(data: dict[str, object]) -> str:
         "skill",
         "model",
         "status",
+        "date",
         "session_id",
+        "artifact_stem",
+        "artifact_kind",
         "repo_path",
         "tokens_input",
         "tokens_output",
@@ -466,6 +469,70 @@ def render_frontmatter(data: dict[str, object]) -> str:
         lines.append(f"{key}: {value if value not in (None, '') else 'unknown'}")
     lines.extend(["---", ""])
     return "\n".join(lines)
+
+
+def slug_component(value: object, fallback: str) -> str:
+    raw = str(value or fallback)
+    raw = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-")
+    return raw or fallback
+
+
+def same_file(left: pathlib.Path, right: pathlib.Path) -> bool:
+    try:
+        return left.samefile(right)
+    except OSError:
+        return left == right
+
+
+def infer_artifact_store(meta: pathlib.Path):
+    reports_dir = meta.parent
+    if reports_dir.name != "reports":
+        return None
+    day_dir = reports_dir.parent
+    if not re.fullmatch(r"[0-9]{4}_[0-9]{4}", day_dir.name):
+        return None
+    repo_dir = day_dir.parent
+    org_dir = repo_dir.parent
+    if not org_dir.name or not repo_dir.name:
+        return None
+    yyyy, mmdd = day_dir.name.split("_", 1)
+    return {
+        "reports_dir": reports_dir,
+        "day": f"{yyyy}-{mmdd[:2]}-{mmdd[2:]}",
+        "org": org_dir.name,
+        "repo": repo_dir.name,
+    }
+
+
+def unique_stem(reports_dir: pathlib.Path, stem: str, sources: list[pathlib.Path], disambiguator: str) -> str:
+    candidates = [stem]
+    if disambiguator:
+        candidates.append(f"{stem}-{slug_component(disambiguator, 'run')}")
+    for index in range(2, 100):
+        candidates.append(f"{stem}-{index}")
+
+    suffixes = [".md", ".transcript.log", ".meta.json"]
+    for candidate in candidates:
+        blocked = False
+        for suffix in suffixes:
+            target = reports_dir / f"{candidate}{suffix}"
+            if not target.exists():
+                continue
+            if any(source and source.exists() and same_file(target, source) for source in sources):
+                continue
+            blocked = True
+            break
+        if not blocked:
+            return candidate
+    return candidates[-1]
+
+
+def move_artifact(source: pathlib.Path, target: pathlib.Path) -> pathlib.Path:
+    if not str(source) or not source.is_file() or same_file(source, target):
+        return source
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(target)
+    return target
 
 
 def footer(marker: str, payload: dict[str, object]) -> str:
@@ -505,7 +572,10 @@ def normalize_markdown_artifact(path: pathlib.Path, payload: dict[str, object], 
             "skill": payload.get("skill_code") or payload.get("skill") or "unknown",
             "model": payload.get("model", "unknown"),
             "status": payload.get("status", "unknown"),
+            "date": payload.get("date", "unknown"),
             "session_id": payload.get("session_id") or "unknown",
+            "artifact_stem": payload.get("artifact_stem", "unknown"),
+            "artifact_kind": payload.get("artifact_kind", "unknown"),
             "repo_path": payload.get("root", "unknown"),
             "tokens_input": payload.get("tokens_input", 0),
             "tokens_output": payload.get("tokens_output", 0),
@@ -535,6 +605,7 @@ session_id = payload.get("session_id") or extract_session(combined_text)
 tokens = extract_tokens(combined_text)
 cost = extract_cost(combined_text)
 completed_at = payload.get("completed_at") or dt.datetime.now(dt.timezone.utc).isoformat()
+artifact_time = dt.datetime.now().astimezone().isoformat(timespec="seconds")
 root = payload.get("root") or os.getcwd()
 resume_hint = (
     f"Use `cd {root} && vc-resume --session {session_id}` to continue work with this Agent."
@@ -551,6 +622,35 @@ payload["token_usage"] = tokens
 payload["cost_usd"] = cost
 payload["resume_hint"] = resume_hint
 payload["artifact_contract"] = "vibecrafted.agent-artifact.v1"
+payload["date"] = payload.get("date") or artifact_time
+
+store = infer_artifact_store(meta_path)
+if store:
+    session_for_name = session_id or payload.get("session_id") or payload.get("run_id") or "unknown-session"
+    stem = (
+        f"{store['day']}_"
+        f"{slug_component(store['org'], 'org')}_"
+        f"{slug_component(store['repo'], 'repo')}_"
+        f"{slug_component(session_for_name, 'session')}-report"
+    )
+    stem = unique_stem(
+        store["reports_dir"],
+        stem,
+        [report_path, transcript_path, meta_path],
+        str(payload.get("run_id") or ""),
+    )
+    final_report = store["reports_dir"] / f"{stem}.md"
+    final_transcript = store["reports_dir"] / f"{stem}.transcript.log"
+    final_meta = store["reports_dir"] / f"{stem}.meta.json"
+
+    report_path = move_artifact(report_path, final_report)
+    transcript_path = move_artifact(transcript_path, final_transcript)
+    payload["report"] = str(report_path)
+    payload["transcript"] = str(transcript_path)
+    payload["meta"] = str(final_meta)
+    payload["artifact_stem"] = stem
+    payload["artifact_kind"] = "report"
+
 payload["artifact_footer"] = {
     "run_id": payload.get("run_id", "unknown"),
     "session_id": payload.get("session_id") or "",
@@ -561,7 +661,11 @@ payload["artifact_footer"] = {
 payload.setdefault("completed_at", completed_at)
 payload["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 
-meta_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+target_meta_path = pathlib.Path(str(payload.get("meta") or meta_path))
+target_meta_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+if not same_file(meta_path, target_meta_path) and meta_path.exists():
+    meta_path.unlink()
+meta_path = target_meta_path
 
 footer_payload = {
     **payload,

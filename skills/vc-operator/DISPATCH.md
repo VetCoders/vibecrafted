@@ -219,9 +219,11 @@ Recovery hint (if your dispatch stalls):
 ```text
 Branch + commit:
 - Branch: `feat/textforge-editor-core` off `feat/text-context-menu@f6b02744`
-- Commit title: `[claude/vc-implement] feat(textforge): wire editor canvas to provider`
-- Commit body: include `Authored-By: claude <agents@vetcoders.io>` (NOT
-  `Co-Authored-By:` and NOT `noreply@anthropic.com`).
+- Commit subject: `[claude/vc-implement] feat(textforge): wire editor canvas to provider`
+- Commit body: explain the change, then include the full runtime footer:
+  `Authored-By: claude <agents@vetcoders.io>`, `session_id: <uuid>`,
+  `time: YYYY-MM-DDTHH:MM:SS±HH:MM`, and `runtime: <runtime>`.
+- Do not use `Co-Authored-By:`, vendor noreply addresses, or personal signatures.
 - DO NOT `git push`. Operator publishes after wave green.
 - DO NOT create PR. Operator does that operator-side.
 ```

@@ -174,8 +174,11 @@ Task-specific recovery hint:
 ```text
 Branch + commit:
 - Branch: {{BRANCH_INSTRUCTION}}
-- Commit title: {{COMMIT_TITLE}}
-- Commit body: include `Authored-By: {{AUTHORED_BY}}` (NOT `Co-Authored-By:`).
+- Commit subject: {{COMMIT_TITLE}}
+- Commit body: explain the change, then include the full runtime footer:
+  `Authored-By: {{AUTHORED_BY}}`, `session_id: <uuid>`,
+  `time: YYYY-MM-DDTHH:MM:SS±HH:MM`, and `runtime: <runtime>`.
+- Do not use `Co-Authored-By:`, vendor noreply addresses, or personal signatures.
 - DO NOT `git push`. Operator publishes after wave green.
 - DO NOT create PR. Operator does that operator-side.
 ```

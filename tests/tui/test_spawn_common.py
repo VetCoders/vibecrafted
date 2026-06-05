@@ -769,6 +769,68 @@ def test_spawn_watch_startup_reports_pass_and_dashboard_hint(tmp_path: Path) -> 
     assert "vibecrafted dashboard" in result.stdout
 
 
+def test_spawn_finalize_artifacts_canonicalizes_by_date_repo_session_and_kind(
+    tmp_path: Path,
+) -> None:
+    reports = (
+        tmp_path
+        / "home"
+        / ".vibecrafted"
+        / "artifacts"
+        / "VetCoders"
+        / "vibecrafted"
+        / "2026_0604"
+        / "reports"
+    )
+    reports.mkdir(parents=True)
+    meta = reports / "old.meta.json"
+    report = reports / "old.md"
+    transcript = reports / "old.transcript.log"
+    launcher = tmp_path / "launcher.sh"
+    plan = tmp_path / "plan.md"
+    session_id = "019e90db-cdfe-7ad2-ab53-d62bef636222"
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        export HOME="{tmp_path / "home"}"
+        export SPAWN_AGENT="codex"
+        export SPAWN_PROMPT_ID="prompt-123"
+        export SPAWN_RUN_ID="run-123"
+        export SPAWN_SKILL_CODE="impl"
+        printf '# Report\\n\\nDone.\\n' > "{report}"
+        printf -- '---\\n---\\n[12:40:43] session: {session_id}\\nWorking...\\n' > "{transcript}"
+        spawn_write_meta "{meta}" "launching" "codex" "implement" "{tmp_path}" "{plan}" "{report}" "{transcript}" "{launcher}"
+        spawn_finish_meta "{meta}" "completed" "0"
+        spawn_finalize_artifacts "{meta}" "{report}" "{transcript}"
+        '''
+    )
+
+    assert result.returncode == 0
+    matches = sorted(
+        reports.glob(f"*_VetCoders_vibecrafted_{session_id}-report.meta.json")
+    )
+    assert len(matches) == 1
+    payload = json.loads(matches[0].read_text(encoding="utf-8"))
+    assert payload["session_id"] == session_id
+    assert payload["artifact_stem"].endswith(f"_{session_id}-report")
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)",
+        payload["date"],
+    )
+    assert Path(payload["report"]).name == matches[0].name.replace(".meta.json", ".md")
+    assert Path(payload["transcript"]).name == matches[0].name.replace(
+        ".meta.json", ".transcript.log"
+    )
+    assert not report.exists()
+    assert not meta.exists()
+
+    final_report = Path(payload["report"])
+    assert final_report.exists()
+    assert "date:" in final_report.read_text(encoding="utf-8")
+
+
 def test_spawn_watch_startup_reports_failure_without_dashboard_hint(
     tmp_path: Path,
 ) -> None:

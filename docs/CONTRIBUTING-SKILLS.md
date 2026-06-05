@@ -163,13 +163,29 @@ vibecrafted commits ship with the `[<agent>/<workflow>]` prefix per the
 - skills/vc-my-new-skill/SKILL.md: trigger + acceptance + anti-patterns
 - skills/vc-my-new-skill/README.md: operator overview
 - skills/vc-my-new-skill/examples/example-prompt.md: realistic trigger pair
+
+Authored-By: claude <agents@vetcoders.io>
+session_id: 019e93be-379d-7303-9ad4-ffae468db99f
+time: 2026-06-05T12:52:47-06:00
+runtime: iterm2
 ```
 
 Use `make commit-safe` (race-protected) under any active agent session:
 
 ```bash
+cat >/tmp/vc-skill-commit.txt <<'MSG'
+[claude/skill-authoring] feat(skills): add vc-my-new-skill
+
+Adds a focused operator workflow with examples and discoverability notes.
+
+Authored-By: claude <agents@vetcoders.io>
+session_id: 019e93be-379d-7303-9ad4-ffae468db99f
+time: 2026-06-05T12:52:47-06:00
+runtime: iterm2
+MSG
+
 make commit-safe \
-  MSG="[claude/skill-authoring] feat(skills): add vc-my-new-skill" \
+  MSG_FILE=/tmp/vc-skill-commit.txt \
   FILES="skills/vc-my-new-skill/SKILL.md \
          skills/vc-my-new-skill/README.md \
          skills/vc-my-new-skill/examples/example-prompt.md"

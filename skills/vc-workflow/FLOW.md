@@ -31,4 +31,5 @@ flowchart TD
 
 - Artifact root: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/`
 - Lock: `$VIBECRAFTED_HOME/locks/<org>/<repo>/<run_id>.lock`
-- Outputs: `reports/<timestamp>_<slug>_<agent>.md` with matching `.transcript.log` and `.meta.json`
+- Outputs: final `reports/%Y-%m-%d_<org>_<repo>_<full_session_id>-<kind>.md`
+  with matching `.transcript.log` and `.meta.json`
