@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
 
+[project.scripts]
+vibecrafted = "vibecrafted_core.cli:main"
+
 [project.optional-dependencies]
 sandbox = ["aiohttp >= 3.9"]
 # macOS-only iTerm2 / locterm AutoLaunch plugin.

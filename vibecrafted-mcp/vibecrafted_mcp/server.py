@@ -202,11 +202,10 @@ def build_server() -> Any:
         mode: str | None = None,
         home: str | None = None,
     ) -> dict[str, Any]:
-        """Launch a workflow through the existing Vibecrafted command deck.
+        """Launch a workflow through the Vibecrafted core runtime.
 
         This is intentionally a thin remote button: launch validation and
-        process creation stay in ``vibecrafted_core.workflow`` and ultimately
-        in ``scripts/vibecrafted`` / ``skills/vc-agents``.
+        process creation stay in ``vibecrafted_core.workflow``.
         """
         payload: dict[str, Any] = {
             "skill": skill,
@@ -236,11 +235,10 @@ def build_server() -> Any:
         mode: str | None = None,
         home: str | None = None,
     ) -> dict[str, Any]:
-        """Launch a workflow through the existing Vibecrafted command deck.
+        """Launch a workflow through the Vibecrafted core runtime.
 
         This is intentionally a thin remote button: launch validation and
-        process creation stay in ``vibecrafted_core.workflow`` and ultimately
-        in ``scripts/vibecrafted`` / ``skills/vc-agents``.
+        process creation stay in ``vibecrafted_core.workflow``.
         """
         return _launch_workflow(
             skill=skill,

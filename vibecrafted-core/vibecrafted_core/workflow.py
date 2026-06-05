@@ -10,11 +10,17 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .control_plane import control_plane_home, lookup_run, sync_state
+from .control_plane import (
+    control_plane_home,
+    lookup_run,
+    operator_session_name,
+    sync_state,
+)
 from .events import append_event
+from .spawn import _default_command
 
 
-SUPPORTED_WORKFLOWS = {"workflow", "research", "review", "marbles"}
+SUPPORTED_WORKFLOWS = {"workflow", "implement", "research", "review", "marbles"}
 SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "swarm"}
 SUPPORTED_RUNTIMES = {"headless", "terminal", "visible"}
 TERMINAL_STATES = {
@@ -40,6 +46,8 @@ class WorkflowLaunchSpec:
     file: str
     runtime: str
     root: str
+    count: int | None = None
+    depth: int | None = None
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -119,6 +127,16 @@ def _normalized_runtime(raw: str) -> str:
     return raw if raw in SUPPORTED_RUNTIMES else "headless"
 
 
+def _coerce_positive_int(value: Any, default: int | None = None) -> int | None:
+    if value in (None, ""):
+        return default
+    try:
+        result = int(str(value))
+    except ValueError:
+        return default
+    return result if result > 0 else default
+
+
 def normalize_launch_spec(
     payload: dict[str, Any], source_dir: str | Path
 ) -> WorkflowLaunchSpec:
@@ -138,6 +156,12 @@ def normalize_launch_spec(
     root = str(payload.get("root") or Path(source_dir).resolve()).strip()
     runtime = _normalized_runtime(str(payload.get("runtime") or "headless").strip())
     mode = str(payload.get("mode") or skill).strip() or skill
+    count = _coerce_positive_int(
+        payload.get("count"), 3 if skill == "marbles" else None
+    )
+    depth = _coerce_positive_int(
+        payload.get("depth"), 3 if skill == "marbles" else None
+    )
 
     if skill != "marbles" and not prompt and not file_path:
         raise ValueError("Launch requires either prompt text or a file path.")
@@ -150,29 +174,85 @@ def normalize_launch_spec(
         file=file_path,
         runtime=runtime,
         root=root,
+        count=count,
+        depth=depth,
     )
 
 
-def build_launch_command(spec: WorkflowLaunchSpec, source_dir: str | Path) -> list[str]:
-    launcher = vibecrafted_launcher(source_dir)
-    if not launcher.exists():
-        raise FileNotFoundError(f"Command deck not found at {launcher}")
-
-    command = ["bash", str(launcher), spec.skill]
-    if spec.skill != "research":
-        command.append(spec.agent)
-
-    command.extend(["--runtime", spec.runtime])
-    if spec.root:
-        command.extend(["--root", spec.root])
+def _source_prompt(spec: WorkflowLaunchSpec) -> str:
     if spec.file:
-        command.extend(["--file", spec.file])
-    elif spec.prompt:
-        command.extend(["--prompt", spec.prompt])
-    elif spec.skill == "marbles":
-        command.extend(["--depth", "3"])
+        try:
+            return (
+                Path(spec.file)
+                .expanduser()
+                .read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            return f"Read the requested prompt file yourself: {spec.file}"
+    return spec.prompt
 
-    return command
+
+def _runtime_prompt(spec: WorkflowLaunchSpec) -> str:
+    report_hint = "${VIBECRAFTED_REPORT_PATH}"
+    transcript_hint = "${VIBECRAFTED_TRANSCRIPT_PATH}"
+    meta_hint = "${VIBECRAFTED_META_PATH}"
+    source_prompt = _source_prompt(spec)
+    return f"""You are running under Vibecrafted core runtime.
+
+Contract:
+- Work in repository root: {spec.root}
+- Skill: vc-{spec.skill}
+- Agent request: {spec.agent}
+- Mode: {spec.mode}
+- Runtime request: {spec.runtime}
+- Count: {spec.count or ""}
+- Depth: {spec.depth or ""}
+- Do not launch or delegate to external agent fleets.
+- Do not call legacy Vibecrafted skill launchers or agents/scripts launchers.
+- Write your final report to the path in VIBECRAFTED_REPORT_PATH ({report_hint}).
+- Let stdout/stderr form the transcript captured at VIBECRAFTED_TRANSCRIPT_PATH ({transcript_hint}).
+- If you create or update run metadata, use VIBECRAFTED_META_PATH ({meta_hint}).
+
+Operator prompt:
+{source_prompt}
+"""
+
+
+def build_launch_command(
+    spec: WorkflowLaunchSpec, _source_dir: str | Path
+) -> list[str]:
+    source_prompt = _source_prompt(spec)
+    if spec.skill == "research":
+        return [
+            sys.executable,
+            "-m",
+            "vibecrafted_core.workflow_runtime",
+            "research",
+            "--root",
+            spec.root,
+            "--prompt",
+            source_prompt,
+        ]
+    if spec.skill == "marbles":
+        return [
+            sys.executable,
+            "-m",
+            "vibecrafted_core.workflow_runtime",
+            "marbles",
+            "--agent",
+            spec.agent if spec.agent != "swarm" else "codex",
+            "--root",
+            spec.root,
+            "--prompt",
+            source_prompt,
+            "--count",
+            str(spec.count or 3),
+            "--depth",
+            str(spec.depth or 3),
+        ]
+
+    worker_agent = spec.agent
+    return _default_command(worker_agent, _runtime_prompt(spec))
 
 
 def launch_workflow(
@@ -204,6 +284,12 @@ def launch_workflow(
     merged_env["VIBECRAFTED_REPORT_PATH"] = str(artifacts["report"])
     merged_env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(artifacts["transcript"])
     merged_env["VIBECRAFTED_META_PATH"] = str(artifacts["meta"])
+    merged_env["VIBECRAFTED_AGENT"] = spec.agent
+    merged_env["VIBECRAFTED_SKILL"] = spec.skill
+    merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
+    merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session_name(
+        spec.root, run_id
+    )
 
     append_event(
         kind="launch",
@@ -302,7 +388,7 @@ def launch_workflow(
     snapshot = sync_state()
     return {
         "accepted": True,
-        "message": f"Launched {spec.skill} via the existing command deck.",
+        "message": f"Launched {spec.skill} via Vibecrafted core runtime.",
         "command": command,
         "worker_command": worker_command,
         "pid": proc.pid,

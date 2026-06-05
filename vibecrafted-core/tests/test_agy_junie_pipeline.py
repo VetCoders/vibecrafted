@@ -17,12 +17,6 @@ def test_workflow_launch_spec_accepts_agy_junie_and_grok(tmp_path: Path) -> None
 
 
 def test_build_launch_command_passes_new_agent_to_command_deck(tmp_path: Path) -> None:
-    source = tmp_path / "src"
-    scripts = source / "scripts"
-    scripts.mkdir(parents=True)
-    launcher = scripts / "vibecrafted"
-    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-
     spec = workflow.WorkflowLaunchSpec(
         agent="junie",
         mode="workflow",
@@ -33,18 +27,19 @@ def test_build_launch_command_passes_new_agent_to_command_deck(tmp_path: Path) -
         root=str(tmp_path),
     )
 
-    assert workflow.build_launch_command(spec, source)[:4] == [
-        "bash",
-        str(launcher),
-        "workflow",
-        "junie",
-    ]
+    command = workflow.build_launch_command(spec, tmp_path / "src")
+
+    assert command[:2] == ["junie", "--task"]
+    assert "Skill: vc-workflow" in command[2]
 
 
 def test_supervisor_defaults_and_sandbox_support_cover_agy_junie_grok() -> None:
     assert sandbox_supported("agy") is True
     assert sandbox_supported("junie") is True
     assert sandbox_supported("grok") is True
+    assert _default_command("claude", "go")[:3] == ["claude", "--print", "--verbose"]
+    assert _default_command("codex", "go")[:2] == ["codex", "exec"]
+    assert _default_command("gemini", "go")[:3] == ["gemini", "--yolo", "--prompt"]
     agy_command = _default_command("agy", "go")
     assert agy_command[:3] == [
         "bash",

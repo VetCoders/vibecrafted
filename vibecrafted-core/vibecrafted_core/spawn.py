@@ -66,11 +66,17 @@ def _set_child_pgid() -> None:
 
 def _default_command(agent: str, prompt: str) -> list[str]:
     if agent == "claude":
-        return ["claude", "--verbose", "--dangerously-skip-permissions", prompt]
+        return [
+            "claude",
+            "--print",
+            "--verbose",
+            "--dangerously-skip-permissions",
+            prompt,
+        ]
     if agent == "codex":
-        return ["codex", "--dangerously-bypass-approvals-and-sandbox", prompt]
+        return ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt]
     if agent == "gemini":
-        return ["gemini", "-y", "-i", prompt]
+        return ["gemini", "--yolo", "--prompt", prompt]
     if agent == "agy":
         return [
             "bash",

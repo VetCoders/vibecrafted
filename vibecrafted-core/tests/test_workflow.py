@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -11,11 +12,7 @@ from vibecrafted_core import workflow
 
 def _source_dir(tmp_path: Path) -> Path:
     root = tmp_path / "src"
-    scripts = root / "scripts"
-    scripts.mkdir(parents=True)
-    launcher = scripts / "vibecrafted"
-    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    launcher.chmod(0o755)
+    root.mkdir(parents=True)
     return root
 
 
@@ -34,6 +31,15 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
         source,
     )
 
+    monkeypatch.setattr(
+        workflow,
+        "_default_command",
+        lambda _agent, _prompt: [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import os; Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
+        ],
+    )
     payload = workflow.launch_workflow(spec, source)
 
     assert payload["accepted"] is True
@@ -196,3 +202,73 @@ def test_retry_run_relaunches_terminal_run(
     assert payload["accepted"] is True
     assert payload["retry_run_id"] == "wflw-020202-0002"
     assert captured["retry_of"] == "wflw-010101-0001"
+
+
+def test_build_launch_command_uses_core_agent_command_not_legacy_deck(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, str] = {}
+
+    def _fake_default(agent: str, prompt: str) -> list[str]:
+        captured["agent"] = agent
+        captured["prompt"] = prompt
+        return ["agent-bin", prompt]
+
+    monkeypatch.setattr(workflow, "_default_command", _fake_default)
+    spec = workflow.WorkflowLaunchSpec(
+        agent="claude",
+        mode="implement",
+        skill="implement",
+        prompt="ship it",
+        file="",
+        runtime="headless",
+        root=str(tmp_path),
+    )
+
+    command = workflow.build_launch_command(spec, tmp_path / "source")
+
+    assert command[0] == "agent-bin"
+    assert command[0:2] != [
+        "bash",
+        str(tmp_path / "source" / "scripts" / "vibecrafted"),
+    ]
+    assert "Skill: vc-implement" in captured["prompt"]
+    assert "Do not call legacy Vibecrafted skill launchers" in captured["prompt"]
+    assert "ship it" in captured["prompt"]
+
+
+def test_research_swarm_uses_core_codex_coordinator(
+    tmp_path: Path,
+) -> None:
+    spec = workflow.normalize_launch_spec(
+        {"skill": "research", "prompt": "map the surface", "root": str(tmp_path)},
+        tmp_path,
+    )
+
+    command = workflow.build_launch_command(spec, tmp_path)
+
+    assert spec.agent == "swarm"
+    assert command[:3] == [sys.executable, "-m", "vibecrafted_core.workflow_runtime"]
+    assert command[3] == "research"
+    assert "map the surface" in command
+
+
+def test_marbles_uses_supervised_core_runtime(tmp_path: Path) -> None:
+    spec = workflow.normalize_launch_spec(
+        {
+            "skill": "marbles",
+            "agent": "codex",
+            "prompt": "converge",
+            "root": str(tmp_path),
+            "count": 2,
+            "depth": 4,
+        },
+        tmp_path,
+    )
+
+    command = workflow.build_launch_command(spec, tmp_path)
+
+    assert command[:3] == [sys.executable, "-m", "vibecrafted_core.workflow_runtime"]
+    assert command[3] == "marbles"
+    assert command[command.index("--count") + 1] == "2"
+    assert command[command.index("--depth") + 1] == "4"
