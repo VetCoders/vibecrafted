@@ -2502,6 +2502,12 @@ def _copy_managed_launcher(src: Path, dst: Path) -> bool:
         if not _is_replaceable_framework_launcher(dst):
             print(f"  {WARN} Keeping existing unmanaged launcher: {dst}")
             return False
+        if dst.is_symlink():
+            dst.unlink()
+        elif dst.is_dir():
+            shutil.rmtree(dst)
+        else:
+            dst.unlink()
     shutil.copy2(src, dst)
     dst.chmod(0o755)
     return True

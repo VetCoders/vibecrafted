@@ -145,49 +145,75 @@ _vetcoders_resume_agent() {
   }
 
   local resume_prompt
+  local runtime
+  local resume_cmd
   resume_prompt="$(_vetcoders_compose_input_context "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1
+  runtime="$(_vetcoders_effective_runtime)"
+  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt")" || return 1
+
+  if [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
+    _vetcoders_prepare_operator_runtime "$runtime" || return 1
+    _vetcoders_spawn_into_operator_session "resume-${tool}" "$resume_cmd" || return 1
+    printf 'Resume launched in operator session: %s\n' "$VIBECRAFTED_OPERATOR_SESSION"
+    printf '  agent:   %s\n' "$tool"
+    printf '  session: %s\n' "$_vetcoders_contract_session"
+    return 0
+  fi
+
+  eval "$resume_cmd"
+}
+
+_vetcoders_resume_command() {
+  local tool="$1"
+  local session_id="$2"
+  local resume_prompt="${3:-}"
+  local quoted_session quoted_prompt
+  quoted_session="$(_vetcoders_shell_quote "$session_id")"
+  if [[ -n "$resume_prompt" ]]; then
+    quoted_prompt="$(_vetcoders_shell_quote "$resume_prompt")"
+  fi
 
   case "$tool" in
     claude)
       if [[ -n "$resume_prompt" ]]; then
-        claude --resume "$_vetcoders_contract_session" "$resume_prompt"
+        printf 'claude --resume %s %s\n' "$quoted_session" "$quoted_prompt"
       else
-        claude --resume "$_vetcoders_contract_session"
+        printf 'claude --resume %s\n' "$quoted_session"
       fi
       ;;
     codex)
       if [[ -n "$resume_prompt" ]]; then
-        codex resume "$_vetcoders_contract_session" "$resume_prompt"
+        printf 'codex resume %s %s\n' "$quoted_session" "$quoted_prompt"
       else
-        codex resume "$_vetcoders_contract_session"
+        printf 'codex resume %s\n' "$quoted_session"
       fi
       ;;
     gemini)
       if [[ -n "$resume_prompt" ]]; then
-        gemini --resume "$_vetcoders_contract_session" "$resume_prompt"
+        printf 'gemini --resume %s %s\n' "$quoted_session" "$quoted_prompt"
       else
-        gemini --resume "$_vetcoders_contract_session"
+        printf 'gemini --resume %s\n' "$quoted_session"
       fi
       ;;
     agy)
       if [[ -n "$resume_prompt" ]]; then
-        agy --conversation "$_vetcoders_contract_session" --prompt-interactive "$resume_prompt"
+        printf 'agy --conversation %s --prompt-interactive %s\n' "$quoted_session" "$quoted_prompt"
       else
-        agy --conversation "$_vetcoders_contract_session"
+        printf 'agy --conversation %s\n' "$quoted_session"
       fi
       ;;
     junie)
       if [[ -n "$resume_prompt" ]]; then
-        junie --session-id="$_vetcoders_contract_session" --resume --task="$resume_prompt" --project=. --skip-update-check
+        printf 'junie --session-id=%s --resume --task=%s --project=. --skip-update-check\n' "$quoted_session" "$quoted_prompt"
       else
-        junie --session-id="$_vetcoders_contract_session" --resume --project=. --skip-update-check
+        printf 'junie --session-id=%s --resume --project=. --skip-update-check\n' "$quoted_session"
       fi
       ;;
     grok)
       if [[ -n "$resume_prompt" ]]; then
-        grok --resume "$_vetcoders_contract_session" --cwd . --permission-mode bypassPermissions --no-alt-screen --single "$resume_prompt"
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --single %s\n' "$quoted_session" "$quoted_prompt"
       else
-        grok --resume "$_vetcoders_contract_session" --cwd . --permission-mode bypassPermissions --no-alt-screen
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen\n' "$quoted_session"
       fi
       ;;
     *)
