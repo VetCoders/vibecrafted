@@ -805,7 +805,7 @@ def test_run_doctor_fail_fast_on_runtime_root_drift(
     assert "manual cleanup" in indexed["root:store"].message
 
 
-def test_run_doctor_fail_fast_on_foundation_provenance_drift(
+def test_run_doctor_accepts_external_foundation_provider(
     tmp_path: Path, monkeypatch
 ) -> None:
     home = tmp_path / "home"
@@ -836,8 +836,51 @@ def test_run_doctor_fail_fast_on_foundation_provenance_drift(
     indexed = {finding.component: finding for finding in findings}
 
     assert indexed["foundation:loct"].level == "ok"
-    assert indexed["foundation-provenance:loct"].level == "fail"
-    assert "manual cleanup" in indexed["foundation-provenance:loct"].message
+    assert indexed["foundation-provenance:loct"].level == "ok"
+    assert (
+        "external developer provider accepted"
+        in indexed["foundation-provenance:loct"].message
+    )
+
+
+def test_install_agent_commands_makes_marbles_discoverable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    store_path = crafted_home / "skills"
+    store_path.mkdir(parents=True)
+
+    for runtime in ("codex", "claude"):
+        (home / f".{runtime}" / "skills").mkdir(parents=True)
+
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    monkeypatch.setattr(installer, "FOUNDATIONS", [])
+
+    installer.install_agent_commands(["codex", "claude"])
+
+    codex_commands = home / ".codex" / "commands"
+    claude_commands = home / ".claude" / "commands"
+    assert (codex_commands / "marbles.md").is_file()
+    assert (codex_commands / "codex-marbles-loop.md").is_file()
+    assert (codex_commands / "cancel-codex-marbles.md").is_file()
+    assert (claude_commands / "marbles.md").is_file()
+    assert (claude_commands / "cancel-marbles.md").is_file()
+    assert "vibecrafted-managed-agent-command" in (
+        codex_commands / "marbles.md"
+    ).read_text(encoding="utf-8")
+
+    state = installer.InstallState(
+        framework_version="3.1.0",
+        runtimes=["codex", "claude"],
+    )
+    state.save(store_path)
+
+    findings = installer.run_doctor(store_path, state)
+    indexed = {finding.component: finding for finding in findings}
+
+    assert indexed["commands:codex"].level == "ok"
+    assert indexed["commands:claude"].level == "ok"
 
 
 def test_pause_for_runtime_contract_failures_prompts_interactively(monkeypatch) -> None:

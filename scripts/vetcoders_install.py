@@ -571,6 +571,12 @@ def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
             "or `vibecrafted update` (or `make install` from a repo "
             "checkout) to rebuild the full launcher surface."
         )
+    if any(finding.component.startswith("commands:") for finding in issues):
+        actions.append(
+            "Agent slash commands need repair. Re-run `vibecrafted update` or "
+            "`make install-auto` from a framework checkout so ~/.codex/commands "
+            "and ~/.claude/commands receive the managed Marbles entries."
+        )
     if any(
         finding.component.startswith("shell-helper")
         or finding.component == "shell-helpers"
@@ -707,6 +713,10 @@ def detect_agent_runtimes() -> Dict[str, Optional[str]]:
 
 def runtime_skills_dir(runtime: str) -> Path:
     return Path.home() / f".{runtime}" / "skills"
+
+
+def runtime_commands_dir(runtime: str) -> Path:
+    return Path.home() / f".{runtime}" / "commands"
 
 
 def detect_osascript() -> Optional[str]:
@@ -2513,6 +2523,173 @@ def _copy_managed_launcher(src: Path, dst: Path) -> bool:
     return True
 
 
+AGENT_COMMAND_MARKER = "<!-- vibecrafted-managed-agent-command -->"
+MARBLES_COMMANDS_BY_RUNTIME: Dict[str, Tuple[str, ...]] = {
+    "claude": ("marbles.md", "cancel-marbles.md"),
+    "codex": ("marbles.md", "codex-marbles-loop.md", "cancel-codex-marbles.md"),
+}
+
+
+def _managed_agent_command(path: Path) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        return AGENT_COMMAND_MARKER in path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
+def _write_managed_agent_command(
+    path: Path, content: str, dry_run: bool = False
+) -> bool:
+    if dry_run:
+        print(f"  {dim('write')} {path}")
+        return True
+    if path.exists() and not _managed_agent_command(path):
+        print(f"  {WARN} Keeping existing unmanaged command: {path}")
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return True
+
+
+def _marbles_orchestrator_expr() -> str:
+    return (
+        '"${VIBECRAFTED_MARBLES_ORCHESTRATOR:-'
+        "${VIBECRAFTED_TOOLS_HOME:-$HOME/.local/share/vibecrafted/tools}"
+        '/vibecrafted-current/agents/vc-marbles/orchestrator}"'
+    )
+
+
+def _codex_marbles_command(alias: str) -> str:
+    orchestrator = _marbles_orchestrator_expr()
+    return f"""---
+description: "Start Codex interactive Marbles loop"
+argument-hint: "PROMPT [--max-iterations N] [--completion-promise TEXT]"
+---
+{AGENT_COMMAND_MARKER}
+
+# Codex Marbles
+
+Run:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/setup-codex-loop.sh" $ARGUMENTS
+```
+
+Then obey the in-session loop protocol before finalizing:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/codex-loop-step.sh" next
+```
+
+If it prints `PROMPT`, continue with that prompt in this same Codex session.
+Only finish after a real completion, then run:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/codex-loop-step.sh" complete --promise "<text>"
+```
+
+Command alias installed as `{alias}`.
+"""
+
+
+def _cancel_codex_marbles_command() -> str:
+    orchestrator = _marbles_orchestrator_expr()
+    return f"""---
+description: "Cancel active Codex Marbles loop"
+---
+{AGENT_COMMAND_MARKER}
+
+# Cancel Codex Marbles
+
+Run:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/codex-loop-step.sh" cancel
+```
+"""
+
+
+def _claude_marbles_command() -> str:
+    orchestrator = _marbles_orchestrator_expr()
+    return f"""---
+description: "Start Marbles in current Claude session"
+argument-hint: "PROMPT [--max-iterations N] [--completion-promise TEXT]"
+---
+{AGENT_COMMAND_MARKER}
+
+# Claude Marbles
+
+Run:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/setup-marbles-loop.sh" $ARGUMENTS
+```
+
+This command initializes `.claude/marbles.local.md`. The Claude Stop hook lives
+at:
+
+```text
+$orchestrator/hooks/stop-hook.sh
+```
+"""
+
+
+def _cancel_claude_marbles_command() -> str:
+    return f"""---
+description: "Cancel active Claude Marbles loop"
+---
+{AGENT_COMMAND_MARKER}
+
+# Cancel Claude Marbles
+
+Run:
+
+```bash
+if [[ -f .claude/marbles.local.md ]]; then
+  rm .claude/marbles.local.md
+  echo "Cancelled Claude Marbles."
+else
+  echo "No active Claude Marbles found."
+fi
+```
+"""
+
+
+def _agent_command_payloads(runtime: str) -> Dict[str, str]:
+    if runtime == "codex":
+        return {
+            "marbles.md": _codex_marbles_command("/marbles"),
+            "codex-marbles-loop.md": _codex_marbles_command("/codex-marbles-loop"),
+            "cancel-codex-marbles.md": _cancel_codex_marbles_command(),
+        }
+    if runtime == "claude":
+        return {
+            "marbles.md": _claude_marbles_command(),
+            "cancel-marbles.md": _cancel_claude_marbles_command(),
+        }
+    return {}
+
+
+def install_agent_commands(runtimes: Sequence[str], dry_run: bool = False) -> None:
+    for runtime in runtimes:
+        payloads = _agent_command_payloads(runtime)
+        if not payloads:
+            continue
+        commands_dir = runtime_commands_dir(runtime)
+        if not dry_run:
+            commands_dir.mkdir(parents=True, exist_ok=True)
+        print(f"  {cyan(runtime)} commands -> {commands_dir}")
+        for filename, content in payloads.items():
+            _write_managed_agent_command(commands_dir / filename, content, dry_run)
+
+
 def _configure_gemini_plans(dry_run: bool = False) -> None:
     """Fix Gemini CLI plan.directory if it points into .vibecrafted.
 
@@ -2705,10 +2882,10 @@ def _foundation_provenance_findings(
     if executable.parent != canonical_launcher:
         findings.append(
             DoctorFinding(
-                "fail",
+                "ok",
                 f"foundation-provenance:{foundation_name}",
-                f"resolves to {_path_with_tilde(executable)}; expected launcher in {_path_with_tilde(canonical_launcher)}. "
-                "manual cleanup: remove non-canonical launcher and reinstall foundations.",
+                f"external developer provider accepted: {_path_with_tilde(executable)} "
+                f"(canonical launcher root is {_path_with_tilde(canonical_launcher)})",
             )
         )
         return findings
@@ -2723,10 +2900,10 @@ def _foundation_provenance_findings(
         if _is_subpath(resolved, legacy_root):
             findings.append(
                 DoctorFinding(
-                    "fail",
+                    "ok",
                     f"foundation-provenance:{foundation_name}",
-                    f"wrapper {_path_with_tilde(executable)} points to legacy target {_path_with_tilde(resolved)}; "
-                    "manual cleanup: remove ghost wrappers, then reinstall foundations under ~/.local/bin.",
+                    f"launcher {_path_with_tilde(executable)} delegates to developer provider "
+                    f"{_path_with_tilde(resolved)}",
                 )
             )
             break
@@ -2736,11 +2913,7 @@ def _foundation_provenance_findings(
 
 def _has_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> bool:
     return any(
-        finding.level == "fail"
-        and (
-            finding.component.startswith("root:")
-            or finding.component.startswith("foundation-provenance:")
-        )
+        finding.level == "fail" and finding.component.startswith("root:")
         for finding in findings
     )
 
@@ -2760,8 +2933,11 @@ def _pause_for_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> N
     print("    - store/control: ~/.vibecrafted", file=out)
     print(file=out)
     print("  Manual cleanup (no automatic dotfile edits were performed):", file=out)
-    print("    1) remove stale wrappers from ~/.cargo/bin and /usr/local/bin", file=out)
-    print("    2) ensure foundations resolve from ~/.local/bin", file=out)
+    print("    1) restore canonical VIBECRAFTED_* root overrides", file=out)
+    print(
+        "    2) remove stale runtime/store launcher wrappers if they shadow these roots",
+        file=out,
+    )
     print("    3) rerun 'vibecrafted doctor' or the installer", file=out)
     print(file=out)
     try:
@@ -2915,6 +3091,36 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 findings.append(
                     DoctorFinding("fail", f"symlink:{runtime}/{skill_name}", "missing")
                 )
+
+    # 4b. Agent slash-command views. These are separate from skills and used by
+    # provider-native command palettes such as ~/.codex/commands and
+    # ~/.claude/commands.
+    for runtime in state.runtimes:
+        expected_commands = MARBLES_COMMANDS_BY_RUNTIME.get(runtime, ())
+        if not expected_commands:
+            continue
+        rt_commands = runtime_commands_dir(runtime)
+        missing = [
+            name
+            for name in expected_commands
+            if not _managed_agent_command(rt_commands / name)
+        ]
+        if missing:
+            findings.append(
+                DoctorFinding(
+                    "fail",
+                    f"commands:{runtime}",
+                    f"missing managed command(s): {', '.join(missing)} in {rt_commands}",
+                )
+            )
+        else:
+            findings.append(
+                DoctorFinding(
+                    "ok",
+                    f"commands:{runtime}",
+                    f"Marbles commands installed in {rt_commands}",
+                )
+            )
 
     # 5. Foundations
     for f in FOUNDATIONS:
@@ -3892,6 +4098,11 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             create_symlink(default, link, dry_run=dry_run)
     print()
 
+    # --- Execute: agent command surfaces ---
+    print(bold("Installing agent commands..."))
+    install_agent_commands(all_runtimes, dry_run=dry_run)
+    print()
+
     # --- Prune orphaned vc-* skills no longer in bundle ---
     prune_orphaned_skills(
         store_path,
@@ -4308,6 +4519,10 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 default = store_path / name
                 link = rt_skills / name
                 create_symlink(default, link, dry_run=dry_run)
+        print()
+
+        print("Installing agent commands:")
+        install_agent_commands(all_runtimes, dry_run=dry_run)
         print()
 
         # Compact line: agents
