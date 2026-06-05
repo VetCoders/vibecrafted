@@ -137,7 +137,7 @@ vendor/
 | `pre-commit`         | Stage-scoped checks (only staged files): secret scan, env guard, lint-staged, tsc on staged, semgrep on staged, loctree health. WARN-mode aware. |
 | `pre-push`           | Full-repo gates: prettier --check, semgrep --config auto, tsc --noEmit, loctree cycles, cargo clippy, vitest.                                    |
 | `pre-merge-commit`   | Codex-agent / vendored-path cleanup before merge commit.                                                                                         |
-| `prepare-commit-msg` | Appends `Vibecrafted-Warn-Signature` trailer if pre-commit ran in WARN mode.                                                                     |
+| `prepare-commit-msg` | Adds missing mechanical agent/runtime trailers before `commit-msg`, then appends `Vibecrafted-Warn-Signature` if WARN mode demoted pre-commit.   |
 | `post-commit`        | Warns if agent-artifact filenames (`RAPORT_*`, `_SESSION_*`, etc.) landed in commit.                                                             |
 | `commit-msg`         | Conventional commit regex with optional `[agent/workflow]` prefix.                                                                               |
 

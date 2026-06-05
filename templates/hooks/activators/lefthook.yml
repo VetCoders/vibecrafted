@@ -54,7 +54,7 @@ pre-merge-commit:
       run: bash .husky/pre-merge-commit
 
 # ---------------------------------------------------------------------------
-# prepare-commit-msg — Vibecrafted-Warn-Signature trailer
+# prepare-commit-msg — agent/runtime trailer normalization + warn signature
 # ---------------------------------------------------------------------------
 #   $1 = path to commit message file
 #   $2 = source (merge | squash | commit | message | template | "")
