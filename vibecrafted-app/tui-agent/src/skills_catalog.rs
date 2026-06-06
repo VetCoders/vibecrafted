@@ -220,6 +220,48 @@ pub const CATALOG: &[SkillEntry] = &[
         default_agent: SkillAgent::Any,
         accepts: SkillPayloadKind::PromptOrFile,
     },
+    SkillEntry {
+        slug: "vc-aicx",
+        display: "AICX",
+        one_line: "Intention retrieval engine",
+        default_agent: SkillAgent::Any,
+        accepts: SkillPayloadKind::PromptOrFile,
+    },
+    SkillEntry {
+        slug: "vc-audit",
+        display: "Audit",
+        one_line: "Plan spec falsification",
+        default_agent: SkillAgent::Any,
+        accepts: SkillPayloadKind::PromptOrFile,
+    },
+    SkillEntry {
+        slug: "vc-loctree",
+        display: "Loctree",
+        one_line: "Holographic structural perception",
+        default_agent: SkillAgent::Any,
+        accepts: SkillPayloadKind::PromptOrFile,
+    },
+    SkillEntry {
+        slug: "vc-prview",
+        display: "PrView",
+        one_line: "PR artifact review pipeline",
+        default_agent: SkillAgent::Any,
+        accepts: SkillPayloadKind::PromptOrFile,
+    },
+    SkillEntry {
+        slug: "vc-screenscribe",
+        display: "ScreenScribe",
+        one_line: "Screencast findings extraction",
+        default_agent: SkillAgent::Any,
+        accepts: SkillPayloadKind::PromptOrFile,
+    },
+    SkillEntry {
+        slug: "vc-skillaunch",
+        display: "Skillaunch",
+        one_line: "Distill workflow into a skill",
+        default_agent: SkillAgent::Any,
+        accepts: SkillPayloadKind::PromptOrFile,
+    },
 ];
 
 pub fn catalog_entry(slug: &str) -> Option<&'static SkillEntry> {
