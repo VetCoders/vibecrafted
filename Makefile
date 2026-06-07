@@ -111,7 +111,7 @@ endif
 install-all: init-hooks
 	@bash scripts/install-foundations.sh $(INSTALL_QUIET)
 	@bash runtime/scripts/install-frontier-config.sh --source "$(SOURCE)" $(INSTALL_QUIET) || printf '[warn] Frontier config skipped (non-fatal)\n'
-	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --compact --non-interactive --mirror
+	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --write-shell-rc --compact --non-interactive --mirror
 	@bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes $(INSTALL_QUIET)
 
 skills:

@@ -84,10 +84,27 @@ def test_bundle_check_uses_portable_mktemp_template() -> None:
 def test_install_manifest_post_install_uses_mirror_sync() -> None:
     text = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
 
+    # --write-shell-rc is required so the non-interactive install re-activates
+    # the rc hook (not merely stages the shim). Without it `make install-all`
+    # leaves a freshly-cleaned machine unwired (shim present, source line absent
+    # or commented) — the single staged runtime exists but the shell never loads
+    # it. The flag guarantees one wired truth on every machine.
     assert (
         'python3 scripts/vetcoders_install.py install --source "." '
-        "--with-shell --compact --non-interactive --mirror"
+        "--with-shell --write-shell-rc --compact --non-interactive --mirror"
     ) in text
+
+
+def test_install_all_paths_write_shell_rc_for_wired_shell() -> None:
+    """make install-all and the install.toml installation phase must both pass
+    --write-shell-rc, or a cleaned/fresh machine's shell is never wired to the
+    staged runtime (vc-* missing in a new terminal)."""
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    manifest = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
+
+    install_all_block = makefile.split("install-all:", 1)[1].split("\nskills:", 1)[0]
+    assert "--with-shell --write-shell-rc" in install_all_block
+    assert "--with-shell --write-shell-rc" in manifest
 
 
 def test_install_manifest_uses_four_human_checkpoints_with_artifact_reason() -> None:
@@ -245,6 +262,11 @@ def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:
     assert '"--write-shell-rc"' in installer
     assert "update_rc=write_shell_rc" in installer
     assert "if write_shell_rc:\n        for rcname in" in installer
+
+    # The "already sourced" skip must be ACTIVE-only: a commented/disabled hook
+    # cannot count as present, or a cleaned machine never re-wires on reinstall.
+    assert 'grep -Fq "vetcoders/vc-skills.sh"' not in install_shell
+    assert "[^#[:space:]].*vetcoders/vc-skills" in install_shell
 
 
 def test_product_mcp_paths_do_not_hardcode_cargo_bin() -> None:

@@ -140,8 +140,11 @@ _update_rcfile() {
   local rcfile="$1"
   # $2 = shell_name (for logging, currently unused)
 
-  # Already present — nothing to do
-  if [[ -f "$rcfile" ]] && grep -Fq "vetcoders/vc-skills.sh" "$rcfile"; then
+  # Already present (ACTIVE line only) — nothing to do. A commented-out or
+  # disabled hook must NOT count as present, else a cleaned/reinstalled machine
+  # never gets re-wired (the source line stays inert). Match only an uncommented
+  # occurrence so install-all re-activates a disabled hook on every machine.
+  if [[ -f "$rcfile" ]] && grep -Eq '^[[:space:]]*[^#[:space:]].*vetcoders/vc-skills\.sh' "$rcfile"; then
     printf '  %s: already sourced\n' "$rcfile"
     return 0
   fi
