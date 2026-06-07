@@ -10,7 +10,7 @@ from vibecrafted_core import control_plane
 
 def _write_meta(home: Path, payload: dict[str, object]) -> Path:
     reports = home / "artifacts" / "VetCoders" / "vibecrafted" / "2026_0519" / "reports"
-    reports.mkdir(parents=True)
+    reports.mkdir(parents=True, exist_ok=True)
     path = reports / f"{payload['run_id']}.meta.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
@@ -52,6 +52,79 @@ def test_sync_state_preserves_runtime_observe_fields(
     assert run["launcher_pid"] == 12345
     assert run["completed_at"] == completed_at
     assert run["session_id"] == "session-abc"
+
+
+def test_sync_state_publishes_lifecycle_control_availability(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    _write_meta(
+        home,
+        {
+            "run_id": "wflw-010102-42",
+            "status": "running",
+            "agent": "codex",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "wflw",
+            "worker_pgid": 23456,
+            "prompt": "continue",
+        },
+    )
+    _write_meta(
+        home,
+        {
+            "run_id": "impl-010103-42",
+            "status": "completed",
+            "agent": "claude",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:01:00+00:00",
+            "skill_code": "impl",
+            "exit_code": 0,
+            "liveness": "terminal",
+            "prompt": "continue",
+        },
+    )
+    _write_meta(
+        home,
+        {
+            "run_id": "rvew-010104-42",
+            "status": "running",
+            "agent": "gemini",
+            "mode": "review",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "skill_code": "rvew",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    runs = {run["run_id"]: run for run in snapshot["recent_runs"]}
+
+    assert runs["wflw-010102-42"]["lifecycle"] == {
+        "await": True,
+        "inspect": True,
+        "stop": True,
+        "cancel": True,
+        "resume": False,
+    }
+    assert runs["impl-010103-42"]["lifecycle"] == {
+        "await": False,
+        "inspect": True,
+        "stop": False,
+        "cancel": False,
+        "resume": True,
+    }
+    assert runs["rvew-010104-42"]["lifecycle"] == {
+        "await": True,
+        "inspect": True,
+        "stop": False,
+        "cancel": False,
+        "resume": False,
+    }
 
 
 def test_lookup_run_uses_synced_snapshot(

@@ -320,6 +320,35 @@ def _failure_card(run: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _has_signal_target(run: dict[str, Any]) -> bool:
+    for key in ("worker_pgid", "worker_pid", "launcher_pid"):
+        raw = run.get(key)
+        if _coerce_int(raw):
+            return True
+    return False
+
+
+def _has_retry_spec(run: dict[str, Any]) -> bool:
+    skill = str(run.get("skill") or "")
+    if skill == "marbles":
+        return True
+    return bool(
+        str(run.get("prompt") or "").strip() or str(run.get("file") or "").strip()
+    )
+
+
+def _lifecycle_controls(run: dict[str, Any]) -> dict[str, bool]:
+    terminal = _run_is_terminal(run)
+    signalable = not terminal and _has_signal_target(run)
+    return {
+        "await": not terminal,
+        "inspect": True,
+        "stop": signalable,
+        "cancel": signalable,
+        "resume": terminal and _has_retry_spec(run),
+    }
+
+
 def _session_base_name(root: str) -> str:
     base = Path(root or "vibecrafted").name.lower()
     cleaned = "".join(ch if ch.isalnum() else "-" for ch in base).strip("-")
@@ -879,6 +908,7 @@ def sync_state() -> dict[str, Any]:
                 payload["liveness"] = (
                     "terminal" if _run_is_terminal(payload) else "heartbeat"
                 )
+            payload["lifecycle"] = _lifecycle_controls(payload)
             _record_transition(previous, payload)
             _write_json(_snapshot_path(run_id), payload)
             payload_runs.append(payload)
