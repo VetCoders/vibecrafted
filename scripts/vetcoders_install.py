@@ -3544,6 +3544,9 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     # 7. Spawn pipeline smoke: validate common.sh sources cleanly and key functions exist
     common_sh = None
     for cand in [
+        current_link.resolve() / "runtime" / "scripts" / "common.sh"
+        if current_link.exists()
+        else None,
         current_link.resolve() / "agents" / "scripts" / "common.sh"
         if current_link.exists()
         else None,
@@ -4397,9 +4400,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     # --- Execute: shell helpers ---
     if install_shell:
         print(bold("Installing shell helper..."))
-        shell_script = (
-            repo_root / "skills" / "vc-agents" / "scripts" / "install-shell.sh"
-        )
+        shell_script = repo_root / "runtime" / "scripts" / "install-shell.sh"
         if shell_script.exists():
             shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
             if write_shell_rc:
@@ -4555,10 +4556,17 @@ def _print_unicode_summary(
     _out = out or sys.stdout
     fw_ver_display = get_framework_version(repo_root)
     skill_count = len(skills)
+    current_runtime = _current_tools_link(store_path) / "runtime"
+
+    def _agent_spawn_present(agent: str) -> bool:
+        # Spawn scripts live in the staged control-plane runtime; the legacy
+        # vc-agents store layout is kept only as a back-compat fallback.
+        return (current_runtime / "scripts" / f"{agent}_spawn.sh").exists() or (
+            store_path / "vc-agents" / "scripts" / f"{agent}_spawn.sh"
+        ).exists()
+
     agent_list = " \u00b7 ".join(
-        a
-        for a in ("claude", "codex", "gemini")
-        if (store_path / "vc-agents" / "scripts" / f"{a}_spawn.sh").exists()
+        a for a in ("claude", "codex", "gemini") if _agent_spawn_present(a)
     )
     shell_str = _helper_surface_label()
     fnd_ok = [f.name for f in FOUNDATIONS if f.is_installed()]
@@ -4845,9 +4853,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         # Shell helpers
         if install_shell:
             print("Installing shell helper:")
-            shell_script = (
-                repo_root / "skills" / "vc-agents" / "scripts" / "install-shell.sh"
-            )
+            shell_script = repo_root / "runtime" / "scripts" / "install-shell.sh"
             if shell_script.exists():
                 shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
                 if write_shell_rc:

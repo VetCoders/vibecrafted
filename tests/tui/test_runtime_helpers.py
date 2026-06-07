@@ -8,7 +8,7 @@ import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 RUNTIME_HELPER = REPO_ROOT / "runtime" / "helpers" / "vetcoders-runtime-core.sh"
 
 
@@ -142,7 +142,7 @@ def test_vetcoders_spawn_script_path_stays_command_compatible() -> None:
     assert result.returncode == 0
     spawn_script = Path(result.stdout.strip())
     assert spawn_script.name == "codex_spawn.sh"
-    assert spawn_script.parent == REPO_ROOT / "agents" / "scripts"
+    assert spawn_script.parent == REPO_ROOT / "runtime" / "scripts"
     assert spawn_script.is_file()
 
 

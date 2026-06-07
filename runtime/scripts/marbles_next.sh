@@ -236,12 +236,6 @@ _wait_for_loop_report() {
   done
 }
 
-_report_frontmatter_status() {
-  local report_path="$1"
-  [[ -f "$report_path" ]] || return 0
-  spawn_frontmatter_field "$report_path" "status"
-}
-
 _update_lock() {
   local key="$1"
   local val="$2"

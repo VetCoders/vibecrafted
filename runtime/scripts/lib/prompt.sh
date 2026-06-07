@@ -52,6 +52,14 @@ for line in lines[1:]:
 PY
 }
 
+# Shared status reader for marbles loop/watcher: returns the report's
+# frontmatter `status` field, or nothing when the report is absent.
+_report_frontmatter_status() {
+  local report_path="$1"
+  [[ -f "$report_path" ]] || return 0
+  spawn_frontmatter_field "$report_path" "status"
+}
+
 spawn_strip_frontmatter_to_file() {
   local source_file="$1"
   local target_file="$2"

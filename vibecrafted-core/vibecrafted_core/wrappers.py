@@ -261,7 +261,7 @@ def research_main(argv: Sequence[str] | None = None) -> int:
 
 def research_await_main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    script = repo_root() / "skills" / "vc-agents" / "scripts" / "await.sh"
+    script = repo_root() / "runtime" / "scripts" / "await.sh"
     return subprocess.call(
         ["bash", str(script), "--research", *args], cwd=str(repo_root())
     )

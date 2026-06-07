@@ -499,7 +499,7 @@ def test_dispatch_launcher_runs_async_lifecycle(tmp_path: Path) -> None:
 
 
 def test_vetcoders_shell_entrypoint_stays_thin_facade() -> None:
-    facade = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+    facade = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
     lib_dir = facade.parent / "lib"
     body = facade.read_text(encoding="utf-8")
 
@@ -524,14 +524,11 @@ def test_telemetry_wrapper_smokes_headless_marbles_runtime(tmp_path: Path) -> No
     wrapper = tmp_path / "telemetry"
     capture_file = tmp_path / "marbles-args.txt"
     isolated_root = tmp_path / "isolated-root"
-    spawn_script = (
-        isolated_root / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
-    )
+    spawn_script = isolated_root / "runtime" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
     wrapper.symlink_to(LAUNCHER)
-    (isolated_root / "skills" / "vc-agents").mkdir(parents=True)
-    (isolated_root / "skills" / "vc-agents" / "scripts").mkdir(parents=True)
+    (isolated_root / "runtime" / "scripts").mkdir(parents=True)
     (isolated_root / "scripts").mkdir(parents=True)
     (isolated_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
     (isolated_root / "scripts" / "vibecrafted").write_text(
@@ -581,14 +578,11 @@ def test_telemetry_wrapper_clears_ambient_marbles_context(tmp_path: Path) -> Non
     wrapper = tmp_path / "telemetry"
     capture_file = tmp_path / "marbles-env.txt"
     isolated_root = tmp_path / "isolated-root"
-    spawn_script = (
-        isolated_root / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
-    )
+    spawn_script = isolated_root / "runtime" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
     wrapper.symlink_to(LAUNCHER)
-    (isolated_root / "skills" / "vc-agents").mkdir(parents=True)
-    (isolated_root / "skills" / "vc-agents" / "scripts").mkdir(parents=True)
+    (isolated_root / "runtime" / "scripts").mkdir(parents=True)
     (isolated_root / "scripts").mkdir(parents=True)
     (isolated_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
     (isolated_root / "scripts" / "vibecrafted").write_text(
@@ -662,25 +656,21 @@ def test_installed_launcher_prefers_current_control_plane_helper_over_home_store
     launcher = home / ".local" / "bin" / "vibecrafted"
     stale_capture = tmp_path / "stale-args.txt"
     fresh_capture = tmp_path / "fresh-args.txt"
-    stale_spawn = (
-        installed_root / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
-    )
+    stale_spawn = installed_root / "runtime" / "scripts" / "marbles_spawn.sh"
     fresh_spawn = (
         runtime_root
         / "tools"
         / "vibecrafted-current"
-        / "skills"
-        / "vc-agents"
+        / "runtime"
         / "scripts"
         / "marbles_spawn.sh"
     )
-    stale_helper = installed_root / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+    stale_helper = installed_root / "skills" / "runtime" / "shell" / "vetcoders.sh"
     fresh_helper = (
         runtime_root
         / "tools"
         / "vibecrafted-current"
-        / "skills"
-        / "vc-agents"
+        / "runtime"
         / "shell"
         / "vetcoders.sh"
     )
@@ -1261,8 +1251,7 @@ def test_generic_skill_fallback_routes_unwrapped_skills(
         / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
-        / "skills"
-        / "vc-agents"
+        / "runtime"
         / "shell"
         / "vetcoders.sh"
     )
@@ -1310,8 +1299,7 @@ def test_generic_skill_fallback_routes_skill_wrappers(
         / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
-        / "skills"
-        / "vc-agents"
+        / "runtime"
         / "shell"
         / "vetcoders.sh"
     )
@@ -1375,7 +1363,7 @@ def test_generic_skill_entry_preserves_marbles_options_for_junie(
     script = "\n".join(
         [
             "set -euo pipefail",
-            f"source {REPO_ROOT / 'skills' / 'vc-agents' / 'shell' / 'vetcoders.sh'}",
+            f"source {REPO_ROOT / 'runtime' / 'shell' / 'vetcoders.sh'}",
             "_vetcoders_marbles() {",
             '  printf "%s\\n" "$@" > "$CAPTURE_FILE"',
             "}",
@@ -1413,8 +1401,7 @@ def test_marbles_delete_control_subcommand_routes_to_helper(tmp_path: Path) -> N
         / "vibecrafted"
         / "tools"
         / "vibecrafted-current"
-        / "skills"
-        / "vc-agents"
+        / "runtime"
         / "shell"
         / "vetcoders.sh"
     )

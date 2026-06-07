@@ -5,9 +5,9 @@ _vetcoders_spawn_home() {
   local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
   local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
   local crafted_tools_home="${VIBECRAFTED_TOOLS_HOME:-$xdg_data_home/vibecrafted/tools}"
-  local crafted_agents="$crafted_home/agents"
+  local crafted_runtime="$crafted_home/runtime"
   local crafted_store="$crafted_home/skills/vc-agents"
-  local current_agents="$crafted_tools_home/vibecrafted-current/agents"
+  local current_runtime="$crafted_tools_home/vibecrafted-current/runtime"
   local current_store="$crafted_tools_home/vibecrafted-current/skills/vc-agents"
   local repo_root
   repo_root="${VIBECRAFTED_ROOT:-$(_vetcoders_repo_root)}"
@@ -15,19 +15,17 @@ _vetcoders_spawn_home() {
   local candidate
 
   if [[ -f "$repo_root/VERSION" && -f "$repo_root/scripts/vibecrafted" ]]; then
-    for candidate in \
-      "$repo_root/agents" \
-      "$repo_root/skills/vc-agents"; do
-      [[ -d "$candidate/scripts" ]] || continue
+    candidate="$repo_root/runtime"
+    if [[ -d "$candidate/scripts" ]]; then
       printf '%s' "$candidate"
       return 0
-    done
+    fi
   fi
 
   for candidate in \
-    "$current_agents" \
+    "$current_runtime" \
+    "$crafted_runtime" \
     "$current_store" \
-    "$crafted_agents" \
     "$crafted_store" \
     "$legacy_store"; do
     [[ -d "$candidate/scripts" ]] || continue
@@ -35,7 +33,7 @@ _vetcoders_spawn_home() {
     return 0
   done
 
-  printf '%s' "$current_agents"
+  printf '%s' "$current_runtime"
 }
 
 _vetcoders_spawn_script() {

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MARBLES_CTL = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "marbles_ctl.sh"
+MARBLES_CTL = REPO_ROOT / "runtime" / "scripts" / "marbles_ctl.sh"
 
 
 def _write_state(path: Path, payload: dict[str, object]) -> None:

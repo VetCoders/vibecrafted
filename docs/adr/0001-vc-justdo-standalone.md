@@ -10,7 +10,7 @@
 
 `vc-justdo` jest dziś **aliasem** `vc-implement`. Wpięcie aliasu (zweryfikowane loctree-first, literal):
 
-- **Run-id / shell mapping:** `agents/scripts/lib/session.sh:38` i `runtime/helpers/vetcoders-runtime-core.sh:402`
+- **Run-id / shell mapping:** `runtime/scripts/lib/session.sh:38` i `runtime/helpers/vetcoders-runtime-core.sh:402`
   (`justdo) printf 'just\n' ;;` — justdo zwija się do `just`/implement).
 - **Installer registry:** `scripts/vetcoders_install.py:1677` (`"justdo"`).
 - **Tabela aliasów / public face:** `docs/SKILLS.md:60-61`, `docs/runtime/CONTRACT_v1.5.0.md:525,527,534`.

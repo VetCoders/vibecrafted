@@ -28,18 +28,18 @@ layout {
         pane split_direction="horizontal" {
             pane split_direction="vertical" size="50%" {
                 pane name="agents" focus=true command="bash" start_suspended=false {
-                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/active-agents.sh\" ]]; then exec \"$root/scripts/mission-control/active-agents.sh\"; fi; done; printf 'Mission control helper not found: active-agents.sh\\n'; exec /bin/zsh -l"
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/runtime}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}\" \"./runtime\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/active-agents.sh\" ]]; then exec \"$root/scripts/mission-control/active-agents.sh\"; fi; done; printf 'Mission control helper not found: active-agents.sh\\n'; exec /bin/zsh -l"
                 }
                 pane name="transcript" command="bash" start_suspended=false {
-                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/live-transcript.sh\" ]]; then exec \"$root/scripts/mission-control/live-transcript.sh\"; fi; done; printf 'Mission control helper not found: live-transcript.sh\\n'; exec /bin/zsh -l"
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/runtime}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}\" \"./runtime\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/live-transcript.sh\" ]]; then exec \"$root/scripts/mission-control/live-transcript.sh\"; fi; done; printf 'Mission control helper not found: live-transcript.sh\\n'; exec /bin/zsh -l"
                 }
             }
             pane split_direction="vertical" size="50%" {
                 pane name="convergence" command="bash" start_suspended=false {
-                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Mission control helper not found: convergence-trend.sh\\n'; exec /bin/zsh -l"
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/runtime}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}\" \"./runtime\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/convergence-trend.sh\" ]]; then exec \"$root/scripts/mission-control/convergence-trend.sh\"; fi; done; printf 'Mission control helper not found: convergence-trend.sh\\n'; exec /bin/zsh -l"
                 }
                 pane name="sessions" command="bash" start_suspended=false {
-                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}\" \"./skills/vc-agents\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Mission control helper not found: recent-sessions.sh\\n'; exec /bin/zsh -l"
+                    args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/runtime}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}\" \"./runtime\"; do if [[ -n \"$root\" && -x \"$root/scripts/mission-control/recent-sessions.sh\" ]]; then exec \"$root/scripts/mission-control/recent-sessions.sh\"; fi; done; printf 'Mission control helper not found: recent-sessions.sh\\n'; exec /bin/zsh -l"
                 }
             }
         }

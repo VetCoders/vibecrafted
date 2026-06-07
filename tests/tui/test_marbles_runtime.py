@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 
 
 def _write_fake_marbles_spawn(script_path: Path) -> None:
@@ -73,7 +73,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
         "marbles_verify_watch.sh",
         "marbles_next.sh",
     ):
-        source = REPO_ROOT / "agents" / "scripts" / name
+        source = REPO_ROOT / "runtime" / "scripts" / name
         target = scripts_dir / name
         shutil.copy2(source, target)
         target.chmod(0o755)
@@ -308,7 +308,7 @@ def _org_repo() -> str:
 
 
 def test_marbles_spawn_chains_with_agent_and_ancestor_plan_contract() -> None:
-    script = (REPO_ROOT / "agents" / "scripts" / "marbles_spawn.sh").read_text(
+    script = (REPO_ROOT / "runtime" / "scripts" / "marbles_spawn.sh").read_text(
         encoding="utf-8"
     )
 

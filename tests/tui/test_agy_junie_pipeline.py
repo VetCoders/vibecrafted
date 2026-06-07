@@ -7,7 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO_ROOT / "scripts" / "vibecrafted"
-SPAWN_DIR = REPO_ROOT / "skills" / "vc-agents" / "scripts"
+SPAWN_DIR = REPO_ROOT / "runtime" / "scripts"
 
 
 def _write_plan(tmp_path: Path) -> Path:

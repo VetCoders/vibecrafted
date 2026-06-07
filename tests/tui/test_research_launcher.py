@@ -9,7 +9,7 @@ import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 RESEARCH_SKILL = REPO_ROOT / "skills" / "vc-research" / "SKILL.md"
 
 
@@ -280,7 +280,7 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
     await_result = subprocess.run(
         [
             "bash",
-            str(REPO_ROOT / "skills" / "vc-agents" / "scripts" / "await.sh"),
+            str(REPO_ROOT / "runtime" / "scripts" / "await.sh"),
             "--research",
             "--run-id",
             run_id,

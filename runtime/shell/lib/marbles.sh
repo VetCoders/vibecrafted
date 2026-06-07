@@ -151,16 +151,20 @@ _vetcoders_resume_agent() {
   runtime="$(_vetcoders_effective_runtime)"
   resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt")" || return 1
 
-  # Operator (zellij) session needs a real TTY. Without one (scripts, CI,
-  # headless dispatch), degrade to a direct resume instead of failing —
-  # "brak TTY → headless" (runtime invariant: degrade, don't die).
-  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && [[ -t 0 && -t 1 ]]; then
+  # prepare_operator_runtime can create or attach an operator surface only when
+  # we are already in zellij, know an operator session, or have an interactive
+  # terminal. Plain headless resume falls back to the agent CLI directly.
+  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && {
+    _vetcoders_in_zellij || [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || [[ -t 0 && -t 1 ]]
+  }; then
     _vetcoders_prepare_operator_runtime "$runtime" || return 1
-    _vetcoders_spawn_into_operator_session "resume-${tool}" "$resume_cmd" || return 1
-    printf 'Resume launched in operator session: %s\n' "$VIBECRAFTED_OPERATOR_SESSION"
-    printf '  agent:   %s\n' "$tool"
-    printf '  session: %s\n' "$_vetcoders_contract_session"
-    return 0
+    if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
+      _vetcoders_spawn_into_operator_session "resume-${tool}" "$resume_cmd" || return 1
+      printf 'Resume launched in operator session: %s\n' "$VIBECRAFTED_OPERATOR_SESSION"
+      printf '  agent:   %s\n' "$tool"
+      printf '  session: %s\n' "$_vetcoders_contract_session"
+      return 0
+    fi
   fi
 
   eval "$resume_cmd"

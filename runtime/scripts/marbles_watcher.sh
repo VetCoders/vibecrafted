@@ -211,6 +211,12 @@ else:
 if agent_source and "agent_source" not in target:
     target["agent_source"] = agent_source
 
+# Keep loops materialized in ascending loop-number order. The watcher and
+# marbles_next.sh mutate state.json concurrently; marbles_next can record the
+# next loop (planned or spawn-failed) before the watcher appends the current
+# loop. Sort by loop number so the materialization order is deterministic
+# (done-then-failed, L1 before L2) regardless of which writer wins the race.
+loops.sort(key=lambda lp: lp.get("loop") if isinstance(lp.get("loop"), int) else 0)
 payload["loops"] = loops
 PY
 )" "$loop_nr" "$transcript" "$agent_name" "$focus" "$ancestor_slug" "$model" "$agent_source" >/dev/null || true
@@ -508,12 +514,6 @@ PY
   fi
 
   printf '||||'
-}
-
-_report_frontmatter_status() {
-  local report="$1"
-  [[ -f "$report" ]] || return 0
-  spawn_frontmatter_field "$report" "status"
 }
 
 _marbles_failure_hint() {

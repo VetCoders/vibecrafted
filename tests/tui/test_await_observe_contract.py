@@ -7,8 +7,8 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-AWAIT_SH = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "await.sh"
-OBSERVE_SH = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "observe.sh"
+AWAIT_SH = REPO_ROOT / "runtime" / "scripts" / "await.sh"
+OBSERVE_SH = REPO_ROOT / "runtime" / "scripts" / "observe.sh"
 
 
 def _write_meta(

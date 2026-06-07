@@ -15,13 +15,12 @@ def _write_executable(path: Path, body: str) -> None:
 
 
 def _write_minimal_source(root: Path, *, helper: str, launcher: str) -> None:
-    (root / "skills" / "vc-agents" / "shell").mkdir(parents=True)
+    (root / "runtime" / "shell").mkdir(parents=True)
+    (root / "skills" / "vc-agents").mkdir(parents=True)
     (root / "skills" / "vc-agents" / "SKILL.md").write_text(
         "# vc-agents\n", encoding="utf-8"
     )
-    (root / "skills" / "vc-agents" / "shell" / "vetcoders.sh").write_text(
-        helper, encoding="utf-8"
-    )
+    (root / "runtime" / "shell" / "vetcoders.sh").write_text(helper, encoding="utf-8")
     (root / "scripts").mkdir(parents=True)
     _write_executable(root / "scripts" / "vibecrafted", launcher)
     (root / "VERSION").write_text("1.5.0-test\n", encoding="utf-8")
@@ -118,9 +117,9 @@ def test_refresh_current_tools_mirrors_shadowing_files(
         helper='printf "fresh helper\\n"\n',
         launcher='#!/usr/bin/env bash\nprintf "fresh launcher\\n"\n',
     )
-    (old_target / "skills" / "vc-agents" / "shell").mkdir(parents=True)
+    (old_target / "runtime" / "shell").mkdir(parents=True)
     (old_target / "scripts").mkdir(parents=True)
-    (old_target / "skills" / "vc-agents" / "shell" / "vetcoders.sh").write_text(
+    (old_target / "runtime" / "shell" / "vetcoders.sh").write_text(
         'printf "stale helper\\n"\n', encoding="utf-8"
     )
     (old_target / "scripts" / "vibecrafted").write_text(
@@ -139,7 +138,7 @@ def test_refresh_current_tools_mirrors_shadowing_files(
 
     assert refreshed == current_link
     assert current_link.is_symlink()
-    assert (old_target / "skills" / "vc-agents" / "shell" / "vetcoders.sh").read_text(
+    assert (old_target / "runtime" / "shell" / "vetcoders.sh").read_text(
         encoding="utf-8"
     ) == 'printf "fresh helper\\n"\n'
     assert (old_target / "scripts" / "vibecrafted").read_text(
@@ -163,9 +162,9 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
         helper='printf "fresh installed helper\\n"\n',
         launcher='#!/usr/bin/env bash\nprintf "fresh installed launcher\\n"\n',
     )
-    (old_target / "skills" / "vc-agents" / "shell").mkdir(parents=True)
+    (old_target / "runtime" / "shell").mkdir(parents=True)
     (old_target / "scripts").mkdir(parents=True)
-    (old_target / "skills" / "vc-agents" / "shell" / "vetcoders.sh").write_text(
+    (old_target / "runtime" / "shell" / "vetcoders.sh").write_text(
         'printf "stale staged helper\\n"\n', encoding="utf-8"
     )
     (old_target / "scripts" / "vibecrafted").write_text(
@@ -194,6 +193,11 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
         "write_start_here_guide",
         lambda _store, _state, _findings: crafted_home / "START_HERE.md",
     )
+    monkeypatch.setattr(
+        installer,
+        "_ensure_runtime_venv",
+        lambda current_tools, dry_run=False: current_tools / ".venv" / "bin" / "python",
+    )
     _hide_rsync(monkeypatch)
 
     exit_code = installer._cmd_install_compact(
@@ -202,7 +206,7 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
     )
 
     assert exit_code == 0
-    assert (current_link / "skills" / "vc-agents" / "shell" / "vetcoders.sh").read_text(
+    assert (current_link / "runtime" / "shell" / "vetcoders.sh").read_text(
         encoding="utf-8"
     ) == 'printf "fresh installed helper\\n"\n'
     assert (current_link / "scripts" / "vibecrafted").read_text(

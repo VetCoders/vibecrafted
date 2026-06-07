@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 
 
 def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None:
@@ -232,9 +232,15 @@ def test_vc_init_finds_bundled_zellij_and_creates_missing_operator_session(
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
     env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
+    # This test exercises the real session-create path; allow it without a TTY.
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
+    # Scrub any operator-session context leaked from a running operator shell so
+    # the runtime computes a fresh session instead of latching onto the ambient one.
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+    env.pop("VIBECRAFTED_OPERATOR_MODE", None)
 
     result = subprocess.run(
         [
@@ -487,7 +493,7 @@ def test_spawn_script_prefers_repo_runtime_over_installed_copy(tmp_path: Path) -
     )
 
     assert result.stdout.strip() == str(
-        REPO_ROOT / "skills" / "vc-agents" / "scripts" / "marbles_spawn.sh"
+        REPO_ROOT / "runtime" / "scripts" / "marbles_spawn.sh"
     )
 
 
@@ -555,6 +561,10 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
+    # Scrub any operator-session context leaked from a running operator shell so
+    # the dashboard resolves the run-id session rather than the ambient one.
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+    env.pop("VIBECRAFTED_OPERATOR_MODE", None)
 
     subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-dashboard vc-marbles'],
@@ -593,9 +603,15 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
     env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
+    # This test exercises the real session-bootstrap path; allow it without a TTY.
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
+    # Scrub any operator-session context leaked from a running operator shell so
+    # the runtime bootstraps a session instead of latching onto the ambient one.
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+    env.pop("VIBECRAFTED_OPERATOR_MODE", None)
 
     subprocess.run(
         [
@@ -641,9 +657,15 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
     env["VIBECRAFTED_RUN_ID"] = "fwup-014520"
     env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    # This test exercises the real dead-session recreate path; allow it without a TTY.
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
+    # Scrub any operator-session context leaked from a running operator shell so
+    # the runtime recreates the dead run-id session instead of reusing the ambient one.
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+    env.pop("VIBECRAFTED_OPERATOR_MODE", None)
 
     result = subprocess.run(
         [

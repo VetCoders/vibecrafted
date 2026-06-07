@@ -23,18 +23,29 @@ def run_hook(tmp_path: Path, message: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+# prepare-commit-msg derives session_id from the first set var among
+# CODEX_SESSION_ID, CLAUDE_CODE_SESSION_ID, then ATUIN_SESSION. The test runner
+# itself runs inside a Codex/Claude session, so those higher-precedence vars leak
+# in via os.environ and shadow the ATUIN_SESSION the test sets. Strip every
+# session var the hook consults, then apply only what the test declares, so the
+# hook deterministically exercises the requested precedence branch.
+_SESSION_ENV_KEYS = ("CODEX_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "ATUIN_SESSION")
+
+
 def run_prepare_hook(
     tmp_path: Path, message: str, env: dict[str, str] | None = None
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     msg_file = tmp_path / "COMMIT_EDITMSG"
     msg_file.write_text(textwrap.dedent(message).lstrip(), encoding="utf-8")
+    hook_env = {k: v for k, v in os.environ.items() if k not in _SESSION_ENV_KEYS}
+    hook_env.update(env or {})
     result = subprocess.run(
         ["bash", str(PREPARE_HOOK), str(msg_file), "message"],
         cwd=REPO_ROOT,
         text=True,
         capture_output=True,
         check=False,
-        env={**os.environ, **(env or {})},
+        env=hook_env,
     )
     return result, msg_file
 

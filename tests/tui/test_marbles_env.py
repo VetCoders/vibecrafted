@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = REPO_ROOT / "skills" / "vc-agents" / "scripts"
+SCRIPTS_DIR = REPO_ROOT / "runtime" / "scripts"
 
 
 def _prepare_scripts(tmp_path: Path, capture_file: Path) -> Path:

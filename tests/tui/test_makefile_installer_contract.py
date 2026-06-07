@@ -191,7 +191,7 @@ def test_setup_installer_uses_canonical_foundation_action_only() -> None:
     installer = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
     )
-    skills_sync = (REPO_ROOT / "agents" / "scripts" / "skills_sync.sh").read_text(
+    skills_sync = (REPO_ROOT / "runtime" / "scripts" / "skills_sync.sh").read_text(
         encoding="utf-8"
     )
 
@@ -232,7 +232,7 @@ def test_installer_publishes_async_dispatch_wrapper() -> None:
 
 
 def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:
-    install_shell = (REPO_ROOT / "agents" / "scripts" / "install-shell.sh").read_text(
+    install_shell = (REPO_ROOT / "runtime" / "scripts" / "install-shell.sh").read_text(
         encoding="utf-8"
     )
     installer = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(

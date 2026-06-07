@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
-COMMON_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "common.sh"
+HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
+COMMON_SCRIPT = REPO_ROOT / "runtime" / "scripts" / "common.sh"
 INSTALL_FRONTIER_SCRIPT = (
-    REPO_ROOT / "skills" / "vc-agents" / "scripts" / "install-frontier-config.sh"
+    REPO_ROOT / "runtime" / "scripts" / "install-frontier-config.sh"
 )
 
 
@@ -49,11 +49,11 @@ def _expected_operator_session(run_id: str | None = None) -> str:
 
 
 def test_dashboard_layouts_resolve_helpers_from_home_store_first() -> None:
-    expected_home_root = "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents"
+    expected_home_root = "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime"
     expected_repo_store_root = (
-        "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}"
+        "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/runtime}"
     )
-    expected_repo_root = "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}"
+    expected_repo_root = "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}"
 
     for layout_name in ("dashboard.kdl", "marbles.kdl", "operator.kdl"):
         payload = (REPO_ROOT / "config" / "zellij" / "layouts" / layout_name).read_text(
@@ -90,8 +90,11 @@ def test_shell_helper_prefers_current_control_plane_over_home_store(
     )
     stale_store = home / ".vibecrafted" / "skills" / "vc-agents"
 
-    current_store.mkdir(parents=True)
-    stale_store.mkdir(parents=True)
+    # A real runtime store carries a scripts/ dir; the resolver only selects
+    # candidates that look like real stores. Both are realistic so the test
+    # exercises the installed>home preference, not the real-store filter.
+    (current_store / "scripts").mkdir(parents=True)
+    (stale_store / "scripts").mkdir(parents=True)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -216,6 +219,10 @@ def test_vc_dashboard_uses_base_run_id_session_without_layout_suffix(
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
+    # Scrub any operator-session context leaked from a running operator shell so
+    # the dashboard resolves the run-id session rather than the ambient one.
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+    env.pop("VIBECRAFTED_OPERATOR_MODE", None)
 
     subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-dashboard vc-marbles'],

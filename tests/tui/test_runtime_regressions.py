@@ -7,7 +7,7 @@ from pathlib import Path
 from scripts import vetcoders_install
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SHELL_SH = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+SHELL_SH = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 
 
 def _write_fake_command(path: Path, body: str) -> None:
@@ -52,6 +52,17 @@ def test_resume_terminal_runtime_routes_codex_resume_into_zellij(
     )
 
     env = os.environ.copy()
+    for key in (
+        "VIBECRAFTED_RUN_ID",
+        "VIBECRAFTED_RUN_LOCK",
+        "VIBECRAFTED_SKILL_CODE",
+        "VIBECRAFTED_SKILL_NAME",
+        "VIBECRAFTED_LOOP_NR",
+        "ZELLIJ",
+        "ZELLIJ_PANE_ID",
+        "ZELLIJ_SESSION_NAME",
+    ):
+        env.pop(key, None)
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
