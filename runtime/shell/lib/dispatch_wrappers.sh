@@ -293,10 +293,10 @@ _vetcoders_await_watch_helper() {
   crafted_root="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current"
 
   for candidate in \
-    "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/agents/scripts/vibecrafted-await-watch.sh}" \
-    "$repo_root/agents/scripts/vibecrafted-await-watch.sh" \
-    "$crafted_root/agents/scripts/vibecrafted-await-watch.sh" \
-    "$(_vetcoders_frontier_file "agents/scripts/vibecrafted-await-watch.sh" 2>/dev/null || true)"
+    "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime/scripts/vibecrafted-await-watch.sh}" \
+    "$repo_root/runtime/scripts/vibecrafted-await-watch.sh" \
+    "$crafted_root/runtime/scripts/vibecrafted-await-watch.sh" \
+    "$(_vetcoders_frontier_file "runtime/scripts/vibecrafted-await-watch.sh" 2>/dev/null || true)"
   do
     [[ -n "$candidate" && -x "$candidate" ]] || continue
     printf '%s\n' "$candidate"

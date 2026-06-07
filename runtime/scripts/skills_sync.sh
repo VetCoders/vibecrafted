@@ -14,11 +14,11 @@ Then create symlink views inside the remote tool homes:
   $HOME/.gemini/skills
 
 Examples:
-  bash agents/scripts/skills_sync.sh mgbook16
-  bash agents/scripts/skills_sync.sh mgbook16 --tool codex --tool claude
-  bash agents/scripts/skills_sync.sh mgbook16 --dry-run
-  bash agents/scripts/skills_sync.sh mgbook16 --mirror
-  bash agents/scripts/skills_sync.sh mgbook16 --with-shell
+  bash runtime/scripts/skills_sync.sh mgbook16
+  bash runtime/scripts/skills_sync.sh mgbook16 --tool codex --tool claude
+  bash runtime/scripts/skills_sync.sh mgbook16 --dry-run
+  bash runtime/scripts/skills_sync.sh mgbook16 --mirror
+  bash runtime/scripts/skills_sync.sh mgbook16 --with-shell
 EOF_USAGE
 }
 
@@ -192,9 +192,9 @@ for tool in "${tools[@]}"; do
 done
 
 if (( with_shell )); then
-  shell_source="$repo_root/agents/shell/vetcoders.sh"
-  [[ -f "$shell_source" ]] || shell_source="$repo_root/agents/shell/vetcoders.zsh"
-  [[ -f "$shell_source" ]] || shell_source="$repo_root/agents/shell/vetcoders.sh"
+  shell_source="$repo_root/runtime/shell/vetcoders.sh"
+  [[ -f "$shell_source" ]] || shell_source="$repo_root/runtime/shell/vetcoders.zsh"
+  [[ -f "$shell_source" ]] || shell_source="$repo_root/runtime/shell/vetcoders.sh"
   [[ -f "$shell_source" ]] || die "Shell helper file not found: $shell_source"
 
   # shellcheck disable=SC2016
@@ -243,8 +243,8 @@ fi
 printf 'Verifying shared skill store on %s\n' "$host"
 ssh -n "$host" 'for f in \
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/scripts/vibecrafted \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills/vc-agents/SKILL.md \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/shell/vetcoders.sh \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills/vc-runtime/SKILL.md \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/runtime/shell/vetcoders.sh \
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh; do
   if [ -e "$f" ]; then
     echo "OK $f"

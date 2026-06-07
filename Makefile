@@ -5,7 +5,7 @@ INSTALLER := scripts/vetcoders_install.py
 GUI_INSTALLER := scripts/installer_gui.py
 MANIFEST := install.toml
 INSTALLER_DIR := scripts/installer
-SHELL_INSTALLER := agents/scripts/install-shell.sh
+SHELL_INSTALLER := runtime/scripts/install-shell.sh
 SOURCE   := $(CURDIR)
 BRANCH   ?= main
 VERSION_FILE := VERSION
@@ -110,7 +110,7 @@ endif
 
 install-all: init-hooks
 	@bash scripts/install-foundations.sh $(INSTALL_QUIET)
-	@bash agents/scripts/install-frontier-config.sh --source "$(SOURCE)" $(INSTALL_QUIET) || printf '[warn] Frontier config skipped (non-fatal)\n'
+	@bash runtime/scripts/install-frontier-config.sh --source "$(SOURCE)" $(INSTALL_QUIET) || printf '[warn] Frontier config skipped (non-fatal)\n'
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --compact --non-interactive --mirror
 	@bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes $(INSTALL_QUIET)
 

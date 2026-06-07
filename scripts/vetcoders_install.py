@@ -2765,7 +2765,7 @@ def _marbles_orchestrator_expr() -> str:
     return (
         '"${VIBECRAFTED_MARBLES_ORCHESTRATOR:-'
         "${VIBECRAFTED_TOOLS_HOME:-$HOME/.local/share/vibecrafted/tools}"
-        '/vibecrafted-current/agents/vc-marbles/orchestrator}"'
+        '/vibecrafted-current/runtime/vc-marbles/orchestrator}"'
     )
 
 

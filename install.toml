@@ -72,7 +72,7 @@ cmd = [
     "-c",
     '''
 bash scripts/install-foundations.sh
-bash agents/scripts/install-frontier-config.sh --source "." || printf '[warn] Frontier config skipped (non-fatal)\n'
+bash runtime/scripts/install-frontier-config.sh --source "." || printf '[warn] Frontier config skipped (non-fatal)\n'
 python3 scripts/vetcoders_install.py install --source "." --with-shell --compact --non-interactive --mirror
 bash scripts/install-runtime.sh --runtime "${VIBECRAFTED_RUNTIME:-none}" --yes
 ''',

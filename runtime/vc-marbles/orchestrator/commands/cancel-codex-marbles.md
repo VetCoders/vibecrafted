@@ -8,7 +8,7 @@ hide-from-slash-command-tool: "true"
 Run:
 
 ```bash
-bash ../vibecrafted/agents/vc-marbles/orchestrator/scripts/codex-loop-step.sh cancel
+bash ../vibecrafted/runtime/vc-marbles/orchestrator/scripts/codex-loop-step.sh cancel
 ```
 
 Then report the iteration number that was cancelled.

@@ -100,7 +100,7 @@ parallel dispatch with persistence requirements.
 
 1. Are these agents deliverable-producing (reports, code, plans)? → `vibecrafted`
 2. Are these agents scouting / lookup / read-only? → native `Agent` ok
-3. If `vibecrafted` chosen: see [vc-agents](../vc-agents/SKILL.md) for
+3. If `vibecrafted` chosen: see [vc-agents](../vc-runtime/SKILL.md) for
    agent routing (codex/claude/gemini per `vc-why-matrix`) and
    [vc-operator](../vc-operator/SKILL.md) for wave-shape conduct.
 
@@ -164,7 +164,7 @@ check, declare what you'll do on each tick, stop when the stop condition is met.
 - [vc-operator](../vc-operator/SKILL.md) — multi-wave fleet conduct posture
 - [vc-partner](../vc-partner/SKILL.md) — shared executive steering posture
 - [vc-init](../vc-init/SKILL.md) — foundation pre-charter perception gate
-- [vc-agents](../vc-agents/SKILL.md) — required for Operational default
+- [vc-agents](../vc-runtime/SKILL.md) — required for Operational default
   (external fleet dispatch via `vibecrafted`, NEVER native `Agent`)
 
 Vibecraftsmanship references but does not replace. It composes the three

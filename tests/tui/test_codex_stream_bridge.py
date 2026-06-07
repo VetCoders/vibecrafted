@@ -1,4 +1,4 @@
-"""Regression tests for agents/scripts/codex_stream_bridge.py.
+"""Regression tests for runtime/scripts/codex_stream_bridge.py.
 
 The bridge parses Codex JSONL events into a human-readable transcript. It must
 be tolerant: malformed lines, unknown event types, and an EOF mid-stream must

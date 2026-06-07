@@ -187,7 +187,7 @@ Remove orphaned skills? [Y/n] y
 
 Installing shell helper...
 Installing VetCoders shell helpers
-  source: ~/hosted/VetCoders/vetcoders-skills/agents/shell/vetcoders.sh
+  source: ~/hosted/VetCoders/vetcoders-skills/runtime/shell/vetcoders.sh
   target: ~/.config/vetcoders/vc-skills.sh
   ~/.zshrc: already sourced
 
@@ -370,7 +370,7 @@ III. Action prompt or progress bar
     - Helpers and binaries (executables and functions)
   3. Post-installation setup
     - Workspace directories (in $VIBECRAFTED_ROOT/.vibecrafted/)
-    - Symlinks for AI coding agents (in $HOME/.agents/)
+    - Symlinks for AI coding agents (in $HOME/.runtime/)
   4. Verification and quick tour
 
                                 ⏎ proceed ⌫ Back ⎋ quit

@@ -6,8 +6,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../../vc-agents/scripts/common.sh
-source "$SCRIPT_DIR/../../vc-agents/scripts/common.sh"
+# shellcheck source=../../agents//common.sh
+source "$SCRIPT_DIR/../../agents//common.sh"
 
 SLUG="${1:?Usage: pipeline-init.sh <slug> [root-dir]}"
 ROOT_INPUT="${2:-$(pwd)}"

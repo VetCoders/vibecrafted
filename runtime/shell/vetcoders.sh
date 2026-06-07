@@ -19,10 +19,10 @@ _vetcoders_shell_lib_candidates() {
   local facade_dir="$(_vetcoders_shell_facade_dir)"
   [[ -n "$facade_dir" ]] && printf '%s/lib\n' "$facade_dir"
   if [[ -n "${VIBECRAFTED_ROOT:-}" ]]; then
-    printf '%s/agents/shell/lib\n' "$VIBECRAFTED_ROOT"
+    printf '%s/runtime/shell/lib\n' "$VIBECRAFTED_ROOT"
   fi
-  printf '%s/vibecrafted-current/agents/shell/lib\n' "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}"
-  printf '%s/agents/shell/lib\n' "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+  printf '%s/vibecrafted-current/runtime/shell/lib\n' "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}"
+  printf '%s/runtime/shell/lib\n' "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
 }
 
 _vetcoders_resolve_shell_lib_dir() {

@@ -54,10 +54,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Find source file (new name first, then compat path)
-source_file="$repo_root/agents/shell/vetcoders.sh"
-[[ -f "$source_file" ]] || source_file="$repo_root/agents/shell/vetcoders.zsh"
-[[ -f "$source_file" ]] || source_file="$repo_root/agents/shell/vetcoders.sh"
-[[ -f "$source_file" ]] || source_file="$repo_root/agents/shell/vetcoders.zsh"
+source_file="$repo_root/runtime/shell/vetcoders.sh"
+[[ -f "$source_file" ]] || source_file="$repo_root/runtime/shell/vetcoders.zsh"
+[[ -f "$source_file" ]] || source_file="$repo_root/runtime/shell/vetcoders.sh"
+[[ -f "$source_file" ]] || source_file="$repo_root/runtime/shell/vetcoders.zsh"
 [[ -f "$source_file" ]] || die "Helper file not found"
 
 # Canonical install location (shell-agnostic)
@@ -91,18 +91,18 @@ _vibecrafted_helper_candidates() {
   # Without env set, resolver uses canonical install paths only —
   # so mid-rebase intermediate states do NOT break other shells.
   if [[ -n "\${VIBECRAFTED_ROOT:-}" ]]; then
-    printf '%s\n' "\$VIBECRAFTED_ROOT/agents/shell/vetcoders.sh"
-    printf '%s\n' "\$VIBECRAFTED_ROOT/agents/shell/vetcoders.zsh"
+    printf '%s\n' "\$VIBECRAFTED_ROOT/runtime/shell/vetcoders.sh"
+    printf '%s\n' "\$VIBECRAFTED_ROOT/runtime/shell/vetcoders.zsh"
   fi
   # CANONICAL INSTALL PATHS (always emitted, operator-agnostic):
   # vibecrafted-current symlinks to the active vibecrafted-<channel> install,
   # so this path stays stable across versions and points at the staged source
   # tree the installer copied into the XDG data runtime.
   printf '%s\n' \
-    "\$crafted_tools_home/vibecrafted-current/agents/shell/vetcoders.sh" \
-    "\$crafted_tools_home/vibecrafted-current/agents/shell/vetcoders.zsh" \
-    "\$crafted_home/agents/shell/vetcoders.sh" \
-    "\$crafted_home/agents/shell/vetcoders.zsh"
+    "\$crafted_tools_home/vibecrafted-current/runtime/shell/vetcoders.sh" \
+    "\$crafted_tools_home/vibecrafted-current/runtime/shell/vetcoders.zsh" \
+    "\$crafted_home/runtime/shell/vetcoders.sh" \
+    "\$crafted_home/runtime/shell/vetcoders.zsh"
 }
 
 _vibecrafted_source_helper() {

@@ -68,7 +68,7 @@ Canonical artifact root: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/{
 Final Markdown artifacts use `%Y-%m-%d_<org>_<repo>_<full_session_id>-<kind>.md`
 (`kind=report,plan,tracker,research,...`) with matching `.transcript.log` and
 `.meta.json` sidecars. `CONTEXT.md` and `RESEARCH.md` live in `plans/` as
-`<ts>_<slug>_CONTEXT.md` and `<ts>_<slug>_RESEARCH.md`. `agents/scripts/common.sh`
+`<ts>_<slug>_CONTEXT.md` and `<ts>_<slug>_RESEARCH.md`. `../../runtime/scripts/common.sh`
 `spawn_prepare_paths()` is the source of truth for day-root resolution.
 Repo-local `.vibecrafted/plans` and `.vibecrafted/reports` are convenience
 symlinks only.

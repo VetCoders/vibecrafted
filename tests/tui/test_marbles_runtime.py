@@ -64,7 +64,7 @@ def _write_replaying_zellij(script_path: Path) -> None:
 def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
-    shutil.copytree(REPO_ROOT / "agents/scripts/lib", scripts_dir / "lib")
+    shutil.copytree(REPO_ROOT / "runtime/scripts/lib", scripts_dir / "lib")
 
     for name in (
         "common.sh",

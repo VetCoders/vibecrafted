@@ -59,7 +59,7 @@ done <<< "$ALL_FILES"
 
 echo "▸ zellij pane targeting guard"
 leaks="$(
-    grep -nE 'zellij[^|]*action new-pane' agents/scripts/lib/*.sh 2>/dev/null \
+    grep -nE 'zellij[^|]*action new-pane' runtime/scripts/lib/*.sh 2>/dev/null \
         | grep -vE 'tab-id|tab_id|--floating|# OPERATOR_TAB_OK' \
         || true
 )"

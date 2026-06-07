@@ -208,7 +208,7 @@ Contract:
 - Count: {spec.count or ""}
 - Depth: {spec.depth or ""}
 - Do not launch or delegate to external agent fleets.
-- Do not call legacy Vibecrafted skill launchers or agents/scripts launchers.
+- Do not call legacy Vibecrafted skill launchers or runtime/scripts launchers.
 - Write your final report to the path in VIBECRAFTED_REPORT_PATH ({report_hint}).
 - Let stdout/stderr form the transcript captured at VIBECRAFTED_TRANSCRIPT_PATH ({transcript_hint}).
 - If you create or update run metadata, use VIBECRAFTED_META_PATH ({meta_hint}).

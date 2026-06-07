@@ -132,7 +132,7 @@ Repo-local `.vibecrafted/plans` and `.vibecrafted/reports` are convenience symli
 
 ## Spawn Commands
 
-Use the portable scripts from `vc-agents/scripts/`. These handle artifact
+Use the portable scripts from `runtime/scripts/`. These handle artifact
 generation, launch mode selection (visible Terminal or headless), and execution
 environment setup automatically.
 
@@ -142,19 +142,19 @@ environment setup automatically.
 ARTIFACT_DAY="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>"
 PLAN="$ARTIFACT_DAY/plans/<ts>_<agent-task>.md"
 
-bash vc-agents/scripts/codex_spawn.sh "$PLAN" --mode implement --runtime terminal
+bash runtime/scripts/codex_spawn.sh "$PLAN" --mode implement --runtime terminal
 ```
 
 ### Claude (for complex reasoning tasks)
 
 ```bash
-bash vc-agents/scripts/claude_spawn.sh "$PLAN" --mode review --runtime terminal
+bash agents//claude_spawn.sh "$PLAN" --mode review --runtime terminal
 ```
 
 ### Gemini
 
 ```bash
-bash vc-agents/scripts/gemini_spawn.sh "$PLAN" --mode implement --runtime terminal
+bash agents//gemini_spawn.sh "$PLAN" --mode implement --runtime terminal
 ```
 
 > The scripts default to visible Terminal mode on macOS and fall back to headless

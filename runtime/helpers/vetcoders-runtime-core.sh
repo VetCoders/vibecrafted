@@ -11,7 +11,7 @@ _vetcoders_spawn_home() {
   local current_store="$crafted_tools_home/vibecrafted-current/skills/vc-agents"
   local repo_root
   repo_root="${VIBECRAFTED_ROOT:-$(_vetcoders_repo_root)}"
-  local legacy_store="$HOME/.agents/skills/vc-agents"
+  local legacy_store="$HOME/.runtime/skills/vc-agents"
   local candidate
 
   if [[ -f "$repo_root/VERSION" && -f "$repo_root/scripts/vibecrafted" ]]; then

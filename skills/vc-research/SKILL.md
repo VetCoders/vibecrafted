@@ -230,7 +230,7 @@ vc-research can be used:
 - **Standalone** — research without a full ERi pipeline
 - **As workflow Phase 2** — `vc-workflow` delegates here instead of single-agent research
 - **Before vc-partner** — when partner mode needs ground truth before debug
-- **Before vc-agents/vc-delegate** — research feeds implementation plans
+- **Before vc-runtime/vc-delegate** — research feeds implementation plans
 
 ```
          ┌─── claude ──→ report ───┐

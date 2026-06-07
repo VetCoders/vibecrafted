@@ -22,7 +22,7 @@ the current interactive session:
 Run:
 
 ```bash
-"${CLAUDE_PLUGIN_ROOT:-../vibecrafted/agents/vc-marbles/orchestrator}/scripts/setup-codex-loop.sh" $ARGUMENTS
+"${CLAUDE_PLUGIN_ROOT:-../vibecrafted/runtime/vc-marbles/orchestrator}/scripts/setup-codex-loop.sh" $ARGUMENTS
 ```
 
 After setup, obey this hard rule:
@@ -31,7 +31,7 @@ After setup, obey this hard rule:
 Do not send a final answer while .codex/marbles.local.md has active: true.
 At every apparent stopping point, run:
 
-  bash ../vibecrafted/agents/vc-marbles/orchestrator/scripts/codex-loop-step.sh next
+  bash ../vibecrafted/runtime/vc-marbles/orchestrator/scripts/codex-loop-step.sh next
 
 If it prints CONTINUE, treat the printed PROMPT as the next user instruction and
 keep working in the same session. If it prints STOP, you may final.
