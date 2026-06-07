@@ -415,7 +415,8 @@ PLATFORM="$(detect_platform)"
 validate_runtime_platform "$RUNTIME" "$PLATFORM"
 
 if [[ "$RUNTIME" == "none" ]]; then
-  info "Runtime horse: none (no runtime install requested)"
+  # No runtime requested is the common case — stay silent unless VERBOSE.
+  [[ "${VERBOSE:-0}" == "1" ]] && info "Runtime horse: none (no runtime install requested)"
   exit 0
 fi
 

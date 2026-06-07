@@ -97,11 +97,22 @@ install-auto: init-hooks
 	export PATH="$$HOME/.local/bin:$$PATH"; \
 	VIBECRAFTED_RUNTIME="$(RUNTIME)" uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST) --yes --quiet
 
+# Output discipline: the shell installers (foundations, frontier, runtime) are
+# chatty. By default their output goes to the install log so the compact Python
+# installer's [1/4..4/4] storytelling is the only on-screen output.
+# VERBOSE=1 shows the full bazaar.
+VERBOSE ?= 0
+ifeq ($(VERBOSE),1)
+INSTALL_QUIET :=
+else
+INSTALL_QUIET := >> "$(HOME)/.vibecrafted/install.log" 2>&1
+endif
+
 install-all: init-hooks
-	@bash scripts/install-foundations.sh
-	@bash agents/scripts/install-frontier-config.sh --source "$(SOURCE)" || printf '[warn] Frontier config skipped (non-fatal)\n'
+	@bash scripts/install-foundations.sh $(INSTALL_QUIET)
+	@bash agents/scripts/install-frontier-config.sh --source "$(SOURCE)" $(INSTALL_QUIET) || printf '[warn] Frontier config skipped (non-fatal)\n'
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --compact --non-interactive --mirror
-	@bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes
+	@bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes $(INSTALL_QUIET)
 
 skills:
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --non-interactive

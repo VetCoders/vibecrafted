@@ -17,6 +17,7 @@ def test_install_runtime_none_is_noop(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
     env["VIBECRAFTED_HOME"] = str(tmp_path / ".vibecrafted")
+    env["VERBOSE"] = "1"  # the no-runtime notice is VERBOSE-gated; opt in to assert it
 
     result = subprocess.run(
         ["bash", str(INSTALL_RUNTIME), "--runtime", "none", "--platform", "linux"],

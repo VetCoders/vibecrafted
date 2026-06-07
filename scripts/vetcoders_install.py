@@ -4690,22 +4690,10 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             out,
             2,
             "Diagnostics and Plan",
-            "We show the shape before changing files, so the install is consentful and debuggable.",
+            "Shape shown before any change — consentful and debuggable (detail in log).",
             (
-                "Action  Set artifacts storage location",
-                "REASON  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. keeps persistent artifacts on the developer's hard disk for past-session context retrieval. We make the location explicit so you can inspect, move, or delete it.",
-                f"Path    {shared_home / 'artifacts'}",
-                "Action  Choose installation options",
-                "REASON  One installer path with clear choices is more respectful than a wall of maintenance commands.",
-                f"Skills   {len(selected_skills)} -> {store_path}",
-                f"Views    {', '.join(all_runtimes)}",
-                f"Agents   {', '.join(detected_agents) if detected_agents else 'none detected'}",
-                f"Shell    {'enabled' if install_shell else 'skipped'}",
-                (
-                    f"Shell rc {'opt-in write' if write_shell_rc else 'manual line only'}"
-                    if install_shell
-                    else "Shell rc skipped"
-                ),
+                f"Plan   {len(selected_skills)} skills · agents {', '.join(detected_agents) or 'none'} · shell {'on' if install_shell else 'off'}",
+                f"Into   {store_path}",
             ),
         )
 
@@ -4987,6 +4975,17 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     print("    Reverse      vibecrafted uninstall")
     print(f"    Guide        {start_here_path()}")
     print(f"    Log          {log_display}")
+    # Inner log viewer — a tasteful peek at what just happened; full detail stays on disk.
+    try:
+        _tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        _tail = []
+    if _tail:
+        print()
+        print(f"    {dim('recent ' + '─' * 30)}")
+        for _line in _tail[-10:]:
+            print(f"    {dim('│')} {_line[:88]}")
+        print(f"    {dim('└─ full log: ' + log_display)}")
     if missing_fnd:
         print()
         print("    Foundations  still missing")
