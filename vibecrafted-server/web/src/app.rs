@@ -5,6 +5,7 @@ use leptos_meta::{Link, Meta, Title};
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::path;
 
+use crate::scaffold::ScaffoldEditorPage;
 use crate::theme::{Theme, ThemeBridge, provide_theme_context, use_theme};
 
 #[cfg(feature = "ssr")]
@@ -45,6 +46,7 @@ pub fn App() -> impl IntoView {
             <ThemeBridge />
             <Routes fallback=|| view! { <ConsolePage /> }>
                 <Route path=path!("/") view=ConsolePage />
+                <Route path=path!("/scaffold") view=ScaffoldEditorPage />
             </Routes>
         </Router>
     }
@@ -95,6 +97,11 @@ pub fn ConsolePage() -> impl IntoView {
                         <p>
                             "A quiet Leptos shell for the server control plane. "
                             "Wave 2 can wire live runs into this branded surface."
+                        </p>
+                        <p>
+                            <a class="server-console-link" href="/scaffold">
+                                "Open scaffold review"
+                            </a>
                         </p>
                     </div>
 

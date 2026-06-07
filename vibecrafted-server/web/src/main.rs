@@ -10,6 +10,7 @@ async fn main() {
     use leptos::logging::log;
     use leptos_axum::{LeptosRoutes, generate_route_list};
     use vibecrafted_server_web::app::{App, shell};
+    use vibecrafted_server_web::scaffold::api::scaffold_routes;
 
     let conf = get_configuration(None).expect("LeptosOptions config");
     let leptos_options = conf.leptos_options;
@@ -21,6 +22,7 @@ async fn main() {
             let opts = leptos_options.clone();
             move || shell(opts.clone())
         })
+        .merge(scaffold_routes())
         .fallback(leptos_axum::file_and_error_handler(shell))
         .with_state(leptos_options);
 

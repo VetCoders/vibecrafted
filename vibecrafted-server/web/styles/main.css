@@ -1492,3 +1492,21 @@ button:hover > .icon-box {
         flex-direction: column;
     }
 }
+
+.scaffold-editor-shell {
+    min-height: 100vh;
+    background: var(--surface-page);
+}
+
+.scaffold-editor-frame {
+    display: block;
+    width: 100%;
+    min-height: 100vh;
+    border: 0;
+    background: var(--surface-page);
+}
+
+.server-console-link {
+    color: currentColor;
+    font-weight: 700;
+}

@@ -1,4 +1,4 @@
-//! `control-core` — read-only typed model of the Vibecrafted control plane.
+//! `control-core` — typed model of the Vibecrafted control plane.
 //!
 //! One core, two frontends. The Python writer
 //! (`vibecrafted-core/vibecrafted_core/control_plane.py`) owns
@@ -6,6 +6,11 @@
 //! **read-only** view of the same data so the `vibecrafted server` web UI
 //! (W1-b/W2) and the future `vc-agent` TUI can share one contract instead of
 //! re-parsing JSON ad hoc.
+//!
+//! The scaffold editor is the deliberate exception to the read-only rule: it
+//! edits operator-authored Markdown artifacts under `artifacts/**/operator/`
+//! and records change/checkpoint sidecars there. It never writes Python
+//! control-plane snapshots.
 //!
 //! Three layers:
 //!
@@ -17,6 +22,8 @@
 //!   sources in Rust. Never writes.
 //! * [`events`] — [`EventStream`], the cursor-as-byte-offset substrate a W2
 //!   axum SSE route drains.
+//! * [`scaffold`] — typed discovery, artifact writes, change feed, and
+//!   checkpoints for vc-scaffold review artifacts.
 //!
 //! ```no_run
 //! use control_core::ControlPlane;
@@ -32,12 +39,17 @@
 pub mod events;
 pub mod model;
 pub mod read;
+pub mod scaffold;
 
 pub use events::{EventBatch, EventStream};
 pub use model::{
-    AgentMeta, Event, Health, RunStatus, StateClass, ACTIVE_STATES, EVENT_TAIL_LIMIT, FINAL_STATES,
-    RECENT_RUN_LIMIT, RUN_STALL_SECONDS, SKILL_CODE_MAP, classify_state, coerce_int_value,
+    ACTIVE_STATES, AgentMeta, EVENT_TAIL_LIMIT, Event, FINAL_STATES, Health, RECENT_RUN_LIMIT,
+    RUN_STALL_SECONDS, RunStatus, SKILL_CODE_MAP, StateClass, classify_state, coerce_int_value,
     is_active_state, is_final_state, merge_status, operator_session_name, parse_iso,
     skill_from_code, state_health,
 };
 pub use read::{ControlPlane, StateView, vibecrafted_home};
+pub use scaffold::{
+    ScaffoldArtifact, ScaffoldArtifactKind, ScaffoldArtifactPatch, ScaffoldArtifactStore,
+    ScaffoldChange, ScaffoldCheckpoint, ScaffoldCheckpointPatch, ScaffoldWorkspace,
+};

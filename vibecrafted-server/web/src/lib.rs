@@ -1,6 +1,7 @@
 #![recursion_limit = "512"]
 
 pub mod app;
+pub mod scaffold;
 pub mod theme;
 
 #[cfg(feature = "hydrate")]

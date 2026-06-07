@@ -11,7 +11,7 @@ license = "BUSL-1.1"
 authors = ["VetCoders <agents@vetcoders.io>"]
 repository = "https://github.com/VetCoders/vibecrafted"
 publish = false
-description = "Read-only typed model of the Vibecrafted control plane (runs + events). One core, two frontends: web (axum, W1-b/W2) and TUI (vc-agent)."
+description = "Typed model of the Vibecrafted control plane (runs + events) plus scaffold artifact review surfaces."
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
