@@ -151,7 +151,10 @@ _vetcoders_resume_agent() {
   runtime="$(_vetcoders_effective_runtime)"
   resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt")" || return 1
 
-  if [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
+  # Operator (zellij) session needs a real TTY. Without one (scripts, CI,
+  # headless dispatch), degrade to a direct resume instead of failing —
+  # "brak TTY → headless" (runtime invariant: degrade, don't die).
+  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && [[ -t 0 && -t 1 ]]; then
     _vetcoders_prepare_operator_runtime "$runtime" || return 1
     _vetcoders_spawn_into_operator_session "resume-${tool}" "$resume_cmd" || return 1
     printf 'Resume launched in operator session: %s\n' "$VIBECRAFTED_OPERATOR_SESSION"
