@@ -347,6 +347,18 @@ _vetcoders_prepare_operator_runtime() {
     return 0
   fi
 
+  # No attachable session exists, so the only remaining option is to CREATE
+  # one — which zellij cannot do without a real PTY. Without a controlling TTY
+  # (scripts, CI, in-repo agent dispatch), degrade to headless instead of
+  # hard-failing: leave VIBECRAFTED_OPERATOR_SESSION unset and return success so
+  # the caller proceeds down the session-free dispatch path. The test bypass env
+  # lets the suite exercise the create branch without a real TTY.
+  # "brak TTY → headless" (runtime invariant: degrade, don't die).
+  if [[ ! -t 0 || ! -t 1 ]] && [[ -z "${VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ:-}" ]]; then
+    printf 'no TTY; running headless (no operator session)\n' >&2
+    return 0
+  fi
+
   session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
   layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
   [[ -n "$layout_file" ]] || return 1
