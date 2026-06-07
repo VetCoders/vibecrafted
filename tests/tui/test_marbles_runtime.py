@@ -333,7 +333,7 @@ def _run_marbles_prompt(
     tmpdir_root = tmp_path / "tmpdir"
     capture_file = tmp_path / "marbles-args.txt"
     zellij_capture_file = tmp_path / "zellij-args.txt"
-    spawn_script = crafted_home / "agents" / "scripts" / "marbles_spawn.sh"
+    spawn_script = crafted_home / "runtime" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
     fake_bin.mkdir()
@@ -425,7 +425,7 @@ def test_vc_marbles_inside_zellij_prints_launch_receipt(tmp_path: Path) -> None:
     tmpdir_root = tmp_path / "tmpdir"
     capture_file = tmp_path / "marbles-args.txt"
     zellij_capture_file = tmp_path / "zellij-args.txt"
-    spawn_script = crafted_home / "agents" / "scripts" / "marbles_spawn.sh"
+    spawn_script = crafted_home / "runtime" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
     fake_bin.mkdir()
@@ -474,7 +474,7 @@ def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
     isolated_root = tmp_path / "isolated-root"
     capture_file = tmp_path / "marbles-args.txt"
     zellij_capture = tmp_path / "zellij-args.txt"
-    spawn_script = crafted_home / "agents" / "scripts" / "marbles_spawn.sh"
+    spawn_script = crafted_home / "runtime" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
     fake_bin.mkdir()
