@@ -55,7 +55,8 @@ composes from memory injects silent drift the operator cannot catch live. Theref
 until repo/runtime truth exists.** Missing `vc-init`/Loctree evidence is a process failure, not a
 warning.
 
-`Loctree:loctree` is the default structural perception. Use it before grep or docs-driven claims:
+`Loctree:loctree` is the default structural perception. Use it before grep or docs-driven claims
+to produce or refresh the **Code-Derived Application Map**:
 `repo-view`, `focus`, `slice` (before edit), `impact` (before delete), `find` / `find --literal`
 (before create), `follow` (dead/cycles/twins/hotspots). Find load-bearing hubs, twins, dead code,
 drift, runtime entrypoints, blast-radius traps. If the task is explicitly non-repo/greenfield,

@@ -52,7 +52,7 @@ See [Living Tree Rule](../LIVING_TREE_RULE.md).
 ## Canonical Orientation Gate (no-question ≠ no-orientation)
 
 „Nie pytaj" NIE znaczy „nie orientuj się". Przed repo-specyficzną pracą uruchom/skonsumuj `vc-init`.
-`Loctree:loctree` to domyślna percepcja strukturalna — `context`/`slice`/`impact`/`find` przed grepem.
+`Loctree:loctree` to domyślna percepcja strukturalna — użyj jej przed grepem (`context`/`slice`/`impact`/`find`), by zbudować lub odświeżyć **Code-Derived Application Map**.
 Brak `vc-init`/Loctree evidence = process failure. No-repo/no-code → zadeklaruj no-repo exception.
 
 ## Postawa (rdzeń)
