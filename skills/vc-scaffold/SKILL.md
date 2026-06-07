@@ -71,9 +71,11 @@ declare the **no-repo exception** in the report and name the orientation source 
 Scaffold is the WRITE entry. If the task is already clear and bounded, skip scaffold and start at
 `vc-init`. The full cadence and the WRITE/READ classification live in `references/cadence.md`.
 
-## The Five Phases
+## The Six Phases
 
-Run these in order. Each phase produces the input the next consumes.
+Run these in order. Each phase produces the input the next consumes. Phases 5–6 are the
+**delivery mechanism**: every cut gets a brief (hard-gate) and the artifacts are served for
+operator review — not narrated as prose and not gated on the agent's good intentions.
 
 ### 1. Orient (research-first)
 
@@ -102,11 +104,50 @@ Break work into agent-sized cuts (30-120 min). **Every cut carries the measure-c
 `state` marker `[ ] [~] [?] [!] [x]`, and a **delivery-verifier** — the non-fakeable test that flips
 `[~]→[x]`. A cut without a verifier ships as `[?]`, never `[x]`. See `references/measure-core.md`.
 
-### 5. Handoff
+### 5. Brief every cut (HARD-GATE — this is the delivery mechanism)
 
-Produce the plan from `references/plan-template.md`. **Scaffold owns brainstorm→plan (WRITE);
-vc-operator reads the `state` column for trigger/stop (dispatch).** The plan must speak for itself:
-what is `[x]` vs `[?]`/runtime-pending, with an exact recipe. Save to the task output directory.
+Produce the plan from `references/plan-template.md` (master-dispatch: wave atlas + dependency
+graph + the `state` column). **Then — non-negotiable — render a brief for EVERY cut.** A cut
+without a rendered, well-formed brief does not exist as far as the plan is concerned. This is the
+rule that turns a plan from a shell (wydmuszka) into something a fleet can execute.
+
+For each cut, write `briefs/<wave>-<slot>_<slug>.md` from the 12-section dispatch template
+(`references/output-shapes.md`): mission · context · files · acceptance · gates · out-of-scope ·
+Living Tree etiquette (verbatim) · Loctree-first · recovery hint · branch+commit · report path.
+
+**Enforcement (ported from `/brainstorming`, the flow that leads the agent by the hand):**
+
+- **Checklist→TODOs:** create one TodoWrite item per cut-brief; complete them in order. The
+  scaffold is not "done" while any cut-brief todo is open.
+- **Hard-gate:** do NOT hand off to `vc-operator`, dispatch, or claim the scaffold complete until
+  EVERY cut in the wave atlas has a matching brief with all 12 sections present.
+- **Loop to green:** missing or malformed brief → loop back and render it. Single terminal state:
+  all briefs rendered AND the scaffold-doctor gate passes.
+- **Anti-pattern pre-emption (FORBIDDEN rationalizations):** "this cut is too small to need a
+  brief", "we are 1:1 so no briefs needed", "the master-dispatch table is enough". A plan without
+  per-cut briefs is a shell, not a plan. No exceptions, regardless of perceived simplicity.
+
+### 6. Serve & review (editable artifacts via vibecrafted-server)
+
+The plan + briefs are **editable artifacts**, not a wall of inline questions. The flow is:
+research → present findings + effort estimate → propose the first cut/wave shape → render the
+briefs → **serve them for operator review through `vibecrafted-server`** (the natural home of this
+phase's tooling: it reads the typed control-plane contract and renders the wave atlas + briefs as a
+**multi-tab, editable** HTML surface — one tab per artifact (atlas · each brief · each design doc),
+edited in place). The operator steers by editing the rendered plan in the browser, not by answering
+twenty questions mid-scaffold. Refine WITH the operator on the served artifacts.
+
+**Transplant the surface — do not reinvent it.** Proven sources to lift from: `../pensieve`
+(multi-tab editable workspace dashboard), `../unicode-puzzles-portal` (portal generators), and
+`/brainstorming`'s visual-companion (proven HTML mockup/diagram generators). The server-review tab
+must be multi-tab + editable from day one, not a static dump.
+
+**scaffold-doctor (the gate, machine-checked):** a deterministic validator in
+`vibecrafted-server/control-core` that refuses the scaffold→implement baton until: master-dispatch
+has a wave atlas + dependency graph; every cut has a `briefs/<wave>-<slot>_<slug>.md` with all 12
+sections; acceptance bullets are atomic + verifier-backed; a design doc exists for every cut flagged
+`needs_design`. The gate is **machine-checked, not agent-promised** — it is the same artifact-as-truth
+gate the async runtime uses between every read-write cadence handoff.
 
 ## Measurement (the armor)
 
@@ -120,6 +161,10 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
 ## Critical Rules
 
 - **Research-first is hard-block, not polish.** No plan from memory; derive from repo/runtime truth.
+- **A brief for every cut — no exceptions.** Per-cut briefs are the hard-gate (Phase 5). A plan
+  whose cuts lack briefs is a shell; the scaffold-doctor refuses to hand it off.
+- **Serve, don't interrogate.** Render editable artifacts and review them through `vibecrafted-server`;
+  the operator edits the plan, not answers twenty mid-scaffold questions.
 - **Measure, don't claim.** A cut is done when its verifier is green, never when an agent says so.
 - **Map before designing.** Respect the grain of the existing system; loctree before assumptions.
 - **Scope is your best friend.** Tight scope + great execution beats loose scope every time.

@@ -123,6 +123,22 @@ The operator agent owns:
 Workers own their slices. Authorship, reports, commits, and findings stay
 attached to the workers who produced them.
 
+## The Brief-Gate — never dispatch a shell (scaffold-doctor)
+
+Before firing ANY wave, the plan MUST pass the **scaffold-doctor** gate: every cut in the wave
+atlas has a rendered `briefs/<wave>-<slot>_<slug>.md` with all 12 sections, atomic verifier-backed
+acceptance, and a design doc for every `needs_design` cut.
+
+- A thin `master-dispatch.md` with no per-cut briefs is a **shell (wydmuszka)** — refuse to dispatch it.
+- If any cut lacks a brief, do NOT improvise it at fire time and do NOT fire without it. Return to
+  `vc-scaffold` (Phase 5) to render the missing briefs, then re-gate.
+- The gate is **machine-checked, not agent-promised** (`vibecrafted-server/control-core`) — the same
+  artifact-as-truth gate every read-write cadence handoff (scaffold→implement, marbles→audit…) uses.
+
+This is the operator-side half of the brief-per-cut rule: scaffold renders the briefs, operator
+refuses to conduct without them. Together they make "the flow does not deliver" structurally
+impossible — not a discipline the agent must remember.
+
 ## Stop Point
 
 Stop at the operator button: the line where the next action is not already
