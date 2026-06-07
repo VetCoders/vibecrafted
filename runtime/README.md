@@ -5,7 +5,7 @@
   runtime CLI tools moved in later phases.
 - `runtime/docs/` describes runtime boundaries and migration contracts.
 
-`skills/vc-agents/shell/vetcoders.sh` is intentionally a compatibility shim in
+`../agents/shell/vetcoders.sh` is intentionally a compatibility shim in
 this phase: it only loads helpers from the default runtime layer and keeps the
 installed command surface unchanged.
 

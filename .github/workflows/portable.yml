@@ -65,6 +65,6 @@ jobs:
         run: |
           vibecrafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
           test -L "$vibecrafted_home/tools/vibecrafted-current"
-          test -f "$vibecrafted_home/tools/vibecrafted-current/skills/vc-agents/scripts/codex_spawn.sh"
+          test -f "$vibecrafted_home/tools/vibecrafted-current/agents/scripts/codex_spawn.sh"
           test -f "$HOME/.config/vetcoders/vc-skills.sh"
           echo "Bootstrap OK"

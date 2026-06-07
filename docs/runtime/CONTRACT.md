@@ -71,7 +71,7 @@ provides all the necessary tools to follow this pattern.
 
 ### Installer Layout Transfer
 
-During the `skills/vc-agents/scripts` → `agents/scripts` transition the
+During the `agents/scripts` → `agents/scripts` transition the
 installer owns a reversible transfer surface:
 
 ```bash

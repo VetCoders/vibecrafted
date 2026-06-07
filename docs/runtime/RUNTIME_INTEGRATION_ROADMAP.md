@@ -39,13 +39,14 @@ szwy → używana codziennie → dopiero potem szerokość. Scaffold się skońc
 
 - Smoke każdego z 5 → oznacz REALNIE odpalalne vs scaffold-skeleton (tabela w TOPOLOGY.md).
 - **Zamroź control-plane schema** jako źródło prawdy: typed kontrakt run-state + events, wersjonowany. Pisze `core/control_plane.py`, czyta `server/control-core`.
-- Wytnij resztki szela: pępowiny `core` → `skills/vc-agents/scripts/await.sh`, `agent_dispatch.py` → `agents/scripts/lib/meta.sh`; napraw `doctor` spawn-pipeline (ma walidować core, nie usunięty `common.sh`).
+- Wytnij resztki szela: pępowiny `core` → `agents/scripts/await.sh`, `agent_dispatch.py` → `agents/scripts/lib/meta.sh`; napraw `doctor` spawn-pipeline (ma walidować core, nie usunięty `common.sh`).
 
 **DoD:** `vibecrafted doctor` zielony bez warnów o szelu · jeden udokumentowany kontrakt schematu · zero martwych launcherów w drzewie.
 
 ## Faza 1 — Walking Skeleton _(najcieńsza pionowa rurka, dogfood)_
 
 **Cel:** JEDNA komenda end-to-end, bez szela, używana codziennie.
+sas
 
 ```
 vc-implement <agent>  →  core.AsyncSupervisor.run  →  realny spawn

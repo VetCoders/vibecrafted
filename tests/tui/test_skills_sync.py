@@ -90,10 +90,8 @@ def test_install_shell_shim_prefers_current_control_plane_before_home_store(
     )
 
     shim = (config / "vetcoders" / "vc-skills.sh").read_text(encoding="utf-8")
-    tools_path = (
-        '"$crafted_tools_home/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh"'
-    )
-    home_path = '"$crafted_home/skills/vc-agents/shell/vetcoders.sh"'
+    tools_path = '"$crafted_tools_home/vibecrafted-current/agents/shell/vetcoders.sh"'
+    home_path = '"$crafted_home/agents/shell/vetcoders.sh"'
 
     assert shim.index(tools_path) < shim.index(home_path)
     assert "/Users/silver/Git/VibeCrafted" not in shim

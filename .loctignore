@@ -5,4 +5,3 @@ vibecrafted-io-link
 .vibecrafted/
 scripts/installer/.venv/
 scripts/installer/uv.lock
-Makefile

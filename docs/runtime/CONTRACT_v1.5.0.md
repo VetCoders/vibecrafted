@@ -23,7 +23,7 @@ The core premise is simple:
 The current system already has real mechanisms:
 
 - `scripts/vibecrafted` is the command deck.
-- `skills/vc-agents/shell/vetcoders.sh` exposes interactive shell wrappers.
+- `../../agents/shell/vetcoders.sh` exposes interactive shell wrappers.
 - `agents/scripts/*_spawn.sh` perform agent-specific launches.
 - `agents/scripts/lib/*.sh` provide shared spawn, meta, lock, prompt,
   session, zellij, and terminal helpers.

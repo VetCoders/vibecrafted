@@ -51,3 +51,5 @@ vibecrafted-io-link
 /.loctree
 /.antigravitycli
 /vibecrafted-server/target
+/docs/plans
+/.air

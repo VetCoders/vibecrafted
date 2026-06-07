@@ -201,7 +201,10 @@ _vetcoders_skill() {
   if [[ -z "$run_lock" || ! -f "$run_lock" ]]; then
     run_lock="$(_vetcoders_create_run_lock "$run_id" "$tool" "$skill" "$root")" || return 1
   fi
-  local prompt prism_payload prism_command prism_band prism_score memo_file
+  # Default the prism_* locals: polarize only computes them when a --task is
+  # given (see below). Without that, set -u must not trip on the band check at
+  # dispatch time — an empty band falls through to a normal polarize dispatch.
+  local prompt prism_payload="" prism_command="" prism_band="" prism_score="" memo_file=""
   if [[ "$skill" == "polarize" && -n "$_vetcoders_contract_task" ]]; then
     prism_payload="$(_vetcoders_write_polarize_prism_payload "$root" "$run_id" "$_vetcoders_contract_task" "$_vetcoders_contract_no_aicx")" || return 1
     prism_command="$(_vetcoders_polarize_prism_command_text "$root" "$_vetcoders_contract_task" "$_vetcoders_contract_no_aicx")"

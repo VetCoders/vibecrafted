@@ -187,7 +187,7 @@ Remove orphaned skills? [Y/n] y
 
 Installing shell helper...
 Installing VetCoders shell helpers
-  source: ~/hosted/VetCoders/vetcoders-skills/skills/vc-agents/shell/vetcoders.sh
+  source: ~/hosted/VetCoders/vetcoders-skills/agents/shell/vetcoders.sh
   target: ~/.config/vetcoders/vc-skills.sh
   ~/.zshrc: already sourced
 

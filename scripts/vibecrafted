@@ -185,16 +185,16 @@ _resolve_skill_path() {
 _helper_candidates() {
   local repo_source repo_helper
   repo_source="$(_repo_source_root 2>/dev/null || true)"
-  repo_helper="$(_script_repo_root)/skills/vc-agents/shell/vetcoders.sh"
+  repo_helper="$(_script_repo_root)/agents/shell/vetcoders.sh"
   if [[ -n "$repo_source" ]]; then
-    printf '%s\n' "$repo_source/skills/vc-agents/shell/vetcoders.sh"
+    printf '%s\n' "$repo_source/agents/shell/vetcoders.sh"
   fi
   # Prefer the staged control plane over the mutable shared skill store so a
   # freshly updated launcher cannot be shadowed by older installed helpers.
   printf '%s\n' \
-    "$crafted_tools/skills/vc-agents/shell/vetcoders.sh" \
+    "$crafted_tools/agents/shell/vetcoders.sh" \
     "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" \
-    "$crafted_skills/vc-agents/shell/vetcoders.sh" \
+    "$crafted_skills/agents/shell/vetcoders.sh" \
     "$repo_helper"
 }
 

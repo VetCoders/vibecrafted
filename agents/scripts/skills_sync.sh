@@ -192,9 +192,9 @@ for tool in "${tools[@]}"; do
 done
 
 if (( with_shell )); then
-  shell_source="$repo_root/skills/vc-agents/shell/vetcoders.sh"
-  [[ -f "$shell_source" ]] || shell_source="$repo_root/skills/vc-agents/shell/vetcoders.zsh"
-  [[ -f "$shell_source" ]] || shell_source="$repo_root/vc-agents/shell/vetcoders.sh"
+  shell_source="$repo_root/agents/shell/vetcoders.sh"
+  [[ -f "$shell_source" ]] || shell_source="$repo_root/agents/shell/vetcoders.zsh"
+  [[ -f "$shell_source" ]] || shell_source="$repo_root/agents/shell/vetcoders.sh"
   [[ -f "$shell_source" ]] || die "Shell helper file not found: $shell_source"
 
   # shellcheck disable=SC2016
@@ -244,7 +244,7 @@ printf 'Verifying shared skill store on %s\n' "$host"
 ssh -n "$host" 'for f in \
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/scripts/vibecrafted \
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills/vc-agents/SKILL.md \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/shell/vetcoders.sh \
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh; do
   if [ -e "$f" ]; then
     echo "OK $f"

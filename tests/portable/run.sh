@@ -97,10 +97,10 @@ bash -n \
   "$repo_root/agents/scripts/claude_spawn.sh" \
   "$repo_root/agents/scripts/gemini_spawn.sh"
 # Shell helpers are bash-compatible; verify with bash -n
-bash -n "$repo_root/skills/vc-agents/shell/vetcoders.sh"
+bash -n "$repo_root/agents/shell/vetcoders.sh"
 # If zsh is available, also verify zsh syntax
 if command -v zsh >/dev/null 2>&1; then
-  zsh -n "$repo_root/skills/vc-agents/shell/vetcoders.sh"
+  zsh -n "$repo_root/agents/shell/vetcoders.sh"
 fi
 
 workspace="$(mktemp -d)"
@@ -165,7 +165,7 @@ require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/agent
 require_file "$config_dir/vetcoders/vc-skills.sh"
 require_file "$config_dir/zsh/vc-skills.zsh"
 assert_contains "$config_dir/vetcoders/vc-skills.sh" '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. helper shim'
-bad_helper_candidate="\${VIBECRAFTED_ROOT:-}/skills/vc-agents/shell/vetcoders.sh"
+bad_helper_candidate="\${VIBECRAFTED_ROOT:-}/agents/shell/vetcoders.sh"
 assert_not_contains "$config_dir/vetcoders/vc-skills.sh" "$bad_helper_candidate"
 # At least one rcfile must have the source line (depends on SHELL/platform)
 rc_found=0

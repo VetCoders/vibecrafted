@@ -21,9 +21,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   `skills/vc-operator/FEEDBACK_2026-05-20_claude.md`, and
   `skills/vc-operator/FEEDBACK_2026-05-20_claude_runtime.md` are the
   durable operator references instead of transcript-only doctrine.
-- **Wave 5 await/watch rail landed**: `skills/vc-agents/scripts/vibecrafted-await-watch.sh`
+- **Wave 5 await/watch rail landed**: `agents/scripts/vibecrafted-await-watch.sh`
   plus the `spawn_await_watch_pane` hook in
-  `skills/vc-agents/scripts/lib/zellij.sh` give long-running dispatches a
+  `agents/scripts/lib/zellij.sh` give long-running dispatches a
   visible watch surface.
 - **`skills/vc-operator/SKILL.md` patched from 0.1.0 to 2.0.0** with the
   runner contract, why-matrix dispatch discipline, feedback intake, and
@@ -116,7 +116,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- **Prism → Polarize gate (Plan 01)**: `vc-polarize` runner (`skills/vc-agents/shell/vetcoders.sh:1168-1186`) now parses `loct prism --json` output, reads `total_score`, and routes to the default action band: `0..4` abort (no polarize, no memo), `5..8` memo (capture local Loctree tag / context-corpus entry, do not dispatch), `9..12` pass (run full `vc-polarize` agent dispatch), `13..15` doctrine (write default decision into context corpus). The runner also emits a prism preflight that injects the band/score into the polarize prompt so the dispatched agent can cite structural evidence rather than re-deriving it. The same threshold mapping is consumed independently by `vc-operator` (`src/polarize.rs:18-23 PolarizeBand::from_score`) — single source of truth at the boundaries `5 / 9 / 13`.
+- **Prism → Polarize gate (Plan 01)**: `vc-polarize` runner (`agents/shell/vetcoders.sh:1168-1186`) now parses `loct prism --json` output, reads `total_score`, and routes to the default action band: `0..4` abort (no polarize, no memo), `5..8` memo (capture local Loctree tag / context-corpus entry, do not dispatch), `9..12` pass (run full `vc-polarize` agent dispatch), `13..15` doctrine (write default decision into context corpus). The runner also emits a prism preflight that injects the band/score into the polarize prompt so the dispatched agent can cite structural evidence rather than re-deriving it. The same threshold mapping is consumed independently by `vc-operator` (`src/polarize.rs:18-23 PolarizeBand::from_score`) — single source of truth at the boundaries `5 / 9 / 13`.
 - New `.claude-plugin/plugin.json` stub manifests for `skills/vc-polarize/`, `skills/vc-intents/`, and `skills/vc-ownership/` to bring them in line with the rest of the framework's marketplace surface (vc-marbles / vc-init / vc-implement / vc-followup / vc-decorate / vc-hydrate / vc-dou / vc-prune / vc-research / vc-review / vc-release / vc-scaffold / vc-workflow / vc-agents / vc-delegate / vc-partner all already shipped manifests).
 - `vc-release` Release Report Contract: every release report now requires
   four mandatory sections — security gate (Semgrep), exposed surface
@@ -168,7 +168,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
     pre-flight doctor
   - Documented resolution order and notarization expectations in
     `tools/bin/README.md`
-- `skills/vc-agents/scripts/marbles_verify_watch.sh` — standalone detached
+- `agents/scripts/marbles_verify_watch.sh` — standalone detached
   verification poller that waits for `*_verified.md`, updates `state.json` under
   lock, and marks verification as `completed` or `timed_out`. Decouples
   verification from the main watcher process and eliminates watcher holding
