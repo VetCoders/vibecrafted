@@ -332,6 +332,8 @@ _vetcoders_skill_entry() {
   local tool="$1"
   local skill="$2"
   shift 2
-  _vetcoders_skill "$tool" "$skill" "$@"
+  case "$skill" in
+    marbles) _vetcoders_marbles "$tool" "$@" ;;
+    *) _vetcoders_skill "$tool" "$skill" "$@" ;;
+  esac
 }
-

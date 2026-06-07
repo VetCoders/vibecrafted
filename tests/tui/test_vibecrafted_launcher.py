@@ -1368,6 +1368,40 @@ def test_marbles_flags_without_agent_get_actionable_error() -> None:
     assert "Unknown agent: --count" not in result.stderr
 
 
+def test_generic_skill_entry_preserves_marbles_options_for_junie(
+    tmp_path: Path,
+) -> None:
+    capture_file = tmp_path / "marbles-entry-args.txt"
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            f"source {REPO_ROOT / 'skills' / 'vc-agents' / 'shell' / 'vetcoders.sh'}",
+            "_vetcoders_marbles() {",
+            '  printf "%s\\n" "$@" > "$CAPTURE_FILE"',
+            "}",
+            "_vetcoders_skill_entry junie marbles --count 3 --file /tmp/plan.md",
+        ]
+    )
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path / "home")
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    subprocess.run(
+        ["bash", "-lc", script],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    assert capture_file.read_text(encoding="utf-8").splitlines() == [
+        "junie",
+        "--count",
+        "3",
+        "--file",
+        "/tmp/plan.md",
+    ]
+
+
 def test_marbles_delete_control_subcommand_routes_to_helper(tmp_path: Path) -> None:
     home = tmp_path / "home"
     wrapper = tmp_path / "vibecrafted"
