@@ -482,10 +482,12 @@ fn artifact_title(relative: &str, kind: ScaffoldArtifactKind) -> String {
     if kind == ScaffoldArtifactKind::WaveAtlas {
         return "Wave atlas".to_string();
     }
-    let stem = Path::new(relative)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
+    let file_name = relative
+        .rsplit('/')
+        .next()
+        .filter(|part| !part.is_empty())
         .unwrap_or(relative);
+    let stem = file_name.strip_suffix(".md").unwrap_or(file_name);
     stem.replace(['_', '-'], " ")
 }
 
@@ -544,4 +546,46 @@ fn reject_unsafe_artifact_path(operator_dir: &Path, path: &Path) -> io::Result<(
 
 fn now_ts() -> String {
     Utc::now().to_rfc3339()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_relative_markdown_path_rejects_traversal_and_absolute_paths() {
+        for relative in [
+            "",
+            "/brief.md",
+            "\\brief.md",
+            "../brief.md",
+            "briefs/../brief.md",
+            "briefs/./brief.md",
+            "briefs\\brief.md",
+            "briefs/brief.txt",
+        ] {
+            assert!(
+                safe_relative_markdown_path(relative).is_err(),
+                "{relative} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_relative_markdown_path_accepts_nested_markdown_paths() {
+        let path = safe_relative_markdown_path("briefs/WS-1_cut.md").expect("safe path");
+        assert_eq!(path, PathBuf::from("briefs").join("WS-1_cut.md"));
+    }
+
+    #[test]
+    fn artifact_title_uses_string_segments_not_filesystem_resolution() {
+        assert_eq!(
+            artifact_title("briefs/WS-1_design.md", ScaffoldArtifactKind::Brief),
+            "WS 1 design"
+        );
+        assert_eq!(
+            artifact_title("../escape.md", ScaffoldArtifactKind::Other),
+            "escape"
+        );
+    }
 }
