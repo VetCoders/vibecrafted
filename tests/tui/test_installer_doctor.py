@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 import shutil
+import subprocess
 from pathlib import Path
 
 from scripts import vetcoders_install as installer
@@ -387,7 +388,7 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     assert not (crafted_home / "bin" / "vc-intents").exists()
     assert not (crafted_home / "bin" / "vc-ownership").exists()
 
-    refreshed_state = installer.InstallState.load(store_path)
+    refreshed_state = installer.InstallState.load(current_link / "skills")
     assert any(
         entry.endswith("/vc-intents") for entry in refreshed_state.launcher_entries
     )
@@ -602,6 +603,95 @@ def test_install_launcher_does_not_overwrite_unmanaged_dev_wrapper(
     )
     assert not unmanaged.is_symlink()
     assert (launcher_bin / "vc-help").is_symlink()
+
+
+def test_install_python_entrypoint_launchers_replace_managed_shell_wrappers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    current_tools = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
+    console_bin = current_tools / ".venv" / "bin"
+    launcher_bin = home / ".local" / "bin"
+    console_bin.mkdir(parents=True)
+    launcher_bin.mkdir(parents=True)
+
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+
+    for name in installer.PYTHON_ENTRYPOINT_LAUNCHERS:
+        _write_executable(
+            console_bin / name,
+            f"#!{console_bin / 'python3'}\nprint('runtime {name}')\n",
+        )
+    (launcher_bin / "vibecrafted").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (launcher_bin / "vc-agents").symlink_to("vibecrafted")
+
+    installed = installer._install_python_entrypoint_launchers(current_tools)
+
+    assert len(installed) == len(installer.PYTHON_ENTRYPOINT_LAUNCHERS)
+    vc_agents = launcher_bin / "vc-agents"
+    assert vc_agents.is_symlink()
+    assert vc_agents.resolve(strict=False) == console_bin / "vc-agents"
+    assert (launcher_bin / "vibecrafted-resume").resolve(strict=False) == (
+        console_bin / "vibecrafted-resume"
+    )
+
+
+def test_cleanse_state_home_agency_moves_only_executable_payloads(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    current_tools = (
+        home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
+    )
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+
+    for name in ("skills", "helpers", "config", "bin", "scripts"):
+        payload = crafted_home / name
+        payload.mkdir(parents=True)
+        (payload / "payload.txt").write_text(name, encoding="utf-8")
+    tmp_dir = crafted_home / "tmp"
+    tmp_dir.mkdir(parents=True)
+    (tmp_dir / "marbles.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    (tmp_dir / "note.txt").write_text("state", encoding="utf-8")
+    (crafted_home / "artifacts").mkdir(parents=True)
+
+    moved = installer.cleanse_state_home_agency(current_tools)
+
+    assert moved == 6
+    for name in ("skills", "helpers", "config", "bin", "scripts"):
+        assert not (crafted_home / name).exists()
+        assert (
+            current_tools / ".legacy-state-agency" / name / "payload.txt"
+        ).read_text(encoding="utf-8") == name
+    assert not (tmp_dir / "marbles.sh").exists()
+    assert (tmp_dir / "note.txt").is_file()
+    assert (crafted_home / "artifacts").is_dir()
+    assert (current_tools / ".legacy-state-agency" / "tmp" / "marbles.sh").is_file()
+
+
+def test_ensure_runtime_pip_bootstraps_when_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append([str(part) for part in cmd])
+        if cmd[2] == "pip" and cmd[3] == "--version":
+            return subprocess.CompletedProcess(cmd, 1)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(installer.subprocess, "run", fake_run)
+
+    installer._ensure_runtime_pip(tmp_path / "python3")
+
+    assert calls == [
+        [str(tmp_path / "python3"), "-m", "pip", "--version"],
+        [str(tmp_path / "python3"), "-m", "ensurepip", "--upgrade"],
+    ]
 
 
 def test_run_doctor_ignores_ds_store_in_stale_file_check(

@@ -11,7 +11,7 @@ BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
 
-.PHONY: help vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon install install-auto install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new
+.PHONY: help vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon install install-auto install-all install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new
 
 help:
 	@printf "\n"
@@ -26,6 +26,7 @@ help:
 	@printf "  \033[2martifacts storage, runtime horse, shell helpers, skills, or dry-run mode.\033[0m\n"
 	@printf "\n"
 	@printf "  \033[33m◆\033[0m  make install-auto  \033[2mAutomation path: same installer, auto-approved\033[0m\n"
+	@printf "  \033[33m◆\033[0m  make install-all   \033[2mIdempotent runtime knife: foundations, venv launchers, store cleanse\033[0m\n"
 	@printf "  \033[33m◆\033[0m  make install RUNTIME=wezterm \033[2mInstall with a lab runtime selected\033[0m\n"
 	@printf "\n"
 	@printf "  \033[32m✓\033[0m  make doctor        \033[2mVerify installation health\033[0m\n"
@@ -95,6 +96,12 @@ install-auto: init-hooks
 	fi; \
 	export PATH="$$HOME/.local/bin:$$PATH"; \
 	VIBECRAFTED_RUNTIME="$(RUNTIME)" uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST) --yes --quiet
+
+install-all: init-hooks
+	@bash scripts/install-foundations.sh
+	@bash agents/scripts/install-frontier-config.sh --source "$(SOURCE)" || printf '[warn] Frontier config skipped (non-fatal)\n'
+	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --compact --non-interactive --mirror
+	@bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes
 
 skills:
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --non-interactive

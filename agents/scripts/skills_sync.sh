@@ -242,10 +242,10 @@ fi
 
 printf 'Verifying shared skill store on %s\n' "$host"
 ssh -n "$host" 'for f in \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/codex_spawn.sh \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/claude_spawn.sh \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/gemini_spawn.sh \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents/scripts/observe.sh; do
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/scripts/vibecrafted \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills/vc-agents/SKILL.md \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills/vc-agents/shell/vetcoders.sh \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh; do
   if [ -e "$f" ]; then
     echo "OK $f"
   else

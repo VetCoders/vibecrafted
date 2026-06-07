@@ -160,6 +160,34 @@ def supervised_skill_main(skill: str, argv: Sequence[str] | None = None) -> int:
     return _print_completed(run_id, payload)
 
 
+def agents_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("agents", argv)
+
+
+def followup_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("followup", argv)
+
+
+def implement_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("implement", argv)
+
+
+def marbles_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("marbles", argv)
+
+
+def prune_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("prune", argv)
+
+
+def review_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("review", argv)
+
+
+def scaffold_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("scaffold", argv)
+
+
 def _prepare_research(args: Sequence[str], run_id: str) -> tuple[int, str]:
     command = [str(deck_path()), "research", *args]
     if not _has_flag(args, "--runtime"):
@@ -313,3 +341,49 @@ def resume_main(argv: Sequence[str] | None = None) -> int:
         command = ["gemini", "--continue", session_id, *extra]
     print(" ".join(command))
     return subprocess.call(command)
+
+
+def sandbox_main(argv: Sequence[str] | None = None) -> int:
+    from vibecrafted_core.sandbox import MsbserverLifecycle, SandboxPolicy
+    from vibecrafted_core.sandbox.policy import default_policy_path
+
+    parser = argparse.ArgumentParser(description="Manage Vibecrafted microsandbox.")
+    parser.add_argument("command", choices=("status", "start", "stop", "policy"))
+    parser.add_argument("--policy", dest="policy_path")
+    args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+
+    lifecycle = MsbserverLifecycle()
+    if args.command == "status":
+        state = "running" if lifecycle.is_running() else "not running"
+        print(f"msbserver: {state}")
+        if lifecycle.pid_file.exists():
+            print(f"pid_file: {lifecycle.pid_file}")
+        return 0
+    if args.command == "start":
+        ok = lifecycle.ensure_running()
+        print(f"msbserver: {'running' if ok else 'not running'}")
+        if not ok:
+            print("hint: install microsandbox or set MSBSERVER_EXE", file=sys.stderr)
+        return 0 if ok else 1
+    if args.command == "stop":
+        lifecycle.stop()
+        print("msbserver: stopped")
+        return 0
+
+    policy = SandboxPolicy.load(args.policy_path, root=Path.cwd())
+    path = (
+        Path(args.policy_path).expanduser()
+        if args.policy_path
+        else default_policy_path()
+    )
+    print(f"policy_file: {path}")
+    print(f"cpu: {policy.cpu}")
+    print(f"memory_mb: {policy.memory_mb}")
+    print(f"network: {policy.network}")
+    print(f"filesystem_root_readonly: {policy.filesystem_root_readonly}")
+    print(f"tmp_writable: {policy.tmp_writable}")
+    print("allow_hosts: " + ", ".join(policy.allow_hosts))
+    print("mounts:")
+    for mount in policy.mounts:
+        print(f"  - {mount}")
+    return 0

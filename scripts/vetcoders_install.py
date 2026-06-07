@@ -1550,6 +1550,7 @@ def _installer_managed_launcher_names() -> List[str]:
         "vibecrafted",
         "vibecraft",
         *LAUNCHER_WRAPPERS,
+        *PYTHON_ENTRYPOINT_LAUNCHERS,
         *LEGACY_LAUNCHER_NAMES,
     ]
 
@@ -1710,6 +1711,21 @@ LAUNCHER_WRAPPERS = [
     *[f"vc-{name}" for name in SKILL_WRAPPER_NAMES],
 ]
 
+PYTHON_ENTRYPOINT_LAUNCHERS = [
+    "vc-agents",
+    "vc-followup",
+    "vc-implement",
+    "vc-marbles",
+    "vc-prune",
+    "vc-research",
+    "vc-research-await",
+    "vc-research-synthesize",
+    "vc-review",
+    "vc-sandbox",
+    "vc-scaffold",
+    "vibecrafted-resume",
+]
+
 LEGACY_LAUNCHER_NAMES = [
     "marble-pack",
     "aicx-pack",
@@ -1798,6 +1814,7 @@ def _is_framework_managed_launcher(entry: Path) -> bool:
         "vibecrafted",
         "vibecraft",
         *[wrapper.lower() for wrapper in LAUNCHER_WRAPPERS],
+        *[wrapper.lower() for wrapper in PYTHON_ENTRYPOINT_LAUNCHERS],
         *[legacy.lower() for legacy in LEGACY_LAUNCHER_NAMES],
     }
     if name in explicit_names:
@@ -2018,8 +2035,10 @@ _RSYNC_EXCLUDES = {".DS_Store", ".loctree"}
 _CONTROL_PLANE_EXCLUDES = {
     ".DS_Store",
     ".git",
+    ".legacy-state-agency",
     ".loctree",
     ".pytest_cache",
+    ".venv",
     "__pycache__",
 }
 
@@ -2507,6 +2526,23 @@ def create_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
     link.symlink_to(target)
 
 
+def create_skill_view_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
+    """Create an agent skill view, replacing stale legacy store views."""
+    if target == link:
+        if dry_run:
+            print(f"  {dim('same-path')} {target}")
+        return
+    if dry_run:
+        print(f"  {dim('ln -s')} {target} -> {link}")
+        return
+    if link.exists() or link.is_symlink():
+        if link.is_symlink() or link.is_file():
+            link.unlink()
+        elif link.is_dir():
+            shutil.rmtree(link)
+    link.symlink_to(target)
+
+
 def _copy_managed_launcher(src: Path, dst: Path) -> bool:
     if dst.exists() or dst.is_symlink():
         if not _is_replaceable_framework_launcher(dst):
@@ -2521,6 +2557,178 @@ def _copy_managed_launcher(src: Path, dst: Path) -> bool:
     shutil.copy2(src, dst)
     dst.chmod(0o755)
     return True
+
+
+def _canonical_store_path(shared_home: Path, *, create: bool = False) -> Path:
+    """Return the canonical skill store under staged tools, not state home."""
+    current_link = _current_tools_link(shared_home)
+    if current_link.exists() or current_link.is_symlink():
+        return current_link / "skills"
+    if create:
+        return _ensure_current_tools_target(shared_home) / "skills"
+    return shared_home / "skills"
+
+
+def _load_install_state(store_path: Path) -> InstallState:
+    state = InstallState.load(store_path)
+    if (store_path / STATE_FILE).exists():
+        return state
+
+    legacy_store = vibecrafted_home() / "skills"
+    if legacy_store != store_path and (legacy_store / STATE_FILE).exists():
+        return InstallState.load(legacy_store)
+    return state
+
+
+def _runtime_venv_dir(current_tools: Path) -> Path:
+    return current_tools / ".venv"
+
+
+def _runtime_venv_python(current_tools: Path) -> Path:
+    return _runtime_venv_dir(current_tools) / "bin" / "python3"
+
+
+def _ensure_runtime_pip(python_bin: Path) -> None:
+    pip_check = subprocess.run(
+        [str(python_bin), "-m", "pip", "--version"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if pip_check.returncode == 0:
+        return
+    subprocess.run(
+        [str(python_bin), "-m", "ensurepip", "--upgrade"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+
+def _ensure_runtime_venv(current_tools: Path, dry_run: bool = False) -> Optional[Path]:
+    """Create/update the installed runtime venv and editable core packages."""
+    python_bin = _runtime_venv_python(current_tools)
+    if dry_run:
+        print(f"  {dim('venv')} {python_bin}")
+        return python_bin
+
+    if not python_bin.exists():
+        subprocess.run(
+            [sys.executable, "-m", "venv", str(_runtime_venv_dir(current_tools))],
+            check=True,
+        )
+
+    _ensure_runtime_pip(python_bin)
+
+    packages = [current_tools / "vibecrafted-core", current_tools / "vibecrafted-mcp"]
+    for package in packages:
+        if not (package / "pyproject.toml").is_file():
+            continue
+        subprocess.run(
+            [
+                str(python_bin),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-deps",
+                "-e",
+                str(package),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+
+    subprocess.run(
+        [str(python_bin), "-c", "import vibecrafted_core"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    return python_bin
+
+
+def _install_python_entrypoint_launchers(
+    current_tools: Path, dry_run: bool = False
+) -> List[Path]:
+    """Expose Python console scripts from the installed runtime venv."""
+    installed: List[Path] = []
+    console_bin = _runtime_venv_dir(current_tools) / "bin"
+    launcher_bin_dir = vibecrafted_launcher_bin()
+    if not dry_run:
+        launcher_bin_dir.mkdir(parents=True, exist_ok=True)
+
+    for name in PYTHON_ENTRYPOINT_LAUNCHERS:
+        src = console_bin / name
+        dst = launcher_bin_dir / name
+        if not dry_run and not src.exists():
+            print(f"  {WARN} Runtime entrypoint missing: {src}")
+            continue
+        create_symlink(src, dst, dry_run=dry_run)
+        installed.append(dst)
+    return installed
+
+
+def _state_agency_quarantine(current_tools: Path) -> Path:
+    return current_tools / ".legacy-state-agency"
+
+
+def _clear_immutable_flags(path: Path) -> None:
+    if sys.platform != "darwin":
+        return
+    subprocess.run(
+        ["chflags", "-R", "nouchg", str(path)],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _available_quarantine_path(dst: Path) -> Path:
+    if not (dst.exists() or dst.is_symlink()):
+        return dst
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    candidate = dst.with_name(f"{dst.name}-{stamp}-{os.getpid()}")
+    counter = 1
+    while candidate.exists() or candidate.is_symlink():
+        candidate = dst.with_name(f"{dst.name}-{stamp}-{os.getpid()}-{counter}")
+        counter += 1
+    return candidate
+
+
+def _move_state_agency_path(src: Path, dst: Path, dry_run: bool = False) -> bool:
+    if not (src.exists() or src.is_symlink()):
+        return False
+    if dry_run:
+        print(f"  {dim('move')} {src} -> {dst}")
+        return True
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst = _available_quarantine_path(dst)
+    if src.is_symlink() or src.is_file():
+        _clear_immutable_flags(src)
+        shutil.move(str(src), str(dst))
+        return True
+    if src.is_dir():
+        shutil.move(str(src), str(dst))
+        return True
+    return False
+
+
+def cleanse_state_home_agency(current_tools: Path, dry_run: bool = False) -> int:
+    """Move executable agency out of ~/.vibecrafted and into staged tools."""
+    state_home = vibecrafted_home()
+    quarantine = _state_agency_quarantine(current_tools)
+    moved = 0
+    for name in ("skills", "helpers", "config", "bin", "scripts"):
+        if _move_state_agency_path(state_home / name, quarantine / name, dry_run):
+            moved += 1
+
+    tmp_dir = state_home / "tmp"
+    if tmp_dir.is_dir():
+        for script in sorted(tmp_dir.glob("*.sh")):
+            if _move_state_agency_path(
+                script, quarantine / "tmp" / script.name, dry_run
+            ):
+                moved += 1
+    return moved
 
 
 AGENT_COMMAND_MARKER = "<!-- vibecrafted-managed-agent-command -->"
@@ -3207,7 +3415,10 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         for name in ["vibecrafted", *LAUNCHER_WRAPPERS]
     }
     missing_wrappers = [
-        name for name in LAUNCHER_WRAPPERS if wrapper_locations.get(name) is None
+        name
+        for name in LAUNCHER_WRAPPERS
+        if name not in PYTHON_ENTRYPOINT_LAUNCHERS
+        and wrapper_locations.get(name) is None
     ]
     if missing_wrappers:
         findings.append(
@@ -3224,7 +3435,9 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             {
                 str(path.parent)
                 for name, path in wrapper_locations.items()
-                if name in LAUNCHER_WRAPPERS and path is not None
+                if name in LAUNCHER_WRAPPERS
+                and name not in PYTHON_ENTRYPOINT_LAUNCHERS
+                and path is not None
             }
         )
         findings.append(
@@ -3232,6 +3445,37 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 "ok",
                 "launcher-wrappers",
                 ", ".join(found_dirs) if found_dirs else "wrappers present",
+            )
+        )
+
+    python_entrypoint_issues: List[str] = []
+    for name in PYTHON_ENTRYPOINT_LAUNCHERS:
+        launcher_path = _find_launcher_wrapper(name)
+        if launcher_path is None:
+            python_entrypoint_issues.append(f"{name}:missing")
+            continue
+        try:
+            resolved = launcher_path.resolve(strict=False)
+        except OSError:
+            resolved = launcher_path
+        if ".venv" not in resolved.parts:
+            python_entrypoint_issues.append(f"{name}:not-runtime-venv")
+    if python_entrypoint_issues:
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "python-entrypoints",
+                "runtime venv launcher issue(s): "
+                + ", ".join(python_entrypoint_issues[:6])
+                + (" ..." if len(python_entrypoint_issues) > 6 else ""),
+            )
+        )
+    else:
+        findings.append(
+            DoctorFinding(
+                "ok",
+                "python-entrypoints",
+                "all Python entrypoints resolve through runtime venv",
             )
         )
 
@@ -3300,6 +3544,9 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     # 7. Spawn pipeline smoke: validate common.sh sources cleanly and key functions exist
     common_sh = None
     for cand in [
+        current_link.resolve() / "agents" / "scripts" / "common.sh"
+        if current_link.exists()
+        else None,
         current_link.resolve() / "skills" / "vc-agents" / "scripts" / "common.sh"
         if current_link.exists()
         else None,
@@ -4010,7 +4257,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
 
     # --- Confirm ---
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
+    store_path = _canonical_store_path(shared_home, create=not dry_run)
 
     print(bold("Plan:"))
     print(f"  Skills:    {len(selected_skills)} -> {cyan(str(store_path))}")
@@ -4085,6 +4332,17 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         print(f"  {OK} {current_tools}")
     print()
 
+    if current_tools is not None:
+        print(bold("Preparing runtime Python..."))
+        try:
+            runtime_python = _ensure_runtime_venv(current_tools, dry_run=dry_run)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(f"  {MISS} Runtime venv failed: {exc}")
+            return 1
+        if runtime_python is not None:
+            print(f"  {OK} {runtime_python}")
+        print()
+
     # --- Execute: symlink views ---
     print(bold("Linking agent views..."))
     for rt in all_runtimes:
@@ -4095,7 +4353,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         for name in selected_skills:
             default = store_path / name
             link = rt_skills / name
-            create_symlink(default, link, dry_run=dry_run)
+            create_skill_view_symlink(default, link, dry_run=dry_run)
     print()
 
     # --- Execute: agent command surfaces ---
@@ -4155,6 +4413,20 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
 
     # --- Execute: vibecrafted launcher ---
     _install_launcher(repo_root, dry_run, update_rc=write_shell_rc)
+    if current_tools is not None:
+        print(bold("Installing runtime Python launchers..."))
+        installed_entrypoints = _install_python_entrypoint_launchers(
+            current_tools, dry_run=dry_run
+        )
+        print(f"  {OK} {len(installed_entrypoints)} launcher(s)")
+        print()
+
+        moved_agency = cleanse_state_home_agency(current_tools, dry_run=dry_run)
+        if moved_agency:
+            print(f"  {OK} Moved {moved_agency} state-home agency payload(s)")
+        else:
+            print(f"  {OK} State home has no agency payloads to move")
+        print()
 
     # --- Fix Gemini plan.directory if it points into .vibecrafted ---
     _configure_gemini_plans(dry_run)
@@ -4228,6 +4500,8 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
                 if launcher_dst != canonical_launcher:
                     create_symlink(canonical_launcher, launcher_dst)
                 for wrapper in LAUNCHER_WRAPPERS:
+                    if wrapper in PYTHON_ENTRYPOINT_LAUNCHERS:
+                        continue
                     create_symlink(Path("vibecrafted"), launcher_bin_dir / wrapper)
                 # Replace old vibecraft binary with a thin redirect
                 legacy_dst = launcher_bin_dir / "vibecraft"
@@ -4237,6 +4511,8 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
         else:
             for launcher_bin_dir in _launcher_bin_dirs():
                 for wrapper in LAUNCHER_WRAPPERS:
+                    if wrapper in PYTHON_ENTRYPOINT_LAUNCHERS:
+                        continue
                     create_symlink(
                         Path("vibecrafted"), launcher_bin_dir / wrapper, dry_run=True
                     )
@@ -4340,7 +4616,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     fw_ver = get_framework_version(repo_root)
 
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
+    store_path = _canonical_store_path(shared_home, create=not dry_run)
     log_path = shared_home / "install.log"
 
     # --- Discover skills (before redirecting stdout) ---
@@ -4503,6 +4779,23 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             _compact_line(out, green("\u2713"), "Tools", "staged current refreshed")
         print()
 
+        if current_tools is not None:
+            print("Preparing runtime Python:")
+            try:
+                runtime_python = _ensure_runtime_venv(current_tools, dry_run=dry_run)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                print(f"  FAILED: {exc}")
+                _clear_compact_status(out)
+                out.write(
+                    "\n  "
+                    + red("Install stopped")
+                    + " — runtime venv could not import vibecrafted_core\n"
+                )
+                return 1
+            print(f"  python: {runtime_python}")
+            _compact_line(out, green("\u2713"), "Python", "runtime venv ready")
+            print()
+
         # Compact status lines on real stdout
         _compact_line(
             out, green("\u2713"), "Skills", f"{len(selected_skills)} installed"
@@ -4518,7 +4811,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             for name in selected_skills:
                 default = store_path / name
                 link = rt_skills / name
-                create_symlink(default, link, dry_run=dry_run)
+                create_skill_view_symlink(default, link, dry_run=dry_run)
         print()
 
         print("Installing agent commands:")
@@ -4603,6 +4896,26 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 
         # Launcher
         _install_launcher(repo_root, dry_run, update_rc=write_shell_rc)
+        if current_tools is not None:
+            print("Installing runtime Python launchers:")
+            installed_entrypoints = _install_python_entrypoint_launchers(
+                current_tools, dry_run=dry_run
+            )
+            print(f"  installed: {len(installed_entrypoints)}")
+            _compact_line(
+                out,
+                green("\u2713"),
+                "Py launchers",
+                f"{len(installed_entrypoints)} runtime venv entrypoints",
+            )
+            moved_agency = cleanse_state_home_agency(current_tools, dry_run=dry_run)
+            print(f"  state agency moved: {moved_agency}")
+            _compact_line(
+                out,
+                green("\u2713"),
+                "State home",
+                "agency-free" if not moved_agency else f"moved {moved_agency}",
+            )
 
         # Fix Gemini plan.directory if it points into .vibecrafted
         _configure_gemini_plans(dry_run)
@@ -4718,8 +5031,8 @@ def _known_bundle_names() -> List[str]:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
-    state = InstallState.load(store_path)
+    store_path = _canonical_store_path(shared_home)
+    state = _load_install_state(store_path)
     has_manifest = bool(state.skills)
 
     if getattr(args, "fix_rc", False):
@@ -4949,8 +5262,8 @@ def cmd_layout(args: argparse.Namespace) -> int:
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
-    state = InstallState.load(store_path)
+    store_path = _canonical_store_path(shared_home)
+    state = _load_install_state(store_path)
     state_file = store_path / STATE_FILE
     dry_run = args.dry_run
     bundle = set(_known_bundle_names())
@@ -5195,7 +5508,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 def cmd_restore(args: argparse.Namespace) -> int:
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
+    store_path = _canonical_store_path(shared_home)
     dry_run = args.dry_run
     backup_root = _backup_root(store_path)
 

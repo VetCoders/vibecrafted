@@ -8,6 +8,18 @@ dependencies = []
 
 [project.scripts]
 vibecrafted = "vibecrafted_core.cli:main"
+vc-agents = "vibecrafted_core.wrappers:agents_main"
+vc-followup = "vibecrafted_core.wrappers:followup_main"
+vc-implement = "vibecrafted_core.wrappers:implement_main"
+vc-marbles = "vibecrafted_core.wrappers:marbles_main"
+vc-prune = "vibecrafted_core.wrappers:prune_main"
+vc-research = "vibecrafted_core.wrappers:research_main"
+vc-research-await = "vibecrafted_core.wrappers:research_await_main"
+vc-research-synthesize = "vibecrafted_core.wrappers:research_synthesize_main"
+vc-review = "vibecrafted_core.wrappers:review_main"
+vc-sandbox = "vibecrafted_core.wrappers:sandbox_main"
+vc-scaffold = "vibecrafted_core.wrappers:scaffold_main"
+vibecrafted-resume = "vibecrafted_core.wrappers:resume_main"
 
 [project.optional-dependencies]
 sandbox = ["aiohttp >= 3.9"]
