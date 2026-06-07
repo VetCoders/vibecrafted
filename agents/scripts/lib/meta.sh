@@ -99,6 +99,9 @@ try:
 except ValueError:
     loop_nr_value = loop_nr
 payload = {
+    # created_at is the stable spawn time; updated_at mutates on every
+    # heartbeat, so duration_s must be measured from created_at, not it.
+    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     "status": status,
     "agent": agent,
@@ -293,7 +296,9 @@ meta_path, status, exit_code = sys.argv[1:4]
 with open(meta_path, "r", encoding="utf-8") as fh:
     payload = json.load(fh)
 completed_at = dt.datetime.now(dt.timezone.utc)
-started_at = payload.get("updated_at")
+# Prefer the stable created_at; fall back to updated_at for metas written
+# before created_at existed, so old runs still get a (looser) duration.
+started_at = payload.get("created_at") or payload.get("updated_at")
 duration_s = None
 if isinstance(started_at, str):
     try:
