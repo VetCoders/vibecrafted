@@ -1,6 +1,7 @@
 #![recursion_limit = "512"]
 
 pub mod app;
+pub mod control;
 pub mod scaffold;
 pub mod theme;
 

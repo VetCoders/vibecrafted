@@ -11,7 +11,7 @@ BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
 
-.PHONY: help vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon install install-auto install-all install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new
+.PHONY: help vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon install install-auto install-all install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test
 
 help:
 	@printf "\n"
@@ -482,3 +482,50 @@ install-hammerspoon:
 
 test-hammerspoon:
 	@bash tests/hammerspoon_smoke.sh
+
+# -----------------------------------------------------------------------------
+# Task 24.A-2 — vibecrafted-server (control-plane read surface).
+#
+# The Rust workspace under vibecrafted-server/ is the remote-observability
+# server: `control-core` is a read-only typed mirror of the same
+# ~/.vibecrafted/control_plane/ the Python runtime writes, and `web` is a
+# Leptos 0.8 SSR axum app that exposes it. It is NOT wired by install-all —
+# these targets are the reproducible run/build/verify entry points.
+#
+# Live reads (curl-smoke after `make server`):
+#   GET /api/control/state         merged StateView (active/recent/warnings/events)
+#   GET /api/control/runs          every runs/<id>.json snapshot, newest-first
+#   GET /api/control/runs/{run_id} a single run, or 404 JSON
+#
+# The bin is built/run with the `ssr` feature (the bare `cargo build` main is a
+# hydrate stub). LEPTOS_* env is exported here because, run directly (not under
+# cargo-leptos), get_configuration(None) reads the environment, not the
+# Cargo.toml [package.metadata.leptos] block. The host linker fix
+# (-ld_classic, for Leptos' long symbol names) lives in
+# vibecrafted-server/.cargo/config.toml so plain cargo works too.
+# -----------------------------------------------------------------------------
+SERVER_DIR  := vibecrafted-server
+SERVER_BIN  := vibecrafted-server-web
+SERVER_ADDR ?= 127.0.0.1:3024
+LEPTOS_RUN_ENV := \
+	LEPTOS_OUTPUT_NAME=$(SERVER_BIN) \
+	LEPTOS_SITE_ROOT=target/site \
+	LEPTOS_SITE_PKG_DIR=pkg \
+	LEPTOS_ENV=DEV \
+	LEPTOS_SITE_ADDR=$(SERVER_ADDR)
+
+server-build:
+	@cd $(SERVER_DIR) && cargo build -p $(SERVER_BIN) --no-default-features --features ssr
+
+server: server-build
+	@echo "[server] control plane: $${VIBECRAFTED_HOME:-$$HOME/.vibecrafted}/control_plane"
+	@echo "[server] listening on  http://$(SERVER_ADDR)   (Ctrl-C to stop)"
+	@echo "[server] reads: /api/control/state  /api/control/runs  /api/control/runs/{run_id}"
+	@cd $(SERVER_DIR) && env $(LEPTOS_RUN_ENV) ./target/debug/$(SERVER_BIN)
+
+server-check:
+	@cd $(SERVER_DIR) && cargo clippy -p control-core -- -D warnings
+	@cd $(SERVER_DIR) && cargo clippy -p $(SERVER_BIN) --no-default-features --features ssr -- -D warnings
+
+server-test:
+	@cd $(SERVER_DIR) && cargo test -p control-core

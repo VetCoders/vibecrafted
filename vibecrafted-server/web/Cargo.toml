@@ -21,6 +21,7 @@ leptos_meta = { version = "0.8" }
 control-core = { path = "../control-core", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
 
 axum = { version = "0.8", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
@@ -57,6 +58,7 @@ ssr = [
     "dep:control-core",
     "dep:serde",
     "dep:serde_json",
+    "dep:chrono",
     "leptos/ssr",
     "leptos_router/ssr",
     "leptos_meta/ssr",

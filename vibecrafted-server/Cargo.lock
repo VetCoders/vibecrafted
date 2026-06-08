@@ -2390,6 +2390,7 @@ name = "vibecrafted-server-web"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "console_error_panic_hook",
  "control-core",
  "http-body-util",
