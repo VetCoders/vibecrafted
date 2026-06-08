@@ -139,6 +139,30 @@ Living Tree etiquette (verbatim) · Loctree-first · recovery hint · branch+com
   brief", "we are 1:1 so no briefs needed", "the master-dispatch table is enough". A plan without
   per-cut briefs is a shell, not a plan. No exceptions, regardless of perceived simplicity.
 
+### 5.5 DRIVER.md (HARD-GATE — the operator's hand-off driver)
+
+Alongside the briefs, render **one `DRIVER.md`** co-located with `briefs/`. It is the single
+self-sufficient artifact a human operator (or a cold fleet) drives the whole plan from **when the
+in-thread loop dies**. NOT optional, NOT a re-skin of the atlas — it is the executable hand-off.
+It MUST contain all five:
+
+1. **Full absolute paths** — every plan artifact, brief, orient evidence, and input/fixture, as
+   copy-pasteable absolute paths.
+2. **Dependency graph WITH a `why` on every edge** — what-after-what AND why: why each cut precedes
+   the next; why a pair is **SEQUENCE** (shared file domain → Living Tree conflict) vs **PARALLEL**
+   (disjoint domains → safe concurrent); and where every **⛔ operator-button STOP** sits (push/merge,
+   product decisions). A graph without `why` is a diagram, not a driver.
+3. **Ready commands** — the exact launcher line (`vibecrafted <workflow> <agent> --file <brief>`) for
+   EVERY remaining cut, in dispatch order, tagged SEQUENCE / PARALLEL / STOP, each followed by its
+   per-cut verify command. A human pastes these verbatim if the loop fails.
+4. **The state alphabet + the `[ ]→[x]` rule, reproduced verbatim** (mirrors Measurement):
+   `[ ]` todo · `[~]` running · `[?]` done-unverified · `[!]` blocked · `[x]` verifier-green.
+   **Only a delivery-verifier flips `[~]→[x]`; an agent's claim NEVER reaches `[x]` on its own.**
+   The rule lives IN the DRIVER on purpose — so that mid-dispatch nobody promotes a claim to done
+   without re-running the verifier. That promotion-without-proof is the single failure mode that
+   wrecks an operator run ("się zajebiemy"). Encode it where the dispatcher's eyes are.
+5. **Live status snapshot** + `dou-index = |[x]| / total`.
+
 ### 6. Serve & review (editable artifacts via vibecrafted-server)
 
 The plan + briefs are **editable artifacts**, not a wall of inline questions. The flow is:
@@ -158,8 +182,10 @@ must be multi-tab + editable from day one, not a static dump.
 `vibecrafted-server/control-core` that refuses the scaffold→implement baton until: master-dispatch
 has a wave atlas + dependency graph; every cut has a `briefs/<wave>-<slot>_<slug>.md` with all 12
 sections; acceptance bullets are atomic + verifier-backed; a design doc exists for every cut flagged
-`needs_design`. The gate is **machine-checked, not agent-promised** — it is the same artifact-as-truth
-gate the async runtime uses between every read-write cadence handoff.
+`needs_design`; **a `DRIVER.md` exists and carries all five (full paths · why-annotated graph ·
+ready commands · the `[ ]→[x]` rule verbatim · status snapshot)**. The gate is **machine-checked, not
+agent-promised** — it is the same artifact-as-truth gate the async runtime uses between every
+read-write cadence handoff.
 
 ## Measurement (the armor)
 
@@ -175,6 +201,13 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
 - **Research-first is hard-block, not polish.** No plan from memory; derive from repo/runtime truth.
 - **A brief for every cut — no exceptions.** Per-cut briefs are the hard-gate (Phase 5). A plan
   whose cuts lack briefs is a shell; the scaffold-doctor refuses to hand it off.
+- **A DRIVER.md — no exceptions (Phase 5.5).** The operator hand-off driver (full paths · why-annotated
+  graph · ready commands · the `[ ]→[x]` rule verbatim · status snapshot) is part of the scaffold-doctor
+  gate. A plan a human can't drive from one file when the loop dies is not handoff-ready.
+- **Durable artifacts NEVER go to `/tmp`.** `/tmp` is ephemeral scratch only — it is wiped, untracked,
+  and invisible to the operator's tooling and sync. Every plan, brief, DRIVER, tracker, journal, report,
+  and design doc lands in the **canonical store**: `~/.vibecrafted/artifacts/<org>/<repo>/<DATE>/plans/`
+  (mirrors the reports layout). Writing a durable artifact to `/tmp` is a process failure, not a shortcut.
 - **Serve, don't interrogate.** Render editable artifacts and review them through `vibecrafted-server`;
   the operator edits the plan, not answers twenty mid-scaffold questions.
 - **Measure, don't claim.** A cut is done when its verifier is green, never when an agent says so.
