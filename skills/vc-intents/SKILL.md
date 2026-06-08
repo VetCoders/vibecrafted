@@ -10,6 +10,9 @@ description: >
   Trigger phrases: "intents", "co z planu siedzi", "which planned items exist",
   "what from the plan is in code", "check intent coverage", "planned vs code",
   "highest truth", "checklist from intents".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-intents — Intention To Runtime Truth
@@ -45,6 +48,14 @@ memory), `vc-loctree` (live repo perception, structural verification).
 
 > Plans are cheap.
 > The truth is whether the plan actually landed in runtime.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Core doctrine
 

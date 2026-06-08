@@ -7,6 +7,9 @@ description: >
   blast radius, dead code. No edit without orientation. No delete without 
   impact. No create without search.
   The craftsman studies the grain before cutting.
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # Loctree — Your Senses in the Codebase
@@ -26,6 +29,14 @@ workflow-specific repo work as blocked until repo truth exists.
 
 Use repo-view, focus, slice, impact, find, and follow as relevant. If the task
 is not repo-specific, say so explicitly instead of pretending a map exists.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## The Craft
 

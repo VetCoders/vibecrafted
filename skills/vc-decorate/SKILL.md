@@ -12,6 +12,9 @@ description: >
   "premium pass", "finish the experience", "make it feel intentional",
   "coherence audit", "design system cleanup", "interactive demo", "animate",
   "add hover effects", "make it feel nice", "visual polish".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-decorate — Coherence First. Premium Second.
@@ -73,6 +76,14 @@ more complete.
 **Premium is not ornament. Premium is coherence.**
 
 ---
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Core Rule: Detect, Don't Dictate
 

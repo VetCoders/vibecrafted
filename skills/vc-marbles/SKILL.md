@@ -29,6 +29,9 @@ compatibility:
 requires:
   - vc-init
   - loctree
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-marbles — Deliberate Excess (Worker-Blind, Swarm-Wide)
@@ -88,6 +91,14 @@ fresh agent in a convergence loop. `--count` controls outer loop
 iterations.
 
 ---
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Purpose
 

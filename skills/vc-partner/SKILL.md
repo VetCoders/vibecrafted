@@ -20,6 +20,9 @@ compatibility:
     - multi_tool_use.parallel
     - web.run
     - js_repl
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-partner
@@ -63,6 +66,14 @@ plan as provisional until repo truth exists.
 Use it to produce or refresh the Code-Derived Application Map before building
 the plan with `vc-scaffold`, choosing execution lanes, or judging shape
 fidelity against live code.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Prime Directive
 

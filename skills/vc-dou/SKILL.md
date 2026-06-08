@@ -11,6 +11,9 @@ description: >
   "what's undone", "product surface audit", "completion audit", "plague check",
   "hydration check", "are we shippable", "czy jesteśmy gotowi", "gap analysis",
   "co brakuje do launchu", "readiness audit", "packaging gap".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # `vc-dou` — AUDIT-FIRST Definition of Undone
@@ -78,6 +81,14 @@ Desktop apps, CLI tools, agents, MCP servers, internal runtimes — all need a
 representation surface (landing page, showcase, one-pager, explainer, screenshots).
 If a product can only be understood by opening the repo or talking to its
 creators, that is Definition of Undone.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Pipeline Position
 

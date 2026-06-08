@@ -11,6 +11,9 @@ description: >
   https://github.com/VetCoders/Screenscribe repository. Prefer this skill even
   if the user does not explicitly ask for "ScreenScribe" but clearly wants a
   spoken screen recording turned into structured engineering findings.
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # Vibecrafted. ScreenScribe
@@ -32,6 +35,14 @@ ScreenScribe repo work as blocked until repo truth exists.
 
 For pure video-analysis runs, state the no-repo exception and use the installed
 ScreenScribe CLI directly.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## What ScreenScribe Is
 

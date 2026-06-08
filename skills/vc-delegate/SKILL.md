@@ -11,6 +11,9 @@ description: >
   "bezpieczne agenty", "implement without externals", "no osascript".
 compatibility:
   tools: []
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-delegate
@@ -61,6 +64,14 @@ vibecrafted partner codex --prompt 'Split this into one small native cut'
 vibecrafted implement claude --file /path/to/plan.md
 vibecrafted workflow gemini --prompt 'Keep this local unless it clearly wants the external fleet'
 ```
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Native Delegation Policy
 

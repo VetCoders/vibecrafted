@@ -11,6 +11,9 @@ description: >-
   "vibecraftsmanship", "manifest", "trinity", "ludzki gust agentyczna siła
   rzeczywistość", "postawa", "ustaw się", "framing reset", "doctrine call",
   "session-start doctrine", "what posture", "jak ja mam to ustawić".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # Vibecraftsmanship — Meta-Doctrine Charter
@@ -23,6 +26,14 @@ description: >-
 The 5th charter. Where ownership/operator/partner each declare **how to act**,
 vibecraftsmanship declares **how to think about acting** — and what makes the
 acting honest.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Overview
 

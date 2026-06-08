@@ -9,6 +9,9 @@ description: >
   This skill should be used when the user asks to "scaffold", "plan this", "architect
   this", "break this down", "I have an idea", "design the system", "vc-scaffold",
   "zaplanuj to", "rozrysuj architekturę", "mam pomysł".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-scaffold: Founder-First Planning — Pancerna Latarnia
@@ -61,6 +64,14 @@ to produce or refresh the **Code-Derived Application Map**:
 (before create), `follow` (dead/cycles/twins/hotspots). Find load-bearing hubs, twins, dead code,
 drift, runtime entrypoints, blast-radius traps. If the task is explicitly non-repo/greenfield,
 declare the **no-repo exception** in the report and name the orientation source used instead.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Pipeline Position
 

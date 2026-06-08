@@ -21,6 +21,9 @@ compatibility:
     - search_tool_bm25
     - web.run
     - js_repl
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-justdo — „Nie pierdol, po prostu zrób"
@@ -54,6 +57,14 @@ See [Living Tree Rule](../LIVING_TREE_RULE.md).
 „Nie pytaj" NIE znaczy „nie orientuj się". Przed repo-specyficzną pracą uruchom/skonsumuj `vc-init`.
 `Loctree:loctree` to domyślna percepcja strukturalna — użyj jej przed grepem (`context`/`slice`/`impact`/`find`), by zbudować lub odświeżyć **Code-Derived Application Map**.
 Brak `vc-init`/Loctree evidence = process failure. No-repo/no-code → zadeklaruj no-repo exception.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Postawa (rdzeń)
 

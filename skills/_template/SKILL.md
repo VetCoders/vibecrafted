@@ -6,6 +6,9 @@ description: >
   decisive outcome it produces. Replace this paragraph entirely before shipping.
   Trigger phrases: "{{SKILL_NAME_NO_PREFIX}}", "TODO add primary trigger",
   "TODO add Polish trigger", "TODO add operator-natural-language trigger".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # {{SKILL_NAME}} — TODO one-line tagline
@@ -26,6 +29,14 @@ concurrent changes, and report substrate failure if the tree is too poisoned to
 continue safely.
 
 See [Living Tree Rule](../LIVING_TREE_RULE.md).
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 Standard launcher:
 

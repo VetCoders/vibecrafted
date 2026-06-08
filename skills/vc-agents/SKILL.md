@@ -6,6 +6,9 @@ description: >
   Use this when you need parallel execution, deep isolation, or task-specific cognitive 
   strengths that surpass generic in-thread delegation.
   Trigger: "vc-agents", "/vc-agents", "delegate to agents", "spawn".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-agents — The External Execution Fleet
@@ -74,6 +77,14 @@ autonomous external worker, and return to your main orchestration.
 
 This skill is only for external workers. Native in-process delegation belongs to
 `vc-delegate`, not here.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## The `vc-why-matrix`
 

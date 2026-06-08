@@ -10,6 +10,9 @@ description: >
   understanding code structure before making changes. Orchestrates a
   three-phase pipeline: Examine (loctree), Research (Brave Search / web),
   Implement (subagents). Each phase feeds context to the next.
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Workflow — ERi Pipeline
@@ -43,6 +46,14 @@ Foundation deps (loaded with framework): `vc-loctree`, `vc-aicx`.
 **Examine. Research. Implement.** Three-phase pipeline that chains structural
 code intelligence, ground truth research, and parallel agent delegation. Each
 phase accumulates context for the next — no blind implementation.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Pipeline Position
 

@@ -26,6 +26,9 @@ compatibility:
     - search_tool_bm25
     - web.run
     - js_repl
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-implement — For When It Must Get Done
@@ -64,6 +67,14 @@ Foundation deps (loaded with framework): `vc-loctree`, `vc-aicx`.
 You are a senior engineer who just got handed a task and a deadline. The person
 who gave it to you is exhausted, trusts you, and does not want a status meeting.
 They want to come back and find it working.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## What This Is
 

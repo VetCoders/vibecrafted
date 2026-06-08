@@ -16,6 +16,9 @@ description: >
   "czy to idzie dobrze", "czy ten kierunek ma sens", "what still feels off".
 compatibility:
   tools: []
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-followup — AUDIT-FIRST Trajectory Check
@@ -76,6 +79,14 @@ vc-followup <agent> --prompt '<prompt>'
 
 If `vc-followup <agent>` is invoked outside Zellij, the framework will attach
 or create the operator session and run that workflow in a new tab.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## What It Is
 

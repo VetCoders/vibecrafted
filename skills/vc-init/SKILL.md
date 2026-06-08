@@ -8,6 +8,9 @@ description: >
   context engine), Intentions (AICX), and Security/Stability Ground Truth.
   Trigger: "init", "initialize", "bootstrap", "daj kontekst", "zainicjuj",
   "przygotuj agenta", "start fresh with context".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-init — Technical Due Diligence
@@ -63,6 +66,14 @@ We apply the VetCoders Axioms: **Perception over memory** and **Intentions
 retrieval over RAG**. We don't blindly load a million tokens of historical
 context — we see what the code is _now_ and find what's broken on the critical
 path before touching a line.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Pipeline Position
 

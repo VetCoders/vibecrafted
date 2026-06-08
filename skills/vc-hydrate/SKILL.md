@@ -11,6 +11,9 @@ description: >
   "przygotuj do launchu", "fix the packaging gap", "marketplace listing",
   "nawodnij", "make it shippable", "go-to-market", "distribution",
   "SEO fix", "landing page", "onboarding", "completion sprint".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
+dogfooding: "required for repo-impacting work"
 ---
 
 # vc-hydrate — The Antidote to Always-in-Production
@@ -44,6 +47,14 @@ vibecrafted hydrate gemini --file /path/to/dou-report.md
 Hydrate is the packaging agent that DoU calls for. It treats "create a DMG installer" and "write SEO-friendly copy" as first-class engineering tasks, not afterthoughts.
 
 **Canonical rule:** every serious product needs a presentation surface, even if it is not itself a web product. Desktop apps, CLI tools, MCP servers, local runtimes, and internal systems still need an external face that lets a stranger discover, understand, see, assess, and adopt.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## Pipeline Position
 
