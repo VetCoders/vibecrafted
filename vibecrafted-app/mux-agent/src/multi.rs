@@ -11,16 +11,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::ResolvedParams;
-use crate::state::MuxState;
-
-/// Status level for display in dashboards.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StatusLevel {
-    Ok,
-    Warn,
-    Error,
-    Lazy,
-}
+use crate::state::{MuxState, StatusLevel};
 
 /// Server command for control operations.
 #[derive(Debug, Clone, PartialEq, Eq)]

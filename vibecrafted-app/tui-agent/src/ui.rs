@@ -224,18 +224,18 @@ fn draw_mux_panel(
     let any_unhealthy = lines.iter().any(|line| line.contains("! "));
     let title_text = match state {
         Some(crate::mux::SubscriberState::Connected) => {
-            format!(" rust-mux ({total_services}) [Connected] ")
+            format!(" rmcp-mux ({total_services}) [Connected] ")
         }
         Some(crate::mux::SubscriberState::Reconnecting) => {
-            format!(" rust-mux ({total_services}) [Reconnecting] ")
+            format!(" rmcp-mux ({total_services}) [Reconnecting] ")
         }
         Some(crate::mux::SubscriberState::Polling) => {
-            format!(" rust-mux ({total_services}) [Polling] ")
+            format!(" rmcp-mux ({total_services}) [Polling] ")
         }
         Some(crate::mux::SubscriberState::Failed) => {
-            format!(" rust-mux ({total_services}) [Failed] ")
+            format!(" rmcp-mux ({total_services}) [Failed] ")
         }
-        None => format!(" rust-mux ({total_services}) "),
+        None => format!(" rmcp-mux ({total_services}) "),
     };
     let title_color = match state {
         Some(crate::mux::SubscriberState::Connected) => Color::Green,
@@ -1343,7 +1343,7 @@ pub fn draw_client_drift_overlay(frame: &mut Frame, area: Rect, halt: &crate::la
 
     let mut lines = vec![
         ratatui::text::Line::from(
-            "Dispatch halted because client configuration does not route through rust-mux.",
+            "Dispatch halted because client configuration does not route through rmcp-mux.",
         ),
         ratatui::text::Line::from(""),
     ];
@@ -1549,8 +1549,8 @@ mod tests {
         let rendered = render_to_string(&app);
 
         assert!(
-            rendered.contains("rust-mux"),
-            "panel title must mark this as the rust-mux surface"
+            rendered.contains("rmcp-mux"),
+            "panel title must mark this as the rmcp-mux surface"
         );
         assert!(
             rendered.contains("(2)") || rendered.contains("(1/2 need attention)"),
@@ -1599,7 +1599,7 @@ mod tests {
         let app = sample_app();
         let rendered = render_to_string(&app);
         assert!(
-            !rendered.contains("rust-mux"),
+            !rendered.contains("rmcp-mux"),
             "no panel should render when there are no mux summaries"
         );
     }

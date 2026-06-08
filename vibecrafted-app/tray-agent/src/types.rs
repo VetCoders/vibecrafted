@@ -1,11 +1,14 @@
-use crate::ipc_client::ClientKind;
-use anyhow::Result;
 use muda::MenuId;
+use mux_agent::ipc::ClientKind;
 use std::path::PathBuf;
-use tracing::debug;
-use tray_icon::Icon;
 
-use crate::icons::{create_fallback_icon, load_custom_icon};
+// `TrayStatus` is the data primitive. Rendering it as a `tray_icon::Icon`
+// lives in `crate::icons::icon_for`, not on the enum — keeping the impl
+// here used to pull `crate::icons` into `crate::types`, while `icons`
+// already imports `TrayStatus` from here, forming a cycle. Likewise the
+// `ClientKind` import points at `mux_agent::ipc::ClientKind` (the canonical
+// source) instead of routing through `crate::ipc_client`, which is only a
+// re-export and would otherwise close a second cycle.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayStatus {
@@ -35,13 +38,6 @@ impl TrayStatus {
 
     pub fn menu_label(&self, service_count: usize) -> String {
         format!("Status: {} ({} services)", self.label(), service_count)
-    }
-
-    pub fn to_icon(self) -> Result<Icon> {
-        load_custom_icon(self).or_else(|error| {
-            debug!("custom tray icon failed, using fallback: {error}");
-            create_fallback_icon(self)
-        })
     }
 }
 

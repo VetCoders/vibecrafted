@@ -56,7 +56,7 @@ pub fn run_with_ipc(socket_path: PathBuf) -> Result<()> {
     let tray_icon = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip(initial_status.tooltip())
-        .with_icon(initial_status.to_icon()?)
+        .with_icon(icons::icon_for(initial_status)?)
         .build()?;
     let menu_channel = MenuEvent::receiver();
     let poll_interval = Duration::from_millis(100);
@@ -85,9 +85,9 @@ pub fn run_with_ipc(socket_path: PathBuf) -> Result<()> {
         }
         match status_rx.try_recv() {
             Ok(status) => {
-                state::apply_status_update(status);
+                menu::update_status_label(&status.menu_label(menu::current_service_count()));
                 let _ = tray_icon.set_tooltip(Some(status.tooltip()));
-                if let Ok(icon) = status.to_icon()
+                if let Ok(icon) = icons::icon_for(status)
                     && let Err(error) = tray_icon.set_icon(Some(icon))
                 {
                     debug!("failed to update tray icon: {error}");

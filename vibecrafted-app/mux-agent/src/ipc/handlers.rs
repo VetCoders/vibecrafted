@@ -1,5 +1,5 @@
 use crate::ipc::command::{MuxControlCommand, MuxControlResponse, NonMuxEntry, VerifyResult};
-use crate::ipc::server::MuxControlContext;
+use crate::ipc::context::MuxControlContext;
 use crate::scan::scan_hosts;
 use std::sync::Arc;
 
@@ -58,7 +58,7 @@ async fn handle_verify(
 
         for srv in scan_res.services {
             let cmd_str = format!("{} {}", srv.command, srv.args.join(" "));
-            if !cmd_str.contains("rust-mux") && !cmd_str.contains("mux-agent") {
+            if !cmd_str.contains("rmcp-mux") && !cmd_str.contains("mux-agent") {
                 non_mux.push(NonMuxEntry {
                     client: client_type.as_label().to_string(),
                     path: scan_res.host.path.to_string_lossy().into_owned(),

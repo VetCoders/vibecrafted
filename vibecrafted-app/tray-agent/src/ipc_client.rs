@@ -14,7 +14,7 @@ pub fn default_socket_path() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(".rust-mux/ipc/control.sock")
+        .join(".rmcp-mux/ipc/control.sock")
 }
 
 pub fn client_label(kind: &ClientKind) -> String {

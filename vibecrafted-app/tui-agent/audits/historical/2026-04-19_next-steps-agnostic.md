@@ -7,7 +7,7 @@
 > zellij session naming (`8930d05`) i named-session readiness probe 2026-04-30.
 > 2026-04-30 P.M. dokleciony przez claude: probe `--config-dir` parity, probe
 > error preservation, hard timeout z child kill, fake-zellij e2e coverage
-> (P1-01 / P2-01 / P2-02 / P2-03 z `2026-04-30_vc-review.md`). Plus rust-mux
+> (P1-01 / P2-01 / P2-02 / P2-03 z `2026-04-30_vc-review.md`). Plus rmcp-mux
 > MCP daemon visibility w Monitor tabie + `MuxHealth` deep action. Zachowany
 > jako historical evidence trail per `vc-intents` 2026-04-29 i 2026-04-30.
 

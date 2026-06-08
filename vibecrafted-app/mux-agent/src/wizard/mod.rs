@@ -1,4 +1,4 @@
-//! Interactive wizard for configuring rust-mux services and rewiring MCP clients.
+//! Interactive wizard for configuring rmcp-mux services and rewiring MCP clients.
 //!
 //! v0.4.0 5-step flow:
 //!
@@ -39,7 +39,7 @@ use persist::{
     run_danger_auto_configure, run_per_client_generate, run_unified_generate, start_tray_daemon,
 };
 use services::{
-    append_default_services, build_services_from_scans, check_health, enrich_running_state,
+    append_default_services, build_services_from_scans, enrich_running_state, probe_service_health,
 };
 use types::{
     AppState, CustomPathInput, PendingAction, SourceEntry, SourceStatus, Strategy, SummaryAction,
@@ -239,7 +239,7 @@ fn build_services_for_selected_sources(sources: &[SourceEntry]) -> Vec<types::Se
     append_default_services(&mut services);
     enrich_running_state(&mut services);
     for svc in &mut services {
-        svc.health = check_health(&svc.config);
+        svc.health = probe_service_health(&svc.config);
     }
     services
 }

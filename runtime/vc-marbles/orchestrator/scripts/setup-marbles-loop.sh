@@ -9,6 +9,7 @@ set -euo pipefail
 PROMPT_PARTS=()
 MAX_ITERATIONS=0
 COMPLETION_PROMISE="null"
+AUDIT_FILE=".claude/marbles.audit.jsonl"
 
 # Parse options and positional arguments
 while [[ $# -gt 0 ]]; do
@@ -26,6 +27,7 @@ ARGUMENTS:
 OPTIONS:
   --max-iterations <n>           Maximum iterations before auto-stop (default: unlimited)
   --completion-promise '<text>'  Promise phrase (USE QUOTES for multi-word)
+  --audit-file <path>            Persistent audit JSONL (default: .claude/marbles.audit.jsonl)
   -h, --help                     Show this help message
 
 DESCRIPTION:

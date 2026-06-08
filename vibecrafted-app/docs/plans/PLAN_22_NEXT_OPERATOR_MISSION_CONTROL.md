@@ -271,7 +271,7 @@ Goal: make mux status an operator-first surface.
 
 Tasks:
 
-1. Reuse `rust-mux` status snapshot schema.
+1. Reuse `rmcp-mux` status snapshot schema.
 2. Show per-service health, clients, pending count, restarts, and failure
    reason.
 3. Surface client drift and suggested fix action.

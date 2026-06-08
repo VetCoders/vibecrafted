@@ -1,10 +1,10 @@
-# rust-mux – AI-facing Overview
+# rmcp-mux – AI-facing Overview
 
 > **Version:** 0.4.0
-> **Last updated:** 2026-05-05
+> **Last updated:** 2026-05-18
 > **Per-repo doctrine:** see `AGENTS.md` (canonical, agent-agnostic)
 
-This document provides a concise technical overview for AI agents working with the rust-mux codebase.
+This document provides a concise technical overview for AI agents working with the rmcp-mux codebase.
 
 ## Purpose
 
@@ -30,7 +30,7 @@ Core features:
 ### Library Usage (Recommended)
 
 ```rust
-use rust_mux::{MuxConfig, run_mux_server};
+use rmcp_mux::{MuxConfig, run_mux_server};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -48,14 +48,14 @@ async fn main() -> anyhow::Result<()> {
 cargo build --release
 
 # Run mux daemon for a single service
-./target/release/rust-mux \
-  --socket ~/.rmcp-servers/rust-mux/sockets/memory.sock \
+./target/release/rmcp-mux \
+  --socket ~/.rmcp-servers/rmcp-mux/sockets/memory.sock \
   --cmd npx -- @modelcontextprotocol/server-memory \
   --max-active-clients 5 \
-  --status-file ~/.rmcp-servers/rust-mux/status.json
+  --status-file ~/.rmcp-servers/rmcp-mux/status.json
 
 # Host side: use bundled proxy (preferred over socat)
-rust-mux-proxy --socket ~/.rmcp-servers/rust-mux/sockets/memory.sock
+rmcp-mux-proxy --socket ~/.rmcp-servers/rmcp-mux/sockets/memory.sock
 ```
 
 The canonical command surface is the `Makefile`. Use `make gates` before every commit; see `AGENTS.md` for the full target list.
@@ -77,8 +77,8 @@ src/
 ├── tray.rs                 # Tray icon (feature: tray)
 ├── tray_dashboard.rs       # Tray dashboard for multi-service status (feature: tray)
 ├── bin/
-│   ├── rust-mux.rs         # CLI binary (feature: cli)
-│   └── rust-mux-proxy.rs   # STDIO↔socket proxy (feature: cli)
+│   ├── rmcp-mux.rs         # CLI binary (feature: cli)
+│   └── rmcp-mux-proxy.rs   # STDIO↔socket proxy (feature: cli)
 ├── runtime/                # Mux daemon core (modular — src/runtime.rs is gone, do not revive)
 │   ├── mod.rs              # run_mux, run_mux_internal, entry points
 │   ├── types.rs            # ServerEvent, MAX_QUEUE, MAX_PENDING
@@ -157,7 +157,7 @@ MuxConfig::new(socket, cmd)
 | `health`        | Verify socket reachability for a service                               |
 | `daemon-status` | Query running multi-service daemon status via Unix socket              |
 | `dashboard`     | Tray dashboard for multi-service status (feature: tray)                |
-| `proxy`         | STDIO↔socket proxy (also exposed as the `rust-mux-proxy` binary)      |
+| `proxy`         | STDIO↔socket proxy (also exposed as the `rmcp-mux-proxy` binary)      |
 
 ## Config (JSON / YAML / TOML)
 
@@ -182,7 +182,7 @@ Default service config: `~/.codex/mcp-mux.toml` (override with `--config`, pick 
 ## Five-Step Wizard
 
 ```bash
-rust-mux wizard --config ~/.codex/mcp-mux.toml
+rmcp-mux wizard --config ~/.codex/mcp-mux.toml
 # or
 make wizard
 ```
@@ -197,9 +197,9 @@ make wizard
 3. **StrategyChoice** — pick how to use the discovery:
    - **Unified** — one mux config under `~/.config/mux/{config.toml, mcp.json, mcp.toml}` with every selected server. Recommended.
    - **Per-client** — one mux config per originating client kind, in that client's native format (`claude.json`, `codex.toml`, `junie.json`, ...).
-   - **`[DANGER]` Auto-rewire** — backup-first preview-first rewrite of the user's existing client configs to route through `rust-mux-proxy`, with rollback commands.
+   - **`[DANGER]` Auto-rewire** — backup-first preview-first rewrite of the user's existing client configs to route through `rmcp-mux-proxy`, with rollback commands.
 4. **SummaryConfirm** — preview of what will be written and where, then `Confirm` / `Back` / `Cancel`.
-5. **ResultAndTray** — show what was written with per-client startup snippets, then offer to start a tray daemon now (spawns `rust-mux --tray --config <generated>` detached).
+5. **ResultAndTray** — show what was written with per-client startup snippets, then offer to start a tray daemon now (spawns `rmcp-mux --tray --config <generated>` detached).
 
 Navigation: `Up/Down` choose, `Space` toggle, `Enter` / `n` next step, `p` previous, `q` quit, `i` open custom-path input on STEP 1.
 
@@ -214,20 +214,44 @@ Written atomically to `status_file` on every state change:
 ```json
 {
   "service_name": "memory",
+  "name": "memory",
   "server_status": "Running",
+  "status_text": "Running",
+  "level": "Ok",
   "restarts": 0,
   "connected_clients": 2,
   "active_clients": 1,
+  "max_active_clients": 5,
   "pending_requests": 0,
+  "cached_initialize": true,
+  "initializing": false,
+  "last_reset": null,
   "queue_depth": 0,
   "child_pid": 12345,
-  "cached_initialize": true,
-  "heartbeat_status": "Healthy",
-  "last_heartbeat_ms": 12345
+  "max_request_bytes": 1048576,
+  "heartbeat_latency_ms": 12,
+  "heartbeat": {
+    "enabled": true,
+    "latency_ms": 12,
+    "last_heartbeat_ms": 1747584320000,
+    "avg_response_ms": 14,
+    "total_success": 1024,
+    "total_failures": 0,
+    "consecutive_failures": 0
+  },
+  "uptime_ms": 1234567,
+  "in_backoff": false,
+  "restart_backoff_ms": 1000,
+  "restart_backoff_max_ms": 30000,
+  "max_restarts": 5
 }
 ```
 
-The multi-service daemon additionally serves a status socket; query it via `rust-mux daemon-status` (or `make daemon-status`).
+Canonical source: `StatusSnapshot` in `state.rs` + `snapshot_for_state` builder.
+`heartbeat` is the nested `HeartbeatMetrics` struct; `heartbeat_latency_ms` is the
+top-level convenience mirror of `heartbeat.latency_ms`.
+
+The multi-service daemon additionally serves a status socket; query it via `rmcp-mux daemon-status` (or `make daemon-status`).
 
 ## Testing & Quality Gates
 
@@ -253,28 +277,29 @@ CI (`.github/workflows/ci.yml`) runs with `--no-default-features` (tray off) so 
 
 ## Key Symbols for Navigation
 
-| Symbol                            | Location                              | Purpose                                                       |
-| --------------------------------- | ------------------------------------- | ------------------------------------------------------------- |
-| `MuxConfig`                       | `lib.rs` (re-export from `config.rs`) | Builder for programmatic configuration                        |
-| `MuxHandle`                       | `lib.rs`                              | Lifecycle control (shutdown, wait, is_running)                |
-| `run_mux_server`                  | `lib.rs`                              | Blocking server entry point                                   |
-| `spawn_mux_server`                | `lib.rs`                              | Non-blocking spawn returning MuxHandle                        |
-| `run_mux_with_shutdown`           | `lib.rs`                              | External CancellationToken support                            |
-| `check_health`                    | `lib.rs`                              | Socket health check                                           |
-| `CliOptions`                      | `config.rs`                           | Trait for generic CLI parameter handling                      |
-| `ResolvedParams`                  | `config.rs`                           | Merged CLI + config parameters                                |
-| `MuxState`                        | `state.rs`                            | Runtime state (clients, pending, cache)                       |
-| `StatusSnapshot` / `DaemonStatus` | `state.rs`                            | JSON status output                                            |
-| `run_mux` / `run_mux_internal`    | `runtime/mod.rs`                      | Main mux loop (internal vs external shutdown)                 |
-| `server_manager`                  | `runtime/server.rs`                   | Child process lifecycle + restart backoff                     |
-| `handle_client`                   | `runtime/client.rs`                   | Per-client connection handler                                 |
-| `heartbeat_loop`                  | `runtime/heartbeat.rs`                | Child health probe                                            |
-| `run_proxy`                       | `runtime/proxy.rs`                    | STDIO↔socket bridge (also `rust-mux-proxy` binary)           |
-| `run_wizard`                      | `wizard/mod.rs`                       | TUI entry point (feature: cli)                                |
-| `WizardStep`                      | `wizard/types.rs`                     | Step enum (Server / Client / Confirmation)                    |
-| `discover_hosts`                  | `scan.rs`                             | Find host config files (feature: cli)                         |
-| `emit_mux_config`                 | `mux_gen.rs`                          | Safe wizard path: write `~/.config/mux/*`                     |
-| `apply_with_backup`               | `danger.rs`                           | `[DANGER]` wizard path: backup → preview → rewrite → rollback |
+| Symbol                                                       | Location                              | Purpose                                                                                            |
+| ------------------------------------------------------------ | ------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `MuxConfig`                                                  | `lib.rs` (re-export from `config.rs`) | Builder for programmatic configuration                                                             |
+| `MuxHandle`                                                  | `lib.rs`                              | Lifecycle control (shutdown, wait, is_running)                                                     |
+| `run_mux_server`                                             | `lib.rs`                              | Blocking server entry point                                                                        |
+| `spawn_mux_server`                                           | `lib.rs`                              | Non-blocking spawn returning MuxHandle                                                             |
+| `run_mux_with_shutdown`                                      | `lib.rs`                              | External CancellationToken support                                                                 |
+| `check_health`                                               | `lib.rs`                              | Socket health check                                                                                |
+| `CliOptions`                                                 | `config.rs`                           | Trait for generic CLI parameter handling                                                           |
+| `ResolvedParams`                                             | `config.rs`                           | Merged CLI + config parameters                                                                     |
+| `MuxState`                                                   | `state.rs`                            | Runtime state (clients, pending, cache)                                                            |
+| `StatusSnapshot`                                             | `state.rs`                            | Per-server status row (in-process)                                                                 |
+| `DaemonStatus`                                               | `runtime/status.rs`                   | Wire payload returned by the daemon status socket                                                  |
+| `run_mux` / `run_mux_internal`                               | `runtime/mod.rs`                      | Main mux loop (internal vs external shutdown)                                                      |
+| `server_manager`                                             | `runtime/server.rs`                   | Child process lifecycle + restart backoff                                                          |
+| `handle_client`                                              | `runtime/client.rs`                   | Per-client connection handler                                                                      |
+| `heartbeat_loop`                                             | `runtime/heartbeat.rs`                | Child health probe                                                                                 |
+| `run_proxy`                                                  | `runtime/proxy.rs`                    | STDIO↔socket bridge (also `rmcp-mux-proxy` binary)                                                |
+| `run_wizard`                                                 | `wizard/mod.rs`                       | TUI entry point (feature: cli)                                                                     |
+| `WizardStep`                                                 | `wizard/types.rs`                     | Five-step enum (DiscoverySources / ServerReview / StrategyChoice / SummaryConfirm / ResultAndTray) |
+| `discover_hosts`                                             | `scan.rs`                             | Find host config files (feature: cli)                                                              |
+| `build_mux_outputs` / `write_mux_outputs`                    | `mux_gen.rs`                          | Safe wizard path: build then atomically write `~/.config/mux/*`                                    |
+| `plan_danger_rewrite` / `execute_plan` / `rollback_commands` | `danger.rs`                           | `[DANGER]` wizard path: plan → preview → execute → rollback                                        |
 
 ## Notes for AI Agents
 
@@ -290,9 +315,9 @@ CI (`.github/workflows/ci.yml`) runs with `--no-default-features` (tray off) so 
 
 4. **Naming convention:**
 
-   - Package name: `rust-mux` (crates.io, `Cargo.toml`).
-   - Library name: `rust_mux` (Rust identifier, `use rust_mux::*`).
-   - Binary names: `rust-mux`, `rust-mux-proxy`.
+   - Package name: `rmcp-mux` (crates.io, `Cargo.toml`).
+   - Library name: `rmcp_mux` (Rust identifier, `use rmcp_mux::*`).
+   - Binary names: `rmcp-mux`, `rmcp-mux-proxy`.
    - Detection still recognises legacy `rmcp_mux` patterns; do not strip without a release note.
 
 5. **Single child model.** One MCP server per socket. Multiple services = multiple `MuxConfig` instances or multi-service daemon mode.
@@ -307,6 +332,6 @@ CI (`.github/workflows/ci.yml`) runs with `--no-default-features` (tray off) so 
 
 10. **Tray feature is GUI-bound.** CI builds `--no-default-features` to avoid GUI deps; keep that path green.
 
-11. **Prefer `rust-mux-proxy` over `socat`** for host STDIO integration — it's the supported bridge.
+11. **Prefer `rmcp-mux-proxy` over `socat`** for host STDIO integration — it's the supported bridge.
 
 12. **`.ai-agents/**`is scratch space.** Do not commit. Root-level`AGENTS.md`(if present) is deprecated; ignore it. The canonical per-repo source is`AGENTS.md`.

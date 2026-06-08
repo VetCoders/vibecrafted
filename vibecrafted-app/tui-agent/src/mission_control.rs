@@ -1097,7 +1097,7 @@ mod tests {
     fn aggregates_per_agent_and_skill_from_meta_json() {
         let dir = tempdir().unwrap();
         let artifact = dir.path().join("artifacts");
-        let bucket = artifact.join("vetcoders/vc-operator/2026_0519/reports");
+        let bucket = artifact.join("vetcoders/vc-tui/2026_0519/reports");
         write_meta(
             &bucket.join("run-a.meta.json"),
             r#"{
@@ -1190,7 +1190,7 @@ mod tests {
     fn failure_board_buckets_within_24h_window() {
         let dir = tempdir().unwrap();
         let artifact = dir.path().join("artifacts");
-        let bucket = artifact.join("vetcoders/vc-operator/2026_0519/reports");
+        let bucket = artifact.join("vetcoders/vc-tui/2026_0519/reports");
         write_meta(
             &bucket.join("recent-fail.meta.json"),
             r#"{
@@ -1286,7 +1286,7 @@ mod tests {
         // mini run that proves the field is wired into DataQuality.
         let dir = tempdir().unwrap();
         let artifact = dir.path().join("artifacts");
-        let bucket = artifact.join("vetcoders/vc-operator/2026_0519/reports");
+        let bucket = artifact.join("vetcoders/vc-tui/2026_0519/reports");
         for idx in 0..3 {
             write_meta(
                 &bucket.join(format!("run-{idx}.meta.json")),

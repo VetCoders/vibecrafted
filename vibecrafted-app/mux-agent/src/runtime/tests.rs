@@ -810,8 +810,7 @@ async fn status_file_writer_persists_snapshot() {
         name: "svc".into(),
         server_status: ServerStatus::Starting,
         status_text: "Starting".into(),
-        level: crate::multi::StatusLevel::Ok,
-        health_status: crate::state::HealthStatus::Starting,
+        level: crate::state::StatusLevel::Ok,
         restarts: 0,
         connected_clients: 0,
         active_clients: 0,
@@ -837,10 +836,26 @@ async fn status_file_writer_persists_snapshot() {
     let mut updated = base.clone();
     updated.queue_depth = 3;
     tx.send(updated.clone()).ok();
-    tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let text = fs::read_to_string(&path).expect("status file");
-    assert!(text.contains("\"queue_depth\": 3"));
+    // The writer task runs concurrently — under a loaded workspace test run
+    // (cargo test --workspace executes hundreds of tokio tests in parallel)
+    // a fixed `sleep(50ms)` is not enough to guarantee the post-send write
+    // has flushed. Poll the file with a bounded timeout instead, matching the
+    // pattern used by `mux_transport_roundtrip_with_loctree_mcp` below.
+    let mut text = String::new();
+    for _ in 0..200 {
+        if let Ok(contents) = fs::read_to_string(&path)
+            && contents.contains("\"queue_depth\": 3")
+        {
+            text = contents;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        text.contains("\"queue_depth\": 3"),
+        "status file never picked up the updated queue_depth: got {text:?}"
+    );
     assert!(text.contains("\"child_pid\": 99"));
 
     handle.abort();
@@ -873,18 +888,9 @@ async fn health_check_fails_for_missing_socket() {
 }
 
 #[tokio::test]
-#[ignore = "optional roundtrip with LOCTREE_MCP override or product-managed loctree-mcp on PATH"]
+#[ignore = "opcjonalny test roundtrip z lokalnym ~/.cargo/bin/loctree-mcp (uruchamiany przez make test-full)"]
 async fn mux_transport_roundtrip_with_loctree_mcp() {
-    let loctree = env::var("LOCTREE_MCP").map(PathBuf::from).ok().or_else(|| {
-        env::var_os("PATH").and_then(|paths| {
-            env::split_paths(&paths)
-                .map(|path| path.join("loctree-mcp"))
-                .find(|candidate| candidate.exists())
-        })
-    });
-    let Some(loctree) = loctree else {
-        panic!("missing product-managed loctree-mcp on PATH or LOCTREE_MCP override");
-    };
+    let loctree = expand_path("~/.cargo/bin/loctree-mcp");
     assert!(
         loctree.exists(),
         "brak binarki referencyjnej: {}",
@@ -945,7 +951,7 @@ async fn mux_transport_roundtrip_with_loctree_mcp() {
         "params": {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": {"name": "rust-mux-test", "version": "0.1.0"}
+            "clientInfo": {"name": "rmcp-mux-test", "version": "0.1.0"}
         }
     });
     write_half
@@ -1058,7 +1064,7 @@ async fn mux_transport_roundtrip_with_loctree_mcp() {
         .get("result")
         .expect("tools/call repo-view bez result");
     println!(
-        "loctree-mcp repo-view (rust-mux): {}",
+        "loctree-mcp repo-view (rmcp-mux): {}",
         serde_json::to_string_pretty(repo_view_result).expect("serialize repo-view result")
     );
 

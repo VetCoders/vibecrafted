@@ -152,7 +152,7 @@ pub async fn run_mux(params: ResolvedParams, shutdown: CancellationToken) -> Res
 ///
 /// # Example
 /// ```rust,no_run
-/// use rust_mux::config::ResolvedParams;
+/// use rmcp_mux::config::ResolvedParams;
 /// use tokio_util::sync::CancellationToken;
 ///
 /// async fn run_embedded(params: ResolvedParams) {
@@ -165,7 +165,7 @@ pub async fn run_mux(params: ResolvedParams, shutdown: CancellationToken) -> Res
 ///         shutdown_clone.cancel();
 ///     });
 ///
-///     rust_mux::runtime::run_mux_internal(params, shutdown).await.unwrap();
+///     rmcp_mux::runtime::run_mux_internal(params, shutdown).await.unwrap();
 /// }
 /// ```
 pub async fn run_mux_internal(params: ResolvedParams, shutdown: CancellationToken) -> Result<()> {
@@ -230,7 +230,7 @@ pub async fn run_mux_internal_with_status(
         event_tx: Some(event_tx.clone()),
     })));
 
-    let ipc_ctx = Arc::new(crate::ipc::server::MuxControlContext::new(
+    let ipc_ctx = Arc::new(crate::ipc::MuxControlContext::new(
         state.clone(),
         Some(event_tx),
     ));

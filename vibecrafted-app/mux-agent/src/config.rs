@@ -425,7 +425,7 @@ pub fn resolve_params(cli: &dyn CliOptions, config: Option<&Config>) -> Result<R
                 .file_name()
                 .and_then(|n| n.to_string_lossy().split('.').next().map(|s| s.to_string()))
         })
-        .unwrap_or_else(|| "rust_mux".to_string());
+        .unwrap_or_else(|| "rmcp_mux".to_string());
 
     // Heartbeat configuration
     let heartbeat_interval = Duration::from_millis(

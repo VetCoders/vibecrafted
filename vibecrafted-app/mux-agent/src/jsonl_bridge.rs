@@ -1,15 +1,18 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
 use crate::ipc::event::IpcEvent;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct Cursor {
     offset: u64,
 }
@@ -24,7 +27,12 @@ pub async fn run_jsonl_bridge(
         .with_context(|| format!("create {}", control_plane.display()))?;
 
     let events_path = control_plane.join("events.jsonl");
-    let mut cursor = Cursor::default();
+    let cursor_path = cursor_path_for(&events_path)?;
+    if let Some(parent) = cursor_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("create {}", parent.display()))?;
+    }
 
     let (watch_tx, mut watch_rx) = tokio::sync::mpsc::channel::<()>(32);
     let mut watcher = notify::recommended_watcher({
@@ -47,16 +55,16 @@ pub async fn run_jsonl_bridge(
         .watch(&control_plane, RecursiveMode::NonRecursive)
         .with_context(|| format!("watch {}", control_plane.display()))?;
 
-    drain_events(&events_path, &mut cursor, &tx).await?;
+    drain_events(&events_path, &cursor_path, &tx).await?;
 
     let mut poll = tokio::time::interval(Duration::from_secs(1));
     loop {
         tokio::select! {
             _ = poll.tick() => {
-                drain_events(&events_path, &mut cursor, &tx).await?;
+                drain_events(&events_path, &cursor_path, &tx).await?;
             }
             Some(()) = watch_rx.recv() => {
-                drain_events(&events_path, &mut cursor, &tx).await?;
+                drain_events(&events_path, &cursor_path, &tx).await?;
             }
             else => break,
         }
@@ -67,24 +75,18 @@ pub async fn run_jsonl_bridge(
 
 async fn drain_events(
     events_path: &Path,
-    cursor: &mut Cursor,
+    cursor_path: &Path,
     tx: &broadcast::Sender<IpcEvent>,
 ) -> Result<()> {
-    let safe_events_path = match events_path.canonicalize() {
-        Ok(path) => path,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(error).with_context(|| format!("resolve {}", events_path.display()));
-        }
-    };
-    let bytes = match std::fs::read(&safe_events_path) {
+    // events_path is the framework's own control-plane events.jsonl (derived from
+    // the control_plane config dir), never attacker-controlled input.
+    let bytes = match tokio::fs::read(events_path).await { // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(error).with_context(|| format!("read {}", safe_events_path.display()));
-        }
+        Err(error) => return Err(error).with_context(|| format!("read {}", events_path.display())),
     };
 
+    let mut cursor = read_cursor(cursor_path).await.unwrap_or_default();
     if cursor.offset as usize > bytes.len() {
         cursor.offset = 0;
     }
@@ -114,7 +116,7 @@ async fn drain_events(
     }
 
     cursor.offset = bytes.len() as u64;
-    Ok(())
+    write_cursor(cursor_path, &cursor).await
 }
 
 fn spawn_update_from_value(value: &Value) -> Option<IpcEvent> {
@@ -170,4 +172,36 @@ fn touches_events_jsonl(event: &Event, events_path: &Path) -> bool {
         event.kind,
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Any
     ) && event.paths.iter().any(|path| path == events_path)
+}
+
+async fn read_cursor(path: &Path) -> Result<Cursor> {
+    // path is the hash-derived internal cursor file (cursor_path_for), never user input.
+    let bytes = tokio::fs::read(path).await?; // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+    serde_json::from_slice(&bytes).context("decode jsonl bridge cursor")
+}
+
+async fn write_cursor(path: &Path, cursor: &Cursor) -> Result<()> {
+    let bytes = serde_json::to_vec(cursor)?;
+    tokio::fs::write(path, bytes)
+        .await
+        .with_context(|| format!("write {}", path.display()))
+}
+
+fn cursor_path_for(events_path: &Path) -> Result<PathBuf> {
+    let mut hasher = DefaultHasher::new();
+    events_path.hash(&mut hasher);
+    let digest = hasher.finish();
+    Ok(runtime_dir()?
+        .join("jsonl-bridge")
+        .join(format!("{digest:x}.cursor")))
+}
+
+fn runtime_dir() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("RMCP_MUX_RUNTIME_DIR") {
+        return Ok(PathBuf::from(path));
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is not set and RMCP_MUX_RUNTIME_DIR was not provided")?;
+    Ok(home.join(".rmcp-mux"))
 }

@@ -2,15 +2,24 @@
 //!
 //! v0.4.0 source-of-truth model:
 //!
-//! 1. **Discovery comes from client configs.** [`load_all_services`] runs
-//!    [`crate::scan::scan_hosts`] across every well-known MCP client config
-//!    (Claude / ClaudeDesktop / Codex / Junie / Gemini / Cursor / VSCode /
-//!    JetBrains) and adds every server it finds, tagged with the originating
-//!    [`ServiceSource::Client`].
-//! 2. **ps-scan enrichment is optional and last** ([`enrich_running_state`]).
+//! 1. **Discovery comes from client configs.** The wizard's STEP 1 driver in
+//!    `wizard/mod.rs::build_services_for_selected_sources` scans every selected
+//!    [`crate::scan::HostFile`] (Claude / ClaudeDesktop / Codex / Junie /
+//!    Gemini / Cursor / VSCode / JetBrains plus `HostKind::Custom` for
+//!    user-provided paths). It feeds the per-host [`crate::scan::ScanResult`]
+//!    list into [`build_services_from_scans`], which dedups via
+//!    `merge_services` and tags every entry with [`ServiceSource::Client`].
+//! 2. **Built-in rust-mux defaults** ([`append_default_services`]) are merged
+//!    in next so the operator sees the runner's own services even when no
+//!    client config mentioned them.
+//! 3. **ps-scan enrichment is optional and last** ([`enrich_running_state`]).
 //!    It only sets the `pid` field on entries whose `(cmd, args)` match a
 //!    running process; orphans (running but not in any config) are surfaced
-//!    as `ServiceSource::DetectedRunning` so the operator can see them.
+//!    as [`ServiceSource::DetectedRunning`] so the operator can see them.
+//! 4. **Per-service health classification** ([`probe_service_health`]) maps
+//!    socket reachability onto [`HealthStatus`] for the review table. Renamed
+//!    from `check_health` to disambiguate from the public daemon-probe API at
+//!    `crate::check_health`.
 //!
 //! The legacy ps-scan-as-source-of-truth path is gone. The hardcoded
 //! `MCP_PATTERNS` whitelist below is used **only** by the enrichment helper
@@ -284,8 +293,8 @@ fn list_running_mcp_processes() -> Vec<RunningMcpProcess> {
         if !MCP_PATTERNS.iter().any(|p| args.contains(p)) {
             continue;
         }
-        // Skip rust-mux itself, its proxy, and the legacy rmcp_mux binary names.
-        if args.contains("rust-mux") || args.contains("rmcp_mux") {
+        // Skip rmcp-mux itself, its proxy, and the legacy rmcp_mux binary names.
+        if args.contains("rmcp-mux") || args.contains("rmcp_mux") {
             continue;
         }
 
@@ -393,7 +402,16 @@ fn extract_cmd_and_args(args: &str) -> (String, Vec<String>) {
 // Health check
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub fn check_health(config: &ServerConfig) -> HealthStatus {
+/// Wizard-time service-config classifier. Synchronously tries to connect to the
+/// configured socket and maps the outcome onto `HealthStatus`.
+///
+/// Renamed from `check_health` to disambiguate from the public async
+/// `crate::check_health(socket) -> Result<()>` daemon-probe API. Both used to
+/// be called `check_health` inside the same crate, which made the two distinct
+/// surfaces indistinguishable at a glance — one async-runtime probe with
+/// `Result<()>` failure semantics, one sync wizard classifier that folds the
+/// outcome into the `HealthStatus { Unknown | Healthy | Unhealthy }` enum.
+pub fn probe_service_health(config: &ServerConfig) -> HealthStatus {
     let socket_path = match &config.socket {
         Some(s) => expand_path(s),
         None => return HealthStatus::Unknown,

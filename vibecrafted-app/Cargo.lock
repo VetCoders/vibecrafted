@@ -3071,7 +3071,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-mux"
+name = "rmcp-mux"
 version = "0.4.0"
 dependencies = [
  "anyhow",
@@ -3957,7 +3957,7 @@ dependencies = [
  "image",
  "muda",
  "notify-rust",
- "rust-mux",
+ "rmcp-mux",
  "serde",
  "serde_json",
  "tao",
@@ -4242,7 +4242,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "vibecrafted-operator"
+name = "vibecrafted-shell-ffi"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rmcp-mux",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tray-agent",
+ "uniffi",
+ "voc",
+]
+
+[[package]]
+name = "vibecrafted-uniffi-bindgen"
+version = "0.2.1"
+dependencies = [
+ "uniffi",
+]
+
+[[package]]
+name = "voc"
 version = "0.1.1"
 dependencies = [
  "anyhow",
@@ -4251,32 +4272,11 @@ dependencies = [
  "crossterm",
  "notify",
  "ratatui",
- "rust-mux",
+ "rmcp-mux",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
-]
-
-[[package]]
-name = "vibecrafted-shell-ffi"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rust-mux",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tray-agent",
- "uniffi",
- "vibecrafted-operator",
-]
-
-[[package]]
-name = "vibecrafted-uniffi-bindgen"
-version = "0.2.1"
-dependencies = [
- "uniffi",
 ]
 
 [[package]]

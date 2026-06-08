@@ -48,9 +48,9 @@ app-debug: bindings xcode
 	@xcodebuild -project app/Vibecrafted.xcodeproj -scheme Vibecrafted -configuration Debug -derivedDataPath build/DerivedData build
 	@BUILT_APP=$$(find build/DerivedData -name Vibecrafted.app -type d | head -1); \
 	if [ -n "$$BUILT_APP" ]; then \
-		cp ../target/release/rust-mux "$$BUILT_APP/Contents/MacOS/vc-mux-daemon"; \
+		cp ../target/release/rmcp-mux "$$BUILT_APP/Contents/MacOS/vc-mux-daemon"; \
 		cp ../target/release/vc-mux-tray "$$BUILT_APP/Contents/MacOS/vc-mux-tray"; \
-		cp ../target/release/vc-operator "$$BUILT_APP/Contents/MacOS/vc-operator-tui"; \
+		cp ../target/release/vc-tui "$$BUILT_APP/Contents/MacOS/vc-tui"; \
 		chmod +x "$$BUILT_APP/Contents/MacOS/"*; \
 		./scripts/fix-dylib-install-names.sh "$$BUILT_APP"; \
 		codesign --force --deep --sign - "$$BUILT_APP"; \

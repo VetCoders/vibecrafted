@@ -158,7 +158,7 @@ fn build_tray(snapshot: &StatusSnapshot, icon_data: Option<&LoadedIcon>) -> Resu
         default_icon()
     };
     let tray = TrayIconBuilder::new()
-        .with_tooltip(format!("rust-mux – {}", snapshot.service_name))
+        .with_tooltip(format!("rmcp-mux – {}", snapshot.service_name))
         .with_icon(icon)
         .with_menu(Box::new(menu.clone()))
         .build()?;
@@ -262,7 +262,7 @@ pub fn load_icon_from_file(path: &Path) -> Option<LoadedIcon> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::multi::StatusLevel;
+    use crate::state::StatusLevel;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn tmp_path(name: &str) -> PathBuf {
@@ -306,7 +306,6 @@ mod tests {
             queue_depth: 0,
             child_pid: None,
             max_request_bytes: 1_048_576,
-            health_status: ServerStatus::Starting,
             heartbeat: crate::state::HeartbeatMetrics::default(),
             uptime_ms: 0,
             in_backoff: false,

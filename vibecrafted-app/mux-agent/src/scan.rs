@@ -28,7 +28,7 @@ pub struct ScanArgs {
     #[arg(long, default_value = "toml")]
     pub snippet_format: String,
     /// Socket directory for generated services.
-    #[arg(long, default_value = "~/.rmcp-servers/rust-mux/sockets")]
+    #[arg(long, default_value = "~/.rmcp-servers/rmcp-mux/sockets")]
     pub socket_dir: String,
     /// Do not write files; print to stdout.
     #[arg(long, default_value_t = false)]
@@ -44,10 +44,10 @@ pub struct RewireArgs {
     #[arg(long)]
     pub host: Option<String>,
     /// Socket directory used for proxy args.
-    #[arg(long, default_value = "~/.rmcp-servers/rust-mux/sockets")]
+    #[arg(long, default_value = "~/.rmcp-servers/rmcp-mux/sockets")]
     pub socket_dir: String,
     /// Proxy command used in rewritten config.
-    #[arg(long, default_value = "rust-mux-proxy")]
+    #[arg(long, default_value = "rmcp-mux-proxy")]
     pub proxy_cmd: String,
     /// Extra args passed before --socket.
     #[arg(long, value_delimiter = ' ')]
@@ -65,8 +65,8 @@ pub struct StatusArgs {
     /// Host kind (codex|claude|claude-desktop|junie|gemini|cursor|vscode|jetbrains).
     #[arg(long)]
     pub host: Option<String>,
-    /// Expected proxy command (default rust-mux-proxy).
-    #[arg(long, default_value = "rust-mux-proxy")]
+    /// Expected proxy command (default rmcp-mux-proxy).
+    #[arg(long, default_value = "rmcp-mux-proxy")]
     pub proxy_cmd: String,
 }
 
@@ -827,7 +827,7 @@ pub fn generate_snippet(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Legacy single-host rewrite (used by `rust-mux rewire` CLI)
+// Legacy single-host rewrite (used by `rmcp-mux rewire` CLI)
 //
 // Note: the *wizard* uses the safer flow defined in `crate::danger`, which
 // always takes timestamped backups, previews changes, and refuses to touch
@@ -1004,7 +1004,7 @@ pub fn run_scan_cmd(args: ScanArgs) -> Result<()> {
     }
 
     if args.snippet.is_some() || args.dry_run {
-        let snippets = generate_snippet(&scans, &socket_dir, "rust-mux-proxy", &[]);
+        let snippets = generate_snippet(&scans, &socket_dir, "rmcp-mux-proxy", &[]);
         for (kind, snippet) in snippets {
             let fmt = args.snippet_format.to_lowercase();
             let text = serialize_snippet(&snippet, &fmt)?;
@@ -1464,7 +1464,7 @@ mod tests {
         let snippets = generate_snippet(
             &scans,
             Path::new("/tmp/sockets"),
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &["proxy".into()],
         );
         let node = snippets.get(&HostKind::Codex).expect("codex snippet");
@@ -1477,7 +1477,7 @@ mod tests {
             .expect("svc entry")
             .as_object()
             .expect("svc object");
-        assert_eq!(svc.get("command").expect("command"), "rust-mux-proxy");
+        assert_eq!(svc.get("command").expect("command"), "rmcp-mux-proxy");
         let args = svc
             .get("args")
             .expect("args")
@@ -1502,7 +1502,7 @@ mod tests {
         rewire_host(
             &host,
             Path::new("/tmp/sockets"),
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
             false,
         )
@@ -1518,7 +1518,7 @@ mod tests {
             .expect("memory")
             .as_object()
             .expect("memory obj");
-        assert_eq!(mem.get("command").expect("command"), "rust-mux-proxy");
+        assert_eq!(mem.get("command").expect("command"), "rmcp-mux-proxy");
         assert_eq!(updated.get("other").and_then(|v| v.as_bool()), Some(true));
     }
 

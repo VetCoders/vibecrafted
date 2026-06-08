@@ -64,16 +64,16 @@ payloads exist, the Controls tab also surfaces Polarize intents from
 decision. See the Vibecrafted `skills/vc-polarize/SKILL.md` doctrine for the
 runner contract.
 
-## MCP daemon visibility (rust-mux)
+## MCP daemon visibility (rmcp-mux)
 
 The console surfaces live status from the
-[`rust-mux`](https://github.com/Loctree/rust-mux) MCP transport multiplexer
-inside the Monitor tab. When `rust-mux` writes JSON status snapshots to its
-`--status-file`, the operator gets a `rust-mux (N)` panel between the stat
+[`rmcp-mux`](https://github.com/Loctree/rmcp-mux) MCP transport multiplexer
+inside the Monitor tab. When `rmcp-mux` writes JSON status snapshots to its
+`--status-file`, the operator gets a `rmcp-mux (N)` panel between the stat
 strip and the run table:
 
 ```text
-┌─ rust-mux (2) ───────────────────────────────────────────────────────────┐
+┌─ rmcp-mux (2) ───────────────────────────────────────────────────────────┐
 │ MCP daemons (1/2 need attention):                                        │
 │   • general-memory: Running clients=1/3 pending=0 queue=0 restarts=0 …  │
 │   ! brave-search: Failed clients=0/0 pending=0 queue=0 restarts=5 …     │
@@ -82,7 +82,7 @@ strip and the run table:
 
 The panel header turns red when any service is unhealthy or unreadable.
 Healthy rows render with a green `•`, unhealthy / unreadable rows render with
-a red `!`. The Controls tab gains one `Health-check MCP daemon: rust-mux
+a red `!`. The Controls tab gains one `Health-check MCP daemon: rmcp-mux
 health --service <name>` action per known service, available even when no
 agent run is selected (so the operator can health-check the supervisor when
 nothing else is up).
@@ -93,12 +93,12 @@ Status files are discovered in this order:
 
 1. `VIBECRAFTED_MUX_STATUS_PATHS` (colon-separated list of explicit paths,
    missing entries are still surfaced so misconfiguration is visible).
-2. `~/.rmcp_servers/rust_mux/status.json` if present.
-3. Every other `*.json` under `~/.rmcp_servers/rust_mux/`, sorted
+2. `~/.rmcp_servers/rmcp_mux/status.json` if present.
+3. Every other `*.json` under `~/.rmcp_servers/rmcp_mux/`, sorted
    lexicographically.
 
-The reader mirrors the public `rust_mux::state::StatusSnapshot` schema and
-ignores unknown fields, so a newer rust-mux release that adds fields will not
+The reader mirrors the public `rmcp_mux::state::StatusSnapshot` schema and
+ignores unknown fields, so a newer rmcp-mux release that adds fields will not
 break this surface.
 
 ## Run
@@ -110,6 +110,5 @@ cargo run -- --state-root "$VIBECRAFTED_HOME/control_plane"
 #   --root /path/to/repo
 ```
 
-The package is `vibecrafted-operator` (manifest at repo root). Built binaries
-are exposed under both `vibecrafted-operator` and the shorter `vc-operator`
-entrypoint.
+The package is `vc-tui` (manifest at repo root). The supported CLI entrypoint
+is `vc-tui`.

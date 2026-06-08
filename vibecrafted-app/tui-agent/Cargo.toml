@@ -1,17 +1,22 @@
 [package]
-name = "vibecrafted-operator"
+name = "voc"
 version = "0.1.1"
+autobins = false
 edition.workspace = true
 license = "MIT"
 authors.workspace = true
-description = "Rust operator console for Vibecrafted"
+description = "Voc Agent — the Rust terminal cockpit for Vibecrafted"
 readme = "README.md"
 homepage = "https://vibecrafted.io"
-repository = "https://github.com/VetCoders/vc-operator"
-documentation = "https://docs.rs/vibecrafted-operator"
+repository = "https://github.com/VetCoders/vc-tui"
+documentation = "https://docs.rs/voc"
+
+[[bin]]
+name = "voc"
+path = "src/main.rs"
 
 [dependencies]
-rust-mux = { path = "../mux-agent", package = "rust-mux" }
+rmcp-mux = { path = "../mux-agent", version = "0.4.0", package = "rmcp-mux" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }
 anyhow = "1"
 arboard = "3"

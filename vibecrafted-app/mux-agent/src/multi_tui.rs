@@ -20,7 +20,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use tokio::sync::{mpsc, watch};
 
-use crate::multi::{MultiServerStatus, ServerCommand, StatusLevel, format_uptime};
+use crate::multi::{MultiServerStatus, ServerCommand, format_uptime};
+use crate::state::StatusLevel;
 
 /// TUI application state.
 pub struct MultiTuiApp {
@@ -150,7 +151,7 @@ fn render(
         // Header
         let header = Paragraph::new(Line::from(vec![
             Span::styled(
-                " rust-mux ",
+                " rmcp-mux ",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),

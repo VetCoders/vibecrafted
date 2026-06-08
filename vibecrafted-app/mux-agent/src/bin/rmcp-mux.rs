@@ -1,7 +1,7 @@
-//! rust-mux CLI binary
+//! rmcp-mux CLI binary
 //!
-//! This is the command-line interface for rust-mux. For library usage,
-//! see the `rust_mux` crate documentation.
+//! This is the command-line interface for rmcp-mux. For library usage,
+//! see the `rmcp_mux` crate documentation.
 
 use std::path::PathBuf;
 
@@ -11,15 +11,15 @@ use tracing_subscriber::filter::LevelFilter;
 
 use tokio_util::sync::CancellationToken;
 
-use rust_mux::config::{
+use rmcp_mux::config::{
     CliOptions, expand_path, load_config, resolve_params, resolve_params_multi,
 };
-use rust_mux::runtime::{health_check, run_mux, run_proxy};
-use rust_mux::scan::{
+use rmcp_mux::runtime::{health_check, run_mux, run_proxy};
+use rmcp_mux::scan::{
     RewireArgs, ScanArgs, StatusArgs, run_rewire_cmd, run_scan_cmd, run_status_cmd,
 };
-use rust_mux::wizard::WizardArgs;
-use rust_mux::{
+use rmcp_mux::wizard::WizardArgs;
+use rmcp_mux::{
     DEFAULT_STATUS_SOCKET, print_status_table, query_status, restart_single, run_mux_multi,
     status_all,
 };
@@ -41,7 +41,7 @@ enum CliCommand {
     Wizard(WizardArgs),
     /// Scan host configs and generate mux manifests/snippets.
     Scan(ScanArgs),
-    /// Rewire a host config to point to rust-mux proxy.
+    /// Rewire a host config to point to rmcp-mux proxy.
     Rewire(RewireArgs),
     /// Proxy STDIO to a mux socket (for MCP hosts).
     Proxy(ProxyArgs),
@@ -148,7 +148,7 @@ struct HealthArgs {
 
 #[derive(Args, Debug, Clone)]
 struct DaemonStatusArgs {
-    /// Status socket path (default: /tmp/rust-mux.status.sock)
+    /// Status socket path (default: /tmp/rmcp-mux.status.sock)
     #[arg(long)]
     socket: Option<std::path::PathBuf>,
     /// Output as JSON instead of table
@@ -159,7 +159,7 @@ struct DaemonStatusArgs {
 #[cfg(feature = "tray")]
 #[derive(Args, Debug, Clone)]
 struct DashboardArgs {
-    /// Status socket path (default: /tmp/rust-mux.status.sock)
+    /// Status socket path (default: /tmp/rmcp-mux.status.sock)
     #[arg(long)]
     socket: Option<std::path::PathBuf>,
 }
@@ -183,7 +183,7 @@ fn main() -> Result<()> {
 async fn async_main(cli: RootCli) -> Result<()> {
     match &cli.command {
         Some(CliCommand::Wizard(wargs)) => {
-            rust_mux::wizard::run_wizard(wargs.clone()).await?;
+            rmcp_mux::wizard::run_wizard(wargs.clone()).await?;
             return Ok(());
         }
         Some(CliCommand::Scan(args)) => {
@@ -324,7 +324,7 @@ async fn run_daemon_status(args: DaemonStatusArgs) -> Result<()> {
 
     let status = query_status(&socket).await.map_err(|e| {
         anyhow!(
-            "failed to connect to mux daemon at {}: {} (is rust-mux running?)",
+            "failed to connect to mux daemon at {}: {} (is rmcp-mux running?)",
             socket.display(),
             e
         )
@@ -345,12 +345,12 @@ fn run_dashboard(args: DashboardArgs) -> Result<()> {
 
     let shutdown = CancellationToken::new();
 
-    println!("Starting rust-mux dashboard...");
+    println!("Starting rmcp-mux dashboard...");
     println!("Click 'Quit Dashboard' in tray menu to exit");
 
-    let icon = rust_mux::tray::find_tray_icon();
+    let icon = rmcp_mux::tray::find_tray_icon();
     // Run on main thread - required for macOS tray menu creation
-    rust_mux::tray_dashboard::run_tray_dashboard(shutdown, icon, args.socket);
+    rmcp_mux::tray_dashboard::run_tray_dashboard(shutdown, icon, args.socket);
 
     println!("Dashboard closed");
     Ok(())

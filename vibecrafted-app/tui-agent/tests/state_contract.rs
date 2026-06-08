@@ -6,15 +6,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use tempfile::tempdir;
-use vibecrafted_operator::app::{App, AppTab, DeepAction, DispatchFocus, LaunchFocus, QueueScope};
-use vibecrafted_operator::config::AppConfig;
-use vibecrafted_operator::launch::{
-    LaunchKind, LaunchRequest, LaunchRuntime, build_launch_command,
-};
-use vibecrafted_operator::skills_catalog::CATALOG;
-use vibecrafted_operator::state::{
-    ControlPlaneState, RenderedRun, RunKind, RunSnapshot, classify_run,
-};
+use voc::app::{App, AppTab, DeepAction, DispatchFocus, LaunchFocus, QueueScope};
+use voc::config::AppConfig;
+use voc::launch::{LaunchKind, LaunchRequest, LaunchRuntime, build_launch_command};
+use voc::skills_catalog::CATALOG;
+use voc::state::{ControlPlaneState, RenderedRun, RunKind, RunSnapshot, classify_run};
 
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -510,7 +506,7 @@ fn terminal_launch_probe_inherits_config_dir_from_launch_command() {
 #[test]
 fn mux_health_deep_actions_surface_per_known_service() {
     use std::path::PathBuf;
-    use vibecrafted_operator::mux::{MuxStatusSnapshot, MuxSummary};
+    use voc::mux::{MuxStatusSnapshot, MuxSummary};
 
     let healthy_json = r#"{
         "service_name": "general-memory",
@@ -604,7 +600,7 @@ fn mux_health_deep_actions_surface_per_known_service() {
         artifact_lines: Vec::new(),
         mux_summaries: Vec::new(),
         polarize_intents: Vec::new(),
-        mission_control: vibecrafted_operator::mission_control::MissionControlState::default(),
+        mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
     };
@@ -647,10 +643,10 @@ fn mux_health_deep_actions_surface_per_known_service() {
     assert!(services.contains(&"general-memory"));
     assert!(services.contains(&"brave-search"));
 
-    // Label must surface the rust-mux invocation so the operator knows
+    // Label must surface the rmcp-mux invocation so the operator knows
     // exactly what will run when they hit Enter.
     let label = mux_actions[0].label();
-    assert!(label.contains("rust-mux health --service"));
+    assert!(label.contains("rmcp-mux health --service"));
     assert!(label.contains("general-memory") || label.contains("brave-search"));
 
     // MuxHealth is available even with no run selected (the operator should
@@ -672,7 +668,7 @@ fn mux_health_deep_actions_surface_per_known_service() {
 #[test]
 fn mux_status_lines_render_healthy_and_attention_headers() {
     use std::path::PathBuf;
-    use vibecrafted_operator::mux::{MuxStatusSnapshot, MuxSummary, MuxSummaryState};
+    use voc::mux::{MuxStatusSnapshot, MuxSummary, MuxSummaryState};
 
     let healthy_json = r#"{
         "service_name": "general-memory",
@@ -742,7 +738,7 @@ fn mux_status_lines_render_healthy_and_attention_headers() {
         artifact_lines: Vec::new(),
         mux_summaries: Vec::new(),
         polarize_intents: Vec::new(),
-        mission_control: vibecrafted_operator::mission_control::MissionControlState::default(),
+        mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
     };
@@ -922,7 +918,7 @@ fn deep_controls_expose_attach_resume_and_artifacts() {
         artifact_lines: Vec::new(),
         mux_summaries: Vec::new(),
         polarize_intents: Vec::new(),
-        mission_control: vibecrafted_operator::mission_control::MissionControlState::default(),
+        mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
     };
@@ -1007,7 +1003,7 @@ fn native_artifact_viewer_reads_files_and_clipboard_payload_prefers_resume_comma
         artifact_lines: Vec::new(),
         mux_summaries: Vec::new(),
         polarize_intents: Vec::new(),
-        mission_control: vibecrafted_operator::mission_control::MissionControlState::default(),
+        mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
     };
@@ -1057,7 +1053,7 @@ fn empty_state_detail_lines_offer_human_quick_start() {
         artifact_lines: Vec::new(),
         mux_summaries: Vec::new(),
         polarize_intents: Vec::new(),
-        mission_control: vibecrafted_operator::mission_control::MissionControlState::default(),
+        mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
     };
@@ -1103,7 +1099,7 @@ fn prompt_lines_include_human_kind_copy_and_command_preview() {
         artifact_lines: Vec::new(),
         mux_summaries: Vec::new(),
         polarize_intents: Vec::new(),
-        mission_control: vibecrafted_operator::mission_control::MissionControlState::default(),
+        mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
     };
@@ -1152,7 +1148,7 @@ fn tab_navigation_wraps_and_dispatch_focus_tracks_selected_field() {
         artifact_lines: Vec::new(),
         mux_summaries: Vec::new(),
         polarize_intents: Vec::new(),
-        mission_control: vibecrafted_operator::mission_control::MissionControlState::default(),
+        mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
     };
@@ -1229,7 +1225,7 @@ fn tab_labels_surface_monitor_dispatch_and_controls_context() {
         artifact_lines: Vec::new(),
         mux_summaries: Vec::new(),
         polarize_intents: Vec::new(),
-        mission_control: vibecrafted_operator::mission_control::MissionControlState::default(),
+        mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
     };
@@ -1338,7 +1334,7 @@ fn changing_launch_kind_reorients_the_operator_into_dispatch() {
         artifact_lines: Vec::new(),
         mux_summaries: Vec::new(),
         polarize_intents: Vec::new(),
-        mission_control: vibecrafted_operator::mission_control::MissionControlState::default(),
+        mission_control: voc::mission_control::MissionControlState::default(),
         mission_focus: 0,
         mission_artifact_root: std::path::PathBuf::from("/tmp/vc-op-mission-test"),
     };
@@ -1369,10 +1365,10 @@ fn mission_control_tab_is_addressable_and_reachable_via_rotation() {
 /// report. Mirror of PLAN_23 §4 acceptance for the seven-panel surface.
 #[test]
 fn mission_control_aggregates_real_meta_json_fixtures() {
-    use vibecrafted_operator::mission_control::{ActionQueueKind, MissionControlState};
+    use voc::mission_control::{ActionQueueKind, MissionControlState};
     let dir = tempdir().unwrap();
     let artifact = dir.path().join("artifacts");
-    let bucket = artifact.join("vetcoders/vc-operator/2026_0519/reports");
+    let bucket = artifact.join("vetcoders/vc-tui/2026_0519/reports");
     fs::create_dir_all(&bucket).unwrap();
 
     fs::write(
@@ -1482,10 +1478,8 @@ fn mission_control_aggregates_real_meta_json_fixtures() {
 #[test]
 fn mission_control_action_queue_includes_polarize_intents_with_band_priority() {
     use std::path::PathBuf;
-    use vibecrafted_operator::mission_control::{
-        ActionPriority, ActionQueueKind, MissionControlState,
-    };
-    use vibecrafted_operator::polarize::{PolarizeBand, PolarizeIntent};
+    use voc::mission_control::{ActionPriority, ActionQueueKind, MissionControlState};
+    use voc::polarize::{PolarizeBand, PolarizeIntent};
 
     let dir = tempdir().unwrap();
     let artifact = dir.path().join("artifacts");
@@ -1555,10 +1549,10 @@ fn mission_control_action_queue_includes_polarize_intents_with_band_priority() {
 /// non-zero. Mirrors PLAN_23 §4 "Failure board (24h)".
 #[test]
 fn mission_control_failure_board_respects_24h_window() {
-    use vibecrafted_operator::mission_control::MissionControlState;
+    use voc::mission_control::MissionControlState;
     let dir = tempdir().unwrap();
     let artifact = dir.path().join("artifacts");
-    let bucket = artifact.join("vetcoders/vc-operator/2026_0519/reports");
+    let bucket = artifact.join("vetcoders/vc-tui/2026_0519/reports");
     fs::create_dir_all(&bucket).unwrap();
 
     fs::write(
@@ -1599,10 +1593,10 @@ fn mission_control_failure_board_respects_24h_window() {
 /// so the operator sees the truth instead of a false-success aggregate.
 #[test]
 fn mission_control_skips_malformed_meta_json_without_panic() {
-    use vibecrafted_operator::mission_control::MissionControlState;
+    use voc::mission_control::MissionControlState;
     let dir = tempdir().unwrap();
     let artifact = dir.path().join("artifacts");
-    let bucket = artifact.join("vetcoders/vc-operator/2026_0519/reports");
+    let bucket = artifact.join("vetcoders/vc-tui/2026_0519/reports");
     fs::create_dir_all(&bucket).unwrap();
     fs::write(
         bucket.join("ok.meta.json"),
@@ -1634,7 +1628,7 @@ fn mission_control_skips_malformed_meta_json_without_panic() {
 /// the test together.
 #[tokio::test]
 async fn mission_control_focus_wraps_across_seven_panels() {
-    use vibecrafted_operator::app::MISSION_PANEL_COUNT;
+    use voc::app::MISSION_PANEL_COUNT;
     assert_eq!(MISSION_PANEL_COUNT, 7);
 
     let mut app = App::new(AppConfig {
@@ -1661,10 +1655,10 @@ async fn mission_control_focus_wraps_across_seven_panels() {
 
 #[tokio::test]
 async fn mission_queue_preselects_matching_deep_action_for_controls_handoff() {
-    use vibecrafted_operator::mission_control::{
+    use voc::mission_control::{
         ActionPriority, ActionQueueItem, ActionQueueKind, MissionControlState,
     };
-    use vibecrafted_operator::polarize::{PolarizeBand, PolarizeIntent};
+    use voc::polarize::{PolarizeBand, PolarizeIntent};
 
     let prism_path = std::path::PathBuf::from("/tmp/polarize/just-777/prism.json");
     let mut app = App::new(AppConfig {

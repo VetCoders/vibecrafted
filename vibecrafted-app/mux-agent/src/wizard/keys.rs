@@ -6,7 +6,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::services::{
-    append_default_services, build_services_from_scans, check_health, enrich_running_state,
+    append_default_services, build_services_from_scans, enrich_running_state, probe_service_health,
 };
 use super::types::{
     AppState, PendingAction, SourceEntry, SourceStatus, Strategy, SummaryAction, TrayChoice,
@@ -139,7 +139,7 @@ fn advance_to_step2(app: &mut AppState) {
     // Cheap health checks on entries with sockets, so STEP 2 has badge data
     // available if a future view turns the column on.
     for svc in &mut services {
-        svc.health = check_health(&svc.config);
+        svc.health = probe_service_health(&svc.config);
     }
 
     app.services = services;
@@ -364,7 +364,7 @@ mod tests {
     fn make_app(step: WizardStep) -> AppState {
         AppState {
             wizard_step: step,
-            config_path: PathBuf::from("/tmp/rust-mux-test-config.toml"),
+            config_path: PathBuf::from("/tmp/rmcp-mux-test-config.toml"),
             sources: Vec::new(),
             selected_source: 0,
             custom_path: CustomPathInput::default(),

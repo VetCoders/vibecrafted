@@ -1,4 +1,4 @@
-//! Multi-server tray dashboard for rust-mux.
+//! Multi-server tray dashboard for rmcp-mux.
 //!
 //! Displays status of all managed MCP servers in a system tray menu.
 //! Queries the daemon status socket periodically to update the display.
@@ -14,8 +14,8 @@ use tray_icon::{
     menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu},
 };
 
-use crate::multi::StatusLevel;
 use crate::runtime::{DEFAULT_STATUS_SOCKET, DaemonStatus, query_status};
+use crate::state::StatusLevel;
 use crate::tray::LoadedIcon;
 
 /// Run the tray dashboard on the current thread (required for macOS main thread).
@@ -88,7 +88,7 @@ impl DashboardUi {
     fn update(&mut self, status: &DaemonStatus) {
         // Update header
         self.header
-            .set_text(format!("rust-mux v{} | {}", status.version, status.uptime));
+            .set_text(format!("rmcp-mux v{} | {}", status.version, status.uptime));
 
         // Update summary
         self.summary.set_text(format!(
@@ -193,7 +193,7 @@ fn build_dashboard(status: &DaemonStatus, icon_data: Option<&LoadedIcon>) -> Res
 
     // Header
     let header = MenuItem::new(
-        format!("rust-mux v{} | {}", status.version, status.uptime),
+        format!("rmcp-mux v{} | {}", status.version, status.uptime),
         false,
         None,
     );
@@ -283,7 +283,7 @@ fn build_dashboard(status: &DaemonStatus, icon_data: Option<&LoadedIcon>) -> Res
     };
 
     let tray = TrayIconBuilder::new()
-        .with_tooltip("rust-mux Dashboard")
+        .with_tooltip("rmcp-mux Dashboard")
         .with_icon(icon)
         .with_menu(Box::new(menu))
         .build()?;

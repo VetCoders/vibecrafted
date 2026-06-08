@@ -36,7 +36,7 @@ enum CliCommand {
     Wizard(WizardArgs),
     /// Scan host configs and generate mux manifests/snippets.
     Scan(ScanArgs),
-    /// Rewire a host config to point to rust-mux proxy.
+    /// Rewire a host config to point to rmcp-mux proxy.
     Rewire(RewireArgs),
     /// Proxy STDIO to a mux socket (for MCP hosts).
     Proxy(ProxyArgs),

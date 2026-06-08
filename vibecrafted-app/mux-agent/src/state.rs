@@ -18,21 +18,38 @@ pub enum ServerStatus {
     Backoff,
 }
 
-pub type HealthStatus = ServerStatus;
+/// Status level for display in dashboards.
+///
+/// Lives here next to `ServerStatus` because both are wire-format status
+/// primitives consumed by `StatusSnapshot` and `MultiServerStatus`. It used
+/// to live in `multi.rs`, which forced a `multi.rs ↔ state.rs` import cycle
+/// (state needed `StatusLevel`; multi needed `MuxState`). Keeping it in the
+/// state hub breaks the cycle without changing the public re-export surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StatusLevel {
+    Ok,
+    Warn,
+    Error,
+    Lazy,
+}
 
-use crate::multi::StatusLevel;
+// An older twin `pub type HealthStatus = ServerStatus;` lived here and was
+// surfaced as `StatusSnapshot.health_status` — always populated as a clone of
+// `server_status`. The consumer (`tui-agent/src/mux.rs::MuxStatusSnapshot`)
+// never read it and the wire schema is permissive (extra unknown fields are
+// ignored). Both the alias and the redundant field were removed to stop
+// suggesting a second health signal that did not exist. The only remaining
+// `HealthStatus` in this crate is `wizard::types::HealthStatus`, a distinct
+// service-config enum with its own variant set.
 
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DaemonStatus {
-    pub servers: Vec<StatusSnapshot>,
-    pub version: String,
-    pub uptime: String,
-    pub server_count: usize,
-    pub running_count: usize,
-    pub error_count: usize,
-}
+// `DaemonStatus` (wire status payload) lives in `runtime/status.rs`. An older
+// twin struct sat here under the same name with a different schema
+// (`Vec<StatusSnapshot>` vs the canonical `Vec<MultiServerStatus>`) and
+// silently drifted because nothing imported it. Do not reintroduce it: the
+// daemon status socket and the public re-export in `lib.rs` both bind to
+// `runtime::status::DaemonStatus`. Edit there, not here.
 
 #[cfg_attr(not(feature = "tray"), allow(dead_code))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -53,7 +70,6 @@ pub struct StatusSnapshot {
     pub queue_depth: usize,
     pub child_pid: Option<u32>,
     pub max_request_bytes: usize,
-    pub health_status: HealthStatus,
     pub heartbeat_latency_ms: Option<u64>,
     pub heartbeat: HeartbeatMetrics,
     pub uptime_ms: u64,
@@ -273,7 +289,6 @@ pub fn snapshot_for_state(st: &MuxState, active_clients: usize) -> StatusSnapsho
         queue_depth: st.queue_depth,
         child_pid: st.child_pid,
         max_request_bytes: st.max_request_bytes,
-        health_status: st.server_status.clone(),
         heartbeat_latency_ms: st.heartbeat_metrics.latency_ms,
         heartbeat: st.heartbeat_metrics.clone(),
         uptime_ms: st

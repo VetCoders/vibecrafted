@@ -1,7 +1,7 @@
 //! `[DANGER]` automatic client configuration.
 //!
 //! This module rewrites the user's *existing* MCP client configs so each
-//! known server starts `rust-mux-proxy` instead of the upstream command.
+//! known server starts `rmcp-mux-proxy` instead of the upstream command.
 //! It does so in a backup-first, preview-first, explicit-confirmation-only
 //! way:
 //!
@@ -687,7 +687,7 @@ mod tests {
     fn execute_refuses_without_confirmation() {
         let plan = DangerPlan {
             actions: Vec::new(),
-            proxy_cmd: "rust-mux-proxy".into(),
+            proxy_cmd: "rmcp-mux-proxy".into(),
             proxy_args: Vec::new(),
             socket_dir: PathBuf::from("/tmp"),
         };
@@ -717,7 +717,7 @@ mod tests {
 
         let plan = plan_danger_rewrite(
             &[json_source(path.clone(), HostKind::Claude)],
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
             Path::new("/tmp/sockets"),
         );
@@ -753,7 +753,7 @@ mod tests {
             .expect("memory entry");
         assert_eq!(
             mem.get("command").and_then(|v| v.as_str()),
-            Some("rust-mux-proxy")
+            Some("rmcp-mux-proxy")
         );
     }
 
@@ -775,7 +775,7 @@ mod tests {
 
         let plan = plan_danger_rewrite(
             &[toml_source(path.clone(), HostKind::Codex)],
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
             Path::new("/tmp/sockets"),
         );
@@ -797,7 +797,7 @@ mod tests {
             .expect("memory entry");
         assert_eq!(
             mem.get("command").and_then(|v| v.as_str()),
-            Some("rust-mux-proxy")
+            Some("rmcp-mux-proxy")
         );
     }
 
@@ -810,7 +810,7 @@ mod tests {
 
         let plan = plan_danger_rewrite(
             &[json_source(path.clone(), HostKind::Claude)],
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
             Path::new("/tmp/sockets"),
         );
@@ -829,7 +829,7 @@ mod tests {
         let mut source = json_source(path, HostKind::Gemini);
         source.eligible_for_danger = false;
 
-        let plan = plan_danger_rewrite(&[source], "rust-mux-proxy", &[], Path::new("/tmp/sockets"));
+        let plan = plan_danger_rewrite(&[source], "rmcp-mux-proxy", &[], Path::new("/tmp/sockets"));
         assert_eq!(plan.actions[0].status, DangerStatus::SkippedIneligible);
     }
 
@@ -840,12 +840,12 @@ mod tests {
         write_text(&path, r#"{"mcpServers": {"x": {"command": "npx"}}}"#);
         let plan = plan_danger_rewrite(
             &[json_source(path, HostKind::Claude)],
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
             Path::new("/tmp/sockets"),
         );
         let preview = format_preview(&plan);
-        assert!(preview.contains("rust-mux-proxy"));
+        assert!(preview.contains("rmcp-mux-proxy"));
         assert!(preview.contains(".bak"));
         assert!(preview.contains("DANGER"));
     }
@@ -860,7 +860,7 @@ mod tests {
         );
         let plan = plan_danger_rewrite(
             &[json_source(path.clone(), HostKind::Claude)],
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
             Path::new("/tmp/sockets"),
         );

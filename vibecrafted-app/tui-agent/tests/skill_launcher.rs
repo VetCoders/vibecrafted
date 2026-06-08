@@ -4,10 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use tempfile::tempdir;
-use vibecrafted_operator::polarize::{PolarizeBand, current_intents_from_home, read_intent};
-use vibecrafted_operator::skills_catalog::{
-    CATALOG, SkillAgent, SkillPayload, build_skill_launch_command,
-};
+use voc::polarize::{PolarizeBand, current_intents_from_home, read_intent};
+use voc::skills_catalog::{CATALOG, SkillAgent, SkillPayload, build_skill_launch_command};
 
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -91,6 +89,13 @@ fn catalog_covers_existing_vibecrafted_skill_directories() {
             // from the operator UI (recursion / category error) and so does
             // not appear in CATALOG.
             existing.remove("vc-operator");
+            // Foundation and tool-wrapper skills load with the framework or
+            // wrap a CLI; they are not standalone launchable workflows and so
+            // intentionally do not appear in CATALOG.
+            existing.remove("vc-aicx");
+            existing.remove("vc-loctree");
+            existing.remove("vc-prview");
+            existing.remove("vc-screenscribe");
 
             let catalog = CATALOG
                 .iter()
@@ -207,7 +212,7 @@ fn polarize_intent_ingests_prism_payload_and_renders_band_action() {
     let home = tempdir().unwrap();
     let prism = home
         .path()
-        .join("artifacts/VetCoders/vc-operator/2026_0508/polarize/polr-123/prism.json");
+        .join("artifacts/VetCoders/vc-tui/2026_0508/polarize/polr-123/prism.json");
     fs::create_dir_all(prism.parent().unwrap()).unwrap();
     fs::write(
         &prism,
@@ -234,7 +239,7 @@ fn polarize_intent_prefers_canonical_band_action_over_score_fallback() {
     let home = tempdir().unwrap();
     let prism = home
         .path()
-        .join("artifacts/VetCoders/vc-operator/2026_0508/polarize/polr-action/prism.json");
+        .join("artifacts/VetCoders/vc-tui/2026_0508/polarize/polr-action/prism.json");
     fs::create_dir_all(prism.parent().unwrap()).unwrap();
     fs::write(
         &prism,
@@ -253,10 +258,10 @@ fn polarize_intent_discovery_skips_malformed_prisms_without_hiding_valid_intents
     let home = tempdir().unwrap();
     let valid_prism = home
         .path()
-        .join("artifacts/VetCoders/vc-operator/2026_0508/polarize/polr-valid/prism.json");
+        .join("artifacts/VetCoders/vc-tui/2026_0508/polarize/polr-valid/prism.json");
     let malformed_prism = home
         .path()
-        .join("artifacts/VetCoders/vc-operator/2026_0508/polarize/polr-bad/prism.json");
+        .join("artifacts/VetCoders/vc-tui/2026_0508/polarize/polr-bad/prism.json");
     fs::create_dir_all(valid_prism.parent().unwrap()).unwrap();
     fs::create_dir_all(malformed_prism.parent().unwrap()).unwrap();
     fs::write(
@@ -285,10 +290,10 @@ fn polarize_intent_discovery_does_not_follow_symlinked_directories() {
     let escaped = tempdir().unwrap();
     let valid_prism = home
         .path()
-        .join("artifacts/VetCoders/vc-operator/2026_0508/polarize/polr-valid/prism.json");
+        .join("artifacts/VetCoders/vc-tui/2026_0508/polarize/polr-valid/prism.json");
     let escaped_prism = escaped
         .path()
-        .join("VetCoders/vc-operator/2026_0508/polarize/polr-escaped/prism.json");
+        .join("VetCoders/vc-tui/2026_0508/polarize/polr-escaped/prism.json");
     fs::create_dir_all(valid_prism.parent().unwrap()).unwrap();
     fs::create_dir_all(escaped_prism.parent().unwrap()).unwrap();
     fs::write(

@@ -64,6 +64,48 @@ field() {
   frontmatter | awk -F: -v k="$key" '$1 == k {sub(/^[ \t]+/, "", $2); print $2; exit}' | sed 's/^"\(.*\)"$/\1/'
 }
 
+audit_file() {
+  local configured
+  configured="$(field audit_file || true)"
+  if [[ -n "$configured" && "$configured" != "null" ]]; then
+    printf '%s\n' "$configured"
+  else
+    printf '%s\n' "$(dirname "$state_file")/marbles.audit.jsonl"
+  fi
+}
+
+audit_event() {
+  local event="$1"
+  local audit
+  audit="$(audit_file)"
+  mkdir -p "$(dirname "$audit")"
+  python3 - "$audit" "$event" "$state_file" "${active:-}" "${iteration:-}" "${max_iterations:-}" <<'PY' || true
+import datetime
+import json
+import sys
+from pathlib import Path
+
+audit_path, event, state_file, active, iteration, max_iterations = sys.argv[1:7]
+
+def number_or_text(value):
+    return int(value) if value.isdigit() else value
+
+record = {
+    "ts": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
+    "runtime": "codex-interactive",
+    "event": event,
+    "state_file": state_file,
+    "active": active,
+    "iteration": number_or_text(iteration),
+    "max_iterations": number_or_text(max_iterations),
+}
+path = Path(audit_path)
+path.parent.mkdir(parents=True, exist_ok=True)
+with path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+PY
+}
+
 prompt_body() {
   awk '/^---$/{i++; next} i>=2' "$state_file"
 }
@@ -100,14 +142,18 @@ case "$max_iterations" in ''|*[!0-9]*) echo "Invalid max_iterations in $state_fi
 
 case "$command_name" in
   status)
+    audit_event status
     printf 'active=%s\niteration=%s\nmax_iterations=%s\ncompletion_promise=%s\nstate_file=%s\n' \
       "$active" "$iteration" "$max_iterations" "$completion_promise" "$state_file"
+    printf 'audit_file=%s\n' "$(audit_file)"
     ;;
 
   cancel)
     set_field active false
     set_field stopped_at "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
     set_field stop_reason cancel
+    active=false
+    audit_event cancel
     printf 'Cancelled Codex Marbles at iteration %s.\n' "$iteration"
     ;;
 
@@ -116,21 +162,27 @@ case "$command_name" in
       set_field active false
       set_field stopped_at "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
       set_field stop_reason complete
+      active=false
+      audit_event complete
       printf 'Completed Codex Marbles.\n'
       exit 0
     fi
     if [[ "$promise" != "$completion_promise" ]]; then
+      audit_event promise_mismatch
       printf 'Promise mismatch. Expected: %s\n' "$completion_promise" >&2
       exit 3
     fi
     set_field active false
     set_field stopped_at "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
     set_field stop_reason promise
+    active=false
+    audit_event complete_promise
     printf 'Completed Codex Marbles with <promise>%s</promise>.\n' "$completion_promise"
     ;;
 
   next)
     if [[ "$active" != "true" ]]; then
+      audit_event inactive_stop
       printf 'STOP: Codex Marbles inactive.\n'
       exit 0
     fi
@@ -138,6 +190,8 @@ case "$command_name" in
       set_field active false
       set_field stopped_at "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
       set_field stop_reason max_iterations
+      active=false
+      audit_event max_iterations
       printf 'STOP: max iterations reached (%s).\n' "$max_iterations"
       exit 0
     fi
@@ -145,6 +199,8 @@ case "$command_name" in
     next_iteration=$((iteration + 1))
     set_field iteration "$next_iteration"
     set_field updated_at "\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\""
+    iteration="$next_iteration"
+    audit_event next
 
     printf 'CONTINUE: Codex Marbles iteration %s\n' "$next_iteration"
     if [[ "$completion_promise" != "null" && -n "$completion_promise" ]]; then

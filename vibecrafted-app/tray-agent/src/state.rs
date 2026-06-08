@@ -4,8 +4,15 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use tracing::debug;
 
-use crate::menu::update_status_label;
 use crate::types::{SpawnEntry, TrayMenuEvent, TrayStatus};
+
+// `state` owns the channel primitives (status + menu events) and nothing
+// else. Menu-label rendering used to live here as `apply_status_update`,
+// which pulled `crate::menu` into `crate::state`. Combined with
+// `ipc_client → state` (for `update_tray_status`) and `menu → ipc_client`
+// (for `ClientKind`), that closed a `state → menu → ipc_client → state`
+// cycle. Render is now applied at the event-loop callsite in `lib.rs` so
+// state stays a leaf in the dependency DAG.
 
 pub static STATUS_CHANNEL: OnceLock<Sender<TrayStatus>> = OnceLock::new();
 pub static MENU_EVENT_CHANNEL: OnceLock<Sender<TrayMenuEvent>> = OnceLock::new();
@@ -33,10 +40,6 @@ pub fn send_menu_event(event: TrayMenuEvent) {
     if let Some(sender) = MENU_EVENT_CHANNEL.get() {
         let _ = sender.send(event);
     }
-}
-
-pub fn apply_status_update(status: TrayStatus) {
-    update_status_label(&status.menu_label(crate::menu::current_service_count()));
 }
 
 pub fn record_spawn_entry(entry: SpawnEntry) -> u32 {

@@ -1,13 +1,13 @@
 //! Safe-path mux config generation.
 //!
 //! Given a set of discovered MCP services from various client configs, produce
-//! the three rust-mux-owned files clients can opt into without us having to
+//! the three rmcp-mux-owned files clients can opt into without us having to
 //! mutate their own configs:
 //!
 //! - `~/.config/mux/config.toml` — daemon truth: which upstream MCP servers
-//!   `rust-mux` should run, with their original `command`/`args`/`env`.
+//!   `rmcp-mux` should run, with their original `command`/`args`/`env`.
 //! - `~/.config/mux/mcp.json` — client-facing JSON. Every server entry's
-//!   `command` is `rust-mux-proxy` (clients launch the proxy, the proxy
+//!   `command` is `rmcp-mux-proxy` (clients launch the proxy, the proxy
 //!   talks to the running mux).
 //! - `~/.config/mux/mcp.toml` — client-facing TOML mirror for Codex-style
 //!   clients or for users who prefer to merge the snippet manually.
@@ -98,7 +98,7 @@ pub fn build_mux_outputs(
 }
 
 /// Write the three mux outputs to disk, creating the parent directory if
-/// needed. Existing files are replaced; the safe path is rust-mux-owned, so
+/// needed. Existing files are replaced; the safe path is rmcp-mux-owned, so
 /// no backup is required (this directory belongs to us).
 pub fn write_mux_outputs(outputs: &MuxOutputs) -> Result<MuxFiles> {
     fs::create_dir_all(&outputs.mux_dir).with_context(|| {
@@ -158,7 +158,7 @@ pub fn safe_path_instructions(outputs: &MuxOutputs) -> Vec<ClientInstruction> {
             commands: vec![
                 "# Codex's `-c/--config` is a key=value override, not a config-file flag.".to_string(),
                 "# Either merge the [mcp_servers] block from the file below into ~/.codex/config.toml,".to_string(),
-                format!("# or `codex mcp add` each server pointing at rust-mux-proxy. Source: {}", mcp_toml),
+                format!("# or `codex mcp add` each server pointing at rmcp-mux-proxy. Source: {}", mcp_toml),
             ],
             note: "There is no verified Codex flag that swaps the entire MCP config file; merge or `codex mcp add` is required.".to_string(),
         },
@@ -198,7 +198,7 @@ fn gemini_mcp_add_commands(services: &[HostService], socket_dir: &Path) -> Vec<S
                 .into_owned()
         });
         out.push(format!(
-            "gemini mcp add {} -- rust-mux-proxy --socket {}",
+            "gemini mcp add {} -- rmcp-mux-proxy --socket {}",
             svc.name, socket
         ));
     }
@@ -499,7 +499,7 @@ pub fn per_client_instructions(outputs: &PerClientOutputs) -> Vec<ClientInstruct
                     vec![
                         "# Codex has no flag that swaps the entire config file.".to_string(),
                         format!("# Merge the [mcp_servers] block from {path} into ~/.codex/config.toml,"),
-                        "# or run `codex mcp add` for each entry pointing at rust-mux-proxy.".to_string(),
+                        "# or run `codex mcp add` for each entry pointing at rmcp-mux-proxy.".to_string(),
                     ],
                     "There is no verified Codex flag for an alternative MCP config file.".to_string(),
                 ),
@@ -614,7 +614,7 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let mux_dir = dir.path().join("mux");
         let merge = one_service();
-        let outputs = build_mux_outputs(&merge, &mux_dir, "rust-mux-proxy", &[]).expect("build");
+        let outputs = build_mux_outputs(&merge, &mux_dir, "rmcp-mux-proxy", &[]).expect("build");
 
         assert!(outputs.config_toml.contains("npx"));
         // Daemon config keeps the upstream command intact.
@@ -623,12 +623,12 @@ mod tests {
                 .config_toml
                 .contains("@modelcontextprotocol/server-memory")
         );
-        // Client JSON points clients at rust-mux-proxy.
-        assert!(outputs.mcp_json.contains("rust-mux-proxy"));
+        // Client JSON points clients at rmcp-mux-proxy.
+        assert!(outputs.mcp_json.contains("rmcp-mux-proxy"));
         assert!(outputs.mcp_json.contains("--socket"));
         // Client TOML uses snake_case `mcp_servers` which Codex understands.
         assert!(outputs.mcp_toml.contains("[mcp_servers."));
-        assert!(outputs.mcp_toml.contains("rust-mux-proxy"));
+        assert!(outputs.mcp_toml.contains("rmcp-mux-proxy"));
     }
 
     #[test]
@@ -636,7 +636,7 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let mux_dir = dir.path().join("mux");
         let merge = one_service();
-        let outputs = build_mux_outputs(&merge, &mux_dir, "rust-mux-proxy", &[]).expect("build");
+        let outputs = build_mux_outputs(&merge, &mux_dir, "rmcp-mux-proxy", &[]).expect("build");
         let files = write_mux_outputs(&outputs).expect("write");
 
         assert!(files.config_toml_path.exists(), "config.toml not written");
@@ -651,7 +651,7 @@ mod tests {
         let outputs = build_mux_outputs(
             &one_service(),
             &dir.path().join("mux"),
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
         )
         .expect("build");
@@ -680,7 +680,7 @@ mod tests {
         let outputs = build_mux_outputs(
             &one_service(),
             &dir.path().join("mux"),
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
         )
         .expect("build");
@@ -704,7 +704,7 @@ mod tests {
         let outputs = build_mux_outputs(
             &one_service(),
             &dir.path().join("mux"),
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
         )
         .expect("build");
@@ -725,7 +725,7 @@ mod tests {
         let outputs = build_mux_outputs(
             &one_service(),
             &dir.path().join("mux"),
-            "rust-mux-proxy",
+            "rmcp-mux-proxy",
             &[],
         )
         .expect("build");
@@ -775,7 +775,7 @@ mod tests {
         ];
 
         let outputs =
-            build_per_client_outputs(&scans, &mux_dir, "rust-mux-proxy", &[]).expect("build");
+            build_per_client_outputs(&scans, &mux_dir, "rmcp-mux-proxy", &[]).expect("build");
 
         assert_eq!(outputs.clients.len(), 1, "same kind must produce one file");
         let client = &outputs.clients[0];

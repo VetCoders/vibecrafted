@@ -411,16 +411,16 @@ fn kdl_quote(raw: &str) -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifyHalt {
-    Drift(Vec<rust_mux::ipc::command::NonMuxEntry>),
+    Drift(Vec<rmcp_mux::ipc::command::NonMuxEntry>),
     Timeout,
 }
 
-pub fn pre_launch_verify(client_kind: rust_mux::ipc::ClientKind) -> Result<(), VerifyHalt> {
+pub fn pre_launch_verify(client_kind: rmcp_mux::ipc::ClientKind) -> Result<(), VerifyHalt> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
 
-    let path = rust_mux::ipc::socket_path();
+    let path = rmcp_mux::ipc::socket_path();
     let stream = match UnixStream::connect(&path) {
         Ok(s) => s,
         Err(_) => return Ok(()),
@@ -429,7 +429,7 @@ pub fn pre_launch_verify(client_kind: rust_mux::ipc::ClientKind) -> Result<(), V
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
 
-    let cmd = rust_mux::ipc::MuxControlCommand::Verify { client_kind };
+    let cmd = rmcp_mux::ipc::MuxControlCommand::Verify { client_kind };
     let Ok(json) = serde_json::to_string(&cmd) else {
         return Ok(());
     };
@@ -445,7 +445,7 @@ pub fn pre_launch_verify(client_kind: rust_mux::ipc::ClientKind) -> Result<(), V
         return Err(VerifyHalt::Timeout);
     }
 
-    if let Ok(rust_mux::ipc::MuxControlResponse::VerifyResult(res)) =
+    if let Ok(rmcp_mux::ipc::MuxControlResponse::VerifyResult(res)) =
         serde_json::from_str(&response_line)
         && !res.ok
     {

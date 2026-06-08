@@ -1,29 +1,29 @@
 [package]
-name = "rust-mux"
+name = "rmcp-mux"
 version = "0.4.0"
 edition.workspace = true
 authors = ["Maciej Gad <void@div0.space>", "Monika Szymanska <hello@vetcoders.io>"]
 description = "Transport multiplexer for Rust MCP servers — tray, proxy, and runtime supervisor"
 license.workspace = true
-repository = "https://github.com/Loctree/rust-mux"
-homepage = "https://github.com/Loctree/rust-mux"
-documentation = "https://docs.rs/rust-mux"
+repository = "https://github.com/Loctree/rmcp-mux"
+homepage = "https://github.com/Loctree/rmcp-mux"
+documentation = "https://docs.rs/rmcp-mux"
 readme = "README.md"
 keywords = ["mcp", "multiplexer", "proxy", "tray", "supervisor"]
 categories = ["command-line-utilities", "development-tools"]
 
 [lib]
-name = "rust_mux"
+name = "rmcp_mux"
 path = "src/lib.rs"
 
 [[bin]]
-name = "rust-mux"
-path = "src/bin/rust-mux.rs"
+name = "rmcp-mux"
+path = "src/bin/rmcp-mux.rs"
 required-features = ["cli"]
 
 [[bin]]
-name = "rust-mux-proxy"
-path = "src/bin/rust-mux-proxy.rs"
+name = "rmcp-mux-proxy"
+path = "src/bin/rmcp-mux-proxy.rs"
 required-features = ["cli"]
 
 [features]

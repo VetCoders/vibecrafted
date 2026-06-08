@@ -124,16 +124,16 @@ pub enum DeepAction {
     OpenReport(PathBuf),
     OpenTranscript(PathBuf),
     OpenRoot(PathBuf),
-    /// Run `rust-mux health --service <name>` against a known MCP daemon.
-    /// Available when at least one rust-mux status snapshot is cached on
+    /// Run `rmcp-mux health --service <name>` against a known MCP daemon.
+    /// Available when at least one rmcp-mux status snapshot is cached on
     /// the App; not tied to the selected run, so the operator can health-
     /// check the supervisor even when no agent run is selected.
     MuxHealth {
         service: String,
     },
     MuxRestart(String),
-    MuxVerifyClient(rust_mux::ipc::ClientKind),
-    MuxFixClientDrift(rust_mux::ipc::ClientKind),
+    MuxVerifyClient(rmcp_mux::ipc::ClientKind),
+    MuxFixClientDrift(rmcp_mux::ipc::ClientKind),
     /// Consumer-side rendering for a polarize prism emitted by Vibecrafted.
     /// The operator does not score or originate the band; it only surfaces
     /// the runner's prism payload and suggested action path.
@@ -168,14 +168,14 @@ impl DeepAction {
             }
             DeepAction::OpenRoot(path) => format!("Open run root: {}", path.to_string_lossy()),
             DeepAction::MuxHealth { service } => {
-                format!("Health-check MCP daemon: rust-mux health --service {service}")
+                format!("Health-check MCP daemon: rmcp-mux health --service {service}")
             }
             DeepAction::MuxRestart(service) => {
-                format!("Restart MCP daemon: rust-mux restart --service {service}")
+                format!("Restart MCP daemon: rmcp-mux restart --service {service}")
             }
             DeepAction::MuxVerifyClient(_) => "Verify client routing through mux".to_string(),
             DeepAction::MuxFixClientDrift(_) => {
-                "Fix client drift: rust-mux wizard --strategy auto-rewire".to_string()
+                "Fix client drift: rmcp-mux wizard --strategy auto-rewire".to_string()
             }
             DeepAction::PolarizeIntent {
                 band,
@@ -231,7 +231,7 @@ pub struct App {
     pub error_lines: Vec<String>,
     pub artifact_title: String,
     pub artifact_lines: Vec<String>,
-    /// Cached rust-mux supervisor snapshots (from
+    /// Cached rmcp-mux supervisor snapshots (from
     /// `crate::mux::current_summaries`). Refreshed on every `App::refresh`
     /// so the Monitor tab can render MCP daemon health without doing IO
     /// inside the draw path.
@@ -294,7 +294,7 @@ impl App {
         app.refresh_mux();
         app.refresh_polarize();
         app.refresh_mission_control();
-        let path = rust_mux::ipc::server::socket_path();
+        let path = rmcp_mux::ipc::server::socket_path();
         let summaries = std::sync::Arc::new(std::sync::RwLock::new(app.mux_summaries.clone()));
         app.mux_subscriber = Some(crate::mux::MuxSubscriber::start(path, summaries));
         Ok(app)
@@ -342,7 +342,7 @@ impl App {
         self.mission_focus = (index % count) as usize;
     }
 
-    /// Refresh cached rust-mux status snapshots from the discovered
+    /// Refresh cached rmcp-mux status snapshots from the discovered
     /// status files. Cheap (a few small JSON reads) so it is safe to call
     /// on the same cadence as the run-state refresh.
     pub fn refresh_mux(&mut self) {
@@ -353,7 +353,7 @@ impl App {
         self.polarize_intents = crate::polarize::current_intents(&self.config.launch_root);
     }
 
-    pub fn handle_ipc_event(&mut self, _event: rust_mux::ipc::IpcEvent) {
+    pub fn handle_ipc_event(&mut self, _event: rmcp_mux::ipc::IpcEvent) {
         // The subscriber pushes events. We can either do a full IO refresh,
         // or apply the diff. The safest and most robust path is just calling refresh_mux().
         self.refresh_mux();
@@ -361,7 +361,7 @@ impl App {
 
     /// Lines for the Monitor tab "MCP daemons" panel. Returns an empty
     /// vec when no mux services are known (operator may simply not be
-    /// running rust-mux), otherwise one summary line per service plus a
+    /// running rmcp-mux), otherwise one summary line per service plus a
     /// header.
     pub fn mux_status_lines(&self) -> Vec<String> {
         if self.mux_summaries.is_empty() {
@@ -451,7 +451,7 @@ impl App {
         let marker_path = archive_dir.join(format!("{}.json", safe_marker_name(&run_id)));
         let marker = serde_json::json!({
             "run_id": run_id,
-            "archived_by": "vc-operator",
+            "archived_by": "vc-tui",
             "archived_at": chrono::Utc::now().to_rfc3339(),
         });
         fs::write(&marker_path, serde_json::to_vec_pretty(&marker)?)?;
@@ -930,7 +930,7 @@ impl App {
             }
         }
         // MCP daemon health-check actions are always available (one per
-        // known rust-mux service), independent of whether a run is
+        // known rmcp-mux service), independent of whether a run is
         // selected. Operators commonly need to check the supervisor when
         // *no* run is healthy, so gating these on selection would defeat
         // the surface.

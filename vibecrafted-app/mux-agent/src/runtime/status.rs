@@ -18,8 +18,8 @@ use tokio::sync::{Mutex, Semaphore, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::multi::{MultiServerStatus, StatusLevel, format_uptime};
-use crate::state::{MuxState, ServerStatus, StatusSnapshot};
+use crate::multi::{MultiServerStatus, format_uptime};
+use crate::state::{MuxState, ServerStatus, StatusLevel, StatusSnapshot};
 
 /// Write a status snapshot to a file atomically.
 pub async fn write_status_file(path: &Path, snapshot: &StatusSnapshot) -> Result<()> {
@@ -64,7 +64,7 @@ pub fn spawn_status_writer(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Default status socket path.
-pub const DEFAULT_STATUS_SOCKET: &str = "/tmp/rust-mux.status.sock";
+pub const DEFAULT_STATUS_SOCKET: &str = "/tmp/rmcp-mux.status.sock";
 
 /// Response from the status endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,7 +275,7 @@ pub async fn query_status(socket_path: impl AsRef<Path>) -> Result<DaemonStatus>
 
 /// Print status in a formatted table.
 pub fn print_status_table(status: &DaemonStatus) {
-    println!("rust-mux v{} | uptime: {}", status.version, status.uptime);
+    println!("rmcp-mux v{} | uptime: {}", status.version, status.uptime);
     println!("{:─<72}", "");
     println!(
         "{:<20} {:^8} {:>8} {:>8} {:>10} {:>10}",
@@ -341,8 +341,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_status_socket_uses_rust_mux_identity() {
-        assert_eq!(DEFAULT_STATUS_SOCKET, "/tmp/rust-mux.status.sock");
+    fn default_status_socket_uses_rmcp_mux_identity() {
+        assert_eq!(DEFAULT_STATUS_SOCKET, "/tmp/rmcp-mux.status.sock");
     }
 
     #[test]

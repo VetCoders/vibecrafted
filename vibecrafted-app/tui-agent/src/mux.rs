@@ -1,6 +1,6 @@
-//! rust-mux status reader.
+//! rmcp-mux status reader.
 //!
-//! `rust-mux` (../rust-mux, MCP transport multiplexer) writes a JSON status
+//! `rmcp-mux` (../rmcp-mux, MCP transport multiplexer) writes a JSON status
 //! snapshot to its `--status-file` on every state change. The operator
 //! console reads those snapshots so the human can see what is actually
 //! happening inside the MCP supervisor when an agent run is misbehaving:
@@ -9,11 +9,11 @@
 //! child has been respawned.
 //!
 //! This module is intentionally a *reader-only* surface. We do not depend
-//! on the `rust-mux` crate directly because it pulls a `tray-icon` /
+//! on the `rmcp-mux` crate directly because it pulls a `tray-icon` /
 //! `ratatui 0.28` stack that would conflict with our `ratatui 0.29`
 //! TUI. Instead we mirror the public schema and deserialize the JSON
 //! snapshot file. The fields are taken from
-//! `rust-mux/src/state.rs::StatusSnapshot` and kept in lockstep manually.
+//! `rmcp-mux/src/state.rs::StatusSnapshot` and kept in lockstep manually.
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -22,7 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Lifecycle of the supervised MCP child process. Mirrors
-/// `rust_mux::state::ServerStatus`. The `Failed` variant carries a human
+/// `rmcp_mux::state::ServerStatus`. The `Failed` variant carries a human
 /// reason string straight from the supervisor.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub enum MuxServerStatus {
@@ -68,11 +68,11 @@ impl MuxServerStatus {
     }
 }
 
-/// Snapshot written atomically to the rust-mux `--status-file` path on every
-/// state change. Mirrors `rust_mux::state::StatusSnapshot`.
+/// Snapshot written atomically to the rmcp-mux `--status-file` path on every
+/// state change. Mirrors `rmcp_mux::state::StatusSnapshot`.
 ///
 /// Field set is intentionally permissive (extra unknown fields are ignored)
-/// so a newer rust-mux that adds fields will not break the operator's
+/// so a newer rmcp-mux that adds fields will not break the operator's
 /// reader.
 #[derive(Clone, Debug, Deserialize)]
 pub struct MuxStatusSnapshot {
@@ -99,7 +99,7 @@ pub struct MuxStatusSnapshot {
 impl MuxStatusSnapshot {
     /// Parse a status snapshot from raw JSON.
     pub fn from_json(raw: &str) -> Result<Self> {
-        serde_json::from_str(raw).context("failed to parse rust-mux status JSON")
+        serde_json::from_str(raw).context("failed to parse rmcp-mux status JSON")
     }
 
     /// Read and parse a status snapshot from a status_file path.
@@ -109,8 +109,8 @@ impl MuxStatusSnapshot {
     pub fn read(path: &Path) -> Result<Self> {
         let path = safe_status_file(path)?;
         let raw = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read rust-mux status file {}", path.display()))?;
-        Self::from_json(&raw).with_context(|| format!("rust-mux status file {}", path.display()))
+            .with_context(|| format!("failed to read rmcp-mux status file {}", path.display()))?;
+        Self::from_json(&raw).with_context(|| format!("rmcp-mux status file {}", path.display()))
     }
 
     /// Compact one-line summary suitable for the Monitor tab.
@@ -137,33 +137,33 @@ impl MuxStatusSnapshot {
 
 fn safe_status_file(path: &Path) -> Result<PathBuf> {
     if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-        anyhow::bail!("refusing non-json rust-mux status file {}", path.display());
+        anyhow::bail!("refusing non-json rmcp-mux status file {}", path.display());
     }
     let meta = fs::symlink_metadata(path)
-        .with_context(|| format!("failed to inspect rust-mux status file {}", path.display()))?;
+        .with_context(|| format!("failed to inspect rmcp-mux status file {}", path.display()))?;
     if meta.file_type().is_symlink() || !meta.is_file() {
-        anyhow::bail!("refusing unsafe rust-mux status file {}", path.display());
+        anyhow::bail!("refusing unsafe rmcp-mux status file {}", path.display());
     }
     fs::canonicalize(path).with_context(|| {
         format!(
-            "failed to canonicalize rust-mux status file {}",
+            "failed to canonicalize rmcp-mux status file {}",
             path.display()
         )
     })
 }
 
-/// Canonical default location where rust-mux services drop their status
-/// files. Matches the `~/.rmcp_servers/rust_mux/` convention used by the
-/// rust-mux installer/launchd templates.
+/// Canonical default location where rmcp-mux services drop their status
+/// files. Matches the `~/.rmcp_servers/rmcp_mux/` convention used by the
+/// rmcp-mux installer/launchd templates.
 fn default_mux_status_root() -> Option<PathBuf> {
     let home = env::var_os("HOME").filter(|value| !value.is_empty())?;
-    Some(PathBuf::from(home).join(".rmcp_servers/rust_mux"))
+    Some(PathBuf::from(home).join(".rmcp_servers/rmcp_mux"))
 }
 
 /// Look for explicit operator overrides first
 /// (`VIBECRAFTED_MUX_STATUS_PATHS`, colon-separated list of paths to
 /// individual status files), then fall back to scanning the default
-/// `~/.rmcp_servers/rust_mux/` directory for any `*.json` snapshots and
+/// `~/.rmcp_servers/rmcp_mux/` directory for any `*.json` snapshots and
 /// for a flat `status.json` at the root.
 ///
 /// Returns paths in stable order:
@@ -232,7 +232,7 @@ pub fn read_all_known_snapshots() -> Vec<(PathBuf, Result<MuxStatusSnapshot>)> {
         .collect()
 }
 
-/// UI-friendly snapshot of one rust-mux service. Cached on the `App` so
+/// UI-friendly snapshot of one rmcp-mux service. Cached on the `App` so
 /// the Monitor tab can render mux status without doing IO inside the draw
 /// path. Carries either the parsed snapshot or the error chain that
 /// stopped us from reading it, never both.
@@ -467,7 +467,7 @@ mod tests {
         let err = MuxStatusSnapshot::read(&status).expect_err("non-json status must be refused");
         let chain = format!("{err:#}");
         assert!(
-            chain.contains("refusing non-json rust-mux status file"),
+            chain.contains("refusing non-json rmcp-mux status file"),
             "error chain should explain the refused path shape: {chain}"
         );
     }
@@ -486,7 +486,7 @@ mod tests {
         let err = MuxStatusSnapshot::read(&linked).expect_err("symlinked status must be refused");
         let chain = format!("{err:#}");
         assert!(
-            chain.contains("refusing unsafe rust-mux status file"),
+            chain.contains("refusing unsafe rmcp-mux status file"),
             "error chain should explain the refused symlink: {chain}"
         );
     }
@@ -550,7 +550,7 @@ mod tests {
     fn discovery_picks_up_default_root_status_json_and_lexicographic_extras() {
         let _guard = env_guard();
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join(".rmcp_servers/rust_mux");
+        let root = dir.path().join(".rmcp_servers/rmcp_mux");
         fs::create_dir_all(&root).unwrap();
         // Flat default status.json plus two named ones.
         fs::write(root.join("status.json"), "{}").unwrap();
@@ -577,7 +577,7 @@ mod tests {
     fn discovery_honors_env_override_first_then_default_root_extras() {
         let _guard = env_guard();
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join(".rmcp_servers/rust_mux");
+        let root = dir.path().join(".rmcp_servers/rmcp_mux");
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("status.json"), "{}").unwrap();
         let override_path = dir.path().join("custom.json");
@@ -641,7 +641,7 @@ mod tests {
     fn read_all_known_snapshots_pairs_paths_with_results() {
         let _guard = env_guard();
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().join(".rmcp_servers/rust_mux");
+        let root = dir.path().join(".rmcp_servers/rmcp_mux");
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("status.json"), RUNNING_FIXTURE).unwrap();
         fs::write(root.join("broken.json"), "not json").unwrap();
@@ -686,7 +686,7 @@ pub enum SubscriberState {
 pub struct MuxSubscriber {
     pub handle: tokio::task::JoinHandle<()>,
     pub state: Arc<RwLock<SubscriberState>>,
-    pub rx: std::sync::mpsc::Receiver<rust_mux::ipc::IpcEvent>,
+    pub rx: std::sync::mpsc::Receiver<rmcp_mux::ipc::IpcEvent>,
 }
 
 impl MuxSubscriber {
@@ -712,7 +712,7 @@ impl MuxSubscriber {
                         }
 
                         use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-                        let cmd = rust_mux::ipc::MuxControlCommand::Subscribe;
+                        let cmd = rmcp_mux::ipc::MuxControlCommand::Subscribe;
                         if let Ok(json) = serde_json::to_string(&cmd)
                             && stream
                                 .write_all(format!("{json}\n").as_bytes())
@@ -722,13 +722,13 @@ impl MuxSubscriber {
                             let (reader, _) = stream.into_split();
                             let mut lines = tokio::io::BufReader::new(reader).lines();
                             while let Ok(Some(line)) = lines.next_line().await {
-                                if let Ok(rust_mux::ipc::MuxControlResponse::Event(event)) =
+                                if let Ok(rmcp_mux::ipc::MuxControlResponse::Event(event)) =
                                     serde_json::from_str(&line)
                                 {
                                     // Forward event to UI
                                     let _ = tx.send(event.clone());
                                     // Also update background summaries if requested
-                                    if let rust_mux::ipc::IpcEvent::StateChange { .. } = event {
+                                    if let rmcp_mux::ipc::IpcEvent::StateChange { .. } = event {
                                         // The prompt mentioned background task updates RwLock
                                         // UI loop handle_ipc_event will actually do it, but we can also just log it.
                                     }
@@ -758,7 +758,7 @@ impl MuxSubscriber {
 #[cfg(test)]
 mod subscriber_tests {
     use super::*;
-    use rust_mux::ipc::{IpcEvent, MuxControlResponse};
+    use rmcp_mux::ipc::{IpcEvent, MuxControlResponse};
     use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
     use tokio::net::UnixListener;

@@ -1,33 +1,18 @@
 use crate::ipc::command::{MuxControlCommand, MuxControlResponse};
-use crate::ipc::event::IpcEvent;
+use crate::ipc::context::MuxControlContext;
 use crate::ipc::handlers::handle_command;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::broadcast;
 
 // Limit to 32 concurrent connections.
 const MAX_CONCURRENT: usize = 32;
 
-pub struct MuxControlContext {
-    pub state: Arc<tokio::sync::Mutex<crate::state::MuxState>>,
-    pub event_tx: Option<broadcast::Sender<IpcEvent>>,
-}
-
-impl MuxControlContext {
-    pub fn new(
-        state: Arc<tokio::sync::Mutex<crate::state::MuxState>>,
-        event_tx: Option<broadcast::Sender<IpcEvent>>,
-    ) -> Self {
-        Self { state, event_tx }
-    }
-}
-
 pub fn socket_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     PathBuf::from(home)
-        .join(".rust-mux")
+        .join(".rmcp-mux")
         .join("ipc")
         .join("control.sock")
 }
@@ -245,6 +230,7 @@ mod tests {
 mod additional_tests {
     use super::*;
     use crate::ipc::command::{ClientKind, VerifyResult};
+    use crate::ipc::event::IpcEvent;
 
     #[test]
     fn test_serde_roundtrip_commands() {

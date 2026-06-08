@@ -1,4 +1,4 @@
-//! # rust_mux - MCP Server Multiplexer
+//! # rmcp_mux - MCP Server Multiplexer
 //!
 //! A library for multiplexing MCP (Model Context Protocol) servers, allowing
 //! a single server process to serve multiple clients via Unix sockets.
@@ -14,7 +14,7 @@
 //! ## Usage as Library
 //!
 //! ```rust,no_run
-//! use rust_mux::{MuxConfig, run_mux_server};
+//! use rmcp_mux::{MuxConfig, run_mux_server};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -30,7 +30,7 @@
 //! ## Usage with Multiple Mux Instances
 //!
 //! ```rust,no_run
-//! use rust_mux::{MuxConfig, spawn_mux_server, MuxHandle};
+//! use rmcp_mux::{MuxConfig, spawn_mux_server, MuxHandle};
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
@@ -59,7 +59,6 @@ use tokio_util::sync::CancellationToken;
 // Public modules
 // ─────────────────────────────────────────────────────────────────────────────
 
-pub mod common;
 pub mod config;
 pub mod multi;
 pub mod runtime;
@@ -93,26 +92,12 @@ pub mod multi_tui;
 pub use config::{CliOptions, Config, ResolvedParams, ServerConfig, resolve_params_multi};
 pub use runtime::{
     DEFAULT_STATUS_SOCKET, DaemonStatus, HeartbeatConfig, MAX_PENDING, MAX_QUEUE, ServerRef,
-    StatusState, health_check, query_status, run_mux, run_proxy, run_status_listener,
+    StatusState, health_check, print_status_table, query_status, run_mux, run_proxy,
+    run_status_listener,
 };
-pub use state::{MuxState, ServerStatus, StatusSnapshot};
-pub fn print_status_table(_status: &DaemonStatus) {
-    // Placeholder
-}
+pub use state::{MuxState, ServerStatus, StatusLevel, StatusSnapshot};
 
-pub async fn restart_single_service(_config: &Config, _name: &str) -> Result<()> {
-    // Placeholder
-    Ok(())
-}
-
-pub async fn status_all_servers(_config: &Config) -> Result<()> {
-    // Placeholder
-    Ok(())
-}
-
-pub use multi::{
-    ManagedServer, MultiServerStatus, ServerCommand, StatusLevel, TuiMuxState, format_uptime,
-};
+pub use multi::{ManagedServer, MultiServerStatus, ServerCommand, TuiMuxState, format_uptime};
 #[cfg(feature = "cli")]
 pub use multi_tui::run_multi_tui;
 
@@ -120,12 +105,12 @@ pub use multi_tui::run_multi_tui;
 // Library-first configuration builder
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Configuration for embedding rust_mux in your application.
+/// Configuration for embedding rmcp_mux in your application.
 ///
 /// Use the builder pattern to configure the mux server:
 ///
 /// ```rust
-/// use rust_mux::MuxConfig;
+/// use rmcp_mux::MuxConfig;
 /// use std::time::Duration;
 ///
 /// let config = MuxConfig::new("/tmp/my-mcp.sock", "npx")
@@ -320,7 +305,7 @@ impl MuxConfig {
             self.socket
                 .file_name()
                 .and_then(|n| n.to_string_lossy().split('.').next().map(|s| s.to_string()))
-                .unwrap_or_else(|| "rust_mux".to_string())
+                .unwrap_or_else(|| "rmcp_mux".to_string())
         })
     }
 }
@@ -364,7 +349,7 @@ impl From<MuxConfig> for ResolvedParams {
 ///
 /// # Example
 /// ```rust,no_run
-/// use rust_mux::{MuxConfig, run_mux_server};
+/// use rmcp_mux::{MuxConfig, run_mux_server};
 ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
@@ -410,7 +395,7 @@ impl MuxHandle {
 ///
 /// # Example
 /// ```rust,no_run
-/// use rust_mux::{MuxConfig, spawn_mux_server};
+/// use rmcp_mux::{MuxConfig, spawn_mux_server};
 ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
@@ -499,7 +484,7 @@ pub const NAME: &str = env!("CARGO_PKG_NAME");
 /// Spawns a mux server for each set of parameters and waits for shutdown signal.
 /// Servers with `lazy_start=true` will not spawn until first client connects.
 /// Also starts a status socket listener at [`DEFAULT_STATUS_SOCKET`] for
-/// daemon-wide status monitoring via `rust_mux daemon-status`.
+/// daemon-wide status monitoring via `rmcp_mux daemon-status`.
 pub async fn run_mux_multi(
     params_list: Vec<ResolvedParams>,
     shutdown: CancellationToken,

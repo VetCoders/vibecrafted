@@ -182,7 +182,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                         "--name",
                         "auto-rewire",
                         "--",
-                        "rust-mux",
+                        "rmcp-mux",
                         "wizard",
                         "--strategy",
                         "auto-rewire",
@@ -328,11 +328,11 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
 fn launch_selected(app: &mut App) -> anyhow::Result<()> {
     if !app.config.no_verify_gate && app.launch_runtime != launch::LaunchRuntime::Headless {
         let client_kind = match app.selected_agent() {
-            "claude" => rust_mux::ipc::ClientKind::Claude,
-            "codex" => rust_mux::ipc::ClientKind::Codex,
-            "gemini" => rust_mux::ipc::ClientKind::Gemini,
-            "junie" => rust_mux::ipc::ClientKind::Junie,
-            other => rust_mux::ipc::ClientKind::Generic {
+            "claude" => rmcp_mux::ipc::ClientKind::Claude,
+            "codex" => rmcp_mux::ipc::ClientKind::Codex,
+            "gemini" => rmcp_mux::ipc::ClientKind::Gemini,
+            "junie" => rmcp_mux::ipc::ClientKind::Junie,
+            other => rmcp_mux::ipc::ClientKind::Generic {
                 name: other.to_string(),
             },
         };
@@ -421,13 +421,13 @@ fn deep_control_command(app: &App, action: &DeepAction) -> LaunchCommand {
             env: Default::default(),
         },
         DeepAction::MuxHealth { service } => LaunchCommand {
-            // `rust-mux` is expected on PATH (installed via the rust-mux
-            // installer or `cargo install rust-mux`). The default config
-            // path is `~/.codex/mcp.json`, which `rust-mux` resolves on
+            // `rmcp-mux` is expected on PATH (installed via the rmcp-mux
+            // installer or `cargo install rmcp-mux`). The default config
+            // path is `~/.codex/mcp.json`, which `rmcp-mux` resolves on
             // its own. Operators with a non-default config should set
-            // `RUST_MUX_CONFIG` (read by rust-mux directly) rather than
+            // `RMCP_MUX_CONFIG` (read by rmcp-mux directly) rather than
             // teach the operator console a second config surface.
-            program: PathBuf::from("rust-mux"),
+            program: PathBuf::from("rmcp-mux"),
             args: vec!["health".into(), "--service".into(), service.clone().into()],
             env: Default::default(),
         },
@@ -511,12 +511,12 @@ impl LaunchRunError {
                     }
                     crate::launch::VerifyHalt::Timeout => {
                         lines.push(
-                            "  Timeout waiting for verify response from rust-mux.".to_string(),
+                            "  Timeout waiting for verify response from rmcp-mux.".to_string(),
                         );
                     }
                 }
                 lines.push(String::new());
-                lines.push("Press F to auto-fix (spawns rust-mux wizard).".to_string());
+                lines.push("Press F to auto-fix (spawns rmcp-mux wizard).".to_string());
                 lines
             }
         }

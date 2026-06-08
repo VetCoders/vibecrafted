@@ -1,8 +1,19 @@
 use anyhow::Result;
 use image::{GenericImageView, imageops::FilterType};
+use tracing::debug;
 use tray_icon::Icon;
 
 use crate::types::TrayStatus;
+
+/// Render a `TrayStatus` as a tray icon, falling back to the synthetic
+/// glyph if the bundled PNG cannot be decoded. Lives here, not on
+/// `TrayStatus`, so the data module stays free of rendering deps.
+pub fn icon_for(status: TrayStatus) -> Result<Icon> {
+    load_custom_icon(status).or_else(|error| {
+        debug!("custom tray icon failed, using fallback: {error}");
+        create_fallback_icon(status)
+    })
+}
 
 const ICON_BYTES: &[u8] = include_bytes!("../assets/icon.png");
 const ICON_SIZE: u32 = 44;

@@ -199,14 +199,11 @@ fn home_dir() -> String {
 }
 
 fn print_help() {
-    println!("Vibecrafted operator console");
+    println!("Voc Agent");
     println!();
     println!("Usage:");
     println!(
-        "  vibecrafted-operator [--state-root <dir>] [--deck <path>] [--root <path>] [--runtime <headless|terminal|visible>] [--tick-ms <ms>]"
-    );
-    println!(
-        "  vc-operator           [--state-root <dir>] [--deck <path>] [--root <path>] [--runtime <headless|terminal|visible>] [--tick-ms <ms>]"
+        "  voc [--state-root <dir>] [--deck <path>] [--root <path>] [--runtime <headless|terminal|visible>] [--tick-ms <ms>]"
     );
     println!();
     println!("Options:");

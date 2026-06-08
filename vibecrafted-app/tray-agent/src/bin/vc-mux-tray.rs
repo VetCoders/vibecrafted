@@ -6,7 +6,7 @@ use tracing_subscriber::EnvFilter;
 #[derive(Debug, Parser)]
 #[command(name = "vc-mux-tray")]
 struct Args {
-    #[arg(long, default_value = "~/.rust-mux/ipc/control.sock")]
+    #[arg(long, default_value = "~/.rmcp-mux/ipc/control.sock")]
     socket: String,
     #[arg(long, default_value = "info")]
     log_level: String,
