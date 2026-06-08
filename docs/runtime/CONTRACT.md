@@ -214,7 +214,7 @@ Living tree note:
 - Run required checks. If something is blocked, report the exact blocker and run the closest safe equivalent.
 - Coordination mode: <solo on this stage / parallel with other agents on this stage>
 - You do not need to inspect other agents' plans unless this plan explicitly tells you to.
-- If this plan explicitly calls for a stabilization checkpoint, commit your own changes locally without push and continue on the current branch.
+- Commit is an obligation, not a checkpoint option: ONE commit per round (marbles — one round = one commit), well-formed per the commit-msg hook, on the current branch. Do NOT leave delivered work uncommitted. Do NOT push — push is the operator's button. When the mission spans multiple rounds/units, multi-commit per dispatch is expected.
 ```
 
 ---

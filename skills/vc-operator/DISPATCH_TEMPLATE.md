@@ -174,6 +174,7 @@ Task-specific recovery hint:
 ```text
 Branch + commit:
 - Branch: {{BRANCH_INSTRUCTION}}
+- Cadence: ONE commit per round (marbles — one round = one commit); a dispatch that delivers multiple rounds/units is EXPECTED to produce multiple commits, each committed locally as its round completes. Never leave delivered work uncommitted.
 - Commit subject: {{COMMIT_TITLE}}
 - Commit body: explain the change, then include the full runtime footer:
   `Authored-By: {{AUTHORED_BY}}`, `session_id: <uuid>`,

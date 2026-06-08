@@ -219,6 +219,7 @@ Recovery hint (if your dispatch stalls):
 ```text
 Branch + commit:
 - Branch: `feat/textforge-editor-core` off `feat/text-context-menu@f6b02744`
+- Cadence: ONE commit per round (marbles — one round = one commit); a dispatch that delivers multiple rounds/units is EXPECTED to produce multiple commits, each committed locally as its round completes. Never leave delivered work uncommitted.
 - Commit subject: `[claude/vc-implement] feat(textforge): wire editor canvas to provider`
 - Commit body: explain the change, then include the full runtime footer:
   `Authored-By: claude <agents@vetcoders.io>`, `session_id: <uuid>`,

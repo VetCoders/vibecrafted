@@ -240,6 +240,13 @@ Do not stop at implementation. Proceed through the convergence boundary:
    - If the concept is smeared, run `vc-polarize --task <concept>` and let the prism band-action contract decide: `0..4 abort`, `5..8 memo`, `9..12 full pass`, `13..15 doctrine pass with regression contract`.
 4. **Handoff** — Present the final diff summary and/or `THESIS.md` ready for `dou` and Release.
 
+### Commit cadence
+
+One commit per round (marbles: one round = one commit), committed locally on the current
+branch, well-formed per the commit-msg hook — delivered work is never left uncommitted. A
+vc-workflow run produces **up to 3 commits** (the write phases — Implement, Marbles, Polarize
+— each commit their round). **Do not push**: push is the operator's button.
+
 ## Quick Reference
 
 | Phase     | Tool                               | Output                          |
