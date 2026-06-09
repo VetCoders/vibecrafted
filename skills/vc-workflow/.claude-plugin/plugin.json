@@ -1,5 +1,5 @@
 {
-  "name": "VC Workflow",
+  "name": "vc-workflow",
   "description": "ERi pipeline: Examine Research Implement. Use /vc-workflow to invoke.",
   "author": {
     "name": "VetCoders",

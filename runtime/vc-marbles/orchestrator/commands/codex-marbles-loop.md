@@ -19,6 +19,10 @@ the current interactive session:
 5. Only finish when the completion promise is genuinely true, then call
    `codex-loop-step.sh complete --promise '<text>'`.
 
+Persistent audit is written to `.codex/marbles.audit.jsonl` by default. Treat it
+as the durable loop ledger: activation, status checks, next iterations,
+completion, cancellation, and promise mismatches are appended there.
+
 Run:
 
 ```bash
@@ -39,3 +43,10 @@ keep working in the same session. If it prints STOP, you may final.
 
 If a completion promise is configured, do not call `complete` unless the promise
 statement is completely true.
+
+Report both files whenever you hand off:
+
+```text
+State: .codex/marbles.local.md
+Audit: .codex/marbles.audit.jsonl
+```

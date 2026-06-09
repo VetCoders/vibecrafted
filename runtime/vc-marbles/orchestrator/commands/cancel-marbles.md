@@ -20,5 +20,7 @@ To cancel the Marbles:
 
 3. **If EXISTS**:
    - Read `.claude/marbles.local.md` to get the current iteration number from the `iteration:` field
+   - Read `audit_file:` from the same frontmatter; default to `.claude/marbles.audit.jsonl` if absent
+   - Append a JSONL cancellation event to the audit file before deleting state
    - Remove the file using Bash: `rm .claude/marbles.local.md`
    - Report: "Cancelled Marbles (was at iteration N)" where N is the iteration value

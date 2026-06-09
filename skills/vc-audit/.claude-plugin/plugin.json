@@ -1,5 +1,5 @@
 {
-  "name": "VC Audit",
+  "name": "vc-audit",
   "description": "READ-ONLY post-marbles falsification. Use /vc-audit when a multi-task plan claims completion: builds a per-task requirements matrix, runs positive + negative checks with evidence grading, defaults every requirement to UNVERIFIED, downgrades weak PASSes via a self-attack pass. Lives between marbles (over-write) and polarize (decisive cut) in the pipeline rhythm.",
   "author": {
     "name": "VetCoders",

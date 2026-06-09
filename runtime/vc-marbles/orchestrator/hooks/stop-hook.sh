@@ -23,6 +23,42 @@ ITERATION=$(echo "$FRONTMATTER" | grep '^iteration:' | sed 's/iteration: *//')
 MAX_ITERATIONS=$(echo "$FRONTMATTER" | grep '^max_iterations:' | sed 's/max_iterations: *//')
 # Extract completion_promise and strip surrounding quotes if present
 COMPLETION_PROMISE=$(echo "$FRONTMATTER" | grep '^completion_promise:' | sed 's/completion_promise: *//' | sed 's/^"\(.*\)"$/\1/')
+AUDIT_FILE=$(echo "$FRONTMATTER" | grep '^audit_file:' | sed 's/audit_file: *//' | sed 's/^"\(.*\)"$/\1/' || true)
+if [[ -z "$AUDIT_FILE" || "$AUDIT_FILE" == "null" ]]; then
+  AUDIT_FILE=".claude/marbles.audit.jsonl"
+fi
+
+audit_event() {
+  local event="$1"
+  local detail="${2:-}"
+  mkdir -p "$(dirname "$AUDIT_FILE")"
+  python3 - "$AUDIT_FILE" "$event" "$detail" "$MARBLES_STATE_FILE" "${ITERATION:-}" "${MAX_ITERATIONS:-}" "${CLAUDE_CODE_SESSION_ID:-}" <<'PY' || true
+import datetime
+import json
+import sys
+from pathlib import Path
+
+audit_file, event, detail, state_file, iteration, max_iterations, session_id = sys.argv[1:8]
+
+def number_or_text(value):
+    return int(value) if value.isdigit() else value
+
+record = {
+    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+    "runtime": "claude-stop-hook",
+    "event": event,
+    "detail": detail,
+    "state_file": state_file,
+    "session_id": session_id,
+    "iteration": number_or_text(iteration),
+    "max_iterations": number_or_text(max_iterations),
+}
+path = Path(audit_file)
+path.parent.mkdir(parents=True, exist_ok=True)
+with path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+PY
+}
 
 # Session isolation: the state file is project-scoped, but the Stop hook
 # fires in every Claude Code session in that project. If another session
@@ -36,6 +72,7 @@ fi
 
 # Validate numeric fields before arithmetic operations
 if [[ ! "$ITERATION" =~ ^[0-9]+$ ]]; then
+  audit_event corrupted_iteration "$ITERATION"
   echo "⚠️  Marbles: State file corrupted" >&2
   echo "   File: $MARBLES_STATE_FILE" >&2
   echo "   Problem: 'iteration' field is not a valid number (got: '$ITERATION')" >&2
@@ -47,6 +84,7 @@ if [[ ! "$ITERATION" =~ ^[0-9]+$ ]]; then
 fi
 
 if [[ ! "$MAX_ITERATIONS" =~ ^[0-9]+$ ]]; then
+  audit_event corrupted_max_iterations "$MAX_ITERATIONS"
   echo "⚠️  Marbles: State file corrupted" >&2
   echo "   File: $MARBLES_STATE_FILE" >&2
   echo "   Problem: 'max_iterations' field is not a valid number (got: '$MAX_ITERATIONS')" >&2
@@ -59,6 +97,7 @@ fi
 
 # Check if max iterations reached
 if [[ $MAX_ITERATIONS -gt 0 ]] && [[ $ITERATION -ge $MAX_ITERATIONS ]]; then
+  audit_event max_iterations
   echo "🛑 Marbles: Max iterations ($MAX_ITERATIONS) reached."
   rm "$MARBLES_STATE_FILE"
   exit 0
@@ -68,6 +107,7 @@ fi
 TRANSCRIPT_PATH=$(echo "$HOOK_INPUT" | jq -r '.transcript_path')
 
 if [[ ! -f "$TRANSCRIPT_PATH" ]]; then
+  audit_event transcript_missing "$TRANSCRIPT_PATH"
   echo "⚠️  Marbles: Transcript file not found" >&2
   echo "   Expected: $TRANSCRIPT_PATH" >&2
   echo "   This is unusual and may indicate a Claude Code internal issue." >&2
@@ -79,6 +119,7 @@ fi
 # Read last assistant message from transcript (JSONL format - one JSON per line)
 # First check if there are any assistant messages
 if ! grep -q '"role":"assistant"' "$TRANSCRIPT_PATH"; then
+  audit_event no_assistant_messages "$TRANSCRIPT_PATH"
   echo "⚠️  Marbles: No assistant messages found in transcript" >&2
   echo "   Transcript: $TRANSCRIPT_PATH" >&2
   echo "   This is unusual and may indicate a transcript format issue" >&2
@@ -97,6 +138,7 @@ fi
 # for long-running sessions.
 LAST_LINES=$(grep '"role":"assistant"' "$TRANSCRIPT_PATH" | tail -n 100)
 if [[ -z "$LAST_LINES" ]]; then
+  audit_event assistant_extract_empty "$TRANSCRIPT_PATH"
   echo "⚠️  Marbles: Failed to extract assistant messages" >&2
   echo "   Marbles is stopping." >&2
   rm "$MARBLES_STATE_FILE"
@@ -117,6 +159,7 @@ set -e
 
 # Check if jq succeeded
 if [[ $JQ_EXIT -ne 0 ]]; then
+  audit_event jq_failure "$LAST_OUTPUT"
   echo "⚠️  Marbles: Failed to parse assistant message JSON" >&2
   echo "   Error: $LAST_OUTPUT" >&2
   echo "   This may indicate a transcript format issue." >&2
@@ -135,6 +178,7 @@ if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then
   # Use = for literal string comparison (not pattern matching)
   # == in [[ ]] does glob pattern matching which breaks with *, ?, [ characters
   if [[ -n "$PROMISE_TEXT" ]] && [[ "$PROMISE_TEXT" = "$COMPLETION_PROMISE" ]]; then
+    audit_event complete_promise "$COMPLETION_PROMISE"
     echo "✅ Marbles: Detected <promise>$COMPLETION_PROMISE</promise>"
     rm "$MARBLES_STATE_FILE"
     exit 0
@@ -150,6 +194,7 @@ NEXT_ITERATION=$((ITERATION + 1))
 PROMPT_TEXT=$(awk '/^---$/{i++; next} i>=2' "$MARBLES_STATE_FILE")
 
 if [[ -z "$PROMPT_TEXT" ]]; then
+  audit_event prompt_missing
   echo "⚠️  Marbles: State file corrupted or incomplete" >&2
   echo "   File: $MARBLES_STATE_FILE" >&2
   echo "   Problem: No prompt text found" >&2
@@ -168,6 +213,8 @@ fi
 TEMP_FILE="${MARBLES_STATE_FILE}.tmp.$$"
 sed "s/^iteration: .*/iteration: $NEXT_ITERATION/" "$MARBLES_STATE_FILE" > "$TEMP_FILE"
 mv "$TEMP_FILE" "$MARBLES_STATE_FILE"
+ITERATION="$NEXT_ITERATION"
+audit_event continue
 
 # Build system message with iteration count and completion promise info
 if [[ "$COMPLETION_PROMISE" != "null" ]] && [[ -n "$COMPLETION_PROMISE" ]]; then

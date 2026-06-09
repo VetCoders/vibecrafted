@@ -103,6 +103,14 @@ HELP_EOF
       COMPLETION_PROMISE="$2"
       shift 2
       ;;
+    --audit-file)
+      if [[ -z "${2:-}" ]]; then
+        echo "Error: --audit-file requires a path argument" >&2
+        exit 1
+      fi
+      AUDIT_FILE="$2"
+      shift 2
+      ;;
     *)
       # Non-option argument - collect all as prompt parts
       PROMPT_PARTS+=("$1")
@@ -131,6 +139,7 @@ fi
 
 # Create state file for stop hook (markdown with YAML frontmatter)
 mkdir -p .claude
+mkdir -p "$(dirname "$AUDIT_FILE")"
 
 # Quote completion promise for YAML if it contains special chars or is not null
 if [[ -n "$COMPLETION_PROMISE" ]] && [[ "$COMPLETION_PROMISE" != "null" ]]; then
@@ -146,16 +155,44 @@ iteration: 1
 session_id: ${CLAUDE_CODE_SESSION_ID:-}
 max_iterations: $MAX_ITERATIONS
 completion_promise: $COMPLETION_PROMISE_YAML
+audit_file: "$AUDIT_FILE"
 started_at: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 ---
 
 $PROMPT
 EOF
 
+python3 - "$AUDIT_FILE" ".claude/marbles.local.md" "$MAX_ITERATIONS" "$COMPLETION_PROMISE" "$PROMPT" "${CLAUDE_CODE_SESSION_ID:-}" <<'PY'
+import datetime
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+audit_file, state_file, max_iterations, completion_promise, prompt, session_id = sys.argv[1:7]
+record = {
+    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+    "runtime": "claude-stop-hook",
+    "event": "activated",
+    "state_file": state_file,
+    "session_id": session_id,
+    "iteration": 1,
+    "max_iterations": int(max_iterations),
+    "completion_promise": None if completion_promise == "null" else completion_promise,
+    "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+    "prompt_preview": prompt[:160],
+}
+path = Path(audit_file)
+path.parent.mkdir(parents=True, exist_ok=True)
+with path.open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+PY
+
 # Output setup message
 cat <<EOF
 🔄 Marbles activated in this session!
 
+Audit: $AUDIT_FILE
 Iteration: 1
 Max iterations: $(if [[ $MAX_ITERATIONS -gt 0 ]]; then echo "$MAX_ITERATIONS"; else echo "unlimited"; fi)
 Completion promise: $(if [[ "$COMPLETION_PROMISE" != "null" ]]; then echo "${COMPLETION_PROMISE//\"/} (ONLY output when TRUE - do not lie!)"; else echo "none (runs forever)"; fi)

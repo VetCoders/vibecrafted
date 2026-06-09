@@ -113,7 +113,7 @@ from pathlib import Path
 
 audit_file, state_file, max_iterations, completion_promise, prompt = sys.argv[1:6]
 record = {
-    "ts": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
+    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
     "runtime": "codex-interactive",
     "event": "activated",
     "state_file": state_file,

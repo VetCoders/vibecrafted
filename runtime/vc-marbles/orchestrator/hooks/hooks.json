@@ -1,5 +1,5 @@
 {
-  "description": "Marbles plugin stop hook for self-referential loops",
+  "description": "Marbles plugin stop hook for self-referential loops with persistent audit JSONL",
   "hooks": {
     "Stop": [
       {

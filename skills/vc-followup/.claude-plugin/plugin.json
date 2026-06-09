@@ -1,5 +1,5 @@
 {
-  "name": "VC Followup",
+  "name": "vc-followup",
   "description": "Post-implementation audit chain. Use /vc-followup to invoke.",
   "author": {
     "name": "VetCoders",

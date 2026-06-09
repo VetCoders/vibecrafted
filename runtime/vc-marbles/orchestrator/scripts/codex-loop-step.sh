@@ -91,7 +91,7 @@ def number_or_text(value):
     return int(value) if value.isdigit() else value
 
 record = {
-    "ts": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
+    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
     "runtime": "codex-interactive",
     "event": event,
     "state_file": state_file,

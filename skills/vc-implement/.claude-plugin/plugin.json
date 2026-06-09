@@ -1,5 +1,5 @@
 {
-  "name": "VC Implement",
+  "name": "vc-implement",
   "description": "For when you're done planning. Skip the pipeline, just ship the thing — full autonomous end-to-end implementation. Use /vc-implement to invoke. /vc-justdo is the same workflow.",
   "author": {
     "name": "VetCoders",

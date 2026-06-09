@@ -54,12 +54,13 @@ Start a Marbles in your current session.
 
 **How it works:**
 
-1. Creates `.claude/.marbles.local.md` state file
+1. Creates `.claude/marbles.local.md` state file
 2. You work on the task
 3. When you try to exit, stop hook intercepts
 4. Same prompt fed back
 5. You see your previous work
 6. Continues until promise detected or max iterations
+7. Persistent audit events append to `.claude/marbles.audit.jsonl`
 
 ---
 
@@ -76,8 +77,34 @@ Cancel an active Marbles (removes the loop state file).
 **How it works:**
 
 - Checks for active loop state file
-- Removes `.claude/.marbles.local.md`
+- Appends a cancellation event to the configured audit file
+- Removes `.claude/marbles.local.md`
 - Reports cancellation with iteration count
+
+---
+
+### /codex-marbles-loop <PROMPT> [OPTIONS]
+
+Start the Codex interactive adaptation of Marbles.
+
+Codex does not expose Claude's Stop hook in this environment, so the loop is a
+same-session command discipline:
+
+1. `setup-codex-loop.sh` writes `.codex/marbles.local.md`
+2. The current Codex session works normally
+3. Before final answer, the session runs `codex-loop-step.sh next`
+4. If `CONTINUE` is printed, the printed prompt becomes the next instruction
+5. Completion requires `codex-loop-step.sh complete --promise '<text>'` when the
+   promise is genuinely true
+
+Persistent audit events append to `.codex/marbles.audit.jsonl`.
+
+---
+
+### /cancel-codex-marbles
+
+Cancel the Codex interactive loop by routing through `codex-loop-step.sh cancel`.
+The cancellation is appended to `.codex/marbles.audit.jsonl`.
 
 ---
 
@@ -92,6 +119,19 @@ To signal completion, the agent must output a `<promise>` tag:
 ```
 
 The stop hook looks for this specific tag. Without it (or `--max-iterations`), Marbles runs infinitely.
+
+### Persistent Audit
+
+Each runtime now has a durable JSONL ledger:
+
+```text
+Claude Stop-hook runtime: .claude/marbles.audit.jsonl
+Codex interactive runtime: .codex/marbles.audit.jsonl
+```
+
+The ledger records activation, iteration advances, completion, cancellation,
+state corruption, transcript failures, and promise mismatches. Use it as the
+handoff source of truth when a loop changes files in a living tree.
 
 ### Self-Reference Mechanism
 
