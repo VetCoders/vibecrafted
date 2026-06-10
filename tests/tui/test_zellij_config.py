@@ -20,12 +20,16 @@ def test_zellij_config_moves_secondary_shortcuts_off_alt() -> None:
 def test_zellij_config_replaces_immediate_quit_with_confirm_flow() -> None:
     payload = ZELLIJ_CONFIG.read_text(encoding="utf-8")
 
-    assert 'bind "Ctrl Shift q" { SwitchToMode "Session"; }' in payload
+    # Brief 25-A1: Ctrl Shift q must open the session-manager (truthful hint),
+    # while the quit-confirmation gate lives on Ctrl Shift x.
+    assert 'bind "Ctrl Shift q" {' in payload
+    assert 'LaunchOrFocusPlugin "session-manager"' in payload
+    assert 'bind "Ctrl Shift x" { SwitchToMode "Session"; }' in payload
     assert 'bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }' in payload
     assert 'bind "Ctrl q" { CloseTab; SwitchToMode "Normal"; }' in payload
     assert 'bind "y" { Quit; }' in payload
     assert (
-        'bind "n" "Esc" "Ctrl q" "Ctrl Shift q" { SwitchToMode "Normal"; }' in payload
+        'bind "n" "Esc" "Ctrl q" "Ctrl Shift x" { SwitchToMode "Normal"; }' in payload
     )
 
 
