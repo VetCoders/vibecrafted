@@ -10,7 +10,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from .artifacts import validate_artifacts
 from .control_plane import (
+    await_run,
     control_plane_home,
     ensure_session_id,
     lookup_run,
@@ -76,6 +78,17 @@ def _run_artifact_paths(run_id: str) -> dict[str, Path]:
     }
 
 
+def _core_package_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _prepend_pythonpath(env: dict[str, str], path: Path) -> None:
+    existing = env.get("PYTHONPATH", "")
+    entries = [str(path)]
+    entries.extend(item for item in existing.split(os.pathsep) if item)
+    env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(entries))
+
+
 def _dispatcher_command(
     *,
     run_id: str,
@@ -113,6 +126,165 @@ def _run_is_terminal(run: dict[str, Any]) -> bool:
     if str(run.get("liveness") or "") == "terminal":
         return True
     return run.get("exit_code") is not None
+
+
+def _path_exists(path: str) -> bool:
+    if not path:
+        return False
+    try:
+        return Path(path).is_file()
+    except OSError:
+        return False
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _terminal_meta_payload(
+    *,
+    run_id: str,
+    run: dict[str, Any],
+    report_path: str,
+    transcript_path: str,
+    meta_path: str,
+) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "state": str(run.get("state") or ""),
+        "liveness": str(run.get("liveness") or ""),
+        "operator_state": str(run.get("operator_state") or ""),
+        "terminal": _run_is_terminal(run),
+        "exit_code": run.get("exit_code"),
+        "session_id": str(run.get("session_id") or ""),
+        "root": str(run.get("root") or ""),
+        "agent": str(run.get("agent") or ""),
+        "skill": str(run.get("skill") or ""),
+        "mode": str(run.get("mode") or ""),
+        "report": report_path,
+        "transcript": transcript_path,
+        "meta": meta_path,
+        "artifact_ok": bool(run.get("artifact_ok")),
+        "artifact_errors": list(run.get("artifact_errors") or []),
+        "updated_at": str(run.get("updated_at") or ""),
+        "completed_at": str(run.get("completed_at") or ""),
+    }
+
+
+def _write_terminal_meta(
+    *,
+    run_id: str,
+    run: dict[str, Any],
+    report_path: str,
+    transcript_path: str,
+    meta_path: str,
+) -> dict[str, Any]:
+    if not meta_path:
+        return {}
+    path = Path(meta_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _read_json_object(path)
+    payload = {
+        **existing,
+        **_terminal_meta_payload(
+            run_id=run_id,
+            run=run,
+            report_path=report_path,
+            transcript_path=transcript_path,
+            meta_path=meta_path,
+        ),
+    }
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return payload
+
+
+def await_launch_truth(
+    launch: dict[str, Any] | str,
+    *,
+    timeout_seconds: float = 300,
+    interval_seconds: float = 5,
+    require_report: bool = True,
+    require_transcript_output: bool = False,
+) -> dict[str, Any]:
+    """Await a launched workflow and verify its announced artifact paths.
+
+    This is intentionally separate from :func:`launch_workflow` so callers can
+    keep launch acceptance asynchronous while dispatch engines can later prove
+    terminal run truth for returned run ids.
+    """
+    launch_payload: dict[str, Any]
+    if isinstance(launch, dict):
+        launch_payload = dict(launch)
+        run_id = str(launch_payload.get("run_id") or "").strip()
+    else:
+        launch_payload = {}
+        run_id = str(launch or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+
+    awaited = await_run(
+        run_id,
+        timeout_seconds=timeout_seconds,
+        interval_seconds=interval_seconds,
+    )
+    run = dict(awaited.get("run") or {})
+    report_path = str(launch_payload.get("report") or run.get("latest_report") or "")
+    transcript_path = str(
+        launch_payload.get("transcript") or run.get("latest_transcript") or ""
+    )
+    meta_path = str(launch_payload.get("meta") or run.get("meta") or "")
+    terminal = bool(awaited.get("completed")) and _run_is_terminal(run)
+
+    meta_payload: dict[str, Any] = {}
+    if terminal:
+        meta_payload = _write_terminal_meta(
+            run_id=run_id,
+            run=run,
+            report_path=report_path,
+            transcript_path=transcript_path,
+            meta_path=meta_path,
+        )
+
+    validation = validate_artifacts(
+        meta_path=meta_path or None,
+        report_path=report_path or None,
+        transcript_path=transcript_path or None,
+        require_report=require_report,
+        require_transcript_output=require_transcript_output,
+    )
+    paths_exist = {
+        "report": _path_exists(report_path),
+        "transcript": _path_exists(transcript_path),
+        "meta": _path_exists(meta_path),
+    }
+    path_errors = [
+        f"{name}_missing" for name, exists in paths_exist.items() if not exists
+    ]
+
+    return {
+        "run_id": run_id,
+        "found": bool(awaited.get("found")),
+        "completed": bool(awaited.get("completed")),
+        "timed_out": bool(awaited.get("timed_out")),
+        "terminal": terminal,
+        "attempts": awaited.get("attempts"),
+        "run": run,
+        "report": report_path,
+        "transcript": transcript_path,
+        "meta": meta_path,
+        "paths_exist": paths_exist,
+        "artifact_ok": validation.ok and not path_errors,
+        "artifact_errors": list(validation.errors) + path_errors,
+        "artifact_warnings": list(validation.warnings),
+        "meta_payload": meta_payload or validation.meta_payload,
+    }
 
 
 def _stop_signal_target(run: dict[str, Any]) -> tuple[str, int] | None:
@@ -282,6 +454,7 @@ def launch_workflow(
     merged_env = dict(os.environ)
     if env:
         merged_env.update(env)
+    _prepend_pythonpath(merged_env, _core_package_root())
     session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
     merged_env["VIBECRAFTED_RUN_ID"] = run_id
     merged_env["VIBECRAFTED_SESSION_ID"] = session_id
@@ -291,9 +464,8 @@ def launch_workflow(
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
-    merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session_name(
-        spec.root, run_id
-    )
+    operator_session = operator_session_name(spec.root, run_id)
+    merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
 
     append_event(
         kind="launch",
@@ -306,6 +478,7 @@ def launch_workflow(
             "mode": spec.mode,
             "runtime": spec.runtime,
             "root": spec.root,
+            "operator_session": operator_session,
             "session_id": session_id,
             "identity_required": True,
             "source_dir": str(Path(source_dir).resolve()),
@@ -329,6 +502,7 @@ def launch_workflow(
                     "dispatch_command": command,
                     "retry_of": retry_of,
                     "session_id": session_id,
+                    "operator_session": operator_session,
                 }
             )
             + "\n"
@@ -378,6 +552,7 @@ def launch_workflow(
                 "mode": spec.mode,
                 "runtime": spec.runtime,
                 "root": spec.root,
+                "operator_session": operator_session,
                 "session_id": session_id,
                 "identity_required": True,
                 "source_dir": str(Path(source_dir).resolve()),
@@ -406,6 +581,12 @@ def launch_workflow(
         "transcript": str(artifacts["transcript"]),
         "meta": str(artifacts["meta"]),
         "session_id": session_id,
+        "operator_session": operator_session,
+        "control_plane_identity": {
+            "run_id": run_id,
+            "session_id": session_id,
+            "operator_session": operator_session,
+        },
         "retry_of": retry_of,
         "launch_log": str(launch_log),
         "spec": spec.to_payload(),

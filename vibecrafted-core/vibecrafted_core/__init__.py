@@ -38,6 +38,7 @@ from .runtime_paths import (
 )
 from .workflow import (
     WorkflowLaunchSpec,
+    await_launch_truth,
     build_launch_command,
     launch_workflow,
     normalize_launch_spec,
@@ -120,6 +121,7 @@ __all__ = [
     "WorkflowLaunchSpec",
     "append_event",
     "await_run",
+    "await_launch_truth",
     "block_end",
     "block_start",
     "build_launch_command",

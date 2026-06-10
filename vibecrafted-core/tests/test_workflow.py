@@ -73,6 +73,68 @@ def test_launch_workflow_keeps_dispatcher_launch_even_if_worker_command_is_bad(
     assert payload["worker_command"] == ["definitely-missing-vibecrafted-binary"]
 
 
+def test_launch_workflow_artifact_paths_are_terminal_truth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    source = _source_dir(tmp_path)
+    spec = workflow.normalize_launch_spec(
+        {"skill": "workflow", "agent": "claude", "prompt": "go"},
+        source,
+    )
+
+    monkeypatch.setattr(
+        workflow,
+        "_default_command",
+        lambda _agent, _prompt: [
+            sys.executable,
+            "-c",
+            (
+                "from pathlib import Path; import os; "
+                "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+                "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+                "); "
+                "print('launcher truth worker complete')"
+            ),
+        ],
+    )
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is True
+    assert payload["run_id"]
+    assert payload["report"]
+    assert payload["transcript"]
+    assert payload["meta"]
+    assert payload["control_plane_identity"] == {
+        "run_id": payload["run_id"],
+        "session_id": payload["session_id"],
+        "operator_session": payload["operator_session"],
+    }
+
+    truth = workflow.await_launch_truth(
+        payload,
+        timeout_seconds=10,
+        interval_seconds=0.05,
+        require_transcript_output=True,
+    )
+
+    assert truth["completed"] is True
+    assert truth["terminal"] is True
+    assert truth["artifact_ok"] is True
+    assert truth["paths_exist"] == {
+        "report": True,
+        "transcript": True,
+        "meta": True,
+    }
+    assert truth["run"]["state"] == "report_validated"
+    assert truth["run"]["liveness"] == "terminal"
+    assert truth["meta_payload"]["run_id"] == payload["run_id"]
+    assert truth["meta_payload"]["terminal"] is True
+    assert truth["meta_payload"]["state"] == "report_validated"
+    assert truth["meta_payload"]["report"] == payload["report"]
+
+
 def test_stop_run_signals_worker_pgid(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         workflow,
