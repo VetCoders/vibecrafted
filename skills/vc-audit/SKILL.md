@@ -31,6 +31,17 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v1 -->
+
+> **Invoking `/vc-audit` means you are DISPATCHING THE 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 FLEET** — real,
+> out-of-process agents launched through `vibecrafted <workflow> <agent>`. This invocation
+> is an **imperative to act**, **not a no-op**, and **not** native in-process subagents.
+> If you loaded this skill and find yourself reaching for an in-thread tool (e.g. native
+> `Workflow`), STOP and dispatch through the launcher. The **sole** exception is
+> `vc-delegate` (native in-process subagents) — every other `/vc-*` is the fleet.
+
+<!-- /fleet-imperative -->
+
 # vc-audit — READ-ONLY Plan-vs-Code Falsifier
 
 > The falsification charter. Where `vc-review` says **"findings-max on

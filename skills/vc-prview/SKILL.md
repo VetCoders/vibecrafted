@@ -14,6 +14,17 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v1 -->
+
+> **Invoking `/vc-prview` means you are DISPATCHING THE 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 FLEET** — real,
+> out-of-process agents launched through `vibecrafted <workflow> <agent>`. This invocation
+> is an **imperative to act**, **not a no-op**, and **not** native in-process subagents.
+> If you loaded this skill and find yourself reaching for an in-thread tool (e.g. native
+> `Workflow`), STOP and dispatch through the launcher. The **sole** exception is
+> `vc-delegate` (native in-process subagents) — every other `/vc-*` is the fleet.
+
+<!-- /fleet-imperative -->
+
 # vc-prview — Bounded Review Pipeline (Generate + Audit)
 
 Two-phase skill: **Phase 1** generates structured artifacts with prview-rs,
@@ -464,6 +475,19 @@ prview --json --quiet | jq '.checks[] | select(.status == "Failed")'
 - Ignoring tooling issues (tool crash ≠ code issue, but still a finding)
 - Skipping pattern scans (the `.unwrap()` / `any` / PII checklist is mandatory)
 - Not cross-referencing coverage-delta with changed source files
+
+## Fleet Dispatch Terminal
+
+This skill's flow ends in action, never in absorbed prose. The named action here
+is generating the prview-rs artifact pack and producing the findings-max audit.
+When the review is dispatched rather than run in-session, fire a fleet worker:
+
+```bash
+vibecrafted review <agent> --file <artifact-pack-or-brief>
+```
+
+No artifact pack generated and no dispatch fired means the invocation was a
+no-op — the failure mode this terminal forbids.
 
 ---
 

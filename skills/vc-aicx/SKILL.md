@@ -14,6 +14,17 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v1 -->
+
+> **Invoking `/vc-aicx` means you are DISPATCHING THE 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 FLEET** — real,
+> out-of-process agents launched through `vibecrafted <workflow> <agent>`. This invocation
+> is an **imperative to act**, **not a no-op**, and **not** native in-process subagents.
+> If you loaded this skill and find yourself reaching for an in-thread tool (e.g. native
+> `Workflow`), STOP and dispatch through the launcher. The **sole** exception is
+> `vc-delegate` (native in-process subagents) — every other `/vc-*` is the fleet.
+
+<!-- /fleet-imperative -->
+
 ## When To Use
 
 Pull historical context from previous AI sessions for this project. We are looking
@@ -137,5 +148,19 @@ aicx extract --format claude \
 # 2. Read the result
 Read /tmp/aicx-extract-xy9z.md
 ```
+
+## Fleet Dispatch Terminal
+
+This skill's flow ends in action, never in absorbed prose. The named action here
+is running the `aicx` commands above (extract, search, rank, read) in-session.
+When the recovery or synthesis outgrows a bounded in-session pass, dispatch a
+fleet worker instead of grinding in-thread:
+
+```bash
+vibecrafted workflow <agent> --prompt 'aicx-extract <path> and synthesize the intent trail'
+```
+
+No `aicx` command run and no dispatch fired means the invocation was a no-op —
+the failure mode this terminal forbids.
 
 _𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_

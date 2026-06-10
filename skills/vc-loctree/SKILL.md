@@ -12,6 +12,17 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v1 -->
+
+> **Invoking `/vc-loctree` means you are DISPATCHING THE 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 FLEET** — real,
+> out-of-process agents launched through `vibecrafted <workflow> <agent>`. This invocation
+> is an **imperative to act**, **not a no-op**, and **not** native in-process subagents.
+> If you loaded this skill and find yourself reaching for an in-thread tool (e.g. native
+> `Workflow`), STOP and dispatch through the launcher. The **sole** exception is
+> `vc-delegate` (native in-process subagents) — every other `/vc-*` is the fleet.
+
+<!-- /fleet-imperative -->
+
 # Loctree — Your Senses in the Codebase
 
 > Before a master carpenter cuts, they study the grain.
@@ -257,6 +268,20 @@ After implementation, report:
 If loctree MCP is unavailable: fall back to `loct --for-ai` CLI if present,
 then `rg --files` + `rg -n` + manual dependency tracing.
 Announce the degradation. Do not pretend you have full senses when you do not.
+
+## Fleet Dispatch Terminal
+
+This skill's flow ends in action, never in absorbed prose. The named action here
+is running the perception commands (`loct context`, `slice`, `impact`, `find`,
+`follow`) before any edit. When the structural work the map reveals outgrows a
+bounded in-session cut, dispatch a fleet worker:
+
+```bash
+vibecrafted workflow <agent> --file <plan-built-from-the-map>
+```
+
+No perception command run and no dispatch fired means the invocation was a
+no-op — the failure mode this terminal forbids.
 
 ---
 

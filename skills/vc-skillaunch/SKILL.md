@@ -13,6 +13,17 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v1 -->
+
+> **Invoking `/vc-skillaunch` means you are DISPATCHING THE 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 FLEET** — real,
+> out-of-process agents launched through `vibecrafted <workflow> <agent>`. This invocation
+> is an **imperative to act**, **not a no-op**, and **not** native in-process subagents.
+> If you loaded this skill and find yourself reaching for an in-thread tool (e.g. native
+> `Workflow`), STOP and dispatch through the launcher. The **sole** exception is
+> `vc-delegate` (native in-process subagents) — every other `/vc-*` is the fleet.
+
+<!-- /fleet-imperative -->
+
 # Workflow-to-Skill Distiller
 
 Turns a completed workflow into a reusable agent skill. Specifically, this skill
@@ -301,3 +312,17 @@ After implementation is complete:
 
 2.  **If a sample query/answer was provided** during brainstorming, run it
     through the skill and verify the output matches expectations.
+
+## Fleet Dispatch Terminal
+
+This skill's flow ends in action, never in absorbed prose. The named action here
+is writing the distilled SKILL.md and validating it (Phase 4 above). When the
+distillation spans more material than a bounded in-session pass can honestly
+cover, dispatch a fleet worker:
+
+```bash
+vibecrafted workflow <agent> --prompt 'Distill <workflow/session> into a SKILL.md and validate it'
+```
+
+No skill file written and no dispatch fired means the invocation was a no-op —
+the failure mode this terminal forbids.
