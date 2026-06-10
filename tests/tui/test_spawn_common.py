@@ -823,8 +823,13 @@ def test_spawn_finalize_artifacts_canonicalizes_by_date_repo_session_and_kind(
     assert Path(payload["transcript"]).name == matches[0].name.replace(
         ".meta.json", ".transcript.log"
     )
-    assert not report.exists()
-    assert not meta.exists()
+    # Announced paths survive canonicalization as compat symlinks — watchers
+    # keyed on the spawn-time announcement must keep resolving
+    # (VC-vbcr-stabilize-032: one truth, two names).
+    assert report.is_symlink()
+    assert report.resolve() == Path(payload["report"]).resolve()
+    assert meta.is_symlink()
+    assert json.loads(meta.read_text(encoding="utf-8"))["status"] == "completed"
 
     final_report = Path(payload["report"])
     assert final_report.exists()
