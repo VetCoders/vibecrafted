@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
+import errno
 import fcntl
 import json
+import os
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -74,6 +76,8 @@ SKILL_CODE_MAP = {
     "wflw": "workflow",
 }
 RUN_STALL_SECONDS = 20 * 60
+LIVENESS_STALE_HEARTBEAT_SECONDS = 120
+LIVENESS_STALE_HEARTBEAT_ENV = "VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS"
 EVENT_TAIL_LIMIT = 16
 RECENT_RUN_LIMIT = 12
 MISSING_SESSION_IDS = {"", "pending", "none", "null", "unknown"}
@@ -220,10 +224,22 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
+def _configured_stale_heartbeat_seconds() -> int:
+    raw = os.environ.get(LIVENESS_STALE_HEARTBEAT_ENV)
+    if not raw:
+        return LIVENESS_STALE_HEARTBEAT_SECONDS
+    try:
+        return max(int(raw), 0)
+    except ValueError:
+        return LIVENESS_STALE_HEARTBEAT_SECONDS
+
+
 def _state_health(state: str, updated_at: str) -> str:
     updated_dt = _parse_iso(updated_at)
     if state in FINAL_STATES:
         return "final"
+    if state == "stalled":
+        return "stalled"
     if updated_dt is None:
         return "unknown"
     if (_now() - updated_dt).total_seconds() > RUN_STALL_SECONDS:
@@ -315,6 +331,69 @@ def _artifact_projection(
     return result
 
 
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError as exc:
+        if exc.errno == errno.EPERM:
+            return True
+        if exc.errno == errno.ESRCH:
+            return False
+        return False
+    return True
+
+
+def _heartbeat_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | None:
+    heartbeat_at = _parse_iso(
+        str(run.get("heartbeat_at") or run.get("updated_at") or "")
+    )
+    if heartbeat_at is None:
+        return None
+    if heartbeat_at.tzinfo is None:
+        heartbeat_at = heartbeat_at.replace(tzinfo=dt.timezone.utc)
+    return (now - heartbeat_at).total_seconds()
+
+
+def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
+    result = dict(run)
+    if _run_is_terminal(result):
+        return result
+    if str(result.get("state") or "") not in ACTIVE_STATES - {"stalled", "paused"}:
+        return result
+    if str(result.get("liveness") or "") != "pid_alive":
+        return result
+
+    launcher_pid = _coerce_int(result.get("launcher_pid"))
+    if launcher_pid is None or _pid_is_alive(launcher_pid):
+        return result
+
+    now = _now()
+    age_seconds = _heartbeat_age_seconds(result, now)
+    threshold = _configured_stale_heartbeat_seconds()
+    if age_seconds is None or age_seconds < threshold:
+        return result
+
+    result["state"] = "stalled"
+    result["health"] = "stalled"
+    result["liveness"] = "pid_gone"
+    result["updated_at"] = now.isoformat()
+    result["recovery_required"] = True
+    result["last_error"] = str(
+        result.get("last_error")
+        or (
+            f"launcher_pid {launcher_pid} disappeared after "
+            f"{int(age_seconds)}s without heartbeat; recovery_required"
+        )
+    )
+    return result
+
+
 def _failure_card(run: dict[str, Any]) -> dict[str, Any] | None:
     errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
     state = str(run.get("state") or "")
@@ -357,13 +436,24 @@ def _has_retry_spec(run: dict[str, Any]) -> bool:
 
 def _lifecycle_controls(run: dict[str, Any]) -> dict[str, bool]:
     terminal = _run_is_terminal(run)
-    signalable = not terminal and _has_signal_target(run)
+    liveness = str(run.get("liveness") or "")
+    signalable = (
+        not terminal
+        and liveness not in {"pid_gone", "terminal"}
+        and _has_signal_target(run)
+    )
+    recovery_required = (
+        bool(run.get("recovery_required"))
+        or liveness == "pid_gone"
+        or str(run.get("state") or "") in BLOCKED_STATES
+    )
     return {
         "await": not terminal,
         "inspect": True,
         "stop": signalable,
         "cancel": signalable,
         "resume": terminal and _has_retry_spec(run),
+        "recovery_required": recovery_required,
     }
 
 
@@ -628,18 +718,25 @@ def _merge_event_stream(merged: dict[str, RunStatus]) -> dict[str, RunStatus]:
             "meta",
             "artifact_ok",
             "artifact_errors",
+            "recovery_required",
         ):
             if key in payload and payload.get(key) not in (None, ""):
                 extra[key] = payload[key]
 
+        payload_last_error = str(
+            payload.get("error") or payload.get("last_error") or ""
+        )
+        if kind == "state" and payload_last_error == message:
+            payload_last_error = ""
         last_error = (
-            str(payload.get("error") or "")
+            payload_last_error
+            or (existing.last_error if existing is not None else "")
             or (
                 message
-                if state in BLOCKED_STATES or state in {"failed", "ghost"}
+                if kind != "state"
+                and (state in BLOCKED_STATES or state in {"failed", "ghost"})
                 else ""
             )
-            or (existing.last_error if existing is not None else "")
         )
 
         incoming = RunStatus(
@@ -813,6 +910,13 @@ def _record_transition(
                 "skill": current.get("skill"),
                 "mode": current.get("mode"),
                 "health": current.get("health"),
+                "root": current.get("root"),
+                "session_id": current.get("session_id"),
+                "liveness": current.get("liveness"),
+                "launcher_pid": current.get("launcher_pid"),
+                "heartbeat_at": current.get("heartbeat_at"),
+                "recovery_required": current.get("recovery_required"),
+                "last_error": current.get("last_error"),
             },
         }
     )
@@ -926,6 +1030,7 @@ def sync_state() -> dict[str, Any]:
         for run_id, status in merged.items():
             previous = previous_snapshots.get(run_id)
             payload = _artifact_projection(_status_to_payload(status), previous)
+            payload = _reconcile_dead_launcher(payload)
             payload["failure_card"] = _failure_card(payload)
             payload["health"] = _state_health(
                 str(payload.get("state") or ""), str(payload.get("updated_at") or "")

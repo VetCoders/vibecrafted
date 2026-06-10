@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 
@@ -177,6 +178,7 @@ def test_sync_state_publishes_lifecycle_control_availability(
         "stop": True,
         "cancel": True,
         "resume": False,
+        "recovery_required": False,
     }
     assert runs["impl-010103-42"]["lifecycle"] == {
         "await": False,
@@ -184,6 +186,7 @@ def test_sync_state_publishes_lifecycle_control_availability(
         "stop": False,
         "cancel": False,
         "resume": True,
+        "recovery_required": False,
     }
     assert runs["rvew-010104-42"]["lifecycle"] == {
         "await": True,
@@ -191,6 +194,7 @@ def test_sync_state_publishes_lifecycle_control_availability(
         "stop": False,
         "cancel": False,
         "resume": False,
+        "recovery_required": False,
     }
 
 
@@ -209,7 +213,7 @@ def test_lookup_run_uses_synced_snapshot(
             "root": str(tmp_path),
             "updated_at": "2026-05-19T00:00:00+00:00",
             "skill_code": "rvew",
-            "launcher_pid": "333",
+            "launcher_pid": os.getpid(),
             "liveness": "pid_alive",
         },
     )
@@ -218,8 +222,122 @@ def test_lookup_run_uses_synced_snapshot(
 
     assert run is not None
     assert run["agent"] == "claude"
-    assert run["launcher_pid"] == 333
+    assert run["launcher_pid"] == os.getpid()
     assert run["liveness"] == "pid_alive"
+
+
+def test_sync_state_reconciles_dead_launcher_to_stalled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    _write_meta(
+        home,
+        {
+            "run_id": "just-dead-pid",
+            "status": "running",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "just",
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "stalled"
+    assert run["health"] == "stalled"
+    assert run["liveness"] == "pid_gone"
+    assert run["recovery_required"] is True
+    assert run["lifecycle"]["recovery_required"] is True
+    assert run["lifecycle"]["stop"] is False
+    assert "recovery_required" in run["last_error"]
+
+    persisted = json.loads(
+        (home / "control_plane" / "runs" / "just-dead-pid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert persisted["state"] == "stalled"
+    assert persisted["liveness"] == "pid_gone"
+
+    refreshed = control_plane.lookup_run("just-dead-pid")
+    assert refreshed is not None
+    assert refreshed["state"] == "stalled"
+    assert refreshed["liveness"] == "pid_gone"
+    assert refreshed["recovery_required"] is True
+    assert refreshed["lifecycle"]["recovery_required"] is True
+    assert "recovery_required" in refreshed["last_error"]
+
+
+def test_sync_state_leaves_live_launcher_running(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    _write_meta(
+        home,
+        {
+            "run_id": "just-live-pid",
+            "status": "running",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "just",
+            "launcher_pid": os.getpid(),
+            "liveness": "pid_alive",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "running"
+    assert run["liveness"] == "pid_alive"
+    assert run["lifecycle"]["recovery_required"] is False
+
+
+def test_sync_state_leaves_terminal_dead_launcher_untouched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    completed_at = "2026-05-19T00:02:00+00:00"
+    _write_meta(
+        home,
+        {
+            "run_id": "just-terminal-pid",
+            "status": "completed",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": completed_at,
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "just",
+            "exit_code": 0,
+            "launcher_pid": 999999999,
+            "liveness": "terminal",
+            "completed_at": completed_at,
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "completed"
+    assert run["health"] == "final"
+    assert run["liveness"] == "terminal"
+    assert "recovery_required" not in run
 
 
 def test_await_run_completes_from_metadata_without_transcript(
