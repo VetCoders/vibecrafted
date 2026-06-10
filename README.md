@@ -63,6 +63,9 @@ The system finds the problems, fixes them, and repeats the loop until nothing im
 **3. The Fix:** The agent eliminates the counterexamples.
 **4. The Close:** We run the loop. We don't stop until P0 / P1 / P2 = 0.
 
+The full pipeline cadence behind the loop — 11 READ/WRITE phases plus Fanfary —
+is canonized in [docs/runtime/LIFECYCLE.md](docs/runtime/LIFECYCLE.md).
+
 ---
 
 ## The System Under The Hood

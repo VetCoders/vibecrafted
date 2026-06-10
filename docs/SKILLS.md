@@ -31,6 +31,9 @@ workflow.
 
 ## Route notes
 
+- Pipeline cadence canon: the `vc-ship` phase order, READ/WRITE cadence, and
+  per-phase tooling for these skills live in
+  [runtime/LIFECYCLE.md](runtime/LIFECYCLE.md).
 - Artifact root: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/`
 - Lock path: `$VIBECRAFTED_HOME/locks/<org>/<repo>/<run_id>.lock`
 - Generic spawned skills write `reports/<timestamp>_<slug>_<agent>.md` with matching
