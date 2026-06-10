@@ -203,28 +203,49 @@ _vetcoders_skill_wrapper() {
   esac
 }
 
-vc-agents() { _vetcoders_skill_wrapper agents "$@"; }
-vc-audit() { _vetcoders_skill_wrapper audit "$@"; }
-vc-decorate() { _vetcoders_skill_wrapper decorate "$@"; }
-vc-delegate() { _vetcoders_skill_wrapper delegate "$@"; }
-vc-dou() { _vetcoders_skill_wrapper dou "$@"; }
-vc-followup() { _vetcoders_skill_wrapper followup "$@"; }
-vc-hydrate() { _vetcoders_skill_wrapper hydrate "$@"; }
-vc-init() { _vetcoders_skill_wrapper init "$@"; }
-vc-intents() { _vetcoders_skill_wrapper intents "$@"; }
-vc-justdo() { _vetcoders_skill_wrapper justdo "$@"; }
-vc-implement() { _vetcoders_skill_wrapper justdo "$@"; }
+_vetcoders_skill_dispatch() {
+  # Graceful degradation for headless / partially-loaded shells: when the
+  # helper layer is incomplete (version skew, stale snapshot, interrupted
+  # source), fall back to the standalone command deck instead of dying with
+  # "command not found: _vetcoders_skill_wrapper" (exit 127, zero run, zero
+  # failure-card). Headless is a first-class environment.
+  local skill="$1"
+  shift || true
+  if typeset -f _vetcoders_skill_wrapper >/dev/null 2>&1; then
+    _vetcoders_skill_wrapper "$skill" "$@"
+    return
+  fi
+  if command -v vibecrafted >/dev/null 2>&1; then
+    command vibecrafted "$skill" "$@"
+    return
+  fi
+  printf 'vc-%s: vibecrafted helper layer is not loaded and no "vibecrafted" deck is on PATH.\n' "$skill" >&2
+  printf 'Run scripts/install-foundations.sh or add the repo bin/ to PATH.\n' >&2
+  return 127
+}
+
+vc-agents() { _vetcoders_skill_dispatch agents "$@"; }
+vc-audit() { _vetcoders_skill_dispatch audit "$@"; }
+vc-decorate() { _vetcoders_skill_dispatch decorate "$@"; }
+vc-delegate() { _vetcoders_skill_dispatch delegate "$@"; }
+vc-dou() { _vetcoders_skill_dispatch dou "$@"; }
+vc-followup() { _vetcoders_skill_dispatch followup "$@"; }
+vc-hydrate() { _vetcoders_skill_dispatch hydrate "$@"; }
+vc-init() { _vetcoders_skill_dispatch init "$@"; }
+vc-intents() { _vetcoders_skill_dispatch intents "$@"; }
+vc-justdo() { _vetcoders_skill_dispatch justdo "$@"; }
+vc-implement() { _vetcoders_skill_dispatch justdo "$@"; }
 vc-loop() { _vetcoders_loop "$@"; }
-vc-marbles() { _vetcoders_skill_wrapper marbles "$@"; }
-vc-operator() { _vetcoders_skill_wrapper operator "$@"; }
-vc-ownership() { _vetcoders_skill_wrapper ownership "$@"; }
-vc-partner() { _vetcoders_skill_wrapper partner "$@"; }
-vc-polarize() { _vetcoders_skill_wrapper polarize "$@"; }
-vc-prune() { _vetcoders_skill_wrapper prune "$@"; }
-vc-release() { _vetcoders_skill_wrapper release "$@"; }
-vc-review() { _vetcoders_skill_wrapper review "$@"; }
-vc-scaffold() { _vetcoders_skill_wrapper scaffold "$@"; }
-vc-workflow() { _vetcoders_skill_wrapper workflow "$@"; }
+vc-marbles() { _vetcoders_skill_dispatch marbles "$@"; }
+vc-operator() { _vetcoders_skill_dispatch operator "$@"; }
+vc-ownership() { _vetcoders_skill_dispatch ownership "$@"; }
+vc-partner() { _vetcoders_skill_dispatch partner "$@"; }
+vc-polarize() { _vetcoders_skill_dispatch polarize "$@"; }
+vc-prune() { _vetcoders_skill_dispatch prune "$@"; }
+vc-release() { _vetcoders_skill_dispatch release "$@"; }
+vc-review() { _vetcoders_skill_dispatch review "$@"; }
+vc-scaffold() { _vetcoders_skill_dispatch scaffold "$@"; }
+vc-workflow() { _vetcoders_skill_dispatch workflow "$@"; }
 
 vc-help() {
   local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
