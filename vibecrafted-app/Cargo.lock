@@ -4269,6 +4269,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "chrono",
+ "clap",
  "crossterm",
  "notify",
  "ratatui",

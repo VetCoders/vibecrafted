@@ -179,7 +179,7 @@ target:
    `tui-agent` cockpit, mux + tray + shell agents). Add a new crate or
    panel to `tui-agent` that consumes the data sources above. Most
    natural fit — the cockpit already exists, dashboard becomes a tab.
-2. **Standalone TUI binary** (new `vc-admin` / `vco status` crate or
+2. **Standalone TUI binary** (new `vc-admin` (formerly `vco`) crate or
    Python `textual` app) reading the same files. Lighter footprint, no
    dependency on the existing cockpit's roadmap.
 
@@ -198,12 +198,12 @@ dashboard means context-switch to a browser tab. TUI keeps the operator
 in their existing flow:
 
 ```bash
-vco status                  # static snapshot, all panels
-vco watch                   # live-refresh, full panel set
-vco wave --plan <id>        # focus on wave atlas
-vco agent claude            # per-agent panel deep dive
-vco failures --since 24h    # failure board
-vco button                  # operator action queue
+vc-admin status                  # static snapshot, all panels
+vc-admin watch                   # live-refresh, full panel set
+vc-admin wave --plan <id>        # focus on wave atlas
+vc-admin agent claude            # per-agent panel deep dive
+vc-admin failures --since 24h    # failure board
+vc-admin button                  # operator action queue
 ```
 
 Web view comes second, as an `aicx dashboard --serve`-style extension if
