@@ -236,6 +236,8 @@ vc-intents() { _vetcoders_skill_dispatch intents "$@"; }
 vc-justdo() { _vetcoders_skill_dispatch justdo "$@"; }
 vc-implement() { _vetcoders_skill_dispatch justdo "$@"; }
 vc-loop() { _vetcoders_loop "$@"; }
+vc-cron() { command vibecrafted cron "$@"; }
+vc-ship() { command vibecrafted ship "$@"; }
 vc-marbles() { _vetcoders_skill_dispatch marbles "$@"; }
 vc-operator() { _vetcoders_skill_dispatch operator "$@"; }
 vc-ownership() { _vetcoders_skill_dispatch ownership "$@"; }
@@ -287,6 +289,7 @@ Command deck:
   vibecrafted <skill> <agent>    Run a repo skill via the launcher
   vibecrafted resume <agent>     Resume a previous session
   vibecrafted loop start --file plan.md --completion-promise READY
+  vibecrafted cron line --root "$(pwd)" --every-minutes 10
   vibecrafted workflow claude -p "Plan and implement auth"
   vibecrafted marbles codex --count 3 --depth 3
   vibecrafted init claude        First-context entrypoint

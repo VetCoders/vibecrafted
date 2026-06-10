@@ -3,7 +3,7 @@ name = "vibecrafted-core"
 version = "0.1.0"
 description = "Core Python library for Vibecrafted runtime and synthesis surfaces."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
@@ -19,7 +19,11 @@ vc-research-synthesize = "vibecrafted_core.wrappers:research_synthesize_main"
 vc-review = "vibecrafted_core.wrappers:review_main"
 vc-sandbox = "vibecrafted_core.wrappers:sandbox_main"
 vc-scaffold = "vibecrafted_core.wrappers:scaffold_main"
+vc-cron = "vibecrafted_core.cron:main"
+vc-loop = "vibecrafted_core.loop:main"
+vc-ship = "vibecrafted_core.ship:main"
 vibecrafted-resume = "vibecrafted_core.wrappers:resume_main"
+vibecrafted-compact-hook = "vibecrafted_core.compact_hooks:main"
 
 [project.optional-dependencies]
 sandbox = ["aiohttp >= 3.9"]

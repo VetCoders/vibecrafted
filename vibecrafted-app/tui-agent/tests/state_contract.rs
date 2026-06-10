@@ -190,20 +190,29 @@ fn marbles_launches_keep_runtime_root_and_loop_controls() {
 
     assert_eq!(command.program, Path::new("zellij"));
 
-    assert!(args.windows(2).any(|pair| {
-        pair == [
-            "--config-dir".to_string(),
-            root.join("config/zellij").to_string_lossy().into_owned(),
-        ]
-    }));
+    let config_idx = args
+        .iter()
+        .position(|value| value == "--config-dir")
+        .expect("repo-local zellij config should be passed as a top-level launch option");
+    assert_eq!(
+        args.get(config_idx + 1),
+        Some(&root.join("config/zellij").to_string_lossy().into_owned())
+    );
     assert!(args.iter().any(|value| value == "--layout-string"));
-    assert!(args.iter().any(|value| value == "options"));
-
-    let layout = args
+    let layout_idx = args
         .iter()
         .position(|value| value == "--layout-string")
-        .and_then(|index| args.get(index + 1))
-        .expect("layout string");
+        .expect("layout string flag should be present");
+    assert!(
+        config_idx < layout_idx,
+        "--config-dir must stay before --layout-string so vc-frame/zellij parses both as top-level launch options: args={args:?}"
+    );
+    assert!(
+        !args.iter().any(|value| value == "options"),
+        "terminal launch must not put --config-dir after the stale zellij options subcommand: args={args:?}"
+    );
+
+    let layout = args.get(layout_idx + 1).expect("layout string");
     assert!(layout.contains("pane name=\"launch\""));
     assert!(layout.contains("command=\"bash\""));
     assert!(layout.contains(&format!("cwd=\"{}\"", root.to_string_lossy())));
@@ -270,7 +279,7 @@ fn terminal_launches_preserve_explicit_zellij_config_dir() {
 }
 
 #[test]
-fn terminal_launch_carries_named_session_before_subcommand() {
+fn terminal_launch_carries_named_session_as_top_level_flag() {
     let _guard = env_lock().lock().unwrap();
     let previous = env::var_os("ZELLIJ_CONFIG_DIR");
     unsafe {
@@ -306,13 +315,9 @@ fn terminal_launch_carries_named_session_before_subcommand() {
         Some("vc-op-workflow-42")
     );
 
-    let options_idx = args
-        .iter()
-        .position(|value| value == "options")
-        .expect("options subcommand present");
     assert!(
-        session_idx < options_idx,
-        "--session must precede the options subcommand: args={args:?}"
+        !args.iter().any(|value| value == "options"),
+        "--session must stay a top-level launch flag; stale options subcommand found: args={args:?}"
     );
 
     match previous {
@@ -460,6 +465,10 @@ fn terminal_launch_probe_inherits_config_dir_from_launch_command() {
     let launch_config_dir = launch_args
         .get(launch_config_idx + 1)
         .expect("--config-dir flag must be followed by a path");
+    let launch_layout_idx = launch_args
+        .iter()
+        .position(|value| value == "--layout-string")
+        .expect("launch should carry --layout-string for terminal runtime");
 
     let probe = command
         .readiness_probe()
@@ -483,6 +492,14 @@ fn terminal_launch_probe_inherits_config_dir_from_launch_command() {
         .expect("probe must invoke list-sessions");
 
     assert_eq!(probe_config_dir, launch_config_dir);
+    assert!(
+        launch_config_idx < launch_layout_idx,
+        "--config-dir must be a top-level launch option before --layout-string: args={launch_args:?}"
+    );
+    assert!(
+        !launch_args.iter().any(|value| value == "options"),
+        "named operator launch must not use the stale `options --config-dir` ordering from the screenshot: args={launch_args:?}"
+    );
     assert!(
         probe_config_dir.contains(&canonical_zellij_dir.to_string_lossy().into_owned())
             || probe_config_dir == &zellij_dir.to_string_lossy().into_owned(),

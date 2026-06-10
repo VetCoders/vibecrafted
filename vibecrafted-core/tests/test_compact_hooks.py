@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from vibecrafted_core import compact_hooks
+
+
+def test_precompact_extracts_conversation_and_user_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture = tmp_path / "aicx-args.txt"
+    home.mkdir()
+    fake_bin.mkdir()
+    aicx = fake_bin / "aicx"
+    aicx.write_text(
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$AICX_CAPTURE"\n',
+        encoding="utf-8",
+    )
+    aicx.chmod(0o755)
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", f"{fake_bin}:/usr/bin:/bin")
+    monkeypatch.setenv("AICX_CAPTURE", str(capture))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home / ".vibecrafted"))
+
+    assert compact_hooks.precompact('{"session_id":"sess-1"}') == 0
+
+    calls = capture.read_text(encoding="utf-8").splitlines()
+    assert calls == [
+        "extract --agent claude --session sess-1 --conversation",
+        "extract --agent claude --session sess-1 --conversation --user-only",
+    ]
+    journal = home / ".vibecrafted" / "runtime" / "compact-hooks.jsonl"
+    assert '"event":"precompact"' in journal.read_text(encoding="utf-8")
+
+
+def test_postcompact_emits_manifest_and_chunks_extract(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    extract_dir = home / ".aicx" / "extracts" / "claude"
+    recall_dir = tmp_path / "recall"
+    extract_dir.mkdir(parents=True)
+    (extract_dir / "sess-2_conversation.md").write_text(
+        "old intent\nold intent\nrecent claim\nverified outcome\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RECALL_DIR", str(recall_dir))
+    monkeypatch.setenv("AICX_RECALL_CHUNK_LINES", "2")
+
+    assert compact_hooks.postcompact('{"session_id":"sess-2"}') == 0
+    payload = json.loads(capsys.readouterr().out)
+    context = payload["hookSpecificOutput"]["additionalContext"]
+
+    assert "LOOP is the foundation" in context
+    assert "loct context --full --markdown" in context
+    assert "verified outcome" in context
+    assert (recall_dir / "claude" / "sess-2" / "chunk-000").is_file()
+    assert (recall_dir / "claude" / "sess-2" / "chunk-001").is_file()
+
+
+def test_postcompact_missing_extract_is_loud(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    assert compact_hooks.postcompact('{"session_id":"missing"}') == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert (
+        "POSTCOMPACT RECALL DEGRADED"
+        in payload["hookSpecificOutput"]["additionalContext"]
+    )

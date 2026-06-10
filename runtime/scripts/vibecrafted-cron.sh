@@ -6,4 +6,4 @@ repo_root="$(cd "$script_dir/../.." && pwd)"
 core_dir="${VIBECRAFTED_CORE_DIR:-$repo_root/vibecrafted-core}"
 
 PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
-  python3 -m vibecrafted_core.loop "$@"
+  python3 -m vibecrafted_core.cron "$@"

@@ -10,7 +10,7 @@ dev = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 files = ["vibecrafted-core/vibecrafted_core", "vibecrafted-mcp/vibecrafted_mcp"]
 ignore_missing_imports = true
 follow_imports = "skip"

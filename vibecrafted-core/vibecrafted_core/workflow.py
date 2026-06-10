@@ -369,7 +369,6 @@ def _source_prompt(spec: WorkflowLaunchSpec) -> str:
 def _runtime_prompt(spec: WorkflowLaunchSpec) -> str:
     report_hint = "${VIBECRAFTED_REPORT_PATH}"
     transcript_hint = "${VIBECRAFTED_TRANSCRIPT_PATH}"
-    meta_hint = "${VIBECRAFTED_META_PATH}"
     source_prompt = _source_prompt(spec)
     return f"""You are running under Vibecrafted core runtime.
 
@@ -385,7 +384,7 @@ Contract:
 - Do not call legacy Vibecrafted skill launchers or runtime/scripts launchers.
 - Write your final report to the path in VIBECRAFTED_REPORT_PATH ({report_hint}).
 - Let stdout/stderr form the transcript captured at VIBECRAFTED_TRANSCRIPT_PATH ({transcript_hint}).
-- If you create or update run metadata, use VIBECRAFTED_META_PATH ({meta_hint}).
+- Do not create, overwrite, or summarize run metadata yourself. The runtime owns VIBECRAFTED_META_PATH.
 
 Operator prompt:
 {source_prompt}

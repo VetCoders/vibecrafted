@@ -72,6 +72,60 @@ def _run(
     )
 
 
+def _write_renamed_artifact_set(store_root: Path) -> dict[str, Path]:
+    reports_dir = store_root / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    run_id = "inte-204103-26970"
+    old_base = reports_dir / "20260609_204104_20260609_2041_perform_claude"
+    old_report = old_base.with_suffix(".md")
+    old_transcript = reports_dir / f"{old_base.name}.transcript.log"
+    old_meta = reports_dir / f"{old_base.name}.meta.json"
+    canonical_base = reports_dir / "2026-06-09_Loctree_aicx_c7ff-report"
+    canonical_report = canonical_base.with_suffix(".md")
+    canonical_transcript = reports_dir / f"{canonical_base.name}.transcript.log"
+    canonical_meta = reports_dir / f"{canonical_base.name}.meta.json"
+
+    old_report.write_text(
+        f"---\nrun_id: {run_id}\nstatus: completed\n---\nold report\n",
+        encoding="utf-8",
+    )
+    old_transcript.write_text(
+        f"---\nrun_id: {run_id}\nstatus: transcript\n---\nold transcript\n",
+        encoding="utf-8",
+    )
+    canonical_report.write_text("canonical report\n", encoding="utf-8")
+    canonical_transcript.write_text("canonical transcript\n", encoding="utf-8")
+    canonical_meta.write_text(
+        json.dumps(
+            {
+                "updated_at": "2026-06-09T21:03:04+00:00",
+                "completed_at": "2026-06-09T21:03:04+00:00",
+                "status": "completed",
+                "agent": "claude",
+                "mode": "intents",
+                "model": "claude-fable-5",
+                "input": "prompt.md",
+                "report": str(canonical_report),
+                "transcript": str(canonical_transcript),
+                "launcher": "launcher.sh",
+                "run_id": run_id,
+                "exit_code": 0,
+                "launcher_pid": None,
+                "liveness": "terminal",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    assert not old_meta.exists()
+    return {
+        "old_meta": old_meta,
+        "old_report": old_report,
+        "canonical_meta": canonical_meta,
+        "canonical_report": canonical_report,
+    }
+
+
 def test_await_exits_zero_for_completed_meta(tmp_path: Path) -> None:
     store_root = tmp_path / "store"
     paths = _write_meta(
@@ -187,3 +241,56 @@ def test_observe_resolves_run_id(tmp_path: Path) -> None:
     assert "Liveness:   terminal" in result.stdout
     assert f"Transcript: {paths['transcript']}" in result.stdout
     assert "--- report tail ---" in result.stdout
+
+
+def test_observe_filters_transient_rmcp_transport_noise(tmp_path: Path) -> None:
+    store_root = tmp_path / "store"
+    paths = _write_meta(
+        store_root / "reports",
+        run_id="just-030101-00006",
+        status="running",
+        exit_code=None,
+        liveness="pid_alive",
+        launcher_pid=os.getpid(),
+        transcript_text=(
+            "\x1b[33m[16:37:02] session: 019eb3e5-7d6a-7cd0-bc93-363824971556\x1b[0m\n"
+            "2026-06-10T23:37:03.409403Z ERROR rmcp::transport::worker: "
+            'worker quit with fatal: Unexpected content type: Some("text/plain; '
+            "body: upstream connect error or disconnect/reset before headers. "
+            'transport failure reason: delayed connect error: Connection refused")\n'
+            "actual worker progress\n"
+        ),
+    )
+    paths["report"].write_text("", encoding="utf-8")
+
+    result = _run(OBSERVE_SH, store_root, "codex", "--run-id", "just-030101-00006")
+
+    assert result.returncode == 0, result.stderr
+    assert "--- transcript tail ---" in result.stdout
+    assert "actual worker progress" in result.stdout
+    assert "rmcp::transport::worker" not in result.stdout
+    assert "session: 019eb3e5-7d6a-7cd0-bc93-363824971556" not in result.stdout
+
+
+def test_await_resolves_renamed_legacy_meta_path(tmp_path: Path) -> None:
+    store_root = tmp_path / "store"
+    paths = _write_renamed_artifact_set(store_root)
+
+    result = _run(AWAIT_SH, store_root, str(paths["old_meta"]))
+
+    assert result.returncode == 0, result.stderr
+    assert "heartbeat run_id=inte-204103-26970 status=completed" in result.stdout
+    assert str(paths["canonical_meta"]) in result.stdout
+    assert str(paths["canonical_report"]) in result.stdout
+
+
+def test_observe_resolves_renamed_legacy_meta_path(tmp_path: Path) -> None:
+    store_root = tmp_path / "store"
+    paths = _write_renamed_artifact_set(store_root)
+
+    result = _run(OBSERVE_SH, store_root, str(paths["old_meta"]))
+
+    assert result.returncode == 0, result.stderr
+    assert "Run ID:     inte-204103-26970" in result.stdout
+    assert f"Report:     {paths['canonical_report']}" in result.stdout
+    assert "FileNotFoundError" not in result.stderr

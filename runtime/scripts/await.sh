@@ -178,7 +178,7 @@ def descriptor_from_target(raw: str) -> dict[str, str]:
         desc.update(parse_launcher(path))
     else:
         desc["meta"] = str(path)
-    return backfill_from_meta(desc)
+    return backfill_from_meta(resolve_missing_meta(desc))
 
 
 def list_legacy_meta_files() -> list[Path]:
@@ -209,6 +209,70 @@ def load_meta(path: Path):
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def extract_field_from_artifact(path: Path, field: str) -> str:
+    if not path.is_file():
+        return ""
+    prefix = f"{field}:"
+    try:
+        for line in path.read_text(
+            encoding="utf-8", errors="replace"
+        ).splitlines()[:80]:
+            stripped = line.strip()
+            if stripped.startswith(prefix):
+                return stripped.split(":", 1)[1].strip().strip("'\"")
+    except OSError:
+        return ""
+    return ""
+
+
+def resolve_missing_meta(descriptor: dict[str, str]) -> dict[str, str]:
+    meta_path = descriptor.get("meta", "")
+    if not meta_path or Path(meta_path).is_file():
+        return descriptor
+
+    probes: list[Path] = []
+    for key in ("report", "transcript"):
+        raw = descriptor.get(key, "")
+        if raw:
+            probes.append(Path(raw).expanduser())
+
+    expected = Path(meta_path).expanduser()
+    if not probes and expected.name.endswith(".meta.json"):
+        stem = expected.name[: -len(".meta.json")]
+        probes.extend(
+            [
+                expected.with_name(f"{stem}.md"),
+                expected.with_name(f"{stem}.transcript.log"),
+            ]
+        )
+
+    wanted_run_id = ""
+    wanted_session_id = ""
+    for probe in probes:
+        wanted_run_id = wanted_run_id or extract_field_from_artifact(probe, "run_id")
+        wanted_session_id = wanted_session_id or extract_field_from_artifact(
+            probe, "session_id"
+        )
+        if wanted_run_id and wanted_session_id:
+            break
+
+    if not wanted_run_id and not wanted_session_id:
+        return descriptor
+
+    for candidate in list_meta_files(include_research=True):
+        payload = load_meta(candidate)
+        if not payload:
+            continue
+        if wanted_run_id and str(payload.get("run_id") or "") == wanted_run_id:
+            descriptor["meta"] = str(candidate)
+            return descriptor
+        if wanted_session_id and str(payload.get("session_id") or "") == wanted_session_id:
+            descriptor["meta"] = str(candidate)
+            return descriptor
+
+    return descriptor
 
 
 def is_empty(value: object) -> bool:

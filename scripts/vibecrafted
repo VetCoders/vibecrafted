@@ -296,6 +296,24 @@ _loop_script() {
   return 1
 }
 
+_cron_script() {
+  local repo_source candidate
+  repo_source="$(_repo_source_root 2>/dev/null || true)"
+  for candidate in \
+    "${repo_source:+$repo_source/runtime/scripts/vibecrafted-cron.sh}" \
+    "$crafted_tools/runtime/scripts/vibecrafted-cron.sh" \
+    "$(_script_repo_root)/runtime/scripts/vibecrafted-cron.sh"; do
+    [[ -n "$candidate" && -f "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+_core_module_dir() {
+  _dispatcher_core_dir
+}
+
 _dispatcher_core_dir() {
   local repo_source candidate
   repo_source="$(_repo_source_root 2>/dev/null || true)"
@@ -601,6 +619,27 @@ cmd_loop_help() {
   printf '%bWhy:%b\n' "$_bold" "$_reset"
   printf '  The front door stays small; the runtime script owns state, iteration,\n'
   printf '  completion promises, and background await chains for operator sessions.\n'
+  printf '\n'
+}
+
+cmd_cron_help() {
+  printf '\n'
+  printf '%b⚒%b  %bcron%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Cron-safe LOOP heartbeat backed by Vibecrafted Core.\n'
+  printf '  Captures Loctree + AICX context and can resume an operator-approved next command after an idle window.\n'
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted cron tick [--root <repo>] [--after-idle-minutes 10] [--then-cmd <cmd>]\n'
+  printf '  vibecrafted cron line [--root <repo>] [--every-minutes 10] [--then-cmd <cmd>]\n'
+  printf '  vc-cron tick --root /path/to/repo --no-context\n'
+  printf '\n'
+  printf '%bReal crontab line:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted cron line --root "$(pwd)" --every-minutes 10 --then-cmd '"'"'vibecrafted loop next'"'"'\n'
+  printf '\n'
+  printf '%bSafety:%b\n' "$_bold" "$_reset"
+  printf '  tick refuses hard-stop commands such as push, deploy, publish, release, reset, checkout --, and rm -rf.\n'
+  printf '  Runtime shell is only a wrapper; implementation lives in vibecrafted-core.\n'
   printf '\n'
 }
 
@@ -1094,6 +1133,10 @@ cmd_help() {
       cmd_loop_help
       return
       ;;
+    cron)
+      cmd_cron_help
+      return
+      ;;
     dispatch)
       cmd_dispatch_help
       return
@@ -1161,6 +1204,8 @@ cmd_help() {
   printf '  %bvibecrafted tui%b                       Launch the Rust operator console\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard%b [layout]        Launch an optional repo-owned Zellij dashboard\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted loop%b                      Interactive operator loop + async awaits\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted cron%b                      Cron-safe LOOP heartbeat + context capture\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted ship%b                      Start VC-Ship loop and dispatch a checkpoint\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dispatch%b run ...          Async lifecycle supervisor for one worker\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted telemetry smoke%b [flags]  Smoke the marbles telemetry path\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted%b <skill> <agent> [flags]   Run an agent-scoped framework skill\n' "$_cyan" "$_reset"
@@ -1192,6 +1237,8 @@ cmd_help() {
   printf '  vibecrafted tui\n'
   printf '  vibecrafted dashboard marbles\n'
   printf '  vibecrafted loop start --file /path/to/master-dispatch.md --completion-promise READY\n'
+  printf '  vibecrafted cron line --root "$(pwd)" --every-minutes 10 --then-cmd '"'"'vibecrafted loop next'"'"'\n'
+  printf '  vibecrafted ship codex --checkpoint workflow --file /path/to/dispatch.toml\n'
   printf '  vibecrafted dispatch run --run-id demo --root . --report report.md --transcript trace.log -- bash worker.sh\n'
   printf '  vibecrafted telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
@@ -1271,6 +1318,8 @@ cmd_help_full() {
   printf '\n'
   printf '  %bvibecrafted dashboard%b [layout]        Open/switch to a Zellij dashboard\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted loop%b                      Interactive operator loop + async awaits\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted cron%b                      Cron-safe LOOP heartbeat + context capture\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted ship%b                      Start VC-Ship loop and dispatch a checkpoint\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dispatch%b run ...          Async lifecycle supervisor for one worker\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard ls%b              List active Zellij sessions\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard gc%b [flags]      Prune dead/stale Zellij sessions\n' "$_cyan" "$_reset"
@@ -1387,6 +1436,35 @@ cmd_loop() {
     return 1
   }
   bash "$script_path" "$@"
+}
+
+cmd_cron() {
+  local script_path
+  if _is_help_flag "${1:-}"; then
+    cmd_cron_help
+    return 0
+  fi
+  script_path="$(_cron_script 2>/dev/null || true)"
+  [[ -n "$script_path" ]] || {
+    printf '%b[error]%b Cron runtime wrapper not found.\n' "$_red" "$_reset" >&2
+    return 1
+  }
+  bash "$script_path" "$@"
+}
+
+cmd_ship() {
+  local core_dir
+  if _is_help_flag "${1:-}"; then
+    printf 'Usage: vibecrafted ship <agent> [--checkpoint workflow] (--file <path>|--prompt <text>) [--loop-only]\n'
+    printf '       vc-ship <agent> [--checkpoint workflow] (--file <path>|--prompt <text>)\n'
+    return 0
+  fi
+  core_dir="$(_dispatcher_core_dir 2>/dev/null || true)"
+  [[ -n "$core_dir" ]] || {
+    printf '%b[error]%b Vibecrafted Core module not found.\n' "$_red" "$_reset" >&2
+    return 1
+  }
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.ship "$@"
 }
 
 cmd_dispatch() {
@@ -1936,6 +2014,14 @@ run_wrapper() {
     cmd_loop "$@"
     return
   fi
+  if [[ "$wrapper" == "vc-cron" ]]; then
+    cmd_cron "$@"
+    return
+  fi
+  if [[ "$wrapper" == "vc-ship" ]]; then
+    cmd_ship "$@"
+    return
+  fi
   if [[ "$wrapper" == "vc-dispatch" ]]; then
     cmd_dispatch "$@"
     return
@@ -2000,6 +2086,8 @@ main() {
     doctor|check) cmd_doctor ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
     loop) cmd_loop "$@" ;;
+    cron) cmd_cron "$@" ;;
+    ship) cmd_ship "$@" ;;
     dispatch|dispatcher) cmd_dispatch "$@" ;;
     telemetry) cmd_telemetry "$@" ;;
     stats|status) cmd_stats ;;

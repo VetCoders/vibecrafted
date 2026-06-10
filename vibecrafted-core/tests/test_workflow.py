@@ -73,6 +73,24 @@ def test_launch_workflow_keeps_dispatcher_launch_even_if_worker_command_is_bad(
     assert payload["worker_command"] == ["definitely-missing-vibecrafted-binary"]
 
 
+def test_runtime_prompt_keeps_metadata_runtime_owned(tmp_path: Path) -> None:
+    spec = workflow.WorkflowLaunchSpec(
+        agent="codex",
+        mode="workflow",
+        skill="workflow",
+        prompt="ship it",
+        file="",
+        runtime="headless",
+        root=str(tmp_path),
+    )
+
+    prompt = workflow._runtime_prompt(spec)
+
+    assert "Write your final report to the path in VIBECRAFTED_REPORT_PATH" in prompt
+    assert "runtime owns VIBECRAFTED_META_PATH" in prompt
+    assert "If you create or update run metadata" not in prompt
+
+
 def test_launch_workflow_artifact_paths_are_terminal_truth(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

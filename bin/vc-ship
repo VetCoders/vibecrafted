@@ -3,4 +3,4 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHONPATH="$ROOT/vibecrafted-core${PYTHONPATH:+:$PYTHONPATH}" \
-  exec python3 -m vibecrafted_core.loop "$@"
+  python3 -m vibecrafted_core.ship "$@"

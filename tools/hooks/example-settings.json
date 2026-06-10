@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/memory-on-compact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh"
           }
         ]
       },
@@ -25,7 +25,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/memory-on-compact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh"
           }
         ]
       }

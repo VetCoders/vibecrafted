@@ -297,9 +297,6 @@ fn build_terminal_launch_command(deck: &Path, request: &LaunchRequest) -> Launch
         args.push(name.into());
     }
 
-    // We are running zellij in-place.
-    args.push("options".into());
-
     if let Some(config_dir) = zellij_config_dir {
         args.push("--config-dir".into());
         args.push(config_dir.into_os_string());
