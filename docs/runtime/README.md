@@ -6,6 +6,10 @@ This is the machinery that makes multi-agent orchestration possible:
 terminal management, session routing, telemetry, spawn mechanics,
 and the contracts that keep everything auditable.
 
+For the canonical product lifecycle — the read/write cadence of the
+`vc-ship` pipeline, the component architecture, and the async supervision
+model — see [`LIFECYCLE.md`](./LIFECYCLE.md).
+
 ---
 
 ## Architecture

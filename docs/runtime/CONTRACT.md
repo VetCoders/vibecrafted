@@ -7,6 +7,9 @@ For the delegation doctrine and the `vc-why-matrix`, see
 [`skills/vc-agents/SKILL.md`](../../skills/vc-agents/SKILL.md).
 For the framework overview and pillar descriptions, see
 [`docs/runtime/README.md`](./README.md).
+For the canonical product lifecycle (read/write cadence of `vc-ship`,
+component architecture, async supervision), see
+[`docs/runtime/LIFECYCLE.md`](./LIFECYCLE.md).
 
 ---
 

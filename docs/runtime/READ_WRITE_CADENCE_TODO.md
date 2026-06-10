@@ -1,6 +1,8 @@
 # Read-Write Cadence Runtime TODO
 
 This note parks the next runtime direction after `vc-research uno`.
+The canonical lifecycle this TODO implements toward now lives in
+[`LIFECYCLE.md`](./LIFECYCLE.md) (operator-dictated canon, 2026-06-08).
 
 ## Target Rhythm
 
