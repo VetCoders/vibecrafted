@@ -35,6 +35,15 @@ die() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 info() { printf '%s\n' "$*"; }
 warn() { printf '[warn] %s\n' "$*" >&2; }
 
+# Storytelling discipline (same pattern as install.sh): this script may add at
+# most its ≤2-line section contribution to the default view. Everything else
+# is detail behind VERBOSE=1; warnings and errors stay visible.
+vinfo() {
+  if [[ "${VERBOSE:-0}" == "1" ]]; then
+    printf '%s\n' "$*"
+  fi
+}
+
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 vibecrafted_home() {
@@ -229,7 +238,7 @@ install_wezterm() {
     else
       die "Cannot stage wezterm config: $dest exists and is not a directory"
     fi
-    info "Activated wezterm Lua config: $dest -> $lua_src"
+    vinfo "Activated wezterm Lua config: $dest -> $lua_src"
   else
     warn "wezterm Lua config not found; expected $src/config/wezterm"
   fi
@@ -416,7 +425,7 @@ validate_runtime_platform "$RUNTIME" "$PLATFORM"
 
 if [[ "$RUNTIME" == "none" ]]; then
   # No runtime requested is the common case — stay silent unless VERBOSE.
-  [[ "${VERBOSE:-0}" == "1" ]] && info "Runtime horse: none (no runtime install requested)"
+  vinfo "Runtime horse: none (no runtime install requested)"
   exit 0
 fi
 

@@ -4989,7 +4989,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     if _tail:
         print()
         print(f"    {dim('recent ' + '─' * 30)}")
-        for _line in _tail[-10:]:
+        for _line in _tail[-12:]:
             print(f"    {dim('│')} {_line[:88]}")
         print(f"    {dim('└─ full log: ' + log_display)}")
     if missing_fnd:

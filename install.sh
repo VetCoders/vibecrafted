@@ -34,6 +34,15 @@ info() {
   printf '%s\n' "$*"
 }
 
+# Output discipline: the default view is calm storytelling (≤10 lines total,
+# ≤2 per install section). Detail lines are gated — VERBOSE=1 restores the
+# full bazaar, nothing is lost.
+vinfo() {
+  if [[ "${VERBOSE:-0}" == "1" ]]; then
+    printf '%s\n' "$*"
+  fi
+}
+
 # -----------------------------------------------------------------------------
 # Platform detection (Plan 03 — cross-platform install)
 #
@@ -430,11 +439,11 @@ if [[ -z "$archive_url" && -z "$archive_file" ]]; then
   fi
   if [[ -n "$resolved_url" ]]; then
     archive_url="$resolved_url"
-    info "Resolved from channel ($ref): $archive_url"
+    vinfo "Resolved from channel ($ref): $archive_url"
   else
     # Fallback: source snapshot for pre-channel / pre-deploy kickoffs.
     archive_url="https://github.com/VetCoders/vibecrafted/archive/refs/heads/${ref}.tar.gz"
-    info "[note] Channel manifest not available — using GitHub source snapshot for ${ref}"
+    vinfo "[note] Channel manifest not available — using GitHub source snapshot for ${ref}"
   fi
 fi
 
@@ -531,11 +540,11 @@ verify_signature() {
   if [[ -n "$expected" && "$actual" != "$expected" ]]; then
     die "SHA256 mismatch for $(basename "$file"): expected $expected, got $actual"
   fi
-  [[ -n "$expected" ]] && info "  SHA256 ✓"
+  [[ -n "$expected" ]] && vinfo "  SHA256 ✓"
 
   if curl -fsSL "${base_url}/$(basename "$sig_file")" -o "$sig_file" 2>/dev/null; then
     if openssl dgst -sha256 -verify "$pub_file" -signature "$sig_file" "$file" >/dev/null 2>&1; then
-      info "  Signature ✓  (Maciej Gad / MW223P3NPX)"
+      vinfo "  Signature ✓  (Maciej Gad / MW223P3NPX)"
     else
       die "Signature verification FAILED for $(basename "$file")"
     fi
@@ -545,10 +554,12 @@ verify_signature() {
 }
 
 if [[ -n "$archive_file" ]]; then
-  info "Staging source: local archive"
+  info "Unpacking the local snapshot…"
+  vinfo "  archive: $archive_file"
   extract_tarball "$archive_file" "$extract_root"
 else
-  info "Staging source: download snapshot"
+  info "Fetching vibecrafted ($ref)…"
+  vinfo "  source: $archive_url"
   local_archive="$tmpdir/$(basename "$archive_url")"
   curl -fsSL "$archive_url" -o "$local_archive"
 
@@ -585,7 +596,13 @@ if [[ -f "$staged_dir/VERSION" ]]; then
 fi
 [[ -n "$_installed_version" ]] || _installed_version="unknown"
 
+# Section truth line: what just became true, in one calm line.
+info "✓ Staged vibecrafted $_installed_version → $current_link"
+
 post_install_banner() {
+  # The default view already told the staging truth in one line; the full
+  # banner is detail and lives behind VERBOSE=1.
+  [[ "${VERBOSE:-0}" == "1" ]] || return 0
   printf '\n'
   info "---------------------------------------------------------------"
   info " Staged: vibecrafted $_installed_version"
@@ -625,9 +642,8 @@ if [[ "$target" == "vibecrafted" && "$use_gui" == "1" ]]; then
   gui_installer="$current_link/scripts/installer_gui.py"
   [[ -f "$gui_installer" ]] || die "Guided installer not found: $gui_installer"
   post_install_banner
-  info "Launching guided installer UI:"
-  info "  python3 $gui_installer --source $current_link"
-  printf '\n'
+  info "▸ Launching the guided installer (browser UI)…"
+  vinfo "  python3 $gui_installer --source $current_link"
   export VIBECRAFTED_RUNTIME="$runtime"
   exec python3 "$gui_installer" --source "$current_link"
 fi
@@ -679,16 +695,14 @@ if [[ "$target" == "vibecrafted" ]]; then
   fi
 
   post_install_banner
-  info "Running built-in installer:"
-  info "  uv run --project $installer_dir vetcoders-installer $manifest"
-  printf '\n'
+  info "▸ Opening the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installer…"
+  vinfo "  uv run --project $installer_dir vetcoders-installer $manifest"
   export VIBECRAFTED_RUNTIME="$runtime"
   exec uv run --project "$installer_dir" --quiet vetcoders-installer "$manifest"
 fi
 
 post_install_banner
-info "Launching local make target:"
-info "  make --no-print-directory -C $current_link $target"
-printf '\n'
+info "▸ Running make ${target}…"
+vinfo "  make --no-print-directory -C $current_link $target"
 
 exec make --no-print-directory -C "$current_link" "$target"
