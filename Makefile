@@ -11,7 +11,7 @@ BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
 
-.PHONY: help vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon install install-auto install-all install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test
+.PHONY: help vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon install install-auto install-all install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test
 
 help:
 	@printf "\n"
@@ -26,8 +26,12 @@ help:
 	@printf "  \033[2martifacts storage, runtime horse, shell helpers, skills, or dry-run mode.\033[0m\n"
 	@printf "\n"
 	@printf "  \033[33m◆\033[0m  make install-auto  \033[2mAutomation path: same installer, auto-approved\033[0m\n"
-	@printf "  \033[33m◆\033[0m  make install-all   \033[2mIdempotent runtime knife: foundations, venv launchers, store cleanse\033[0m\n"
+	@printf "  \033[33m◆\033[0m  make install-all   \033[2mIdempotent runtime knife: foundations, venv launchers, app binaries\033[0m\n"
 	@printf "  \033[33m◆\033[0m  make install RUNTIME=wezterm \033[2mInstall with a lab runtime selected\033[0m\n"
+	@printf "\n"
+	@printf "  \033[2minstall-all installs the Rust app binaries (voc, vc-admin) as real files\033[0m\n"
+	@printf "  \033[2minto ~/.local/bin. vibecrafted-server is intentionally excluded: control-core\033[0m\n"
+	@printf "  \033[2mis a library and the Leptos SSR web bin needs site assets + env — use make server.\033[0m\n"
 	@printf "\n"
 	@printf "  \033[32m✓\033[0m  make doctor        \033[2mVerify installation health\033[0m\n"
 	@printf "  \033[32m✓\033[0m  make test          \033[2mRun installer + marketplace pytest gates\033[0m\n"
@@ -113,6 +117,33 @@ install-all: init-hooks
 	@bash runtime/scripts/install-frontier-config.sh --source "$(SOURCE)" $(INSTALL_QUIET) || printf '[warn] Frontier config skipped (non-fatal)\n'
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --write-shell-rc --compact --non-interactive --mirror
 	@bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes $(INSTALL_QUIET)
+	@$(MAKE) --no-print-directory install-app-binaries
+
+# install-all owns every binary the product ships into BIN (~/.local/bin).
+# The vibecrafted-app members ship `voc` and `vc-admin` (both bins of the
+# tui-agent `voc` package): built from source in release and copied as REAL
+# files. Never `cargo install` here — that breeds ~/.local/bin -> ~/.cargo/bin
+# ghost symlinks, the exact pattern the runtime contract bans in BIN.
+# vibecrafted-server is intentionally NOT installed: control-core is a
+# library (no [[bin]]) and vibecrafted-server-web is a Leptos SSR app that
+# needs LEPTOS_* env + site assets to run — `make server` is its entry point.
+APP_DIR := vibecrafted-app
+APP_BINARIES := voc vc-admin
+BIN_DIR := $(HOME)/.local/bin
+
+install-app-binaries:
+	@command -v cargo >/dev/null 2>&1 || { \
+		echo "[app] cargo not found — install rustup (https://rustup.rs) to build $(APP_BINARIES)" >&2; \
+		exit 1; \
+	}
+	@mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)"
+	@echo "[app] building release binaries ($(APP_BINARIES)) from $(APP_DIR)"
+	@cd $(APP_DIR) && cargo build --release -p voc $(INSTALL_QUIET)
+	@for bin in $(APP_BINARIES); do \
+		rm -f "$(BIN_DIR)/$$bin"; \
+		install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"; \
+	done
+	@echo "[app] installed: $(APP_BINARIES) -> $(BIN_DIR) (real files, no cargo ghosts)"
 
 skills:
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --non-interactive

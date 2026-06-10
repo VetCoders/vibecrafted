@@ -888,9 +888,9 @@ async fn health_check_fails_for_missing_socket() {
 }
 
 #[tokio::test]
-#[ignore = "opcjonalny test roundtrip z lokalnym ~/.cargo/bin/loctree-mcp (uruchamiany przez make test-full)"]
+#[ignore = "opcjonalny test roundtrip z lokalnym ~/.local/bin/loctree-mcp (uruchamiany przez make test-full)"]
 async fn mux_transport_roundtrip_with_loctree_mcp() {
-    let loctree = expand_path("~/.cargo/bin/loctree-mcp");
+    let loctree = expand_path("~/.local/bin/loctree-mcp");
     assert!(
         loctree.exists(),
         "brak binarki referencyjnej: {}",

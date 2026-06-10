@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -52,6 +53,72 @@ def test_sync_state_preserves_runtime_observe_fields(
     assert run["launcher_pid"] == 12345
     assert run["completed_at"] == completed_at
     assert run["session_id"] == "session-abc"
+
+
+def test_sync_state_enforces_identity_on_fresh_creation_events(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.chdir(tmp_path)
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "ts": "2026-05-19T00:00:00+00:00",
+                        "run_id": "wflw-known-identity",
+                        "kind": "launch",
+                        "message": "launch accepted",
+                        "payload": {
+                            "state": "created",
+                            "agent": "codex",
+                            "skill": "workflow",
+                            "mode": "workflow",
+                            "root": str(repo),
+                            "session_id": "session-real",
+                            "identity_required": True,
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "ts": "2026-05-19T00:00:01+00:00",
+                        "run_id": "wflw-fallback-identity",
+                        "kind": "launch",
+                        "message": "launch accepted",
+                        "payload": {
+                            "state": "created",
+                            "agent": "claude",
+                            "skill": "workflow",
+                            "mode": "workflow",
+                            "root": "repo",
+                            "session_id": "pending",
+                            "identity_required": True,
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+    runs = {run["run_id"]: run for run in snapshot["recent_runs"]}
+
+    known = runs["wflw-known-identity"]
+    assert known["session_id"] == "session-real"
+    assert known["root"] == str(repo.resolve())
+
+    fallback = runs["wflw-fallback-identity"]
+    assert fallback["root"] == str(repo.resolve())
+    assert fallback["session_id"] != "pending"
+    uuid.UUID(fallback["session_id"])
 
 
 def test_sync_state_publishes_lifecycle_control_availability(

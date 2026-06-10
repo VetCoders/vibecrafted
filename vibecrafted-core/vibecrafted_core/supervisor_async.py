@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from .artifacts import ArtifactValidation, validate_artifacts
+from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
 from .lifecycle import EventKind, RunState
 
@@ -33,6 +34,7 @@ class AsyncRunHandle:
     completed_at: datetime | None = None
     artifact_validation: ArtifactValidation | None = None
     first_output_seen: bool = False
+    session_id: str = ""
 
     @property
     def state(self) -> RunState:
@@ -59,11 +61,16 @@ class AsyncSupervisor:
     ) -> AsyncRunHandle:
         if not command:
             raise ValueError("command must not be empty")
-        cwd = Path(root).resolve()
+        cwd = Path(normalize_run_root(root))
         transcript = Path(transcript_path) if transcript_path is not None else None
         if transcript is not None:
             transcript.parent.mkdir(parents=True, exist_ok=True)
 
+        merged_env = os.environ.copy()
+        if env:
+            merged_env.update(env)
+        session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
+        merged_env["VIBECRAFTED_SESSION_ID"] = session_id
         started_at = _utc_now()
 
         await self._emit(
@@ -77,11 +84,10 @@ class AsyncSupervisor:
                 "report": str(report_path or ""),
                 "transcript": str(transcript_path or ""),
                 "started_at": started_at.isoformat(),
+                "session_id": session_id,
+                "identity_required": True,
             },
         )
-        merged_env = os.environ.copy()
-        if env:
-            merged_env.update(env)
 
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -100,6 +106,7 @@ class AsyncSupervisor:
             meta_path=Path(meta_path) if meta_path is not None else None,
             report_path=Path(report_path) if report_path is not None else None,
             transcript_path=transcript,
+            session_id=session_id,
         )
         try:
             handle.pgid = os.getpgid(process.pid)
@@ -290,7 +297,14 @@ class AsyncSupervisor:
         payload: dict[str, object] | None = None,
     ) -> None:
         handle.states.append(state)
-        await self._emit(handle.run_id, state, message, payload=payload)
+        event_payload: dict[str, object] = {
+            "root": str(handle.root),
+            "session_id": handle.session_id,
+            "identity_required": True,
+        }
+        if payload:
+            event_payload.update(payload)
+        await self._emit(handle.run_id, state, message, payload=event_payload)
 
     async def _emit(
         self,

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .agent_dispatch import extract_session_id, sandbox_supported
+from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
 
 EventCallback = Callable[[dict[str, Any]], None]
@@ -172,7 +173,7 @@ class Supervisor:
         sandbox_policy: str | os.PathLike[str] | None = None,
         sandbox_config: dict[str, Any] | None = None,
     ) -> SpawnHandle:
-        root_path = Path(root).resolve()
+        root_path = Path(normalize_run_root(root))
         command_list = (
             list(command) if command is not None else _default_command(agent, prompt)
         )
@@ -195,7 +196,9 @@ class Supervisor:
         child_env = os.environ.copy()
         if env:
             child_env.update(env)
+        session_id = ensure_session_id(child_env.get("VIBECRAFTED_SESSION_ID"))
         child_env.setdefault("VIBECRAFTED_RUN_ID", effective_run_id)
+        child_env["VIBECRAFTED_SESSION_ID"] = session_id
 
         if sandbox:
             if not sandbox_supported(agent):
@@ -213,6 +216,7 @@ class Supervisor:
                 command=command_list,
                 meta_path=inferred_meta,
                 transcript_path=inferred_transcript,
+                session_id=session_id,
             )
             self._emit(
                 "spawn-started",
@@ -260,6 +264,7 @@ class Supervisor:
             command=command_list,
             meta_path=inferred_meta,
             transcript_path=inferred_transcript,
+            session_id=session_id,
         )
         self._emit(
             "spawn-started",
@@ -317,7 +322,9 @@ class Supervisor:
             return
 
         handle.completed_at = _now_iso()
-        handle.session_id = _maybe_extract_session_id(handle)
+        extracted_session_id = _maybe_extract_session_id(handle)
+        if extracted_session_id:
+            handle.session_id = extracted_session_id
         kind = "spawn-completed" if handle.exit_code == 0 else "spawn-failed"
         self._emit(
             kind,
@@ -340,7 +347,9 @@ class Supervisor:
         exit_code = handle.process.wait()
         handle.exit_code = exit_code
         handle.completed_at = _now_iso()
-        handle.session_id = _maybe_extract_session_id(handle)
+        extracted_session_id = _maybe_extract_session_id(handle)
+        if extracted_session_id:
+            handle.session_id = extracted_session_id
         kind = "spawn-completed" if exit_code == 0 else "spawn-failed"
         self._emit(
             kind,
@@ -383,6 +392,8 @@ class Supervisor:
                 "skill": handle.skill,
                 "mode": handle.mode,
                 "root": str(handle.root),
+                "session_id": handle.session_id,
+                "identity_required": True,
                 **payload,
             },
         )

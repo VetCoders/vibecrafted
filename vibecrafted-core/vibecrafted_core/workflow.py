@@ -12,7 +12,9 @@ from typing import Any
 
 from .control_plane import (
     control_plane_home,
+    ensure_session_id,
     lookup_run,
+    normalize_run_root,
     operator_session_name,
     sync_state,
 )
@@ -153,7 +155,7 @@ def normalize_launch_spec(
 
     prompt = str(payload.get("prompt") or "").strip()
     file_path = str(payload.get("file") or "").strip()
-    root = str(payload.get("root") or Path(source_dir).resolve()).strip()
+    root = normalize_run_root(payload.get("root"), source_dir)
     runtime = _normalized_runtime(str(payload.get("runtime") or "headless").strip())
     mode = str(payload.get("mode") or skill).strip() or skill
     count = _coerce_positive_int(
@@ -280,7 +282,9 @@ def launch_workflow(
     merged_env = dict(os.environ)
     if env:
         merged_env.update(env)
+    session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
     merged_env["VIBECRAFTED_RUN_ID"] = run_id
+    merged_env["VIBECRAFTED_SESSION_ID"] = session_id
     merged_env["VIBECRAFTED_REPORT_PATH"] = str(artifacts["report"])
     merged_env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(artifacts["transcript"])
     merged_env["VIBECRAFTED_META_PATH"] = str(artifacts["meta"])
@@ -302,6 +306,8 @@ def launch_workflow(
             "mode": spec.mode,
             "runtime": spec.runtime,
             "root": spec.root,
+            "session_id": session_id,
+            "identity_required": True,
             "source_dir": str(Path(source_dir).resolve()),
             "prompt": spec.prompt,
             "file": spec.file,
@@ -322,6 +328,7 @@ def launch_workflow(
                     "worker_command": worker_command,
                     "dispatch_command": command,
                     "retry_of": retry_of,
+                    "session_id": session_id,
                 }
             )
             + "\n"
@@ -371,6 +378,8 @@ def launch_workflow(
                 "mode": spec.mode,
                 "runtime": spec.runtime,
                 "root": spec.root,
+                "session_id": session_id,
+                "identity_required": True,
                 "source_dir": str(Path(source_dir).resolve()),
                 "prompt": spec.prompt,
                 "file": spec.file,
@@ -396,6 +405,7 @@ def launch_workflow(
         "report": str(artifacts["report"]),
         "transcript": str(artifacts["transcript"]),
         "meta": str(artifacts["meta"]),
+        "session_id": session_id,
         "retry_of": retry_of,
         "launch_log": str(launch_log),
         "spec": spec.to_payload(),

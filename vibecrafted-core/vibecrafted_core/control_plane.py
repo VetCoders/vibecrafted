@@ -6,6 +6,7 @@ import datetime as dt
 import fcntl
 import json
 import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
@@ -75,6 +76,7 @@ SKILL_CODE_MAP = {
 RUN_STALL_SECONDS = 20 * 60
 EVENT_TAIL_LIMIT = 16
 RECENT_RUN_LIMIT = 12
+MISSING_SESSION_IDS = {"", "pending", "none", "null", "unknown"}
 
 
 @dataclass(frozen=True)
@@ -196,6 +198,22 @@ def _coerce_int(value: Any) -> int | None:
         if value and value.lstrip("-").isdigit():
             return int(value)
     return None
+
+
+def normalize_run_root(
+    root: str | Path | None, fallback: str | Path | None = None
+) -> str:
+    raw = str(root or fallback or "").strip()
+    if not raw:
+        return ""
+    return str(Path(raw).expanduser().resolve())
+
+
+def ensure_session_id(session_id: Any = "") -> str:
+    raw = str(session_id or "").strip()
+    if raw.lower() not in MISSING_SESSION_IDS:
+        return raw
+    return str(uuid.uuid4())
 
 
 def _now() -> dt.datetime:
@@ -552,7 +570,13 @@ def _merge_event_stream(merged: dict[str, RunStatus]) -> dict[str, RunStatus]:
         if not state:
             state = existing.state if existing is not None else "unknown"
 
-        root = str(payload.get("root") or (existing.root if existing else ""))
+        identity_required = bool(payload.get("identity_required"))
+        raw_root = payload.get("root") or (existing.root if existing else "")
+        root = (
+            normalize_run_root(str(raw_root or ""), Path.cwd())
+            if identity_required
+            else str(raw_root or "")
+        )
         agent = str(payload.get("agent") or (existing.agent if existing else "unknown"))
         skill = str(payload.get("skill") or (existing.skill if existing else "unknown"))
         mode = str(payload.get("mode") or (existing.mode if existing else "unknown"))
@@ -587,6 +611,8 @@ def _merge_event_stream(merged: dict[str, RunStatus]) -> dict[str, RunStatus]:
             payload.get("session_id")
             or (existing.session_id if existing is not None else "")
         )
+        if identity_required:
+            session_id = ensure_session_id(session_id)
 
         extra = dict(existing.extra if existing is not None else {})
         for key in (

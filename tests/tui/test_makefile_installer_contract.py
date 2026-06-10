@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -105,6 +108,59 @@ def test_install_all_paths_write_shell_rc_for_wired_shell() -> None:
     install_all_block = makefile.split("install-all:", 1)[1].split("\nskills:", 1)[0]
     assert "--with-shell --write-shell-rc" in install_all_block
     assert "--with-shell --write-shell-rc" in manifest
+
+
+def test_install_all_covers_app_binaries_as_real_files() -> None:
+    """install-all must own the vibecrafted-app member binaries (voc,
+    vc-admin): built from source in release and copied into ~/.local/bin as
+    REAL files. `cargo install` is forbidden in that path — it is what breeds
+    the ~/.local/bin -> ~/.cargo/bin ghost symlinks the runtime contract bans.
+    The install.toml installation phase mirrors install-all line-by-line, so
+    it must carry the same step."""
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    manifest = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
+
+    install_all_block = makefile.split("install-all:", 1)[1].split("\nskills:", 1)[0]
+    assert "install-app-binaries" in install_all_block
+
+    assert "APP_BINARIES := voc vc-admin" in makefile
+    assert "BIN_DIR := $(HOME)/.local/bin" in makefile
+
+    app_block = makefile.split("\ninstall-app-binaries:", 1)[1].split("\nskills:", 1)[0]
+    assert "cargo build --release -p voc" in app_block
+    assert "cargo install" not in app_block
+    assert 'install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"' in (
+        app_block
+    )
+
+    assert "make --no-print-directory install-app-binaries" in manifest
+
+
+def test_bin_dir_owned_entries_are_never_cargo_ghost_symlinks() -> None:
+    """Runtime contract: BIN (~/.local/bin) holds real files or symlinks into
+    the vibecrafted runtime — never a symlink resolving into ~/.cargo/bin.
+    A cargo ghost is a side-installed binary the canonical installer does not
+    own; the machine then drifts the moment `cargo install` re-runs."""
+    bin_dir = Path.home() / ".local" / "bin"
+    if not bin_dir.is_dir():
+        pytest.skip("no ~/.local/bin on this machine")
+
+    cargo_bin = Path.home() / ".cargo" / "bin"
+    owned_names = {"voc", "vc-admin", "vibecraft", "vibecrafted", "telemetry"}
+
+    offenders = []
+    for entry in bin_dir.iterdir():
+        owned = entry.name in owned_names or entry.name.startswith("vc-")
+        if not owned or not entry.is_symlink():
+            continue
+        resolved = Path(os.path.realpath(entry))
+        if resolved.is_relative_to(cargo_bin):
+            offenders.append(f"{entry.name} -> {resolved}")
+
+    assert offenders == [], (
+        "cargo-ghost symlinks in ~/.local/bin (run `make install-all` to "
+        f"install real files): {offenders}"
+    )
 
 
 def test_install_manifest_uses_four_human_checkpoints_with_artifact_reason() -> None:
