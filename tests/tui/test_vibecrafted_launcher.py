@@ -536,12 +536,19 @@ def test_vetcoders_shell_entrypoint_stays_thin_facade() -> None:
         "prompts",
         "dispatch_core",
         "dispatch_wrappers",
-        "research",
         "marbles",
         "dispatch",
     ]:
         assert f"_vetcoders_source_shell_module {module}" in body
         assert (lib_dir / f"{module}.sh").is_file()
+
+    runtime_root = facade.parent.parent
+    for workflow, module in [
+        ("vc-research", "research_prompts"),
+        ("vc-research", "research"),
+    ]:
+        assert f"_vetcoders_source_workflow_module {workflow} {module}" in body
+        assert (runtime_root / workflow / "shell" / f"{module}.sh").is_file()
 
 
 def test_telemetry_wrapper_smokes_headless_marbles_runtime(tmp_path: Path) -> None:

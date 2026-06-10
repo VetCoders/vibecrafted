@@ -46,19 +46,34 @@ _vetcoders_source_shell_module() {
   source "$module_path"
 }
 
+_vetcoders_source_workflow_module() {
+  # Workflow-owned modules live in runtime/<workflow>/shell/, not in the
+  # shared lib/. The lib dir always ends in /shell/lib, so its grandparent
+  # is the runtime root that hosts the per-workflow dirs.
+  local workflow_name="$1"
+  local module_name="$2"
+  local module_path="${_vetcoders_shell_lib_dir%/shell/lib}/${workflow_name}/shell/${module_name}.sh"
+  [[ -r "$module_path" ]] || {
+    printf 'Missing Vibecrafted workflow shell module: %s\n' "$module_path" >&2
+    return 1
+  }
+  # shellcheck disable=SC1090
+  source "$module_path"
+}
+
 _vetcoders_shell_lib_dir="$(_vetcoders_resolve_shell_lib_dir 2>/dev/null || true)"
 if [[ -z "$_vetcoders_shell_lib_dir" ]]; then
   _vetcoders_runtime_helper="${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh"
   if [[ -r "$_vetcoders_runtime_helper" ]]; then
     # shellcheck disable=SC1090
     source "$_vetcoders_runtime_helper"
-    unset -f _vetcoders_shell_facade_dir _vetcoders_shell_lib_candidates _vetcoders_resolve_shell_lib_dir _vetcoders_source_shell_module
+    unset -f _vetcoders_shell_facade_dir _vetcoders_shell_lib_candidates _vetcoders_resolve_shell_lib_dir _vetcoders_source_shell_module _vetcoders_source_workflow_module
     unset _vetcoders_shell_lib_dir _vetcoders_runtime_helper
     return 0
   fi
   printf 'Missing Vibecrafted shell module directory. Checked:\n' >&2
   _vetcoders_shell_lib_candidates | sed 's/^/  - /' >&2
-  unset -f _vetcoders_shell_facade_dir _vetcoders_shell_lib_candidates _vetcoders_resolve_shell_lib_dir _vetcoders_source_shell_module
+  unset -f _vetcoders_shell_facade_dir _vetcoders_shell_lib_candidates _vetcoders_resolve_shell_lib_dir _vetcoders_source_shell_module _vetcoders_source_workflow_module
   unset _vetcoders_shell_lib_dir _vetcoders_runtime_helper
   return 1
 fi
@@ -72,16 +87,16 @@ _vetcoders_source_shell_module dashboard || return $?
 _vetcoders_source_shell_module prompts || return $?
 _vetcoders_source_shell_module quote || return $?
 _vetcoders_source_shell_module polarize || return $?
-_vetcoders_source_shell_module research_prompts || return $?
+_vetcoders_source_workflow_module vc-research research_prompts || return $?
 _vetcoders_source_shell_module operator || return $?
 _vetcoders_source_shell_module dispatch_core || return $?
 _vetcoders_source_shell_module observe || return $?
 _vetcoders_source_shell_module dispatch_wrappers || return $?
-_vetcoders_source_shell_module research || return $?
+_vetcoders_source_workflow_module vc-research research || return $?
 _vetcoders_source_shell_module operator_entrypoints || return $?
 _vetcoders_source_shell_module skill_shortcuts || return $?
 _vetcoders_source_shell_module marbles || return $?
 _vetcoders_source_shell_module dispatch || return $?
 
-unset -f _vetcoders_shell_facade_dir _vetcoders_shell_lib_candidates _vetcoders_resolve_shell_lib_dir _vetcoders_source_shell_module
+unset -f _vetcoders_shell_facade_dir _vetcoders_shell_lib_candidates _vetcoders_resolve_shell_lib_dir _vetcoders_source_shell_module _vetcoders_source_workflow_module
 unset _vetcoders_shell_lib_dir
