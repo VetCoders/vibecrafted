@@ -140,6 +140,9 @@ if [[ "${VIBECRAFTED_INLINE_STARTUP_WATCH:-1}" != "0" ]]; then
   VIBECRAFTED_STARTUP_WATCH_ECHO=0 spawn_watch_startup "$meta" "$transcript" "$report" &
   startup_watch_pid=$!
 fi
+# Lifecycle truth: the spawner wrote "launching"; the launcher owns the run
+# from here, so the agent command starting is the launching->running edge.
+spawn_mark_meta_running "$meta"
 if bash -c "$SPAWN_CMD"; then
   spawn_finish_meta "$meta" "completed" "0"
 EOF_LAUNCH

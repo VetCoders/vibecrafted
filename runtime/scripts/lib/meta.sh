@@ -165,6 +165,45 @@ with open(meta_path, "w", encoding="utf-8") as fh:
 PY
 }
 
+spawn_mark_meta_running() {
+  # Called by the generated launcher immediately before it starts the agent
+  # command. The launcher is the run owner: once it is alive (PID written)
+  # and about to exec the agent, the run is running — keeping "launching"
+  # past this point is a lie the dashboards repeat. Written atomically
+  # (tmp + os.replace) so watchers never read a half-written meta.
+  local meta_path="$1"
+  [[ -f "$meta_path" ]] || return 0
+
+  python3 - "$meta_path" <<'PY'
+import datetime as dt
+import json
+import os
+import sys
+
+meta_path = sys.argv[1]
+try:
+    with open(meta_path, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+except (OSError, json.JSONDecodeError):
+    sys.exit(0)
+
+# Only the launching->running edge belongs here; never resurrect a run that
+# a watcher or finisher already moved to a terminal state.
+if payload.get("status") not in ("launching", "pending"):
+    sys.exit(0)
+
+payload["status"] = "running"
+payload["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+
+tmp_path = f"{meta_path}.tmp.{os.getpid()}"
+with open(tmp_path, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2, ensure_ascii=False)
+    fh.write("\n")
+os.replace(tmp_path, meta_path)
+PY
+  spawn_sync_control_plane
+}
+
 spawn_pid_alive() {
   # Returns 0 if pid is alive, 1 if dead or invalid. Uses kill -0 semantics;
   # treats permission denied as alive (kernel says: exists, not yours).
