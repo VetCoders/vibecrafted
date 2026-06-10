@@ -1622,6 +1622,78 @@ fn mission_control_skips_malformed_meta_json_without_panic() {
     assert_eq!(mission.agent_stats.len(), 1);
 }
 
+#[test]
+fn mission_control_defaults_to_live_runs_across_roots_with_root_labels() {
+    use voc::mission_control::MissionControlState;
+
+    let now = chrono::DateTime::parse_from_rfc3339("2026-06-10T12:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let dir = tempdir().unwrap();
+    let control_plane_root = dir.path().join("control-plane");
+    let artifact_root = dir.path().join("artifacts");
+    let mission_root = dir.path().join("pensieve");
+    let foreign_root = dir.path().join("CodeScribe");
+    let legacy_root = "";
+
+    let state = ControlPlaneState {
+        root: control_plane_root,
+        runs: vec![
+            RunSnapshot {
+                run_id: "wflw-foreign-launching".to_string(),
+                session_id: Some("session-foreign".to_string()),
+                agent: Some("codex".to_string()),
+                skill: Some("workflow".to_string()),
+                mode: None,
+                state: Some("launching".to_string()),
+                status: None,
+                started_at: Some("2026-06-10T11:55:00Z".to_string()),
+                updated_at: Some("2026-06-10T11:59:00Z".to_string()),
+                last_heartbeat: Some("2026-06-10T11:59:30Z".to_string()),
+                root: Some(foreign_root.to_string_lossy().into_owned()),
+                operator_session: None,
+                latest_report: None,
+                latest_transcript: None,
+                last_error: None,
+                extra: BTreeMap::new().into_iter().collect(),
+            },
+            RunSnapshot {
+                run_id: "wflw-legacy-running".to_string(),
+                session_id: Some(String::new()),
+                agent: Some("claude".to_string()),
+                skill: Some("workflow".to_string()),
+                mode: None,
+                state: Some("running".to_string()),
+                status: None,
+                started_at: Some("2026-06-10T11:50:00Z".to_string()),
+                updated_at: Some("2026-06-10T11:58:00Z".to_string()),
+                last_heartbeat: Some("2026-06-10T11:59:00Z".to_string()),
+                root: Some(legacy_root.to_string()),
+                operator_session: None,
+                latest_report: None,
+                latest_transcript: None,
+                last_error: None,
+                extra: BTreeMap::new().into_iter().collect(),
+            },
+        ],
+        events: Vec::new(),
+        archived_run_ids: Default::default(),
+    };
+
+    let mission = MissionControlState::build_at(&state, &artifact_root, now);
+    assert_eq!(mission.active_dispatches.len(), 2);
+    assert!(mission.active_dispatches.iter().any(|dispatch| {
+        dispatch.run_id == "wflw-foreign-launching" && dispatch.root_label == "CodeScribe"
+    }));
+    assert!(mission.active_dispatches.iter().any(|dispatch| {
+        dispatch.run_id == "wflw-legacy-running" && dispatch.root_label == "root unknown"
+    }));
+
+    let mission_only =
+        MissionControlState::build_at_for_root(&state, &artifact_root, now, &mission_root);
+    assert!(mission_only.active_dispatches.is_empty());
+}
+
 /// Mission Control panel focus navigation wraps around exactly the
 /// seven panels documented in PLAN_23 §4. Locks the navigation
 /// contract so future panel additions adjust both the constant and

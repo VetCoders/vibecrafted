@@ -790,7 +790,10 @@ fn draw_mc_active_dispatches(
                     ),
                     Span::raw(format!("{} / {}", dispatch.agent, dispatch.skill)),
                 ]);
-                let mut detail = format!("  age {} · {}", dispatch.age_label, dispatch.eta_label);
+                let mut detail = format!(
+                    "  root {} · age {} · {}",
+                    dispatch.root_label, dispatch.age_label, dispatch.eta_label
+                );
                 if let Some(wave) = dispatch.wave.as_deref() {
                     detail.push_str(&format!(" · wave {wave}"));
                 }

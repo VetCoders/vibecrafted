@@ -80,7 +80,8 @@ async fn drain_events(
 ) -> Result<()> {
     // events_path is the framework's own control-plane events.jsonl (derived from
     // the control_plane config dir), never attacker-controlled input.
-    let bytes = match tokio::fs::read(events_path).await { // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+    let read_events = tokio::fs::read(events_path); // nosemgrep: rust.actix.path-traversal.tainted-path.tainted-path
+    let bytes = match read_events.await {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error).with_context(|| format!("read {}", events_path.display())),

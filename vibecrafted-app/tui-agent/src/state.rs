@@ -457,6 +457,7 @@ fn is_stale(timestamp: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
 
 fn is_active_like(state: &str) -> bool {
     state.contains("active")
+        || state.contains("launch")
         || state.contains("run")
         || state.contains("watch")
         || state.contains("queued")

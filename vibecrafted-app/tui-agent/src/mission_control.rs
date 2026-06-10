@@ -46,6 +46,8 @@ pub struct ActiveDispatch {
     pub run_id: String,
     pub agent: String,
     pub skill: String,
+    pub root: Option<String>,
+    pub root_label: String,
     pub wave: Option<String>,
     pub started_at: Option<String>,
     pub age_label: String,
@@ -264,11 +266,32 @@ impl MissionControlState {
         intents: &[PolarizeIntent],
         now: DateTime<Utc>,
     ) -> Self {
+        Self::build_at_with_scope(state, artifact_root, intents, now, None)
+    }
+
+    /// Explicit mission-root filtered view. The default builders stay
+    /// fleet-wide; callers must opt in when they want a local-root slice.
+    pub fn build_at_for_root(
+        state: &ControlPlaneState,
+        artifact_root: &Path,
+        now: DateTime<Utc>,
+        mission_root: &Path,
+    ) -> Self {
+        Self::build_at_with_scope(state, artifact_root, &[], now, Some(mission_root))
+    }
+
+    fn build_at_with_scope(
+        state: &ControlPlaneState,
+        artifact_root: &Path,
+        intents: &[PolarizeIntent],
+        now: DateTime<Utc>,
+        mission_root: Option<&Path>,
+    ) -> Self {
         let (meta_records, mut data_quality) = collect_meta_records(artifact_root, now);
         data_quality.artifact_root = Some(artifact_root.to_path_buf());
         data_quality.artifact_root_present = artifact_root.exists();
 
-        let active_dispatches = active_dispatches_from_state(state, now);
+        let active_dispatches = active_dispatches_from_state(state, now, mission_root);
         let wave_atlas = wave_atlas_from_meta(&meta_records, state, now);
         let agent_stats = agent_stats_from_meta(&meta_records, now);
         let skill_stats = skill_stats_from_meta(&meta_records, now);
@@ -442,9 +465,13 @@ fn directory_within_window(path: &Path, window_floor: &NaiveDate) -> bool {
 fn active_dispatches_from_state(
     state: &ControlPlaneState,
     now: DateTime<Utc>,
+    mission_root: Option<&Path>,
 ) -> Vec<ActiveDispatch> {
     let mut out = Vec::new();
     for snapshot in &state.runs {
+        if !matches_root_filter(snapshot.root.as_deref(), mission_root) {
+            continue;
+        }
         let kind = classify_run(snapshot, now);
         if !matches!(kind, RunKind::Active) {
             continue;
@@ -461,6 +488,13 @@ fn active_dispatches_from_state(
             .get("wave")
             .and_then(|value| value.as_str())
             .map(ToOwned::to_owned);
+        let root = snapshot
+            .root
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let root_label = root_label(root.as_deref());
         out.push(ActiveDispatch {
             run_id: snapshot.run_id.clone(),
             agent: snapshot
@@ -472,6 +506,8 @@ fn active_dispatches_from_state(
                 .clone()
                 .or_else(|| snapshot.mode.clone())
                 .unwrap_or_else(|| "unknown".to_string()),
+            root,
+            root_label,
             wave,
             started_at,
             age_label,
@@ -480,6 +516,28 @@ fn active_dispatches_from_state(
     }
     out.sort_by(|left, right| left.age_label.cmp(&right.age_label));
     out
+}
+
+fn matches_root_filter(run_root: Option<&str>, mission_root: Option<&Path>) -> bool {
+    let Some(mission_root) = mission_root else {
+        return true;
+    };
+    let Some(run_root) = run_root.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    Path::new(run_root) == mission_root
+}
+
+fn root_label(root: Option<&str>) -> String {
+    let Some(root) = root.map(str::trim).filter(|value| !value.is_empty()) else {
+        return "root unknown".to_string();
+    };
+    Path::new(root)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or(root)
+        .to_string()
 }
 
 fn compute_eta_label(last_heartbeat: Option<&str>, now: DateTime<Utc>) -> String {
