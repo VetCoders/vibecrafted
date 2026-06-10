@@ -613,7 +613,7 @@ cmd_loop_help() {
   printf '  Local state is ignored by git via /.vibecrafted.\n'
   printf '\n'
   printf '%bSafety:%b\n' "$_bold" "$_reset"
-  printf '  --then-cmd is an Operator-approved command executed after a successful await via bash -lc.\n'
+  printf '  --then-cmd is an Operator-approved argv command executed after a successful await.\n'
   printf '  Do not use it for push/deploy/publish unless the active plan explicitly says so.\n'
   printf '\n'
   printf '%bWhy:%b\n' "$_bold" "$_reset"

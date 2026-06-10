@@ -302,6 +302,8 @@ def test_installer_publishes_async_dispatch_wrapper() -> None:
     launcher_block = installer.split("LAUNCHER_WRAPPERS = [", 1)[1].split("\n]", 1)[0]
 
     assert '"vc-loop"' in launcher_block
+    assert '"vc-ship"' in launcher_block
+    assert '"vc-cron"' in launcher_block
     assert '"vc-dispatch"' in launcher_block
     assert '"vc-dashboard"' in launcher_block
 
