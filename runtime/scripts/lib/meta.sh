@@ -579,6 +579,24 @@ def move_artifact(source: pathlib.Path, target: pathlib.Path) -> pathlib.Path:
     return target
 
 
+def leave_compat_link(announced: pathlib.Path, final: pathlib.Path) -> None:
+    # The path announced at spawn time is a contract: watchers and awaits are
+    # keyed on it. After the artifact-contract rename the announced path must
+    # keep resolving — one truth, two names. Symlink, never a copy.
+    if not str(announced) or not final.is_file():
+        return
+    if announced == final or same_file(announced, final):
+        return
+    if announced.is_symlink() or announced.exists():
+        return
+    try:
+        announced.parent.mkdir(parents=True, exist_ok=True)
+        link_target = final.name if announced.parent == final.parent else final
+        announced.symlink_to(link_target)
+    except OSError:
+        pass
+
+
 def footer(marker: str, payload: dict[str, object]) -> str:
     return "\n".join(
         [
@@ -641,6 +659,8 @@ except json.JSONDecodeError:
 
 report_path = pathlib.Path(report_arg or payload.get("report", ""))
 transcript_path = pathlib.Path(transcript_arg or payload.get("transcript", ""))
+announced_report = report_path
+announced_transcript = transcript_path
 transcript_text = read_text(transcript_path) if str(transcript_path) else ""
 report_text = read_text(report_path) if str(report_path) else ""
 combined_text = "\n".join([transcript_text, report_text])
@@ -689,6 +709,8 @@ if store:
 
     report_path = move_artifact(report_path, final_report)
     transcript_path = move_artifact(transcript_path, final_transcript)
+    leave_compat_link(announced_report, report_path)
+    leave_compat_link(announced_transcript, transcript_path)
     payload["report"] = str(report_path)
     payload["transcript"] = str(transcript_path)
     payload["meta"] = str(final_meta)
@@ -708,7 +730,10 @@ payload["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 target_meta_path = pathlib.Path(str(payload.get("meta") or meta_path))
 target_meta_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 if not same_file(meta_path, target_meta_path) and meta_path.exists():
+    # Watchers (await.sh, dashboards) are keyed on the announced meta path.
+    # Swap the original file for a symlink instead of deleting the truth.
     meta_path.unlink()
+    leave_compat_link(meta_path, target_meta_path)
 meta_path = target_meta_path
 
 footer_payload = {
