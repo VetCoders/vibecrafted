@@ -135,7 +135,7 @@ _vetcoders_research_session_ready() {
   # operator's shell gets swallowed and the research flow freezes until the
   # client exits. Research only ever needs an EXISTING live session to hang
   # its tab on; when none exists we degrade to headless instead.
-  command -v zellij >/dev/null 2>&1 || return 1
+  _vetcoders_zellij_bin >/dev/null 2>&1 || return 1
   if _vetcoders_in_zellij; then
     VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
     export VIBECRAFTED_OPERATOR_SESSION
@@ -295,6 +295,8 @@ _vetcoders_research() {
   if [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
     # Session readiness was proven non-blockingly above; never call the
     # blocking operator-runtime preparer from the research dispatch path.
+    local zellij_bin=""
+    zellij_bin="$(_vetcoders_zellij_bin)" || return 1
     session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
     [[ -n "$session_name" ]] || {
       echo "Could not determine the operator zellij session." >&2
@@ -330,7 +332,7 @@ _vetcoders_research() {
     export VIBECRAFTED_STORE_ROOT="$root"
     # shellcheck disable=SC2031
     export VIBECRAFTED_RESEARCH_RUN_DIR="$run_dir"
-    zellij --session "$session_name" action new-tab --layout "$layout_file" >/dev/null
+    "$zellij_bin" --session "$session_name" action new-tab --layout "$layout_file" >/dev/null
     launch_label="Research swarm"
     [[ "$research_mode" == "uno" ]] && launch_label="Research uno ($requested_research_agent)"
     printf '%s launched in shared tab (run_id=%s).\n' "$launch_label" "$run_id"
@@ -358,4 +360,3 @@ _vetcoders_research() {
   printf '\nAwait:\n\n'
   printf 'vc-research-await --run-id %s\n' "$run_id"
 }
-

@@ -150,7 +150,9 @@ def test_bin_dir_owned_entries_are_never_cargo_ghost_symlinks() -> None:
 
     offenders = []
     for entry in bin_dir.iterdir():
-        owned = entry.name in owned_names or entry.name.startswith("vc-")
+        owned = entry.name in owned_names or (
+            entry.name.startswith("vc-") and entry.name != "vc-frame"
+        )
         if not owned or not entry.is_symlink():
             continue
         resolved = Path(os.path.realpath(entry))

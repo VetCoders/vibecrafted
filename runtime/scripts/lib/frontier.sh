@@ -81,7 +81,7 @@ spawn_export_frontier_sidecars() {
     export ATUIN_CONFIG="$atuin_config"
   fi
 
-  if command -v zellij >/dev/null 2>&1 && [[ -n "$zellij_config" ]]; then
+  if spawn_zellij_bin >/dev/null 2>&1 && [[ -n "$zellij_config" ]]; then
     zellij_config_dir="$(dirname "$zellij_config")"
     export ZELLIJ_CONFIG_DIR="$zellij_config_dir"
   fi

@@ -170,11 +170,26 @@ pub fn default_command_deck() -> PathBuf {
     PathBuf::from("vibecrafted")
 }
 
+fn command_on_path(name: &str) -> bool {
+    env::var_os("PATH").is_some_and(|paths| {
+        env::split_paths(&paths).any(|dir| {
+            let candidate = dir.join(name);
+            candidate.is_file()
+        })
+    })
+}
+
 pub fn default_terminal_binary() -> PathBuf {
     env::var_os("VIBECRAFTED_TERMINAL_BINARY")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("zellij"))
+        .unwrap_or_else(|| {
+            if command_on_path("vc-frame") {
+                PathBuf::from("vc-frame")
+            } else {
+                PathBuf::from("zellij")
+            }
+        })
 }
 
 pub fn default_launch_root(command_deck: &Path) -> PathBuf {
@@ -211,7 +226,9 @@ fn print_help() {
     println!("  --deck <path>        Command deck binary or script to launch workflows");
     println!("  --root <path>        Workspace root passed through to launched workflows");
     println!("  --runtime <kind>     Launch runtime (headless|terminal|visible)");
-    println!("  --terminal-binary <path>  Terminal multiplexer binary (default: zellij)");
+    println!(
+        "  --terminal-binary <path>  Terminal multiplexer binary (default: vc-frame, zellij fallback)"
+    );
     println!("  --tick-ms <ms>       Refresh cadence for the TUI (default: 250)");
 }
 

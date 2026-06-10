@@ -7,6 +7,21 @@ spawn_in_zellij_context() {
   [[ -n "${ZELLIJ_PANE_ID:-}" ]] || [[ -n "${ZELLIJ+set}" ]]
 }
 
+spawn_zellij_bin() {
+  local bin=""
+  bin="$(command -v vc-frame 2>/dev/null || true)"
+  if [[ -n "$bin" ]]; then
+    printf '%s\n' "$bin"
+    return 0
+  fi
+  bin="$(command -v zellij 2>/dev/null || true)"
+  if [[ -n "$bin" ]]; then
+    printf '%s\n' "$bin"
+    return 0
+  fi
+  return 1
+}
+
 spawn_current_zellij_session_name() {
   printf '%s\n' "${ZELLIJ_SESSION_NAME:-}"
 }
@@ -25,10 +40,11 @@ spawn_effective_operator_session() {
     return 0
   fi
 
-  command -v zellij >/dev/null 2>&1 || return 1
+  local zellij_bin=""
+  zellij_bin="$(spawn_zellij_bin)" || return 1
 
   session_name="$(
-    zellij list-sessions 2>/dev/null \
+    "$zellij_bin" list-sessions 2>/dev/null \
       | sed 's/\x1b\[[0-9;]*m//g' \
       | awk '/\(current\)/ {print $1; exit}'
   )"
@@ -100,8 +116,9 @@ spawn_release_zellij_launch_slot() {
 spawn_current_tab_id() {
   local session_name="${1:-}"
   local raw=""
-  local -a zellij_cmd=(zellij)
-  command -v zellij >/dev/null 2>&1 || return 1
+  local zellij_bin=""
+  zellij_bin="$(spawn_zellij_bin)" || return 1
+  local -a zellij_cmd=("$zellij_bin")
   if [[ -n "$session_name" ]]; then
     zellij_cmd+=(--session "$session_name")
   fi
@@ -136,9 +153,10 @@ spawn_tab_id_by_name() {
   local tab_name="${1:-}"
   local session_name="${2:-}"
   local raw=""
-  local -a zellij_cmd=(zellij)
+  local zellij_bin=""
   [[ -n "$tab_name" ]] || return 1
-  command -v zellij >/dev/null 2>&1 || return 1
+  zellij_bin="$(spawn_zellij_bin)" || return 1
+  local -a zellij_cmd=("$zellij_bin")
   if [[ -n "$session_name" ]]; then
     zellij_cmd+=(--session "$session_name")
   fi
@@ -189,8 +207,9 @@ PY
 
 spawn_current_focused_pane_id() {
   local raw=""
-  command -v zellij >/dev/null 2>&1 || return 1
-  raw="$(zellij action list-panes --json --state 2>/dev/null || true)"
+  local zellij_bin=""
+  zellij_bin="$(spawn_zellij_bin)" || return 1
+  raw="$("$zellij_bin" action list-panes --json --state 2>/dev/null || true)"
   python3 - "$raw" <<'PY'
 import json
 import sys
@@ -288,8 +307,10 @@ spawn_in_marbles_tab() {
   local launch_cmd="bash '$launcher'"
   local pane_direction="$direction"
   local pane_lifecycle_args=(--stacked)
+  local zellij_bin=""
 
   [[ -n "$marbles_tab" ]] || return 1
+  zellij_bin="$(spawn_zellij_bin)" || return 1
 
   if [[ "$pane_direction" == "new-tab" ]]; then
     pane_direction="right"
@@ -310,10 +331,10 @@ spawn_in_marbles_tab() {
   marbles_tab_id="$(spawn_tab_id_by_name "$marbles_tab" 2>/dev/null || true)"
   if [[ -z "$marbles_tab_id" ]]; then
     operator_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
-    zellij action go-to-tab-name "$marbles_tab" --create >/dev/null 2>&1 || true
+    "$zellij_bin" action go-to-tab-name "$marbles_tab" --create >/dev/null 2>&1 || true
     marbles_tab_id="$(spawn_tab_id_by_name "$marbles_tab" 2>/dev/null || true)"
     if [[ -n "$operator_tab_id" ]]; then
-      zellij action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
+      "$zellij_bin" action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
     fi
   fi
 
@@ -323,7 +344,7 @@ spawn_in_marbles_tab() {
   # invariant IS stacked-inside-marbles-tab (see comment above), so we drop
   # --direction here and let zellij choose stack position.
   if [[ -n "$marbles_tab_id" ]]; then
-    zellij action new-pane --tab-id "$marbles_tab_id" \
+    "$zellij_bin" action new-pane --tab-id "$marbles_tab_id" \
       --name "$pane_name" \
       "${pane_lifecycle_args[@]}" \
       --cwd "${SPAWN_ROOT:-$(pwd)}" \
@@ -332,10 +353,10 @@ spawn_in_marbles_tab() {
     if [[ -z "$operator_tab_id" ]]; then
       operator_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
     fi
-    zellij action go-to-tab-name "$marbles_tab" --create >/dev/null 2>&1 || true
-    zellij action new-pane --name "$pane_name" "${pane_lifecycle_args[@]}" --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" >/dev/null # OPERATOR_TAB_OK: fallback after explicit go-to marbles tab.
+    "$zellij_bin" action go-to-tab-name "$marbles_tab" --create >/dev/null 2>&1 || true
+    "$zellij_bin" action new-pane --name "$pane_name" "${pane_lifecycle_args[@]}" --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" >/dev/null # OPERATOR_TAB_OK: fallback after explicit go-to marbles tab.
     if [[ -n "$operator_tab_id" ]]; then
-      zellij action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
+      "$zellij_bin" action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
     fi
   fi
 
@@ -349,8 +370,9 @@ spawn_in_zellij_pane() {
   local launch_cmd="bash '$launcher'"
   local cmd_script
   local launch_lock=""
+  local zellij_bin=""
 
-  if spawn_in_zellij_context && command -v zellij >/dev/null 2>&1; then
+  if spawn_in_zellij_context && zellij_bin="$(spawn_zellij_bin)"; then
     # If the operator explicitly targets another zellij session, do not open a
     # pane in the current live session. Fall through to spawn_in_operator_session().
     if ! spawn_in_target_zellij_session; then
@@ -376,25 +398,25 @@ spawn_in_zellij_pane() {
       local run_tab_id=""
       run_tab_id="$(spawn_tab_id_by_name "$run_tab_name" 2>/dev/null || true)"
       if [[ -z "$run_tab_id" ]]; then
-        zellij action new-tab \
+        "$zellij_bin" action new-tab \
           --name "$run_tab_name" \
           --cwd "${SPAWN_ROOT:-$(pwd)}" \
           -- "$cmd_script" >/dev/null || launch_status=$?
       else
         local operator_tab_id=""
         operator_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
-        zellij action new-pane --tab-id "$run_tab_id" \
+        "$zellij_bin" action new-pane --tab-id "$run_tab_id" \
           --stacked \
           --close-on-exit \
           --name "$pane_name" \
           --cwd "${SPAWN_ROOT:-$(pwd)}" \
           -- "$cmd_script" >/dev/null || launch_status=$?
         if [[ -n "$operator_tab_id" ]]; then
-          zellij action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
+          "$zellij_bin" action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
         fi
       fi
     else
-      zellij action new-pane --direction "$direction" --name "$pane_name" --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" >/dev/null || launch_status=$? # OPERATOR_TAB_OK: explicit same-tab grid spawn.
+      "$zellij_bin" action new-pane --direction "$direction" --name "$pane_name" --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" >/dev/null || launch_status=$? # OPERATOR_TAB_OK: explicit same-tab grid spawn.
     fi
     spawn_release_zellij_launch_slot "$launch_lock"
     [[ "$launch_status" == "0" ]] || return "$launch_status"
@@ -419,6 +441,8 @@ spawn_await_watch_pane() {
   local run_tab_id="$1" run_tab_name="$2" worker_pane_name="$3"
   command -v jq >/dev/null 2>&1 || return 0
   [[ -n "${SPAWN_RUN_ID:-}" ]] || return 0
+  local zellij_bin=""
+  zellij_bin="$(spawn_zellij_bin)" || return 0
 
   local helper="${_SPAWN_LIB_DIR}/../vibecrafted-await-watch.sh"
   [[ -x "$helper" ]] || return 0
@@ -433,7 +457,7 @@ spawn_await_watch_pane() {
   [[ -n "$run_tab_id" ]] || return 0
 
   local pane_name="await:${SPAWN_AGENT:-?}:${SPAWN_RUN_ID##*-}"
-  zellij action new-pane --tab-id "$run_tab_id" \
+  "$zellij_bin" action new-pane --tab-id "$run_tab_id" \
     --stacked \
     --close-on-exit \
     --name "$pane_name" \
@@ -450,12 +474,13 @@ spawn_in_operator_session() {
   local launch_cmd="bash '$launcher'"
   local cmd_script
   local launch_lock=""
+  local zellij_bin=""
 
   spawn_normalize_ambient_context
 
   session_name="$(spawn_effective_operator_session 2>/dev/null || true)"
   [[ -n "$session_name" ]] || return 1
-  command -v zellij >/dev/null 2>&1 || return 1
+  zellij_bin="$(spawn_zellij_bin)" || return 1
   export VIBECRAFTED_OPERATOR_SESSION="$session_name"
 
   # When routing into a session from outside its active pane context, always
@@ -477,25 +502,25 @@ spawn_in_operator_session() {
     local run_tab_id=""
     run_tab_id="$(spawn_tab_id_by_name "$run_tab_name" "$session_name" 2>/dev/null || true)"
     if [[ -z "$run_tab_id" ]]; then
-      zellij --session "$session_name" action new-tab \
+      "$zellij_bin" --session "$session_name" action new-tab \
         --name "$run_tab_name" \
         --cwd "${SPAWN_ROOT:-$(pwd)}" \
         -- "$cmd_script" >/dev/null || launch_status=$?
     else
       local operator_tab_id=""
       operator_tab_id="$(spawn_current_tab_id "$session_name" 2>/dev/null || true)"
-      zellij --session "$session_name" action new-pane --tab-id "$run_tab_id" \
+      "$zellij_bin" --session "$session_name" action new-pane --tab-id "$run_tab_id" \
         --stacked \
         --close-on-exit \
         --name "$pane_name" \
         --cwd "${SPAWN_ROOT:-$(pwd)}" \
         -- "$cmd_script" >/dev/null || launch_status=$?
       if [[ -n "$operator_tab_id" ]]; then
-        zellij --session "$session_name" action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
+        "$zellij_bin" --session "$session_name" action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
       fi
     fi
   else
-    zellij --session "$session_name" action new-pane --direction "$effective_direction" --name "$pane_name" --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" >/dev/null || launch_status=$? # OPERATOR_TAB_OK: explicit same-tab grid spawn.
+    "$zellij_bin" --session "$session_name" action new-pane --direction "$effective_direction" --name "$pane_name" --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" >/dev/null || launch_status=$? # OPERATOR_TAB_OK: explicit same-tab grid spawn.
   fi
   spawn_release_zellij_launch_slot "$launch_lock"
   [[ "$launch_status" == "0" ]] || return "$launch_status"
@@ -508,11 +533,12 @@ spawn_probe() {
   local agent_name="${SPAWN_AGENT:-agent}"
   local run_id="${SPAWN_RUN_ID:-${VIBECRAFTED_RUN_ID:-?}}"
   local notify_enabled="${VIBECRAFTED_SPAWN_PROBE_NOTIFY:-1}"
+  local zellij_bin=""
 
   # Skip if disabled or not in zellij
   [[ "${VIBECRAFTED_SPAWN_PROBE:-1}" == "1" ]] || return 0
   spawn_in_zellij_context || return 0
-  command -v zellij >/dev/null 2>&1 || return 0
+  zellij_bin="$(spawn_zellij_bin)" || return 0
   [[ -n "$transcript_path" ]] || return 0
 
   # Floating probe pane (10s ephemeral) + content heuristic + system notification.
@@ -535,7 +561,7 @@ spawn_probe() {
     focused_pane_id="$(spawn_current_focused_pane_id 2>/dev/null || true)"
     focused_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
     probe_cmd=(
-      zellij action new-pane --floating
+      "$zellij_bin" action new-pane --floating
       --close-on-exit
       --width 20%
       --x 80%
@@ -549,7 +575,7 @@ spawn_probe() {
     probe_cmd+=(-- timeout "$probe_seconds" tail -f "$transcript_path")
     "${probe_cmd[@]}" >/dev/null 2>&1 || true
     if [[ -n "$focused_pane_id" ]]; then
-      zellij action focus-pane-id "$focused_pane_id" >/dev/null 2>&1 || true
+      "$zellij_bin" action focus-pane-id "$focused_pane_id" >/dev/null 2>&1 || true
     fi
   ) &
 

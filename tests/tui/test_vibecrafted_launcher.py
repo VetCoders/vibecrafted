@@ -37,22 +37,26 @@ def _write_trimmed_launcher(script_path: Path) -> None:
 
 
 def _write_fake_command(bin_dir: Path, name: str, capture_file: Path) -> None:
-    script = bin_dir / name
-    script.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf "%s\\n" "$@"',
-                '  printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"',
-                '} > "$CAPTURE_FILE"',
-            ]
+    script_names = [name]
+    if name == "zellij":
+        script_names.insert(0, "vc-frame")
+    for script_name in script_names:
+        script = bin_dir / script_name
+        script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "set -euo pipefail",
+                    "{",
+                    '  printf "%s\\n" "$@"',
+                    '  printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"',
+                    '} > "$CAPTURE_FILE"',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
+        script.chmod(0o755)
 
 
 def _write_fake_zellij_with_live_session(
@@ -78,6 +82,9 @@ def _write_fake_zellij_with_live_session(
         encoding="utf-8",
     )
     script.chmod(0o755)
+    vc_frame = bin_dir / "vc-frame"
+    vc_frame.write_text(script.read_text(encoding="utf-8"), encoding="utf-8")
+    vc_frame.chmod(0o755)
 
 
 def _write_gc_zellij(bin_dir: Path, capture_file: Path, listing: str) -> None:
@@ -105,6 +112,9 @@ def _write_gc_zellij(bin_dir: Path, capture_file: Path, listing: str) -> None:
         encoding="utf-8",
     )
     script.chmod(0o755)
+    vc_frame = bin_dir / "vc-frame"
+    vc_frame.write_text(script.read_text(encoding="utf-8"), encoding="utf-8")
+    vc_frame.chmod(0o755)
 
 
 def _write_capture_script(script_path: Path, capture_file: Path) -> None:
@@ -282,6 +292,9 @@ def _write_stateful_zellij(
         encoding="utf-8",
     )
     script.chmod(0o755)
+    vc_frame = bin_dir / "vc-frame"
+    vc_frame.write_text(script.read_text(encoding="utf-8"), encoding="utf-8")
+    vc_frame.chmod(0o755)
 
 
 def _write_fake_osascript(

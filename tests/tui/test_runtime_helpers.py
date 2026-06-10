@@ -227,6 +227,25 @@ def test_vetcoders_require_zellij_uses_bundled_priority_without_path_leak(
     assert result.stdout == f"PATH={initial_path}\n"
 
 
+def test_vetcoders_zellij_bin_prefers_vc_frame_on_path(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    _write_capture_command(fake_bin, "zellij", tmp_path / "zellij-args.txt")
+    _write_capture_command(fake_bin, "vc-frame", tmp_path / "vc-frame-args.txt")
+
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        "_vetcoders_zellij_bin",
+        {
+            "PATH": f"{fake_bin}:{os.defpath}",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout.strip() == str(fake_bin / "vc-frame")
+
+
 def test_dashboard_uses_bundled_zellij_priority_without_path_leak(
     tmp_path: Path,
 ) -> None:

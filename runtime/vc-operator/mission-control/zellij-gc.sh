@@ -6,6 +6,10 @@ include_live=0
 quiet=0
 max_age_hours="${VIBECRAFTED_ZELLIJ_MAX_AGE_HOURS:-24}"
 
+vc_frame_or_zellij_bin() {
+  command -v vc-frame 2>/dev/null || command -v zellij 2>/dev/null || return 1
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -55,12 +59,12 @@ while (($#)); do
   shift || true
 done
 
-command -v zellij >/dev/null 2>&1 || {
-  echo "zellij is required." >&2
+zellij_bin="$(vc_frame_or_zellij_bin)" || {
+  echo "vc-frame is required." >&2
   exit 1
 }
 
-listing="$(zellij list-sessions 2>/dev/null || true)"
+listing="$("$zellij_bin" list-sessions 2>/dev/null || true)"
 [[ -n "$listing" ]] || {
   (( quiet )) || echo "zellij-gc: no sessions reported"
   exit 0
@@ -173,7 +177,7 @@ fi
 
 if (( apply )); then
   for session in "${targets[@]}"; do
-    zellij kill-session "$session" >/dev/null 2>&1 || true
+    "$zellij_bin" kill-session "$session" >/dev/null 2>&1 || true
   done
 fi
 

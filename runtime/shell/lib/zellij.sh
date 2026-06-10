@@ -4,15 +4,30 @@
 _vetcoders_zellij_missing_message() {
   local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
   local runtime_bin="${VIBECRAFTED_RUNTIME_BIN:-${VIBECRAFTED_RUNTIME_HOME:-$xdg_data_home/vibecrafted}/bin}"
-  echo "zellij is required for the Vibecrafted operator runtime." >&2
-  echo "Expected zellij on PATH or bundled at: $runtime_bin/zellij" >&2
+  echo "vc-frame is required for the Vibecrafted operator runtime." >&2
+  echo "Expected vc-frame on PATH, zellij fallback, or bundled at: $runtime_bin/vc-frame" >&2
+}
+
+_vetcoders_zellij_bin() {
+  local bin=""
+  bin="$(command -v vc-frame 2>/dev/null || true)"
+  if [[ -n "$bin" ]]; then
+    printf '%s\n' "$bin"
+    return 0
+  fi
+  bin="$(command -v zellij 2>/dev/null || true)"
+  if [[ -n "$bin" ]]; then
+    printf '%s\n' "$bin"
+    return 0
+  fi
+  return 1
 }
 
 _vetcoders_require_zellij() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
-  command -v zellij >/dev/null 2>&1 || {
+  _vetcoders_zellij_bin >/dev/null 2>&1 || {
     _vetcoders_zellij_missing_message
     return 1
   }
@@ -54,9 +69,10 @@ _vetcoders_guess_active_zellij_session() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
-  command -v zellij >/dev/null 2>&1 || return 0
+  local zellij_bin=""
+  zellij_bin="$(_vetcoders_zellij_bin)" || return 0
   local active
-  active="$(zellij ls 2>/dev/null | _vetcoders_strip_ansi | grep -E '\(attached\)|\(current\)' | head -1 | awk '{print $1}')"
+  active="$("$zellij_bin" ls 2>/dev/null | _vetcoders_strip_ansi | grep -E '\(attached\)|\(current\)' | head -1 | awk '{print $1}')"
   printf '%s\n' "$active"
 }
 
@@ -115,13 +131,14 @@ _vetcoders_zellij_session_state() {
   export PATH
   local session_name="$1"
   local listing
+  local zellij_bin=""
 
-  command -v zellij >/dev/null 2>&1 || {
+  zellij_bin="$(_vetcoders_zellij_bin)" || {
     printf 'missing\n'
     return 0
   }
 
-  listing="$(zellij ls 2>/dev/null | _vetcoders_strip_ansi || true)"
+  listing="$("$zellij_bin" ls 2>/dev/null | _vetcoders_strip_ansi || true)"
   while IFS= read -r line; do
     [[ -n "$line" ]] || continue
     case "$line" in
@@ -230,9 +247,11 @@ _vetcoders_ensure_zellij_session() {
   export PATH
   local session_name="$1"
   local layout_file="$2"
+  local zellij_bin=""
   shift 2
 
   _vetcoders_require_zellij || return 1
+  zellij_bin="$(_vetcoders_zellij_bin)" || return 1
 
   local inside_zellij=0
   # Align with spawn_in_zellij_context: ZELLIJ_PANE_ID or ZELLIJ being set
@@ -249,18 +268,18 @@ _vetcoders_ensure_zellij_session() {
   case "$(_vetcoders_zellij_session_state "$session_name")" in
     live)
       if (( inside_zellij )); then
-        zellij action switch-session "$session_name"
+        "$zellij_bin" action switch-session "$session_name"
       else
-        zellij "$@" attach "$session_name"
+        "$zellij_bin" "$@" attach "$session_name"
       fi
       ;;
     dead)
       # Dead (EXITED) sessions cannot be switched to — kill and recreate.
-      zellij kill-session "$session_name" 2>/dev/null || true
+      "$zellij_bin" kill-session "$session_name" 2>/dev/null || true
       if [[ -n "$layout_file" ]]; then
         if (( inside_zellij )); then
           env -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
-            zellij --session "$session_name" --new-session-with-layout "$layout_file" &
+            "$zellij_bin" --session "$session_name" --new-session-with-layout "$layout_file" &
           local bg_pid_dead=$!
           local wait_dead=0
           while (( wait_dead < 20 )); do
@@ -270,9 +289,9 @@ _vetcoders_ensure_zellij_session() {
           done
           kill "$bg_pid_dead" 2>/dev/null || true
           wait "$bg_pid_dead" 2>/dev/null || true
-          zellij action switch-session "$session_name"
+          "$zellij_bin" action switch-session "$session_name"
         else
-          zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+          "$zellij_bin" "$@" --session "$session_name" --new-session-with-layout "$layout_file"
         fi
       else
         # No layout — try force-run which may resurrect the session.
@@ -280,7 +299,7 @@ _vetcoders_ensure_zellij_session() {
           echo "Session '$session_name' is dead and no layout is available to recreate it." >&2
           return 1
         else
-          zellij "$@" attach --force-run-commands "$session_name"
+          "$zellij_bin" "$@" attach --force-run-commands "$session_name"
         fi
       fi
       ;;
@@ -290,7 +309,7 @@ _vetcoders_ensure_zellij_session() {
           # Create the session in the background with Zellij env stripped to
           # prevent nested-client panic, then switch to it.
           env -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
-            zellij --session "$session_name" --new-session-with-layout "$layout_file" &
+            "$zellij_bin" --session "$session_name" --new-session-with-layout "$layout_file" &
           local bg_pid=$!
           # Wait briefly for session to appear.
           local wait_i=0
@@ -302,9 +321,9 @@ _vetcoders_ensure_zellij_session() {
           # Kill the background client now that the session server is alive.
           kill "$bg_pid" 2>/dev/null || true
           wait "$bg_pid" 2>/dev/null || true
-          zellij action switch-session "$session_name"
+          "$zellij_bin" action switch-session "$session_name"
         else
-          zellij "$@" --session "$session_name" --new-session-with-layout "$layout_file"
+          "$zellij_bin" "$@" --session "$session_name" --new-session-with-layout "$layout_file"
         fi
       else
         echo "Layout file missing and session not found." >&2
@@ -382,8 +401,10 @@ _vetcoders_spawn_into_operator_session() {
   local root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
   local layout_file state
   local cmd_script
+  local zellij_bin=""
 
   _vetcoders_require_zellij || return 1
+  zellij_bin="$(_vetcoders_zellij_bin)" || return 1
   if ! _vetcoders_in_zellij && [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
     layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
     state="$(_vetcoders_zellij_session_state "$session_name")"
@@ -398,9 +419,8 @@ _vetcoders_spawn_into_operator_session() {
   # readable trail for debugging.
   cmd_script="$(_vetcoders_tmp_script_path "vc-spawn-cmd" "$root_dir")"
   _vetcoders_write_command_script "$cmd_script" "$command_text" || return 1
-  zellij --session "$session_name" action new-tab \
+  "$zellij_bin" --session "$session_name" action new-tab \
     --name "$tab_name" \
     --cwd "$root_dir" \
     -- "$cmd_script" >/dev/null
 }
-

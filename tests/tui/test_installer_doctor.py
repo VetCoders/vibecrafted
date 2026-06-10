@@ -453,6 +453,42 @@ def test_product_tool_discovery_records_path_without_rehoming(
     assert loaded.product_tools["zellij"]["path"] == str(cargo_bin / "zellij")
 
 
+def test_product_tool_discovery_prefers_vc_frame_for_zellij_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    cargo_bin = home / ".cargo" / "bin"
+    cargo_bin.mkdir(parents=True)
+
+    _write_executable(
+        cargo_bin / "vc-frame", "#!/usr/bin/env bash\nprintf 'vc-frame-dev\\n'\n"
+    )
+    _write_executable(
+        cargo_bin / "zellij", "#!/usr/bin/env bash\nprintf 'zellij-dev\\n'\n"
+    )
+
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    monkeypatch.setenv("PATH", str(cargo_bin))
+    monkeypatch.setattr(
+        installer,
+        "FOUNDATIONS",
+        [
+            installer.Foundation(
+                name="zellij",
+                description="Visible terminal workspace surface",
+                channels=["brew", "cargo", "github"],
+                packages={"cargo": "zellij"},
+                verify_cmd="zellij --version",
+            ),
+        ],
+    )
+
+    product_tools = installer.snapshot_product_tool_state()
+
+    assert product_tools["zellij"]["path"] == str(cargo_bin / "vc-frame")
+
+
 def test_layout_migrate_promotes_legacy_agents_scripts_to_current_tools(
     tmp_path: Path, monkeypatch
 ) -> None:

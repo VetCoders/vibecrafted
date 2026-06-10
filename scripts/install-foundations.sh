@@ -584,8 +584,12 @@ zellij_asset_patterns() {
 }
 
 install_zellij() {
+  if binary_runs vc-frame; then
+    ok "vc-frame already installed: $(command -v vc-frame)"
+    return 0
+  fi
   if binary_runs zellij; then
-    ok "zellij already installed: $(command -v zellij)"
+    ok "zellij fallback already installed: $(command -v zellij)"
     return 0
   fi
 
@@ -599,7 +603,7 @@ install_zellij() {
   done <<< "$patterns_text"
 
   if (( CHECK_ONLY )); then
-    info "Would download zellij release asset for ${os}/${arch}"
+    info "Would install terminal multiplexer fallback for ${os}/${arch}"
     info "  Install to: $PREFIX"
     return 0
   fi

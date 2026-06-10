@@ -17,28 +17,36 @@ INSTALL_FRONTIER_SCRIPT = (
 
 
 def _write_fake_binary(bin_dir: Path, name: str) -> None:
-    script = bin_dir / name
-    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    script.chmod(0o755)
+    script_names = [name]
+    if name == "zellij":
+        script_names.insert(0, "vc-frame")
+    for script_name in script_names:
+        script = bin_dir / script_name
+        script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
 
 
 def _write_capture_binary(bin_dir: Path, name: str, capture_file: Path) -> None:
-    script = bin_dir / name
-    script.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf "%s\\n" "$@"',
-                '  printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"',
-                '} > "$CAPTURE_FILE"',
-            ]
+    script_names = [name]
+    if name == "zellij":
+        script_names.insert(0, "vc-frame")
+    for script_name in script_names:
+        script = bin_dir / script_name
+        script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "set -euo pipefail",
+                    "{",
+                    '  printf "%s\\n" "$@"',
+                    '  printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"',
+                    '} > "$CAPTURE_FILE"',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
+        script.chmod(0o755)
 
 
 def _expected_operator_session(run_id: str | None = None) -> str:

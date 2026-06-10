@@ -41,42 +41,46 @@ _vetcoders_launch_dashboard() {
   # Thin shim subcommands — delegate directly to native Zellij.
   case "$first_arg" in
     ls|list|sessions)
-      command -v zellij >/dev/null 2>&1 || {
-        echo "zellij is required." >&2; return 1
+      local zellij_bin=""
+      zellij_bin="$(_vetcoders_zellij_bin)" || {
+        echo "vc-frame is required." >&2; return 1
       }
-      zellij list-sessions
+      "$zellij_bin" list-sessions
       return
       ;;
     switch)
       shift
-      command -v zellij >/dev/null 2>&1 || {
-        echo "zellij is required." >&2; return 1
+      local zellij_bin=""
+      zellij_bin="$(_vetcoders_zellij_bin)" || {
+        echo "vc-frame is required." >&2; return 1
       }
       if [[ -n "${ZELLIJ+set}" ]]; then
-        zellij action switch-session "${1:?session name required}"
+        "$zellij_bin" action switch-session "${1:?session name required}"
       else
-        zellij attach "${1:?session name required}"
+        "$zellij_bin" attach "${1:?session name required}"
       fi
       return
       ;;
     attach)
       shift
-      command -v zellij >/dev/null 2>&1 || {
-        echo "zellij is required." >&2; return 1
+      local zellij_bin=""
+      zellij_bin="$(_vetcoders_zellij_bin)" || {
+        echo "vc-frame is required." >&2; return 1
       }
       if [[ -n "${ZELLIJ+set}" ]]; then
-        zellij action switch-session "${1:?session name required}"
+        "$zellij_bin" action switch-session "${1:?session name required}"
       else
-        zellij attach "${1:?session name required}"
+        "$zellij_bin" attach "${1:?session name required}"
       fi
       return
       ;;
     kill)
       shift
-      command -v zellij >/dev/null 2>&1 || {
-        echo "zellij is required." >&2; return 1
+      local zellij_bin=""
+      zellij_bin="$(_vetcoders_zellij_bin)" || {
+        echo "vc-frame is required." >&2; return 1
       }
-      zellij kill-session "${1:?session name required}"
+      "$zellij_bin" kill-session "${1:?session name required}"
       return
       ;;
     gc)
@@ -92,14 +96,14 @@ _vetcoders_launch_dashboard() {
       ;;
   esac
 
-  local layout_name layout_file session_name repo_source repo_zellij_dir state inside_zellij current_session
+  local layout_name layout_file session_name repo_source repo_zellij_dir state inside_zellij current_session zellij_bin
   _vetcoders_normalize_ambient_context
   _vetcoders_auto_gc_dead_zellij_sessions
   layout_name="$(_vetcoders_dashboard_layout_name "${first_arg}")" || return 1
   (( $# )) && shift
 
-  command -v zellij >/dev/null 2>&1 || {
-    echo "zellij is required for vibecrafted dashboard." >&2
+  zellij_bin="$(_vetcoders_zellij_bin)" || {
+    echo "vc-frame is required for vibecrafted dashboard." >&2
     return 1
   }
 
@@ -131,13 +135,13 @@ _vetcoders_launch_dashboard() {
 
   if [[ "$layout_name" != "operator" && "$layout_name" != "dashboard" && "$state" == "live" ]]; then
     if (( inside_zellij )) && [[ "$current_session" == "$session_name" ]]; then
-      zellij action new-tab --layout "$layout_file"
+      "$zellij_bin" action new-tab --layout "$layout_file"
     else
-      zellij --session "$session_name" action new-tab --layout "$layout_file"
+      "$zellij_bin" --session "$session_name" action new-tab --layout "$layout_file"
       if (( inside_zellij )); then
-        zellij action switch-session "$session_name"
+        "$zellij_bin" action switch-session "$session_name"
       else
-        zellij attach "$session_name"
+        "$zellij_bin" attach "$session_name"
       fi
     fi
     return 0
@@ -154,4 +158,3 @@ _vetcoders_resume_operator_session() {
 
   _vetcoders_ensure_zellij_session "$session_name" "$layout_file"
 }
-

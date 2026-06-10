@@ -311,7 +311,8 @@ _vetcoders_maybe_spawn_await_pane() {
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
   local tool="$1" skill="$2" run_id="$3" root="$4"
-  command -v zellij >/dev/null 2>&1 || return 0
+  local zellij_bin=""
+  zellij_bin="$(_vetcoders_zellij_bin)" || return 0
   _vetcoders_in_zellij || return 0
   command -v jq >/dev/null 2>&1 || return 0
 
@@ -323,7 +324,7 @@ _vetcoders_maybe_spawn_await_pane() {
   ( sleep 1
     local pane_name="await:${tool}:${run_id##*-}"
     local cwd="${root:-$PWD}"
-    zellij action new-pane \
+    "$zellij_bin" action new-pane \
       --name "$pane_name" \
       --close-on-exit \
       --cwd "$cwd" \

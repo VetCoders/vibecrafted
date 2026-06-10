@@ -54,6 +54,12 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return base
 
 
+def _mirror_fake_vc_frame(zellij: Path) -> None:
+    vc_frame = zellij.with_name("vc-frame")
+    vc_frame.write_text(zellij.read_text(encoding="utf-8"), encoding="utf-8")
+    vc_frame.chmod(0o755)
+
+
 def _legacy_expected_operator_session(run_id: str | None = None) -> str:
     base = (
         re.sub(r"[^a-z0-9]+", "-", REPO_ROOT.name.lower()).strip("-") or "vibecrafted"
@@ -246,6 +252,7 @@ def test_terminal_spawn_refuses_osascript_fallback_when_zellij_fails(
         encoding="utf-8",
     )
     (fake_bin / "zellij").chmod(0o755)
+    _mirror_fake_vc_frame(fake_bin / "zellij")
     (fake_bin / "osascript").write_text(
         "\n".join(
             [
@@ -1469,6 +1476,7 @@ def test_spawn_in_zellij_pane_honors_requested_direction(tmp_path: Path) -> None
         encoding="utf-8",
     )
     zellij.chmod(0o755)
+    _mirror_fake_vc_frame(zellij)
 
     _bash(
         f'''
@@ -1853,6 +1861,7 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
         encoding="utf-8",
     )
     zellij.chmod(0o755)
+    _mirror_fake_vc_frame(zellij)
 
     _bash(
         f'''
@@ -1904,6 +1913,7 @@ def test_spawn_in_operator_session_suppresses_zellij_tab_number_output(
         encoding="utf-8",
     )
     zellij.chmod(0o755)
+    _mirror_fake_vc_frame(zellij)
 
     result = subprocess.run(
         [
@@ -1966,6 +1976,7 @@ def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
         encoding="utf-8",
     )
     zellij.chmod(0o755)
+    _mirror_fake_vc_frame(zellij)
 
     result = subprocess.run(
         [
@@ -2042,6 +2053,7 @@ def test_spawn_in_zellij_pane_marbles_tab_can_keep_agent_panes_for_forensics(
         encoding="utf-8",
     )
     zellij.chmod(0o755)
+    _mirror_fake_vc_frame(zellij)
 
     subprocess.run(
         [
@@ -2111,6 +2123,7 @@ def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     zellij.chmod(0o755)
+    _mirror_fake_vc_frame(zellij)
 
     result = subprocess.run(
         [
@@ -2272,6 +2285,7 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
         encoding="utf-8",
     )
     zellij.chmod(0o755)
+    _mirror_fake_vc_frame(zellij)
 
     _bash(
         f'''
@@ -2351,6 +2365,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
         encoding="utf-8",
     )
     zellij.chmod(0o755)
+    _mirror_fake_vc_frame(zellij)
 
     _bash(
         f'''

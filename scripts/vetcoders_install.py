@@ -230,6 +230,11 @@ class Foundation:
 
     def is_installed(self) -> Optional[str]:
         """Return path if installed, None otherwise."""
+        if self.name == "zellij":
+            for candidate in ("vc-frame", "zellij"):
+                found = shutil.which(candidate)
+                if found:
+                    return found
         found = shutil.which(self.name)
         if found:
             return found
@@ -3714,12 +3719,15 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 )
             )
 
-    # 7e. Zellij availability and version
-    zellij_bin = shutil.which("zellij")
+    # 7e. VC Frame/Zellij availability and version. ZELLIJ_* env/socket names
+    # remain engine-room canonical, but the rebranded binary is preferred.
+    zellij_bin = shutil.which("vc-frame") or shutil.which("zellij")
     if not zellij_bin:
-        bundled_zellij = vibecrafted_runtime_bin() / "zellij"
-        if bundled_zellij.is_file() and os.access(bundled_zellij, os.X_OK):
-            zellij_bin = str(bundled_zellij)
+        for bundled_name in ("vc-frame", "zellij"):
+            bundled_zellij = vibecrafted_runtime_bin() / bundled_name
+            if bundled_zellij.is_file() and os.access(bundled_zellij, os.X_OK):
+                zellij_bin = str(bundled_zellij)
+                break
     if zellij_bin:
         try:
             zellij_ver = subprocess.run(

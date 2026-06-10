@@ -81,7 +81,8 @@ _vetcoders_marbles() {
   # run_id = one tab, no crossover. The "marbles-" prefix distinguishes
   # the tab from workflow/research tabs which also carry run_ids.
   # Temp script keeps zellij args ASCII-safe (no inline UTF-8 prompt bytes).
-  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && _vetcoders_in_zellij && command -v zellij >/dev/null 2>&1; then
+  local zellij_bin=""
+  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && _vetcoders_in_zellij && zellij_bin="$(_vetcoders_zellij_bin)"; then
     local cmd_script marbles_tab_name
     VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
     export VIBECRAFTED_OPERATOR_SESSION
@@ -96,8 +97,8 @@ _vetcoders_marbles() {
     local original_tab
     original_tab="${ZELLIJ_TAB_NAME:-}"
     
-    zellij action go-to-tab-name "$marbles_tab_name" --create >/dev/null 2>&1 || true
-    zellij action new-pane \
+    "$zellij_bin" action go-to-tab-name "$marbles_tab_name" --create >/dev/null 2>&1 || true
+    "$zellij_bin" action new-pane \
       --name "$marbles_run_id" \
       --cwd "$root_dir" \
       -- "$cmd_script" >/dev/null || return 1
@@ -107,7 +108,7 @@ _vetcoders_marbles() {
     printf '  inspect: vc-marbles inspect %s\n' "$marbles_run_id"
       
     if [[ -n "$original_tab" ]]; then
-      zellij action go-to-tab-name "$original_tab" >/dev/null 2>&1 || true
+      "$zellij_bin" action go-to-tab-name "$original_tab" >/dev/null 2>&1 || true
     fi
     
     _vetcoders_marbles_emit_probe "$root_dir" "$marbles_run_id" "launched"

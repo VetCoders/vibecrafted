@@ -31,7 +31,7 @@ def _write_fake_marbles_spawn(script_path: Path) -> None:
 
 
 def _write_replaying_zellij(script_path: Path) -> None:
-    script_path.write_text(
+    payload = (
         "\n".join(
             [
                 "#!/usr/bin/env python3",
@@ -55,10 +55,14 @@ def _write_replaying_zellij(script_path: Path) -> None:
                 "    subprocess.run([shell, '-lc', str(cmd_script)], check=True, env=os.environ.copy())",
             ]
         )
-        + "\n",
-        encoding="utf-8",
+        + "\n"
     )
+    script_path.write_text(payload, encoding="utf-8")
     script_path.chmod(0o755)
+    if script_path.name == "zellij":
+        vc_frame = script_path.with_name("vc-frame")
+        vc_frame.write_text(payload, encoding="utf-8")
+        vc_frame.chmod(0o755)
 
 
 def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:

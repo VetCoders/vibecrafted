@@ -89,7 +89,7 @@ _vetcoders_load_frontier_sidecars() {
     export ATUIN_CONFIG="$atuin_config"
   fi
 
-  if command -v zellij >/dev/null 2>&1 && [[ -n "$zellij_config" && -z "${ZELLIJ_CONFIG_DIR:-}" ]]; then
+  if _vetcoders_zellij_bin >/dev/null 2>&1 && [[ -n "$zellij_config" && -z "${ZELLIJ_CONFIG_DIR:-}" ]]; then
     zellij_config_dir="$(dirname "$zellij_config")"
     export ZELLIJ_CONFIG_DIR="$zellij_config_dir"
   fi
@@ -100,4 +100,3 @@ _vetcoders_load_frontier_sidecars
 _vetcoders_normalize_ambient_context
 
 _VETCODERS_ATUIN_BIN="$(_vetcoders_atuin_bin 2>/dev/null || true)"
-

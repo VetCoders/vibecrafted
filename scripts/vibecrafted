@@ -1447,6 +1447,21 @@ cmd_doctor() {
   python3 "$installer" doctor
 }
 
+_vc_frame_or_zellij_bin() {
+  local bin=""
+  bin="$(command -v vc-frame 2>/dev/null || true)"
+  if [[ -n "$bin" ]]; then
+    printf '%s\n' "$bin"
+    return 0
+  fi
+  bin="$(command -v zellij 2>/dev/null || true)"
+  if [[ -n "$bin" ]]; then
+    printf '%s\n' "$bin"
+    return 0
+  fi
+  return 1
+}
+
 cmd_dashboard() {
   if _is_help_flag "${1:-}"; then
     cmd_dashboard_help
@@ -1457,45 +1472,49 @@ cmd_dashboard() {
   # the full helper layer. This keeps ls/switch/attach/kill instant.
   case "${1:-}" in
     ls|list|sessions)
-      command -v zellij >/dev/null 2>&1 || {
-        printf '%b[error]%b zellij is required.\n' "$_red" "$_reset" >&2; return 1
+      local zellij_bin=""
+      zellij_bin="$(_vc_frame_or_zellij_bin)" || {
+        printf '%b[error]%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
-      zellij list-sessions
+      "$zellij_bin" list-sessions
       return
       ;;
     switch)
       shift
-      command -v zellij >/dev/null 2>&1 || {
-        printf '%b[error]%b zellij is required.\n' "$_red" "$_reset" >&2; return 1
+      local zellij_bin=""
+      zellij_bin="$(_vc_frame_or_zellij_bin)" || {
+        printf '%b[error]%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b[error]%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
       if [[ -n "${ZELLIJ+set}" ]]; then
-        zellij action switch-session "$1"
+        "$zellij_bin" action switch-session "$1"
       else
-        zellij attach "$1"
+        "$zellij_bin" attach "$1"
       fi
       return
       ;;
     attach)
       shift
-      command -v zellij >/dev/null 2>&1 || {
-        printf '%b[error]%b zellij is required.\n' "$_red" "$_reset" >&2; return 1
+      local zellij_bin=""
+      zellij_bin="$(_vc_frame_or_zellij_bin)" || {
+        printf '%b[error]%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b[error]%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
       if [[ -n "${ZELLIJ+set}" ]]; then
-        zellij action switch-session "$1"
+        "$zellij_bin" action switch-session "$1"
       else
-        zellij attach "$1"
+        "$zellij_bin" attach "$1"
       fi
       return
       ;;
     kill)
       shift
-      command -v zellij >/dev/null 2>&1 || {
-        printf '%b[error]%b zellij is required.\n' "$_red" "$_reset" >&2; return 1
+      local zellij_bin=""
+      zellij_bin="$(_vc_frame_or_zellij_bin)" || {
+        printf '%b[error]%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b[error]%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
-      zellij kill-session "$1"
+      "$zellij_bin" kill-session "$1"
       return
       ;;
     gc)

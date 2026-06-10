@@ -290,20 +290,20 @@ The operator (Maciej) presses every push / PR / merge button per
 - [x] Wave 0 → `40935d5` — dispatcher telemetry (`model` + `duration_s`
       written into `meta.json` via `runtime/scripts/lib/meta.sh`).
       NOTE: the commit subject is mislabeled (`feat(install): storytelling
-    output`) — the telemetry cut rode along in the same landing; the
+output`) — the telemetry cut rode along in the same landing; the
       stat shows `lib/meta.sh +114` as the actual Wave 0 surface.
 - [x] Wave A → `b534103` — Mission Control tab skeleton landed inside the
       same cut as Wave B (single landing, see below).
 - [x] Wave B → `b534103` — `MissionControlState` + panel wiring landed as
       one commit (`feat(vibecrafted-app): land voc overlay + Mission
-    Control dashboard`), not four sequential prompts as planned.
+Control dashboard`), not four sequential prompts as planned.
 - [x] Wave C → `b534103` (data panels landed in the same cut) + scope fix
       `75bc7f5` (Monitor/Active-dispatches default scope widened to all
       live runs across roots, with root labels).
 - [x] Wave D → D-1 `65c5072` (standalone snapshot renderer binary,
       `vco` → `vc-admin` rename) · D-2 = the commit introducing this
       close-out (`test(mission-control): snapshot all panels in both
-    themes + PLAN_23 close-out`) — Insta snapshot suite in
+themes + PLAN_23 close-out`) — Insta snapshot suite in
       `tui-agent/tests/mission_control_snapshots.rs` freezing all seven
       panels (TUI buffer content + color map + empty state) and the
       `vc-admin status` text surface end-to-end.
