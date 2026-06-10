@@ -55,6 +55,31 @@ def _write_fake_command(bin_dir: Path, name: str, capture_file: Path) -> None:
     script.chmod(0o755)
 
 
+def _write_fake_zellij_with_live_session(
+    bin_dir: Path, capture_file: Path, session_name: str
+) -> None:
+    script = bin_dir / "zellij"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'if [[ "${1:-}" == "ls" || "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "{session_name} (attached)\\n"',
+                "  exit 0",
+                "fi",
+                "{",
+                '  printf "%s\\n" "$@"',
+                '  printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"',
+                '} > "$CAPTURE_FILE"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
 def _write_gc_zellij(bin_dir: Path, capture_file: Path, listing: str) -> None:
     script = bin_dir / "zellij"
     script.write_text(
@@ -1707,6 +1732,60 @@ def test_resume_subcommand_forwards_session_and_prompt_to_agent(
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert payload == ["resume", "resume-session-123", "Continue the fix"]
+
+
+def test_resume_subcommand_wraps_terminal_runtime_in_zellij_operator_session(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "zellij-args.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_fake_zellij_with_live_session(fake_bin, capture_file, "operator-test")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_RUNTIME_BIN"] = str(fake_bin)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "terminal"
+    env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-test"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VIBECRAFTED_RUN_ID", None)
+    env.pop("VIBECRAFTED_RUN_LOCK", None)
+    env.pop("VIBECRAFTED_SKILL_CODE", None)
+    env.pop("VIBECRAFTED_SKILL_NAME", None)
+
+    subprocess.run(
+        [
+            "bash",
+            str(LAUNCHER),
+            "resume",
+            "codex",
+            "--session",
+            "resume-session-789",
+            "--prompt",
+            "Continue inside zellij",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert "--session" in payload
+    assert "operator-test" in payload
+    assert "action" in payload
+    assert "new-tab" in payload
+    assert "--name" in payload
+    assert "resume-codex" in payload
+    assert "--cwd" in payload
+    assert str(REPO_ROOT) in payload
 
 
 def test_resume_wrapper_symlink_forwards_session_and_prompt_to_agent(

@@ -341,12 +341,7 @@ def resume_main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    if ns.agent == "claude":
-        command = ["claude", "--resume", session_id, *extra]
-    elif ns.agent == "codex":
-        command = ["codex", "--resume", session_id, *extra]
-    else:
-        command = ["gemini", "--continue", session_id, *extra]
+    command = [str(deck_path()), "resume", ns.agent, "--session", session_id, *extra]
     print(" ".join(command))
     return subprocess.call(command)
 
