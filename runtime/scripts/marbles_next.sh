@@ -750,7 +750,7 @@ _launch_next_loop() {
     --failure-hook "$failure_hook"
   )
   loop_model="$(spawn_clean_model "$loop_model")"
-  if [[ -n "$loop_model" && "$loop_agent" != "codex" ]]; then
+  if [[ -n "$loop_model" ]]; then
     spawn_args+=(--model "$loop_model")
   fi
 

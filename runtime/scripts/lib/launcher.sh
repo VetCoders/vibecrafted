@@ -17,7 +17,7 @@ spawn_generate_launcher() {
   [[ -n "$command" ]] || spawn_die "Missing command payload for launcher."
 
   local q_meta q_report q_transcript q_common q_cmd
-  local q_root q_agent q_prompt_id q_run_id q_run_lock q_loop_nr q_skill_code
+  local q_root q_agent q_model q_prompt_id q_run_id q_run_lock q_loop_nr q_skill_code
   local q_skill_name q_operator_session q_spawn_direction q_marbles_tab q_marbles_watcher
   q_meta="$(spawn_shell_quote "$meta_path")"
   q_report="$(spawn_shell_quote "$report_path")"
@@ -26,6 +26,7 @@ spawn_generate_launcher() {
   q_cmd="$(spawn_shell_quote "$command")"
   q_root="$(spawn_shell_quote "${SPAWN_ROOT:-}")"
   q_agent="$(spawn_shell_quote "${SPAWN_AGENT:-}")"
+  q_model="$(spawn_shell_quote "$(spawn_read_meta_field "$meta_path" "model")")"
   q_prompt_id="$(spawn_shell_quote "${SPAWN_PROMPT_ID:-}")"
   q_run_id="$(spawn_shell_quote "${SPAWN_RUN_ID:-}")"
   q_run_lock="$(spawn_shell_quote "${SPAWN_RUN_LOCK:-}")"
@@ -48,6 +49,7 @@ transcript=$q_transcript
 SPAWN_CMD=$q_cmd
 export SPAWN_ROOT=$q_root
 export SPAWN_AGENT=$q_agent
+export SPAWN_MODEL=$q_model
 export SPAWN_PROMPT_ID=$q_prompt_id
 export SPAWN_RUN_ID=$q_run_id
 export SPAWN_RUN_LOCK=$q_run_lock
@@ -69,7 +71,7 @@ startup_watch_pid=""
 spawn_update_meta_pid "\$meta" \$\$
 
 rm -f "\$transcript" "\$report"
-spawn_write_frontmatter "\$transcript" "\$SPAWN_AGENT" "unknown" "transcript"
+spawn_write_frontmatter "\$transcript" "\$SPAWN_AGENT" "\${SPAWN_MODEL:-unknown}" "transcript"
 if [[ -n "\${SPAWN_ROOT:-}" ]]; then
   cd "\$SPAWN_ROOT"
 fi

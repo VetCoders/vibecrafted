@@ -12,9 +12,10 @@ _ENV_SANITIZE = """
 unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME ZELLIJ_TAB_NAME ZELLIJ_CONFIG_DIR
 unset VIBECRAFTED_OPERATOR_SESSION VIBECRAFTED_RUN_ID VIBECRAFTED_RUN_LOCK
 unset VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME VIBECRAFTED_LOOP_NR
+unset VIBECRAFTED_PARENT_MODEL CLAUDE_MODEL CODEX_MODEL GEMINI_MODEL GROK_MODEL
 unset SPAWN_LOOP_NR SPAWN_META SPAWN_TRANSCRIPT SPAWN_REPORT SPAWN_ROOT
 unset SPAWN_RUN_ID SPAWN_RUN_LOCK SPAWN_AGENT SPAWN_SKILL_CODE SPAWN_SKILL_NAME
-unset SPAWN_PROMPT_ID
+unset SPAWN_MODEL SPAWN_PROMPT_ID
 """
 
 
@@ -65,6 +66,49 @@ def test_mark_meta_running_never_resurrects_terminal_states(tmp_path: Path) -> N
     _bash(f'source "{COMMON_SH}"; spawn_mark_meta_running "{meta}"')
 
     assert _load(meta)["status"] == "completed"
+
+
+def test_finalize_artifacts_persists_model_and_duration(tmp_path: Path) -> None:
+    meta = tmp_path / "run.meta.json"
+    report = tmp_path / "report.md"
+    transcript = tmp_path / "transcript.log"
+    report.write_text("# Report\n\nDone.\n", encoding="utf-8")
+    transcript.write_text(
+        "[12:40:43] session: telemetry-session-001\n", encoding="utf-8"
+    )
+
+    _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        export SPAWN_RUN_ID=lcyc-test-001
+        export CODEX_MODEL=gpt-5.3-codex
+        spawn_write_meta "{meta}" launching codex implement "{tmp_path}" plan.md "{report}" "{transcript}" l.sh
+        spawn_finish_meta "{meta}" completed 0
+        python3 - "{meta}" <<'PY'
+import json
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+payload["model"] = "unknown"
+payload["duration_s"] = None
+payload["created_at"] = "2026-06-10T08:00:00+00:00"
+payload["completed_at"] = "2026-06-10T08:00:05+00:00"
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\\n")
+PY
+        spawn_finalize_artifacts "{meta}" "{report}" "{transcript}"
+        '''
+    )
+
+    final = _load(meta)
+    assert final["model"] == "gpt-5.3-codex"
+    assert final["duration_s"] == 5.0
+    assert final["run_id"] == "lcyc-test-001"
+    assert final["status"] == "completed"
+    assert final["session_id"] == "telemetry-session-001"
 
 
 def test_generated_launcher_walks_full_lifecycle(tmp_path: Path) -> None:
@@ -120,3 +164,5 @@ def test_generated_launcher_walks_full_lifecycle(tmp_path: Path) -> None:
     assert final["status"] == "completed"
     assert final["exit_code"] == 0
     assert final["liveness"] == "terminal"
+    assert final["model"] == "claude-cli-default"
+    assert isinstance(final["duration_s"], (int, float))

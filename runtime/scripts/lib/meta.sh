@@ -70,6 +70,41 @@ print(value, end="")
 PY
 }
 
+spawn_detect_model_identity() {
+  local agent="${1:-}"
+  local explicit_model="${2:-}"
+
+  explicit_model="$(spawn_clean_model "$explicit_model")"
+  if [[ -n "$explicit_model" ]]; then
+    printf '%s\n' "$explicit_model"
+    return 0
+  fi
+
+  local candidate
+  for candidate in \
+    "${VIBECRAFTED_PARENT_MODEL:-}" \
+    "${CLAUDE_MODEL:-}" \
+    "${CODEX_MODEL:-}" \
+    "${GEMINI_MODEL:-}" \
+    "${GROK_MODEL:-}"
+  do
+    candidate="$(spawn_clean_model "$candidate")"
+    if [[ -n "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  case "$agent" in
+    claude) printf 'claude-cli-default\n' ;;
+    codex) printf 'codex-cli-default\n' ;;
+    gemini|agy) printf 'gemini-cli-default\n' ;;
+    grok) printf 'grok-cli-default\n' ;;
+    junie) printf 'junie-cli-default\n' ;;
+    *) printf '%s-cli-default\n' "${agent:-agent}" ;;
+  esac
+}
+
 spawn_write_meta() {
   local meta_path="$1"
   local status="$2"
@@ -80,13 +115,14 @@ spawn_write_meta() {
   local report="$7"
   local transcript="$8"
   local launcher="$9"
-  local model="${10:-__NONE__}"
+  local model="${10:-}"
   local prompt_id="${SPAWN_PROMPT_ID:-}"
   local run_id="${SPAWN_RUN_ID:-}"
   local loop_nr="${SPAWN_LOOP_NR:-0}"
   local skill_code="${SPAWN_SKILL_CODE:-}"
   local framework_version
   framework_version="$(spawn_framework_version)"
+  model="$(spawn_detect_model_identity "$agent" "$model")"
 
   python3 - "$meta_path" "$status" "$agent" "$mode" "$root" "$input_ref" "$report" "$transcript" "$launcher" "$model" "$prompt_id" "$run_id" "$loop_nr" "$skill_code" "$framework_version" <<'PY'
 import datetime as dt
@@ -122,8 +158,7 @@ payload = {
     "launcher_pid": None,
     "liveness": "pid_pending",
 }
-if model != "__NONE__":
-    payload["model"] = model
+payload["model"] = model
 with open(meta_path, "w", encoding="utf-8") as fh:
     json.dump(payload, fh, indent=2, ensure_ascii=False)
     fh.write("\n")
@@ -405,6 +440,14 @@ COST_PATTERNS = [
     re.compile(r"cost(?:_usd)?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
     re.compile(r"\$([0-9]+\.[0-9]+)\s*(?:usd)?", re.IGNORECASE),
 ]
+MODEL_ENV_VARS = (
+    "VIBECRAFTED_PARENT_MODEL",
+    "CLAUDE_MODEL",
+    "CODEX_MODEL",
+    "GEMINI_MODEL",
+    "GROK_MODEL",
+)
+MODEL_PLACEHOLDERS = {"", "none", "null", "unknown", "pending"}
 
 
 def read_text(path: pathlib.Path) -> str:
@@ -460,6 +503,69 @@ def extract_cost(text: str):
             except ValueError:
                 pass
     return None
+
+
+def clean_model(value: object) -> str:
+    raw = str(value or "").strip()
+    return "" if raw.lower() in MODEL_PLACEHOLDERS else raw
+
+
+def fallback_model(agent: object) -> str:
+    agent_name = str(agent or "agent").strip() or "agent"
+    if agent_name == "agy":
+        return "gemini-cli-default"
+    return f"{agent_name}-cli-default"
+
+
+def extract_model_from_text(text: str) -> str:
+    clean = clean_text(text)
+    for match in reversed(re.findall(r"^model:\s*(.+?)\s*$", clean, re.MULTILINE)):
+        model = clean_model(match)
+        if model:
+            return model
+    return ""
+
+
+def resolve_model(payload: dict[str, object], combined_text: str) -> str:
+    model = clean_model(payload.get("model"))
+    if model:
+        return model
+    for env_name in MODEL_ENV_VARS:
+        model = clean_model(os.environ.get(env_name))
+        if model:
+            return model
+    model = extract_model_from_text(combined_text)
+    if model:
+        return model
+    return fallback_model(payload.get("agent"))
+
+
+def parse_dt(value: object):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def resolve_duration(payload: dict[str, object], completed_at_iso: str):
+    current = payload.get("duration_s")
+    if isinstance(current, (int, float)):
+        return current
+    if isinstance(current, str) and current.strip() and current.lower() not in {"none", "null"}:
+        try:
+            return round(float(current), 3)
+        except ValueError:
+            pass
+    completed_dt = parse_dt(completed_at_iso)
+    started_dt = parse_dt(payload.get("created_at") or payload.get("updated_at"))
+    if completed_dt is None or started_dt is None:
+        return None
+    return round((completed_dt - started_dt).total_seconds(), 3)
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -678,6 +784,8 @@ resume_hint = (
 )
 
 payload["session_id"] = session_id or payload.get("session_id") or ""
+payload["model"] = resolve_model(payload, combined_text)
+payload["duration_s"] = resolve_duration(payload, completed_at)
 payload["tokens_input"] = tokens["input"]
 payload["tokens_cached_input"] = tokens["cached_input"]
 payload["tokens_output"] = tokens["output"]

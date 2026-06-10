@@ -302,7 +302,7 @@ spawn_args=(
   --failure-hook "$failure_hook"
 )
 ancestor_model="$(spawn_clean_model "$ancestor_model")"
-if [[ -n "$ancestor_model" && "$agent" != "codex" ]]; then
+if [[ -n "$ancestor_model" ]]; then
   spawn_args+=(--model "$ancestor_model")
 fi
 
