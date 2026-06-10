@@ -150,6 +150,40 @@ queue items.
 
 ---
 
+## Landed vs planned (close-out audit, 2026-06-10 — PLAN_23 Wave D-2)
+
+The seven panels above are doctrine; this table is runtime truth as of the
+PLAN_23 close-out. "Landed" means the panel renders in the `voc` Mission
+Control tab AND the standalone `vc-admin` renderer (`b534103`, scope fix
+`75bc7f5`, binary rename `65c5072`), with Insta snapshot armor in
+`vibecrafted-app/tui-agent/tests/mission_control_snapshots.rs`.
+
+| Panel                 | Status  | Landed shape                                                        | Still planned (not wired)                                         |
+| --------------------- | ------- | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Active dispatches     | LANDED  | control-plane live runs, all roots + root labels, age/ETA, wave     | pidfile + `tasks/*.output` JSONL join; live terminal-tab link     |
+| Wave atlas            | LANDED  | `prompt_id` grouping from `meta.json` + live runs, state glyphs     | tracker.md parsing; SHA-on-green; branch; dependency arrows       |
+| Per-agent stats       | LANDED  | 30d `meta.json` aggregation: runs/✓/✗/⌀dur/model-known rate         | peer-tier compliance; token/cost rollup; `aicx steer` cross-check |
+| Per-skill stats       | LANDED  | 30d invocations/✓/✗/⌀dur + quiet-skill ⚠ flag                      | 7/90d windows; last-invocation timestamp                          |
+| Fleet health          | PARTIAL | control-plane, artifact-root, meta-scan, model/duration parity      | disk per host; `aicx health`; MCP liveness; Tailscale link        |
+| Failure board         | LANDED  | 24h window from `meta.json` + live failed runs, reason + age        | failure modality classes; `recovers:` recovery links              |
+| Operator action queue | LANDED  | derived: stalled runs + failures + polarize intents + fresh reports | stop-point `.md` tailing; one-click fulfil actions                |
+
+Cross-cutting close-out notes:
+
+- CLI surface landed as **`vc-admin`** (`vco` renamed in `65c5072`):
+  `status` / `wave` / `agent` / `skill` / `failures` / `button` /
+  `health` / `watch`.
+- DataQuality receipt (scanned/capped/missing-model/missing-duration/
+  parse-failures) renders under the panels — the "surface the gap" rule
+  from the Known data gap note is live. Wave 0 telemetry fix landed in
+  `40935d5` (mislabeled subject; `runtime/scripts/lib/meta.sh`).
+- Theme truth: there is no in-app light/dark palette — the dashboard
+  emits named ANSI colors only and the zellij mesh themes resolve them
+  terminal-side. Snapshot suite freezes content + color placement and
+  guards the named-ANSI invariant.
+
+---
+
 ## Data shape (mapping panel → file)
 
 | Panel                 | Primary file                                               | Secondary                           | Notes                            |

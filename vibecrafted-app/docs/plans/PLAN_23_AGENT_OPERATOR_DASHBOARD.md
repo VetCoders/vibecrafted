@@ -280,16 +280,50 @@ The operator (Maciej) presses every push / PR / merge button per
 
 ---
 
-## 11) Close-out (filled after plan lands)
+## 11) Close-out (filled 2026-06-10, Wave D-2)
 
-- [ ] Wave 0 → `<sha>`
-- [ ] Wave A → `<sha>`
-- [ ] Wave B → `<sha-1>` `<sha-2>` `<sha-3>` `<sha-4>`
-- [ ] Wave C → `<sha-c1>` `<sha-c2>` `<sha-c3>`
-- [ ] Wave D → `<sha-d1>` `<sha-d2>`
+> Naming note: the `vco` binary named throughout this plan shipped and was
+> then renamed to **`vc-admin`** in `65c5072` (the `voc` cockpit binary
+> keeps its name; only the standalone snapshot renderer was renamed).
+> Wherever this plan says `vco <cmd>`, runtime truth is `vc-admin <cmd>`.
+
+- [x] Wave 0 → `40935d5` — dispatcher telemetry (`model` + `duration_s`
+      written into `meta.json` via `runtime/scripts/lib/meta.sh`).
+      NOTE: the commit subject is mislabeled (`feat(install): storytelling
+    output`) — the telemetry cut rode along in the same landing; the
+      stat shows `lib/meta.sh +114` as the actual Wave 0 surface.
+- [x] Wave A → `b534103` — Mission Control tab skeleton landed inside the
+      same cut as Wave B (single landing, see below).
+- [x] Wave B → `b534103` — `MissionControlState` + panel wiring landed as
+      one commit (`feat(vibecrafted-app): land voc overlay + Mission
+    Control dashboard`), not four sequential prompts as planned.
+- [x] Wave C → `b534103` (data panels landed in the same cut) + scope fix
+      `75bc7f5` (Monitor/Active-dispatches default scope widened to all
+      live runs across roots, with root labels).
+- [x] Wave D → D-1 `65c5072` (standalone snapshot renderer binary,
+      `vco` → `vc-admin` rename) · D-2 = the commit introducing this
+      close-out (`test(mission-control): snapshot all panels in both
+    themes + PLAN_23 close-out`) — Insta snapshot suite in
+      `tui-agent/tests/mission_control_snapshots.rs` freezing all seven
+      panels (TUI buffer content + color map + empty state) and the
+      `vc-admin status` text surface end-to-end.
+- [x] Theme close-out truth: the "mid-light / mid-dark tui-agent palette"
+      named in §5 does not exist as an in-app switch. `voc` emits named
+      ANSI colors only; light/dark resolution happens terminal-side via
+      the zellij themes (`config/zellij/themes/vetcoders-mesh.kdl`), so
+      both themes consume one identical buffer. The snapshot suite
+      freezes that buffer (content + color placement) and the
+      `mission_control_palette_is_terminal_theme_adaptive` test guards
+      the named-ANSI invariant that keeps it theme-correct.
 - [ ] Retro entry in `docs/backlog/` for any pattern that emerges from
       the build (likely: notify-driven Rust dashboard pattern, since this
       is the first one we're building this shape)
+- [ ] Known observed quirk (snapshot evidence, not fixed in D-2 — D-2
+      observes, it does not redesign): `wave_atlas_from_meta` counts a
+      run with BOTH `exit_code != 0` AND a `status` containing
+      "fail"/"error" twice in `failed`, so a wave can render
+      `failed > total` (see `vc_admin_status` snapshot: wave-a
+      TOTAL 2 / FAILED 2 with one actual failure). Needs a follow-up cut.
 
 ---
 

@@ -1,0 +1,44 @@
+---
+source: tui-agent/tests/mission_control_snapshots.rs
+expression: buffer_text(&buffer)
+---
+Vibecrafted Operator Console  no live runs loaded
+mission root: /fixture/repo  |  active runs: 0  |  scope: live  |  focus: Mission Control
+┌Surface───────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Monitor live 0 │ Dispatch workflow/claude │ Controls 22 │ Mission 2|4                                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌Active dispatches─────────────────────┐┌History (30d)─────────────────────────┐┌Mission posture───────────────────────┐
+│2 running                             ││128 meta.json scanned                 ││model parity 40/128                   │
+│4 stalled queue items                 ││3 agents · 3 skills                   ││duration parity 2/128                 │
+│                                      ││                                      ││                                      │
+└──────────────────────────────────────┘└──────────────────────────────────────┘└──────────────────────────────────────┘
+┌ Active dispatches (2) ───────────────────────────────────┐┌ Wave atlas (5) ──────────────────────────────────────────┐
+│▶ just-091500-11111 claude / implement                    ││✓ intents-zero-W1        4/4  ✓4 ✗0 ⏳ 0                   │
+│  root vibecrafted · age 12m ago · 3m since heartbeat ·   ││⏳  intents-zero-W2        2/3  ✓2 ✗1 ⏳ 0                  │
+│wave W3-C                                                 ││⏳  intents-zero-W3        0/2  ✓0 ✗0 ⏳ 2                  │
+│▶ marb-090000-22222 codex / marbles                       ││! legacy-recovery        0/1  ✓0 ✗1 ⏳ 0                   │
+│  root vista · age 2m ago · fresh                         ││· parked-wave            0/1  ✓0 ✗0 ⏳ 0                   │
+└──────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
+┌ Per-agent stats (30d, 3 agents) ───────────────────────────────┐┌ Per-skill stats (3) ───────────────────────────────┐
+│agent      runs   ✓    ✗   ⌀dur     model%                      ││skill         inv   ✓    ✗   ⌀dur                   │
+│claude      42   39    3   14.0m    95%                         ││implement      18   17    1  10.7m                  │
+│codex       28   25    3   11.0m    50%                         ││marbles         9    8    1    45s                  │
+│gemini       9    7    2     —       0%                         ││partner         1    1    0    —   ⚠                │
+│                                                                ││                                                    │
+└────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
+┌ Fleet health (5) ─────────────────────┐┌ Failure board 24h (2) ──────────────┐┌ Operator action queue (4) ───────────┐
+│✓ control-plane   /fixture/state (3    ││✗ rsrc-083000-77777 gemini / research││!! [fail] investigate                 │
+│runs)                                  ││  exit_code 2 · 3h ago               ││rsrc-083000-77777 (gemini / research) │
+│✓ artifact-root   /fixture/artifacts   ││✗ lost-070000-55555 codex / workflow ││! [stall] resume lost-070000-55555    │
+│✓ meta scan       128 meta.json scanned││  stalled heartbeat · 5h ago         ││(codex)                               │
+│! model parity    40/128 missing model ││                                     ││! [polarize] polarize polr-42 (pass / │
+└───────────────────────────────────────┘└─────────────────────────────────────┘└──────────────────────────────────────┘
+┌ Mission Control receipt ─────────────────────────────────────────────────────────────────────────────────────────────┐
+│artifact root: /fixture/artifacts                                                                                     │
+│generated at:  2026-06-10T12:00:00+00:00                                                                              │
+│1 meta.json parse failures skipped                                                                                    │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Mission Control: ↑/↓ panel focus  r refresh  Tab next tab
+Global: q quit  r refresh  a cycle agent  v cycle runtime  y copy  Ctrl+L clear search  ? help
+state root: /fixture/state
