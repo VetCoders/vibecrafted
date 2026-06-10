@@ -109,8 +109,23 @@ keybinds {
         bind "Ctrl Shift p" { TogglePaneInGroup; }
         bind "Ctrl Shift g" { ToggleGroupMarking; }
 
-        // Session mode acts as a confirmation gate before Quit.
-        bind "Ctrl Shift q" { SwitchToMode "Session"; }
+        bind "Ctrl Shift q" {
+            LaunchOrFocusPlugin "session-manager" {
+                floating true
+                move_to_focused_tab true
+            };
+            SwitchToMode "Normal";
+        }
+        bind "Ctrl Shift c" {
+            Run "bash" "-lc" "tmp=$(mktemp -t vc-pane-dump.XXXXXX); pane_id=$(zellij action list-panes --json --all --state | python3 -c 'import json, os, sys; current=os.environ.get(\"ZELLIJ_PANE_ID\"); panes=json.load(sys.stdin); match=next((p for p in panes if p.get(\"is_focused\") and str(p.get(\"id\")) != current), None); print(((\"plugin_\" if match.get(\"is_plugin\") else \"\") + str(match.get(\"id\"))) if match else \"\")'); if [ -n \"$pane_id\" ]; then zellij action dump-screen --full --pane-id \"$pane_id\" --path \"$tmp\" && pbcopy < \"$tmp\"; fi; rm -f \"$tmp\"" {
+                close_on_exit true
+                floating true
+                name "copy-pane-scrollback"
+            };
+        }
+
+        // Quit confirmation lives on Ctrl+Shift+X so Ctrl+Shift+Q can truthfully open session switching.
+        bind "Ctrl Shift x" { SwitchToMode "Session"; }
     }
 
     // Ctrl+Q closes the current focus, not the whole session.
@@ -130,9 +145,9 @@ keybinds {
         bind "Ctrl q" { CloseTab; SwitchToMode "Normal"; }
     }
 
-    // Confirm-on-quit: Ctrl+Shift+Q -> Session mode, y = quit, n/Esc = cancel.
+    // Confirm-on-quit: Ctrl+Shift+X -> Session mode, y = quit, n/Esc = cancel.
     session {
         bind "y" { Quit; }
-        bind "n" "Esc" "Ctrl q" "Ctrl Shift q" { SwitchToMode "Normal"; }
+        bind "n" "Esc" "Ctrl q" "Ctrl Shift x" { SwitchToMode "Normal"; }
     }
 }
