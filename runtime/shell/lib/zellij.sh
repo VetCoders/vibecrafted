@@ -198,7 +198,7 @@ _vetcoders_operator_session_name() {
 }
 
 _vetcoders_zellij_gc_script() {
-  _vetcoders_spawn_script "vc-agents" "mission-control/zellij-gc.sh"
+  _vetcoders_workflow_script "vc-operator" "mission-control/zellij-gc.sh"
 }
 
 _vetcoders_auto_gc_dead_zellij_sessions() {

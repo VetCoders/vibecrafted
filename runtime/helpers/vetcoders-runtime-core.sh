@@ -48,6 +48,20 @@ _vetcoders_spawn_script() {
   printf '%s/scripts/%s' "$base" "$script_name"
 }
 
+_vetcoders_workflow_script() {
+  # Workflow-owned scripts live in runtime/<workflow>/, next to the shared
+  # runtime/scripts/ surface that _vetcoders_spawn_script resolves.
+  local workflow="$1"
+  local script_path="$2"
+  local base
+  base="$(_vetcoders_spawn_home "$workflow")"
+  [[ -f "$base/$workflow/$script_path" ]] || {
+    echo "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. workflow script not found: $base/$workflow/$script_path" >&2
+    return 1
+  }
+  printf '%s/%s/%s' "$base" "$workflow" "$script_path"
+}
+
 _vetcoders_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null || pwd
 }
