@@ -128,6 +128,32 @@ EOF
 EOF
 }
 
+_vetcoders_research_session_ready() {
+  # Non-blocking session discovery for research. The general
+  # _vetcoders_prepare_operator_runtime may run a BLOCKING zellij client
+  # (attach / --new-session-with-layout) inside the calling terminal — the
+  # operator's shell gets swallowed and the research flow freezes until the
+  # client exits. Research only ever needs an EXISTING live session to hang
+  # its tab on; when none exists we degrade to headless instead.
+  command -v zellij >/dev/null 2>&1 || return 1
+  if _vetcoders_in_zellij; then
+    VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
+    export VIBECRAFTED_OPERATOR_SESSION
+    return 0
+  fi
+  if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] \
+    && [[ "$(_vetcoders_zellij_session_state "$VIBECRAFTED_OPERATOR_SESSION")" == "live" ]]; then
+    return 0
+  fi
+  local guessed_session
+  guessed_session="$(_vetcoders_guess_active_zellij_session 2>/dev/null || true)"
+  if [[ -n "$guessed_session" ]]; then
+    export VIBECRAFTED_OPERATOR_SESSION="$guessed_session"
+    return 0
+  fi
+  return 1
+}
+
 _vetcoders_research_help() {
   cat <<'HELP'
 ⚒  research
@@ -219,6 +245,12 @@ _vetcoders_research() {
   root="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
   runtime="$(_vetcoders_effective_runtime)"
 
+  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && ! _vetcoders_research_session_ready; then
+    printf 'vc-research: no live zellij operator session to attach the research tab to.\n' >&2
+    printf 'Degrading to headless so your terminal stays yours (start one with vc-start for the shared tab).\n' >&2
+    runtime="headless"
+  fi
+
   inherited_run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
   inherited_run_lock="$(_vetcoders_effective_run_lock 2>/dev/null || true)"
   run_id="$inherited_run_id"
@@ -261,12 +293,8 @@ _vetcoders_research() {
   summary_file="$(_vetcoders_write_research_summary "$run_dir" "$run_id" "$root" "$prompt_file" "${launcher_entries[@]}")" || return 1
 
   if [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
-    _vetcoders_prepare_operator_runtime "$runtime" || return 1
-    command -v zellij >/dev/null 2>&1 || {
-      echo "vc-research requires zellij for the shared research tab layout." >&2
-      return 1
-    }
-
+    # Session readiness was proven non-blockingly above; never call the
+    # blocking operator-runtime preparer from the research dispatch path.
     session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
     [[ -n "$session_name" ]] || {
       echo "Could not determine the operator zellij session." >&2

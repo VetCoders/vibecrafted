@@ -206,9 +206,13 @@ def _prepare_research(args: Sequence[str], run_id: str) -> tuple[int, str]:
 
 
 def _launcher_paths(output: str) -> dict[str, Path]:
+    # Must recognise every supported agent: the default swarm is configurable
+    # (claude+codex+junie today) and uno mode can pick any single agent.
     launchers: dict[str, Path] = {}
+    agent_alternation = "|".join(sorted(AGENTS))
+    pattern = re.compile(rf"\s*({agent_alternation}):\s+(.+\.sh)\s*$")
     for line in output.splitlines():
-        match = re.match(r"\s*(claude|codex|gemini):\s+(.+\.sh)\s*$", line)
+        match = pattern.match(line)
         if match:
             launchers[match.group(1)] = Path(match.group(2)).expanduser()
     return launchers
@@ -225,10 +229,14 @@ def research_main(argv: Sequence[str] | None = None) -> int:
     if code != 0:
         return code
     launchers = _launcher_paths(output)
-    missing = sorted(AGENTS - set(launchers))
-    if missing:
+    if not launchers:
+        # The old check demanded launchers for ALL six agents while the swarm
+        # prepares only the configured ones (three by default) — vc-research
+        # could never start. The honest contract: at least one prepared
+        # launcher, spawn exactly what was prepared.
         print(
-            f"vc-research: missing launcher paths for: {', '.join(missing)}",
+            "vc-research: research preparation announced no launcher paths; "
+            "cannot spawn the swarm.",
             file=sys.stderr,
         )
         return 1
