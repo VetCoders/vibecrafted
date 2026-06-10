@@ -9,7 +9,7 @@ import pytest
 from vibecrafted_core import control_plane
 from vibecrafted_core.agent_dispatch import extract_session_id
 from vibecrafted_core.events import append_event
-from vibecrafted_core.spawn import Supervisor
+from vibecrafted_core.spawn import Supervisor, finalize_artifacts
 
 
 def test_supervisor_spawn_lifecycle_extracts_session_id(
@@ -90,6 +90,72 @@ def test_session_id_extractors_use_shared_pattern() -> None:
         extract_session_id("gemini", (fixtures / "gemini_session.log").read_text())
         == "gemini-session-789"
     )
+
+
+def test_finalize_artifacts_python_owns_launcher_artifact_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CODEX_MODEL", "gpt-5.3-codex")
+    reports = tmp_path / "VetCoders" / "vibecrafted" / "2026_0610" / "reports"
+    reports.mkdir(parents=True)
+    report = reports / "announced.md"
+    transcript = reports / "announced.transcript.log"
+    meta = reports / "announced.meta.json"
+
+    report.write_text("# Report\n\nDone.\n", encoding="utf-8")
+    transcript.write_text(
+        "[12:40:43] session: codex-finalize-001\n"
+        "tokens: 12 in (3 cached) / 7 out\n"
+        "cost_usd: $0.045\n",
+        encoding="utf-8",
+    )
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "finalize-test-001",
+                "prompt_id": "prompt-finalize",
+                "agent": "codex",
+                "skill": "implement",
+                "model": "unknown",
+                "status": "completed",
+                "root": str(tmp_path),
+                "report": str(report),
+                "transcript": str(transcript),
+                "meta": str(meta),
+                "created_at": "2026-06-10T08:00:00+00:00",
+                "completed_at": "2026-06-10T08:00:05+00:00",
+                "duration_s": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    final_meta = finalize_artifacts(meta, report, transcript)
+
+    assert final_meta is not None
+    payload = json.loads(final_meta.read_text(encoding="utf-8"))
+    assert payload["session_id"] == "codex-finalize-001"
+    assert payload["model"] == "gpt-5.3-codex"
+    assert payload["duration_s"] == 5.0
+    assert payload["tokens_input"] == 12
+    assert payload["tokens_cached_input"] == 3
+    assert payload["tokens_output"] == 7
+    assert payload["tokens_total"] == 19
+    assert payload["cost_usd"] == 0.045
+    assert payload["artifact_contract"] == "vibecrafted.agent-artifact.v1"
+
+    final_report = Path(payload["report"])
+    final_transcript = Path(payload["transcript"])
+    assert final_report.name.endswith("-report.md")
+    assert final_report.is_file()
+    assert final_transcript.is_file()
+    assert report.exists()
+    assert transcript.exists()
+    assert meta.exists()
+    assert report.resolve() == final_report.resolve()
+    assert transcript.resolve() == final_transcript.resolve()
+    assert meta.resolve() == final_meta.resolve()
 
 
 def test_subscribe_events_reads_appended_events(

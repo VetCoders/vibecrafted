@@ -153,6 +153,7 @@ EOF_LAUNCH
     printf '%s\n' "$success_hook" >> "$launcher"
   fi
   cat >> "$launcher" <<'EOF_LAUNCH'
+  # Final artifact closure is Python-owned; this shell call is the stable wrapper.
   spawn_finalize_artifacts "$meta" "$report" "$transcript"
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
@@ -166,6 +167,7 @@ EOF_LAUNCH
     printf '%s\n' "$failure_hook" >> "$launcher"
   fi
   cat >> "$launcher" <<'EOF_LAUNCH'
+  # Final artifact closure is Python-owned; this shell call is the stable wrapper.
   spawn_finalize_artifacts "$meta" "$report" "$transcript"
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import os
+import re
 import shlex
 import subprocess
 import threading
@@ -15,6 +17,34 @@ from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
 
 EventCallback = Callable[[dict[str, Any]], None]
+
+ANSI_PATTERN = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+SESSION_PATTERNS = (
+    re.compile(
+        r"(?:^|\[[0-9]{2}:[0-9]{2}:[0-9]{2}\]\s+)session:\s*([A-Za-z0-9][A-Za-z0-9._:-]*)",
+        re.MULTILINE,
+    ),
+    re.compile(
+        r"\b(?:thread|conversation|session)[_-]?id['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9][A-Za-z0-9._:-]*)",
+        re.IGNORECASE,
+    ),
+)
+TOKEN_PATTERN = re.compile(
+    r"tokens:\s*([0-9]+)\s+in(?:\s*\(([0-9]+)\s+cached\))?\s*/\s*([0-9]+)\s+out",
+    re.IGNORECASE,
+)
+COST_PATTERNS = (
+    re.compile(r"cost(?:_usd)?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
+    re.compile(r"\$([0-9]+\.[0-9]+)\s*(?:usd)?", re.IGNORECASE),
+)
+MODEL_ENV_VARS = (
+    "VIBECRAFTED_PARENT_MODEL",
+    "CLAUDE_MODEL",
+    "CODEX_MODEL",
+    "GEMINI_MODEL",
+    "GROK_MODEL",
+)
+MODEL_PLACEHOLDERS = {"", "none", "null", "unknown", "pending"}
 
 
 @dataclass
@@ -131,6 +161,456 @@ def _write_meta(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def _clean_text(text: str) -> str:
+    return ANSI_PATTERN.sub("", text)
+
+
+def _extract_session(text: str) -> str:
+    clean = _clean_text(text)
+    for pattern in SESSION_PATTERNS:
+        matches = pattern.findall(clean)
+        if matches:
+            return str(matches[-1])
+    return ""
+
+
+def _extract_tokens(text: str) -> dict[str, int]:
+    clean = _clean_text(text)
+    found = TOKEN_PATTERN.findall(clean)
+    if not found:
+        return {"input": 0, "cached_input": 0, "output": 0, "total": 0}
+    input_tokens = cached_tokens = output_tokens = 0
+    for raw_in, raw_cached, raw_out in found:
+        input_tokens += int(raw_in)
+        cached_tokens += int(raw_cached or 0)
+        output_tokens += int(raw_out)
+    return {
+        "input": input_tokens,
+        "cached_input": cached_tokens,
+        "output": output_tokens,
+        "total": input_tokens + output_tokens,
+    }
+
+
+def _extract_cost(text: str) -> float | None:
+    clean = _clean_text(text)
+    for pattern in COST_PATTERNS:
+        matches = pattern.findall(clean)
+        if not matches:
+            continue
+        try:
+            return round(float(matches[-1]), 6)
+        except ValueError:
+            pass
+    return None
+
+
+def _clean_model(value: object) -> str:
+    raw = str(value or "").strip()
+    return "" if raw.lower() in MODEL_PLACEHOLDERS else raw
+
+
+def _fallback_model(agent: object) -> str:
+    agent_name = str(agent or "agent").strip() or "agent"
+    if agent_name == "agy":
+        return "gemini-cli-default"
+    return f"{agent_name}-cli-default"
+
+
+def _extract_model_from_text(text: str) -> str:
+    clean = _clean_text(text)
+    for match in reversed(re.findall(r"^model:\s*(.+?)\s*$", clean, re.MULTILINE)):
+        model = _clean_model(match)
+        if model:
+            return model
+    return ""
+
+
+def _resolve_model(payload: dict[str, Any], combined_text: str) -> str:
+    model = _clean_model(payload.get("model"))
+    if model:
+        return model
+    for env_name in MODEL_ENV_VARS:
+        model = _clean_model(os.environ.get(env_name))
+        if model:
+            return model
+    model = _extract_model_from_text(combined_text)
+    if model:
+        return model
+    return _fallback_model(payload.get("agent"))
+
+
+def _parse_dt(value: object) -> dt.datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def _resolve_duration(
+    payload: dict[str, Any], completed_at_iso: str
+) -> float | int | None:
+    current = payload.get("duration_s")
+    if isinstance(current, (int, float)):
+        return current
+    if (
+        isinstance(current, str)
+        and current.strip()
+        and current.lower()
+        not in {
+            "none",
+            "null",
+        }
+    ):
+        try:
+            return round(float(current), 3)
+        except ValueError:
+            pass
+    completed_dt = _parse_dt(completed_at_iso)
+    started_dt = _parse_dt(payload.get("created_at") or payload.get("updated_at"))
+    if completed_dt is None or started_dt is None:
+        return None
+    return round((completed_dt - started_dt).total_seconds(), 3)
+
+
+def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}, text
+    end = None
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            end = index
+            break
+    if end is None:
+        return {}, text
+    data: dict[str, str] = {}
+    for line in lines[1:end]:
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        data[key.strip()] = value.strip()
+    body = "\n".join(lines[end + 1 :]).lstrip("\n")
+    return data, body
+
+
+def _render_frontmatter(data: dict[str, object]) -> str:
+    order = [
+        "run_id",
+        "prompt_id",
+        "agent",
+        "skill",
+        "model",
+        "status",
+        "date",
+        "session_id",
+        "artifact_stem",
+        "artifact_kind",
+        "repo_path",
+        "tokens_input",
+        "tokens_output",
+        "tokens_total",
+        "cost_usd",
+    ]
+    lines = ["---"]
+    emitted = set()
+    for key in order:
+        if key in data:
+            value = data.get(key)
+            lines.append(f"{key}: {value if value not in (None, '') else 'unknown'}")
+            emitted.add(key)
+    for key in sorted(k for k in data if k not in emitted):
+        value = data.get(key)
+        lines.append(f"{key}: {value if value not in (None, '') else 'unknown'}")
+    lines.extend(["---", ""])
+    return "\n".join(lines)
+
+
+def _slug_component(value: object, fallback: str) -> str:
+    raw = str(value or fallback)
+    raw = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-")
+    return raw or fallback
+
+
+def _same_file(left: Path, right: Path) -> bool:
+    try:
+        return left.samefile(right)
+    except OSError:
+        return left == right
+
+
+def _infer_artifact_store(meta: Path) -> dict[str, object] | None:
+    reports_dir = meta.parent
+    if reports_dir.name != "reports":
+        return None
+    day_dir = reports_dir.parent
+    if not re.fullmatch(r"[0-9]{4}_[0-9]{4}", day_dir.name):
+        return None
+    repo_dir = day_dir.parent
+    org_dir = repo_dir.parent
+    if not org_dir.name or not repo_dir.name:
+        return None
+    yyyy, mmdd = day_dir.name.split("_", 1)
+    return {
+        "reports_dir": reports_dir,
+        "day": f"{yyyy}-{mmdd[:2]}-{mmdd[2:]}",
+        "org": org_dir.name,
+        "repo": repo_dir.name,
+    }
+
+
+def _unique_stem(
+    reports_dir: Path, stem: str, sources: list[Path], disambiguator: str
+) -> str:
+    candidates = [stem]
+    if disambiguator:
+        candidates.append(f"{stem}-{_slug_component(disambiguator, 'run')}")
+    for index in range(2, 100):
+        candidates.append(f"{stem}-{index}")
+
+    suffixes = [".md", ".transcript.log", ".meta.json"]
+    for candidate in candidates:
+        blocked = False
+        for suffix in suffixes:
+            target = reports_dir / f"{candidate}{suffix}"
+            if not target.exists():
+                continue
+            if any(
+                source and source.exists() and _same_file(target, source)
+                for source in sources
+            ):
+                continue
+            blocked = True
+            break
+        if not blocked:
+            return candidate
+    return candidates[-1]
+
+
+def _move_artifact(source: Path, target: Path) -> Path:
+    if not str(source) or not source.is_file() or _same_file(source, target):
+        return source
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(target)
+    return target
+
+
+def _leave_compat_link(announced: Path, final: Path) -> None:
+    if not str(announced) or not final.is_file():
+        return
+    if announced == final or _same_file(announced, final):
+        return
+    if announced.is_symlink() or announced.exists():
+        return
+    try:
+        announced.parent.mkdir(parents=True, exist_ok=True)
+        link_target: str | Path = (
+            final.name if announced.parent == final.parent else final
+        )
+        announced.symlink_to(link_target)
+    except OSError:
+        pass
+
+
+def _footer(marker: str, payload: dict[str, object]) -> str:
+    return "\n".join(
+        [
+            "",
+            f"<!-- vibecrafted-artifact-footer:{marker} -->",
+            "---",
+            "run_closure:",
+            f"  run_id: {payload.get('run_id', 'unknown')}",
+            f"  session_id: {payload.get('session_id') or 'unknown'}",
+            f"  tokens_input: {payload.get('tokens_input', 0)}",
+            f"  tokens_output: {payload.get('tokens_output', 0)}",
+            f"  tokens_total: {payload.get('tokens_total', 0)}",
+            f"  cost_usd: {payload.get('cost_usd') if payload.get('cost_usd') is not None else 'unknown'}",
+            f"  status: {payload.get('status', 'unknown')}",
+            f"  completed_at: {payload.get('completed_at', 'unknown')}",
+            f'  resume_hint: "{payload.get("resume_hint", "")}"',
+            "---",
+            "",
+        ]
+    )
+
+
+def _normalize_markdown_artifact(
+    path: Path, payload: dict[str, object], *, fallback_body: str = ""
+) -> None:
+    text = _read_text(path)
+    if not text and fallback_body:
+        text = fallback_body
+    if not text:
+        return
+    fm, body = _parse_frontmatter(text)
+    fm.update(
+        {
+            "run_id": payload.get("run_id", "unknown"),
+            "prompt_id": payload.get("prompt_id", "unknown"),
+            "agent": payload.get("agent", "unknown"),
+            "skill": payload.get("skill_code") or payload.get("skill") or "unknown",
+            "model": payload.get("model", "unknown"),
+            "status": payload.get("status", "unknown"),
+            "date": payload.get("date", "unknown"),
+            "session_id": payload.get("session_id") or "unknown",
+            "artifact_stem": payload.get("artifact_stem", "unknown"),
+            "artifact_kind": payload.get("artifact_kind", "unknown"),
+            "repo_path": payload.get("root", "unknown"),
+            "tokens_input": payload.get("tokens_input", 0),
+            "tokens_output": payload.get("tokens_output", 0),
+            "tokens_total": payload.get("tokens_total", 0),
+            "cost_usd": payload.get("cost_usd")
+            if payload.get("cost_usd") is not None
+            else "unknown",
+        }
+    )
+    marker = str(payload.get("run_id") or "unknown")
+    new_text = _render_frontmatter(fm) + body.rstrip() + "\n"
+    if f"vibecrafted-artifact-footer:{marker}" not in new_text:
+        new_text += _footer(marker, payload)
+    _write_text(path, new_text)
+
+
+def finalize_artifacts(
+    meta_path: str | os.PathLike[str],
+    report_path: str | os.PathLike[str] | None = None,
+    transcript_path: str | os.PathLike[str] | None = None,
+) -> Path | None:
+    """Finalize a launcher run's report/transcript/meta artifact contract."""
+    meta = Path(meta_path)
+    if not meta.is_file():
+        return None
+
+    try:
+        payload = json.loads(_read_text(meta))
+    except json.JSONDecodeError:
+        return None
+
+    report = Path(str(report_path or payload.get("report", "")))
+    transcript = Path(str(transcript_path or payload.get("transcript", "")))
+    announced_report = report
+    announced_transcript = transcript
+    transcript_text = _read_text(transcript) if str(transcript) else ""
+    report_text = _read_text(report) if str(report) else ""
+    combined_text = "\n".join([transcript_text, report_text])
+
+    session_id = payload.get("session_id") or _extract_session(combined_text)
+    tokens = _extract_tokens(combined_text)
+    cost = _extract_cost(combined_text)
+    completed_at = (
+        payload.get("completed_at") or dt.datetime.now(dt.timezone.utc).isoformat()
+    )
+    artifact_time = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    root = payload.get("root") or os.getcwd()
+    resume_hint = (
+        f"Use `cd {root} && vc-resume --session {session_id}` to continue work with this Agent."
+        if session_id
+        else f"Use `cd {root} && vc-resume --session <session_id>` to continue work with this Agent."
+    )
+
+    payload["session_id"] = session_id or payload.get("session_id") or ""
+    payload["model"] = _resolve_model(payload, combined_text)
+    payload["duration_s"] = _resolve_duration(payload, str(completed_at))
+    payload["tokens_input"] = tokens["input"]
+    payload["tokens_cached_input"] = tokens["cached_input"]
+    payload["tokens_output"] = tokens["output"]
+    payload["tokens_total"] = tokens["total"]
+    payload["token_usage"] = tokens
+    payload["cost_usd"] = cost
+    payload["resume_hint"] = resume_hint
+    payload["artifact_contract"] = "vibecrafted.agent-artifact.v1"
+    payload["date"] = payload.get("date") or artifact_time
+
+    store = _infer_artifact_store(meta)
+    if store:
+        reports_dir = Path(str(store["reports_dir"]))
+        session_for_name = (
+            session_id
+            or payload.get("session_id")
+            or payload.get("run_id")
+            or "unknown-session"
+        )
+        stem = (
+            f"{store['day']}_"
+            f"{_slug_component(store['org'], 'org')}_"
+            f"{_slug_component(store['repo'], 'repo')}_"
+            f"{_slug_component(session_for_name, 'session')}-report"
+        )
+        stem = _unique_stem(
+            reports_dir,
+            stem,
+            [report, transcript, meta],
+            str(payload.get("run_id") or ""),
+        )
+        final_report = reports_dir / f"{stem}.md"
+        final_transcript = reports_dir / f"{stem}.transcript.log"
+        final_meta = reports_dir / f"{stem}.meta.json"
+
+        report = _move_artifact(report, final_report)
+        transcript = _move_artifact(transcript, final_transcript)
+        _leave_compat_link(announced_report, report)
+        _leave_compat_link(announced_transcript, transcript)
+        payload["report"] = str(report)
+        payload["transcript"] = str(transcript)
+        payload["meta"] = str(final_meta)
+        payload["artifact_stem"] = stem
+        payload["artifact_kind"] = "report"
+
+    payload["artifact_footer"] = {
+        "run_id": payload.get("run_id", "unknown"),
+        "session_id": payload.get("session_id") or "",
+        "tokens_total": tokens["total"],
+        "cost_usd": cost,
+        "resume_hint": resume_hint,
+    }
+    payload.setdefault("completed_at", completed_at)
+    payload["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+
+    target_meta = Path(str(payload.get("meta") or meta))
+    target_meta.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    if not _same_file(meta, target_meta) and meta.exists():
+        meta.unlink()
+        _leave_compat_link(meta, target_meta)
+    meta = target_meta
+
+    footer_payload = {
+        **payload,
+        "tokens_input": tokens["input"],
+        "tokens_output": tokens["output"],
+        "tokens_total": tokens["total"],
+        "cost_usd": cost,
+    }
+
+    if str(transcript):
+        _normalize_markdown_artifact(transcript, footer_payload)
+    if (
+        str(report)
+        and report.exists()
+        and report.suffix.lower() in {".md", ".markdown"}
+    ):
+        _normalize_markdown_artifact(report, footer_payload)
+    return meta
 
 
 def _maybe_extract_session_id(handle: SpawnHandle) -> str:
@@ -399,3 +879,28 @@ class Supervisor:
         )
         if on_event is not None:
             on_event(event)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Vibecrafted launcher helpers.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    finalize = sub.add_parser(
+        "finalize-artifacts",
+        help="Finalize launcher meta/report/transcript artifacts.",
+    )
+    finalize.add_argument("meta")
+    finalize.add_argument("report", nargs="?")
+    finalize.add_argument("transcript", nargs="?")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    if args.command == "finalize-artifacts":
+        finalize_artifacts(args.meta, args.report, args.transcript)
+        return 0
+    return 2
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point.
+    raise SystemExit(main())
