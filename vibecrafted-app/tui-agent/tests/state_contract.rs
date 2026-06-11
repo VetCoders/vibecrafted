@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use tempfile::tempdir;
 use voc::app::{App, AppTab, DeepAction, DispatchFocus, LaunchFocus, QueueScope};
-use voc::config::{AppConfig, default_terminal_binary};
+use voc::config::{AppConfig, CliOptions, build_config, default_terminal_binary};
 use voc::launch::{LaunchKind, LaunchRequest, LaunchRuntime, build_launch_command};
 use voc::skills_catalog::CATALOG;
 use voc::state::{ControlPlaneState, RenderedRun, RunKind, RunSnapshot, classify_run};
@@ -60,6 +60,115 @@ fn default_terminal_binary_prefers_vc_frame_when_available() {
         },
         None => unsafe {
             env::remove_var("VIBECRAFTED_TERMINAL_BINARY");
+        },
+    }
+}
+
+#[tokio::test]
+async fn operator_console_launch_uses_vc_frame_top_level_layout_flags() {
+    let _guard = env_lock().lock().unwrap();
+    let previous_path = env::var_os("PATH");
+    let previous_override = env::var_os("VIBECRAFTED_TERMINAL_BINARY");
+    let previous_config_dir = env::var_os("ZELLIJ_CONFIG_DIR");
+    unsafe {
+        env::remove_var("VIBECRAFTED_TERMINAL_BINARY");
+        env::remove_var("ZELLIJ_CONFIG_DIR");
+    }
+
+    let dir = tempdir().unwrap();
+    let bin_dir = dir.path().join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    fs::write(bin_dir.join("vc-frame"), "#!/bin/sh\n").unwrap();
+    fs::write(bin_dir.join("zellij"), "#!/bin/sh\n").unwrap();
+
+    let repo_root = dir.path().join("repo");
+    fs::create_dir_all(repo_root.join("config/zellij")).unwrap();
+    fs::write(repo_root.join("config/zellij/config.kdl"), "layout {}\n").unwrap();
+
+    let path = previous_path
+        .as_ref()
+        .map(|value| {
+            let mut paths = vec![bin_dir.clone()];
+            paths.extend(env::split_paths(value));
+            env::join_paths(paths).expect("join PATH")
+        })
+        .unwrap_or_else(|| bin_dir.into_os_string());
+    unsafe {
+        env::set_var("PATH", path);
+    }
+
+    let config = build_config(CliOptions {
+        state_root: Some(dir.path().join("state")),
+        command_deck: Some(PathBuf::from("/usr/bin/vibecrafted")),
+        launch_root: Some(repo_root.clone()),
+        launch_runtime: Some(LaunchRuntime::Terminal),
+        terminal_binary: None,
+        tick_ms: 250,
+        no_verify_gate: true,
+    });
+    assert_eq!(config.terminal_binary, Path::new("vc-frame"));
+
+    let app = App::new(config).unwrap();
+    let command = app.launch_command();
+    let args = command
+        .args
+        .iter()
+        .map(|value| value.to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(command.program, Path::new("vc-frame"));
+    assert_eq!(
+        command.env.get("ZELLIJ_CONFIG_DIR"),
+        Some(&repo_root.join("config/zellij").into_os_string())
+    );
+    assert!(
+        !args.iter().any(|value| value == "--config-dir"),
+        "operator console must not pass --config-dir after a zellij subcommand: args={args:?}"
+    );
+    assert!(
+        !args.iter().any(|value| value == "options"),
+        "operator console must not emit the stale zellij options subcommand: args={args:?}"
+    );
+    let session_idx = args
+        .iter()
+        .position(|value| value == "--session")
+        .expect("operator console launch should carry a named session");
+    let layout_idx = args
+        .iter()
+        .position(|value| value == "--layout-string")
+        .expect("operator console launch should pass a top-level layout string");
+    assert!(
+        session_idx < layout_idx,
+        "session must be a top-level runtime flag before layout payload: args={args:?}"
+    );
+
+    let layout = args.get(layout_idx + 1).expect("layout payload");
+    assert!(layout.contains("pane name=\"launch\""));
+    assert!(layout.contains("export ZELLIJ_CONFIG_DIR="));
+    assert!(layout.contains("exec '/usr/bin/vibecrafted' 'workflow'"));
+
+    match previous_path {
+        Some(value) => unsafe {
+            env::set_var("PATH", value);
+        },
+        None => unsafe {
+            env::remove_var("PATH");
+        },
+    }
+    match previous_override {
+        Some(value) => unsafe {
+            env::set_var("VIBECRAFTED_TERMINAL_BINARY", value);
+        },
+        None => unsafe {
+            env::remove_var("VIBECRAFTED_TERMINAL_BINARY");
+        },
+    }
+    match previous_config_dir {
+        Some(value) => unsafe {
+            env::set_var("ZELLIJ_CONFIG_DIR", value);
+        },
+        None => unsafe {
+            env::remove_var("ZELLIJ_CONFIG_DIR");
         },
     }
 }

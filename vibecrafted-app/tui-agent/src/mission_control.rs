@@ -567,19 +567,20 @@ fn wave_atlas_from_meta(
         };
         let entry = groups.entry(wave_id).or_default();
         entry.total += 1;
-        match record.meta.exit_code {
-            Some(0) => entry.completed += 1,
-            Some(code) if code != 0 => entry.failed += 1,
-            _ => {}
-        }
-        match record.meta.status.as_deref().map(str::to_ascii_lowercase) {
-            Some(ref status) if status.contains("fail") || status.contains("error") => {
-                entry.failed += 1;
-            }
-            Some(ref status) if status.contains("complete") || status.contains("done") => {
-                entry.completed += 1;
-            }
-            _ => {}
+        // exit_code and status are two spellings of the same outcome, so
+        // each record contributes at most one count; a failure signal from
+        // either side wins over completion.
+        let status = record.meta.status.as_deref().map(str::to_ascii_lowercase);
+        let status_failed = status
+            .as_deref()
+            .is_some_and(|status| status.contains("fail") || status.contains("error"));
+        let status_completed = status
+            .as_deref()
+            .is_some_and(|status| status.contains("complete") || status.contains("done"));
+        if matches!(record.meta.exit_code, Some(code) if code != 0) || status_failed {
+            entry.failed += 1;
+        } else if matches!(record.meta.exit_code, Some(0)) || status_completed {
+            entry.completed += 1;
         }
     }
     // Live runs contribute to the wave atlas too — an in-progress wave
@@ -1242,6 +1243,58 @@ mod tests {
         assert_eq!(wave1.total, 2);
         assert_eq!(wave1.completed, 1);
         assert_eq!(wave1.failed, 1);
+    }
+
+    #[test]
+    fn wave_atlas_counts_each_run_once_when_exit_code_and_status_agree() {
+        let dir = tempdir().unwrap();
+        let artifact = dir.path().join("artifacts");
+        let bucket = artifact.join("vetcoders/vc-tui/2026_0519/reports");
+        // The shape every launcher meta.json actually emits: BOTH the
+        // exit_code and the status field carry the same outcome.
+        write_meta(
+            &bucket.join("run-fail.meta.json"),
+            r#"{
+                "run_id": "run-fail",
+                "agent": "codex",
+                "skill_code": "marb",
+                "exit_code": 1,
+                "status": "failed",
+                "completed_at": "2026-05-19T11:00:00Z",
+                "prompt_id": "wave-dup"
+            }"#,
+        );
+        write_meta(
+            &bucket.join("run-ok.meta.json"),
+            r#"{
+                "run_id": "run-ok",
+                "agent": "claude",
+                "skill_code": "impl",
+                "exit_code": 0,
+                "status": "completed",
+                "completed_at": "2026-05-19T10:00:00Z",
+                "prompt_id": "wave-dup"
+            }"#,
+        );
+
+        let now = ts("2026-05-19T13:00:00Z");
+        let state = empty_state(dir.path());
+        let mission = MissionControlState::build_at(&state, &artifact, now);
+
+        let wave = mission
+            .wave_atlas
+            .iter()
+            .find(|seg| seg.wave_id == "wave-dup")
+            .expect("wave-dup segment");
+        assert_eq!(wave.total, 2);
+        assert_eq!(
+            wave.failed, 1,
+            "a run with exit_code!=0 AND status=failed must count as one failure"
+        );
+        assert_eq!(
+            wave.completed, 1,
+            "a run with exit_code=0 AND status=completed must count as one completion"
+        );
     }
 
     #[test]

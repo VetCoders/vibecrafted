@@ -1,5 +1,6 @@
 ---
 source: tui-agent/tests/mission_control_snapshots.rs
+assertion_line: 354
 expression: buffer_color_map(&buffer)
 ---
 YYYYYYYYYYYYYYYYYYYYYYYYYYYY..ggggggggggggggggggg.......................................................................
@@ -20,7 +21,7 @@ GYYYYYYYYYYYYYYYYYYYY......................................GCRR.................
 G..........................................................GCdd........................................................C
 GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
-Ydddddddddddddddddddddddddddddddddddddddddd......................YBddddddddddddddddddddddddddddddddd...................B
+Yddddddddddddddddddddddddddddddddddddddddddddd...................YBddddddddddddddddddddddddddddddddd...................B
 Y................................................................YB....................................................B
 Y................................................................YB....................................................B
 Y................................................................YB....................................................B
@@ -28,10 +29,10 @@ Y................................................................YB.............
 YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 MGG................ddddddddddddddddd....MRRRRRRRRRRRRRRRRRRRRR.................RWRRRddddddd............................W
-Mddddd..................................MRdddddddddddddddddddddd...............RW......................................W
-MGG................dddddddddddddddddd...MRRRRRRRRRRRRRRRRRRRRR.................RWYYdddddddd............................W
-MGG................dddddddddddddddddddddMRdddddddddddddddddddddddddddd.........RW......................................W
-MYY................dddddddddddddddddddd.MR.....................................RWYYddddddddddd.........................W
+Mddddd..................................MRdddddddddddddddddddddd...............RWYYdddddddd............................W
+MGG................dddddddddddddddddd...MRRRRRRRRRRRRRRRRRRRRR.................RWYYddddddddddd.........................W
+MGG................dddddddddddddddddddddMRdddddddddddddddddddddddddddd.........RWCCddddddddd...........................W
+MYY................dddddddddddddddddddd.MR.....................................RW......................................W
 MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 ........................................................................................................................
 .ddddddddddddddd........................................................................................................

@@ -865,7 +865,7 @@ fn draw_mc_agent_stats(frame: &mut Frame, area: Rect, rows: &[AgentStatsRow], fo
     } else {
         let mut out = Vec::with_capacity(rows.len() + 1);
         out.push(Line::from(Span::styled(
-            "agent      runs   ✓    ✗   ⌀dur     model%",
+            "agent      runs    ✓    ✗   ✓%    ⌀dur model%",
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
@@ -878,15 +878,15 @@ fn draw_mc_agent_stats(frame: &mut Frame, area: Rect, rows: &[AgentStatsRow], fo
             let model_pct = (row.model_known_rate * 100.0).round() as i32;
             let success_pct = (row.success_rate * 100.0).round() as i32;
             out.push(Line::from(format!(
-                "{:<9} {:>4} {:>4} {:>4}  {:>6}  {:>4}%",
+                "{:<9} {:>4} {:>4} {:>4} {:>3}%  {:>6}  {:>4}%",
                 truncate(&row.agent, 9),
                 row.total_runs,
                 row.completed,
                 row.failed,
+                success_pct,
                 avg,
                 model_pct,
             )));
-            let _ = success_pct;
         }
         out
     };
@@ -1019,6 +1019,8 @@ fn draw_mc_failure_board(frame: &mut Frame, area: Rect, entries: &[FailureEntry]
 fn draw_mc_action_queue(frame: &mut Frame, area: Rect, items: &[ActionQueueItem], focused: bool) {
     let title = format!(" Operator action queue ({}) ", items.len());
     let block = panel_block(&title, focused, Color::White);
+    // Inner text width = panel minus the left/right border cells.
+    let inner_width = area.width.saturating_sub(2) as usize;
     let lines: Vec<Line> = if items.is_empty() {
         vec![Line::from(Span::styled(
             "nothing to press",
@@ -1039,18 +1041,23 @@ fn draw_mc_action_queue(frame: &mut Frame, area: Rect, items: &[ActionQueueItem]
                     ActionQueueKind::Polarize => "polarize",
                     ActionQueueKind::ReportReady => "report",
                 };
+                let priority_prefix = format!("{} ", item.priority.marker());
+                let kind_prefix = format!("[{kind_label}] ");
+                // Truncate at the panel width so long summaries end with an
+                // ellipsis instead of wrapping past the panel edge; .max(1)
+                // keeps degenerate widths from producing an empty span.
+                let summary_width = inner_width
+                    .saturating_sub(priority_prefix.chars().count() + kind_prefix.chars().count())
+                    .max(1);
                 Line::from(vec![
                     Span::styled(
-                        format!("{} ", item.priority.marker()),
+                        priority_prefix,
                         Style::default()
                             .fg(priority_color)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        format!("[{kind_label}] "),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::raw(truncate(&item.summary, 60).to_string()),
+                    Span::styled(kind_prefix, Style::default().fg(Color::DarkGray)),
+                    Span::raw(truncate(&item.summary, summary_width)),
                 ])
             })
             .collect()

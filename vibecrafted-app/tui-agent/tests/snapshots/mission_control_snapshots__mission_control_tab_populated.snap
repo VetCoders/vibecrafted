@@ -1,5 +1,6 @@
 ---
 source: tui-agent/tests/mission_control_snapshots.rs
+assertion_line: 347
 expression: buffer_text(&buffer)
 ---
 Vibecrafted Operator Console  no live runs loaded
@@ -20,18 +21,18 @@ mission root: /fixture/repo  |  active runs: 0  |  scope: live  |  focus: Missio
 │  root vista · age 2m ago · fresh                         ││· parked-wave            0/1  ✓0 ✗0 ⏳ 0                   │
 └──────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
 ┌ Per-agent stats (30d, 3 agents) ───────────────────────────────┐┌ Per-skill stats (3) ───────────────────────────────┐
-│agent      runs   ✓    ✗   ⌀dur     model%                      ││skill         inv   ✓    ✗   ⌀dur                   │
-│claude      42   39    3   14.0m    95%                         ││implement      18   17    1  10.7m                  │
-│codex       28   25    3   11.0m    50%                         ││marbles         9    8    1    45s                  │
-│gemini       9    7    2     —       0%                         ││partner         1    1    0    —   ⚠                │
+│agent      runs    ✓    ✗   ✓%    ⌀dur model%                   ││skill         inv   ✓    ✗   ⌀dur                   │
+│claude      42   39    3  93%   14.0m    95%                    ││implement      18   17    1  10.7m                  │
+│codex       28   25    3  89%   11.0m    50%                    ││marbles         9    8    1    45s                  │
+│gemini       9    7    2  78%     —       0%                    ││partner         1    1    0    —   ⚠                │
 │                                                                ││                                                    │
 └────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
 ┌ Fleet health (5) ─────────────────────┐┌ Failure board 24h (2) ──────────────┐┌ Operator action queue (4) ───────────┐
-│✓ control-plane   /fixture/state (3    ││✗ rsrc-083000-77777 gemini / research││!! [fail] investigate                 │
-│runs)                                  ││  exit_code 2 · 3h ago               ││rsrc-083000-77777 (gemini / research) │
-│✓ artifact-root   /fixture/artifacts   ││✗ lost-070000-55555 codex / workflow ││! [stall] resume lost-070000-55555    │
-│✓ meta scan       128 meta.json scanned││  stalled heartbeat · 5h ago         ││(codex)                               │
-│! model parity    40/128 missing model ││                                     ││! [polarize] polarize polr-42 (pass / │
+│✓ control-plane   /fixture/state (3    ││✗ rsrc-083000-77777 gemini / research││!! [fail] investigate rsrc-083000-777…│
+│runs)                                  ││  exit_code 2 · 3h ago               ││! [stall] resume lost-070000-55555 (c…│
+│✓ artifact-root   /fixture/artifacts   ││✗ lost-070000-55555 codex / workflow ││! [polarize] polarize polr-42 (pass /…│
+│✓ meta scan       128 meta.json scanned││  stalled heartbeat · 5h ago         ││- [report] open report just-091500-11…│
+│! model parity    40/128 missing model ││                                     ││                                      │
 └───────────────────────────────────────┘└─────────────────────────────────────┘└──────────────────────────────────────┘
 ┌ Mission Control receipt ─────────────────────────────────────────────────────────────────────────────────────────────┐
 │artifact root: /fixture/artifacts                                                                                     │

@@ -1,5 +1,6 @@
 ---
 source: tui-agent/tests/mission_control_snapshots.rs
+assertion_line: 556
 expression: stdout
 ---
 Mission Control
@@ -11,7 +12,7 @@ no live dispatches
 
 == Wave atlas (2) ==
 STATE          WAVE                               TOTAL  COMPLETE  FAILED  ACTIVE
-in-progress    wave-a                                 2         1       2       0
+in-progress    wave-a                                 2         1       1       0
 completed      wave-b                                 1         1       0       0
 
 == Per-agent stats (2) ==

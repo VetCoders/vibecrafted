@@ -413,6 +413,52 @@ fn mission_control_palette_is_terminal_theme_adaptive() {
     }
 }
 
+/// F3 guard: a summary longer than the action-queue panel must end in an
+/// ellipsis on its own line instead of wrapping past the panel edge.
+#[test]
+fn action_queue_truncates_long_summaries_at_panel_width() {
+    let mut state = populated_mission_state();
+    state.action_queue.insert(
+        0,
+        ActionQueueItem {
+            kind: ActionQueueKind::Failure,
+            summary: "investigate the extremely long dispatch summary that previously \
+                      wrapped past the panel edge and ended with the word OVERFLOWTAIL"
+                .to_string(),
+            source_path: None,
+            priority: ActionPriority::Critical,
+        },
+    );
+    let app = mission_app(state);
+    let rendered = buffer_text(&render_mission_tab(&app));
+    assert!(
+        rendered.contains("investigate the extremely"),
+        "long-summary queue item must render at all"
+    );
+    assert!(
+        rendered.contains('…'),
+        "long summary must truncate with an ellipsis"
+    );
+    assert!(
+        !rendered.contains("OVERFLOWTAIL"),
+        "summary tail must not render past the truncation point"
+    );
+}
+
+/// F3 guard: degenerate terminal sizes must render without panicking —
+/// width-aware truncation may never underflow or index past the panel.
+#[test]
+fn mission_control_tab_survives_narrow_terminals() {
+    let app = mission_app(populated_mission_state());
+    for (width, height) in [(80u16, 24u16), (40, 20), (20, 10), (8, 4)] {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| voc::ui::draw(frame, &app))
+            .unwrap_or_else(|err| panic!("draw must not fail at {width}x{height}: {err}"));
+    }
+}
+
 // ─── vc-admin: standalone snapshot renderer e2e ─────────────────────────
 
 fn write_meta(path: &Path, contents: &str) {
