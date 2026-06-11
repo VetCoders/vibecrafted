@@ -852,7 +852,10 @@ def test_marbles_runtime_applies_rotation_schedule_without_ancestor_override(
     assert (
         (state_dir / "ancestor.md")
         .read_text(encoding="utf-8")
-        .startswith("---\nagent: codex\nfocus: initial prompt\npriority: P0\n---\n")
+        .startswith(
+            "---\nagent: codex\nskill_name: marbles\n"
+            "focus: initial prompt\npriority: P0\n---\n"
+        )
     )
 
     events = _load_spawn_events(capture_file)
@@ -867,13 +870,16 @@ def test_marbles_runtime_applies_rotation_schedule_without_ancestor_override(
     child_plan_2 = child_plans[1].read_text(encoding="utf-8")
     child_plan_3 = child_plans[2].read_text(encoding="utf-8")
     assert child_plan_1.startswith(
-        "---\nagent: codex\nfocus: initial prompt\npriority: P0\n---\n"
+        "---\nagent: codex\nskill_name: marbles\n"
+        "focus: initial prompt\npriority: P0\n---\n"
     )
     assert child_plan_2.startswith(
-        "---\nagent: claude\nfocus: initial prompt\npriority: P0\n---\n"
+        "---\nagent: claude\nskill_name: marbles\n"
+        "focus: initial prompt\npriority: P0\n---\n"
     )
     assert child_plan_3.startswith(
-        "---\nagent: gemini\nfocus: initial prompt\npriority: P0\n---\n"
+        "---\nagent: gemini\nskill_name: marbles\n"
+        "focus: initial prompt\npriority: P0\n---\n"
     )
     assert "The worker must remain on the operator-assigned substrate." in child_plan_1
     assert "Do not switch branches." in child_plan_1
@@ -966,7 +972,8 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
     child_plan_2 = child_plans[1].read_text(encoding="utf-8")
     child_plan_3 = child_plans[2].read_text(encoding="utf-8")
     assert child_plan_1.startswith(
-        "---\nagent: codex\nfocus: initial prompt\npriority: P0\n---\n"
+        "---\nagent: codex\nskill_name: marbles\n"
+        "focus: initial prompt\npriority: P0\n---\n"
     )
     assert child_plan_2.startswith(
         "---\nagent: gemini\nfocus: accessibility\npriority: P0\n---\n"
