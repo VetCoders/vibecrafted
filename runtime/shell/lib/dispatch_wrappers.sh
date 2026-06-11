@@ -278,19 +278,18 @@ _vetcoders_skill() {
   return "$_dispatch_rc"
 }
 
-# Spawn a zellij side-pane running vibecrafted-await-watch for the just-fired
-# worker, so the operator gets live transcript tail + automatic exit when the
-# worker is done (status=completed/failed, or wrapper dies + transcript idle).
+# Spawn a zellij floating probe running vibecrafted-await-watch for the
+# just-fired worker, so the operator gets live transcript tail + automatic exit
+# without the legacy helper stealing operator layout space or focus.
 #
 # Silent no-op unless:
 #   - the operator is inside an active zellij session
 #   - the await-watch helper is installed and executable
 #   - jq is available (helper needs it to parse meta.json)
 #
-# Resolves meta.json by greping the artifacts dir for a meta whose .run_id
-# matches the freshly-launched dispatch's run_id. Worker filename is
-# prompt_id-based, not run_id-based, so content grep is the only reliable
-# resolver.
+# Legacy shell helpers are only a compatibility shim now. They must speak the
+# Launchdeck/meta contract: resolve an active meta.json first, pass it directly,
+# and otherwise stay silent instead of creating panes that guess by run_id.
 _vetcoders_await_watch_helper() {
   local repo_root crafted_root candidate
   repo_root="$(_vetcoders_repo_root)"
@@ -310,6 +309,84 @@ _vetcoders_await_watch_helper() {
   return 1
 }
 
+_vetcoders_await_status_is_active() {
+  case "${1:-}" in
+    launching|running|in-progress|pending|created|brief_rendered|process_spawned|prompt_delivered|first_output_seen|active|artifact_seen|report_started|posthook_running)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+_vetcoders_active_await_meta_for_run_id() {
+  local run_id="$1"
+  local artifacts_root="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/artifacts"
+  local candidate status pid
+  [[ -n "$run_id" && -d "$artifacts_root" ]] || return 1
+
+  while IFS= read -r candidate; do
+    [[ -f "$candidate" ]] || continue
+    [[ "$(jq -r '.run_id // ""' "$candidate" 2>/dev/null)" == "$run_id" ]] || continue
+    status="$(jq -r '.status // ""' "$candidate" 2>/dev/null || true)"
+    _vetcoders_await_status_is_active "$status" || continue
+    pid="$(jq -r '.launcher_pid // ""' "$candidate" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$pid" -gt 0 ]] && ! kill -0 "$pid" 2>/dev/null; then
+      continue
+    fi
+    printf '%s\n' "$candidate"
+    return 0
+  done < <(find "$artifacts_root" -maxdepth 8 -name "*.meta.json" -type f -mtime -2 2>/dev/null)
+
+  return 1
+}
+
+_vetcoders_current_focused_zellij_pane_id() {
+  local zellij_bin="$1"
+  local raw=""
+  raw="$("$zellij_bin" action list-panes --json --state 2>/dev/null || true)"
+  python3 - "$raw" <<'PY'
+import json
+import sys
+
+raw = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+if not raw:
+    raise SystemExit(1)
+try:
+    payload = json.loads(raw)
+except Exception:
+    raise SystemExit(1)
+
+def is_truthy(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return False
+
+def visit(node):
+    if isinstance(node, dict):
+        if is_truthy(node.get("is_focused")) or is_truthy(node.get("focused")):
+            for key in ("pane_id", "id"):
+                value = node.get(key)
+                if value not in (None, ""):
+                    print(value)
+                    return True
+        for value in node.values():
+            if visit(value):
+                return True
+    elif isinstance(node, list):
+        for value in node:
+            if visit(value):
+                return True
+    return False
+
+if not visit(payload):
+    raise SystemExit(1)
+PY
+}
+
 _vetcoders_maybe_spawn_await_pane() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
@@ -326,13 +403,26 @@ _vetcoders_maybe_spawn_await_pane() {
 
   # Best effort: short delay so the wrapper has a moment to drop meta.json.
   ( sleep 1
+    local meta=""
+    meta="$(_vetcoders_active_await_meta_for_run_id "$run_id" 2>/dev/null || true)"
+    [[ -n "$meta" && -f "$meta" ]] || exit 0
+    local focused_pane_id=""
+    focused_pane_id="$(_vetcoders_current_focused_zellij_pane_id "$zellij_bin" 2>/dev/null || true)"
     local pane_name="await:${tool}:${run_id##*-}"
     local cwd="${root:-$PWD}"
     "$zellij_bin" action new-pane \
+      --floating \
+      --width 24% \
+      --height 35% \
+      --x 76% \
+      --y 8% \
       --name "$pane_name" \
       --close-on-exit \
       --cwd "$cwd" \
-      -- "$helper" --run-id "$run_id" >/dev/null 2>&1 || true
+      -- "$helper" --meta "$meta" >/dev/null 2>&1 || true
+    if [[ -n "$focused_pane_id" ]]; then
+      "$zellij_bin" action focus-pane-id "$focused_pane_id" >/dev/null 2>&1 || true
+    fi
   ) &
 }
 

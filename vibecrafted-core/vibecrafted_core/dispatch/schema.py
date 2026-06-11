@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import shlex
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -149,6 +149,30 @@ def render_cell_prompt(
     parts = [dispatch.common.text, body, cut.extra, active_baton.to_json()]
     rendered = [_format_known(part, variables).strip() for part in parts if part]
     return "\n\n".join(part for part in rendered if part).rstrip() + "\n"
+
+
+def render_cut_verifies(dispatch: Dispatch, cut: Cut) -> Cut:
+    """Render placeholders in verifier commands before execution.
+
+    Verifier shells get the same variable set as cell prompts except the
+    baton — a JSON blob never belongs inside a shell command line.
+    """
+    if not cut.verify:
+        return cut
+    variables = {
+        "repo": dispatch.meta.repo,
+        "id": cut.id,
+        "agent": cut.agent,
+        "workflow": cut.workflow,
+        "resolved_workflow": cut.resolved_workflow,
+        "reports_dir": dispatch.meta.reports_dir,
+        "tracker": dispatch.meta.tracker,
+    }
+    rendered = tuple(
+        replace(verify, run=_format_known(verify.run, variables))
+        for verify in cut.verify
+    )
+    return replace(cut, verify=rendered)
 
 
 def _brief_or_prompt(cut: Cut) -> str:

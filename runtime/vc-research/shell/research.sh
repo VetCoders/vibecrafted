@@ -51,24 +51,58 @@ _vetcoders_runtime_manifest_path() {
   return 1
 }
 
-_vetcoders_research_agents() {
-  local manifest
+_vetcoders_user_config_path() {
+  local config_home config_path
+  config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  config_path="$config_home/vibecrafted/config.toml"
+  [[ -f "$config_path" ]] || return 1
+  printf '%s\n' "$config_path"
+}
 
-  if [[ -n "${VIBECRAFTED_RESEARCH_AGENTS:-}" ]]; then
-    printf '%s\n' "${VIBECRAFTED_RESEARCH_AGENTS}" | tr ', ' '\n' | awk 'NF'
-    return 0
-  fi
+_vetcoders_research_config_paths() {
+  local config_path manifest
+
+  config_path="$(_vetcoders_user_config_path 2>/dev/null || true)"
+  [[ -n "$config_path" ]] && printf '%s\n' "$config_path"
 
   manifest="$(_vetcoders_runtime_manifest_path 2>/dev/null || true)"
-  if [[ -n "$manifest" ]]; then
-    python3 - "$manifest" <<'PY' 2>/dev/null && return 0
-import sys
-try:
-    import tomllib
-except ModuleNotFoundError:
-    sys.exit(1)
+  [[ -n "$manifest" ]] && printf '%s\n' "$manifest"
+}
 
-with open(sys.argv[1], "rb") as handle:
+_vetcoders_python311_bin() {
+  local candidate bin
+  for candidate in \
+    "${VIBECRAFTED_PYTHON:-}" \
+    python3.14 \
+    python3.13 \
+    python3.12 \
+    python3.11 \
+    python3
+  do
+    [[ -n "$candidate" ]] || continue
+    bin="$(command -v "$candidate" 2>/dev/null || true)"
+    [[ -n "$bin" ]] || continue
+    "$bin" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1 || continue
+    printf '%s\n' "$bin"
+    return 0
+  done
+
+  printf 'Vibecrafted requires Python >=3.11 on PATH; Python 3.10/3.9 launchers are unsupported because runtime TOML parsing uses tomllib.\n' >&2
+  return 1
+}
+
+_vetcoders_research_agents_from_config() {
+  local config_path="$1"
+  local python_bin output parse_status
+
+  python_bin="$(_vetcoders_python311_bin)" || return 2
+
+  output="$("$python_bin" -c '
+import sys
+import tomllib
+
+path = sys.argv[1]
+with open(path, "rb") as handle:
     data = tomllib.load(handle)
 
 agents = (
@@ -77,13 +111,46 @@ agents = (
     .get("research", {})
     .get("default_agents", [])
 )
+
+printed = False
 for agent in agents:
     if isinstance(agent, str) and agent.strip():
         print(agent.strip())
-PY
+        printed = True
+
+sys.exit(0 if printed else 3)
+' "$config_path")"
+  parse_status=$?
+  if (( parse_status == 0 )); then
+    printf '%s\n' "$output"
+    return 0
+  fi
+  if (( parse_status == 3 )); then
+    return 1
+  fi
+  printf 'Failed to read research agent config: %s\n' "$config_path" >&2
+  return "$parse_status"
+}
+
+_vetcoders_research_agents() {
+  local config_path
+  local parse_status
+
+  if [[ -n "${VIBECRAFTED_RESEARCH_AGENTS:-}" ]]; then
+    printf '%s\n' "${VIBECRAFTED_RESEARCH_AGENTS}" | tr ', ' '\n' | awk 'NF'
+    return 0
   fi
 
-  printf '%s\n' claude codex junie
+  while IFS= read -r config_path; do
+    [[ -n "$config_path" ]] || continue
+    _vetcoders_research_agents_from_config "$config_path" && return 0
+    parse_status=$?
+    if (( parse_status != 1 )); then
+      return "$parse_status"
+    fi
+  done < <(_vetcoders_research_config_paths)
+
+  printf '%s\n' claude codex gemini
 }
 
 _vetcoders_write_research_layout() {
@@ -158,7 +225,7 @@ _vetcoders_research_help() {
   cat <<'HELP'
 ⚒  research
 ─────────────────────────────────────────
-Triple-agent research swarm launcher (claude + codex + junie by default).
+Configurable triple-agent research swarm launcher.
 
 Usage:
   vc-research --prompt "Question to research"
@@ -270,15 +337,18 @@ _vetcoders_research() {
   if [[ "$research_mode" == "uno" ]]; then
     research_agents=("$requested_research_agent")
   else
+    local agents_output
+    agents_output="$(_vetcoders_research_agents)" || return 1
     while IFS= read -r agent; do
       case "$agent" in
         claude|codex|gemini|agy|junie|grok) research_agents+=("$agent") ;;
         "") ;;
         *) printf 'Ignoring unsupported research agent from runtime picking config: %s\n' "$agent" >&2 ;;
       esac
-    done < <(_vetcoders_research_agents)
+    done <<< "$agents_output"
     if (( ${#research_agents[@]} == 0 )); then
-      research_agents=(claude codex junie)
+      printf 'vc-research: no supported research agents configured.\n' >&2
+      return 1
     fi
   fi
 

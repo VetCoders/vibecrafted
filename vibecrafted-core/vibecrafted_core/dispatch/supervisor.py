@@ -23,7 +23,7 @@ from .model import (
     Dispatch,
     Verdict,
 )
-from .schema import render_cell_prompt
+from .schema import render_cell_prompt, render_cut_verifies
 from .verify import run_verifies
 
 DEFAULT_POLL_S = 90.0
@@ -546,7 +546,7 @@ class DispatchSupervisor:
                 f"[{cut.id}] verify_executor={self.policy.verify_executor!r}"
                 " is not supported yet; falling back to supervisor execution"
             )
-        verdict = run_verifies(cut, repo=self.repo)
+        verdict = run_verifies(render_cut_verifies(self.dispatch, cut), repo=self.repo)
         for evidence in verdict.verifiers:
             self._journal(
                 f"[{cut.id}] verifier {evidence.matcher_result}:"

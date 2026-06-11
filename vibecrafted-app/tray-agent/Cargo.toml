@@ -5,7 +5,9 @@ edition = "2024"
 publish = false
 
 [features]
-linux-notifications = ["notify-rust"]
+default = ["native-notifications"]
+native-notifications = ["notify-rust"]
+linux-notifications = ["native-notifications"]
 
 [dependencies]
 anyhow = "1"

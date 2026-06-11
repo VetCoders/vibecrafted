@@ -432,15 +432,28 @@ spawn_in_zellij_pane() {
   return 1
 }
 
-# Spawn the vibecrafted-await-watch helper as a stacked side-pane in the
+# Spawn the vibecrafted-await-watch helper as a floating mini probe in the
 # worker's run tab so the operator gets live transcript tail + automatic
-# self-exit when the worker is done. Hard requirement: SPAWN_RUN_ID env,
-# jq available, the helper script executable, and the run tab actually
-# exists (we re-query if the post-tab-creation race left run_tab_id empty).
+# self-exit without stealing layout space. Hard requirement: active SPAWN_META,
+# jq available, the helper script executable, and the run tab actually exists
+# (we re-query if the post-tab-creation race left run_tab_id empty).
+spawn_await_status_is_active() {
+  case "${1:-}" in
+    launching|running|in-progress|pending|created|brief_rendered|process_spawned|prompt_delivered|first_output_seen|active|artifact_seen|report_started|posthook_running)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 spawn_await_watch_pane() {
   local run_tab_id="$1" run_tab_name="$2" worker_pane_name="$3"
   command -v jq >/dev/null 2>&1 || return 0
   [[ -n "${SPAWN_RUN_ID:-}" ]] || return 0
+  [[ -n "${SPAWN_META:-}" && -f "${SPAWN_META:-}" ]] || return 0
+  local meta_status=""
+  meta_status="$(jq -r '.status // ""' "$SPAWN_META" 2>/dev/null || true)"
+  spawn_await_status_is_active "$meta_status" || return 0
   local zellij_bin=""
   zellij_bin="$(spawn_zellij_bin)" || return 0
 
@@ -456,13 +469,22 @@ spawn_await_watch_pane() {
   fi
   [[ -n "$run_tab_id" ]] || return 0
 
+  local focused_pane_id=""
+  focused_pane_id="$(spawn_current_focused_pane_id 2>/dev/null || true)"
   local pane_name="await:${SPAWN_AGENT:-?}:${SPAWN_RUN_ID##*-}"
   "$zellij_bin" action new-pane --tab-id "$run_tab_id" \
-    --stacked \
+    --floating \
+    --width 24% \
+    --height 35% \
+    --x 76% \
+    --y 8% \
     --close-on-exit \
     --name "$pane_name" \
     --cwd "${SPAWN_ROOT:-$(pwd)}" \
-    -- "$helper" --run-id "$SPAWN_RUN_ID" >/dev/null 2>&1 || true
+    -- "$helper" --meta "$SPAWN_META" >/dev/null 2>&1 || true
+  if [[ -n "$focused_pane_id" ]]; then
+    "$zellij_bin" action focus-pane-id "$focused_pane_id" >/dev/null 2>&1 || true
+  fi
 }
 
 spawn_in_operator_session() {
@@ -662,13 +684,15 @@ spawn_probe_watch() {
   fi
 }
 
-# Cross-platform system notification helper. iTerm2 OSC 9 is preferred so the
-# Notification Center owner is iTerm2, not Script Editor via osascript.
+# Cross-platform system notification helper. iTerm2 OSC 9 is preferred inside
+# iTerm; otherwise route through the Vibecrafted tray app bridge. Do not use
+# AppleScript for notifications: macOS attributes those to Script Editor.
 # Silent no-op when no notifier is available.
 spawn_probe_notify() {
   local title="$1"
   local body="$2"
   local message="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. — ${title}: ${body}"
+  local tray_bin=""
   message="${message//$'\033'/ }"
   message="${message//$'\a'/ }"
 
@@ -678,9 +702,13 @@ spawn_probe_notify() {
     fi
   fi
 
-  if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]] && command -v osascript >/dev/null 2>&1; then
-    osascript -e "display notification \"${body//\"/\\\"}\" with title \"𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. — ${title//\"/\\\"}\"" >/dev/null 2>&1 || true
-  elif command -v notify-send >/dev/null 2>&1; then
+  tray_bin="${VIBECRAFTED_TRAY_NOTIFY_BIN:-}"
+  [[ -n "$tray_bin" ]] || tray_bin="$(command -v vc-mux-tray 2>/dev/null || true)"
+  if [[ -n "$tray_bin" && -x "$tray_bin" ]]; then
+    "$tray_bin" notify --title "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. — $title" --message "$body" >/dev/null 2>&1 && return 0
+  fi
+
+  if command -v notify-send >/dev/null 2>&1; then
     notify-send "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. — $title" "$body" >/dev/null 2>&1 || true
   fi
 }

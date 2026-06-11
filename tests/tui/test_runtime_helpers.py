@@ -279,6 +279,24 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
     staged_home = tmp_path / "home" / ".vibecrafted"
     runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
     capture_file = tmp_path / "zellij-args.txt"
+    artifacts_dir = staged_home / "artifacts" / "repo" / "2026_0611" / "reports"
+    artifacts_dir.mkdir(parents=True)
+    meta = artifacts_dir / "run.meta.json"
+    transcript = artifacts_dir / "run.transcript.log"
+    transcript.write_text("", encoding="utf-8")
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "run-424242",
+                "status": "running",
+                "agent": "codex",
+                "mode": "review",
+                "transcript": str(transcript),
+                "launcher_pid": os.getpid(),
+            }
+        ),
+        encoding="utf-8",
+    )
     helper_root = tmp_path / "frontier"
     helper = (
         helper_root / "config" / "agents" / "scripts" / "vibecrafted-await-watch.sh"
@@ -289,7 +307,34 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
     (helper_root / "config" / "starship.toml").write_text("", encoding="utf-8")
 
     _write_capture_command(runtime_home / "bin", "zellij", capture_file)
-    _write_capture_command(runtime_home / "bin", "jq", tmp_path / "jq-args.txt")
+    jq = runtime_home / "bin" / "jq"
+    jq.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+            if [[ "${1:-}" == "-r" ]]; then
+              filter="${2:-}"
+              file="${3:-}"
+            else
+              filter="${1:-}"
+              file="${2:-}"
+            fi
+            python3 - "$filter" "$file" <<'PY'
+            import json
+            import sys
+
+            key = sys.argv[1].split()[0].lstrip(".")
+            with open(sys.argv[2], "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+            value = payload.get(key, "")
+            print("" if value is None else value)
+            PY
+            """
+        ),
+        encoding="utf-8",
+    )
+    jq.chmod(0o755)
 
     initial_path = os.defpath
     result = _run_vetcoders_helper(
@@ -314,7 +359,10 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
     assert capture_file.exists()
     payload = capture_file.read_text(encoding="utf-8")
     assert "action\nnew-pane" in payload
+    assert "--floating" in payload
     assert "--name\nawait:codex:424242" in payload
+    assert f"--meta\n{meta}" in payload
+    assert "--run-id" not in payload
     assert result.stdout == f"PATH={initial_path}\n"
 
 

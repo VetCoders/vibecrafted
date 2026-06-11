@@ -13,6 +13,21 @@ HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 RESEARCH_SKILL = REPO_ROOT / "skills" / "vc-research" / "SKILL.md"
 
 
+def write_research_config(config_home: Path, agents: list[str]) -> None:
+    config_dir = config_home / "vibecrafted"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    quoted_agents = ", ".join(f'"{agent}"' for agent in agents)
+    (config_dir / "config.toml").write_text(
+        textwrap.dedent(
+            f"""\
+            [runtime.picking.research]
+            default_agents = [{quoted_agents}]
+            """
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_vc_research_help_is_pure_help() -> None:
     result = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-research --help'],
@@ -22,7 +37,7 @@ def test_vc_research_help_is_pure_help() -> None:
     )
 
     assert result.returncode == 0
-    assert "Triple-agent research swarm launcher" in result.stdout
+    assert "Configurable triple-agent research swarm launcher" in result.stdout
     assert "Do not pass an agent directly to vc-research." in result.stdout
     assert "vc-research uno <agent>" in result.stdout
     assert "Research swarm launched" not in result.stdout
@@ -56,6 +71,7 @@ def test_vc_research_uno_launches_one_requested_agent(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
 
     result = subprocess.run(
@@ -141,6 +157,7 @@ def test_vc_research_generated_worker_prompts_do_not_leak_launcher_semantics(
     env = os.environ.copy()
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
 
     result = subprocess.run(
         [
@@ -207,10 +224,13 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     crafted_home = tmp_path / "home" / ".vibecrafted"
+    config_home = tmp_path / "xdg"
+    write_research_config(config_home, ["grok", "codex", "gemini"])
 
     env = os.environ.copy()
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(config_home)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     for key in (
         "VIBECRAFTED_RUN_ID",
@@ -248,19 +268,19 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
     assert run_dir.parent.name == "research"
     assert (run_dir / "summary.md").is_file()
     assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
-        "claude.meta.json",
         "codex.meta.json",
-        "junie.meta.json",
+        "gemini.meta.json",
+        "grok.meta.json",
     ]
     assert sorted(p.name for p in (run_dir / "tmp").glob("*_launch.sh")) == [
-        "claude_launch.sh",
         "codex_launch.sh",
-        "junie_launch.sh",
+        "gemini_launch.sh",
+        "grok_launch.sh",
     ]
     assert not list(run_dir.parent.parent.glob("reports/*rsch*.meta.json"))
     assert not list(run_dir.parent.parent.glob("tmp/vc-research-*"))
 
-    for agent in ("claude", "codex", "junie"):
+    for agent in ("grok", "codex", "gemini"):
         meta = json.loads((run_dir / "logs" / f"{agent}.meta.json").read_text())
         assert meta["run_id"] == run_id
         assert meta["skill_code"] == "rsch"
@@ -298,15 +318,15 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
     assert str(run_dir / "logs" / "codex.meta.json") in await_result.stdout
 
 
-def test_runtime_picking_manifest_sets_junie_as_default_third_researcher() -> None:
+def test_runtime_picking_manifest_keeps_mainstream_default_researchers() -> None:
     manifest = tomllib.loads((REPO_ROOT / "install.toml").read_text(encoding="utf-8"))
 
     assert manifest["runtime"]["picking"]["research"]["default_agents"] == [
         "claude",
         "codex",
-        "junie",
+        "gemini",
     ]
-    assert "agy" in manifest["runtime"]["picking"]["research"]["fallback_agents"]
+    assert "grok" in manifest["runtime"]["picking"]["research"]["fallback_agents"]
 
 
 def test_vc_research_skill_documents_read_only_source_repo_contract() -> None:

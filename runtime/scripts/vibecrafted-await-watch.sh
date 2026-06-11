@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # vibecrafted-await-watch — auto-tail-await-die pane helper
 #
-# Spawned as a zellij side-pane by `_vetcoders_skill` after every
+# Spawned as a zellij floating probe by legacy shell shims after every
 # non-marbles dispatch. Tails the worker's transcript log, watches the
 # meta status + size delta + worker process liveness, and self-
 # terminates when the worker is done (or the wrapper zombies).
 #
 # Args (one of):
 #   --meta <path>       direct meta.json path (preferred — no resolve cost)
-#   --run-id <id>       run_id; helper greps artifacts/ for matching meta
+#   --run-id <id>       fallback only; helper scans active recent meta files
 #   <run_id>            positional shorthand for --run-id
 #
 # Env tunables:
@@ -19,7 +19,7 @@
 #                                   (default: 3)
 #
 # Exit conditions (in priority order):
-#   1. meta status == completed | failed   → exit clean, report exit_code
+#   1. meta status is terminal             → exit clean, report exit_code
 #   2. launcher_pid dead AND transcript idle >IDLE_TIMEOUT
 #                                          → exit "worker done, status frozen"
 #   3. transcript idle >2*IDLE_TIMEOUT     → exit "possible zombie wrapper"
@@ -30,6 +30,29 @@ set -uo pipefail
 
 RUN_ID=""
 META=""
+
+await_status_is_active() {
+  case "${1:-}" in
+    launching|running|in-progress|pending|created|brief_rendered|process_spawned|prompt_delivered|first_output_seen|active|artifact_seen|report_started|posthook_running)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+await_status_is_terminal() {
+  case "${1:-}" in
+    completed|failed|ghost|stopped|timed_out|contract_failed|closed|process_dead|prompt_not_delivered|no_first_output|idle|stalled|report_missing|report_invalid|recovery_required)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+await_debug() {
+  [[ "${VIBECRAFTED_AWAIT_WATCH_DEBUG:-0}" == "1" ]] || return 0
+  printf '[await-watch] %s\n' "$*" >&2
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -63,24 +86,23 @@ ARTIFACTS_ROOT="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/artifacts"
 # so we grep .run_id field content across recent meta.json files.
 if [[ -z "$META" && -n "$RUN_ID" ]]; then
   if ! command -v jq >/dev/null 2>&1; then
-    echo "[await-watch] jq required to resolve run_id $RUN_ID" >&2
+    await_debug "jq required to resolve run_id $RUN_ID"
     exit 3
   fi
   while IFS= read -r candidate; do
     [[ -f "$candidate" ]] || continue
+    status="$(jq -r '.status // ""' "$candidate" 2>/dev/null || true)"
+    await_status_is_active "$status" || continue
     if [[ "$(jq -r '.run_id // ""' "$candidate" 2>/dev/null)" == "$RUN_ID" ]]; then
       META="$candidate"
       break
     fi
-  done < <(find "$ARTIFACTS_ROOT" -maxdepth 6 -name "*.meta.json" -type f -newermt '7 days ago' 2>/dev/null)
+  done < <(find "$ARTIFACTS_ROOT" -maxdepth 8 -name "*.meta.json" -type f -mtime -2 2>/dev/null)
 fi
 
 if [[ -z "$META" || ! -f "$META" ]]; then
-  short_id="${RUN_ID##*-}"
-  printf '\033]2;await:%s:not-found\007' "${short_id:-?}"
-  echo "[await-watch] meta.json not found (run_id=$RUN_ID meta=$META)" >&2
-  sleep 10
-  exit 1
+  await_debug "meta.json not found (run_id=$RUN_ID meta=$META)"
+  exit 0
 fi
 
 # Backfill RUN_ID from meta if needed (for display)
@@ -90,8 +112,14 @@ fi
 
 # Resolve paths + worker pid from meta
 if ! command -v jq >/dev/null 2>&1; then
-  echo "[await-watch] jq not found on PATH — required for meta parsing" >&2
+  await_debug "jq not found on PATH; required for meta parsing"
   exit 3
+fi
+
+status="$(jq -r '.status // "unknown"' "$META" 2>/dev/null || echo unknown)"
+if ! await_status_is_active "$status"; then
+  await_debug "meta is not active (status=$status meta=$META)"
+  exit 0
 fi
 
 TRANSCRIPT="$(jq -r '.transcript // ""' "$META")"
@@ -145,14 +173,16 @@ while true; do
 
   # Re-read status (worker may have updated meta)
   status="$(jq -r '.status // "unknown"' "$META" 2>/dev/null || echo unknown)"
-  case "$status" in
-    completed|failed)
+  if await_status_is_terminal "$status"; then
       final_status="$status"
       exit_code="$(jq -r '.exit_code // "?"' "$META" 2>/dev/null || echo '?')"
-      printf '\n\033[1;32m[await-watch] worker %s (exit_code=%s)\033[0m\n' "$status" "$exit_code"
+      if [[ "$status" == "completed" ]]; then
+        printf '\n\033[1;32m[await-watch] worker %s (exit_code=%s)\033[0m\n' "$status" "$exit_code"
+      else
+        printf '\n\033[1;33m[await-watch] worker %s (exit_code=%s)\033[0m\n' "$status" "$exit_code"
+      fi
       break
-      ;;
-  esac
+  fi
 
   # Transcript size delta
   size="$(wc -c < "$TRANSCRIPT" 2>/dev/null || echo 0)"
@@ -187,6 +217,6 @@ printf 'final transcript size: %s bytes\n' "$final_size"
 printf 'final meta status:     %s\n' "$status"
 printf '────────────────────────\n'
 
-# Keep pane open for ~30s so operator can read final state, then self-close.
+# Keep pane open briefly so operator can read final state, then self-close.
 # zellij --close-on-exit will reap the pane after we exit.
-sleep 30
+sleep "${VIBECRAFTED_AWAIT_FINAL_HOLD:-8}"

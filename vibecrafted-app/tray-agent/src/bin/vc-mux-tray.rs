@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
@@ -12,6 +12,19 @@ struct Args {
     log_level: String,
     #[arg(long, default_value_t = false)]
     show_dock_icon: bool,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Send a Vibecrafted-owned desktop notification.
+    Notify {
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        message: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -23,6 +36,10 @@ fn main() -> anyhow::Result<()> {
         .init();
     if args.show_dock_icon {
         tracing::info!("--show-dock-icon requested; dock policy is delegated to the app bundle");
+    }
+    if let Some(Command::Notify { title, message }) = args.command {
+        tray_agent::handlers::notify_user(&title, &message);
+        return Ok(());
     }
     tray_agent::run_with_ipc(expand_home(&args.socket))
 }

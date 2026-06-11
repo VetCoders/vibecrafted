@@ -196,28 +196,20 @@ pub(crate) fn notify_spawn_update(agent: &str, state: &str, run_id: &str) {
     }
 }
 
+pub fn notify_user(title: &str, message: &str) {
+    #[cfg(feature = "native-notifications")]
+    if let Err(error) = notify_rust::Notification::new()
+        .summary(title)
+        .body(message)
+        .show()
+    {
+        warn!("failed to show notification: {error}");
+    }
+    tracing::info!("{title}: {message}");
+}
+
 fn notify(title: &str, message: &str) {
-    #[cfg(target_os = "macos")]
-    {
-        let script = format!(
-            "display notification {} with title {}",
-            quote_osascript(message),
-            quote_osascript(title)
-        );
-        let _ = Command::new("osascript").arg("-e").arg(script).spawn();
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        #[cfg(feature = "linux-notifications")]
-        if let Err(error) = notify_rust::Notification::new()
-            .summary(title)
-            .body(message)
-            .show()
-        {
-            warn!("failed to show notification: {error}");
-        }
-        tracing::info!("{title}: {message}");
-    }
+    notify_user(title, message);
 }
 
 fn open_path(path: &Path) {
@@ -226,11 +218,6 @@ fn open_path(path: &Path) {
     #[cfg(not(target_os = "macos"))]
     let command = "xdg-open";
     let _ = Command::new(command).arg(path).spawn();
-}
-
-#[cfg(target_os = "macos")]
-fn quote_osascript(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn home_path(path: &str) -> PathBuf {

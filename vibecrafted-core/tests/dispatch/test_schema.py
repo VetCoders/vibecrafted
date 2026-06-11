@@ -163,3 +163,30 @@ prompt = "duplicate"
     errors = "\n".join(exc.value.errors)
     assert "duplicate cut id 'd1-schema-parser'" in errors
     assert "verify: required unless observational READ is explicit" in errors
+
+
+def test_verifier_rendering_substitutes_placeholders_and_keeps_matchers() -> None:
+    from dataclasses import replace
+
+    from vibecrafted_core.dispatch.model import Verify
+    from vibecrafted_core.dispatch.schema import render_cut_verifies
+
+    dispatch = load_dispatch(FIXTURES / "minimal.dispatch.toml")
+    cut = replace(
+        dispatch.cuts[0],
+        verify=(
+            Verify(
+                run="cd {repo} && grep -c ready {reports_dir}/{id}_report.md",
+                expect={"matches": "^[1-9]"},
+            ),
+        ),
+    )
+
+    rendered = render_cut_verifies(dispatch, cut)
+
+    assert rendered.verify[0].run == (
+        f"cd {dispatch.meta.repo} && grep -c ready"
+        f" {dispatch.meta.reports_dir}/{cut.id}_report.md"
+    )
+    assert "{" not in rendered.verify[0].run
+    assert rendered.verify[0].matchers == cut.verify[0].matchers

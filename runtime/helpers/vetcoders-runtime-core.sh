@@ -249,8 +249,11 @@ _vetcoders_marbles_emit_probe() {
 
   # Detach: probe must NEVER block the operator shell.
   (
-    if command -v osascript >/dev/null 2>&1; then
-      osascript -e "display notification \"${body//\"/\\\"}\" with title \"${title//\"/\\\"}\"" >/dev/null 2>&1 || true
+    local tray_bin=""
+    tray_bin="${VIBECRAFTED_TRAY_NOTIFY_BIN:-}"
+    [[ -n "$tray_bin" ]] || tray_bin="$(command -v vc-mux-tray 2>/dev/null || true)"
+    if [[ -n "$tray_bin" && -x "$tray_bin" ]]; then
+      "$tray_bin" notify --title "$title" --message "$body" >/dev/null 2>&1 || true
     elif command -v notify-send >/dev/null 2>&1; then
       notify-send -t "$((delay_s * 1000))" "$title" "$body" >/dev/null 2>&1 || true
     else

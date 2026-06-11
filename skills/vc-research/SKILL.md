@@ -3,8 +3,8 @@ name: vc-research
 version: 1.3.0
 description: >
   Standalone triple-agent research skill. Co-define the problem with the user,
-  write a research plan, then spawn claude + codex + gemini simultaneously on the
-  same questions. Three independent reports come back. Synthesize into one
+  write a research plan, then spawn the configured triple-agent research lanes
+  on the same questions. Three independent reports come back. Synthesize into one
   gap-free research document ready for implementation. Use whenever the team
   needs ground truth before coding: unknown APIs, architecture decisions, library
   assessment, protocol research, best-practice survey, competitive analysis,
@@ -88,7 +88,7 @@ or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`
 
 ## Purpose
 
-Research a problem from three independent angles before writing code. The orchestrating agent co-defines the problem with the user, writes a plan, spawns claude + codex + gemini on the same questions, then synthesizes findings into one gap-free document. This is the Research phase from `vc-workflow`, extracted as a standalone skill and upgraded with triple-agent triangulation.
+Research a problem from three independent angles before writing code. The orchestrating agent co-defines the problem with the user, writes a plan, spawns the configured research lanes on the same questions, then synthesizes findings into one gap-free document. This is the Research phase from `vc-workflow`, extracted as a standalone skill and upgraded with triple-agent triangulation.
 
 ## When To Use
 
@@ -187,7 +187,9 @@ vc-research --file "$PLAN"
 
 Repo-owned spawn scripts remain the internal engine. Do not document raw `bash skills/...spawn.sh` paths as the operator entrypoint.
 
-The launcher opens one shared Zellij research tab using `research.kdl`, keeps a common `run_id`, and starts claude + codex + gemini against the same plan. Divergence between reports reveals blind spots.
+Research lane picking is configurable at runtime. Precedence is `VIBECRAFTED_RESEARCH_AGENTS`, then `${XDG_CONFIG_HOME:-$HOME/.config}/vibecrafted/config.toml`, then the packaged `install.toml` defaults.
+
+The launcher opens one shared Zellij research tab using `research.kdl`, keeps a common `run_id`, and starts the configured research lanes against the same plan. Divergence between reports reveals blind spots.
 
 Immediately after spawn, the operator gets a launch card with shared `run_id`, run directory, reports directory, summary path, and the exact await command. **The launch card is the default surface.** `observe --last` is a drilldown tool, not the primary source of truth.
 
