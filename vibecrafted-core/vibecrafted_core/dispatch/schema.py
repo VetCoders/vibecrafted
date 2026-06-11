@@ -57,10 +57,18 @@ def doctor_dispatch(
     text: str, *, base_dir: str | Path | None = None
 ) -> DispatchDoctorResult:
     try:
+        dispatch = parse_dispatch(text, base_dir=base_dir)
+        policy_errors = _doctor_policy_errors(dispatch)
+        if policy_errors:
+            return DispatchDoctorResult(
+                ok=False,
+                errors=tuple(policy_errors),
+                dispatch=dispatch,
+            )
         return DispatchDoctorResult(
             ok=True,
             errors=(),
-            dispatch=parse_dispatch(text, base_dir=base_dir),
+            dispatch=dispatch,
         )
     except DispatchSchemaError as exc:
         return DispatchDoctorResult(ok=False, errors=exc.errors, dispatch=None)
@@ -300,9 +308,7 @@ def _parse_cuts(
                 f"cuts[{index}].verify: required unless observational READ is explicit"
             )
         if mode == "read":
-            if not mutation:
-                errors.append(f"cuts[{index}].mutation: required for READ cuts")
-            elif mutation not in READ_MUTATIONS:
+            if mutation and mutation not in READ_MUTATIONS:
                 errors.append(f"cuts[{index}].mutation: unsupported value {mutation!r}")
 
         cuts.append(
@@ -324,6 +330,14 @@ def _parse_cuts(
             )
         )
     return cuts
+
+
+def _doctor_policy_errors(dispatch: Dispatch) -> list[str]:
+    errors: list[str] = []
+    for index, cut in enumerate(dispatch.cuts):
+        if cut.mode == "read" and not cut.mutation:
+            errors.append(f"cuts[{index}].mutation: required for READ cuts")
+    return errors
 
 
 def _parse_verify(value: Any, cut_index: int, errors: list[str]) -> list[Verify]:

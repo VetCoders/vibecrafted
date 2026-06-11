@@ -43,6 +43,7 @@ def test_stage0_maximum_fixture_is_accepted() -> None:
     assert dispatch.workflow_map["audit"] == "review"
     assert dispatch.cuts[0].brief.endswith("stage0-brief.md")
     assert dispatch.cuts[1].resolved_workflow == "review"
+    assert dispatch.cuts[1].mutation == ""
     assert dispatch.cuts[1].observational is True
 
 
@@ -111,6 +112,32 @@ def test_doctor_reports_schema_errors_without_throwing() -> None:
     assert result.ok is False
     assert result.dispatch is None
     assert any("unsupported schema" in error for error in result.errors)
+
+
+def test_parser_accepts_read_cut_without_mutation_for_doctor_policy() -> None:
+    text = (FIXTURES / "stage0.dispatch.toml").read_text(encoding="utf-8")
+
+    dispatch = parse_dispatch(text, base_dir=FIXTURES)
+    result = doctor_dispatch(text, base_dir=FIXTURES)
+
+    assert dispatch.cuts[1].mode == "read"
+    assert dispatch.cuts[1].mutation == ""
+    assert result.ok is False
+    assert result.dispatch is not None
+    assert "cuts[1].mutation: required for READ cuts" in result.errors
+
+
+def test_rejects_unsupported_read_mutation_at_parse_time() -> None:
+    text = (FIXTURES / "stage0.dispatch.toml").read_text(encoding="utf-8")
+    text = text.replace(
+        'mode = "read"\nobservational = true',
+        'mode = "read"\nmutation = "teleport"\nobservational = true',
+    )
+
+    with pytest.raises(DispatchSchemaError) as exc:
+        parse_dispatch(text, base_dir=FIXTURES)
+
+    assert "cuts[1].mutation: unsupported value 'teleport'" in exc.value.errors
 
 
 def test_rejects_duplicate_cut_ids_and_missing_verify() -> None:

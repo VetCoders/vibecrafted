@@ -55,6 +55,5 @@ phase = "Audit"
 agent = "gemini"
 workflow = "audit"
 mode = "read"
-mutation = "forbid"
 observational = true
 prompt = "Review baton states and report whether the parser contract is complete."
