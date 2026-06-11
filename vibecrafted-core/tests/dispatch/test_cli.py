@@ -4,7 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
-from vibecrafted_core.dispatch import cli
+from vibecrafted_core import cli as root_cli
+from vibecrafted_core.dispatch import cli as dispatch_cli
 
 
 def _init_repo(path: Path) -> None:
@@ -57,7 +58,7 @@ prompt = "hello {{baton}}"
 def test_cli_doctor_accepts_valid_dispatch(tmp_path: Path, capsys) -> None:
     dispatch_file, _, _ = _dispatch_file(tmp_path)
 
-    assert cli.main([str(dispatch_file), "--doctor"]) == 0
+    assert dispatch_cli.main([str(dispatch_file), "--doctor"]) == 0
 
     captured = capsys.readouterr()
     assert captured.out.strip() == "dispatch-doctor: ok"
@@ -66,7 +67,7 @@ def test_cli_doctor_accepts_valid_dispatch(tmp_path: Path, capsys) -> None:
 def test_cli_dry_run_renders_prompts_and_machine_result(tmp_path: Path, capsys) -> None:
     dispatch_file, reports, _ = _dispatch_file(tmp_path)
 
-    assert cli.main([str(dispatch_file), "--dry-run", "--json"]) == 0
+    assert dispatch_cli.main([str(dispatch_file), "--dry-run", "--json"]) == 0
 
     payload = json.loads(capsys.readouterr().out)
     dry_run_dir = reports / "dry-run"
@@ -82,7 +83,18 @@ def test_cli_dry_run_renders_prompts_and_machine_result(tmp_path: Path, capsys) 
 def test_cli_doctor_rejects_conductor_invalid_fixture(capsys) -> None:
     fixture = Path(__file__).parent / "fixtures" / "invalid-no-verify.dispatch.toml"
 
-    assert cli.main([str(fixture), "--doctor"]) == 1
+    assert dispatch_cli.main([str(fixture), "--doctor"]) == 1
 
     captured = capsys.readouterr()
     assert "cuts[0].verify" in captured.out
+
+
+def test_root_cli_dispatch_subcommand_routes_to_dispatch_cli(
+    tmp_path: Path, capsys
+) -> None:
+    dispatch_file, _, _ = _dispatch_file(tmp_path)
+
+    assert root_cli.main(["dispatch", str(dispatch_file), "--doctor"]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "dispatch-doctor: ok"

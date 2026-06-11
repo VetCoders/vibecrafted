@@ -177,68 +177,62 @@ class DispatchSupervisor:
     def run(self) -> DispatchResult:
         baton = self.dispatch.empty_baton()
         line_broken = False
+        active_cut: Cut | None = None
+        result: DispatchResult | None = None
         poll_s, timeout_s = self._await_config()
-        self._journal(
-            f"dispatch start: {self.dispatch.meta.name!r} repo={self.repo}"
-            f" cuts={len(self.dispatch.cuts)} repair_rounds={self.policy.repair_rounds}"
-            f" on_critical_fail={self.policy.on_critical_fail}"
-            f" on_timeout={self.policy.on_timeout}"
-            f" await=poll {poll_s:g}s/timeout {timeout_s:g}s"
-        )
-        self._write_tracker()
+        try:
+            self._journal(
+                f"dispatch start: {self.dispatch.meta.name!r} repo={self.repo}"
+                f" cuts={len(self.dispatch.cuts)} repair_rounds={self.policy.repair_rounds}"
+                f" on_critical_fail={self.policy.on_critical_fail}"
+                f" on_timeout={self.policy.on_timeout}"
+                f" await=poll {poll_s:g}s/timeout {timeout_s:g}s"
+            )
+            self._write_tracker()
 
-        for cut in self.dispatch.cuts:
-            if line_broken:
-                self._set_state(cut.id, STATE_PENDING, "skipped: line broken upstream")
-                continue
-            verdict = self._run_cut(cut, baton)
-            baton = baton.append(verdict)
-            self._set_state(cut.id, verdict.state, self._verdict_note(verdict))
-            if (
-                cut.critical
-                and not verdict.ok
-                and self.policy.on_critical_fail == "break"
-            ):
-                line_broken = True
-                self._journal(
-                    f"[{cut.id}] critical cut not verified ({verdict.state}):"
-                    " breaking the dispatch line"
+            for cut in self.dispatch.cuts:
+                active_cut = cut
+                if line_broken:
+                    self._set_state(
+                        cut.id, STATE_PENDING, "skipped: line broken upstream"
+                    )
+                    continue
+                verdict = self._run_cut(cut, baton)
+                baton = baton.append(verdict)
+                self._set_state(cut.id, verdict.state, self._verdict_note(verdict))
+                if (
+                    cut.critical
+                    and not verdict.ok
+                    and self.policy.on_critical_fail == "break"
+                ):
+                    line_broken = True
+                    self._journal(
+                        f"[{cut.id}] critical cut not verified ({verdict.state}):"
+                        " breaking the dispatch line"
+                    )
+
+            result = self._build_result(baton, line_broken)
+            return result
+        except Exception as exc:
+            message = f"supervisor exception: {type(exc).__name__}: {exc}"
+            self._journal(message)
+            if active_cut is not None:
+                self._set_state(active_cut.id, STATE_FAILED, message)
+                baton = baton.append(
+                    Verdict(
+                        cut_id=active_cut.id,
+                        phase=active_cut.phase,
+                        state=STATE_FAILED,
+                        failures=(f"{active_cut.id}: {message}",),
+                    )
                 )
-
-        verdicts = {state.cut_id: state for state in baton.states}
-        result = DispatchResult(
-            line_broken=line_broken,
-            baton=baton,
-            states={cut_id: state for cut_id, (state, _) in self._states.items()},
-            cuts=tuple(
-                {
-                    "id": cut.id,
-                    "phase": cut.phase,
-                    "agent": cut.agent,
-                    "state": self._states[cut.id][0],
-                    "note": self._states[cut.id][1],
-                    "commit": verdicts[cut.id].commit if cut.id in verdicts else "",
-                    "report": verdicts[cut.id].report if cut.id in verdicts else "",
-                }
-                for cut in self.dispatch.cuts
-            ),
-            artifacts={
-                "tracker": str(self.tracker_path),
-                "journal": str(self.journal_path),
-                "handoff": str(self.handoff_path),
-                "result": str(self.result_path),
-            },
-        )
-        self._write_handoff(result)
-        self.result_path.write_text(
-            json.dumps(result.to_dict(), ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        self._journal(
-            f"dispatch end: dou_index {baton.verified}/{baton.total}"
-            f" line_broken={line_broken}"
-        )
-        return result
+                line_broken = True
+                self._mark_downstream_skipped(active_cut.id)
+            result = self._build_result(baton, line_broken)
+            return result
+        finally:
+            final_result = result or self._build_result(baton, line_broken)
+            self._write_final_artifacts(final_result)
 
     # -------------------------------------------------------------- per cut
 
@@ -375,7 +369,17 @@ class DispatchSupervisor:
     def _execute_cell(
         self, cut: Cut, prompt: str, kind: str
     ) -> tuple[AwaitOutcome | None, Verdict | None]:
-        cell = self.launcher(cut, prompt, kind)
+        try:
+            cell = self.launcher(cut, prompt, kind)
+        except Exception as exc:
+            message = f"{kind} launch crashed: {type(exc).__name__}: {exc}"
+            self._journal(f"[{cut.id}] {message}")
+            return None, Verdict(
+                cut_id=cut.id,
+                phase=cut.phase,
+                state=STATE_FAILED,
+                failures=(f"{cut.id}: {message}",),
+            )
         if not cell.accepted:
             message = f"{kind} launch refused: {cell.error or 'unknown error'}"
             self._journal(f"[{cut.id}] {message}")
@@ -638,6 +642,52 @@ class DispatchSupervisor:
             state, note = self._states[cut.id]
             lines.append(f"| {cut.id} | {cut.phase} | {cut.agent} | {state} | {note} |")
         self.tracker_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _mark_downstream_skipped(self, cut_id: str) -> None:
+        past_failed_cut = False
+        for cut in self.dispatch.cuts:
+            if cut.id == cut_id:
+                past_failed_cut = True
+                continue
+            if past_failed_cut and self._states[cut.id][0] == STATE_PENDING:
+                self._set_state(cut.id, STATE_PENDING, "skipped: line broken upstream")
+
+    def _build_result(self, baton: Baton, line_broken: bool) -> DispatchResult:
+        verdicts = {state.cut_id: state for state in baton.states}
+        return DispatchResult(
+            line_broken=line_broken,
+            baton=baton,
+            states={cut_id: state for cut_id, (state, _) in self._states.items()},
+            cuts=tuple(
+                {
+                    "id": cut.id,
+                    "phase": cut.phase,
+                    "agent": cut.agent,
+                    "state": self._states[cut.id][0],
+                    "note": self._states[cut.id][1],
+                    "commit": verdicts[cut.id].commit if cut.id in verdicts else "",
+                    "report": verdicts[cut.id].report if cut.id in verdicts else "",
+                }
+                for cut in self.dispatch.cuts
+            ),
+            artifacts={
+                "tracker": str(self.tracker_path),
+                "journal": str(self.journal_path),
+                "handoff": str(self.handoff_path),
+                "result": str(self.result_path),
+            },
+        )
+
+    def _write_final_artifacts(self, result: DispatchResult) -> None:
+        self.result_path.write_text(
+            json.dumps(result.to_dict(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self._write_handoff(result)
+        self._journal(
+            f"dispatch end: dou_index {result.baton.verified}/{result.baton.total}"
+            f" line_broken={result.line_broken}"
+        )
 
     def _write_handoff(self, result: DispatchResult) -> None:
         baton = result.baton

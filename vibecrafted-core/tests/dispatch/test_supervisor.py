@@ -322,6 +322,53 @@ prompt = "poisoned tree"
     assert any("SUBSTRATE_FAILURE" in f for f in result.baton.last.failures)
 
 
+def test_launcher_exception_still_emits_result_and_handoff(tmp_path: Path) -> None:
+    dispatch, _reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "boom"
+critical = true
+agent = "codex"
+workflow = "implement"
+prompt = "launcher crashes"
+  [[cuts.verify]]
+  run = "echo should-not-run"
+  expect = { contains = "should-not-run" }
+
+[[cuts]]
+id = "downstream"
+agent = "codex"
+workflow = "implement"
+prompt = "skipped after critical crash"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+    )
+
+    def crashing_launcher(_cut, _prompt: str, _kind: str) -> CellRun:
+        raise RuntimeError("launcher exploded before accepting the cell")
+
+    result = run_dispatch(
+        dispatch, launcher=crashing_launcher, artifacts_dir=artifacts_dir
+    )
+
+    assert result.line_broken is True
+    assert result.states == {"boom": STATE_FAILED, "downstream": STATE_PENDING}
+    payload = json.loads(
+        (artifacts_dir / "dispatch-result.json").read_text(encoding="utf-8")
+    )
+    assert [(entry["id"], entry["state"]) for entry in payload["cuts"]] == [
+        ("boom", STATE_FAILED),
+        ("downstream", STATE_PENDING),
+    ]
+    handoff = (artifacts_dir / "handoff.md").read_text(encoding="utf-8")
+    assert "launcher exploded before accepting the cell" in handoff
+    journal = (artifacts_dir / "journal.md").read_text(encoding="utf-8")
+    assert "dispatch end" in journal
+
+
 def test_timeout_continue_marks_unknown_and_journals(tmp_path: Path) -> None:
     dispatch, reports_dir, artifacts_dir = build_dispatch(
         tmp_path,
