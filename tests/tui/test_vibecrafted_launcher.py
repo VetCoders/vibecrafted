@@ -1636,6 +1636,21 @@ def test_agent_subcommand_help_lists_modes() -> None:
     assert "implement <plan.md>" in result.stdout
     assert "observe   --last" in result.stdout
     assert "await     --last" in result.stdout
+    assert "stop      --run-id <id>" in result.stdout
+
+
+def test_agent_stop_mode_routes_to_core_cli_help() -> None:
+    result = subprocess.run(
+        [str(LAUNCHER), "codex", "stop", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Stop a run by launcher process group." in result.stdout
+    assert "Usage: vibecrafted codex stop --run-id <id>" in result.stdout
+    assert "Unknown mode: stop" not in result.stderr
 
 
 def test_dashboard_subcommand_launches_repo_owned_zellij_layout(tmp_path: Path) -> None:

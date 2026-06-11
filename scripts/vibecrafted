@@ -33,7 +33,7 @@ _red='\033[31m'
 _reset='\033[0m'
 
 _agents=(claude codex gemini agy junie grok)
-_modes=(implement research review plan prompt observe await)
+_modes=(implement research review plan prompt observe await stop)
 _skills=(audit decorate delegate dou followup hydrate implement intents justdo marbles ownership partner polarize prune release research review scaffold workflow)
 
 _script_repo_root() {
@@ -528,7 +528,7 @@ cmd_agent_help() {
   printf '  Plan-based helper modes for %s.\n' "$agent"
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted %s <implement|research|review|plan|prompt|observe|await> [args]\n' "$agent"
+  printf '  vibecrafted %s <implement|research|review|plan|prompt|observe|await|stop> [args]\n' "$agent"
   printf '\n'
   printf '%bModes:%b\n' "$_bold" "$_reset"
   printf '  implement <plan.md>            Execute a plan file\n'
@@ -538,12 +538,14 @@ cmd_agent_help() {
   printf '  prompt    <plan.md>            Free-form prompt with plan context\n'
   printf '  observe   --last               Check the last report or transcript\n'
   printf '  await     --last               Wait for metadata completion + summary\n'
+  printf '  stop      --run-id <id>        TERM the launcher process group and mark stopped\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted %s implement .vibecrafted/plans/my-plan.md\n' "$agent"
   printf '  vibecrafted %s research .vibecrafted/plans/my-plan.md\n' "$agent"
   printf '  vibecrafted %s observe --last\n' "$agent"
   printf '  vibecrafted %s await --last\n' "$agent"
+  printf '  vibecrafted %s stop --run-id <id>\n' "$agent"
   printf '\n'
 }
 
@@ -1850,6 +1852,18 @@ cmd_resume() {
   _run_helper vc-resume "$agent" "$@"
 }
 
+cmd_stop() {
+  local agent="$1"
+  shift || true
+  local core_dir
+  core_dir="$(_dispatcher_core_dir 2>/dev/null || true)"
+  [[ -n "$core_dir" ]] || {
+    printf '%b✗%b Vibecrafted Core module not found.\n' "$_red" "$_reset" >&2
+    return 1
+  }
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.cli "$agent" stop "$@"
+}
+
 run_mode() {
   local agent="$1"
   local mode="$2"
@@ -1864,9 +1878,14 @@ run_mode() {
       prompt)    printf '  Free-form prompt with plan context.\n  Usage: vibecrafted %s prompt <plan.md>\n' "$agent" ;;
       observe)   printf '  Check the last agent report or transcript.\n  Usage: vibecrafted %s observe --last\n' "$agent" ;;
       await)     printf '  Wait for the last agent run to finish via metadata.\n  Usage: vibecrafted %s await --last\n' "$agent" ;;
+      stop)      printf '  Stop a run by launcher process group.\n  Usage: vibecrafted %s stop --run-id <id>\n' "$agent" ;;
     esac
     printf '\n'
     return 0
+  fi
+  if [[ "$mode" == "stop" ]]; then
+    cmd_stop "$agent" "$@"
+    return
   fi
   _ensure_helpers_loaded || return 1
   _run_helper "${agent}-${mode}" "$@"

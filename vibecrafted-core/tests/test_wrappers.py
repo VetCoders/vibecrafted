@@ -5,6 +5,7 @@ import subprocess
 import pytest
 
 from vibecrafted_core import wrappers
+from vibecrafted_core import workflow
 
 
 def test_resume_main_routes_captured_session_through_zellij_aware_resume_helper(
@@ -49,3 +50,51 @@ def test_resume_main_routes_captured_session_through_zellij_aware_resume_helper(
             "Continue the fix",
         ]
     ]
+
+
+def test_stop_main_prints_success_for_stopped_run(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        workflow,
+        "stop_run",
+        lambda run_id, *, reason, grace_seconds: {
+            "accepted": True,
+            "run_id": run_id,
+            "target": "launcher_pid",
+            "target_pid": 1234,
+            "target_pgid": 1234,
+            "already_dead": False,
+            "run": {"state": "stopped"},
+        },
+    )
+
+    code = wrappers.stop_main(
+        ["--agent", "codex", "--run-id", "wflw-010101-0001", "--grace-seconds", "0"]
+    )
+
+    assert code == 0
+    assert (
+        "run_id=wflw-010101-0001 state=stopped "
+        "target=launcher_pid:1234 pgid=1234 TERM sent"
+    ) in capsys.readouterr().out
+
+
+def test_stop_main_terminal_noop_is_success(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        workflow,
+        "stop_run",
+        lambda run_id, *, reason, grace_seconds: {
+            "accepted": False,
+            "run_id": run_id,
+            "reason": "run_terminal",
+            "run": {"state": "completed"},
+        },
+    )
+
+    code = wrappers.stop_main(["--run-id", "wflw-terminal"])
+
+    assert code == 0
+    assert "already terminal state=completed; no-op" in capsys.readouterr().out

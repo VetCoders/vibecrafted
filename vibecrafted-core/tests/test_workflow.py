@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,14 @@ def _source_dir(tmp_path: Path) -> Path:
     root = tmp_path / "src"
     root.mkdir(parents=True)
     return root
+
+
+def _write_run_meta(home: Path, payload: dict[str, object]) -> Path:
+    run_dir = home / "artifacts" / "VetCoders" / "vibecrafted" / "2026_0611" / "reports"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / f"{payload['run_id']}.meta.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
 
 def test_normalize_launch_spec_requires_prompt_or_file(tmp_path: Path) -> None:
@@ -153,36 +162,111 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
     assert truth["meta_payload"]["report"] == payload["report"]
 
 
-def test_stop_run_signals_worker_pgid(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        workflow,
-        "lookup_run",
-        lambda run_id: {
-            "run_id": run_id,
-            "state": "active",
-            "worker_pgid": 4321,
+def test_stop_run_terms_live_launcher_process_group(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    proc = subprocess.Popen(["sleep", "60"], start_new_session=True)
+    try:
+        _write_run_meta(
+            home,
+            {
+                "run_id": "wflw-live-stop",
+                "status": "running",
+                "agent": "codex",
+                "mode": "workflow",
+                "root": str(tmp_path),
+                "updated_at": "2026-06-11T00:00:00+00:00",
+                "skill_code": "wflw",
+                "launcher_pid": proc.pid,
+                "liveness": "pid_alive",
+            },
+        )
+
+        payload = workflow.stop_run(
+            "wflw-live-stop", reason="manual", grace_seconds=0.05
+        )
+        proc.wait(timeout=2)
+
+        assert payload["accepted"] is True
+        assert payload["target"] == "launcher_pid"
+        assert payload["target_pid"] == proc.pid
+        assert payload["target_pgid"] == proc.pid
+        assert payload["signal_sent"] is True
+        run = payload["run"]
+        assert run["state"] == "stopped"
+        assert run["exit_code"] == 143
+        assert run["operator_state"] == "stopped"
+        assert run["lifecycle"]["stop"] is False
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=2)
+
+
+def test_stop_run_records_already_dead_launcher_without_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    _write_run_meta(
+        home,
+        {
+            "run_id": "wflw-dead-stop",
+            "status": "running",
+            "agent": "codex",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": "2026-06-11T00:00:00+00:00",
+            "skill_code": "wflw",
+            "launcher_pid": 999999999,
             "liveness": "pid_alive",
-            "exit_code": None,
         },
     )
-    calls: dict[str, Any] = {}
-    monkeypatch.setattr(
-        workflow,
-        "append_event",
-        lambda **kwargs: calls.setdefault("events", []).append(kwargs),
-    )
-    monkeypatch.setattr(workflow.time, "sleep", lambda _seconds: None)
-    monkeypatch.setattr(
-        workflow.os,
-        "killpg",
-        lambda pgid, sig: calls.setdefault("killpg", []).append((pgid, sig)),
-    )
 
-    payload = workflow.stop_run("wflw-010101-0001", reason="manual")
+    payload = workflow.stop_run("wflw-dead-stop", reason="manual", grace_seconds=0)
 
     assert payload["accepted"] is True
-    assert payload["target"] == "worker_pgid"
-    assert calls["killpg"][0][0] == 4321
+    assert payload["already_dead"] is True
+    assert payload["error"] == ""
+    run = payload["run"]
+    assert run["state"] == "stopped"
+    assert run["liveness"] == "terminal"
+    assert run["stop_already_dead"] is True
+    assert run["lifecycle"]["stop"] is False
+
+
+def test_stop_run_terminal_record_is_noop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    _write_run_meta(
+        home,
+        {
+            "run_id": "wflw-terminal-stop",
+            "status": "completed",
+            "agent": "codex",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": "2026-06-11T00:00:00+00:00",
+            "skill_code": "wflw",
+            "exit_code": 0,
+            "launcher_pid": 999999999,
+            "liveness": "terminal",
+        },
+    )
+
+    payload = workflow.stop_run("wflw-terminal-stop", reason="manual")
+
+    assert payload["accepted"] is False
+    assert payload["reason"] == "run_terminal"
+    run = workflow.lookup_run("wflw-terminal-stop")
+    assert run is not None
+    assert run["state"] == "completed"
+    assert run["exit_code"] == 0
+    assert run["lifecycle"]["stop"] is False
 
 
 def test_block_run_marks_active_run_blocked(

@@ -18,6 +18,7 @@ from .control_plane import (
     lookup_run,
     normalize_run_root,
     operator_session_name,
+    record_stop_transition,
     sync_state,
 )
 from .events import append_event
@@ -288,13 +289,36 @@ def await_launch_truth(
 
 
 def _stop_signal_target(run: dict[str, Any]) -> tuple[str, int] | None:
-    for key in ("worker_pgid", "worker_pid", "launcher_pid"):
+    for key in ("launcher_pid", "worker_pgid", "worker_pid"):
         raw = run.get(key)
         if isinstance(raw, int) and raw > 0:
             return key, raw
         if isinstance(raw, str) and raw.strip().isdigit():
             return key, int(raw.strip())
     return None
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _wait_for_pid_exit(pid: int, grace_seconds: float) -> bool:
+    deadline = time.monotonic() + max(float(grace_seconds), 0.0)
+    while time.monotonic() < deadline:
+        if not _pid_is_alive(pid):
+            return False
+        time.sleep(min(0.05, max(deadline - time.monotonic(), 0.0)))
+    return _pid_is_alive(pid)
 
 
 def _normalized_runtime(raw: str) -> str:
@@ -593,31 +617,31 @@ def launch_workflow(
     }
 
 
-def stop_run(run_id: str, *, reason: str = "operator stop request") -> dict[str, Any]:
+def stop_run(
+    run_id: str,
+    *,
+    reason: str = "operator stop request",
+    grace_seconds: float = 2.0,
+) -> dict[str, Any]:
     target = str(run_id or "").strip()
     if not target:
         raise ValueError("run_id is required")
 
     run = lookup_run(target)
     if run is None:
-        append_event(
-            kind="audit:stop",
-            run_id=target,
-            message="stop rejected: run not found",
-            payload={"accepted": False, "reason": "run_not_found"},
+        record_stop_transition(
+            target,
+            accepted=False,
+            reason="run_not_found",
         )
         return {"accepted": False, "run_id": target, "reason": "run_not_found"}
 
     if _run_is_terminal(run):
-        append_event(
-            kind="audit:stop",
-            run_id=target,
-            message="stop rejected: run already terminal",
-            payload={
-                "accepted": False,
-                "reason": "run_terminal",
-                "state": run.get("state"),
-            },
+        record_stop_transition(
+            target,
+            run=run,
+            accepted=False,
+            reason="run_terminal",
         )
         return {
             "accepted": False,
@@ -628,11 +652,11 @@ def stop_run(run_id: str, *, reason: str = "operator stop request") -> dict[str,
 
     signal_target = _stop_signal_target(run)
     if signal_target is None:
-        append_event(
-            kind="audit:stop",
-            run_id=target,
-            message="stop rejected: no signal target",
-            payload={"accepted": False, "reason": "missing_signal_target"},
+        record_stop_transition(
+            target,
+            run=run,
+            accepted=False,
+            reason="missing_signal_target",
         )
         return {
             "accepted": False,
@@ -642,36 +666,60 @@ def stop_run(run_id: str, *, reason: str = "operator stop request") -> dict[str,
         }
 
     target_kind, target_pid = signal_target
+    target_pgid: int | None = None
+    signal_sent = False
+    already_dead = False
+    alive_after_grace: bool | None = None
+    stop_reason = reason
+    stop_error = ""
     try:
-        if target_kind == "worker_pgid":
-            os.killpg(target_pid, signal.SIGTERM)
+        if target_kind == "launcher_pid":
+            target_pgid = os.getpgid(target_pid)
+            os.killpg(target_pgid, signal.SIGTERM)
+        elif target_kind == "worker_pgid":
+            target_pgid = target_pid
+            os.killpg(target_pgid, signal.SIGTERM)
         else:
             os.kill(target_pid, signal.SIGTERM)
-        accepted = True
-        stop_error = ""
+        signal_sent = True
+    except ProcessLookupError:
+        already_dead = True
+        stop_reason = "pid_gone_before_stop"
     except OSError as exc:
-        accepted = False
         stop_error = f"{type(exc).__name__}: {exc}"
 
-    append_event(
-        kind="audit:stop",
-        run_id=target,
-        message="stop signal dispatched" if accepted else "stop signal failed",
-        payload={
-            "accepted": accepted,
-            "reason": reason,
-            "signal": "SIGTERM",
-            "target": target_kind,
-            "target_pid": target_pid,
-            "error": stop_error,
-        },
+    accepted = not stop_error
+    if signal_sent:
+        alive_after_grace = _wait_for_pid_exit(target_pid, grace_seconds)
+    elif already_dead:
+        alive_after_grace = False
+
+    record_stop_transition(
+        target,
+        run=run,
+        accepted=accepted,
+        reason=stop_reason if accepted else "signal_failed",
+        signal_name="SIGTERM",
+        target=target_kind,
+        target_pid=target_pid,
+        target_pgid=target_pgid,
+        signal_sent=signal_sent,
+        already_dead=already_dead,
+        alive_after_grace=alive_after_grace,
+        grace_seconds=grace_seconds,
+        exit_code=143 if signal_sent else None,
+        error=stop_error,
     )
-    time.sleep(0.05)
     return {
         "accepted": accepted,
         "run_id": target,
         "target": target_kind,
         "target_pid": target_pid,
+        "target_pgid": target_pgid,
+        "signal_sent": signal_sent,
+        "already_dead": already_dead,
+        "alive_after_grace": alive_after_grace,
+        "reason": stop_reason if accepted else "signal_failed",
         "error": stop_error,
         "run": lookup_run(target),
     }

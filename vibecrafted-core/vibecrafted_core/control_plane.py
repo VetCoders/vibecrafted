@@ -253,6 +253,8 @@ def _operator_state(run: dict[str, Any]) -> str:
     artifact_errors = list(run.get("artifact_errors") or [])
     exit_code = _coerce_int(run.get("exit_code"))
 
+    if state == "stopped":
+        return "stopped"
     if state in BLOCKED_STATES:
         return "blocked"
     if state in {"failed", "process_dead", "ghost"}:
@@ -719,6 +721,15 @@ def _merge_event_stream(merged: dict[str, RunStatus]) -> dict[str, RunStatus]:
             "artifact_ok",
             "artifact_errors",
             "recovery_required",
+            "stop_reason",
+            "stop_signal",
+            "stop_target",
+            "stop_target_pid",
+            "stop_target_pgid",
+            "stop_signal_sent",
+            "stop_already_dead",
+            "stop_alive_after_grace",
+            "stop_grace_seconds",
         ):
             if key in payload and payload.get(key) not in (None, ""):
                 extra[key] = payload[key]
@@ -920,6 +931,95 @@ def _record_transition(
             },
         }
     )
+
+
+def record_stop_transition(
+    run_id: str,
+    *,
+    run: dict[str, Any] | None = None,
+    accepted: bool,
+    reason: str,
+    signal_name: str = "SIGTERM",
+    target: str = "",
+    target_pid: int | None = None,
+    target_pgid: int | None = None,
+    signal_sent: bool = False,
+    already_dead: bool = False,
+    alive_after_grace: bool | None = None,
+    grace_seconds: float = 0.0,
+    exit_code: int | None = None,
+    error: str = "",
+) -> dict[str, Any]:
+    """Append the canonical control-plane event for an operator stop request."""
+    now = _now().isoformat()
+    payload: dict[str, Any] = {
+        "accepted": accepted,
+        "reason": reason,
+        "stop_reason": reason,
+        "signal": signal_name,
+        "stop_signal": signal_name,
+        "target": target,
+        "stop_target": target,
+        "target_pid": target_pid,
+        "stop_target_pid": target_pid,
+        "target_pgid": target_pgid,
+        "stop_target_pgid": target_pgid,
+        "signal_sent": signal_sent,
+        "stop_signal_sent": signal_sent,
+        "already_dead": already_dead,
+        "stop_already_dead": already_dead,
+        "alive_after_grace": alive_after_grace,
+        "stop_alive_after_grace": alive_after_grace,
+        "grace_seconds": grace_seconds,
+        "stop_grace_seconds": grace_seconds,
+        "error": error,
+    }
+    if run:
+        for key in (
+            "agent",
+            "skill",
+            "mode",
+            "root",
+            "session_id",
+            "launcher_pid",
+            "worker_pid",
+            "worker_pgid",
+            "runtime",
+            "source_dir",
+            "prompt",
+            "file",
+            "meta",
+            "report",
+            "transcript",
+        ):
+            if key in run and run.get(key) not in (None, ""):
+                payload[key] = run[key]
+        if "report" not in payload and run.get("latest_report"):
+            payload["report"] = run["latest_report"]
+        if "transcript" not in payload and run.get("latest_transcript"):
+            payload["transcript"] = run["latest_transcript"]
+    if accepted:
+        payload["state"] = "stopped"
+        payload["health"] = "final"
+        payload["liveness"] = (
+            "pid_alive_after_stop" if alive_after_grace else "terminal"
+        )
+        payload["completed_at"] = now
+        if exit_code is not None:
+            payload["exit_code"] = exit_code
+
+    event = {
+        "ts": now,
+        "run_id": str(run_id or ""),
+        "kind": "audit:stop",
+        "message": (
+            "run stopped" if accepted else f"stop rejected: {reason.replace('_', ' ')}"
+        ),
+        "payload": payload,
+    }
+    with _sync_lock():
+        _append_event(event)
+    return event
 
 
 def _warnings_for_runs(runs: list[dict[str, Any]]) -> list[str]:

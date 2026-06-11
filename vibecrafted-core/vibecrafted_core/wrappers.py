@@ -346,6 +346,54 @@ def resume_main(argv: Sequence[str] | None = None) -> int:
     return subprocess.call(command)
 
 
+def stop_main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Stop a Vibecrafted run by terminating its launcher process group."
+    )
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--agent", choices=sorted(AGENTS))
+    parser.add_argument("--reason", default="operator stop request")
+    parser.add_argument("--grace-seconds", type=float, default=2.0)
+    ns = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+
+    from .workflow import stop_run
+
+    result = stop_run(
+        ns.run_id,
+        reason=ns.reason,
+        grace_seconds=ns.grace_seconds,
+    )
+    run = dict(result.get("run") or {})
+    reason = str(result.get("reason") or "")
+    if result.get("accepted"):
+        target = result.get("target") or "unknown"
+        target_pid = result.get("target_pid") or ""
+        group = result.get("target_pgid")
+        group_suffix = f" pgid={group}" if group else ""
+        note = (
+            "already dead; recorded stopped"
+            if result.get("already_dead")
+            else "TERM sent"
+        )
+        print(
+            f"run_id={ns.run_id} state={run.get('state', 'stopped')} "
+            f"target={target}:{target_pid}{group_suffix} {note}"
+        )
+        return 0
+
+    if reason == "run_terminal":
+        print(
+            f"run_id={ns.run_id} already terminal "
+            f"state={run.get('state', 'unknown')}; no-op"
+        )
+        return 0
+
+    print(f"run_id={ns.run_id} stop failed reason={reason}", file=sys.stderr)
+    if result.get("error"):
+        print(str(result["error"]), file=sys.stderr)
+    return 1
+
+
 def sandbox_main(argv: Sequence[str] | None = None) -> int:
     from vibecrafted_core.sandbox import MsbserverLifecycle, SandboxPolicy
     from vibecrafted_core.sandbox.policy import default_policy_path

@@ -8,6 +8,8 @@ from typing import Sequence
 
 from .workflow import launch_workflow, normalize_launch_spec
 
+AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -37,6 +39,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .dispatch.cli import main as dispatch_main
 
         return dispatch_main(raw_args[1:])
+    if raw_args and raw_args[0] == "stop":
+        from .wrappers import stop_main
+
+        return stop_main(raw_args[1:])
+    if len(raw_args) >= 2 and raw_args[0] in AGENTS and raw_args[1] == "stop":
+        from .wrappers import stop_main
+
+        return stop_main(["--agent", raw_args[0], *raw_args[2:]])
 
     parser = _build_parser()
     args = parser.parse_args(raw_args)
