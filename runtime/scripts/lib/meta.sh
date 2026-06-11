@@ -355,56 +355,39 @@ spawn_gc_dead_runs() {
   done < <(find "$reports_dir" -type f -name '*.meta.json' -print0 2>/dev/null)
 }
 
+spawn_python_core_path() {
+  local candidate_core=""
+  if [[ -n "${VIBECRAFTED_CORE_PYTHONPATH:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_CORE_PYTHONPATH"
+    return 0
+  fi
+  if [[ -n "${_SPAWN_LIB_DIR:-}" ]]; then
+    candidate_core="$(cd "$_SPAWN_LIB_DIR/../../.." && pwd)/vibecrafted-core"
+    if [[ -d "$candidate_core/vibecrafted_core" ]]; then
+      printf '%s\n' "$candidate_core"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+spawn_python_module() {
+  local core_path
+  core_path="$(spawn_python_core_path 2>/dev/null || true)"
+  if [[ -n "$core_path" ]]; then
+    PYTHONPATH="${core_path}${PYTHONPATH:+:$PYTHONPATH}" python3 -m "$@"
+  else
+    python3 -m "$@"
+  fi
+}
+
 spawn_finish_meta() {
   local meta_path="$1"
   local status="$2"
   local exit_code="${3:-0}"
 
-  python3 - "$meta_path" "$status" "$exit_code" <<'PY'
-import datetime as dt
-import json
-import re
-import sys
-
-meta_path, status, exit_code = sys.argv[1:4]
-with open(meta_path, "r", encoding="utf-8") as fh:
-    payload = json.load(fh)
-completed_at = dt.datetime.now(dt.timezone.utc)
-# Prefer the stable created_at; fall back to updated_at for metas written
-# before created_at existed, so old runs still get a (looser) duration.
-started_at = payload.get("created_at") or payload.get("updated_at")
-duration_s = None
-if isinstance(started_at, str):
-    try:
-        started_dt = dt.datetime.fromisoformat(started_at)
-    except ValueError:
-        started_dt = None
-    if started_dt is not None:
-        duration_s = round((completed_at - started_dt).total_seconds(), 3)
-payload["updated_at"] = completed_at.isoformat()
-payload["completed_at"] = completed_at.isoformat()
-payload["duration_s"] = duration_s
-payload["status"] = status
-payload["exit_code"] = int(exit_code)
-payload["liveness"] = "terminal"
-
-# Parse session_id from transcript (strip ANSI, match "session: <uuid>")
-transcript_path = payload.get("transcript", "")
-if transcript_path:
-    try:
-        with open(transcript_path, "r", errors="replace") as tf:
-            raw = tf.read(64 * 1024)  # first 64KB is enough
-        clean = re.sub(r'\x1b\[[0-9;]*m', '', raw)
-        m = re.search(r'(?:^|\[[0-9]{2}:[0-9]{2}:[0-9]{2}\]\s+)session: ([A-Za-z0-9][A-Za-z0-9-]*)', clean, re.MULTILINE)
-        if m:
-            payload["session_id"] = m.group(1)
-    except (OSError, IOError):
-        pass  # transcript not readable — skip silently
-
-with open(meta_path, "w", encoding="utf-8") as fh:
-    json.dump(payload, fh, indent=2, ensure_ascii=False)
-    fh.write("\n")
-PY
+  # Terminal meta state is Python-owned; this shell call is the stable wrapper.
+  spawn_python_module vibecrafted_core.spawn finish-meta "$meta_path" "$status" "$exit_code"
   spawn_sync_control_plane
 }
 
@@ -415,22 +398,6 @@ spawn_finalize_artifacts() {
 
   [[ -f "$meta_path" ]] || return 0
 
-  local core_path=""
-  local candidate_core=""
-  if [[ -n "${VIBECRAFTED_CORE_PYTHONPATH:-}" ]]; then
-    core_path="$VIBECRAFTED_CORE_PYTHONPATH"
-  elif [[ -n "${_SPAWN_LIB_DIR:-}" ]]; then
-    candidate_core="$(cd "$_SPAWN_LIB_DIR/../../.." && pwd)/vibecrafted-core"
-    if [[ -d "$candidate_core/vibecrafted_core" ]]; then
-      core_path="$candidate_core"
-    fi
-  fi
-
-  if [[ -n "$core_path" ]]; then
-    PYTHONPATH="${core_path}${PYTHONPATH:+:$PYTHONPATH}" \
-      python3 -m vibecrafted_core.spawn finalize-artifacts "$meta_path" "$report_path" "$transcript_path"
-  else
-    python3 -m vibecrafted_core.spawn finalize-artifacts "$meta_path" "$report_path" "$transcript_path"
-  fi
+  spawn_python_module vibecrafted_core.spawn finalize-artifacts "$meta_path" "$report_path" "$transcript_path"
   spawn_sync_control_plane
 }

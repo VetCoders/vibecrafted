@@ -9,7 +9,7 @@ import pytest
 from vibecrafted_core import control_plane
 from vibecrafted_core.agent_dispatch import extract_session_id
 from vibecrafted_core.events import append_event
-from vibecrafted_core.spawn import Supervisor, finalize_artifacts
+from vibecrafted_core.spawn import Supervisor, finalize_artifacts, finish_meta
 
 
 def test_supervisor_spawn_lifecycle_extracts_session_id(
@@ -156,6 +156,41 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     assert report.resolve() == final_report.resolve()
     assert transcript.resolve() == final_transcript.resolve()
     assert meta.resolve() == final_meta.resolve()
+
+
+def test_finish_meta_python_owns_terminal_state(tmp_path: Path) -> None:
+    transcript = tmp_path / "agent.transcript.log"
+    meta = tmp_path / "agent.meta.json"
+    transcript.write_text(
+        "\x1b[31m[12:00:00] session: codex-finish-001\x1b[0m\n",
+        encoding="utf-8",
+    )
+    meta.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "agent": "codex",
+                "created_at": "2026-06-10T08:00:00+00:00",
+                "updated_at": "2026-06-10T08:00:01+00:00",
+                "transcript": str(transcript),
+                "exit_code": None,
+                "liveness": "pid_alive",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = finish_meta(meta, "failed", "7")
+
+    assert result == meta
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["exit_code"] == 7
+    assert payload["liveness"] == "terminal"
+    assert payload["session_id"] == "codex-finish-001"
+    assert isinstance(payload["duration_s"], (int, float))
+    assert payload["completed_at"] == payload["updated_at"]
 
 
 def test_subscribe_events_reads_appended_events(

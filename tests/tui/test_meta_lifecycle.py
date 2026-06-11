@@ -68,6 +68,25 @@ def test_mark_meta_running_never_resurrects_terminal_states(tmp_path: Path) -> N
     assert _load(meta)["status"] == "completed"
 
 
+def test_finish_meta_delegates_to_python_terminal_writer(tmp_path: Path) -> None:
+    meta = tmp_path / "run.meta.json"
+    transcript = tmp_path / "transcript.log"
+    _write_meta(meta, "running")
+    transcript.write_text("[12:10:00] session: shell-finish-001\n", encoding="utf-8")
+    payload = _load(meta)
+    payload["transcript"] = str(transcript)
+    meta.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    _bash(f'source "{COMMON_SH}"; spawn_finish_meta "{meta}" failed 9')
+
+    final = _load(meta)
+    assert final["status"] == "failed"
+    assert final["exit_code"] == 9
+    assert final["liveness"] == "terminal"
+    assert final["session_id"] == "shell-finish-001"
+    assert isinstance(final["duration_s"], (int, float))
+
+
 def test_finalize_artifacts_persists_model_and_duration(tmp_path: Path) -> None:
     meta = tmp_path / "run.meta.json"
     report = tmp_path / "report.md"

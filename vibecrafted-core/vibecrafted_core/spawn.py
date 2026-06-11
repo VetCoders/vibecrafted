@@ -292,6 +292,48 @@ def _resolve_duration(
     return round((completed_dt - started_dt).total_seconds(), 3)
 
 
+def finish_meta(
+    meta_path: str | os.PathLike[str],
+    status: str,
+    exit_code: int | str = 0,
+) -> Path | None:
+    """Mark a launcher meta.json terminal and persist completion telemetry."""
+    meta = Path(meta_path)
+    if not meta.is_file():
+        return None
+
+    try:
+        payload = json.loads(_read_text(meta))
+    except json.JSONDecodeError:
+        return None
+
+    completed_at = dt.datetime.now(dt.timezone.utc)
+    started_dt = _parse_dt(payload.get("created_at") or payload.get("updated_at"))
+    duration_s = (
+        round((completed_at - started_dt).total_seconds(), 3)
+        if started_dt is not None
+        else None
+    )
+
+    payload["updated_at"] = completed_at.isoformat()
+    payload["completed_at"] = completed_at.isoformat()
+    payload["duration_s"] = duration_s
+    payload["status"] = status
+    payload["exit_code"] = int(exit_code)
+    payload["liveness"] = "terminal"
+
+    transcript_raw = str(payload.get("transcript") or "")
+    transcript_text = (
+        _read_text(Path(transcript_raw))[: 64 * 1024] if transcript_raw else ""
+    )
+    session_id = _extract_session(transcript_text)
+    if session_id:
+        payload["session_id"] = session_id
+
+    _write_meta(meta, payload)
+    return meta
+
+
 def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -891,11 +933,21 @@ def _build_parser() -> argparse.ArgumentParser:
     finalize.add_argument("meta")
     finalize.add_argument("report", nargs="?")
     finalize.add_argument("transcript", nargs="?")
+    finish = sub.add_parser(
+        "finish-meta",
+        help="Mark launcher meta terminal and persist completion telemetry.",
+    )
+    finish.add_argument("meta")
+    finish.add_argument("status")
+    finish.add_argument("exit_code", nargs="?", default="0")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.command == "finish-meta":
+        finish_meta(args.meta, args.status, args.exit_code)
+        return 0
     if args.command == "finalize-artifacts":
         finalize_artifacts(args.meta, args.report, args.transcript)
         return 0
