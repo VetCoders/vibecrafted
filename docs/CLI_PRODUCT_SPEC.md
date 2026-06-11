@@ -54,12 +54,12 @@ live in `help --all` and in `help <skill>`.
 ### Hidden behind `help --all` (still work, never advertised up front)
 
 | Command                                                | Reason                                                               |
-| ------------------------------------------------------ | -------------------------------------------------------------------- | ------ | ------- | ------- | -------- | ------------------------------------------- |
+| ------------------------------------------------------ | -------------------------------------------------------------------- |
 | `gui`, `tui`, `dashboard` (+ ls/switch/attach/kill/gc) | Operator consoles — second visit, not first contact                  |
 | `loop`, `cron`, `ship`, `dispatch run`                 | Runtime/automation plumbing; humans meet them via docs, not the deck |
 | `telemetry smoke`                                      | Dev-only diagnostic                                                  |
 | `<agent> <mode>` (6 agents × 7 modes)                  | Power-user grammar that duplicates `<skill> <agent>`                 |
-| `marbles <pause                                        | stop                                                                 | resume | session | inspect | delete>` | Control plane, documented in `help marbles` |
+| `marbles <pause·stop·resume·session·inspect·delete>`   | Control plane, documented in `help marbles`                          |
 | `uninstall`, `version`                                 | Necessary, not promotional                                           |
 
 ### Remove from help entirely (keep working as silent aliases)
