@@ -246,3 +246,53 @@ def test_spawn_write_meta_schema_contract_pin(tmp_path: Path) -> None:
         "model",
     }
     assert set(data.keys()) == expected_keys
+
+
+def test_write_meta_python_direct(tmp_path: Path) -> None:
+    import sys
+
+    package_root = REPO_ROOT / "vibecrafted-core"
+    if str(package_root) not in sys.path:
+        sys.path.insert(0, str(package_root))
+
+    from vibecrafted_core.spawn import write_meta
+
+    meta = tmp_path / "run.meta.json"
+    write_meta(
+        meta_path=meta,
+        status="launching",
+        agent="claude",
+        mode="implement",
+        root=tmp_path,
+        input_ref="plan.md",
+        report="report.md",
+        transcript="t.log",
+        launcher="l.sh",
+        model="gpt-4",
+        prompt_id="prompt-123",
+        run_id="lcyc-test-py-001",
+        loop_nr=5,
+        skill_code="just",
+        framework_version="v1.0",
+    )
+
+    data = json.loads(meta.read_text(encoding="utf-8"))
+    assert data["status"] == "launching"
+    assert data["agent"] == "claude"
+    assert data["mode"] == "implement"
+    assert data["root"] == str(tmp_path)
+    assert data["input"] == "plan.md"
+    assert data["report"] == "report.md"
+    assert data["transcript"] == "t.log"
+    assert data["launcher"] == "l.sh"
+    assert data["prompt_id"] == "prompt-123"
+    assert data["run_id"] == "lcyc-test-py-001"
+    assert data["loop_nr"] == 5
+    assert data["skill_code"] == "just"
+    assert data["framework_version"] == "v1.0"
+    assert data["exit_code"] is None
+    assert data["launcher_pid"] is None
+    assert data["liveness"] == "pid_pending"
+    assert data["model"] == "gpt-4"
+    assert isinstance(data["created_at"], str)
+    assert isinstance(data["updated_at"], str)

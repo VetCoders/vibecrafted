@@ -292,6 +292,59 @@ def _resolve_duration(
     return round((completed_dt - started_dt).total_seconds(), 3)
 
 
+def write_meta(
+    meta_path: str | os.PathLike[str],
+    status: str,
+    agent: str,
+    mode: str,
+    root: str | os.PathLike[str],
+    input_ref: str,
+    report: str,
+    transcript: str,
+    launcher: str,
+    model: str = "",
+    prompt_id: str = "",
+    run_id: str = "",
+    loop_nr: str | int = 0,
+    skill_code: str = "",
+    framework_version: str = "",
+) -> Path:
+    """Write initial launcher meta.json."""
+    meta = Path(meta_path)
+    meta.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        loop_nr_value = int(loop_nr)
+    except (ValueError, TypeError):
+        loop_nr_value = loop_nr
+
+    now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+    payload = {
+        "created_at": now_iso,
+        "updated_at": now_iso,
+        "status": status,
+        "agent": agent,
+        "mode": mode,
+        "root": str(root),
+        "input": input_ref,
+        "report": report,
+        "transcript": transcript,
+        "launcher": launcher,
+        "prompt_id": prompt_id,
+        "run_id": run_id,
+        "loop_nr": loop_nr_value,
+        "skill_code": skill_code,
+        "framework_version": framework_version,
+        "exit_code": None,
+        "launcher_pid": None,
+        "liveness": "pid_pending",
+        "model": model,
+    }
+
+    _write_meta(meta, payload)
+    return meta
+
+
 def finish_meta(
     meta_path: str | os.PathLike[str],
     status: str,
@@ -926,6 +979,26 @@ class Supervisor:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Vibecrafted launcher helpers.")
     sub = parser.add_subparsers(dest="command", required=True)
+    write = sub.add_parser(
+        "write-meta",
+        help="Write initial launcher meta.json.",
+    )
+    write.add_argument("meta")
+    write.add_argument("status")
+    write.add_argument("agent")
+    write.add_argument("mode")
+    write.add_argument("root")
+    write.add_argument("input")
+    write.add_argument("report")
+    write.add_argument("transcript")
+    write.add_argument("launcher")
+    write.add_argument("--model", default="")
+    write.add_argument("--prompt-id", default="")
+    write.add_argument("--run-id", default="")
+    write.add_argument("--loop-nr", default="0")
+    write.add_argument("--skill-code", default="")
+    write.add_argument("--framework-version", default="")
+
     finalize = sub.add_parser(
         "finalize-artifacts",
         help="Finalize launcher meta/report/transcript artifacts.",
@@ -945,6 +1018,25 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+    if args.command == "write-meta":
+        write_meta(
+            args.meta,
+            args.status,
+            args.agent,
+            args.mode,
+            args.root,
+            args.input,
+            args.report,
+            args.transcript,
+            args.launcher,
+            model=args.model,
+            prompt_id=args.prompt_id,
+            run_id=args.run_id,
+            loop_nr=args.loop_nr,
+            skill_code=args.skill_code,
+            framework_version=args.framework_version,
+        )
+        return 0
     if args.command == "finish-meta":
         finish_meta(args.meta, args.status, args.exit_code)
         return 0

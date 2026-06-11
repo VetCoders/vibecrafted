@@ -124,45 +124,23 @@ spawn_write_meta() {
   framework_version="$(spawn_framework_version)"
   model="$(spawn_detect_model_identity "$agent" "$model")"
 
-  python3 - "$meta_path" "$status" "$agent" "$mode" "$root" "$input_ref" "$report" "$transcript" "$launcher" "$model" "$prompt_id" "$run_id" "$loop_nr" "$skill_code" "$framework_version" <<'PY'
-import datetime as dt
-import json
-import sys
+  spawn_python_module vibecrafted_core.spawn write-meta \
+    "$meta_path" \
+    "$status" \
+    "$agent" \
+    "$mode" \
+    "$root" \
+    "$input_ref" \
+    "$report" \
+    "$transcript" \
+    "$launcher" \
+    --model "$model" \
+    --prompt-id "$prompt_id" \
+    --run-id "$run_id" \
+    --loop-nr "$loop_nr" \
+    --skill-code "$skill_code" \
+    --framework-version "$framework_version"
 
-meta_path, status, agent, mode, root, input_ref, report, transcript, launcher, model, prompt_id, run_id, loop_nr, skill_code, framework_version = sys.argv[1:16]
-try:
-    loop_nr_value = int(loop_nr)
-except ValueError:
-    loop_nr_value = loop_nr
-payload = {
-    # created_at is the stable spawn time; updated_at mutates on every
-    # heartbeat, so duration_s must be measured from created_at, not it.
-    "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-    "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-    "status": status,
-    "agent": agent,
-    "mode": mode,
-    "root": root,
-    "input": input_ref,
-    "report": report,
-    "transcript": transcript,
-    "launcher": launcher,
-    "prompt_id": prompt_id,
-    "run_id": run_id,
-    "loop_nr": loop_nr_value,
-    "skill_code": skill_code,
-    "framework_version": framework_version,
-    "exit_code": None,
-    # launcher_pid is set by the launcher itself once it starts (see
-    # spawn_update_meta_pid). Dead launcher_pid → ghost state, out.
-    "launcher_pid": None,
-    "liveness": "pid_pending",
-}
-payload["model"] = model
-with open(meta_path, "w", encoding="utf-8") as fh:
-    json.dump(payload, fh, indent=2, ensure_ascii=False)
-    fh.write("\n")
-PY
   spawn_sync_control_plane
 }
 
