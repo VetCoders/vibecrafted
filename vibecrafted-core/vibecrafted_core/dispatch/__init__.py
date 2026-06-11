@@ -22,6 +22,13 @@ from .schema import (
     parse_dispatch,
     render_cell_prompt,
 )
+from .supervisor import (
+    CellRun,
+    DispatchResult,
+    DispatchSupervisor,
+    run_dispatch,
+    workflow_cell_launcher,
+)
 from .verify import (
     DEFAULT_TIMEOUT_S,
     MATCHER_FAIL,
@@ -37,6 +44,9 @@ __all__ = [
     "MATCHER_PASS",
     "MATCHER_TIMEOUT",
     "Baton",
+    "CellRun",
+    "DispatchResult",
+    "DispatchSupervisor",
     "Common",
     "Cut",
     "CutState",
@@ -54,6 +64,8 @@ __all__ = [
     "load_dispatch",
     "parse_dispatch",
     "render_cell_prompt",
+    "run_dispatch",
     "run_verifies",
     "sanitize_env",
+    "workflow_cell_launcher",
 ]
