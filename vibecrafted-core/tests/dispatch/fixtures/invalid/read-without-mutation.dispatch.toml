@@ -1,0 +1,13 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "read-without-mutation"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "review"
+mode = "read"
+observational = true
+prompt = "Observe only."

@@ -1,0 +1,15 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "unknown-matcher"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+prompt = "Do it."
+
+  [[cuts.verify]]
+  run = "true"
+  expect = { stderr = "boom" }

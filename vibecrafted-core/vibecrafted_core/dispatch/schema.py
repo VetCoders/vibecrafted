@@ -28,10 +28,16 @@ from .model import (
 )
 
 FORBIDDEN_COMMAND_NEEDLES = (
+    "--no-verify",
     "git reset --hard",
     "git clean -fd",
     "git clean -xdf",
+    "git push",
+    "make release",
+    "release",
     "rm -rf /",
+    "vc-release",
+    "vibecrafted release",
 )
 
 
@@ -335,9 +341,35 @@ def _parse_cuts(
 def _doctor_policy_errors(dispatch: Dispatch) -> list[str]:
     errors: list[str] = []
     for index, cut in enumerate(dispatch.cuts):
-        if cut.mode == "read" and not cut.mutation:
+        if (
+            cut.mode == "read"
+            and not cut.mutation
+            and not _has_explicit_no_edit_read_policy(cut)
+        ):
             errors.append(f"cuts[{index}].mutation: required for READ cuts")
     return errors
+
+
+def _has_explicit_no_edit_read_policy(cut: Cut) -> bool:
+    if cut.resolved_workflow != "review":
+        return False
+    prompt = " ".join((cut.prompt, cut.extra)).lower()
+    no_edit_markers = (
+        "no edit",
+        "no-edit",
+        "do not edit",
+        "nie edytuj",
+        "zero edycji",
+    )
+    no_commit_markers = (
+        "no commit",
+        "do not commit",
+        "nie commituj",
+        "zero commit",
+    )
+    return any(marker in prompt for marker in no_edit_markers) and any(
+        marker in prompt for marker in no_commit_markers
+    )
 
 
 def _parse_verify(value: Any, cut_index: int, errors: list[str]) -> list[Verify]:

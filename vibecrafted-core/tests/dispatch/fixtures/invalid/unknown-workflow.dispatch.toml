@@ -1,0 +1,15 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "unknown-workflow"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "audit"
+prompt = "Do it."
+
+  [[cuts.verify]]
+  run = "true"
+  expect = { exit_code = 0 }
