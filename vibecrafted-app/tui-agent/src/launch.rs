@@ -167,22 +167,7 @@ impl LaunchCommand {
             .find(|pair| pair.first().is_some_and(|value| value == "--session"))
             .and_then(|pair| pair.get(1))
             .map(|value| value.to_string_lossy().into_owned())?;
-        // The launch command may carry a top-level `--config-dir <dir>` flag so
-        // that zellij talks to the repo-local namespace under
-        // `<root>/config/zellij`. The readiness probe MUST inspect the same
-        // namespace, otherwise it can succeed/fail against a completely
-        // different socket directory and report nonsense to the operator.
-        let config_dir = self
-            .args
-            .windows(2)
-            .find(|pair| pair.first().is_some_and(|value| value == "--config-dir"))
-            .and_then(|pair| pair.get(1))
-            .cloned();
         let mut args: Vec<OsString> = Vec::new();
-        if let Some(dir) = config_dir {
-            args.push("--config-dir".into());
-            args.push(dir);
-        }
         args.push("list-sessions".into());
         args.push("--short".into());
         args.push("--no-formatting".into());
@@ -285,7 +270,10 @@ fn build_deck_launch_command(deck: &Path, request: &LaunchRequest) -> LaunchComm
 
 fn build_terminal_launch_command(deck: &Path, request: &LaunchRequest) -> LaunchCommand {
     let zellij_layout = build_zellij_layout_string(deck, request);
-    let zellij_config_dir = resolved_zellij_config_dir(request.root.as_deref());
+    let mut env = request.env.clone();
+    if let Some(config_dir) = zellij_config_dir_for_request(request) {
+        env.insert("ZELLIJ_CONFIG_DIR".to_string(), config_dir.into_os_string());
+    }
 
     let mut args = Vec::new();
 
@@ -297,11 +285,6 @@ fn build_terminal_launch_command(deck: &Path, request: &LaunchRequest) -> Launch
         args.push(name.into());
     }
 
-    if let Some(config_dir) = zellij_config_dir {
-        args.push("--config-dir".into());
-        args.push(config_dir.into_os_string());
-    }
-
     args.push("--layout-string".into());
     args.push(zellij_layout.into());
 
@@ -311,7 +294,7 @@ fn build_terminal_launch_command(deck: &Path, request: &LaunchRequest) -> Launch
             .clone()
             .unwrap_or_else(|| PathBuf::from("zellij")),
         args,
-        env: request.env.clone(),
+        env,
     }
 }
 
@@ -335,7 +318,7 @@ fn build_zellij_layout_string(deck: &Path, request: &LaunchRequest) -> String {
 
 fn build_pane_shell_command(deck: &Path, request: &LaunchRequest) -> String {
     let mut parts = Vec::new();
-    if let Some(config_dir) = resolved_zellij_config_dir(request.root.as_deref()) {
+    if let Some(config_dir) = zellij_config_dir_for_request(request) {
         parts.push(format!(
             "export ZELLIJ_CONFIG_DIR={}",
             shell_quote(&config_dir.to_string_lossy())
@@ -354,6 +337,17 @@ fn build_pane_shell_command(deck: &Path, request: &LaunchRequest) -> String {
         shell_join(deck, &build_deck_launch_command(deck, request).args)
     ));
     parts.join("; ")
+}
+
+fn zellij_config_dir_for_request(request: &LaunchRequest) -> Option<PathBuf> {
+    if let Some(explicit) = request
+        .env
+        .get("ZELLIJ_CONFIG_DIR")
+        .filter(|value| !value.is_empty())
+    {
+        return Some(PathBuf::from(explicit));
+    }
+    resolved_zellij_config_dir(request.root.as_deref())
 }
 
 fn resolved_zellij_config_dir(root: Option<&Path>) -> Option<PathBuf> {
@@ -449,4 +443,74 @@ pub fn pre_launch_verify(client_kind: rmcp_mux::ipc::ClientKind) -> Result<(), V
         return Err(VerifyHalt::Drift(res.non_mux_servers));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(root: PathBuf) -> LaunchRequest {
+        LaunchRequest {
+            kind: LaunchKind::Workflow,
+            agent: "codex".to_string(),
+            prompt: "Plan and implement.".to_string(),
+            runtime: LaunchRuntime::Terminal,
+            root: Some(root),
+            terminal_binary: Some(PathBuf::from("zellij")),
+            env: BTreeMap::new(),
+            count: None,
+            depth: None,
+            session_name: Some("vc-op-workflow-123".to_string()),
+        }
+    }
+
+    #[test]
+    fn terminal_launch_uses_zellij_config_env_not_top_level_flag() {
+        let temp = tempfile::tempdir().unwrap();
+        let config_dir = temp.path().join("config/zellij");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.kdl"), "layout {}\n").unwrap();
+
+        let mut req = request(temp.path().into());
+        req.env.insert(
+            "ZELLIJ_CONFIG_DIR".to_string(),
+            config_dir.clone().into_os_string(),
+        );
+
+        let command = build_terminal_launch_command(Path::new("vibecrafted"), &req);
+
+        assert!(!command.args.iter().any(|arg| arg == "--config-dir"));
+        assert_eq!(
+            command.env.get("ZELLIJ_CONFIG_DIR"),
+            Some(&config_dir.into_os_string())
+        );
+        assert!(command.args.iter().any(|arg| arg == "--session"));
+        assert!(command.args.iter().any(|arg| arg == "--layout-string"));
+
+        let probe = command.readiness_probe().unwrap();
+        assert!(!probe.args.iter().any(|arg| arg == "--config-dir"));
+        assert_eq!(
+            probe.env.get("ZELLIJ_CONFIG_DIR"),
+            command.env.get("ZELLIJ_CONFIG_DIR")
+        );
+    }
+
+    #[test]
+    fn terminal_launch_respects_explicit_zellij_config_env() {
+        let temp = tempfile::tempdir().unwrap();
+        let explicit = temp.path().join("frontier/zellij");
+        let mut req = request(temp.path().into());
+        req.env.insert(
+            "ZELLIJ_CONFIG_DIR".to_string(),
+            explicit.clone().into_os_string(),
+        );
+
+        let command = build_terminal_launch_command(Path::new("vibecrafted"), &req);
+
+        assert!(!command.args.iter().any(|arg| arg == "--config-dir"));
+        assert_eq!(
+            command.env.get("ZELLIJ_CONFIG_DIR"),
+            Some(&explicit.into_os_string())
+        );
+    }
 }

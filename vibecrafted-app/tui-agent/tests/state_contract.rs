@@ -234,13 +234,10 @@ fn marbles_launches_keep_runtime_root_and_loop_controls() {
 
     assert_eq!(command.program, Path::new("zellij"));
 
-    let config_idx = args
-        .iter()
-        .position(|value| value == "--config-dir")
-        .expect("repo-local zellij config should be passed as a top-level launch option");
     assert_eq!(
-        args.get(config_idx + 1),
-        Some(&root.join("config/zellij").to_string_lossy().into_owned())
+        command.env.get("ZELLIJ_CONFIG_DIR"),
+        Some(&root.join("config/zellij").into_os_string()),
+        "repo-local zellij config should be passed through env so vc-frame does not parse it as a stale subcommand flag"
     );
     assert!(args.iter().any(|value| value == "--layout-string"));
     let layout_idx = args
@@ -248,8 +245,8 @@ fn marbles_launches_keep_runtime_root_and_loop_controls() {
         .position(|value| value == "--layout-string")
         .expect("layout string flag should be present");
     assert!(
-        config_idx < layout_idx,
-        "--config-dir must stay before --layout-string so vc-frame/zellij parses both as top-level launch options: args={args:?}"
+        !args.iter().any(|value| value == "--config-dir"),
+        "terminal launch must not pass --config-dir as argv; vc-frame/zellij version skew rejects it in this context: args={args:?}"
     );
     assert!(
         !args.iter().any(|value| value == "options"),
