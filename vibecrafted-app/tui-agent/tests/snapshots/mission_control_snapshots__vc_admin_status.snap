@@ -1,6 +1,6 @@
 ---
 source: tui-agent/tests/mission_control_snapshots.rs
-assertion_line: 556
+assertion_line: 599
 expression: stdout
 ---
 Mission Control
@@ -25,13 +25,18 @@ SKILL                    INV  COMPLETE  FAILED AVG_DUR
 implement                  2         2       0 1.4m
 marbles                    1         0       1 -
 
-== Fleet health (5) ==
+== Fleet health ([N]) ==
 STATUS    SIGNAL             DETAIL
 ✓         control-plane      [PATH] (0 runs)
 ✓         artifact-root      [PATH]
 ✓         meta scan          3 meta.json scanned
 !         model parity       1/3 missing model
 !         duration parity    1/3 missing duration_s
+!         disk ~/.vibecra... [DISK]
+!         disk ~/.codex      [DISK]
+!         disk ~/.aicx       [DISK]
+!         disk ~/.vibecra... [DISK]
+✓         ulimit -f          [ULIMIT]
 
 == Failure board 24h (1) ==
 RUN_ID                       AGENT      SKILL              AGE          REASON

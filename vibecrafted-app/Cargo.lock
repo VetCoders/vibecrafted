@@ -4308,6 +4308,7 @@ dependencies = [
  "clap",
  "crossterm",
  "insta",
+ "libc",
  "notify",
  "ratatui",
  "rmcp-mux",

@@ -358,6 +358,42 @@ fn mission_control_tab_populated_color_map_snapshot() {
 }
 
 #[test]
+fn mission_control_tab_disk_probe_snapshot() {
+    let mut state = MissionControlState {
+        generated_at: "2026-06-10T12:00:00+00:00".to_string(),
+        ..MissionControlState::default()
+    };
+    state.fleet_health = vec![
+        FleetHealthSignal {
+            label: "disk ~/.codex".to_string(),
+            status: FleetHealthStatus::Ok,
+            detail: "82.0% free".to_string(),
+        },
+        FleetHealthSignal {
+            label: "disk ~/.aicx".to_string(),
+            status: FleetHealthStatus::Warn,
+            detail: "11.0% free".to_string(),
+        },
+        FleetHealthSignal {
+            label: "disk ~/.vibecrafted/artifacts".to_string(),
+            status: FleetHealthStatus::Blocked,
+            detail: "4.0% free".to_string(),
+        },
+        FleetHealthSignal {
+            label: "ulimit -f".to_string(),
+            status: FleetHealthStatus::Blocked,
+            detail: "finite 65336 blk (31.9 MiB)".to_string(),
+        },
+    ];
+    let buffer = render_mission_tab(&mission_app(state));
+    insta::assert_snapshot!("mission_control_tab_disk_probe", buffer_text(&buffer));
+    insta::assert_snapshot!(
+        "mission_control_tab_disk_probe_colors",
+        buffer_color_map(&buffer)
+    );
+}
+
+#[test]
 fn mission_control_tab_empty_state_snapshot() {
     let app = mission_app(MissionControlState::default());
     let buffer = render_mission_tab(&app);
@@ -552,6 +588,13 @@ fn vc_admin_status_renders_all_panels_from_disk_fixtures() {
         (r"\d{4}-\d{2}-\d{2}T[0-9:.]+[0-9:+Zz-]*", "[TS]"),
         (r"\b\d+[smhd] ago", "[AGE] ago"),
         (r"\bjust now\b", "[AGE] ago"),
+        (r"== Fleet health \(\d+\) ==", "== Fleet health ([N]) =="),
+        (r"(✓|!|✗|\?)         disk ~/.vibecra\.\.\.\s+.*", "$1         disk ~/.vibecra... [DISK]"),
+        (r"(✓|!|✗|\?)         disk ~/.vibecrafted/control_plane\s+.*", "$1         disk ~/.vibecrafted/control_plane [DISK]"),
+        (r"(✓|!|✗|\?)         disk ~/.codex\s+.*", "$1         disk ~/.codex      [DISK]"),
+        (r"(✓|!|✗|\?)         disk ~/.aicx\s+.*", "$1         disk ~/.aicx       [DISK]"),
+        (r"(✓|!|✗|\?)         disk ~/.vibecrafted/artifacts\s+.*", "$1         disk ~/.vibecrafted/artifacts [DISK]"),
+        (r"(✓|!|✗|\?)         ulimit -f\s+.*", "$1         ulimit -f          [ULIMIT]"),
     ]}, {
         insta::assert_snapshot!("vc_admin_status", stdout);
     });

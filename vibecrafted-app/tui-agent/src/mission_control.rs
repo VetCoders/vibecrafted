@@ -1,6 +1,7 @@
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, Utc};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -27,6 +28,13 @@ const FAILURE_WINDOW_HOURS: i64 = 24;
 /// than this is considered stalled in the dashboard and contributes an
 /// `ActionQueue` entry instead of an `ActiveDispatch` entry.
 const STALL_AFTER_MINUTES: i64 = 15;
+
+const DISK_WARN_FREE_PERCENT: f64 = 15.0;
+const DISK_BLOCKED_FREE_PERCENT: f64 = 5.0;
+const ULIMIT_FSIZE_BLOCKED_MB: u64 = 64;
+const ULIMIT_FSIZE_BLOCKED_MB_ENV: &str = "VIBECRAFTED_ULIMIT_FSIZE_BLOCKED_MB";
+const TRACKED_FILE_CAP_PERCENT: f64 = 80.0;
+const TRACKED_FILE_SCAN_CAP: usize = 2_048;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MissionControlState {
@@ -976,7 +984,317 @@ fn fleet_health_from_inputs(
         ),
     });
 
+    signals.extend(disk_health_signals());
+
     signals
+}
+
+fn disk_health_signals() -> Vec<FleetHealthSignal> {
+    let mut signals = Vec::new();
+    for (label, path) in substrate_disk_paths() {
+        signals.push(disk_path_signal(label, &path));
+    }
+    signals.push(ulimit_fsize_signal(&substrate_disk_paths()));
+    signals
+}
+
+fn substrate_disk_paths() -> Vec<(&'static str, PathBuf)> {
+    let vibecrafted_home = crate::config::default_vibecrafted_home();
+    let mut paths = vec![
+        (
+            "disk ~/.vibecrafted/control_plane",
+            vibecrafted_home.join("control_plane"),
+        ),
+        (
+            "disk ~/.vibecrafted/artifacts",
+            vibecrafted_home.join("artifacts"),
+        ),
+    ];
+    if let Some(home) = home_dir() {
+        paths.insert(1, ("disk ~/.codex", home.join(".codex")));
+        paths.insert(2, ("disk ~/.aicx", home.join(".aicx")));
+    }
+    paths
+}
+
+fn home_dir() -> Option<PathBuf> {
+    env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn existing_probe_path(path: &Path) -> PathBuf {
+    let mut candidate = path;
+    loop {
+        if candidate.exists() {
+            return candidate.to_path_buf();
+        }
+        let Some(parent) = candidate.parent() else {
+            return path.to_path_buf();
+        };
+        candidate = parent;
+    }
+}
+
+fn disk_path_signal(label: &'static str, path: &Path) -> FleetHealthSignal {
+    match statvfs_probe(&existing_probe_path(path)) {
+        Ok(stats) => {
+            let free_percent = stats.free_percent();
+            let status = if free_percent < DISK_BLOCKED_FREE_PERCENT {
+                FleetHealthStatus::Blocked
+            } else if free_percent <= DISK_WARN_FREE_PERCENT {
+                FleetHealthStatus::Warn
+            } else {
+                FleetHealthStatus::Ok
+            };
+            FleetHealthSignal {
+                label: label.to_string(),
+                status,
+                detail: format!(
+                    "{free_percent:.1}% free ({}/{})",
+                    format_bytes(stats.free_bytes),
+                    format_bytes(stats.total_bytes)
+                ),
+            }
+        }
+        Err(err) => FleetHealthSignal {
+            label: label.to_string(),
+            status: FleetHealthStatus::Unknown,
+            detail: format!("{}: {}", path.display(), err),
+        },
+    }
+}
+
+fn ulimit_fsize_signal(substrates: &[(&'static str, PathBuf)]) -> FleetHealthSignal {
+    match rlimit_fsize_bytes() {
+        Ok(None) => FleetHealthSignal {
+            label: "ulimit -f".to_string(),
+            status: FleetHealthStatus::Ok,
+            detail: "unlimited".to_string(),
+        },
+        Ok(Some(cap_bytes)) => {
+            let largest = largest_tracked_file(substrates);
+            let blocked_threshold = ulimit_blocked_threshold_bytes();
+            let file_ratio = largest
+                .as_ref()
+                .map(|file| file.size_bytes as f64 / cap_bytes.max(1) as f64 * 100.0)
+                .unwrap_or(0.0);
+            let status = if cap_bytes <= blocked_threshold || file_ratio >= TRACKED_FILE_CAP_PERCENT
+            {
+                FleetHealthStatus::Blocked
+            } else {
+                FleetHealthStatus::Warn
+            };
+            let mut detail = format!(
+                "finite {} blk ({})",
+                cap_bytes / 512,
+                format_bytes(cap_bytes)
+            );
+            if let Some(file) = largest {
+                detail.push_str(&format!(
+                    "; largest {} {} ({file_ratio:.0}%)",
+                    file.label,
+                    format_bytes(file.size_bytes)
+                ));
+            }
+            FleetHealthSignal {
+                label: "ulimit -f".to_string(),
+                status,
+                detail,
+            }
+        }
+        Err(err) => FleetHealthSignal {
+            label: "ulimit -f".to_string(),
+            status: FleetHealthStatus::Unknown,
+            detail: err,
+        },
+    }
+}
+
+fn ulimit_blocked_threshold_bytes() -> u64 {
+    let mb = env::var(ULIMIT_FSIZE_BLOCKED_MB_ENV)
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(ULIMIT_FSIZE_BLOCKED_MB);
+    mb.saturating_mul(1024 * 1024)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DiskStats {
+    free_bytes: u64,
+    total_bytes: u64,
+}
+
+impl DiskStats {
+    fn free_percent(self) -> f64 {
+        if self.total_bytes == 0 {
+            return 0.0;
+        }
+        self.free_bytes as f64 / self.total_bytes as f64 * 100.0
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TrackedFile {
+    label: String,
+    size_bytes: u64,
+}
+
+fn largest_tracked_file(substrates: &[(&'static str, PathBuf)]) -> Option<TrackedFile> {
+    let mut scanned = 0usize;
+    let mut largest = None;
+    for (_, root) in substrates {
+        scan_tracked_files(root, &mut scanned, &mut largest);
+        if scanned >= TRACKED_FILE_SCAN_CAP {
+            break;
+        }
+    }
+    largest
+}
+
+fn scan_tracked_files(path: &Path, scanned: &mut usize, largest: &mut Option<TrackedFile>) {
+    if *scanned >= TRACKED_FILE_SCAN_CAP {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if *scanned >= TRACKED_FILE_SCAN_CAP {
+            return;
+        }
+        *scanned += 1;
+        let path = entry.path();
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.is_dir() {
+            scan_tracked_files(&path, scanned, largest);
+            continue;
+        }
+        if !metadata.is_file() || !is_tracked_log_or_db(&path) {
+            continue;
+        }
+        let size_bytes = metadata.len();
+        let is_larger = match largest.as_ref() {
+            Some(current) => size_bytes > current.size_bytes,
+            None => true,
+        };
+        if is_larger {
+            *largest = Some(TrackedFile {
+                label: compact_home_path(&path),
+                size_bytes,
+            });
+        }
+    }
+}
+
+fn is_tracked_log_or_db(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "db" | "jsonl" | "log" | "sqlite" | "sqlite3"
+    )
+}
+
+fn compact_home_path(path: &Path) -> String {
+    if let Some(home) = home_dir()
+        && let Ok(stripped) = path.strip_prefix(home)
+    {
+        return format!("~/{}", stripped.display());
+    }
+    path.display().to_string()
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    const GIB: f64 = MIB * 1024.0;
+    const TIB: f64 = GIB * 1024.0;
+    let bytes_f = bytes as f64;
+    if bytes_f >= TIB {
+        format!("{:.1} TiB", bytes_f / TIB)
+    } else if bytes_f >= GIB {
+        format!("{:.1} GiB", bytes_f / GIB)
+    } else if bytes_f >= MIB {
+        format!("{:.1} MiB", bytes_f / MIB)
+    } else if bytes_f >= KIB {
+        format!("{:.1} KiB", bytes_f / KIB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+#[cfg(unix)]
+fn statvfs_probe(path: &Path) -> Result<DiskStats, String> {
+    unix_probe::statvfs_probe(path)
+}
+
+#[cfg(not(unix))]
+fn statvfs_probe(_path: &Path) -> Result<DiskStats, String> {
+    Err("statvfs unavailable on this platform".to_string())
+}
+
+#[cfg(unix)]
+fn rlimit_fsize_bytes() -> Result<Option<u64>, String> {
+    unix_probe::rlimit_fsize_bytes()
+}
+
+#[cfg(not(unix))]
+fn rlimit_fsize_bytes() -> Result<Option<u64>, String> {
+    Err("getrlimit unavailable on this platform".to_string())
+}
+
+#[cfg(unix)]
+mod unix_probe {
+    use super::DiskStats;
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    pub fn statvfs_probe(path: &Path) -> Result<DiskStats, String> {
+        let raw_path = CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| "path contains an interior nul byte".to_string())?;
+        let mut stats = MaybeUninit::<libc::statvfs>::uninit();
+        // SAFETY: `raw_path` is a nul-terminated C string and `stats` points to
+        // writable memory for the kernel to initialize.
+        let code = unsafe { libc::statvfs(raw_path.as_ptr(), stats.as_mut_ptr()) };
+        if code != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        // SAFETY: `statvfs` returned success, so the struct has been filled.
+        let stats = unsafe { stats.assume_init() };
+        let block_size = if stats.f_frsize > 0 {
+            stats.f_frsize
+        } else {
+            stats.f_bsize
+        } as u64;
+        Ok(DiskStats {
+            free_bytes: (stats.f_bavail as u64).saturating_mul(block_size),
+            total_bytes: (stats.f_blocks as u64).saturating_mul(block_size),
+        })
+    }
+
+    pub fn rlimit_fsize_bytes() -> Result<Option<u64>, String> {
+        let mut limit = MaybeUninit::<libc::rlimit>::uninit();
+        // SAFETY: `limit` points to writable memory and RLIMIT_FSIZE is the
+        // platform resource id for the inherited file-size soft cap.
+        let code = unsafe { libc::getrlimit(libc::RLIMIT_FSIZE, limit.as_mut_ptr()) };
+        if code != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        // SAFETY: `getrlimit` returned success, so the struct has been filled.
+        let limit = unsafe { limit.assume_init() };
+        if limit.rlim_cur == libc::RLIM_INFINITY {
+            Ok(None)
+        } else {
+            Ok(Some(limit.rlim_cur as u64))
+        }
+    }
 }
 
 fn action_queue_from_inputs(

@@ -27,6 +27,7 @@ arboard = "3"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
+libc = "0.2.186"
 notify = "6"
 ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
