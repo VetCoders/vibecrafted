@@ -16,12 +16,16 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-<!-- fleet-imperative-exception: v1 -->
+<!-- fleet-imperative-exception: v2 -->
 
-> **`vc-delegate` is THE exception to the Fleet Imperative** — native in-process
-> subagents, NOT the external 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 fleet. Every other `/vc-*` workflow
-> invocation means dispatching real, out-of-process agents through
-> `vibecrafted <workflow> <agent>`; this skill alone stays in-process by design.
+> **`vc-delegate` is THE exception to the Fleet Imperative:** native in-process
+> subagents, NOT the external Vibecrafted fleet. In the operator CLI layer, every
+> other `/vc-*` workflow invocation means dispatching real, out-of-process agents
+> through `vibecrafted <workflow> <agent>`.
+>
+> In the skill-loading / chat layer, loading `vc-delegate` still does not mean self-dispatch.
+> Use native in-process delegation only when the current operator
+> task explicitly calls for bounded local subagents.
 
 <!-- /fleet-imperative-exception -->
 

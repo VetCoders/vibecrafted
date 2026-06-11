@@ -5,9 +5,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-FLEET_IMPERATIVE_START = "<!-- fleet-imperative: v1 -->"
+FLEET_IMPERATIVE_START = "<!-- fleet-imperative: v2 -->"
 FLEET_IMPERATIVE_END = "<!-- /fleet-imperative -->"
-FLEET_EXCEPTION_START = "<!-- fleet-imperative-exception: v1 -->"
+FLEET_EXCEPTION_START = "<!-- fleet-imperative-exception: v2 -->"
 FLEET_EXCEPTION_END = "<!-- /fleet-imperative-exception -->"
 
 
@@ -36,11 +36,11 @@ def test_vc_skills_preserve_init_and_loctree_orientation_contract() -> None:
 
 
 def test_vc_skills_carry_fleet_imperative_block() -> None:
-    """Every /vc-* invocation means dispatching the external fleet — never a no-op.
+    """Operator /vc-* invocations dispatch; loaded SKILL.md files do not.
 
     The sole carve-out is vc-delegate (native in-process subagents). The block is
-    the structural guarantee; this gate keeps it from regressing into prose an
-    agent can absorb without acting.
+    the structural guarantee; this gate keeps the operator runtime imperative
+    from leaking into the Codex/Claude local skill-loading layer.
     """
     skill_files = sorted((REPO_ROOT / "skills").glob("vc-*/SKILL.md"))
     assert skill_files, "No vc-* skill files discovered"
@@ -61,7 +61,12 @@ def test_vc_skills_carry_fleet_imperative_block() -> None:
             carve_out = text.split(FLEET_EXCEPTION_START, 1)[1].split(
                 FLEET_EXCEPTION_END, 1
             )[0]
-            for needle in ("THE exception", "NOT the external", "in-process"):
+            for needle in (
+                "THE exception",
+                "NOT the external",
+                "in-process",
+                "does not mean self-dispatch",
+            ):
                 if needle not in carve_out:
                     failures.append(
                         f"{rel} exception carve-out missing phrase: {needle!r}"
@@ -80,11 +85,14 @@ def test_vc_skills_carry_fleet_imperative_block() -> None:
             0
         ]
         for needle in (
-            "DISPATCHING THE",
+            "Operator CLI / slash-command layer",
             "`vibecrafted <workflow> <agent>`",
             "not a no-op",
+            "Skill-loading / chat layer",
+            "does not mean self-dispatch",
+            "do not spawn another agent",
+            "explicitly asks you to launch",
             "native in-process subagents",
-            "STOP and dispatch through the launcher",
             "`vc-delegate`",
         ):
             if needle not in block:

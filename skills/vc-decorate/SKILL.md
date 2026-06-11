@@ -17,14 +17,20 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-<!-- fleet-imperative: v1 -->
+<!-- fleet-imperative: v2 -->
 
-> **Invoking `/vc-decorate` means you are DISPATCHING THE 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 FLEET** — real,
-> out-of-process agents launched through `vibecrafted <workflow> <agent>`. This invocation
-> is an **imperative to act**, **not a no-op**, and **not** native in-process subagents.
-> If you loaded this skill and find yourself reaching for an in-thread tool (e.g. native
-> `Workflow`), STOP and dispatch through the launcher. The **sole** exception is
-> `vc-delegate` (native in-process subagents) — every other `/vc-*` is the fleet.
+> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
+> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
+> fleet through the launcher. In that layer, the invocation is an imperative to
+> act, not a no-op, and not native in-process subagents.
+>
+> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
+> Gemini, or another local agent does not mean self-dispatch. Read and apply the
+> skill in the current thread; do not spawn another agent unless the operator
+> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
+> command such as `vc-init codex` / `vibecrafted init claude`.
+>
+> The sole native in-process carve-out is `vc-delegate`.
 
 <!-- /fleet-imperative -->
 
@@ -173,12 +179,12 @@ consistent characters from the same Unicode block.
 | ---------- | ------------------- | ------------------------ |
 | Box frames | `╭─╮│╰─╯`           | Box Drawing              |
 | Separators | `·` `─` `━` `┄`     | Box Drawing, Punctuation |
-| Checkmarks | `✓` `✗` `⚠`        | Dingbats                 |
-| Bullets    | `▸` `▪` `◆` `›`    | Geometric Shapes         |
+| Checkmarks | `✓` `✗` `⚠`         | Dingbats                 |
+| Bullets    | `▸` `▪` `◆` `›`     | Geometric Shapes         |
 | Progress   | `⣿⣶⣤⣀` `█▓▒░`       | Braille, Block Elements  |
 | Sparklines | `⣀⣤⣶⣿` (8px/cell)   | Braille (256 combos)     |
 | Arrows     | `→` `←` `↑` `↓` `⟶` | Arrows                   |
-| Status     | `⚒` `⚡` `⚙` `⟳`  | Misc Symbols             |
+| Status     | `⚒` `⚡` `⚙` `⟳`    | Misc Symbols             |
 | Brands     | `🄵·🅁·🄰·🄼·🄴·🅆·🄾·🅁·🄺` | Enclosed Alphanumerics   |
 
 **Braille sparklines** deserve attention. A single Braille char encodes 8 dots
