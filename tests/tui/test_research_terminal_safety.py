@@ -18,17 +18,18 @@ BLOCKING_ZELLIJ_VERBS = ("attach", "--new-session-with-layout", "switch-session"
 
 def _stub_zellij(bin_dir: Path, log: Path) -> None:
     # Records every invocation; reports no sessions. Lets the test prove that
-    # vc-research never starts a blocking zellij client in the calling shell.
+    # vc-research never starts a blocking mux client in the calling shell.
     bin_dir.mkdir(parents=True, exist_ok=True)
-    stub = bin_dir / "zellij"
-    stub.write_text(
-        "#!/usr/bin/env bash\n"
-        f'echo "$@" >> "{log}"\n'
-        'case "${1:-}" in list-sessions|ls) exit 0 ;; esac\n'
-        "exit 0\n",
-        encoding="utf-8",
-    )
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+    for name in ("vc-frame", "zellij"):
+        stub = bin_dir / name
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            f'echo "$@" >> "{log}"\n'
+            'case "${1:-}" in list-sessions|ls) exit 0 ;; esac\n'
+            "exit 0\n",
+            encoding="utf-8",
+        )
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
 
 
 def test_vc_research_terminal_without_session_degrades_to_headless(
