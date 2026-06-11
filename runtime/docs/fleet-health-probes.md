@@ -41,11 +41,12 @@ unwired columns literally:
 ```
 
 So the four probe families are not my invention — they are the explicit
-"Still planned (not wired)" cell. PLAN_23 §7 C-3 (`vibecrafted-app/docs/plans/
-PLAN_23_AGENT_OPERATOR_DASHBOARD.md:196`) named the same shape: _"Fleet health
-(aicx health + df -h + MCP pings)"_. **This design honors the plan's named
-shapes; it does not silently diverge.** Two corrections to plan assumptions
-are flagged explicitly below (aicx flag, run-record coupling).
+"Still planned (not wired)" cell. `PLAN_23` §7 C-3
+(`vibecrafted-app/docs/plans/PLAN_23_AGENT_OPERATOR_DASHBOARD.md:196`) named
+the same shape: "Fleet health (aicx health + df -h + MCP pings)". **This design
+honors the plan's named shapes; it does not silently diverge.** Two corrections
+to plan assumptions are flagged explicitly below (aicx flag, run-record
+coupling).
 
 ---
 
@@ -110,8 +111,8 @@ the honest "couldn't probe" fallback (probe binary absent, permission denied).
 - **How it surfaces EARLIER:** today staleness is _silent_ — agents just recall
   worse. The probe turns a 94 h lag into a visible `Warn`/`Fail` line, so the
   operator runs `aicx index` _before_ the next wave dispatches on a stale brain.
-- **⚠ Plan correction (runtime truth):** DASHBOARD.md `:117` and PLAN_23 say
-  `aicx health --json`. **That flag does not exist** — `aicx health` _rejects_
+- **⚠ Plan correction (runtime truth):** DASHBOARD.md `:117` and `PLAN_23` say
+  `aicx health --json`. **That flag does not exist** — `aicx health` rejects
   `--json` (`error: unexpected argument '--json'`) because it emits JSON
   **unconditionally** ("Emit the full AICX health report as JSON for
   automation"). The implement-wave must call `aicx health` with **no flag**.
@@ -158,8 +159,8 @@ the honest "couldn't probe" fallback (probe binary absent, permission denied).
   a down peer = a silently-failed remote dispatch.
 - **How it surfaces EARLIER:** the operator reads `div0 unreachable ✗` _before_
   firing a remote wave at it, instead of discovering it through a dead
-  dispatch. **Gating note:** the remote half of the DISK probe (PLAN_23 §5
-  `df -h over Tailscale ssh`) _depends_ on this probe — Tailscale must be `Ok`
+  dispatch. **Gating note:** the remote half of the DISK probe (`PLAN_23` §5
+  `df -h over Tailscale ssh`) depends on this probe — Tailscale must be `Ok`
   before remote-disk is even attempted. So this probe sequences ahead of any
   remote-disk extension.
 
