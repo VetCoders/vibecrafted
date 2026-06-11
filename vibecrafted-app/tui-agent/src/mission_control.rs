@@ -5,6 +5,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::polarize::{PolarizeBand, PolarizeIntent};
@@ -43,9 +44,16 @@ const MCP_SERVERS: &[(&str, bool)] = &[
     ("vibecrafted-mcp", false),
 ];
 const LOCTREE_CONTEXT_ATLAS_MANIFEST: &str = ".loctree/context-atlas/manifest.json";
+const PROBE_CACHE_TTL_SECS: u64 = 60;
 const TAILSCALE_STATUS_TIMEOUT_MS: u64 = 750;
 const TAILSCALE_STATUS_JSON_ENV: &str = "VIBECRAFTED_TAILSCALE_STATUS_JSON";
 const TAILSCALE_DISPATCH_TARGETS: &[&str] = &["dragon", "div0"];
+const AICX_HEALTH_TIMEOUT_MS: u64 = 750;
+const AICX_HEALTH_JSON_ENV: &str = "VIBECRAFTED_AICX_HEALTH_JSON";
+
+static TAILSCALE_STATUS_CACHE: OnceLock<Mutex<ProbeCache<Result<String, String>>>> =
+    OnceLock::new();
+static AICX_HEALTH_CACHE: OnceLock<Mutex<ProbeCache<Result<String, String>>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MissionControlState {
@@ -998,12 +1006,62 @@ fn fleet_health_from_inputs(
     signals.extend(disk_health_signals());
     signals.extend(mcp_health_signals());
     signals.extend(tailscale_health_signals());
+    signals.extend(aicx_health_signals());
 
     signals
 }
 
+#[derive(Debug, Clone)]
+struct ProbeCache<T> {
+    ttl: Duration,
+    last_run: Option<Instant>,
+    result: Option<T>,
+}
+
+impl<T: Clone> ProbeCache<T> {
+    fn new(ttl: Duration) -> Self {
+        Self {
+            ttl,
+            last_run: None,
+            result: None,
+        }
+    }
+
+    fn get_or_refresh<F>(&mut self, now: Instant, refresh: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        if let (Some(last_run), Some(result)) = (self.last_run, self.result.as_ref())
+            && now
+                .checked_duration_since(last_run)
+                .is_some_and(|age| age < self.ttl)
+        {
+            return result.clone();
+        }
+        let result = refresh();
+        self.last_run = Some(now);
+        self.result = Some(result.clone());
+        result
+    }
+}
+
+fn cached_probe_result<F>(
+    cache: &'static OnceLock<Mutex<ProbeCache<Result<String, String>>>>,
+    refresh: F,
+) -> Result<String, String>
+where
+    F: FnOnce() -> Result<String, String>,
+{
+    let cache = cache
+        .get_or_init(|| Mutex::new(ProbeCache::new(Duration::from_secs(PROBE_CACHE_TTL_SECS))));
+    match cache.lock() {
+        Ok(mut cache) => cache.get_or_refresh(Instant::now(), refresh),
+        Err(err) => Err(format!("probe cache unavailable: {err}")),
+    }
+}
+
 fn tailscale_health_signals() -> Vec<FleetHealthSignal> {
-    tailscale_health_signals_from_status(tailscale_status_json())
+    tailscale_health_signals_from_status(cached_tailscale_status_json())
 }
 
 fn tailscale_health_signals_from_status(
@@ -1110,24 +1168,55 @@ fn tailscale_peer_detail(prefix: &str, peer: &TailscalePeer) -> String {
     }
 }
 
-fn tailscale_status_json() -> Result<String, String> {
+fn cached_tailscale_status_json() -> Result<String, String> {
     if let Ok(raw) = env::var(TAILSCALE_STATUS_JSON_ENV) {
         return Ok(raw);
     }
+    cached_probe_result(&TAILSCALE_STATUS_CACHE, tailscale_status_json_uncached)
+}
 
-    let mut child = Command::new("tailscale")
-        .args(["status", "--json"])
+fn tailscale_status_json_uncached() -> Result<String, String> {
+    bounded_command_stdout(
+        "tailscale",
+        &["status", "--json"],
+        TAILSCALE_STATUS_TIMEOUT_MS,
+    )
+}
+
+fn aicx_health_signals() -> Vec<FleetHealthSignal> {
+    aicx_health_signals_from_output(cached_aicx_health_json())
+}
+
+fn cached_aicx_health_json() -> Result<String, String> {
+    if let Ok(raw) = env::var(AICX_HEALTH_JSON_ENV) {
+        return Ok(raw);
+    }
+    cached_probe_result(&AICX_HEALTH_CACHE, aicx_health_json_uncached)
+}
+
+fn aicx_health_json_uncached() -> Result<String, String> {
+    bounded_command_stdout("aicx", &["health"], AICX_HEALTH_TIMEOUT_MS)
+}
+
+fn bounded_command_stdout(program: &str, args: &[&str], timeout_ms: u64) -> Result<String, String> {
+    let command_label = if args.is_empty() {
+        program.to_string()
+    } else {
+        format!("{} {}", program, args.join(" "))
+    };
+    let mut child = Command::new(program)
+        .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
-                "tailscale binary not found on PATH".to_string()
+                format!("{program} binary not found on PATH")
             } else {
-                format!("tailscale status --json failed to start: {err}")
+                format!("{command_label} failed to start: {err}")
             }
         })?;
-    let deadline = Instant::now() + Duration::from_millis(TAILSCALE_STATUS_TIMEOUT_MS);
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     loop {
         match child.try_wait() {
             Ok(Some(_)) => {
@@ -1135,7 +1224,7 @@ fn tailscale_status_json() -> Result<String, String> {
                 if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                     return Err(if stderr.is_empty() {
-                        format!("tailscale status --json exited {}", output.status)
+                        format!("{command_label} exited {}", output.status)
                     } else {
                         stderr
                     });
@@ -1145,13 +1234,174 @@ fn tailscale_status_json() -> Result<String, String> {
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!(
-                    "tailscale status --json timed out after {TAILSCALE_STATUS_TIMEOUT_MS}ms"
-                ));
+                return Err(format!("{command_label} timed out after {timeout_ms}ms"));
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-            Err(err) => return Err(format!("tailscale status --json wait failed: {err}")),
+            Err(err) => return Err(format!("{command_label} wait failed: {err}")),
         }
+    }
+}
+
+fn aicx_health_signals_from_output(output: Result<String, String>) -> Vec<FleetHealthSignal> {
+    let raw = match output {
+        Ok(raw) => raw,
+        Err(err) => {
+            return vec![FleetHealthSignal {
+                label: "aicx index".to_string(),
+                status: FleetHealthStatus::Unknown,
+                detail: err,
+            }];
+        }
+    };
+    let report = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(report) => report,
+        Err(err) => {
+            return vec![FleetHealthSignal {
+                label: "aicx index".to_string(),
+                status: FleetHealthStatus::Unknown,
+                detail: format!("invalid health JSON: {err}"),
+            }];
+        }
+    };
+    vec![aicx_health_signal_from_report(&report)]
+}
+
+fn aicx_health_signal_from_report(report: &serde_json::Value) -> FleetHealthSignal {
+    let checks = aicx_relevant_checks(report);
+    if checks.is_empty() {
+        return FleetHealthSignal {
+            label: "aicx index".to_string(),
+            status: FleetHealthStatus::Unknown,
+            detail: "health report contained no index/sidecar/extractor checks".to_string(),
+        };
+    }
+
+    let mut status = FleetHealthStatus::Ok;
+    let mut bad_details = Vec::new();
+    for check in &checks {
+        let check_status = aicx_check_status(check);
+        status = worst_fleet_health_status(status, check_status);
+        if check_status != FleetHealthStatus::Ok {
+            bad_details.push(format!("{}: {}", check.name, check.detail));
+        }
+    }
+
+    let detail = if bad_details.is_empty() {
+        "index fresh; sidecars covered".to_string()
+    } else {
+        bad_details.truncate(2);
+        bad_details.join("; ")
+    };
+    FleetHealthSignal {
+        label: "aicx index".to_string(),
+        status,
+        detail,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AicxHealthCheck {
+    name: String,
+    severity: String,
+    detail: String,
+}
+
+fn aicx_relevant_checks(report: &serde_json::Value) -> Vec<AicxHealthCheck> {
+    let Some(entries) = report.as_object() else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|(key, value)| {
+            let severity = value.get("severity")?.as_str()?.to_string();
+            let name = value
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or(key)
+                .to_string();
+            let detail = value
+                .get("detail")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string();
+            let needle = format!("{key} {name} {detail}").to_ascii_lowercase();
+            let relevant = needle.contains("index")
+                || needle.contains("sidecar")
+                || needle.contains("extract")
+                || key == "canonical_store"
+                || key == "state";
+            relevant.then_some(AicxHealthCheck {
+                name,
+                severity,
+                detail,
+            })
+        })
+        .collect()
+}
+
+fn aicx_check_status(check: &AicxHealthCheck) -> FleetHealthStatus {
+    let severity_status = match check.severity.to_ascii_lowercase().as_str() {
+        "green" | "ok" | "healthy" | "success" => FleetHealthStatus::Ok,
+        "warning" | "warn" | "yellow" | "degraded" => FleetHealthStatus::Warn,
+        "red" | "error" | "critical" | "fail" | "failed" | "blocked" => FleetHealthStatus::Blocked,
+        "skipped" | "notconfigured" | "unknown" => FleetHealthStatus::Unknown,
+        _ => FleetHealthStatus::Unknown,
+    };
+
+    worst_fleet_health_status(severity_status, aicx_threshold_status(&check.detail))
+}
+
+fn aicx_threshold_status(detail: &str) -> FleetHealthStatus {
+    let detail = detail.to_ascii_lowercase();
+    if detail.contains("extract") && (detail.contains("fail") || detail.contains("error")) {
+        return FleetHealthStatus::Blocked;
+    }
+    if detail.contains("missing")
+        && (detail.contains("sidecar") || detail.contains("extract"))
+        && first_number(&detail).is_some_and(|count| count > 0.0)
+    {
+        return FleetHealthStatus::Warn;
+    }
+    if detail.contains("lag")
+        && let Some(hours) = first_number(&detail)
+    {
+        if hours > 72.0 {
+            return FleetHealthStatus::Blocked;
+        }
+        if hours >= 24.0 {
+            return FleetHealthStatus::Warn;
+        }
+    }
+    FleetHealthStatus::Ok
+}
+
+fn first_number(text: &str) -> Option<f64> {
+    text.split(|ch: char| !(ch.is_ascii_digit() || ch == '.'))
+        .find_map(|token| {
+            if token.is_empty() {
+                None
+            } else {
+                token.parse::<f64>().ok()
+            }
+        })
+}
+
+fn worst_fleet_health_status(
+    left: FleetHealthStatus,
+    right: FleetHealthStatus,
+) -> FleetHealthStatus {
+    fn rank(status: FleetHealthStatus) -> u8 {
+        match status {
+            FleetHealthStatus::Ok => 0,
+            FleetHealthStatus::Unknown => 1,
+            FleetHealthStatus::Warn => 2,
+            FleetHealthStatus::Blocked => 3,
+        }
+    }
+    if rank(right) > rank(left) {
+        right
+    } else {
+        left
     }
 }
 
@@ -2222,5 +2472,120 @@ mod tests {
         assert_eq!(signals[0].label, "tailscale status");
         assert_eq!(signals[0].status, FleetHealthStatus::Unknown);
         assert_eq!(signals[0].detail, "tailscaled is not running");
+    }
+
+    #[test]
+    fn aicx_probe_maps_index_lag_and_sidecar_health() {
+        let signals = aicx_health_signals_from_output(Ok(r#"{
+            "schema_version": 2,
+            "index_freshness": {
+                "name": "index_freshness",
+                "severity": "warning",
+                "detail": "semantic index lag 48h",
+                "recommendation": "run aicx store"
+            },
+            "sidecar_coverage": {
+                "name": "sidecars",
+                "severity": "green",
+                "detail": "0 missing sidecars",
+                "recommendation": null
+            },
+            "semantic_health": {
+                "name": "semantic_health",
+                "severity": "warning",
+                "detail": "optional semantic model not found",
+                "recommendation": null
+            },
+            "overall": "warning"
+        }"#
+        .to_string()));
+
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0].label, "aicx index");
+        assert_eq!(signals[0].status, FleetHealthStatus::Warn);
+        assert!(signals[0].detail.contains("48h"));
+    }
+
+    #[test]
+    fn aicx_probe_blocks_on_extractor_failure() {
+        let signals = aicx_health_signals_from_output(Ok(r#"{
+            "schema_version": 2,
+            "index_freshness": {
+                "name": "index_freshness",
+                "severity": "green",
+                "detail": "index lag 2h",
+                "recommendation": null
+            },
+            "extractor_failures": {
+                "name": "extractor_failures",
+                "severity": "error",
+                "detail": "3 extractor failures in postcompact hooks",
+                "recommendation": "inspect diagnostics"
+            }
+        }"#
+        .to_string()));
+
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0].status, FleetHealthStatus::Blocked);
+        assert!(signals[0].detail.contains("extractor"));
+    }
+
+    #[test]
+    fn aicx_probe_warns_on_missing_sidecars() {
+        let signals = aicx_health_signals_from_output(Ok(r#"{
+            "schema_version": 2,
+            "index_freshness": {
+                "name": "index_freshness",
+                "severity": "green",
+                "detail": "index lag 2h",
+                "recommendation": null
+            },
+            "sidecar_coverage": {
+                "name": "sidecars",
+                "severity": "green",
+                "detail": "3 missing sidecars",
+                "recommendation": "run aicx store"
+            }
+        }"#
+        .to_string()));
+
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0].status, FleetHealthStatus::Warn);
+        assert!(signals[0].detail.contains("sidecars"));
+    }
+
+    #[test]
+    fn aicx_probe_degrades_to_one_signal_when_health_is_unavailable() {
+        let signals =
+            aicx_health_signals_from_output(Err("aicx binary not found on PATH".to_string()));
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0].label, "aicx index");
+        assert_eq!(signals[0].status, FleetHealthStatus::Unknown);
+        assert_eq!(signals[0].detail, "aicx binary not found on PATH");
+    }
+
+    #[test]
+    fn probe_cache_reuses_result_inside_ttl_without_refreshing() {
+        let mut cache = ProbeCache::new(std::time::Duration::from_secs(60));
+        let start = Instant::now();
+        let mut refreshes = 0;
+
+        let first = cache.get_or_refresh(start, || {
+            refreshes += 1;
+            "first".to_string()
+        });
+        let second = cache.get_or_refresh(start + std::time::Duration::from_millis(5), || {
+            refreshes += 1;
+            "second".to_string()
+        });
+        let third = cache.get_or_refresh(start + std::time::Duration::from_secs(61), || {
+            refreshes += 1;
+            "third".to_string()
+        });
+
+        assert_eq!(first, "first");
+        assert_eq!(second, "first");
+        assert_eq!(third, "third");
+        assert_eq!(refreshes, 2);
     }
 }

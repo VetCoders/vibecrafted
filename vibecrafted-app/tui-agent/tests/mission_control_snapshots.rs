@@ -466,6 +466,25 @@ fn mission_control_tab_tailscale_probe_snapshot() {
 }
 
 #[test]
+fn mission_control_tab_aicx_probe_snapshot() {
+    let mut state = MissionControlState {
+        generated_at: "2026-06-10T12:00:00+00:00".to_string(),
+        ..MissionControlState::default()
+    };
+    state.fleet_health = vec![FleetHealthSignal {
+        label: "aicx index".to_string(),
+        status: FleetHealthStatus::Warn,
+        detail: "index_freshness: semantic index lag 48h".to_string(),
+    }];
+    let buffer = render_mission_tab(&mission_app(state));
+    insta::assert_snapshot!("mission_control_tab_aicx_probe", buffer_text(&buffer));
+    insta::assert_snapshot!(
+        "mission_control_tab_aicx_probe_colors",
+        buffer_color_map(&buffer)
+    );
+}
+
+#[test]
 fn mission_control_tab_empty_state_snapshot() {
     let app = mission_app(MissionControlState::default());
     let buffer = render_mission_tab(&app);
@@ -662,6 +681,25 @@ fn vc_admin_status_renders_all_panels_from_disk_fixtures() {
                 }
             }"#,
         )
+        .env(
+            "VIBECRAFTED_AICX_HEALTH_JSON",
+            r#"{
+                "schema_version": 2,
+                "index_freshness": {
+                    "name": "index_freshness",
+                    "severity": "green",
+                    "detail": "index lag 1h",
+                    "recommendation": null
+                },
+                "sidecar_coverage": {
+                    "name": "sidecars",
+                    "severity": "green",
+                    "detail": "0 missing sidecars",
+                    "recommendation": null
+                },
+                "overall": "green"
+            }"#,
+        )
         .arg("status")
         .output()
         .expect("vc-admin binary must run");
@@ -690,6 +728,7 @@ fn vc_admin_status_renders_all_panels_from_disk_fixtures() {
         (r"(✓|!|✗|\?)         mcp loctree-mcp\s+.*", "$1         mcp loctree-mcp [MCP]"),
         (r"(✓|!|✗|\?)         mcp aicx-mcp\s+.*", "$1         mcp aicx-mcp    [MCP]"),
         (r"(✓|!|✗|\?)         mcp vibecrafted-mcp\s+.*", "$1         mcp vibecrafted-mcp [MCP]"),
+        (r"(✓|!|✗|\?)         aicx index\s+.*", "$1         aicx index      [AICX]"),
     ]}, {
         insta::assert_snapshot!("vc_admin_status", stdout);
     });
