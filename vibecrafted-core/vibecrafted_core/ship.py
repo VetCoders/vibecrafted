@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import argparse
 import subprocess
-import sys
 from pathlib import Path
 from typing import Sequence
 
-from . import loop
+from . import loop, ui
 
 
 SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "opencode"}
@@ -47,7 +46,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.agent not in SUPPORTED_AGENTS:
-        print(f"vc-ship: unknown agent: {args.agent}", file=sys.stderr)
+        ui.err(
+            f"unknown agent: {args.agent}",
+            fix="use one of: claude · codex · gemini · agy · junie · grok · opencode",
+        )
         return 1
     prompt = args.prompt or ""
     dispatch_args: list[str]
@@ -70,7 +72,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.prompt,
         ]
     else:
-        print("vc-ship: provide --file or --prompt", file=sys.stderr)
+        ui.err("ship needs a prompt", fix='vibecrafted ship codex -p "<task>"')
         return 1
 
     loop_prompt = build_ship_prompt(args.agent, args.checkpoint, prompt)

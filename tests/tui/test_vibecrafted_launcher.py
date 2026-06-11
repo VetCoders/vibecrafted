@@ -444,11 +444,10 @@ def test_vc_help_wrapper_symlink_renders_main_help(tmp_path: Path) -> None:
     )
 
     assert "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍." in result.stdout
-    assert "Front door:" in result.stdout
-    assert "vibecrafted dashboard" in result.stdout
-    assert "Start here:" in result.stdout
-    assert 'vibecrafted hydrate codex --prompt "Package the product"' in result.stdout
-    assert "Dashboard is optional" in result.stdout
+    assert "Commands:" in result.stdout
+    assert "Ship cycle:" in result.stdout
+    assert "workflow → implement → marbles → review → dou → release" in result.stdout
+    assert 'vibecrafted implement codex -p "Ship dark mode"' in result.stdout
 
 
 def test_vc_help_wrapper_forwards_topic_help(tmp_path: Path) -> None:
@@ -465,7 +464,7 @@ def test_vc_help_wrapper_forwards_topic_help(tmp_path: Path) -> None:
 
     assert "Start an interactive repository orientation session" in result.stdout
     assert "vc-init [claude|codex|gemini|agy|junie|grok]" in result.stdout
-    assert "Front door:" not in result.stdout
+    assert "Ship cycle:" not in result.stdout
 
 
 def test_dispatch_help_documents_async_lifecycle_contract() -> None:
@@ -782,11 +781,11 @@ def test_repo_launcher_is_directly_executable() -> None:
 
     assert "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍." in result.stdout
     assert expected_version in result.stdout
-    assert "vibecrafted dashboard" in result.stdout
-    assert "vibecrafted telemetry smoke" in result.stdout
-    assert "\n  telemetry smoke" not in result.stdout
-    assert 'vibecrafted hydrate codex --prompt "Package the product"' in result.stdout
-    assert "START_HERE.md" in result.stdout
+    assert "Commands:" in result.stdout
+    assert "vibecrafted init claude" in result.stdout
+    # Bounded deck: plumbing stays out of first contact.
+    assert "vibecrafted dashboard" not in result.stdout
+    assert "telemetry smoke" not in result.stdout
 
 
 def test_update_web_fallback_verifies_install_sh_against_sha256sums(
@@ -1107,7 +1106,7 @@ def test_help_topics_route_to_specific_command_or_skill_help(
     )
 
     assert expected in result.stdout
-    assert "Front door:" not in result.stdout
+    assert "Ship cycle:" not in result.stdout
 
 
 def test_status_empty_state_is_explicit_when_artifact_dirs_exist(
@@ -1189,19 +1188,9 @@ def test_compact_help_teaches_implement_before_alias() -> None:
         text=True,
     )
 
-    assert "Skill inventory (20 live workflows):" in result.stdout
-    assert "marbles · audit · polarize · dou" in result.stdout
-    assert (
-        "For daily tasks, use implement or justdo as convenient aliases."
-        in result.stdout
-    )
-    assert (
-        "Compatibility: justdo is a " + "leg" + "acy alias for implement"
-        not in result.stdout
-    )
+    assert 'vibecrafted implement codex -p "Ship dark mode"' in result.stdout
+    assert "justdo" not in result.stdout
     assert "leg" + "acy alias" not in result.stdout
-    assert 'vibecrafted implement codex --prompt "Ship <task>"' in result.stdout
-    assert 'vibecrafted justdo codex --prompt "Ship <task>"' not in result.stdout
 
 
 def test_review_and_followup_help_separate_bounded_review_from_direction_audit() -> (
@@ -1494,7 +1483,7 @@ def test_loop_help_exposes_interactive_operator_runtime() -> None:
     assert "vibecrafted loop await-run --run-id" in result.stdout
     assert "vc-loop status" in result.stdout
     assert "<repo-root>/.vibecrafted/operator-loop.local.md" in result.stdout
-    assert "Operator-approved command" in result.stdout
+    assert "Operator-approved argv command" in result.stdout
 
 
 def test_loop_start_next_and_max_iteration_stop(tmp_path: Path) -> None:

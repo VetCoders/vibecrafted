@@ -41,6 +41,7 @@ def test_tick_runs_then_command_after_idle_window(
     rc = cron.main(
         [
             "tick",
+            "--json",
             "--root",
             str(root),
             "--state-file",
@@ -77,6 +78,7 @@ def test_tick_refuses_hard_stop_then_command(
     rc = cron.main(
         [
             "tick",
+            "--json",
             "--root",
             str(root),
             "--state-file",
@@ -93,6 +95,41 @@ def test_tick_refuses_hard_stop_then_command(
     payload = json.loads(capsys.readouterr().out)
     assert payload["then"]["status"] == "refused"
     assert "git push" in payload["then"]["reason"]
+
+
+def test_tick_default_prints_human_summary_not_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    """CLI_PRODUCT_SPEC §7 cut 6: raw JSON reaches humans only under --json."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    state = root / ".vibecrafted" / "operator-loop.local.md"
+    journal = tmp_path / "journal.jsonl"
+    write_state(state, updated_at=datetime.now(timezone.utc) - timedelta(minutes=15))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+
+    rc = cron.main(
+        [
+            "tick",
+            "--root",
+            str(root),
+            "--state-file",
+            str(state),
+            "--journal",
+            str(journal),
+            "--no-context",
+        ]
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "loop tick" in out
+    assert "active" in out
+    assert "{" not in out
+    # the journal still records the full machine payload
+    assert json.loads(journal.read_text(encoding="utf-8").splitlines()[-1])["active"]
 
 
 def test_cron_line_prints_real_vibecrafted_command(
@@ -119,4 +156,5 @@ def test_cron_line_prints_real_vibecrafted_command(
     line = capsys.readouterr().out.strip()
     assert line.startswith("*/10 * * * *")
     assert "vibecrafted cron tick" in line
+    assert "--json" in line
     assert "--then-cmd 'vibecrafted loop next'" in line

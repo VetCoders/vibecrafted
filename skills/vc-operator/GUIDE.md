@@ -159,7 +159,6 @@ smoke in both themes + README/GUIDELINES update + close-out backlog entry.
    ```
 
    Tracker statuses beyond `[ ]` / `[x]`: prefix with annotations when needed.
-
    - `- [ ] 🔄 ...` — currently firing / await in flight
    - `- [ ] ⚠ ...` — recovery dispatch fired (paired with the recovered prompt id)
    - `- [x] ↻ ...` — landed via recovery dispatch, not original

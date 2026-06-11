@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+from . import ui
 from .runtime_paths import vibecrafted_home
 
 
@@ -268,7 +269,22 @@ def tick(args: argparse.Namespace) -> int:
         "then": command_result,
     }
     append_jsonl(journal, payload)
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    if getattr(args, "json", False):
+        # Machine consumers (crontab logs, agents) opt in to the raw payload.
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        status = "active" if active else "inactive"
+        idle_part = f" · idle {idle:.0f}m" if idle is not None else ""
+        ui.ok(f"loop tick · {run_id} · {status}{idle_part}")
+        if command_result is not None:
+            if command_result.get("status") == "refused":
+                ui.warn(f"then-cmd refused — {command_result.get('reason')}")
+            else:
+                code = int(command_result.get("exit_code") or 0)
+                if code == 0:
+                    ui.ok(f"then-cmd ok · {args.then_cmd}")
+                else:
+                    ui.err(f"then-cmd exited {code}", log=str(journal))
     if command_result and command_result.get("status") == "ran":
         return int(command_result.get("exit_code") or 0)
     return 0
@@ -282,6 +298,7 @@ def cron_line(args: argparse.Namespace) -> int:
         shlex.quote(script),
         "cron",
         "tick",
+        "--json",
         "--root",
         shlex.quote(str(root)),
         "--after-idle-minutes",
@@ -314,6 +331,11 @@ def _build_parser() -> argparse.ArgumentParser:
     tick_parser.add_argument("--root", default="")
     tick_parser.add_argument("--state-file", default="")
     tick_parser.add_argument("--journal", default="")
+    tick_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the raw tick payload (default: one-line human summary)",
+    )
     tick_parser.add_argument("--after-idle-minutes", type=int, default=10)
     tick_parser.add_argument("--then-cmd", default="")
     tick_parser.add_argument(

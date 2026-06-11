@@ -149,9 +149,10 @@ def test_install_sh_attended_pipe_requires_explicit_yes_before_staging(
         home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current"
     )
     assert exit_code == 0
-    assert "Nothing will be staged or installed until you say yes." in output
+    assert "⚒ 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. →" in output
+    assert "unpack · stage ·" in output
     assert "Proceed? [y/N]" in output
-    assert "Cancelled. Nothing was staged or installed." in output
+    assert "Cancelled." in output
     assert not staged_root.exists()
 
 

@@ -49,7 +49,6 @@ about what the product is.
 
 2. Installer truth
    Confirm every public install surface keeps the same contract:
-
    - guided GUI path is the first CTA for humans
    - compact path stays available for automation
    - `doctor` remains the first verification step after install
@@ -85,7 +84,6 @@ about what the product is.
 
 4. Asset truth
    Capture and store these before submission day:
-
    - guided installer screenshot
    - command deck screenshot
    - quickstart screenshot
@@ -95,7 +93,6 @@ about what the product is.
 
 5. Marketplace order
    Submit in this order:
-
    1. There’s An AI For That
    2. Future Tools
    3. Futurepedia
@@ -107,7 +104,6 @@ about what the product is.
 6. Uneed dry run
    Treat Uneed as the softer rehearsal launch once AI-directory listings are
    already live:
-
    - use the guided installer screenshot as the hero asset
    - keep the explanation founder-readable, not taxonomy-heavy
    - watch which screenshot / blurb combination gets the cleanest conversion

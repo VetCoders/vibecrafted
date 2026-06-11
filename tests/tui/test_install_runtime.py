@@ -142,4 +142,4 @@ def test_install_sh_fail_fast_on_launcher_root_drift(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     merged_output = f"{result.stdout}\n{result.stderr}"
-    assert "Fail-fast: launcher root drift detected" in merged_output
+    assert "✗ launcher root drift:" in merged_output

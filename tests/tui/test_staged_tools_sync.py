@@ -83,21 +83,21 @@ def test_compact_status_appends_lines_for_non_tty_logs() -> None:
     ]
 
 
-def test_compact_checkpoint_preserves_reason_context() -> None:
+def test_compact_checkpoint_prints_title_and_bounded_details_without_reason() -> None:
+    """CLI_PRODUCT_SPEC §4: installers don't explain their own typography —
+    the REASON narration line is retired from compact checkpoints."""
     out = io.StringIO()
 
     installer._compact_checkpoint(
         out,
         2,
         "Diagnostics and Plan",
-        "We show the shape before changing files.",
         ("Skills   27 -> ~/.vibecrafted/skills", "Shell    enabled"),
     )
 
     assert out.getvalue().splitlines() == [
         "",
         "  [2/4] Diagnostics and Plan",
-        "      REASON  We show the shape before changing files.",
         "      Skills   27 -> ~/.vibecrafted/skills",
         "      Shell    enabled",
     ]

@@ -636,7 +636,7 @@ cmd_cron_help() {
   printf '  vc-cron tick --root /path/to/repo --no-context\n'
   printf '\n'
   printf '%bReal crontab line:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted cron line --root "$(pwd)" --every-minutes 10 --then-cmd '"'"'vibecrafted loop next'"'"'\n'
+  printf '  vibecrafted cron line --root /path/to/repo --every-minutes 10 --then-cmd '"'"'vibecrafted loop next'"'"'\n'
   printf '\n'
   printf '%bSafety:%b\n' "$_bold" "$_reset"
   printf '  tick refuses hard-stop commands such as push, deploy, publish, release, reset, checkout --, and rm -rf.\n'

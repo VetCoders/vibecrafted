@@ -84,7 +84,10 @@ def test_install_foundations_default_treats_agent_cli_bootstrap_as_best_effort(
     )
 
     assert result.returncode == 0
-    assert "Agent CLI bootstrap incomplete; continuing" in result.stdout
+    assert (
+        "agent CLIs incomplete — optional, install later: vibecrafted doctor"
+        in result.stdout
+    )
 
 
 def test_install_foundations_explicit_agents_target_fails_when_bootstrap_fails(

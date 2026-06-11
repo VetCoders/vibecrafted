@@ -228,12 +228,8 @@ pause_runtime_contract_failure() {
   if ! is_interactive_session; then
     return
   fi
-  printf '\nRuntime root contract failed fast.\n'
-  printf 'Manual cleanup required (no dotfiles were modified automatically):\n'
-  printf '  1) unset conflicting VIBECRAFTED_* root overrides\n'
-  printf '  2) remove stale wrappers from ~/.cargo/bin and /usr/local/bin\n'
-  printf '  3) keep launchers in ~/.local/bin and rerun install\n\n'
-  printf 'Press Enter to continue after reviewing cleanup steps, or Ctrl-C to abort: '
+  printf '  → fix: vibecrafted doctor --fix-launchers\n' >&2
+  printf 'Press Enter to continue, or Ctrl-C to abort: '
   read -r _ || true
 }
 
@@ -251,17 +247,17 @@ enforce_runtime_root_contract() {
   resolved_launcher="${VIBECRAFTED_LAUNCHER_BIN:-$expected_launcher}"
 
   if [[ "$resolved_store" != "$expected_store" ]]; then
-    printf 'Fail-fast: store root drift detected (%s, expected %s).\n' "$resolved_store" "$expected_store" >&2
+    printf '✗ store root drift: %s ≠ %s\n' "$resolved_store" "$expected_store" >&2
     failed=1
   fi
 
   if [[ "$resolved_runtime" != "$expected_runtime" ]]; then
-    printf 'Fail-fast: runtime root drift detected (%s, expected %s).\n' "$resolved_runtime" "$expected_runtime" >&2
+    printf '✗ runtime root drift: %s ≠ %s\n' "$resolved_runtime" "$expected_runtime" >&2
     failed=1
   fi
 
   if [[ "$resolved_launcher" != "$expected_launcher" ]]; then
-    printf 'Fail-fast: launcher root drift detected (%s, expected %s).\n' "$resolved_launcher" "$expected_launcher" >&2
+    printf '✗ launcher root drift: %s ≠ %s\n' "$resolved_launcher" "$expected_launcher" >&2
     failed=1
   fi
 
@@ -303,27 +299,22 @@ prompt_attended_consent() {
   has_attended_tty || return 0
 
   if [[ -n "$archive_file" ]]; then
-    source_description="unpack local archive: $archive_file"
+    source_description="unpack"
   else
-    source_description="download snapshot: $archive_url"
+    source_description="download"
   fi
   next_step="$(bootstrap_next_step)"
 
   {
     printf '\n'
-    printf 'This bootstrap will:\n'
-    printf '  • %s\n' "$source_description"
-    printf '  • stage the control plane under %s\n' "$staged_dir"
-    printf '  • refresh the current symlink at %s\n' "$current_link"
-    printf '  • %s\n' "$next_step"
-    printf '\n'
-    printf 'Nothing will be staged or installed until you say yes.\n'
+    printf '⚒ 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. → %s\n' "$staged_dir"
+    printf '  %s · stage · %s\n' "$source_description" "$next_step"
   } > /dev/tty
 
   while true; do
     printf 'Proceed? [y/N] ' > /dev/tty
     if ! IFS= read -r response < /dev/tty; then
-      printf '\nBootstrap cancelled: no confirmation received.\n' > /dev/tty
+      printf '\nCancelled.\n' > /dev/tty
       exit 1
     fi
     case "$response" in
@@ -332,7 +323,7 @@ prompt_attended_consent() {
         return 0
         ;;
       ""|[nN]|[nN][oO])
-        printf '\nCancelled. Nothing was staged or installed.\n' > /dev/tty
+        printf '\nCancelled.\n' > /dev/tty
         exit 0
         ;;
       *)
@@ -607,10 +598,6 @@ post_install_banner() {
   info "---------------------------------------------------------------"
   info " Staged: vibecrafted $_installed_version"
   info " Channel:   tarball"
-  info ""
-  info " The archive has been extracted and symlinked."
-  info " Shell integration runs next — if the step below fails,"
-  info " re-run the install command."
   info ""
   info " Update:  vibecrafted update"
   info " Health:  vibecrafted doctor"

@@ -107,11 +107,26 @@ def cyan(t: str) -> str:
     return _c("36", t)
 
 
-OK = green("[ok]")
-MISS = red("[missing]")
-WARN = yellow("[warn]")
-OPT = dim("[optional]")
-SKIP = dim("[skip]")
+# Glyph language (docs/CLI_PRODUCT_SPEC.md §3.1): the glyph is the prefix —
+# bracket tags ([ok], [missing], …) are retired everywhere.
+OK = green("✓")
+MISS = red("✗")
+WARN = yellow("!")
+OPT = dim("·")
+SKIP = dim("·")
+
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def err_line(what_failed: str, fix: str = "", log: str = "") -> None:
+    """Error shape (CLI_PRODUCT_SPEC §3.4): what failed · one fix · log path.
+
+    Always stderr — the compact installer redirects stdout into the log."""
+    print(f"{red('✗')} {what_failed}", file=sys.stderr)
+    if fix:
+        print(f"  {dim('→ fix:')} {fix}", file=sys.stderr)
+    if log:
+        print(f"  {dim('log: ' + log)}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -182,13 +197,11 @@ def _compact_checkpoint(
     out,
     step: int,
     title: str,
-    reason: str,
     details: Sequence[str] = (),
 ) -> None:
-    """Print a stable compact checkpoint with enough context to trust the install."""
+    """Print a stable compact checkpoint: step, title, bounded detail lines."""
     _clear_compact_status(out)
     out.write(f"\n  [{step}/4] {bold(title)}\n")
-    out.write(f"      REASON  {reason}\n")
     for detail in details:
         out.write(f"      {detail}\n")
     out.flush()
@@ -540,11 +553,10 @@ def _doctor_totals(findings: Sequence["DoctorFinding"]) -> Tuple[int, int, int]:
 
 
 def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
+    """One bounded, copy-pasteable fix per issue class (CLI_PRODUCT_SPEC §3.4)."""
     issues = [finding for finding in findings if finding.level != "ok"]
     if not issues:
-        return [
-            "Nothing is blocking the framework right now. Start with `vibecrafted init claude` and re-run `vibecrafted doctor` after major install changes."
-        ]
+        return ["start here: `vibecrafted init claude`"]
 
     actions: List[str] = []
     if any(
@@ -552,56 +564,33 @@ def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
         for finding in issues
     ):
         actions.append(
-            "Required foundations are missing. Loctree and AICX are product-managed; "
-            "repair them through their own checkout or release surface. Then run "
-            "`bash scripts/install-foundations.sh --check` from this repo to validate "
-            "the boundary and re-run `vibecrafted doctor`."
+            "repair Loctree/AICX from their own release surface, then "
+            "`bash scripts/install-foundations.sh --check`"
         )
     if any(
         finding.component.startswith(("runtime:", "symlink:", "stale-copy:"))
         for finding in issues
     ):
-        actions.append(
-            "Runtime links need repair. Re-run `vibecrafted update` (or "
-            "`make install` from a repo checkout) to rebuild the shared "
-            "skill views and remove stale copies."
-        )
+        actions.append("rebuild skill views: `vibecrafted update`")
     if any(
         finding.component in ("launcher-wrappers", "launcher-runtime")
         for finding in issues
     ):
-        actions.append(
-            "Launcher commands need repair. Run "
-            "`vibecrafted doctor --fix-launchers` for an in-place repair, "
-            "or `vibecrafted update` (or `make install` from a repo "
-            "checkout) to rebuild the full launcher surface."
-        )
+        actions.append("repair launchers: `vibecrafted doctor --fix-launchers`")
     if any(finding.component.startswith("commands:") for finding in issues):
-        actions.append(
-            "Agent slash commands need repair. Re-run `vibecrafted update` or "
-            "`make install-auto` from a framework checkout so ~/.codex/commands "
-            "and ~/.claude/commands receive the managed Marbles entries."
-        )
+        actions.append("restore agent slash commands: `vibecrafted update`")
     if any(
         finding.component.startswith("shell-helper")
         or finding.component == "shell-helpers"
         for finding in issues
     ):
-        actions.append(
-            "Shell helper shortcuts need cleanup. Core `vibecrafted ...` commands still work; re-run install when you want the `vc-*` shortcuts back."
-        )
+        actions.append("restore `vc-*` shortcuts: re-run `make install`")
     if any(finding.component == "manifest" for finding in issues):
-        actions.append(
-            "No install manifest was found. Run the Smart Installer once to enable cleaner tracking, restore, and uninstall."
-        )
+        actions.append("enable tracking and restore: run the installer once")
     if any(finding.component.startswith("orphan:") for finding in issues):
-        actions.append(
-            "Older bundle leftovers are still present. Re-run the installer before release so the product surface stays clean."
-        )
+        actions.append("clean bundle leftovers: re-run the installer")
     if not actions:
-        actions.append(
-            "The install is usable but has warnings. Review the report, clean the highlighted items, then re-run `vibecrafted doctor`."
-        )
+        actions.append("review the warnings above, then re-run `vibecrafted doctor`")
     return actions
 
 
@@ -3889,78 +3878,74 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
 
 
 def print_doctor(
-    findings: List[DoctorFinding], guide_path: Optional[Path] = None
+    findings: List[DoctorFinding],
+    guide_path: Optional[Path] = None,
+    verbose: bool = False,
 ) -> int:
-    """Print doctor findings. Returns exit code (0 if no failures)."""
-    _doctor_title = (
-        "\U0001d54d\U0001d55a\U0001d553\U0001d556\U0001d554\U0001d563\U0001d552\U0001d557\U0001d565 Doctor"
-        if _IS_TTY
-        else "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Doctor"
-    )
-    print(f"\n{bold(_doctor_title)}\n")
+    """Summary-first doctor report (CLI_PRODUCT_SPEC §6.4).
 
-    fails = 0
-    warns = 0
-    oks = 0
+    Verdict in two lines; only failures and warnings are listed by default.
+    Passing checks are a count — the full list lives under --verbose.
+    Returns exit code (0 if no failures)."""
+    fails = [f for f in findings if f.level == "fail"]
+    warns = [f for f in findings if f.level == "warn"]
+    oks = len(findings) - len(fails) - len(warns)
 
-    for f in findings:
-        if f.level == "ok":
-            icon = OK
-            oks += 1
-        elif f.level == "warn":
-            icon = WARN
-            warns += 1
-        else:
-            icon = MISS
-            fails += 1
-        print(f"  {icon} {f.component}: {f.message}")
-
+    print(f"\n{bold('⚒ doctor')} {dim(f'— {len(findings)} checks')}")
     print(
-        f"\n  {green(str(oks))} ok  {yellow(str(warns))} warnings  {red(str(fails))} failures\n"
+        f"{green(f'✓ {oks} ok')}   "
+        f"{yellow(f'! {len(warns)} warnings')}   "
+        f"{red(f'✗ {len(fails)} failures')}\n"
     )
+
+    shown = findings if verbose else fails + warns
+    for f in shown:
+        icon = OK if f.level == "ok" else WARN if f.level == "warn" else MISS
+        print(f"{icon} {f.component}: {f.message}")
+    if shown:
+        print()
 
     if fails:
         print(
-            f"  {red('Installation has issues.')} Run {bold('vibecrafted doctor --fix-rc --fix-launchers')} or {bold('make install')} to fix.\n"
+            f"  {dim('→ fix:')} {cyan('vibecrafted doctor --fix-rc --fix-launchers')}\n"
         )
-        exit_code = 1
-    elif warns:
-        print(f"  {yellow('Installation healthy with minor warnings.')}\n")
-        exit_code = 0
-    else:
-        _healthy = "\u2713 Installation healthy."
-        print(f"  {green(_healthy)}\n")
-        exit_code = 0
-
-    print(f"  {bold('Simple path:')}")
-    print(f"    {cyan('vibecrafted init claude')}")
-    print(
-        "    "
-        + cyan("vibecrafted workflow claude --prompt 'Plan and implement <task>'")
-    )
-    print("    " + cyan("vibecrafted implement codex --prompt 'Ship <task>'"))
-    print()
-    print(f"  {bold('Ship-ready path:')}")
-    print("    " + cyan("vibecrafted dou claude --prompt 'Audit launch readiness'"))
-    print(
-        "    "
-        + cyan("vibecrafted decorate codex --prompt 'Polish the release surface'")
-    )
-    print("    " + cyan("vibecrafted hydrate codex --prompt 'Package the product'"))
-    print("    " + cyan("vibecrafted release codex --prompt 'Prepare release steps'"))
-    print()
 
     actions = _doctor_action_items(findings)
     if actions:
-        print(f"  {bold('Next steps:')}")
-        for action in actions:
-            print(f"    - {action}")
+        for action in actions[:5]:
+            print(f"  {dim('→')} {action}")
+        if len(actions) > 5:
+            print(f"  {dim(f'… and {len(actions) - 5} more (--verbose)')}")
+        print()
+
+    if verbose:
+        print(f"  {bold('Simple path:')}")
+        print(f"    {cyan('vibecrafted init claude')}")
+        print(
+            "    "
+            + cyan("vibecrafted workflow claude --prompt 'Plan and implement <task>'")
+        )
+        print("    " + cyan("vibecrafted implement codex --prompt 'Ship <task>'"))
+        print()
+        print(f"  {bold('Ship-ready path:')}")
+        print("    " + cyan("vibecrafted dou claude --prompt 'Audit launch readiness'"))
+        print(
+            "    "
+            + cyan("vibecrafted decorate codex --prompt 'Polish the release surface'")
+        )
+        print("    " + cyan("vibecrafted hydrate codex --prompt 'Package the product'"))
+        print(
+            "    " + cyan("vibecrafted release codex --prompt 'Prepare release steps'")
+        )
         print()
 
     if guide_path is not None:
-        print(f"  {bold('Guide:')} {guide_path}\n")
+        print(f"  {dim(f'guide: {guide_path}')}")
+    if not verbose:
+        print(f"  {dim('details: vibecrafted doctor --verbose')}")
+    print()
 
-    return exit_code
+    return 1 if fails else 0
 
 
 # ---------------------------------------------------------------------------
@@ -4070,9 +4055,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                         if path:
                             print(f"  {OK} {cmd} -> {dim(path)}")
                         elif cmd in RECOMMENDED_DEPS:
-                            print(
-                                f"  {WARN} {cmd} {dim('(recommended; Python fallback available)')}"
-                            )
+                            print(f"  {WARN} {cmd}")
                         else:
                             print(f"  {MISS} {cmd}")
 
@@ -4080,9 +4063,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                     if osascript:
                         print(f"  {OK} osascript -> {dim(osascript)}")
                     else:
-                        print(
-                            f"  {OPT} osascript {dim('(visible Terminal automation unavailable; non-visible fallback exists)')}"
-                        )
+                        print(f"  {OPT} osascript")
                     print()
 
                     missing_critical = [
@@ -4097,9 +4078,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                         print("Install them before continuing.")
                         return 1
                     if not sys_deps.get("zsh"):
-                        print(
-                            f"  {OPT} zsh {dim('(not found — helpers will use bash only)')}"
-                        )
+                        print(f"  {OPT} zsh")
                     args._sys_checked = True
                 step += 1
 
@@ -4331,11 +4310,8 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             repo_root, shared_home, dry_run=dry_run, mirror=mirror
         )
     except (OSError, subprocess.CalledProcessError) as exc:
-        print(f"  {MISS} Could not refresh staged tools: {exc}")
-        print(
-            "  Stopping install so stale ~/.local/share/vibecrafted/tools/vibecrafted-current "
-            "cannot shadow fresh skills."
-        )
+        print(f"  {dim(str(exc))}")
+        err_line("could not refresh staged tools", "rerun `vibecrafted update`")
         return 1
     if current_tools is None:
         print(f"  {WARN} Source is not a full framework checkout; staged tools skipped")
@@ -4658,8 +4634,10 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         print("  Install them before continuing.")
         return 1
 
-    # --- All verbose output goes to log; compact lines go to real stdout ---
-    with compact_logging(log_path, quiet=True) as out:
+    # --- All verbose output goes to log; compact lines go to real stdout.
+    # --debug tees the full transaction log onto stdout as well. ---
+    debug = getattr(args, "debug", False)
+    with compact_logging(log_path, quiet=not debug) as out:
         # Log header
         print(f"𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer v{fw_ver} — compact mode")
         print(f"Source: {repo_root}")
@@ -4669,7 +4647,6 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             out,
             1,
             "Introduction",
-            "This keeps the terminal readable while the full transaction log stays on disk.",
             (
                 f"Source  {repo_root}",
                 f"Log     {log_path}",
@@ -4708,7 +4685,6 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             out,
             2,
             "Diagnostics and Plan",
-            "Shape shown before any change — consentful and debuggable (detail in log).",
             (
                 f"Plan   {len(selected_skills)} skills · agents {', '.join(detected_agents) or 'none'} · shell {'on' if install_shell else 'off'}",
                 f"Into   {store_path}",
@@ -4717,12 +4693,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 
         # Backup
         print("Backup:")
-        _compact_checkpoint(
-            out,
-            3,
-            "Installation",
-            "Now the installer backs up current state, stages tools, links views, and verifies the result.",
-        )
+        _compact_checkpoint(out, 3, "Installation")
         orphaned_entries = collect_orphaned_skills(
             store_path, all_runtimes, set(selected_skills)
         )
@@ -4750,10 +4721,17 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         skills_dir = (
             repo_root / "skills" if (repo_root / "skills").is_dir() else repo_root
         )
-        for name in selected_skills:
+        # One live counter line (§6.6), per-skill detail stays in the log.
+        total_skills = len(selected_skills)
+        for idx, name in enumerate(selected_skills, 1):
             src = skills_dir / name
             dst = store_path / name
             print(f"  -> {name}")
+            if _compact_status_is_live(out):
+                frame = SPINNER_FRAMES[idx % len(SPINNER_FRAMES)]
+                _compact_line(
+                    out, dim(frame), "Skills", f"installing {idx}/{total_skills}"
+                )
             rsync_skill(src, dst, dry_run=dry_run, mirror=mirror)
         print()
 
@@ -4765,13 +4743,10 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         except (OSError, subprocess.CalledProcessError) as exc:
             print(f"  FAILED: {exc}")
             _clear_compact_status(out)
-            out.write(
-                "\n  "
-                + red("Install stopped")
-                + " — could not refresh ~/.local/share/vibecrafted/tools/vibecrafted-current\n"
-            )
-            out.write(
-                "  Stale staged tools would shadow fresh skills; check the install log.\n"
+            err_line(
+                "could not refresh staged tools",
+                "rerun `vibecrafted update`",
+                str(log_path),
             )
             return 1
         if current_tools is None:
@@ -4792,10 +4767,10 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             except (OSError, subprocess.CalledProcessError) as exc:
                 print(f"  FAILED: {exc}")
                 _clear_compact_status(out)
-                out.write(
-                    "\n  "
-                    + red("Install stopped")
-                    + " — runtime venv could not import vibecrafted_core\n"
+                err_line(
+                    "runtime venv could not import vibecrafted_core",
+                    "rerun `vibecrafted update`",
+                    str(log_path),
                 )
                 return 1
             print(f"  python: {runtime_python}")
@@ -4960,56 +4935,38 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 critical = [finding for finding in issues if finding.level == "fail"]
                 if critical:
                     _clear_compact_status(out)
-                    out.write(f"\n  {red('Issues found')} — check {log_path}\n")
+                    err_line(
+                        "install verification found failures",
+                        "vibecrafted doctor",
+                        str(log_path),
+                    )
             else:
                 print("  All checks passed")
             print(f"  Start-here guide: {guide_path}")
         print()
 
-    # --- Compact footer: header + commands (no repeated status lines) ---
+    # --- Finish card (CLI_PRODUCT_SPEC §6.1): result, key facts, one next step. ---
     _clear_compact_status(sys.stdout)
-    _compact_checkpoint(
-        sys.stdout,
-        4,
-        "Onboarding",
-        "The framework is installed; these are the first commands and recovery points.",
-    )
+    _compact_checkpoint(sys.stdout, 4, "Onboarding")
     fw_ver_display = get_framework_version(repo_root)
-    sep = brand_separator(37)
-    log_display = str(log_path).replace(str(Path.home()), "~")
+    store_display = str(vibecrafted_home()).replace(str(Path.home()), "~")
+    agent_str = " ".join(agent_names) if agent_names else "none"
     missing_fnd = [f for f in FOUNDATIONS if f.required and not f.is_installed()]
 
     print()
-    print(f"  \u2692 {VAPOR_HEADER} \u2692")
+    print(
+        f"  {green('\u2713')} {bold(f'\U0001d685\U0001d692\U0001d68b\U0001d68e\U0001d68c\U0001d69b\U0001d68a\U0001d68f\U0001d69d\U0001d68e\U0001d68d. {fw_ver_display} installed')}"
+    )
     print()
-    print(f"  {brand_version_line(fw_ver_display)}")
-    print(f"  {TAGLINE}")
-    print(f"  {PRODUCT_LINE}")
-    print(f"  {sep}")
-    print("    Start        vibecrafted help")
-    print("    Verify       vibecrafted doctor")
-    print("    Reverse      vibecrafted uninstall")
-    print(f"    Guide        {start_here_path()}")
-    print(f"    Log          {log_display}")
-    # Inner log viewer — a tasteful peek at what just happened; full detail stays on disk.
-    try:
-        _tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        _tail = []
-    if _tail:
-        print()
-        print(f"    {dim('recent ' + '─' * 30)}")
-        for _line in _tail[-12:]:
-            print(f"    {dim('│')} {_line[:88]}")
-        print(f"    {dim('└─ full log: ' + log_display)}")
+    print(
+        f"    skills {len(selected_skills)} \u00b7 agents {agent_str} \u00b7 store {store_display}"
+    )
     if missing_fnd:
-        print()
-        print("    Foundations  still missing")
-        for f in missing_fnd:
-            print(f"      - {f.name}: {f.install_hint()}")
+        names = " · ".join(f.name for f in missing_fnd)
+        print(f"    {WARN} foundations missing: {names} — vibecrafted doctor")
     print()
-    print(f"    {FOOTER_BRANDING}")
-    print(f"    {FRAMEWORK_STAMP}")
+    print(f"    → {cyan('vibecrafted init claude')}       {dim('start here')}")
+    print(f"    → {cyan('vibecrafted doctor')}            {dim('verify')}")
     print()
 
     return 0
@@ -5018,15 +4975,19 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 def cmd_install(args: argparse.Namespace) -> int:
     repo_root = Path(args.source).resolve()
     if not repo_root.is_dir():
-        print(red(f"Error: repo root not found: {repo_root}"))
+        err_line(f"repo root not found: {repo_root}")
         return 1
 
-    compact = getattr(args, "compact", False)
+    # Strict modes (CLI_PRODUCT_SPEC §3.5): compact is the default; --verbose
+    # restores the per-step narration; --compact is retired (silent no-op).
+    # An attended TTY without --non-interactive keeps the consent wizard,
+    # which lives in the verbose flow.
+    verbose = getattr(args, "verbose", False) or getattr(args, "advanced", False)
+    interactive = _IS_TTY and not args.non_interactive
 
-    if compact:
-        return _cmd_install_compact(args, repo_root)
-    else:
+    if verbose or interactive:
         return _cmd_install_verbose(args, repo_root)
+    return _cmd_install_compact(args, repo_root)
 
 
 # ---------------------------------------------------------------------------
@@ -5156,7 +5117,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     )
 
     guide_path = write_start_here_guide(store_path, state, findings)
-    exit_code = print_doctor(findings, guide_path=guide_path)
+    exit_code = print_doctor(
+        findings, guide_path=guide_path, verbose=getattr(args, "verbose", False)
+    )
     _pause_for_runtime_contract_failures(findings)
     return exit_code
 
@@ -5725,11 +5688,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p_install.add_argument(
         "--compact",
         action="store_true",
-        help="Compact output — one screen, details to log",
+        help=argparse.SUPPRESS,  # retired: compact is the default (kept as no-op)
+    )
+    p_install.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Per-step narration on stdout instead of the compact view",
+    )
+    p_install.add_argument(
+        "--debug",
+        action="store_true",
+        help="Raw subprocess output on stdout (everything the log gets)",
     )
 
     # doctor
     p_doctor = sub.add_parser("doctor", help="Verify installation health")
+    p_doctor.add_argument(
+        "--verbose",
+        action="store_true",
+        help="List every check, including passing ones",
+    )
     p_doctor.add_argument(
         "--fix-rc",
         action="store_true",

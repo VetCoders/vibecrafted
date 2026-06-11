@@ -1,6 +1,17 @@
 # Vibecrafted CLI Product Spec — One Sharp Instrument
 
 > Status: APPROVED-FOR-IMPLEMENTATION design pack (vc-decorate output, 2026-06-10).
+> Implementation status (2026-06-10, second decorate pass): cuts 1–4 of §7 landed —
+> `scripts/lib/vc_ui.sh` + `vibecrafted_core/ui.py` exist, the §2 deck ships with
+> `help --all` canonical, `make help` is six targets + `help-dev`, install.sh
+> rhetoric purged (§4 kill list) with the §6.2 consent card.
+> Implementation status (2026-06-10, third decorate pass): cuts 5–6 landed —
+> `vetcoders_install.py` is compact-by-default with strict modes
+> (`--verbose`/`--debug`, `--compact` retired as a silent no-op), prints the
+> §6.1 finish card, the §6.6 skill counter, and the §6.4 summary-first doctor;
+> bracket prefixes and checkpoint REASON lines are gone; `loop`/`cron`/`ship`
+> adopt `ui.py`, and `cron tick` prints JSON only under `--json`
+> (the crontab line generator emits `--json` for machine logs).
 > Scope: `install.sh`, `Makefile`, `scripts/vibecrafted`, `scripts/vetcoders_install.py`,
 > `scripts/install-foundations.sh`, `scripts/install-runtime.sh`, `vibecrafted_core` runtime
 > commands (loop, cron, ship, doctor).

@@ -100,13 +100,45 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     assert "Dashboard is optional" in guide_text
 
 
-def test_print_doctor_surfaces_simple_and_release_paths(capsys, tmp_path: Path) -> None:
-    findings = [installer.DoctorFinding("ok", "store", "ready")]
+def test_print_doctor_default_is_summary_first_and_bounded(
+    capsys, tmp_path: Path
+) -> None:
+    """CLI_PRODUCT_SPEC §6.4: verdict in two lines, passing checks are a
+    count (never lines), details live behind --verbose."""
+    findings = [
+        installer.DoctorFinding("ok", "store", "ready"),
+        installer.DoctorFinding("ok", "launcher", "ready"),
+        installer.DoctorFinding("warn", "loctree", "missing — optional foundation"),
+    ]
 
     exit_code = installer.print_doctor(findings, guide_path=tmp_path / "START_HERE.md")
 
     assert exit_code == 0
     output = capsys.readouterr().out
+    assert "doctor" in output
+    assert "3 checks" in output
+    assert "2 ok" in output
+    assert "1 warnings" in output
+    assert "0 failures" in output
+    # warnings are listed; passing checks are a count, not lines
+    assert "loctree: missing" in output
+    assert "store: ready" not in output
+    assert "details: vibecrafted doctor --verbose" in output
+    assert "START_HERE.md" in output
+
+
+def test_print_doctor_verbose_lists_every_check_and_golden_paths(
+    capsys, tmp_path: Path
+) -> None:
+    findings = [installer.DoctorFinding("ok", "store", "ready")]
+
+    exit_code = installer.print_doctor(
+        findings, guide_path=tmp_path / "START_HERE.md", verbose=True
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "store: ready" in output
     assert "Simple path:" in output
     assert "vibecrafted init claude" in output
     assert "Ship-ready path:" in output
@@ -125,6 +157,7 @@ def test_print_doctor_failure_hint_uses_vibecrafted_not_old_brand(
 
     assert exit_code == 1
     output = capsys.readouterr().out
+    assert "store: missing" in output
     assert "vibecrafted doctor --fix-rc --fix-launchers" in output
     assert "vetcoders install" not in output
 

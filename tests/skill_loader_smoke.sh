@@ -261,16 +261,21 @@ if ! (cd "$REPO_ROOT" && make doctor) >"$doctor_log" 2>&1; then
   log_warn "make doctor exited nonzero — output captured at $doctor_log"
 fi
 
-ok_count="$(grep -c '\[ok\]' "$doctor_log" || true)"
-fail_count="$(grep -c '\[failure\]' "$doctor_log" || true)"
-warn_count="$(grep -c '\[warn\]' "$doctor_log" || true)"
+# Doctor is summary-first (CLI_PRODUCT_SPEC §6.4): parse the verdict-line
+# counts ("N ok   M warnings   K failures") instead of counting bracket tags.
+ok_count="$(grep -oE '[0-9]+ ok' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
+warn_count="$(grep -oE '[0-9]+ warnings' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
+fail_count="$(grep -oE '[0-9]+ failures' "$doctor_log" | head -n1 | grep -oE '[0-9]+' || true)"
+ok_count="${ok_count:-0}"
+warn_count="${warn_count:-0}"
+fail_count="${fail_count:-0}"
 
 if (( fail_count > 0 )); then
-  log_fail "doctor: $fail_count [failure] markers found"
+  log_fail "doctor: $fail_count failures reported"
 elif (( ok_count < MIN_DOCTOR_OK )); then
-  log_fail "doctor: only $ok_count [ok] markers (expected ≥$MIN_DOCTOR_OK)"
+  log_fail "doctor: only $ok_count ok checks (expected ≥$MIN_DOCTOR_OK)"
 else
-  log_pass "doctor: $ok_count [ok] / $warn_count [warn] / $fail_count [failure]"
+  log_pass "doctor: $ok_count ok / $warn_count warnings / $fail_count failures"
 fi
 
 if (( warn_count > 0 )); then

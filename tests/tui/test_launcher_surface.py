@@ -30,19 +30,19 @@ def _run_launcher_help(tmp_path: Path, *args: str) -> str:
 def test_compact_help_uses_release_engine_contract(tmp_path: Path) -> None:
     output = _run_launcher_help(tmp_path, "help")
 
-    assert "Release engine for AI-developed software." in output
-    assert "Install locally. Work from evidence." in output
-    assert "Skill inventory (20 live workflows):" in output
-    assert "marbles · audit · polarize · dou" in output
-    assert "For daily tasks, use implement or justdo as convenient aliases." in output
+    assert "release engine for AI-developed software" in output
+    assert "Commands:" in output
+    assert "Ship cycle:" in output
+    assert "workflow → implement → marbles → review → dou → release" in output
+    assert "14 more skills: vibecrafted help --all" in output
+    assert 'vibecrafted implement codex -p "Ship dark mode"' in output
+    assert "justdo" not in output
     assert "compatibility alias" not in output
     assert "leg" + "acy alias" not in output
-    assert 'vibecrafted implement codex --prompt "Ship <task>"' in output
-    assert 'vibecrafted justdo codex --prompt "Ship <task>"' not in output
     assert "Founders' Framework" not in output
-    assert 'vibecrafted implement codex --prompt "Ship the feature"' in output
-    assert 'vibecrafted justdo codex --prompt "Ship the feature"' not in output
-    assert 'vibecrafted decorate codex --prompt "Polish the release surface"' in output
+    # Bounded deck: operator consoles and plumbing live in help --all only.
+    assert "dashboard" not in output
+    assert "telemetry" not in output
 
 
 def test_full_help_examples_keep_decorate_between_dou_and_hydrate(

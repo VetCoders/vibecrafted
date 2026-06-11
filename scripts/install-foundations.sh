@@ -927,7 +927,7 @@ for target in "${TARGETS[@]}"; do
         if (( AGENTS_REQUIRED )); then
           exit_code=1
         else
-          warn "Agent CLI bootstrap incomplete; continuing because agents are optional during foundation install."
+          warn "agent CLIs incomplete — optional, install later: vibecrafted doctor"
         fi
       fi
       ;;

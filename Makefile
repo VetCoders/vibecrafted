@@ -11,35 +11,39 @@ BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
 
-.PHONY: help vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon install install-auto install-all install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon install install-auto install-all install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test
 
 help:
 	@printf "\n"
-	@printf "  \033[1m\033[38;5;173m⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework\033[0m\n"
-	@printf "  ─────────────────────────────────────\n"
+	@printf "  \033[1m\033[38;5;173m⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. %s\033[0m\n" "$$(cat $(VERSION_FILE) 2>/dev/null || echo dev)"
 	@printf "\n"
-	@printf "  \033[36m▸\033[0m  make install       \033[2mInstall interactively with checkpoints and REASON\033[0m\n"
-	@printf "  \033[36m▸\033[0m  make setup-dev     \033[2mOpen the meta-installer for options and local setup\033[0m\n"
-	@printf "  \033[36m▸\033[0m  make wizard        \033[2mOpen the browser-guided installer\033[0m\n"
+	@printf "  make install      \033[2mGuided install\033[0m\n"
+	@printf "  make doctor       \033[2mHealth check\033[0m\n"
+	@printf "  make update       \033[2mPull latest + reinstall\033[0m\n"
+	@printf "  make uninstall    \033[2mReverse the install\033[0m\n"
+	@printf "  make test         \033[2mRun the gates\033[0m\n"
+	@printf "  make check        \033[2mLint shell scripts\033[0m\n"
 	@printf "\n"
-	@printf "  \033[2mOptions live inside the installer. Use setup-dev when you want to choose\033[0m\n"
-	@printf "  \033[2martifacts storage, runtime horse, shell helpers, skills, or dry-run mode.\033[0m\n"
+	@printf "  \033[2mdev targets: make help-dev\033[0m\n"
 	@printf "\n"
-	@printf "  \033[33m◆\033[0m  make install-auto  \033[2mAutomation path: same installer, auto-approved\033[0m\n"
-	@printf "  \033[33m◆\033[0m  make install-all   \033[2mIdempotent runtime knife: foundations, venv launchers, app binaries\033[0m\n"
-	@printf "  \033[33m◆\033[0m  make install RUNTIME=wezterm \033[2mInstall with a lab runtime selected\033[0m\n"
+
+help-dev:
 	@printf "\n"
-	@printf "  \033[2minstall-all installs the Rust app binaries (voc, vc-admin) as real files\033[0m\n"
-	@printf "  \033[2minto ~/.local/bin. vibecrafted-server is intentionally excluded: control-core\033[0m\n"
-	@printf "  \033[2mis a library and the Leptos SSR web bin needs site assets + env — use make server.\033[0m\n"
+	@printf "  \033[1m\033[38;5;173m⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. dev targets\033[0m\n"
 	@printf "\n"
-	@printf "  \033[32m✓\033[0m  make doctor        \033[2mVerify installation health\033[0m\n"
-	@printf "  \033[32m✓\033[0m  make test          \033[2mRun installer + marketplace pytest gates\033[0m\n"
-	@printf "  \033[32m✓\033[0m  make check         \033[2mRun basic linters on shell scripts\033[0m\n"
+	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-app-binaries · install-hammerspoon\n"
+	@printf "            skills · helpers · setup-dev · wizard · wizard-dev · gui-install · dry-run · restore\n"
+	@printf "            migrate · migrate-dry · foundations · foundations-check · bundle · bundle-check\n"
+	@printf "  \033[1mtests\033[0m     test · test-skills · test-install · test-parity · test-zellij · test-iterm2-migrate\n"
+	@printf "            test-memex · test-aicx-sync · test-hammerspoon · test-race-protection · check · semgrep\n"
+	@printf "  \033[1miterm2\033[0m    iterm-plugin · iterm-plugin-refresh · iterm-plugin-show · iterm-plugin-uninstall · iterm-plugin-migrate\n"
+	@printf "  \033[1mserver\033[0m    server · server-build · server-check · server-test\n"
+	@printf "  \033[1mversion\033[0m   version · version-show · version-bump · bump-patch · bump-minor · bump-major\n"
+	@printf "  \033[1mhooks\033[0m     init-hooks · seed-commit-msg-hooks · commit-safe\n"
+	@printf "  \033[1mmisc\033[0m      doctor · list · update · uninstall · demo · demo-full · skill-new\n"
 	@printf "\n"
-	@printf "  ╭─────────────────────────────────────────╮\n"
-	@printf "  │ Vibecrafted with AI Agents by VetCoders │\n"
-	@printf "  ╰─────────────────────────────────────────╯\n"
+	@printf "  \033[2minstall-all builds the Rust app binaries (voc, vc-admin) as real files into ~/.local/bin.\033[0m\n"
+	@printf "  \033[2mvibecrafted-server is excluded by design — use make server. RUNTIME=<horse> selects a lab runtime.\033[0m\n"
 	@printf "\n"
 
 vibecrafted: install

@@ -64,7 +64,7 @@ def test_ship_loop_only_creates_vc_ship_contract(
         == 0
     )
 
-    assert "Operator loop activated" in capsys.readouterr().out
+    assert "operator loop activated" in capsys.readouterr().out
     content = state_file.read_text(encoding="utf-8")
     assert "VC-SHIP interactive supervisor loop." in content
     assert "checkpoint: workflow" in content

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+from . import ui
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -110,10 +112,10 @@ def cmd_start(args: argparse.Namespace) -> int:
     if args.file:
         prompt = Path(args.file).expanduser().read_text(encoding="utf-8")
     if not prompt:
-        print("vibecrafted loop: provide --prompt or --file", file=sys.stderr)
+        ui.err("loop needs a prompt", fix='vibecrafted loop start -p "<prompt>"')
         return 1
     if args.max_iterations < 0:
-        print("vibecrafted loop: --max-iterations must be >= 0", file=sys.stderr)
+        ui.err("--max-iterations must be >= 0")
         return 1
     session_id = (
         os.environ.get("CODEX_SESSION_ID")
@@ -136,15 +138,11 @@ def cmd_start(args: argparse.Namespace) -> int:
         "root": quote_yaml(str(repo_root())),
     }
     write_state(state_file, fields, prompt)
-    print("Operator loop activated.")
-    print()
-    print(f"State: {state_file}")
-    print("Iteration: 1")
-    print(
-        f"Max iterations: {args.max_iterations if args.max_iterations else 'unlimited'}"
-    )
+    max_desc = str(args.max_iterations) if args.max_iterations else "unlimited"
     promise = args.completion_promise or "none"
-    print(f"Completion promise: {promise}")
+    ui.ok(f"operator loop activated · iteration 1 · max {max_desc}")
+    print(f"  state: {state_file}")
+    print(f"  promise: {promise}")
     print()
     print("Protocol for the active Agent-Operator:")
     print("1. Work normally in this same interactive session.")
@@ -168,7 +166,7 @@ def cmd_cancel(args: argparse.Namespace) -> int:
     fields["stopped_at"] = quote_yaml(utc_now())
     fields["stop_reason"] = "cancel"
     write_state(state.path, fields, state.prompt)
-    print(f"Cancelled operator loop at iteration {state.fields.get('iteration', '0')}.")
+    ui.ok(f"cancelled operator loop at iteration {state.fields.get('iteration', '0')}")
     return 0
 
 
@@ -176,7 +174,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
     state = parse_state(resolve_state_file(args.state_file))
     expected = state.fields.get("completion_promise", "null").strip('"')
     if expected not in {"", "null"} and args.promise != expected:
-        print(f"Promise mismatch. Expected: {expected}", file=sys.stderr)
+        ui.err(f"promise mismatch — expected: {expected}")
         return 3
     fields = dict(state.fields)
     fields["active"] = "false"
@@ -229,10 +227,13 @@ def cmd_await_run(args: argparse.Namespace) -> int:
         "grok",
         "opencode",
     }:
-        print(f"vibecrafted loop: unknown agent: {args.agent}", file=sys.stderr)
+        ui.err(
+            f"unknown agent: {args.agent}",
+            fix="use one of: claude · codex · gemini · agy · junie · grok · opencode",
+        )
         return 1
     if not args.run_id:
-        print("vibecrafted loop: await-run requires --run-id", file=sys.stderr)
+        ui.err("await-run requires --run-id")
         return 1
 
     def run_wait() -> int:
@@ -275,12 +276,10 @@ def cmd_await_run(args: argparse.Namespace) -> int:
             cwd=repo_root(),
             env=os.environ.copy(),
         )
-    print("Operator loop await armed.")
-    print(f"  run_id: {args.run_id}")
-    print(f"  pid:    {proc.pid}")
-    print(f"  log:    {log_path}")
+    ui.ok(f"await armed · {args.run_id} · pid {proc.pid}")
+    print(f"  log: {log_path}")
     if args.then_cmd:
-        print(f"  then:   {args.then_cmd}")
+        print(f"  then: {args.then_cmd}")
     return 0
 
 
@@ -329,7 +328,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return int(args.func(args))
     except FileNotFoundError as exc:
-        print(f"vibecrafted loop: {exc}", file=sys.stderr)
+        ui.err(str(exc), fix='vibecrafted loop start -p "<prompt>"')
         return 1
 
 

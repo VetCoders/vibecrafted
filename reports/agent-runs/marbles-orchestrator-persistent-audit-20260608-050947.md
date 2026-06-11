@@ -65,29 +65,24 @@ Note: the two Codex script files were already audit-armed in the current local H
 ## Findings
 
 1. Push blocker is not a local quality-gate failure.
-
    - Local pre-push checks passed in the user's run.
    - The blocker is remote authorization: OAuth credential lacks `workflow` scope for a ref update GitHub believes touches `.github/workflows/portable.yml`.
    - Fresh local diff against `origin/feat/runtime-integration` did not show a current workflow diff, so treat this as a credential/ref-history blocker until reproduced with current auth.
 
 2. `vc-audit` cannot be assumed available.
-
    - The user's shell returned `zsh: command not found: vc-audit`.
    - Persistent audit must therefore live in repo artifacts and loop JSONL ledgers, not only in a launcher command.
 
 3. Orchestrator state previously was too ephemeral.
-
    - Claude had state and a Stop hook, but no durable JSONL ledger.
    - Codex had a state file and manual step discipline, but the commands did not present audit as a first-class handoff artifact.
    - Cancellation docs did not preserve cancellation in a durable ledger.
 
 4. Command wiring had stale names.
-
    - `/marbles-loop` referenced `setup-marbles.sh`, while the actual script is `setup-marbles-loop.sh`.
    - Help text still mentioned `.claude/.marbles.local.md` in one place.
 
 5. Claude-side executable bits were not armed.
-
    - `setup-marbles-loop.sh` and `hooks/stop-hook.sh` were not executable during smoke testing.
    - Slash-command and hook surfaces invoke those files as commands, so mode bits are runtime behavior, not cosmetic metadata.
 

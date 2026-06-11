@@ -21,12 +21,12 @@ def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
     """
     text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
-    assert (
-        "make install       \\033[2mInstall interactively with checkpoints and REASON"
-        in text
-    )
-    assert "make setup-dev     \\033[2mOpen the meta-installer for options" in text
-    assert "make install-auto  \\033[2mAutomation path: same installer" in text
+    # CLI_PRODUCT_SPEC §6.5: `make help` is the six-target deck; everything
+    # else lives in `make help-dev`.
+    assert "make install      \\033[2mGuided install" in text
+    assert "make doctor       \\033[2mHealth check" in text
+    assert "dev targets: make help-dev" in text
+    assert "help-dev:" in text
     assert "make skills" not in text.split("help:", 1)[1].split("\nvibecrafted:", 1)[0]
     assert "vibecrafted: install" in text
 
