@@ -22,8 +22,20 @@ from .schema import (
     parse_dispatch,
     render_cell_prompt,
 )
+from .verify import (
+    DEFAULT_TIMEOUT_S,
+    MATCHER_FAIL,
+    MATCHER_PASS,
+    MATCHER_TIMEOUT,
+    run_verifies,
+    sanitize_env,
+)
 
 __all__ = [
+    "DEFAULT_TIMEOUT_S",
+    "MATCHER_FAIL",
+    "MATCHER_PASS",
+    "MATCHER_TIMEOUT",
     "Baton",
     "Common",
     "Cut",
@@ -42,4 +54,6 @@ __all__ = [
     "load_dispatch",
     "parse_dispatch",
     "render_cell_prompt",
+    "run_verifies",
+    "sanitize_env",
 ]

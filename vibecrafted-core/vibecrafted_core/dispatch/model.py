@@ -108,6 +108,7 @@ class VerifierEvidence:
     evidence: str = ""
     elapsed_ms: int | None = None
     timestamp: str = ""
+    matcher_result: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -117,6 +118,7 @@ class VerifierEvidence:
             "evidence": self.evidence,
             "elapsed_ms": self.elapsed_ms,
             "timestamp": self.timestamp,
+            "matcher_result": self.matcher_result,
         }
 
 
