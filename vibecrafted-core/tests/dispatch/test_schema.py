@@ -41,10 +41,13 @@ def test_stage0_maximum_fixture_is_accepted() -> None:
     assert dispatch.meta.name == "d1-schema-parser"
     assert dispatch.policy.await_config == {"poll_s": 90, "timeout_min": 90}
     assert dispatch.workflow_map["audit"] == "review"
+    assert len(dispatch.cuts) == 7
     assert dispatch.cuts[0].brief.endswith("stage0-brief.md")
     assert dispatch.cuts[1].resolved_workflow == "review"
     assert dispatch.cuts[1].mutation == ""
     assert dispatch.cuts[1].observational is True
+    assert dispatch.cuts[6].mode == "read"
+    assert dispatch.cuts[6].mutation == ""
 
 
 def test_prompt_rendering_substitutes_common_body_extra_and_empty_baton() -> None:
@@ -91,8 +94,8 @@ def test_prompt_rendering_substitutes_previous_verdict_baton() -> None:
     assert '"cut_id": "d1-schema-parser"' in prompt
     assert '"commit": "abc1234"' in prompt
     assert '"verified": 1' in prompt
-    assert '"total": 2' in prompt
-    assert '"ratio": 0.5' in prompt
+    assert '"total": 7' in prompt
+    assert '"ratio": 0.14285714285714285' in prompt
 
 
 def test_matchers_cover_required_set() -> None:
@@ -120,11 +123,13 @@ def test_parser_accepts_read_cut_without_mutation_for_doctor_policy() -> None:
     dispatch = parse_dispatch(text, base_dir=FIXTURES)
     result = doctor_dispatch(text, base_dir=FIXTURES)
 
-    assert dispatch.cuts[1].mode == "read"
-    assert dispatch.cuts[1].mutation == ""
+    assert len(dispatch.cuts) == 7
+    assert dispatch.cuts[6].mode == "read"
+    assert dispatch.cuts[6].mutation == ""
     assert result.ok is False
     assert result.dispatch is not None
     assert "cuts[1].mutation: required for READ cuts" in result.errors
+    assert "cuts[6].mutation: required for READ cuts" in result.errors
 
 
 def test_rejects_unsupported_read_mutation_at_parse_time() -> None:

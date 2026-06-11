@@ -35,6 +35,14 @@ detail = "Parser, prompt rendering, baton contract."
 title = "Audit"
 detail = "Read-only verifier consumes accumulated states."
 
+[[phases]]
+title = "Runtime"
+detail = "Executor and supervisor cuts."
+
+[[phases]]
+title = "Stage2"
+detail = "Self-replay read cut."
+
 [[cuts]]
 id = "d1-schema-parser"
 phase = "Foundation"
@@ -57,3 +65,60 @@ workflow = "audit"
 mode = "read"
 observational = true
 prompt = "Review baton states and report whether the parser contract is complete."
+
+[[cuts]]
+id = "d2-dispatch-doctor"
+phase = "Foundation"
+agent = "codex"
+workflow = "implement"
+prompt = "Implement the dispatch doctor refusal boundary."
+
+  [[cuts.verify]]
+  run = "cd {repo} && make dispatch-test"
+  expect = { matches = "(passed|ok)" }
+
+[[cuts]]
+id = "d3-verifier-executor"
+phase = "Runtime"
+agent = "claude"
+workflow = "implement"
+prompt = "Implement verifier execution and evidence."
+
+  [[cuts.verify]]
+  run = "cd {repo} && make dispatch-test"
+  expect = { matches = "(passed|ok)" }
+
+[[cuts]]
+id = "d4-supervisor-loop"
+phase = "Runtime"
+critical = true
+agent = "claude"
+workflow = "implement"
+prompt = "Implement the supervisor loop."
+
+  [[cuts.verify]]
+  run = "cd {repo} && make dispatch-test"
+  expect = { matches = "(passed|ok)" }
+
+[[cuts]]
+id = "d5-cli-surface"
+phase = "Runtime"
+agent = "codex"
+workflow = "implement"
+prompt = "Implement the CLI surface."
+
+  [[cuts.verify]]
+  run = "cd {repo} && make dispatch-test"
+  expect = { matches = "(passed|ok)" }
+
+[[cuts]]
+id = "d7-stage2-self-replay"
+phase = "Stage2"
+agent = "gemini"
+workflow = "audit"
+mode = "read"
+prompt = "Review the final dispatch result. Do not edit code and do not commit."
+
+  [[cuts.verify]]
+  run = "true"
+  expect = { exit_code = 0 }

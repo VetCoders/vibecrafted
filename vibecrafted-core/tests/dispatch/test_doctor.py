@@ -60,11 +60,14 @@ def test_dispatch_doctor_allows_observational_read_with_mutation_policy() -> Non
     assert report.errors == ()
 
 
-def test_dispatch_doctor_allows_legacy_stage0_review_no_edit_read() -> None:
+def test_dispatch_doctor_rejects_legacy_stage0_review_no_edit_read() -> None:
     report = diagnose_file(FIXTURES / "legacy-stage0-read-no-edit.dispatch.toml")
 
-    assert report.ok is True
-    assert report.errors == ()
+    assert report.ok is False
+    assert any(
+        error.path == "cuts[0].mutation" and "required for READ" in error.message
+        for error in report.errors
+    ), report.errors
 
 
 def test_dispatch_doctor_cli_returns_nonzero_for_errors(
