@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Sequence
+
+from .doctor import diagnose_file
+from .model import Dispatch, STATE_VERIFIED
+from .schema import render_cell_prompt
+from .supervisor import DispatchResult, run_dispatch
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="vibecrafted dispatch",
+        description="Run or validate a vibecrafted.dispatch.v1 TOML plan.",
+    )
+    parser.add_argument("dispatch_file", help="Path to a .dispatch.toml file")
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="validate only; exits non-zero when the dispatch is unsafe",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="validate and render every prompt without launching workers",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print dispatch-result.json payload to stdout",
+    )
+    parser.add_argument(
+        "--resume",
+        metavar="RUN_ID",
+        help="continue from the first non-verified cut recorded in the tracker",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    source = Path(args.dispatch_file).expanduser()
+
+    report = diagnose_file(source)
+    if args.doctor and not args.dry_run:
+        return _print_doctor(report, json_output=args.json)
+    if not report.ok:
+        _print_doctor(report, json_output=args.json)
+        return 1
+    assert report.dispatch is not None
+
+    dispatch = _with_runtime_baseline(report.dispatch)
+    if args.resume:
+        dispatch = _resume_dispatch(dispatch)
+
+    if args.dry_run:
+        result = _dry_run(source, dispatch, run_id=args.resume)
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(f"dispatch dry-run: rendered {len(dispatch.cuts)} prompt(s)")
+            print(f"dry_run_dir: {result['artifacts']['dry_run_dir']}")
+        return 0
+
+    artifacts_dir = _artifacts_dir(dispatch)
+    _copy_validated_source(source, artifacts_dir)
+    result = run_dispatch(dispatch, artifacts_dir=artifacts_dir)
+    if args.json:
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print(f"dispatch run: {dispatch.meta.name or source.stem}")
+        print(f"tracker: {result.artifacts.get('tracker', '')}")
+        print(f"journal: {result.artifacts.get('journal', '')}")
+        print(f"result: {result.artifacts.get('result', '')}")
+        print(f"dou_index: {result.baton.verified}/{result.baton.total}")
+    return 0 if _result_ok(result) else 1
+
+
+def _print_doctor(report: Any, *, json_output: bool) -> int:
+    if json_output:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+    elif report.ok:
+        print("dispatch-doctor: ok")
+    else:
+        for error in report.errors:
+            print(f"{error.path}: {error.message}")
+    return 0 if report.ok else 1
+
+
+def _with_runtime_baseline(dispatch: Dispatch) -> Dispatch:
+    baseline = dict(dispatch.meta.baseline)
+    baseline["branch"] = _git(dispatch.meta.repo, ["branch", "--show-current"])
+    baseline["head"] = _git(dispatch.meta.repo, ["rev-parse", "HEAD"])
+    baseline["recorded_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return replace(dispatch, meta=replace(dispatch.meta, baseline=baseline))
+
+
+def _dry_run(
+    source: Path, dispatch: Dispatch, *, run_id: str | None = None
+) -> dict[str, Any]:
+    dry_run_dir = _dry_run_dir(dispatch)
+    prompts_dir = dry_run_dir / "prompts"
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    _copy_validated_source(source, dry_run_dir)
+    _write_dry_run_tracker(dispatch, dry_run_dir, run_id=run_id)
+
+    baton = dispatch.empty_baton()
+    prompt_paths: dict[str, str] = {}
+    for cut in dispatch.cuts:
+        prompt = render_cell_prompt(dispatch, cut, baton=baton)
+        prompt_path = prompts_dir / f"{cut.id}.md"
+        prompt_path.write_text(prompt, encoding="utf-8")
+        prompt_paths[cut.id] = str(prompt_path)
+
+    payload = {
+        "schema": "vibecrafted.dispatch-dry-run.v1",
+        "dry_run": True,
+        "run_id": run_id or "",
+        "cuts": [cut.id for cut in dispatch.cuts],
+        "prompts": prompt_paths,
+        "artifacts": {
+            "dry_run_dir": str(dry_run_dir),
+            "tracker": str(dry_run_dir / "tracker.md"),
+            "validated_copy": str(dry_run_dir / "validated-dispatch.toml"),
+            "result": str(dry_run_dir / "dispatch-result.json"),
+        },
+        "baseline": dispatch.meta.baseline,
+    }
+    (dry_run_dir / "dispatch-result.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return payload
+
+
+def _resume_dispatch(dispatch: Dispatch) -> Dispatch:
+    states = _tracker_states(Path(dispatch.meta.tracker).expanduser())
+    if not states:
+        return dispatch
+    start_index = 0
+    for index, cut in enumerate(dispatch.cuts):
+        if states.get(cut.id) != STATE_VERIFIED:
+            start_index = index
+            break
+    else:
+        start_index = len(dispatch.cuts)
+    return replace(dispatch, cuts=dispatch.cuts[start_index:])
+
+
+def _tracker_states(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    states: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("| ") or stripped.startswith("| Cut |"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) < 4 or cells[0] == "---":
+            continue
+        states[cells[0]] = cells[3]
+    return states
+
+
+def _write_dry_run_tracker(
+    dispatch: Dispatch, dry_run_dir: Path, *, run_id: str | None = None
+) -> None:
+    tracker = dry_run_dir / "tracker.md"
+    baseline = dispatch.meta.baseline
+    lines = [
+        f"# dispatch dry-run tracker - {dispatch.meta.name or 'unnamed'}",
+        "",
+        f"- repo: {dispatch.meta.repo}",
+        f"- run_id: {run_id or ''}",
+        f"- baseline_branch: {baseline.get('branch', '')}",
+        f"- baseline_head: {baseline.get('head', '')}",
+        f"- validated_copy: {dry_run_dir / 'validated-dispatch.toml'}",
+        "- mode: dry-run (no workers launched)",
+        "",
+        "| Cut | Phase | Agent | State | Supervisor evidence |",
+        "|---|---|---|---:|---|",
+    ]
+    for cut in dispatch.cuts:
+        lines.append(
+            f"| {cut.id} | {cut.phase} | {cut.agent} | [ ] | prompt rendered |"
+        )
+    tracker.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _copy_validated_source(source: Path, artifacts_dir: Path) -> Path:
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    target = artifacts_dir / "validated-dispatch.toml"
+    shutil.copyfile(source, target)
+    return target
+
+
+def _dry_run_dir(dispatch: Dispatch) -> Path:
+    if dispatch.meta.reports_dir:
+        return Path(dispatch.meta.reports_dir).expanduser() / "dry-run"
+    return Path.cwd() / "dry-run"
+
+
+def _artifacts_dir(dispatch: Dispatch) -> Path:
+    if dispatch.meta.tracker:
+        return Path(dispatch.meta.tracker).expanduser().parent
+    if dispatch.meta.reports_dir:
+        return Path(dispatch.meta.reports_dir).expanduser()
+    return Path.cwd()
+
+
+def _result_ok(result: DispatchResult) -> bool:
+    return all(state == STATE_VERIFIED for state in result.states.values())
+
+
+def _git(repo: str, args: list[str]) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main(sys.argv[1:]))

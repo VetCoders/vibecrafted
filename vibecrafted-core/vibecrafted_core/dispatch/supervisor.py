@@ -607,6 +607,9 @@ class DispatchSupervisor:
             f"# dispatch tracker — {meta.name or 'unnamed'}",
             "",
             f"- repo: {meta.repo}",
+            f"- baseline_branch: {meta.baseline.get('branch', '')}",
+            f"- baseline_head: {meta.baseline.get('head', '')}",
+            f"- validated_copy: {self.artifacts_dir / 'validated-dispatch.toml'}",
             f"- updated: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
             "- writer: dispatch supervisor (single writer; verified state"
             " flips only after green supervisor verify)",

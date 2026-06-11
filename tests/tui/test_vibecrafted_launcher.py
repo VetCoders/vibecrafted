@@ -476,7 +476,9 @@ def test_dispatch_help_documents_async_lifecycle_contract() -> None:
         text=True,
     )
 
-    assert "Run one worker under the async lifecycle supervisor" in result.stdout
+    assert "vibecrafted.dispatch.v1 TOML plan" in result.stdout
+    assert "vibecrafted dispatch <plan.dispatch.toml>" in result.stdout
+    assert "--doctor validates only" in result.stdout
     assert "transcript capture" in result.stdout
     assert "artifact contract failed" in result.stdout
 

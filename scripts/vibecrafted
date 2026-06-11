@@ -648,16 +648,23 @@ cmd_dispatch_help() {
   printf '\n'
   printf '%b⚒%b  %bdispatch%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  Run one worker under the async lifecycle supervisor.\n'
-  printf '  This owns process spawn, transcript capture, artifact validation, and exit status.\n'
+  printf '  Run a vibecrafted.dispatch.v1 TOML plan through the deterministic supervisor.\n'
+  printf '  Also preserves dispatch run for one-worker async lifecycle supervision.\n'
+  printf '  dispatch run owns process spawn, transcript capture, artifact validation, and exit status.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted dispatch <plan.dispatch.toml> [--doctor|--dry-run|--json|--resume <run-id>]\n'
   printf '  vibecrafted dispatch run --run-id <id> --root <path> --report <path> --transcript <path> -- <command> [args]\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted dispatch analyzer-truth.dispatch.toml --doctor\n'
+  printf '  vibecrafted dispatch analyzer-truth.dispatch.toml --dry-run --json\n'
   printf '  vibecrafted dispatch run --run-id demo --root . --report .vibecrafted/report.md --transcript .vibecrafted/trace.log --json -- bash worker.sh\n'
   printf '\n'
   printf '%bContract:%b\n' "$_bold" "$_reset"
+  printf '  --doctor validates only and exits non-zero on dispatch-doctor errors.\n'
+  printf '  --dry-run renders every worker prompt under reports_dir/dry-run without launching.\n'
+  printf '  Full dispatch writes tracker.md, journal.md, handoff.md, and dispatch-result.json.\n'
   printf '  Exit code is the worker exit code when the worker fails.\n'
   printf '  Exit code 2 means the worker exited cleanly but the artifact contract failed.\n'
   printf '\n'
@@ -1277,6 +1284,7 @@ cmd_help_full() {
   printf '  %bvibecrafted loop%b                      Interactive operator loop + async awaits\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted cron%b                      Cron-safe LOOP heartbeat + context capture\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted ship%b                      Start VC-Ship loop and dispatch a checkpoint\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dispatch%b <file.toml>      Deterministic dispatch.v1 supervisor\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dispatch%b run ...          Async lifecycle supervisor for one worker\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard ls%b              List active Zellij sessions\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dashboard gc%b [flags]      Prune dead/stale Zellij sessions\n' "$_cyan" "$_reset"
@@ -1306,6 +1314,7 @@ cmd_help_full() {
   printf '  %bvibecrafted init%b [agent]              Interactive init session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted gui%b                       Launch the localhost control plane\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted tui%b                       Launch the Rust operator console\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dispatch%b <file.toml>      Deterministic dispatch.v1 supervisor\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dispatch%b run ...          Async lifecycle supervisor for one worker\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted telemetry smoke%b [flags]  Smoke the marbles telemetry path\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
@@ -1346,6 +1355,7 @@ cmd_help_full() {
   printf '  vibecrafted gui\n'
   printf '  vibecrafted tui\n'
   printf '  vibecrafted dashboard workflow\n'
+  printf '  vibecrafted dispatch analyzer-truth.dispatch.toml --doctor\n'
   printf '  vibecrafted dispatch run --run-id demo --root . --report report.md --transcript trace.log -- bash worker.sh\n'
   printf '  vibecrafted telemetry smoke --count 1 --no-watch\n'
   printf '  vibecrafted workflow claude --prompt "Plan and implement auth"\n'
@@ -1436,7 +1446,11 @@ cmd_dispatch() {
     printf '  Expected vibecrafted-core/vibecrafted_core/dispatcher.py in the source or installed tools tree.\n' >&2
     return 1
   }
-  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.dispatcher "$@"
+  if [[ "${1:-}" == "run" ]]; then
+    PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.dispatcher "$@"
+    return $?
+  fi
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.dispatch.cli "$@"
 }
 
 cmd_init() {
