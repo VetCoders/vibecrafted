@@ -2299,12 +2299,12 @@ def test_spawn_probe_watch_does_not_fail_live_worker_on_transient_error(
         "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n",
         encoding="utf-8",
     )
-    (fake_bin / "osascript").write_text(
+    (fake_bin / "vc-mux-tray").write_text(
         '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$NOTIFY_CAPTURE"\n',
         encoding="utf-8",
     )
     (fake_bin / "uname").chmod(0o755)
-    (fake_bin / "osascript").chmod(0o755)
+    (fake_bin / "vc-mux-tray").chmod(0o755)
 
     _bash(
         f'''
@@ -2335,6 +2335,41 @@ def test_spawn_probe_watch_reports_transient_error_as_warning_not_failure(
         "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n",
         encoding="utf-8",
     )
+    (fake_bin / "vc-mux-tray").write_text(
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$NOTIFY_CAPTURE"\n',
+        encoding="utf-8",
+    )
+    (fake_bin / "uname").chmod(0o755)
+    (fake_bin / "vc-mux-tray").chmod(0o755)
+
+    _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export NOTIFY_CAPTURE="{notify_capture}"
+        source "{COMMON_SH}"
+        spawn_probe_watch "{transcript}" 1 codex wflw-224433-38831
+        '''
+    )
+
+    notification = notify_capture.read_text(encoding="utf-8")
+    assert "notify" in notification
+    assert "--title" in notification
+    assert "--message" in notification
+    assert "Worker startup warning" in notification
+    assert "Worker FAILED" not in notification
+
+
+def test_spawn_probe_notify_does_not_fallback_to_osascript_on_macos(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    notify_capture = tmp_path / "notifications.txt"
+    (fake_bin / "uname").write_text(
+        "#!/usr/bin/env bash\nprintf 'Darwin\\n'\n",
+        encoding="utf-8",
+    )
     (fake_bin / "osascript").write_text(
         '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$NOTIFY_CAPTURE"\n',
         encoding="utf-8",
@@ -2348,13 +2383,11 @@ def test_spawn_probe_watch_reports_transient_error_as_warning_not_failure(
         export PATH="{fake_bin}:$PATH"
         export NOTIFY_CAPTURE="{notify_capture}"
         source "{COMMON_SH}"
-        spawn_probe_watch "{transcript}" 1 codex wflw-224433-38831
+        spawn_probe_notify "Worker silent on startup" "gemini:96923 - check logs"
         '''
     )
 
-    notification = notify_capture.read_text(encoding="utf-8")
-    assert "Worker startup warning" in notification
-    assert "Worker FAILED" not in notification
+    assert not notify_capture.exists()
 
 
 def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
