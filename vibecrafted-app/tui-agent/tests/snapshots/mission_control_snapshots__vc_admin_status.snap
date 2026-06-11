@@ -39,7 +39,9 @@ STATUS    SIGNAL             DETAIL
 ✓         mcp loctree-mcp [MCP]
 ✓         mcp aicx-mcp    [MCP]
 !         mcp vibecrafted... [MCP]
-!         mcp loctree-mcp... [MCP]
+✓         mcp loctree-mcp... [MCP]
+✓         tailscale div0     online (100.73.193.98)
+✗         tailscale dragon   dispatch target offline (100.64.0.10)
 
 == Failure board 24h (1) ==
 RUN_ID                       AGENT      SKILL              AGE          REASON

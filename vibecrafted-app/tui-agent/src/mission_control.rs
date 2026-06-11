@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::SystemTime;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::polarize::{PolarizeBand, PolarizeIntent};
 use crate::state::{ControlPlaneState, RunKind, classify_run};
@@ -43,6 +43,9 @@ const MCP_SERVERS: &[(&str, bool)] = &[
     ("vibecrafted-mcp", false),
 ];
 const LOCTREE_CONTEXT_ATLAS_MANIFEST: &str = ".loctree/context-atlas/manifest.json";
+const TAILSCALE_STATUS_TIMEOUT_MS: u64 = 750;
+const TAILSCALE_STATUS_JSON_ENV: &str = "VIBECRAFTED_TAILSCALE_STATUS_JSON";
+const TAILSCALE_DISPATCH_TARGETS: &[&str] = &["dragon", "div0"];
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MissionControlState {
@@ -994,8 +997,225 @@ fn fleet_health_from_inputs(
 
     signals.extend(disk_health_signals());
     signals.extend(mcp_health_signals());
+    signals.extend(tailscale_health_signals());
 
     signals
+}
+
+fn tailscale_health_signals() -> Vec<FleetHealthSignal> {
+    tailscale_health_signals_from_status(tailscale_status_json())
+}
+
+fn tailscale_health_signals_from_status(
+    status_json: Result<String, String>,
+) -> Vec<FleetHealthSignal> {
+    let raw = match status_json {
+        Ok(raw) => raw,
+        Err(err) => {
+            return vec![FleetHealthSignal {
+                label: "tailscale status".to_string(),
+                status: FleetHealthStatus::Unknown,
+                detail: err,
+            }];
+        }
+    };
+    let status = match serde_json::from_str::<TailscaleStatus>(&raw) {
+        Ok(status) => status,
+        Err(err) => {
+            return vec![FleetHealthSignal {
+                label: "tailscale status".to_string(),
+                status: FleetHealthStatus::Unknown,
+                detail: format!("invalid status JSON: {err}"),
+            }];
+        }
+    };
+
+    let mut peers = status
+        .peers
+        .iter()
+        .map(|(key, peer)| (peer.display_name(key), peer))
+        .collect::<Vec<_>>();
+    peers.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut reported_peer_keys = Vec::new();
+    let mut signals = Vec::new();
+    for (name, peer) in peers {
+        reported_peer_keys.extend(peer.match_keys(&name));
+        signals.push(tailscale_peer_signal(&name, peer));
+    }
+
+    for target in TAILSCALE_DISPATCH_TARGETS {
+        if !reported_peer_keys
+            .iter()
+            .any(|key| key == &normalize_tailscale_name(target))
+        {
+            signals.push(FleetHealthSignal {
+                label: format!("tailscale {target}"),
+                status: FleetHealthStatus::Blocked,
+                detail: "dispatch target missing from tailscale status".to_string(),
+            });
+        }
+    }
+
+    if signals.is_empty() {
+        return vec![FleetHealthSignal {
+            label: "tailscale peers".to_string(),
+            status: FleetHealthStatus::Unknown,
+            detail: "tailscale status reported no peers".to_string(),
+        }];
+    }
+    signals
+}
+
+fn tailscale_peer_signal(name: &str, peer: &TailscalePeer) -> FleetHealthSignal {
+    let critical = peer.match_keys(name).iter().any(|key| {
+        TAILSCALE_DISPATCH_TARGETS
+            .iter()
+            .any(|target| key == &normalize_tailscale_name(target))
+    });
+    match peer.online {
+        Some(true) => FleetHealthSignal {
+            label: format!("tailscale {name}"),
+            status: FleetHealthStatus::Ok,
+            detail: tailscale_peer_detail("online", peer),
+        },
+        Some(false) => FleetHealthSignal {
+            label: format!("tailscale {name}"),
+            status: if critical {
+                FleetHealthStatus::Blocked
+            } else {
+                FleetHealthStatus::Warn
+            },
+            detail: tailscale_peer_detail(
+                if critical {
+                    "dispatch target offline"
+                } else {
+                    "peer offline"
+                },
+                peer,
+            ),
+        },
+        None => FleetHealthSignal {
+            label: format!("tailscale {name}"),
+            status: FleetHealthStatus::Unknown,
+            detail: tailscale_peer_detail("online state missing", peer),
+        },
+    }
+}
+
+fn tailscale_peer_detail(prefix: &str, peer: &TailscalePeer) -> String {
+    match peer.tailscale_ips.first() {
+        Some(ip) => format!("{prefix} ({ip})"),
+        None => prefix.to_string(),
+    }
+}
+
+fn tailscale_status_json() -> Result<String, String> {
+    if let Ok(raw) = env::var(TAILSCALE_STATUS_JSON_ENV) {
+        return Ok(raw);
+    }
+
+    let mut child = Command::new("tailscale")
+        .args(["status", "--json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                "tailscale binary not found on PATH".to_string()
+            } else {
+                format!("tailscale status --json failed to start: {err}")
+            }
+        })?;
+    let deadline = Instant::now() + Duration::from_millis(TAILSCALE_STATUS_TIMEOUT_MS);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let output = child.wait_with_output().map_err(|err| err.to_string())?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    return Err(if stderr.is_empty() {
+                        format!("tailscale status --json exited {}", output.status)
+                    } else {
+                        stderr
+                    });
+                }
+                return String::from_utf8(output.stdout).map_err(|err| err.to_string());
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "tailscale status --json timed out after {TAILSCALE_STATUS_TIMEOUT_MS}ms"
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(err) => return Err(format!("tailscale status --json wait failed: {err}")),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct TailscaleStatus {
+    #[serde(rename = "Peer", default)]
+    peers: BTreeMap<String, TailscalePeer>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TailscalePeer {
+    #[serde(rename = "HostName", default)]
+    host_name: String,
+    #[serde(rename = "DNSName", default)]
+    dns_name: String,
+    #[serde(rename = "Online", default)]
+    online: Option<bool>,
+    #[serde(rename = "TailscaleIPs", default)]
+    tailscale_ips: Vec<String>,
+}
+
+impl TailscalePeer {
+    fn display_name(&self, fallback: &str) -> String {
+        if !self.host_name.trim().is_empty() {
+            return self.host_name.trim().to_string();
+        }
+        if !self.dns_name.trim().is_empty() {
+            return self
+                .dns_name
+                .trim()
+                .trim_end_matches('.')
+                .split('.')
+                .next()
+                .unwrap_or(fallback)
+                .to_string();
+        }
+        fallback.to_string()
+    }
+
+    fn match_keys(&self, display_name: &str) -> Vec<String> {
+        let mut keys = vec![normalize_tailscale_name(display_name)];
+        if !self.host_name.trim().is_empty() {
+            keys.push(normalize_tailscale_name(&self.host_name));
+        }
+        if !self.dns_name.trim().is_empty() {
+            keys.push(normalize_tailscale_name(&self.dns_name));
+            if let Some(first_label) = self.dns_name.trim().trim_end_matches('.').split('.').next()
+            {
+                keys.push(normalize_tailscale_name(first_label));
+            }
+        }
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+}
+
+fn normalize_tailscale_name(name: &str) -> String {
+    name.trim()
+        .trim_end_matches('.')
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .to_ascii_lowercase()
 }
 
 fn mcp_health_signals() -> Vec<FleetHealthSignal> {
@@ -1946,5 +2166,61 @@ mod tests {
             ),
             "a path argument named like the server is not a live server process"
         );
+    }
+
+    #[test]
+    fn tailscale_probe_maps_reported_peers_and_missing_dispatch_targets() {
+        let signals = tailscale_health_signals_from_status(Ok(r#"{
+                "Peer": {
+                    "node-a": {
+                        "HostName": "dragon",
+                        "DNSName": "dragon.tailnet.ts.net.",
+                        "Online": false,
+                        "TailscaleIPs": ["100.64.0.1"]
+                    },
+                    "node-b": {
+                        "HostName": "blacky",
+                        "DNSName": "blacky.tailnet.ts.net.",
+                        "Online": false,
+                        "TailscaleIPs": ["100.64.0.2"]
+                    },
+                    "node-c": {
+                        "HostName": "spare",
+                        "Online": true,
+                        "TailscaleIPs": ["100.64.0.3"]
+                    }
+                }
+            }"#
+        .to_string()));
+
+        let dragon = signals
+            .iter()
+            .find(|signal| signal.label == "tailscale dragon")
+            .expect("dragon signal");
+        assert_eq!(dragon.status, FleetHealthStatus::Blocked);
+        assert!(dragon.detail.contains("dispatch target offline"));
+
+        let blacky = signals
+            .iter()
+            .find(|signal| signal.label == "tailscale blacky")
+            .expect("blacky signal");
+        assert_eq!(blacky.status, FleetHealthStatus::Warn);
+
+        let div0 = signals
+            .iter()
+            .find(|signal| signal.label == "tailscale div0")
+            .expect("missing div0 signal");
+        assert_eq!(div0.status, FleetHealthStatus::Blocked);
+        assert!(div0.detail.contains("missing from tailscale status"));
+    }
+
+    #[test]
+    fn tailscale_probe_degrades_to_one_signal_when_status_is_unavailable() {
+        let signals =
+            tailscale_health_signals_from_status(Err("tailscaled is not running".to_string()));
+        assert_eq!(signals.len(), 1);
+        assert_eq!(signals[0].label, "tailscale status");
+        assert_eq!(signals[0].status, FleetHealthStatus::Unknown);
+        assert_eq!(signals[0].detail, "tailscaled is not running");
     }
 }

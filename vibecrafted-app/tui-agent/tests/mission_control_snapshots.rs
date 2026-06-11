@@ -430,6 +430,42 @@ fn mission_control_tab_mcp_probe_snapshot() {
 }
 
 #[test]
+fn mission_control_tab_tailscale_probe_snapshot() {
+    let mut state = MissionControlState {
+        generated_at: "2026-06-10T12:00:00+00:00".to_string(),
+        ..MissionControlState::default()
+    };
+    state.fleet_health = vec![
+        FleetHealthSignal {
+            label: "tailscale div0".to_string(),
+            status: FleetHealthStatus::Ok,
+            detail: "online (100.73.193.98)".to_string(),
+        },
+        FleetHealthSignal {
+            label: "tailscale dragon".to_string(),
+            status: FleetHealthStatus::Blocked,
+            detail: "dispatch target offline (100.64.0.10)".to_string(),
+        },
+        FleetHealthSignal {
+            label: "tailscale blacky".to_string(),
+            status: FleetHealthStatus::Warn,
+            detail: "peer offline (100.64.0.11)".to_string(),
+        },
+        FleetHealthSignal {
+            label: "tailscale status".to_string(),
+            status: FleetHealthStatus::Unknown,
+            detail: "tailscaled is not running".to_string(),
+        },
+    ];
+    let buffer = render_mission_tab(&mission_app(state));
+    insta::assert_snapshot!("mission_control_tab_tailscale_probe", buffer_text(&buffer));
+    insta::assert_snapshot!(
+        "mission_control_tab_tailscale_probe_colors",
+        buffer_color_map(&buffer)
+    );
+}
+
+#[test]
 fn mission_control_tab_empty_state_snapshot() {
     let app = mission_app(MissionControlState::default());
     let buffer = render_mission_tab(&app);
@@ -609,6 +645,23 @@ fn vc_admin_status_renders_all_panels_from_disk_fixtures() {
         .arg(&state_root)
         .arg("--artifact-root")
         .arg(&artifact_root)
+        .env(
+            "VIBECRAFTED_TAILSCALE_STATUS_JSON",
+            r#"{
+                "Peer": {
+                    "node-div0": {
+                        "HostName": "div0",
+                        "Online": true,
+                        "TailscaleIPs": ["100.73.193.98"]
+                    },
+                    "node-dragon": {
+                        "HostName": "dragon",
+                        "Online": false,
+                        "TailscaleIPs": ["100.64.0.10"]
+                    }
+                }
+            }"#,
+        )
         .arg("status")
         .output()
         .expect("vc-admin binary must run");
