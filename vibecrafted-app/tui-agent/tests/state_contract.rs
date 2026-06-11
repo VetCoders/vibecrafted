@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use tempfile::tempdir;
 use voc::app::{App, AppTab, DeepAction, DispatchFocus, LaunchFocus, QueueScope};
-use voc::config::AppConfig;
+use voc::config::{AppConfig, default_terminal_binary};
 use voc::launch::{LaunchKind, LaunchRequest, LaunchRuntime, build_launch_command};
 use voc::skills_catalog::CATALOG;
 use voc::state::{ControlPlaneState, RenderedRun, RunKind, RunSnapshot, classify_run};
@@ -18,6 +18,50 @@ use std::os::unix::fs::symlink;
 fn env_lock() -> &'static Mutex<()> {
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     ENV_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[test]
+fn default_terminal_binary_prefers_vc_frame_when_available() {
+    let _guard = env_lock().lock().unwrap();
+    let previous_path = env::var_os("PATH");
+    let previous_override = env::var_os("VIBECRAFTED_TERMINAL_BINARY");
+    unsafe {
+        env::remove_var("VIBECRAFTED_TERMINAL_BINARY");
+    }
+
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("vc-frame"), "#!/bin/sh\n").unwrap();
+    fs::write(dir.path().join("zellij"), "#!/bin/sh\n").unwrap();
+    let path = previous_path
+        .as_ref()
+        .map(|value| {
+            let mut paths = vec![dir.path().to_path_buf()];
+            paths.extend(env::split_paths(value));
+            env::join_paths(paths).expect("join PATH")
+        })
+        .unwrap_or_else(|| PathBuf::from(dir.path()).into_os_string());
+    unsafe {
+        env::set_var("PATH", path);
+    }
+
+    assert_eq!(default_terminal_binary(), Path::new("vc-frame"));
+
+    match previous_path {
+        Some(value) => unsafe {
+            env::set_var("PATH", value);
+        },
+        None => unsafe {
+            env::remove_var("PATH");
+        },
+    }
+    match previous_override {
+        Some(value) => unsafe {
+            env::set_var("VIBECRAFTED_TERMINAL_BINARY", value);
+        },
+        None => unsafe {
+            env::remove_var("VIBECRAFTED_TERMINAL_BINARY");
+        },
+    }
 }
 
 #[test]
