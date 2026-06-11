@@ -394,6 +394,42 @@ fn mission_control_tab_disk_probe_snapshot() {
 }
 
 #[test]
+fn mission_control_tab_mcp_probe_snapshot() {
+    let mut state = MissionControlState {
+        generated_at: "2026-06-10T12:00:00+00:00".to_string(),
+        ..MissionControlState::default()
+    };
+    state.fleet_health = vec![
+        FleetHealthSignal {
+            label: "mcp loctree-mcp".to_string(),
+            status: FleetHealthStatus::Ok,
+            detail: "process alive".to_string(),
+        },
+        FleetHealthSignal {
+            label: "mcp aicx-mcp".to_string(),
+            status: FleetHealthStatus::Blocked,
+            detail: "critical down".to_string(),
+        },
+        FleetHealthSignal {
+            label: "mcp vibecrafted-mcp".to_string(),
+            status: FleetHealthStatus::Warn,
+            detail: "non-critical down".to_string(),
+        },
+        FleetHealthSignal {
+            label: "mcp loctree-mcp snapshot".to_string(),
+            status: FleetHealthStatus::Warn,
+            detail: "snapshot stale".to_string(),
+        },
+    ];
+    let buffer = render_mission_tab(&mission_app(state));
+    insta::assert_snapshot!("mission_control_tab_mcp_probe", buffer_text(&buffer));
+    insta::assert_snapshot!(
+        "mission_control_tab_mcp_probe_colors",
+        buffer_color_map(&buffer)
+    );
+}
+
+#[test]
 fn mission_control_tab_empty_state_snapshot() {
     let app = mission_app(MissionControlState::default());
     let buffer = render_mission_tab(&app);
@@ -595,6 +631,12 @@ fn vc_admin_status_renders_all_panels_from_disk_fixtures() {
         (r"(✓|!|✗|\?)         disk ~/.aicx\s+.*", "$1         disk ~/.aicx       [DISK]"),
         (r"(✓|!|✗|\?)         disk ~/.vibecrafted/artifacts\s+.*", "$1         disk ~/.vibecrafted/artifacts [DISK]"),
         (r"(✓|!|✗|\?)         ulimit -f\s+.*", "$1         ulimit -f          [ULIMIT]"),
+        (r"(✓|!|✗|\?)         mcp loctree-mcp\.\.\.\s+.*", "$1         mcp loctree-mcp... [MCP]"),
+        (r"(✓|!|✗|\?)         mcp vibecrafted\.\.\.\s+.*", "$1         mcp vibecrafted... [MCP]"),
+        (r"(✓|!|✗|\?)         mcp loctree-mcp snapshot\s+.*", "$1         mcp loctree-mcp snapshot [MCP]"),
+        (r"(✓|!|✗|\?)         mcp loctree-mcp\s+.*", "$1         mcp loctree-mcp [MCP]"),
+        (r"(✓|!|✗|\?)         mcp aicx-mcp\s+.*", "$1         mcp aicx-mcp    [MCP]"),
+        (r"(✓|!|✗|\?)         mcp vibecrafted-mcp\s+.*", "$1         mcp vibecrafted-mcp [MCP]"),
     ]}, {
         insta::assert_snapshot!("vc_admin_status", stdout);
     });

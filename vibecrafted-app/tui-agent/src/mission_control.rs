@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::SystemTime;
 
 use crate::polarize::{PolarizeBand, PolarizeIntent};
 use crate::state::{ControlPlaneState, RunKind, classify_run};
@@ -35,6 +37,12 @@ const ULIMIT_FSIZE_BLOCKED_MB: u64 = 64;
 const ULIMIT_FSIZE_BLOCKED_MB_ENV: &str = "VIBECRAFTED_ULIMIT_FSIZE_BLOCKED_MB";
 const TRACKED_FILE_CAP_PERCENT: f64 = 80.0;
 const TRACKED_FILE_SCAN_CAP: usize = 2_048;
+const MCP_SERVERS: &[(&str, bool)] = &[
+    ("loctree-mcp", true),
+    ("aicx-mcp", true),
+    ("vibecrafted-mcp", false),
+];
+const LOCTREE_CONTEXT_ATLAS_MANIFEST: &str = ".loctree/context-atlas/manifest.json";
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MissionControlState {
@@ -985,8 +993,192 @@ fn fleet_health_from_inputs(
     });
 
     signals.extend(disk_health_signals());
+    signals.extend(mcp_health_signals());
 
     signals
+}
+
+fn mcp_health_signals() -> Vec<FleetHealthSignal> {
+    let process_scan = mcp_process_scan();
+    let mut signals = Vec::new();
+    let loctree_alive = process_scan
+        .as_deref()
+        .ok()
+        .map(|scan| mcp_process_alive(scan, "loctree-mcp"));
+
+    for (server, critical) in MCP_SERVERS {
+        signals.push(mcp_server_signal(
+            server,
+            *critical,
+            process_scan.as_deref(),
+        ));
+    }
+    signals.push(loctree_snapshot_signal(loctree_alive));
+    signals
+}
+
+fn mcp_server_signal(
+    server: &str,
+    critical: bool,
+    process_scan: Result<&str, &String>,
+) -> FleetHealthSignal {
+    match process_scan {
+        Ok(scan) if mcp_process_alive(scan, server) => FleetHealthSignal {
+            label: format!("mcp {server}"),
+            status: FleetHealthStatus::Ok,
+            detail: "process alive".to_string(),
+        },
+        Ok(_) => FleetHealthSignal {
+            label: format!("mcp {server}"),
+            status: if critical {
+                FleetHealthStatus::Blocked
+            } else {
+                FleetHealthStatus::Warn
+            },
+            detail: if critical {
+                "critical process not found".to_string()
+            } else {
+                "non-critical process not found".to_string()
+            },
+        },
+        Err(err) => FleetHealthSignal {
+            label: format!("mcp {server}"),
+            status: FleetHealthStatus::Unknown,
+            detail: format!("process scan unavailable: {err}"),
+        },
+    }
+}
+
+fn loctree_snapshot_signal(loctree_alive: Option<bool>) -> FleetHealthSignal {
+    if matches!(loctree_alive, Some(false)) {
+        return FleetHealthSignal {
+            label: "mcp loctree-mcp snapshot".to_string(),
+            status: FleetHealthStatus::Blocked,
+            detail: "loctree-mcp process not found; freshness untrusted".to_string(),
+        };
+    }
+    if loctree_alive.is_none() {
+        return FleetHealthSignal {
+            label: "mcp loctree-mcp snapshot".to_string(),
+            status: FleetHealthStatus::Unknown,
+            detail: "process scan unavailable; freshness untrusted".to_string(),
+        };
+    }
+
+    match loctree_snapshot_freshness() {
+        Ok((true, head_label)) => FleetHealthSignal {
+            label: "mcp loctree-mcp snapshot".to_string(),
+            status: FleetHealthStatus::Ok,
+            detail: format!("fresh vs git HEAD {head_label}"),
+        },
+        Ok((false, head_label)) => FleetHealthSignal {
+            label: "mcp loctree-mcp snapshot".to_string(),
+            status: FleetHealthStatus::Warn,
+            detail: format!("snapshot stale vs git HEAD {head_label}"),
+        },
+        Err(err) => FleetHealthSignal {
+            label: "mcp loctree-mcp snapshot".to_string(),
+            status: FleetHealthStatus::Unknown,
+            detail: err,
+        },
+    }
+}
+
+fn mcp_process_scan() -> Result<String, String> {
+    let output = Command::new("ps")
+        .args(["-axo", "command="])
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "ps process scan failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    String::from_utf8(output.stdout).map_err(|err| err.to_string())
+}
+
+fn mcp_process_alive(process_scan: &str, server: &str) -> bool {
+    process_scan
+        .lines()
+        .any(|line| process_line_mentions_server(line, server))
+}
+
+fn process_line_mentions_server(line: &str, server: &str) -> bool {
+    let Some(command) = line.split_whitespace().next() else {
+        return false;
+    };
+    let trimmed = command.trim_matches(|ch| matches!(ch, '"' | '\''));
+    trimmed == server
+        || Path::new(trimmed)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some(server)
+}
+
+fn loctree_snapshot_freshness() -> Result<(bool, String), String> {
+    let cwd = env::current_dir().map_err(|err| err.to_string())?;
+    let repo_root = find_git_root(&cwd).ok_or_else(|| "git root not found".to_string())?;
+    let snapshot_path = repo_root.join(LOCTREE_CONTEXT_ATLAS_MANIFEST);
+    let snapshot_modified = fs::metadata(&snapshot_path)
+        .map_err(|err| format!("{}: {}", compact_home_path(&snapshot_path), err))?
+        .modified()
+        .map_err(|err| format!("{}: {}", compact_home_path(&snapshot_path), err))?;
+    let (head_modified, head_label) = git_head_modified(&repo_root)?;
+    Ok((snapshot_modified >= head_modified, head_label))
+}
+
+fn find_git_root(start: &Path) -> Option<PathBuf> {
+    let mut candidate = start;
+    loop {
+        if candidate.join(".git").exists() {
+            return Some(candidate.to_path_buf());
+        }
+        candidate = candidate.parent()?;
+    }
+}
+
+fn git_head_modified(repo_root: &Path) -> Result<(SystemTime, String), String> {
+    let git_dir = git_dir(repo_root)?;
+    let head_path = git_dir.join("HEAD");
+    let head_raw = fs::read_to_string(&head_path)
+        .map_err(|err| format!("{}: {}", head_path.display(), err))?;
+    let head = head_raw.trim();
+    if let Some(reference) = head.strip_prefix("ref: ") {
+        let ref_path = git_dir.join(reference);
+        let modified = fs::metadata(&ref_path)
+            .or_else(|_| fs::metadata(&head_path))
+            .map_err(|err| format!("{}: {}", ref_path.display(), err))?
+            .modified()
+            .map_err(|err| format!("{}: {}", ref_path.display(), err))?;
+        return Ok((modified, reference.to_string()));
+    }
+    let modified = fs::metadata(&head_path)
+        .map_err(|err| format!("{}: {}", head_path.display(), err))?
+        .modified()
+        .map_err(|err| format!("{}: {}", head_path.display(), err))?;
+    Ok((modified, head.chars().take(12).collect()))
+}
+
+fn git_dir(repo_root: &Path) -> Result<PathBuf, String> {
+    let dot_git = repo_root.join(".git");
+    if dot_git.is_dir() {
+        return Ok(dot_git);
+    }
+    let raw =
+        fs::read_to_string(&dot_git).map_err(|err| format!("{}: {}", dot_git.display(), err))?;
+    let path = raw
+        .trim()
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| format!("{} is not a gitdir pointer", dot_git.display()))?;
+    let git_dir = PathBuf::from(path);
+    if git_dir.is_absolute() {
+        Ok(git_dir)
+    } else {
+        Ok(repo_root.join(git_dir))
+    }
 }
 
 fn disk_health_signals() -> Vec<FleetHealthSignal> {
@@ -1735,5 +1927,24 @@ mod tests {
         assert_eq!(mission.data_quality.scanned_meta_files, 3);
         assert!(!mission.data_quality.capped);
         assert!(mission.data_quality.artifact_root_present);
+    }
+
+    #[test]
+    fn mcp_process_match_uses_executable_token_only() {
+        assert!(process_line_mentions_server(
+            "/Users/operator/.cargo/bin/loctree-mcp --transport stdio",
+            "loctree-mcp"
+        ));
+        assert!(process_line_mentions_server(
+            "aicx-mcp --transport stdio",
+            "aicx-mcp"
+        ));
+        assert!(
+            !process_line_mentions_server(
+                "python /repo/vibecrafted-mcp/tests/test_server.py",
+                "vibecrafted-mcp"
+            ),
+            "a path argument named like the server is not a live server process"
+        );
     }
 }

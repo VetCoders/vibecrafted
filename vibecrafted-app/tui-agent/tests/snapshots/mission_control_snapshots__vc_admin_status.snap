@@ -1,6 +1,5 @@
 ---
 source: tui-agent/tests/mission_control_snapshots.rs
-assertion_line: 599
 expression: stdout
 ---
 Mission Control
@@ -37,6 +36,10 @@ STATUS    SIGNAL             DETAIL
 !         disk ~/.aicx       [DISK]
 !         disk ~/.vibecra... [DISK]
 ✓         ulimit -f          [ULIMIT]
+✓         mcp loctree-mcp [MCP]
+✓         mcp aicx-mcp    [MCP]
+!         mcp vibecrafted... [MCP]
+!         mcp loctree-mcp... [MCP]
 
 == Failure board 24h (1) ==
 RUN_ID                       AGENT      SKILL              AGE          REASON
