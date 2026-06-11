@@ -2357,3 +2357,216 @@ def test_claude_launcher_salvages_final_message_on_failure(
     assert final_message in body
     assert "no final message was captured" not in body
     assert last_message.read_text(encoding="utf-8").strip() == final_message
+
+
+def _fake_agent_script(agent: str, final_message: str, stream_json: bool) -> str:
+    env_prefix = agent.upper()
+    lines = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'prompt_file=""',
+        'task_text=""',
+        "while [[ $# -gt 0 ]]; do",
+        '  case "$1" in',
+        "    --prompt-file)",
+        "      shift",
+        '      prompt_file="${1:-}"',
+        "      ;;",
+        "    --prompt-file=*)",
+        '      prompt_file="${1#--prompt-file=}"',
+        "      ;;",
+        "    --task=*)",
+        '      task_text="${1#--task=}"',
+        "      ;;",
+        "    --task)",
+        "      shift",
+        '      task_text="${1:-}"',
+        "      ;;",
+        "  esac",
+        "  shift || true",
+        "done",
+        'if [[ -n "$prompt_file" ]]; then',
+        '  prompt_text="$(cat "$prompt_file")"',
+        'elif [[ -n "$task_text" ]]; then',
+        '  prompt_text="$task_text"',
+        "else",
+        '  prompt_text="$(cat)"',
+        "fi",
+        'report_path="$(printf "%s\\n" "$prompt_text" | awk -F": " \'/^Report path: / { print $2; exit }\')"',
+        'if [[ "${FAKE_WRITE_REPORT:-0}" == "1" && -n "$report_path" ]]; then',
+        '  mkdir -p "$(dirname "$report_path")"',
+        "  cat > \"$report_path\" <<'REPORT'",
+        "---",
+        f"agent: {agent}",
+        "status: completed",
+        "---",
+        "",
+        f"{agent} worker-authored report survived.",
+        "REPORT",
+        "fi",
+    ]
+    if stream_json:
+        stream = "\n".join(
+            [
+                f"{agent} CLI banner ignored by grep",
+                json.dumps(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": final_message,
+                    }
+                ),
+                json.dumps({"type": "result", "status": "done"}),
+            ]
+        )
+        lines.extend(["cat <<'JSONL'", stream, "JSONL"])
+    else:
+        lines.extend(["cat <<'TXT'", final_message, "TXT"])
+    lines.append(f'exit "${{FAKE_{env_prefix}_EXIT:-0}}"')
+    return "\n".join(lines) + "\n"
+
+
+def _write_fake_salvage_agent(
+    bin_dir: Path,
+    agent: str,
+    final_message: str,
+    *,
+    stream_json: bool = False,
+) -> None:
+    script = bin_dir / agent
+    script.write_text(
+        _fake_agent_script(agent, final_message, stream_json),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
+def _fleet_salvage_env(tmp_path: Path, fake_bin: Path) -> dict[str, str]:
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_RUNTIME_BIN"] = str(fake_bin)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_INLINE_STARTUP_WATCH"] = "0"
+    return env
+
+
+@pytest.mark.parametrize(
+    ("agent", "stream_json"),
+    [
+        ("gemini", True),
+        ("agy", False),
+        ("grok", False),
+        ("junie", False),
+    ],
+)
+def test_remaining_launchers_salvage_final_message_on_missing_report_success(
+    tmp_path: Path,
+    agent: str,
+    stream_json: bool,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    final_message = f"# {agent} final message\n\nSalvaged from captured stdout."
+    _write_fake_salvage_agent(
+        fake_bin,
+        agent,
+        final_message,
+        stream_json=stream_json,
+    )
+    env = _fleet_salvage_env(tmp_path, fake_bin)
+
+    result, report, _, last_message = _generate_and_run_spawn_launcher(
+        tmp_path,
+        agent,
+        env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = report.read_text(encoding="utf-8")
+    assert "status: completed" in body
+    assert final_message in body
+    assert "no final message was captured" not in body
+    assert final_message in last_message.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("agent", "stream_json", "exit_code"),
+    [
+        ("gemini", True, "11"),
+        ("agy", False, "12"),
+        ("grok", False, "13"),
+        ("junie", False, "14"),
+    ],
+)
+def test_remaining_launchers_salvage_final_message_on_missing_report_failure(
+    tmp_path: Path,
+    agent: str,
+    stream_json: bool,
+    exit_code: str,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    final_message = f"# {agent} failed final message\n\nFailure details survived."
+    _write_fake_salvage_agent(
+        fake_bin,
+        agent,
+        final_message,
+        stream_json=stream_json,
+    )
+    env = _fleet_salvage_env(tmp_path, fake_bin)
+    env[f"FAKE_{agent.upper()}_EXIT"] = exit_code
+
+    result, report, _, last_message = _generate_and_run_spawn_launcher(
+        tmp_path,
+        agent,
+        env,
+    )
+
+    assert result.returncode == int(exit_code)
+    body = report.read_text(encoding="utf-8")
+    assert "status: failed" in body
+    assert final_message in body
+    assert "no final message was captured" not in body
+    assert final_message in last_message.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("agent", "stream_json"),
+    [
+        ("gemini", True),
+        ("agy", False),
+        ("grok", False),
+        ("junie", False),
+    ],
+)
+def test_remaining_launchers_do_not_overwrite_worker_authored_reports(
+    tmp_path: Path,
+    agent: str,
+    stream_json: bool,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    final_message = f"# {agent} stdout final message\n\nThis stays out of the report."
+    _write_fake_salvage_agent(
+        fake_bin,
+        agent,
+        final_message,
+        stream_json=stream_json,
+    )
+    env = _fleet_salvage_env(tmp_path, fake_bin)
+    env["FAKE_WRITE_REPORT"] = "1"
+
+    result, report, _, last_message = _generate_and_run_spawn_launcher(
+        tmp_path,
+        agent,
+        env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    body = report.read_text(encoding="utf-8")
+    assert f"{agent} worker-authored report survived." in body
+    assert final_message not in body
+    assert final_message in last_message.read_text(encoding="utf-8")

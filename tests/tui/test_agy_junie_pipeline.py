@@ -80,7 +80,9 @@ def test_agy_spawn_dry_run_uses_antigravity_print_contract(tmp_path: Path) -> No
     assert "--print-timeout 30m" in text
     assert " < " in text
     assert '"$(cat ' not in text
-    assert "pipeline_status=65" in text
+    assert "Agy completed without writing a standalone report file" in text
+    assert "Agy failed before writing a standalone report file" in text
+    assert "pipeline_status=65" not in text
 
 
 def test_junie_spawn_dry_run_uses_project_task_contract(tmp_path: Path) -> None:

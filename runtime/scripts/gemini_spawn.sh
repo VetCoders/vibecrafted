@@ -87,21 +87,35 @@ fi
 
 qroot="$(spawn_shell_quote "$SPAWN_ROOT")"
 qruntime="$(spawn_shell_quote "$runtime_input")"
+qreport="$(spawn_shell_quote "$SPAWN_REPORT")"
 qtranscript="$(spawn_shell_quote "$SPAWN_TRANSCRIPT")"
+qlast_message="$(spawn_shell_quote "${SPAWN_TRANSCRIPT%.log}.last-message.md")"
 qmodel="$(spawn_shell_quote "$model")"
 
 # shellcheck disable=SC2016
 gemini_success_hook='
-  if [[ ! -s "$report" && -s "$transcript" ]]; then
+  if [[ ! -s "$report" ]]; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "completed"
-    cat "$transcript" >> "$report"
+    cat >> "$report" <<TXT
+Gemini completed without writing a standalone report file, and no final message was captured.
+See transcript for the full event stream:
+$transcript
+Last message path checked:
+${transcript%.log}.last-message.md
+TXT
   fi'
 
 # shellcheck disable=SC2016
 gemini_failure_hook='
-  if [[ ! -s "$report" && -s "$transcript" ]]; then
+  if [[ ! -s "$report" ]]; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "failed"
-    cat "$transcript" >> "$report"
+    cat >> "$report" <<TXT
+Gemini failed before writing a standalone report file, and no final message was captured.
+See transcript for the full event stream:
+$transcript
+Last message path checked:
+${transcript%.log}.last-message.md
+TXT
   fi'
 
 model_flag=""
@@ -115,7 +129,10 @@ qvhome="$(spawn_shell_quote "$vibecrafted_home")"
 # cover run_shell_command in current gemini-cli. Observed 2026-04-22: gemini
 # reached run_shell_command and got "requires user confirmation, not supported
 # in non-interactive mode" — the explicit approval mode cures it.
-launch_cmd="set -o pipefail && cd $qroot && { GEMINI_FORCE_FILE_STORAGE=true gemini -p '' --approval-mode yolo $model_flag --include-directories $qvhome -o stream-json < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript; pipeline_status=\$?; exit \$pipeline_status; }"
+last_message_extract="if [[ -s $qtranscript ]]; then cp $qtranscript $qlast_message 2>/dev/null || rm -f $qlast_message; [[ -s $qlast_message ]] || rm -f $qlast_message; fi;"
+salvage_success_report="if [[ \$pipeline_status -eq 0 && ! -s $qreport && -s $qlast_message ]]; then { printf '%s\n' '---'; printf 'run_id: %s\n' \"\${SPAWN_RUN_ID:-unknown}\"; printf 'prompt_id: %s\n' \"\${SPAWN_PROMPT_ID:-unknown}\"; printf 'agent: %s\n' \"\${SPAWN_AGENT:-gemini}\"; printf 'skill: %s\n' \"\${SPAWN_SKILL_CODE:-unknown}\"; printf 'model: %s\n' \"\${SPAWN_MODEL:-unknown}\"; printf 'status: completed\n'; printf 'session_id: %s\n' \"\${SPAWN_SESSION_ID:-pending}\"; printf 'repo_path: %s\n' \"\${SPAWN_ROOT:-unknown}\"; printf 'tokens_input: 0\n'; printf 'tokens_output: 0\n'; printf 'tokens_total: 0\n'; printf 'cost_usd: unknown\n'; printf '%s\n\n' '---'; cat $qlast_message; } > $qreport || pipeline_status=\$?; fi;"
+salvage_failure_report="if [[ \$pipeline_status -ne 0 && ! -s $qreport ]]; then { printf '%s\n' '---'; printf 'run_id: %s\n' \"\${SPAWN_RUN_ID:-unknown}\"; printf 'prompt_id: %s\n' \"\${SPAWN_PROMPT_ID:-unknown}\"; printf 'agent: %s\n' \"\${SPAWN_AGENT:-gemini}\"; printf 'skill: %s\n' \"\${SPAWN_SKILL_CODE:-unknown}\"; printf 'model: %s\n' \"\${SPAWN_MODEL:-unknown}\"; printf 'status: failed\n'; printf 'session_id: %s\n' \"\${SPAWN_SESSION_ID:-pending}\"; printf 'repo_path: %s\n' \"\${SPAWN_ROOT:-unknown}\"; printf 'tokens_input: 0\n'; printf 'tokens_output: 0\n'; printf 'tokens_total: 0\n'; printf 'cost_usd: unknown\n'; printf '%s\n\n' '---'; if [[ -s $qlast_message ]]; then cat $qlast_message; else printf '%s\n' 'Gemini failed before writing a standalone report file, and no final message was captured.'; printf '%s\n' 'See transcript for the full event stream:'; printf '%s\n' $qtranscript; printf '%s\n' 'Last message path checked:'; printf '%s\n' $qlast_message; fi; } > $qreport; fi;"
+launch_cmd="set -o pipefail && cd $qroot && { rm -f $qlast_message; GEMINI_FORCE_FILE_STORAGE=true gemini -p '' --approval-mode yolo $model_flag --include-directories $qvhome -o stream-json < $qruntime 2>&1 | grep --line-buffered '^{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript; pipeline_status=\$?; $last_message_extract $salvage_success_report $salvage_failure_report exit \$pipeline_status; }"
 
 # Combine built-in hooks with caller-provided hooks (marbles chain, etc.)
 combined_success="${gemini_success_hook}${success_hook_extra:+

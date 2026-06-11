@@ -83,30 +83,38 @@ qroot="$(spawn_shell_quote "$SPAWN_ROOT")"
 qruntime="$(spawn_shell_quote "$runtime_input")"
 qreport="$(spawn_shell_quote "$SPAWN_REPORT")"
 qtranscript="$(spawn_shell_quote "$SPAWN_TRANSCRIPT")"
+qlast_message="$(spawn_shell_quote "${SPAWN_TRANSCRIPT%.log}.last-message.md")"
 
 # shellcheck disable=SC2016
 agy_success_hook='
-  if [[ ! -s "$report" && -s "$transcript" ]]; then
+  if [[ ! -s "$report" ]]; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "unknown" "completed"
     cat >> "$report" <<TXT
-Agy completed without writing a standalone report file.
+Agy completed without writing a standalone report file, and no final message was captured.
 See transcript for the full event stream:
 $transcript
+Last message path checked:
+${transcript%.log}.last-message.md
 TXT
   fi'
 
 # shellcheck disable=SC2016
 agy_failure_hook='
-  if [[ ! -s "$report" && -s "$transcript" ]]; then
+  if [[ ! -s "$report" ]]; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "unknown" "failed"
     cat >> "$report" <<TXT
-Agy failed before writing a standalone report file.
+Agy failed before writing a standalone report file, and no final message was captured.
 See transcript for the full event stream:
 $transcript
+Last message path checked:
+${transcript%.log}.last-message.md
 TXT
   fi'
 
-launch_cmd="set -o pipefail && cd $qroot && { agy --print --dangerously-skip-permissions --add-dir $qroot --print-timeout 30m '' < $qruntime 2>&1 | tee -a $qtranscript; pipeline_status=\$?; if [[ \$pipeline_status -eq 0 && ! -s $qreport ]]; then pipeline_status=65; fi; echo; { grep -oE '\\[[0-9]{2}:[0-9]{2}:[0-9]{2}\\] session: [[:alnum:]-]+' $qtranscript 2>/dev/null | tail -1 | awk '{print \$3}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
+last_message_extract="if [[ -s $qtranscript ]]; then cp $qtranscript $qlast_message 2>/dev/null || rm -f $qlast_message; [[ -s $qlast_message ]] || rm -f $qlast_message; fi;"
+salvage_success_report="if [[ \$pipeline_status -eq 0 && ! -s $qreport && -s $qlast_message ]]; then { printf '%s\n' '---'; printf 'run_id: %s\n' \"\${SPAWN_RUN_ID:-unknown}\"; printf 'prompt_id: %s\n' \"\${SPAWN_PROMPT_ID:-unknown}\"; printf 'agent: %s\n' \"\${SPAWN_AGENT:-agy}\"; printf 'skill: %s\n' \"\${SPAWN_SKILL_CODE:-unknown}\"; printf 'model: %s\n' \"\${SPAWN_MODEL:-unknown}\"; printf 'status: completed\n'; printf 'session_id: %s\n' \"\${SPAWN_SESSION_ID:-pending}\"; printf 'repo_path: %s\n' \"\${SPAWN_ROOT:-unknown}\"; printf 'tokens_input: 0\n'; printf 'tokens_output: 0\n'; printf 'tokens_total: 0\n'; printf 'cost_usd: unknown\n'; printf '%s\n\n' '---'; cat $qlast_message; } > $qreport || pipeline_status=\$?; fi;"
+salvage_failure_report="if [[ \$pipeline_status -ne 0 && ! -s $qreport ]]; then { printf '%s\n' '---'; printf 'run_id: %s\n' \"\${SPAWN_RUN_ID:-unknown}\"; printf 'prompt_id: %s\n' \"\${SPAWN_PROMPT_ID:-unknown}\"; printf 'agent: %s\n' \"\${SPAWN_AGENT:-agy}\"; printf 'skill: %s\n' \"\${SPAWN_SKILL_CODE:-unknown}\"; printf 'model: %s\n' \"\${SPAWN_MODEL:-unknown}\"; printf 'status: failed\n'; printf 'session_id: %s\n' \"\${SPAWN_SESSION_ID:-pending}\"; printf 'repo_path: %s\n' \"\${SPAWN_ROOT:-unknown}\"; printf 'tokens_input: 0\n'; printf 'tokens_output: 0\n'; printf 'tokens_total: 0\n'; printf 'cost_usd: unknown\n'; printf '%s\n\n' '---'; if [[ -s $qlast_message ]]; then cat $qlast_message; else printf '%s\n' 'Agy failed before writing a standalone report file, and no final message was captured.'; printf '%s\n' 'See transcript for the full event stream:'; printf '%s\n' $qtranscript; printf '%s\n' 'Last message path checked:'; printf '%s\n' $qlast_message; fi; } > $qreport; fi;"
+launch_cmd="set -o pipefail && cd $qroot && { rm -f $qlast_message; agy --print --dangerously-skip-permissions --add-dir $qroot --print-timeout 30m '' < $qruntime 2>&1 | tee -a $qtranscript; pipeline_status=\$?; $last_message_extract $salvage_success_report $salvage_failure_report echo; { grep -oE '\\[[0-9]{2}:[0-9]{2}:[0-9]{2}\\] session: [[:alnum:]-]+' $qtranscript 2>/dev/null | tail -1 | awk '{print \$3}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
 
 combined_success="${agy_success_hook}${success_hook_extra:+
 $success_hook_extra}"
