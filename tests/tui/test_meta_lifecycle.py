@@ -185,3 +185,64 @@ def test_generated_launcher_walks_full_lifecycle(tmp_path: Path) -> None:
     assert final["liveness"] == "terminal"
     assert final["model"] == "claude-cli-default"
     assert isinstance(final["duration_s"], (int, float))
+
+
+def test_spawn_write_meta_schema_contract_pin(tmp_path: Path) -> None:
+    meta = tmp_path / "run.meta.json"
+    _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        export SPAWN_RUN_ID=lcyc-test-pin-001
+        export SPAWN_PROMPT_ID=prompt-123
+        export SPAWN_LOOP_NR=4
+        export SPAWN_SKILL_CODE=just
+        spawn_write_meta "{meta}" "launching" "claude" "implement" "{tmp_path}" "plan.md" "report.md" "t.log" "l.sh" "gpt-4"
+        '''
+    )
+
+    data = _load(meta)
+
+    # Assert fields are exactly compatible
+    assert data["status"] == "launching"
+    assert data["agent"] == "claude"
+    assert data["mode"] == "implement"
+    assert data["root"] == str(tmp_path)
+    assert data["input"] == "plan.md"
+    assert data["report"] == "report.md"
+    assert data["transcript"] == "t.log"
+    assert data["launcher"] == "l.sh"
+    assert data["prompt_id"] == "prompt-123"
+    assert data["run_id"] == "lcyc-test-pin-001"
+    assert data["loop_nr"] == 4
+    assert data["skill_code"] == "just"
+    assert isinstance(data["framework_version"], str)
+    assert data["exit_code"] is None
+    assert data["launcher_pid"] is None
+    assert data["liveness"] == "pid_pending"
+    assert data["model"] == "gpt-4"
+    assert isinstance(data["created_at"], str)
+    assert isinstance(data["updated_at"], str)
+
+    expected_keys = {
+        "created_at",
+        "updated_at",
+        "status",
+        "agent",
+        "mode",
+        "root",
+        "input",
+        "report",
+        "transcript",
+        "launcher",
+        "prompt_id",
+        "run_id",
+        "loop_nr",
+        "skill_code",
+        "framework_version",
+        "exit_code",
+        "launcher_pid",
+        "liveness",
+        "model",
+    }
+    assert set(data.keys()) == expected_keys
