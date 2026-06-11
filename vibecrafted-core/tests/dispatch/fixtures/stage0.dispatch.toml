@@ -1,0 +1,60 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "d1-schema-parser"
+description = "Stage0 maximum fixture for dispatch schema parser."
+repo = "/Users/maciejgad/vc-workspace/VetCoders/vibecrafted"
+baseline = { branch = "feat/runtime-integration", head = "9365d7c" }
+reports_dir = "/Users/maciejgad/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0610/reports"
+tracker = "/Users/maciejgad/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0610/plans/stage0-tracker.md"
+
+[policy]
+repair_rounds = 1
+on_critical_fail = "break"
+on_timeout = "repair"
+concurrency = 2
+allow_concurrency = true
+await = { poll_s = 90, timeout_min = 90 }
+verify_executor = "supervisor"
+
+[workflow_map]
+audit = "review"
+
+[common]
+text = """
+ŚRODOWISKO: repo {repo}, bieżąca gałąź; zero worktree, zero branch switching.
+RAPORT: {reports_dir}/{id}_report.md
+BATON: {baton}
+"""
+
+[[phases]]
+title = "Foundation"
+detail = "Parser, prompt rendering, baton contract."
+
+[[phases]]
+title = "Audit"
+detail = "Read-only verifier consumes accumulated states."
+
+[[cuts]]
+id = "d1-schema-parser"
+phase = "Foundation"
+critical = true
+agent = "codex"
+workflow = "implement"
+brief = "stage0-brief.md"
+extra = "Cut {id}; agent {agent}; workflow {workflow}; repo {repo}."
+recovery = { on = "[!]", goto = "read-audit", max_loops = 1 }
+
+  [[cuts.verify]]
+  run = "cd {repo} && make dispatch-test"
+  expect = { contains = "passed", not_contains = "FAILED", matches = "[0-9]+ passed", exit_code = 0 }
+
+[[cuts]]
+id = "read-audit"
+phase = "Audit"
+agent = "gemini"
+workflow = "audit"
+mode = "read"
+mutation = "forbid"
+observational = true
+prompt = "Review baton states and report whether the parser contract is complete."

@@ -11,7 +11,7 @@ BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon install install-auto install-all install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test
 
 help:
 	@printf "\n"
@@ -35,7 +35,7 @@ help-dev:
 	@printf "            skills · helpers · setup-dev · wizard · wizard-dev · gui-install · dry-run · restore\n"
 	@printf "            migrate · migrate-dry · foundations · foundations-check · bundle · bundle-check\n"
 	@printf "  \033[1mtests\033[0m     test · test-skills · test-install · test-parity · test-zellij · test-iterm2-migrate\n"
-	@printf "            test-memex · test-aicx-sync · test-hammerspoon · test-race-protection · check · semgrep\n"
+	@printf "            test-memex · test-aicx-sync · test-hammerspoon · dispatch-test · test-race-protection · check · semgrep\n"
 	@printf "  \033[1miterm2\033[0m    iterm-plugin · iterm-plugin-refresh · iterm-plugin-show · iterm-plugin-uninstall · iterm-plugin-migrate\n"
 	@printf "  \033[1mserver\033[0m    server · server-build · server-check · server-test\n"
 	@printf "  \033[1mversion\033[0m   version · version-show · version-bump · bump-patch · bump-minor · bump-major\n"
@@ -232,6 +232,13 @@ test:
 		PYTHONPATH="$(SOURCE)" uv run --with pytest pytest tests/tui -q; \
 	else \
 		PYTHONPATH="$(SOURCE)" $(PYTHON) -m pytest tests/tui -q; \
+	fi
+
+dispatch-test:
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run --project vibecrafted-core --with pytest python -m pytest vibecrafted-core/tests/dispatch -q; \
+	else \
+		PYTHONPATH="$(SOURCE)/vibecrafted-core" $(PYTHON) -m pytest vibecrafted-core/tests/dispatch -q; \
 	fi
 
 test-skills:

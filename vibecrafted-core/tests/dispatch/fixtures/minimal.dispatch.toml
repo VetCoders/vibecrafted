@@ -1,0 +1,34 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "dispatch-minimal"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+reports_dir = "/tmp/vibecrafted-dispatch-fixture/reports"
+
+[policy]
+concurrency = 1
+on_timeout = "fail"
+
+[common]
+text = """
+Repo: {repo}
+Report: {reports_dir}/{id}_report.md
+Baton: {baton}
+"""
+
+[[phases]]
+title = "Foundation"
+detail = "schema parser smoke"
+
+[[cuts]]
+id = "d1-schema-parser"
+phase = "Foundation"
+critical = true
+agent = "codex"
+workflow = "implement"
+prompt = "Implement parser cut {id} in {repo}."
+extra = "Use workflow {workflow} as the cell launcher."
+
+  [[cuts.verify]]
+  run = "python -m pytest vibecrafted-core/tests/dispatch -q"
+  expect = { contains = "passed", exit_code = 0 }
