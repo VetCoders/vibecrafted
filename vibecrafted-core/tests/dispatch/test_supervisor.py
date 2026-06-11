@@ -152,6 +152,9 @@ prompt = "do thing two"
     )
     assert payload["schema"] == "vibecrafted.dispatch-result.v1"
     assert payload["baton"]["dou_index"]["verified"] == 2
+    assert [entry["id"] for entry in payload["cuts"]] == ["c1", "c2"]
+    assert payload["cuts"][0]["state"] == STATE_VERIFIED
+    assert payload["cuts"][1]["state"] == STATE_VERIFIED
 
 
 def test_baton_flows_from_verified_cut_into_next_prompt(tmp_path: Path) -> None:
@@ -250,6 +253,10 @@ prompt = "never runs"
     assert result.states == {"c1": STATE_FAILED, "c2": STATE_PENDING}
     assert result.line_broken is True
     assert launcher.launches == [("c1", "initial")]
+    assert [(entry["id"], entry["state"]) for entry in result.cuts] == [
+        ("c1", STATE_FAILED),
+        ("c2", STATE_PENDING),
+    ]
     tracker = (artifacts_dir / "tracker.md").read_text(encoding="utf-8")
     assert "skipped: line broken upstream" in tracker
     journal = (artifacts_dir / "journal.md").read_text(encoding="utf-8")

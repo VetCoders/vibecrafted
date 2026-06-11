@@ -74,12 +74,16 @@ class DispatchResult:
     baton: Baton
     states: dict[str, str] = field(default_factory=dict)
     artifacts: dict[str, str] = field(default_factory=dict)
+    # Ordered per-cut entries (dispatch order, skipped cuts included) so
+    # machine consumers can read result["cuts"][i]["state"] positionally.
+    cuts: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema": RESULT_SCHEMA,
             "line_broken": self.line_broken,
             "states": dict(self.states),
+            "cuts": [dict(entry) for entry in self.cuts],
             "baton": self.baton.to_dict(),
             "artifacts": dict(self.artifacts),
         }
@@ -201,10 +205,23 @@ class DispatchSupervisor:
                     " breaking the dispatch line"
                 )
 
+        verdicts = {state.cut_id: state for state in baton.states}
         result = DispatchResult(
             line_broken=line_broken,
             baton=baton,
             states={cut_id: state for cut_id, (state, _) in self._states.items()},
+            cuts=tuple(
+                {
+                    "id": cut.id,
+                    "phase": cut.phase,
+                    "agent": cut.agent,
+                    "state": self._states[cut.id][0],
+                    "note": self._states[cut.id][1],
+                    "commit": verdicts[cut.id].commit if cut.id in verdicts else "",
+                    "report": verdicts[cut.id].report if cut.id in verdicts else "",
+                }
+                for cut in self.dispatch.cuts
+            ),
             artifacts={
                 "tracker": str(self.tracker_path),
                 "journal": str(self.journal_path),
