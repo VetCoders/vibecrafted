@@ -1,6 +1,5 @@
 ---
 source: tui-agent/tests/mission_control_snapshots.rs
-assertion_line: 389
 expression: buffer_text(&buffer)
 ---
 Vibecrafted Operator Console  no live runs loaded
@@ -28,11 +27,11 @@ mission root: /fixture/repo  |  active runs: 0  |  scope: live  |  focus: Missio
 │                                                                ││                                                    │
 └────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
 ┌ Fleet health (4) ─────────────────────┐┌ Failure board 24h (0) ──────────────┐┌ Operator action queue (0) ───────────┐
-│✓ disk ~/.codex   82.0% free           ││no failures in window                ││nothing to press                      │
-│! disk ~/.aicx    11.0% free           ││                                     ││                                      │
-│✗ disk ~/.vibecra…4.0% free            ││                                     ││                                      │
-│✗ ulimit -f       finite 65336 blk     ││                                     ││                                      │
-│(31.9 MiB)                             ││                                     ││                                      │
+│✗ disk ~/.vibecraf… 4.0% free          ││no failures in window                ││nothing to press                      │
+│✗ ulimit -f         finite 65336 blk (…││                                     ││                                      │
+│! disk ~/.aicx      11.0% free         ││                                     ││                                      │
+│✓ disk ~/.codex     82.0% free         ││                                     ││                                      │
+│                                       ││                                     ││                                      │
 └───────────────────────────────────────┘└─────────────────────────────────────┘└──────────────────────────────────────┘
 ┌ Mission Control receipt ─────────────────────────────────────────────────────────────────────────────────────────────┐
 │artifact root: unset                                                                                                  │

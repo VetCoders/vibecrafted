@@ -1,6 +1,5 @@
 ---
 source: tui-agent/tests/mission_control_snapshots.rs
-assertion_line: 390
 expression: buffer_color_map(&buffer)
 ---
 YYYYYYYYYYYYYYYYYYYYYYYYYYYY..ggggggggggggggggggg.......................................................................
@@ -28,11 +27,11 @@ Y................................................................YB.............
 Y................................................................YB....................................................B
 YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB
 MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
-MGG................dddddddddd...........MRddddddddddddddddddddd................RWdddddddddddddddd......................W
-MYY................dddddddddd...........MR.....................................RW......................................W
-MRR................ddddddddd............MR.....................................RW......................................W
-MRR................dddddddddddddddd.....MR.....................................RW......................................W
-Mdddddddddd.............................MR.....................................RW......................................W
+MRR..................ddddddddd..........MRddddddddddddddddddddd................RWdddddddddddddddd......................W
+MRR..................dddddddddddddddddddMR.....................................RW......................................W
+MYY..................dddddddddd.........MR.....................................RW......................................W
+MGG..................dddddddddd.........MR.....................................RW......................................W
+M.......................................MR.....................................RW......................................W
 MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 ........................................................................................................................
 .ddddddddddddddd........................................................................................................

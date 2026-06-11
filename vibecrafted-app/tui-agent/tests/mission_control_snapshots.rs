@@ -485,6 +485,70 @@ fn mission_control_tab_aicx_probe_snapshot() {
 }
 
 #[test]
+fn mission_control_tab_fleet_health_overflow_snapshot() {
+    let mut state = MissionControlState {
+        generated_at: "2026-06-10T12:00:00+00:00".to_string(),
+        ..MissionControlState::default()
+    };
+    state.fleet_health = vec![
+        FleetHealthSignal {
+            label: "disk ~/.codex".to_string(),
+            status: FleetHealthStatus::Ok,
+            detail: "82.0% free".to_string(),
+        },
+        FleetHealthSignal {
+            label: "tailscale exceptionally-long-hostname".to_string(),
+            status: FleetHealthStatus::Blocked,
+            detail: "dispatch target offline (100.64.0.10)".to_string(),
+        },
+        FleetHealthSignal {
+            label: "mcp vibecrafted-mcp".to_string(),
+            status: FleetHealthStatus::Warn,
+            detail: "non-critical down".to_string(),
+        },
+        FleetHealthSignal {
+            label: "aicx index".to_string(),
+            status: FleetHealthStatus::Warn,
+            detail: "semantic index lag 48h".to_string(),
+        },
+        FleetHealthSignal {
+            label: "disk ~/.aicx".to_string(),
+            status: FleetHealthStatus::Warn,
+            detail: "11.0% free".to_string(),
+        },
+        FleetHealthSignal {
+            label: "tailscale status".to_string(),
+            status: FleetHealthStatus::Warn,
+            detail: "daemon stale".to_string(),
+        },
+        FleetHealthSignal {
+            label: "artifact-root".to_string(),
+            status: FleetHealthStatus::Ok,
+            detail: "/fixture/artifacts".to_string(),
+        },
+        FleetHealthSignal {
+            label: "meta scan".to_string(),
+            status: FleetHealthStatus::Ok,
+            detail: "128 meta.json scanned".to_string(),
+        },
+        FleetHealthSignal {
+            label: "model parity".to_string(),
+            status: FleetHealthStatus::Ok,
+            detail: "0/128 missing model".to_string(),
+        },
+    ];
+    let buffer = render_mission_tab(&mission_app(state));
+    insta::assert_snapshot!(
+        "mission_control_tab_fleet_health_overflow",
+        buffer_text(&buffer)
+    );
+    insta::assert_snapshot!(
+        "mission_control_tab_fleet_health_overflow_colors",
+        buffer_color_map(&buffer)
+    );
+}
+
+#[test]
 fn mission_control_tab_empty_state_snapshot() {
     let app = mission_app(MissionControlState::default());
     let buffer = render_mission_tab(&app);

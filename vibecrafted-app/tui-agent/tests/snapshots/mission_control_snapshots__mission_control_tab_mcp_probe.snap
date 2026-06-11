@@ -27,10 +27,10 @@ mission root: /fixture/repo  |  active runs: 0  |  scope: live  |  focus: Missio
 │                                                                ││                                                    │
 └────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
 ┌ Fleet health (4) ─────────────────────┐┌ Failure board 24h (0) ──────────────┐┌ Operator action queue (0) ───────────┐
-│✓ mcp loctree-mcp process alive        ││no failures in window                ││nothing to press                      │
-│✗ mcp aicx-mcp    critical down        ││                                     ││                                      │
-│! mcp vibecrafted…non-critical down    ││                                     ││                                      │
-│! mcp loctree-mcp…snapshot stale       ││                                     ││                                      │
+│✗ mcp aicx-mcp      critical down      ││no failures in window                ││nothing to press                      │
+│! mcp vibecrafted-… non-critical down  ││                                     ││                                      │
+│! mcp loctree-mcp … snapshot stale     ││                                     ││                                      │
+│✓ mcp loctree-mcp   process alive      ││                                     ││                                      │
 │                                       ││                                     ││                                      │
 └───────────────────────────────────────┘└─────────────────────────────────────┘└──────────────────────────────────────┘
 ┌ Mission Control receipt ─────────────────────────────────────────────────────────────────────────────────────────────┐

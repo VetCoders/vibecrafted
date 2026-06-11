@@ -944,42 +944,101 @@ fn draw_mc_fleet_health(
 ) {
     let title = format!(" Fleet health ({}) ", signals.len());
     let block = panel_block(&title, focused, Color::Magenta);
+    let inner_height = area.height.saturating_sub(2) as usize;
+    let inner_width = area.width.saturating_sub(2) as usize;
     let lines: Vec<Line> = if signals.is_empty() {
         vec![Line::from(Span::styled(
             "fleet not probed",
             Style::default().fg(Color::DarkGray),
         ))]
     } else {
-        signals
-            .iter()
-            .map(|signal| {
-                let color = match signal.status {
-                    FleetHealthStatus::Ok => Color::Green,
-                    FleetHealthStatus::Warn => Color::Yellow,
-                    FleetHealthStatus::Blocked => Color::Red,
-                    FleetHealthStatus::Unknown => Color::Gray,
-                };
-                Line::from(vec![
-                    Span::styled(
-                        format!("{} ", signal.status.marker()),
-                        Style::default().fg(color).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        format!("{:<16}", truncate(&signal.label, 16)),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        truncate(&signal.detail, 40).to_string(),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ])
-            })
-            .collect()
+        fleet_health_lines(signals, inner_height, inner_width)
     };
     let para = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });
     frame.render_widget(para, area);
+}
+
+fn fleet_health_lines(
+    signals: &[FleetHealthSignal],
+    inner_height: usize,
+    inner_width: usize,
+) -> Vec<Line<'static>> {
+    let mut ordered = signals.iter().enumerate().collect::<Vec<_>>();
+    ordered.sort_by_key(|(index, signal)| (fleet_health_status_rank(signal.status), *index));
+
+    let overflow = ordered.len() > inner_height;
+    let visible_signal_count = if overflow {
+        inner_height.saturating_sub(1)
+    } else {
+        ordered.len().min(inner_height)
+    };
+
+    let mut lines = ordered
+        .iter()
+        .take(visible_signal_count)
+        .map(|(_, signal)| fleet_health_signal_line(signal, inner_width))
+        .collect::<Vec<_>>();
+
+    if overflow && inner_height > 0 {
+        let hidden = &ordered[visible_signal_count..];
+        let hidden_non_ok = hidden
+            .iter()
+            .filter(|(_, signal)| signal.status != FleetHealthStatus::Ok)
+            .count();
+        let detail = format!("… +{} more ({} warn)", hidden.len(), hidden_non_ok);
+        let color = if hidden_non_ok == 0 {
+            Color::DarkGray
+        } else {
+            Color::Yellow
+        };
+        lines.push(Line::from(Span::styled(
+            truncate(&detail, inner_width),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )));
+    }
+
+    lines
+}
+
+fn fleet_health_signal_line(signal: &FleetHealthSignal, inner_width: usize) -> Line<'static> {
+    const MARKER_WIDTH: usize = 2;
+    const LABEL_WIDTH: usize = 18;
+
+    let color = match signal.status {
+        FleetHealthStatus::Ok => Color::Green,
+        FleetHealthStatus::Warn => Color::Yellow,
+        FleetHealthStatus::Blocked => Color::Red,
+        FleetHealthStatus::Unknown => Color::Gray,
+    };
+    let label_width = LABEL_WIDTH.min(inner_width.saturating_sub(MARKER_WIDTH));
+    let detail_width = inner_width.saturating_sub(MARKER_WIDTH + label_width);
+    let label = truncate(&signal.label, label_width.saturating_sub(1));
+
+    Line::from(vec![
+        Span::styled(
+            format!("{} ", signal.status.marker()),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{label:<label_width$}"),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            truncate(&signal.detail, detail_width),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
+}
+
+fn fleet_health_status_rank(status: FleetHealthStatus) -> u8 {
+    match status {
+        FleetHealthStatus::Blocked => 0,
+        FleetHealthStatus::Warn => 1,
+        FleetHealthStatus::Unknown => 2,
+        FleetHealthStatus::Ok => 3,
+    }
 }
 
 fn draw_mc_failure_board(frame: &mut Frame, area: Rect, entries: &[FailureEntry], focused: bool) {
@@ -1146,6 +1205,9 @@ fn panel_block(title: &str, focused: bool, accent: Color) -> Block<'_> {
 }
 
 fn truncate(value: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     if value.chars().count() <= max {
         value.to_string()
     } else {

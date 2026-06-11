@@ -27,11 +27,11 @@ mission root: /fixture/repo  |  active runs: 0  |  scope: live  |  focus: Missio
 │                                                                ││                                                    │
 └────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
 ┌ Fleet health (4) ─────────────────────┐┌ Failure board 24h (0) ──────────────┐┌ Operator action queue (0) ───────────┐
-│✓ tailscale div0  online               ││no failures in window                ││nothing to press                      │
-│(100.73.193.98)                        ││                                     ││                                      │
-│✗ tailscale dragondispatch target      ││                                     ││                                      │
-│offline (100.64.0.10)                  ││                                     ││                                      │
-│! tailscale blackypeer offline         ││                                     ││                                      │
+│✗ tailscale dragon  dispatch target of…││no failures in window                ││nothing to press                      │
+│! tailscale blacky  peer offline (100.…││                                     ││                                      │
+│? tailscale status  tailscaled is not …││                                     ││                                      │
+│✓ tailscale div0    online (100.73.193…││                                     ││                                      │
+│                                       ││                                     ││                                      │
 └───────────────────────────────────────┘└─────────────────────────────────────┘└──────────────────────────────────────┘
 ┌ Mission Control receipt ─────────────────────────────────────────────────────────────────────────────────────────────┐
 │artifact root: unset                                                                                                  │

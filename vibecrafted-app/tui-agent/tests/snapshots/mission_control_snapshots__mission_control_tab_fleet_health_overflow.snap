@@ -26,12 +26,12 @@ mission root: /fixture/repo  |  active runs: 0  |  scope: live  |  focus: Missio
 │                                                                ││                                                    │
 │                                                                ││                                                    │
 └────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
-┌ Fleet health (1) ─────────────────────┐┌ Failure board 24h (0) ──────────────┐┌ Operator action queue (0) ───────────┐
-│! aicx index        index_freshness: s…││no failures in window                ││nothing to press                      │
-│                                       ││                                     ││                                      │
-│                                       ││                                     ││                                      │
-│                                       ││                                     ││                                      │
-│                                       ││                                     ││                                      │
+┌ Fleet health (9) ─────────────────────┐┌ Failure board 24h (0) ──────────────┐┌ Operator action queue (0) ───────────┐
+│✗ tailscale except… dispatch target of…││no failures in window                ││nothing to press                      │
+│! mcp vibecrafted-… non-critical down  ││                                     ││                                      │
+│! aicx index        semantic index lag…││                                     ││                                      │
+│! disk ~/.aicx      11.0% free         ││                                     ││                                      │
+│… +5 more (1 warn)                     ││                                     ││                                      │
 └───────────────────────────────────────┘└─────────────────────────────────────┘└──────────────────────────────────────┘
 ┌ Mission Control receipt ─────────────────────────────────────────────────────────────────────────────────────────────┐
 │artifact root: unset                                                                                                  │

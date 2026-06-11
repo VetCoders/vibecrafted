@@ -1,6 +1,5 @@
 ---
 source: tui-agent/tests/mission_control_snapshots.rs
-assertion_line: 347
 expression: buffer_text(&buffer)
 ---
 Vibecrafted Operator Console  no live runs loaded
@@ -28,11 +27,11 @@ mission root: /fixture/repo  |  active runs: 0  |  scope: live  |  focus: Missio
 │                                                                ││                                                    │
 └────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘
 ┌ Fleet health (5) ─────────────────────┐┌ Failure board 24h (2) ──────────────┐┌ Operator action queue (4) ───────────┐
-│✓ control-plane   /fixture/state (3    ││✗ rsrc-083000-77777 gemini / research││!! [fail] investigate rsrc-083000-777…│
-│runs)                                  ││  exit_code 2 · 3h ago               ││! [stall] resume lost-070000-55555 (c…│
-│✓ artifact-root   /fixture/artifacts   ││✗ lost-070000-55555 codex / workflow ││! [polarize] polarize polr-42 (pass /…│
-│✓ meta scan       128 meta.json scanned││  stalled heartbeat · 5h ago         ││- [report] open report just-091500-11…│
-│! model parity    40/128 missing model ││                                     ││                                      │
+│! model parity      40/128 missing mod…││✗ rsrc-083000-77777 gemini / research││!! [fail] investigate rsrc-083000-777…│
+│? duration parity   0/0 missing durati…││  exit_code 2 · 3h ago               ││! [stall] resume lost-070000-55555 (c…│
+│✓ control-plane     /fixture/state (3 …││✗ lost-070000-55555 codex / workflow ││! [polarize] polarize polr-42 (pass /…│
+│✓ artifact-root     /fixture/artifacts ││  stalled heartbeat · 5h ago         ││- [report] open report just-091500-11…│
+│✓ meta scan         128 meta.json scan…││                                     ││                                      │
 └───────────────────────────────────────┘└─────────────────────────────────────┘└──────────────────────────────────────┘
 ┌ Mission Control receipt ─────────────────────────────────────────────────────────────────────────────────────────────┐
 │artifact root: /fixture/artifacts                                                                                     │
