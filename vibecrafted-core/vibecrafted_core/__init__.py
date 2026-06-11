@@ -36,16 +36,6 @@ from .runtime_paths import (
     vibecrafted_home,
     xdg_config_home,
 )
-from .workflow import (
-    WorkflowLaunchSpec,
-    await_launch_truth,
-    build_launch_command,
-    launch_workflow,
-    normalize_launch_spec,
-    retry_run,
-    stop_run,
-    vibecrafted_launcher,
-)
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 
 __version__ = "0.1.0"
@@ -69,6 +59,12 @@ _LAZY_EXPORTS = {
     "install_profiles": ".iterm2_profiles",
     "invalidate_buttons": ".iterm2_osc",
     "iterm2_plugin": ".iterm2_plugin",
+    "WorkflowLaunchSpec": ".workflow",
+    "await_launch_truth": ".workflow",
+    "build_launch_command": ".workflow",
+    "launch_workflow": ".workflow",
+    "normalize_launch_spec": ".workflow",
+    "retry_run": ".workflow",
     "post_notification": ".iterm2_osc",
     "progress": ".iterm2_osc",
     "remote_host": ".iterm2_osc",
@@ -82,8 +78,10 @@ _LAZY_EXPORTS = {
     "set_user_var": ".iterm2_osc",
     "stable_guid": ".iterm2_profiles",
     "steal_focus": ".iterm2_osc",
+    "stop_run": ".workflow",
     "uninstall_profiles": ".iterm2_profiles",
     "update_block": ".iterm2_osc",
+    "vibecrafted_launcher": ".workflow",
 }
 
 
@@ -99,6 +97,8 @@ def __getattr__(name: str) -> Any:
         from . import iterm2_osc as module
     elif module_name == ".iterm2_plugin":
         from . import iterm2_plugin as module
+    elif module_name == ".workflow":
+        from . import workflow as module
     else:  # pragma: no cover - _LAZY_EXPORTS is the whitelist.
         raise AttributeError(f"module {__name__!r} has no lazy module for {name!r}")
 

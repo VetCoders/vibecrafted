@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Mapping
 
 from .model import (
     STATE_FAILED,
@@ -57,13 +57,19 @@ def sanitize_env(
 
 
 def run_verifies(
-    cut: Cut,
+    target: Cut | Iterable[Verify],
     *,
-    repo: str,
+    repo: str | None = None,
     timeout_s: float = DEFAULT_TIMEOUT_S,
     env: Mapping[str, str] | None = None,
 ) -> Verdict:
     """Execute every declared verifier of a cut deterministically.
+
+    `target` is either a full `Cut` or a bare iterable of `Verify` (the
+    ad-hoc conductor path). `repo` defaults to the current working
+    directory. The verifier shell env is always the sanitized base;
+    `env` entries are merged on top as extras, never a wholesale
+    replacement — agent-session noise must not leak into verifier shells.
 
     The verdict is the three-valued AND of all matchers across all
     verifiers: any red matcher refutes the cut (`[!]`), otherwise any
@@ -71,18 +77,24 @@ def run_verifies(
     supervisor-verified (`[x]`). A cut without verifiers stays `[?]` —
     verified state must be earned by green matchers, never assumed.
     """
-    if not cut.verify:
-        return Verdict(cut_id=cut.id, phase=cut.phase, state=STATE_UNKNOWN)
+    if isinstance(target, Cut):
+        cut_id, phase, verifies = target.id, target.phase, target.verify
+    else:
+        cut_id, phase, verifies = "adhoc", "", tuple(target)
 
-    run_env = sanitize_env() if env is None else dict(env)
+    if not verifies:
+        return Verdict(cut_id=cut_id, phase=phase, state=STATE_UNKNOWN)
+
+    cwd = os.getcwd() if repo is None else repo
+    run_env = sanitize_env(extra=env)
     evidences: list[VerifierEvidence] = []
     failures: list[str] = []
-    for index, verify in enumerate(cut.verify):
+    for index, verify in enumerate(verifies):
         evidence, verifier_failures = _run_verifier(
             verify,
             index=index,
-            cut_id=cut.id,
-            cwd=repo,
+            cut_id=cut_id,
+            cwd=cwd,
             timeout_s=timeout_s,
             env=run_env,
         )
@@ -97,8 +109,8 @@ def run_verifies(
     else:
         state = STATE_VERIFIED
     return Verdict(
-        cut_id=cut.id,
-        phase=cut.phase,
+        cut_id=cut_id,
+        phase=phase,
         state=state,
         verifiers=tuple(evidences),
         failures=tuple(failures),

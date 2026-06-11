@@ -200,3 +200,50 @@ def test_cut_without_verifiers_stays_unknown(tmp_path: Path) -> None:
     assert verdict.state == STATE_UNKNOWN
     assert verdict.verifiers == ()
     assert verdict.failures == ()
+
+
+def test_bare_verify_list_with_expect_reports_ok(tmp_path: Path) -> None:
+    verdict = run_verifies(
+        [
+            Verify(run="echo hello", expect={"contains": "hello"}),
+            Verify(run="false", expect={"exit_code": "1"}),
+        ],
+        repo=str(tmp_path),
+        env={},
+    )
+
+    assert verdict.ok is True
+    assert verdict.state == STATE_VERIFIED
+    assert verdict.cut_id == "adhoc"
+
+
+def test_verdict_ok_is_false_on_red_matcher(tmp_path: Path) -> None:
+    verdict = run_verifies(
+        [Verify(run="echo hello", expect={"contains": "absent"})],
+        repo=str(tmp_path),
+    )
+
+    assert verdict.ok is False
+    assert verdict.state == STATE_FAILED
+
+
+def test_expect_exit_code_coerces_string_to_int() -> None:
+    matcher = Verify(run="false", expect={"exit_code": "1"}).matchers[0]
+
+    assert matcher.expected == 1
+    assert matcher.check("", exit_code=1) is True
+
+
+def test_expect_rejects_unknown_matcher_kind() -> None:
+    with pytest.raises(ValueError, match="unsupported matcher kind"):
+        Verify(run="true", expect={"exitcode": "0"})
+
+
+def test_repo_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    verdict = run_verifies(
+        [Verify(run="pwd", expect={"equals": str(tmp_path.resolve())})]
+    )
+
+    assert verdict.ok is True, verdict.failures

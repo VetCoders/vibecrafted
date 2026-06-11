@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import InitVar, dataclass, field
 from typing import Any
 
 
@@ -69,10 +70,30 @@ class Matcher:
         raise ValueError(f"unsupported matcher kind {self.kind!r}")
 
 
+def matchers_from_expect(expect: Mapping[str, str | int]) -> tuple[Matcher, ...]:
+    matchers: list[Matcher] = []
+    for kind, expected in expect.items():
+        if kind not in MATCHER_TYPES:
+            raise ValueError(f"unsupported matcher kind {kind!r}")
+        if kind == "exit_code":
+            expected = int(expected)
+        matchers.append(Matcher(kind=kind, expected=expected))
+    return tuple(matchers)
+
+
 @dataclass(frozen=True)
 class Verify:
     run: str
-    matchers: tuple[Matcher, ...]
+    matchers: tuple[Matcher, ...] = ()
+    # Dispatch YAML and ad-hoc callers declare matchers as an `expect`
+    # mapping (kind -> expected); it folds into `matchers` at init.
+    expect: InitVar[Mapping[str, str | int] | None] = None
+
+    def __post_init__(self, expect: Mapping[str, str | int] | None) -> None:
+        if expect:
+            object.__setattr__(
+                self, "matchers", self.matchers + matchers_from_expect(expect)
+            )
 
 
 @dataclass(frozen=True)
@@ -132,6 +153,10 @@ class Verdict:
     verifiers: tuple[VerifierEvidence, ...] = ()
     failures: tuple[str, ...] = ()
     repair_attempts: int = 0
+
+    @property
+    def ok(self) -> bool:
+        return self.state == STATE_VERIFIED
 
     def to_dict(self) -> dict[str, Any]:
         return {
