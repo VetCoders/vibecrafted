@@ -2139,3 +2139,206 @@ def test_run_helper_blocks_self_looping_path_resolution(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "resolved back to vibecrafted itself" in result.stderr
     assert "missing function definition to vetcoders.sh" in result.stderr
+
+
+def _write_fake_claude_stream_agent(bin_dir: Path, final_message: str) -> None:
+    script = bin_dir / "claude"
+    stream = "\n".join(
+        [
+            "Claude CLI banner that should be ignored by the JSON filter",
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "init",
+                    "session_id": "claude-fixture-session",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Intermediate assistant text is transcript-only.",
+                            }
+                        ]
+                    },
+                }
+            ),
+            json.dumps({"type": "result", "result": final_message}),
+        ]
+    )
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "cat <<'JSONL'",
+                stream,
+                "JSONL",
+                'exit "${FAKE_CLAUDE_EXIT:-0}"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
+def _write_fake_codex_last_message_agent(bin_dir: Path, final_message: str) -> None:
+    script = bin_dir / "codex"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'last_message=""',
+                "while [[ $# -gt 0 ]]; do",
+                '  if [[ "$1" == "--output-last-message" ]]; then',
+                "    shift",
+                '    last_message="${1:-}"',
+                "  fi",
+                "  shift || true",
+                "done",
+                'if [[ -n "$last_message" ]]; then',
+                '  printf "%s\\n" "$FAKE_CODEX_LAST_MESSAGE" > "$last_message"',
+                "fi",
+                'printf "%s\\n" \'{"type":"thread.started","thread_id":"codex-fixture-session"}\'',
+                'printf "%s\\n" \'{"type":"item.completed","item":{"type":"agent_message","text":"Codex stream body."}}\'',
+                'exit "${FAKE_CODEX_EXIT:-0}"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
+def _strip_ansi(payload: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", payload)
+
+
+def _generate_and_run_spawn_launcher(
+    tmp_path: Path,
+    agent: str,
+    env: dict[str, str],
+) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
+    plan = tmp_path / f"{agent}-plan.md"
+    root = tmp_path / f"{agent}-root"
+    plan.write_text("Hermetic launcher salvage fixture.\n", encoding="utf-8")
+    root.mkdir()
+
+    spawn_script = REPO_ROOT / "runtime" / "scripts" / f"{agent}_spawn.sh"
+    dry_run = subprocess.run(
+        [
+            "bash",
+            str(spawn_script),
+            "--runtime",
+            "headless",
+            "--root",
+            str(root),
+            "--dry-run",
+            str(plan),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    clean_stdout = _strip_ansi(dry_run.stdout)
+    launcher_match = re.search(r"launcher generated only: (.+)", clean_stdout)
+    report_match = re.search(r"report:\s+(.+)", clean_stdout)
+    assert launcher_match, clean_stdout
+    assert report_match, clean_stdout
+    launcher = Path(launcher_match.group(1).strip())
+    report = Path(report_match.group(1).strip())
+    transcript = report.with_suffix(".transcript.log")
+    last_message = Path(str(transcript).removesuffix(".log") + ".last-message.md")
+
+    result = subprocess.run(
+        ["bash", str(launcher)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    return result, report, transcript, last_message
+
+
+def test_codex_and_claude_launchers_salvage_last_message_on_missing_report(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    home.mkdir()
+    fake_bin.mkdir()
+
+    claude_final = "# Claude final message\n\nSalvaged from result JSONL."
+    codex_final = "# Codex final message\n\nSalvaged from --output-last-message."
+    _write_fake_claude_stream_agent(fake_bin, claude_final)
+    _write_fake_codex_last_message_agent(fake_bin, codex_final)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_RUNTIME_BIN"] = str(fake_bin)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_INLINE_STARTUP_WATCH"] = "0"
+    env["FAKE_CODEX_LAST_MESSAGE"] = codex_final
+
+    claude_result, claude_report, _, claude_last_message = (
+        _generate_and_run_spawn_launcher(tmp_path, "claude", env)
+    )
+    codex_result, codex_report, _, codex_last_message = (
+        _generate_and_run_spawn_launcher(tmp_path, "codex", env)
+    )
+
+    assert claude_result.returncode == 0, claude_result.stderr
+    assert codex_result.returncode == 0, codex_result.stderr
+    claude_body = claude_report.read_text(encoding="utf-8")
+    codex_body = codex_report.read_text(encoding="utf-8")
+    assert "status: completed" in claude_body
+    assert "status: completed" in codex_body
+    assert claude_final in claude_body
+    assert codex_final in codex_body
+    assert "no final message was captured" not in claude_body
+    assert claude_last_message.read_text(encoding="utf-8").strip() == claude_final
+    assert codex_last_message.read_text(encoding="utf-8").strip() == codex_final
+
+
+def test_claude_launcher_salvages_final_message_on_failure(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    home.mkdir()
+    fake_bin.mkdir()
+
+    final_message = (
+        "# Claude failed final message\n\nThe useful failure report survived."
+    )
+    _write_fake_claude_stream_agent(fake_bin, final_message)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_RUNTIME_BIN"] = str(fake_bin)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_INLINE_STARTUP_WATCH"] = "0"
+    env["FAKE_CLAUDE_EXIT"] = "7"
+
+    result, report, _, last_message = _generate_and_run_spawn_launcher(
+        tmp_path,
+        "claude",
+        env,
+    )
+
+    assert result.returncode == 7
+    body = report.read_text(encoding="utf-8")
+    assert "status: failed" in body
+    assert final_message in body
+    assert "no final message was captured" not in body
+    assert last_message.read_text(encoding="utf-8").strip() == final_message

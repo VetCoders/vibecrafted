@@ -87,7 +87,10 @@ fi
 
 qroot="$(spawn_shell_quote "$SPAWN_ROOT")"
 qruntime="$(spawn_shell_quote "$runtime_input")"
+qreport="$(spawn_shell_quote "$SPAWN_REPORT")"
 qtranscript="$(spawn_shell_quote "$SPAWN_TRANSCRIPT")"
+qlast_message="$(spawn_shell_quote "${SPAWN_TRANSCRIPT%.log}.last-message.md")"
+qstream_jsonl="$(spawn_shell_quote "${SPAWN_TRANSCRIPT%.log}.stream.jsonl")"
 qmodel="$(spawn_shell_quote "$model")"
 
 # shellcheck disable=SC2016
@@ -95,9 +98,11 @@ claude_success_hook='
   if [[ ! -s "$report" ]]; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "completed"
     cat >> "$report" <<TXT
-Claude completed without writing a standalone report file.
+Claude completed without writing a standalone report file, and no final message was captured.
 See transcript for the full event stream:
 $transcript
+Last message path checked:
+${transcript%.log}.last-message.md
 TXT
   fi'
 
@@ -106,20 +111,31 @@ claude_failure_hook='
   if [[ ! -s "$report" ]]; then
     spawn_write_frontmatter "$report" "$SPAWN_AGENT" "${SPAWN_MODEL:-unknown}" "failed"
     cat >> "$report" <<TXT
-Claude failed before writing a standalone report file.
+Claude failed before writing a standalone report file, and no final message was captured.
 See transcript for the full event stream:
 $transcript
+Last message path checked:
+${transcript%.log}.last-message.md
 TXT
   fi'
 
 model_flag=""
 [[ -n "$model" ]] && model_flag="--model $qmodel"
 qfilter="$(spawn_shell_quote "$SCRIPT_DIR/claude_stream_filter.jq")"
+last_message_extract="if [[ -s $qstream_jsonl ]]; then jq -rs 'map(select(.type == \"result\") | .result // empty) | map(select(. != \"\")) | last // empty' $qstream_jsonl > $qlast_message 2>/dev/null || rm -f $qlast_message; [[ -s $qlast_message ]] || rm -f $qlast_message; fi;"
+salvage_success_report="if [[ \$pipeline_status -eq 0 && ! -s $qreport && -s $qlast_message ]]; then { printf '%s\n' '---'; printf 'run_id: %s\n' \"\${SPAWN_RUN_ID:-unknown}\"; printf 'prompt_id: %s\n' \"\${SPAWN_PROMPT_ID:-unknown}\"; printf 'agent: %s\n' \"\${SPAWN_AGENT:-claude}\"; printf 'skill: %s\n' \"\${SPAWN_SKILL_CODE:-unknown}\"; printf 'model: %s\n' \"\${SPAWN_MODEL:-unknown}\"; printf 'status: completed\n'; printf 'session_id: %s\n' \"\${SPAWN_SESSION_ID:-pending}\"; printf 'repo_path: %s\n' \"\${SPAWN_ROOT:-unknown}\"; printf 'tokens_input: 0\n'; printf 'tokens_output: 0\n'; printf 'tokens_total: 0\n'; printf 'cost_usd: unknown\n'; printf '%s\n\n' '---'; cat $qlast_message; } > $qreport || pipeline_status=\$?; fi;"
+missing_report_guard=""
+if [[ "$mode" == "research" || "${VIBECRAFTED_SKILL_NAME:-}" == "research" || "${VIBECRAFTED_SKILL_CODE:-}" == "rsch" || "${VIBECRAFTED_RESEARCH_MODE:-0}" == "1" ]]; then
+  # Research reports remain first-class artifacts; a final handoff can be useful
+  # evidence, but a missing report is still a failed artifact contract.
+  missing_report_guard="if [[ \$pipeline_status -eq 0 && ! -s $qreport ]]; then pipeline_status=65; fi;"
+fi
+salvage_failure_report="if [[ \$pipeline_status -ne 0 && ! -s $qreport ]]; then { printf '%s\n' '---'; printf 'run_id: %s\n' \"\${SPAWN_RUN_ID:-unknown}\"; printf 'prompt_id: %s\n' \"\${SPAWN_PROMPT_ID:-unknown}\"; printf 'agent: %s\n' \"\${SPAWN_AGENT:-claude}\"; printf 'skill: %s\n' \"\${SPAWN_SKILL_CODE:-unknown}\"; printf 'model: %s\n' \"\${SPAWN_MODEL:-unknown}\"; printf 'status: failed\n'; printf 'session_id: %s\n' \"\${SPAWN_SESSION_ID:-pending}\"; printf 'repo_path: %s\n' \"\${SPAWN_ROOT:-unknown}\"; printf 'tokens_input: 0\n'; printf 'tokens_output: 0\n'; printf 'tokens_total: 0\n'; printf 'cost_usd: unknown\n'; printf '%s\n\n' '---'; if [[ -s $qlast_message ]]; then cat $qlast_message; else printf '%s\n' 'Claude failed before writing a standalone report file, and no final message was captured.'; printf '%s\n' 'See transcript for the full event stream:'; printf '%s\n' $qtranscript; printf '%s\n' 'Last message path checked:'; printf '%s\n' $qlast_message; fi; } > $qreport; fi;"
 # Claude sometimes emits non-JSON noise before the JSONL stream.
 # Keep only JSON object lines so jq never chokes on banners, warnings, or status text.
-# Stream-json → grep JSON objects → jq (external filter file) → clean text to terminal AND transcript
+# Stream-json → grep JSON objects → tee raw stream → jq filter → clean text to terminal AND transcript
 # Raw JSONL lives in $HOME/.claude/projects/ — aicx ingests from there, not from us
-launch_cmd="set -o pipefail && cd $qroot && { claude -p --output-format stream-json --verbose --dangerously-skip-permissions $model_flag -- \"\$(cat $qruntime)\" 2>&1 | grep --line-buffered '^[[:space:]]*{' | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript; pipeline_status=\$?; echo; { grep -oE '\\[[0-9]{2}:[0-9]{2}:[0-9]{2}\\] session: [[:alnum:]-]+' $qtranscript 2>/dev/null | tail -1 | awk '{print \$3}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
+launch_cmd="set -o pipefail && cd $qroot && { rm -f $qlast_message $qstream_jsonl; claude -p --output-format stream-json --verbose --dangerously-skip-permissions $model_flag -- \"\$(cat $qruntime)\" 2>&1 | grep --line-buffered '^[[:space:]]*{' | tee $qstream_jsonl | jq --unbuffered -rj -f $qfilter | tee -a $qtranscript; pipeline_status=\$?; $last_message_extract $salvage_success_report $missing_report_guard $salvage_failure_report echo; { grep -oE '\\[[0-9]{2}:[0-9]{2}:[0-9]{2}\\] session: [[:alnum:]-]+' $qtranscript 2>/dev/null | tail -1 | awk '{print \$3}' | xargs -I{} printf '\\n\\033[33m━━━ session: {} ━━━\\033[0m\\n'; } || true; exit \$pipeline_status; }"
 
 # Combine built-in hooks with caller-provided hooks (marbles chain, etc.)
 combined_success="${claude_success_hook}${success_hook_extra:+
