@@ -36,6 +36,39 @@ case "$report_sync_timeout_s" in
 esac
 report_poll_s=5
 
+_state_scalar() {
+  local key="$1"
+  local fallback="${2:-}"
+  if [[ -f "$state_file" ]] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$state_file" "$key" "$fallback" <<'PY'
+import json
+import sys
+
+path, key, fallback = sys.argv[1:4]
+try:
+    with open(path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+except Exception:
+    print(fallback)
+    raise SystemExit(0)
+value = payload.get(key, fallback)
+print(value if isinstance(value, str) and value else fallback)
+PY
+  else
+    printf '%s\n' "$fallback"
+  fi
+}
+
+loop_skill_name="$(_state_scalar skill_name marbles)"
+loop_skill_code="$(_state_scalar skill_code "$(spawn_skill_prefix "$loop_skill_name")")"
+loop_label="$(_state_scalar loop_label Marbles)"
+loop_file_prefix="$(_state_scalar loop_file_prefix "$loop_skill_name")"
+
+_convergence_path() {
+  printf '%s/reports/%s_%s-%s_CONVERGENCE.md\n' \
+    "$store" "$(spawn_timestamp)" "$loop_file_prefix" "$ancestor_slug"
+}
+
 _state_json_edit() {
   local mutator="$1"
   shift
@@ -91,7 +124,7 @@ PY
 
 _loop_child_plan() {
   local loop_nr="$1"
-  spawn_marbles_child_plan_path "$store" "$ancestor_plan" "$loop_nr"
+  spawn_marbles_child_plan_path "$store" "$ancestor_plan" "$loop_nr" "$loop_file_prefix"
 }
 
 _find_meta_for_loop() {
@@ -398,7 +431,7 @@ _write_missing_report_failure() {
   local loop_nr="$1"
   local reason="$2"
   local loop_agent="$3"
-  local convergence="$store/reports/$(spawn_timestamp)_marbles-${ancestor_slug}_CONVERGENCE.md"
+  local convergence="$(_convergence_path)"
 
   cat > "$convergence" <<CONV
 ---
@@ -410,7 +443,7 @@ total_loops: $total_count
 reason: missing_report
 ---
 
-# Marbles Convergence — FAILED
+# ${loop_label} Convergence — FAILED
 
 Loop $loop_nr of $total_count did not produce an observed report.
 
@@ -423,7 +456,7 @@ CONV
 
   _update_lock status failed
   _archive_terminal_state "failed"
-  printf '\n\033[31m ✗  Marbles blocked at loop %s/%s\033[0m\n' "$loop_nr" "$total_count"
+  printf '\n\033[31m ✗  %s blocked at loop %s/%s\033[0m\n' "$loop_label" "$loop_nr" "$total_count"
   printf '    Missing report guard: %s\n' "$reason"
   printf '    Convergence: %s\n' "$convergence"
 }
@@ -435,7 +468,7 @@ _write_report_failed_convergence() {
   local report_status="$4"
   local meta_status="$5"
   local reason="$6"
-  local convergence="$store/reports/$(spawn_timestamp)_marbles-${ancestor_slug}_CONVERGENCE.md"
+  local convergence="$(_convergence_path)"
 
   cat > "$convergence" <<CONV
 ---
@@ -450,7 +483,7 @@ meta_status: ${meta_status:-unknown}
 report: $report_path
 ---
 
-# Marbles Convergence — FAILED
+# ${loop_label} Convergence — FAILED
 
 Loop $loop_nr of $total_count produced a failed report/status.
 
@@ -465,7 +498,7 @@ CONV
   _record_report_failed_loop "$loop_nr" "$reason" "$report_path" "$(_find_meta_for_loop "$loop_nr")"
   _update_lock status failed
   _archive_terminal_state "failed"
-  printf '\n\033[31m ✗  Marbles failed at loop %s/%s\033[0m\n' "$loop_nr" "$total_count"
+  printf '\n\033[31m ✗  %s failed at loop %s/%s\033[0m\n' "$loop_label" "$loop_nr" "$total_count"
   printf '    Report status guard: %s\n' "$reason"
   printf '    Convergence: %s\n' "$convergence"
 }
@@ -473,7 +506,7 @@ CONV
 _write_invalid_ancestor_failure() {
   local loop_nr="$1"
   local invalid_agent="$2"
-  local convergence="$store/reports/$(spawn_timestamp)_marbles-${ancestor_slug}_CONVERGENCE.md"
+  local convergence="$(_convergence_path)"
 
   cat > "$convergence" <<CONV
 ---
@@ -485,7 +518,7 @@ total_loops: $total_count
 reason: invalid_ancestor_agent
 ---
 
-# Marbles Convergence — FAILED
+# ${loop_label} Convergence — FAILED
 
 'ancestor.md' requested an invalid agent for loop $loop_nr.
 
@@ -497,7 +530,7 @@ CONV
 
   _update_lock status failed
   _archive_terminal_state "failed"
-  printf '\n\033[31m ✗  Marbles blocked before loop %s/%s\033[0m\n' "$loop_nr" "$total_count"
+  printf '\n\033[31m ✗  %s blocked before loop %s/%s\033[0m\n' "$loop_label" "$loop_nr" "$total_count"
   printf '    Invalid ancestor agent: %s\n' "${invalid_agent:-<empty>}"
   printf '    Convergence: %s\n' "$convergence"
 }
@@ -622,14 +655,14 @@ _write_spawn_failure_artifacts() {
   local report_path=""
   local transcript_path=""
   local meta_path=""
-  local prompt_id="marbles-ancestor_L${loop_nr}_$(date +%Y%m%d)"
+  local prompt_id="${loop_file_prefix}-ancestor_L${loop_nr}_$(date +%Y%m%d)"
 
   stamp="$(spawn_timestamp)"
   # Include loop_run_id (unique per dispatch+loop, has PID suffix) so parallel
-  # marbles runs of the same ancestor+agent at the same timestamp do not
+  # loop runs of the same ancestor+agent at the same timestamp do not
   # collide on the same meta/report/transcript file. Observed 2026-04-22:
   # two codex dispatches on vc-board T1 and T2 wrote to the same filename.
-  base="$store/reports/${stamp}_${loop_run_id}_marbles-${ancestor_slug}_L${loop_nr}_${loop_agent}"
+  base="$store/reports/${stamp}_${loop_run_id}_${loop_file_prefix}-${ancestor_slug}_L${loop_nr}_${loop_agent}"
   report_path="${base}.md"
   transcript_path="${base}.transcript.log"
   meta_path="${base}.meta.json"
@@ -647,7 +680,7 @@ TXT
 
   spawn_write_frontmatter "$report_path" "$loop_agent" "unknown" "failed"
   cat >> "$report_path" <<TXT
-Marbles failed before loop ${loop_nr} could launch.
+${loop_label} failed before loop ${loop_nr} could launch.
 
 - Reason: ${reason}
 - Exit code: ${exit_code}
@@ -730,7 +763,7 @@ _launch_next_loop() {
   local spawn_args=()
 
   _update_lock current "$loop_nr"
-  printf '\n\033[38;5;173m ⚒  Marbles loop %s/%s starting...\033[0m\n' "$loop_nr" "$total_count"
+  printf '\n\033[38;5;173m ⚒  %s loop %s/%s starting...\033[0m\n' "$loop_label" "$loop_nr" "$total_count"
 
   q_state="$(spawn_shell_quote "$state_dir")"
   q_root="$(spawn_shell_quote "$root_dir")"
@@ -757,10 +790,10 @@ _launch_next_loop() {
   VIBECRAFTED_LOOP_NR="$loop_nr" \
   SPAWN_LOOP_NR="$loop_nr" \
   VIBECRAFTED_RUN_ID="$loop_run_id" \
-  VIBECRAFTED_SKILL_CODE="marb" \
-  VIBECRAFTED_SKILL_NAME="marbles" \
+  VIBECRAFTED_SKILL_CODE="$loop_skill_code" \
+  VIBECRAFTED_SKILL_NAME="$loop_skill_name" \
   VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right \
-  VIBECRAFTED_MARBLES_TAB_NAME="${VIBECRAFTED_MARBLES_TAB_NAME:-marbles}" \
+  VIBECRAFTED_MARBLES_TAB_NAME="${VIBECRAFTED_MARBLES_TAB_NAME:-${loop_file_prefix}-${run_id}}" \
   VIBECRAFTED_STORE_DIR="$store" \
   VIBECRAFTED_STORE_ROOT="$root_dir" \
   bash "$scripts_dir/${loop_agent}_spawn.sh" "${spawn_args[@]}" "$loop_plan"
@@ -771,7 +804,7 @@ current_agent="$(_read_loop_agent "$current")"
 [[ -n "$current_agent" ]] || current_agent="unknown"
 
 if (( failed )); then
-  convergence="$store/reports/$(spawn_timestamp)_marbles-${ancestor_slug}_CONVERGENCE.md"
+  convergence="$(_convergence_path)"
   cat > "$convergence" <<CONV
 ---
 run_id: $run_id
@@ -781,7 +814,7 @@ failed_at_loop: $current
 total_loops: $total_count
 ---
 
-# Marbles Convergence — FAILED
+# ${loop_label} Convergence — FAILED
 
 Loop $current of $total_count failed.
 Check individual loop reports for details.
@@ -792,7 +825,7 @@ CONV
 
   _update_lock status failed
   _archive_terminal_state "failed"
-  printf '\n\033[31m ✗  Marbles failed at loop %s/%s\033[0m\n' "$current" "$total_count"
+  printf '\n\033[31m ✗  %s failed at loop %s/%s\033[0m\n' "$loop_label" "$current" "$total_count"
   printf '    Convergence: %s\n' "$convergence"
   exit 0
 fi
@@ -848,7 +881,7 @@ fi
 _refresh_state_steering_fields
 
 if [[ $next -gt $total_count ]]; then
-  convergence="$store/reports/$(spawn_timestamp)_marbles-${ancestor_slug}_CONVERGENCE.md"
+  convergence="$(_convergence_path)"
 
   {
     cat <<HEADER
@@ -861,7 +894,7 @@ god_plan: $god_plan
 ancestor_plan: $ancestor_plan
 ---
 
-# Marbles Convergence — Complete
+# ${loop_label} Convergence — Complete
 
 $total_count loops completed successfully.
 
@@ -885,7 +918,7 @@ HEADER
   _launch_verification "$current" 1
   _update_lock status completed
   _archive_terminal_state "completed"
-  printf '\n\033[32m ✓  Marbles complete: %s loops · %s\033[0m\n' "$total_count" "$run_id"
+  printf '\n\033[32m ✓  %s complete: %s loops · %s\033[0m\n' "$loop_label" "$total_count" "$run_id"
   printf '    Convergence: %s\n' "$convergence"
   exit 0
 fi
@@ -918,7 +951,7 @@ fi
 next_plan="$(_loop_child_plan "$next")"
 next_plan_tmp="${next_plan}.tmp"
 rm -f "$next_plan_tmp"
-spawn_marbles_write_child_plan "$ancestor_plan" "$next_plan_tmp"
+spawn_marbles_write_child_plan "$ancestor_plan" "$next_plan_tmp" "$loop_skill_name"
 
 _ancestor_agent="$(spawn_frontmatter_field "$next_plan_tmp" "agent")"
 _ancestor_model="$(spawn_clean_model "$(spawn_frontmatter_field "$next_plan_tmp" "model")")"

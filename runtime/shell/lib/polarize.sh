@@ -288,3 +288,45 @@ _vetcoders_compose_polarize_prompt() {
   printf '%s\n' "$base"
 }
 
+_vetcoders_polarize_loop() {
+  local tool="$1"
+  shift
+
+  _vetcoders_parse_contract "$@" || return 1
+  [[ -n "$_vetcoders_contract_count" ]] || {
+    echo "vc-polarize loop runtime requires --count <n>." >&2
+    return 1
+  }
+  _vetcoders_require_positive_int "$_vetcoders_contract_count" "--count" || return 1
+  [[ -z "$_vetcoders_contract_depth" ]] || _vetcoders_require_positive_int "$_vetcoders_contract_depth" "--depth" || return 1
+  [[ -z "$_vetcoders_contract_session" ]] || {
+    echo "--session is only supported by vibecrafted resume." >&2
+    return 1
+  }
+
+  local root skill_code run_id prompt seed_dir seed_file
+  root="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
+  skill_code="$(_vetcoders_skill_prefix "polarize")"
+  run_id="${VIBECRAFTED_LOOP_RUN_ID:-$(_vetcoders_generate_run_id "$skill_code")}"
+  prompt="$(_vetcoders_compose_polarize_prompt "$_vetcoders_contract_prompt" "$_vetcoders_contract_file" "$_vetcoders_contract_task")" || return 1
+  if [[ -n "$_vetcoders_contract_depth" ]]; then
+    prompt+=$'\n\n'
+    prompt+="Requested loop context depth: $_vetcoders_contract_depth"
+  fi
+
+  seed_dir="$root/.vibecrafted/tmp"
+  mkdir -p "$seed_dir"
+  seed_file="$seed_dir/${run_id}_polarize-loop.md"
+  printf '%s\n' "$prompt" > "$seed_file"
+
+  local marbles_args=(--count "$_vetcoders_contract_count" --file "$seed_file")
+  [[ -n "$_vetcoders_contract_root" ]] && marbles_args+=(--root "$_vetcoders_contract_root")
+  [[ -n "$_vetcoders_contract_runtime" ]] && marbles_args+=(--runtime "$_vetcoders_contract_runtime")
+
+  VIBECRAFTED_LOOP_SKILL_NAME="polarize" \
+  VIBECRAFTED_LOOP_SKILL_CODE="$skill_code" \
+  VIBECRAFTED_LOOP_LABEL="Polarize" \
+  VIBECRAFTED_LOOP_FILE_PREFIX="polarize" \
+  VIBECRAFTED_LOOP_RUN_ID="$run_id" \
+    _vetcoders_marbles "$tool" "${marbles_args[@]}"
+}

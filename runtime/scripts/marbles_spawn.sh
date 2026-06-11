@@ -23,6 +23,9 @@ Options:
   --runtime <rt>      terminal, headless (default: terminal)
   --root <dir>        Repository root
   --no-watch          Skip watcher UI and run chaining directly
+  --skill-name <name> Loop skill name (default: marbles)
+  --skill-code <code> Loop skill run-id prefix (default: derived from skill)
+  --loop-label <text> Human label for receipts (default: Marbles)
 EOF
 }
 
@@ -35,6 +38,10 @@ rotation="single"
 runtime="terminal"
 root=""
 use_watcher=1
+loop_skill_name="${VIBECRAFTED_LOOP_SKILL_NAME:-marbles}"
+loop_skill_code="${VIBECRAFTED_LOOP_SKILL_CODE:-}"
+loop_label="${VIBECRAFTED_LOOP_LABEL:-Marbles}"
+loop_file_prefix="${VIBECRAFTED_LOOP_FILE_PREFIX:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,6 +54,10 @@ while [[ $# -gt 0 ]]; do
     --runtime) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --runtime"; runtime="$1" ;;
     --root)    shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --root"; root="$1" ;;
     --no-watch) use_watcher=0 ;;
+    --skill-name) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --skill-name"; loop_skill_name="$1" ;;
+    --skill-code) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --skill-code"; loop_skill_code="$1" ;;
+    --loop-label) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --loop-label"; loop_label="$1" ;;
+    --loop-file-prefix) shift; [[ $# -gt 0 ]] || spawn_die "Missing value for --loop-file-prefix"; loop_file_prefix="$1" ;;
     -h|--help) usage; exit 0 ;;
     *) spawn_die "Unknown argument: $1" ;;
   esac
@@ -59,6 +70,12 @@ spawn_validate_runtime "$runtime"
 spawn_require_positive_int "$count" "--count"
 spawn_rotation_validate_mode "$rotation"
 [[ -z "$depth" ]] || spawn_require_positive_int "$depth" "--depth"
+[[ "$loop_skill_name" =~ ^[A-Za-z0-9_-]+$ ]] || spawn_die "Invalid --skill-name: $loop_skill_name"
+[[ -n "$loop_skill_code" ]] || loop_skill_code="$(spawn_skill_prefix "$loop_skill_name")"
+[[ "$loop_skill_code" =~ ^[A-Za-z0-9_-]+$ ]] || spawn_die "Invalid --skill-code: $loop_skill_code"
+[[ -n "$loop_file_prefix" ]] || loop_file_prefix="$loop_skill_name"
+loop_file_prefix="$(printf '%s' "$loop_file_prefix" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_-]+/-/g; s/^-+//; s/-+$//')"
+[[ -n "$loop_file_prefix" ]] || loop_file_prefix="$loop_skill_name"
 
 spawn_require_shell_syntax "$SCRIPT_DIR/common.sh" "shared spawn library"
 spawn_require_shell_syntax "$SCRIPT_DIR/${agent}_spawn.sh" "${agent} spawn"
@@ -132,7 +149,7 @@ except Exception:
 fi
 if [[ -z "$marbles_run_id" ]]; then
   # Same PID-suffixed format as _vetcoders_generate_run_id; keep shapes identical across entry points.
-  marbles_run_id="marb-$(date +%H%M%S)-$$"
+  marbles_run_id="${loop_skill_code}-$(date +%H%M%S)-$$"
 fi
 state_dir="$(spawn_marbles_state_dir "$marbles_run_id")"
 state_file="$state_dir/state.json"
@@ -196,6 +213,7 @@ chmod 0444 "$god_plan"
   cat <<EOF
 ---
 agent: $agent
+skill_name: $loop_skill_name
 focus: $ancestor_focus
 priority: $ancestor_priority
 EOF
@@ -217,6 +235,10 @@ cat > "$state_file" <<EOF
 {
   "run_id": "$marbles_run_id",
   "agent": "$agent",
+  "skill_name": "$loop_skill_name",
+  "skill_code": "$loop_skill_code",
+  "loop_label": "$loop_label",
+  "loop_file_prefix": "$loop_file_prefix",
   "mode": "steered",
   "rotation": "$rotation",
   "rotation_pool": $rotation_pool_json,
@@ -247,6 +269,9 @@ session_lock="$lock_dir/${marbles_run_id}.lock"
 cat > "$session_lock" <<LOCK
 run_id=$marbles_run_id
 agent=$agent
+skill_name=$loop_skill_name
+skill_code=$loop_skill_code
+loop_label=$loop_label
 plan=$ancestor_plan
 count=$count
 current=1
@@ -258,7 +283,7 @@ status=running
 LOCK
 
 _bold='\033[1m' _copper='\033[38;5;173m' _steel='\033[38;5;247m' _reset='\033[0m'
-printf '\n%b ⚒  Marbles Loop · %s × %s%b\n' "$_bold$_copper" "$agent" "$count" "$_reset"
+printf '\n%b ⚒  %s Loop · %s × %s%b\n' "$_bold$_copper" "$loop_label" "$agent" "$count" "$_reset"
 printf '%b──────────────────────────────────%b\n' "$_steel" "$_reset"
 printf '%b  god:     %b%s\n'   "$_steel" "$_reset" "$god_plan"
 printf '%b  ancestor:%b%s\n'   "$_steel" "$_reset" "$ancestor_plan"
@@ -267,8 +292,8 @@ printf '%b  run_id:  %b%s\n'   "$_steel" "$_reset" "$marbles_run_id"
 printf '%b  lock:    %b%s\n'   "$_steel" "$_reset" "$session_lock"
 printf '%b──────────────────────────────────%b\n' "$_steel" "$_reset"
 
-l1_plan="$(spawn_marbles_child_plan_path "$store" "$ancestor_plan" 1)"
-spawn_marbles_write_child_plan "$ancestor_plan" "$l1_plan"
+l1_plan="$(spawn_marbles_child_plan_path "$store" "$ancestor_plan" 1 "$loop_file_prefix")"
+spawn_marbles_write_child_plan "$ancestor_plan" "$l1_plan" "$loop_skill_name"
 
 q_state="$(spawn_shell_quote "$state_dir")"
 q_root="$(spawn_shell_quote "$root_dir")"
@@ -283,8 +308,8 @@ failure_hook="bash $q_scripts/marbles_next.sh --failed $q_state $count 1 $marble
 export SPAWN_LOOP_NR=1
 export VIBECRAFTED_LOOP_NR=1
 export VIBECRAFTED_RUN_ID="${marbles_run_id}-001"
-export VIBECRAFTED_SKILL_CODE="marb"
-export VIBECRAFTED_SKILL_NAME="marbles"
+export VIBECRAFTED_SKILL_CODE="$loop_skill_code"
+export VIBECRAFTED_SKILL_NAME="$loop_skill_name"
 # One run_id = one tab, name "marbles-<run_id>". Subsequent loops
 # (marbles_next.sh) inherit this via env and stay in the same tab, so the
 # dispatch history of a single run never spills across tabs and distinct
@@ -292,7 +317,7 @@ export VIBECRAFTED_SKILL_NAME="marbles"
 # from workflow/research tabs which also carry run_ids.
 # Canonical since 2026-04-12 marbles tab isolation spec; regressed 2026-04-14
 # to shared "marbles" tab; restored 2026-04-22.
-export VIBECRAFTED_MARBLES_TAB_NAME="marbles-${marbles_run_id}"
+export VIBECRAFTED_MARBLES_TAB_NAME="${loop_file_prefix}-${marbles_run_id}"
 
 spawn_args=(
   --mode implement

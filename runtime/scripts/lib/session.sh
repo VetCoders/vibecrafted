@@ -38,6 +38,7 @@ spawn_skill_prefix() {
     justdo) printf 'just\n' ;; 
     marbles) printf 'marb\n' ;; 
     partner) printf 'prtn\n' ;; 
+    polarize) printf 'polr\n' ;;
     plan) printf 'plan\n' ;; 
     prune) printf 'prun\n' ;; 
     release) printf 'rels\n' ;; 
@@ -124,18 +125,21 @@ spawn_marbles_child_plan_path() {
   local store_dir="$1"
   local ancestor_plan="$2"
   local loop_nr="$3"
+  local loop_file_prefix="${4:-marbles}"
   local ancestor_slug
   ancestor_slug="$(spawn_slug_from_path "$ancestor_plan")"
-  printf '%s/plans/marbles-%s_L%s.md\n' "$store_dir" "$ancestor_slug" "$loop_nr"
+  printf '%s/plans/%s-%s_L%s.md\n' "$store_dir" "$loop_file_prefix" "$ancestor_slug" "$loop_nr"
 }
 
 spawn_marbles_write_child_plan() {
   local ancestor_plan="$1"
   local child_plan="$2"
+  local loop_skill_name="${3:-marbles}"
 
   mkdir -p "$(dirname "$child_plan")"
   cp "$ancestor_plan" "$child_plan"
-  cat >> "$child_plan" <<'ROUND_CONTRACT'
+  {
+    cat <<'ROUND_CONTRACT_HEAD'
 
 ---
 ## Worker Contract
@@ -143,7 +147,9 @@ spawn_marbles_write_child_plan() {
 ### Hard Rule
 - The worker must remain on the operator-assigned substrate.
 - The worker is expected to maneuver intelligently within the assigned surface, inside the living tree, and around concurrent edits by others. That maneuverability is part of the craft.
-- But `vc-marbles` does not permit escaping the assigned substrate.
+ROUND_CONTRACT_HEAD
+    printf -- '- But vc-%s loop runtime does not permit escaping the assigned substrate.\n' "$loop_skill_name"
+    cat <<'ROUND_CONTRACT_TAIL'
 - Do not switch branches.
 - Do not create or move to a worktree.
 - Do not relocate execution to another lane or clone.
@@ -155,7 +161,8 @@ spawn_marbles_write_child_plan() {
 - **COMMIT**: only if you produced staged changes that match the dispatched scope.
   NO empty commits. NO `--allow-empty`. NO chore stamps.
 - **SCOPE**: do your work, write report, optionally commit if real changes, stop.
-ROUND_CONTRACT
+ROUND_CONTRACT_TAIL
+  } >> "$child_plan"
 }
 
 spawn_prepare_paths() {

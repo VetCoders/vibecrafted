@@ -8,6 +8,7 @@ _vetcoders_marbles() {
   local tool="$1"
   shift
   local script marbles_cmd quoted_args quoted_env operator_session root_dir marbles_run_id runtime launch_ts launch_report
+  local loop_skill_name loop_skill_code loop_label loop_file_prefix
   local -a marbles_env
   script="$(_vetcoders_spawn_script "$tool" "marbles_spawn.sh")" || return 1
   _vetcoders_parse_contract "$@" || return 1
@@ -34,16 +35,27 @@ _vetcoders_marbles() {
   [[ -z "$_vetcoders_contract_count" ]] || _vetcoders_require_positive_int "$_vetcoders_contract_count" "--count" || return 1
   [[ -z "$_vetcoders_contract_depth" ]] || _vetcoders_require_positive_int "$_vetcoders_contract_depth" "--depth" || return 1
 
+  loop_skill_name="${VIBECRAFTED_LOOP_SKILL_NAME:-marbles}"
+  loop_skill_code="${VIBECRAFTED_LOOP_SKILL_CODE:-$(_vetcoders_skill_prefix "$loop_skill_name")}"
+  loop_label="${VIBECRAFTED_LOOP_LABEL:-Marbles}"
+  loop_file_prefix="${VIBECRAFTED_LOOP_FILE_PREFIX:-$loop_skill_name}"
+
   # shellcheck disable=SC2031
-  [[ -n "${VIBECRAFTED_SKILL_NAME:-}" ]] || export VIBECRAFTED_SKILL_NAME="marbles"
+  [[ -n "${VIBECRAFTED_SKILL_NAME:-}" ]] || export VIBECRAFTED_SKILL_NAME="$loop_skill_name"
   # shellcheck disable=SC2031
-  export VIBECRAFTED_SKILL_CODE="marb"
+  export VIBECRAFTED_SKILL_CODE="$loop_skill_code"
 
   root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
-  marbles_run_id="${VIBECRAFTED_MARBLES_RUN_ID:-$(_vetcoders_generate_run_id "marb")}"
+  marbles_run_id="${VIBECRAFTED_MARBLES_RUN_ID:-${VIBECRAFTED_LOOP_RUN_ID:-$(_vetcoders_generate_run_id "$loop_skill_code")}}"
   runtime="$(_vetcoders_effective_runtime)"
-  marbles_env=(VIBECRAFTED_MARBLES_RUN_ID="$marbles_run_id")
-  local marbles_args=(--agent "$tool" --runtime "$runtime")
+  marbles_env=(
+    VIBECRAFTED_MARBLES_RUN_ID="$marbles_run_id"
+    VIBECRAFTED_LOOP_SKILL_NAME="$loop_skill_name"
+    VIBECRAFTED_LOOP_SKILL_CODE="$loop_skill_code"
+    VIBECRAFTED_LOOP_LABEL="$loop_label"
+    VIBECRAFTED_LOOP_FILE_PREFIX="$loop_file_prefix"
+  )
+  local marbles_args=(--agent "$tool" --runtime "$runtime" --skill-name "$loop_skill_name" --skill-code "$loop_skill_code" --loop-label "$loop_label" --loop-file-prefix "$loop_file_prefix")
   local source_args=()
   [[ -n "$_vetcoders_contract_root" ]] && marbles_args+=(--root "$_vetcoders_contract_root")
   [[ -n "$_vetcoders_contract_count" ]] && marbles_args+=(--count "$_vetcoders_contract_count")
@@ -86,7 +98,7 @@ _vetcoders_marbles() {
     local cmd_script marbles_tab_name
     VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
     export VIBECRAFTED_OPERATOR_SESSION
-    marbles_tab_name="marbles-${marbles_run_id}"
+    marbles_tab_name="${loop_file_prefix}-${marbles_run_id}"
     export VIBECRAFTED_MARBLES_TAB_NAME="$marbles_tab_name"
     marbles_env+=(VIBECRAFTED_MARBLES_TAB_NAME="$marbles_tab_name")
     quoted_env="$(_vetcoders_shell_quote_join "${marbles_env[@]}")"
@@ -103,7 +115,7 @@ _vetcoders_marbles() {
       --cwd "$root_dir" \
       -- "$cmd_script" >/dev/null || return 1
 
-    printf 'Marbles run launched in zellij tab: %s\n' "$marbles_tab_name"
+    printf '%s run launched in zellij tab: %s\n' "$loop_label" "$marbles_tab_name"
     printf '  run_id:  %s\n' "$marbles_run_id"
     printf '  inspect: vc-marbles inspect %s\n' "$marbles_run_id"
       
@@ -116,7 +128,7 @@ _vetcoders_marbles() {
     _vetcoders_prepare_operator_runtime "$runtime" || return 1
     if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
       _vetcoders_spawn_into_operator_session "marbles" "$marbles_cmd" || return 1
-      printf 'Marbles run launched in operator session: %s\n' "$VIBECRAFTED_OPERATOR_SESSION"
+      printf '%s run launched in operator session: %s\n' "$loop_label" "$VIBECRAFTED_OPERATOR_SESSION"
       printf '  run_id:  %s\n' "$marbles_run_id"
       printf '  inspect: vc-marbles inspect %s\n' "$marbles_run_id"
       _vetcoders_marbles_emit_probe "$root_dir" "$marbles_run_id" "launched"

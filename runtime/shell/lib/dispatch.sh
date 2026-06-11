@@ -143,7 +143,7 @@ _vetcoders_skill_wrapper_usage() {
       ;;
     polarize)
       printf 'Usage: vc-polarize <claude|codex|gemini|agy|junie|grok> --task <text> [--prompt <text>] [--file <path>] [--no-aicx] [--no-context-corpus]\n' >&2
-      printf '       vc-polarize <claude|codex|gemini|agy|junie|grok> [--prompt <text>] [--file <path>]\n' >&2
+      printf '       vc-polarize <claude|codex|gemini|agy|junie|grok> [--count <n>] [--prompt <text>] [--file <path>]\n' >&2
       ;;
     *)
       printf 'Usage: vc-%s <claude|codex|gemini|agy|junie|grok> [--prompt <text>] [--file <path>]\n' "$skill" >&2
@@ -297,7 +297,7 @@ Command deck:
 Uniform skill flags:
   -p, --prompt <text>            Inline prompt; captures the rest of the command line
   -f, --file <path.md>           Input file as prompt context
-  --count <n>                    Marbles loop count (default: 3)
+  --count <n>                    Marbles / Polarize loop count (default: 3)
   --depth <n>                    Marbles plan crawl depth (default: 3)
   --session <id>                 Resume session id
 

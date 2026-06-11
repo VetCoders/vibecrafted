@@ -180,6 +180,10 @@ _vetcoders_skill() {
   inherited_run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
   inherited_run_lock="$(_vetcoders_effective_run_lock 2>/dev/null || true)"
   _vetcoders_parse_contract "$@" || return 1
+  if [[ "$skill" == "polarize" && -n "$_vetcoders_contract_count" ]]; then
+    _vetcoders_polarize_loop "$tool" "$@"
+    return
+  fi
   [[ -z "$_vetcoders_contract_count" ]] || {
     echo "--count is only supported by vibecrafted marbles." >&2
     return 1
@@ -338,6 +342,7 @@ _vetcoders_skill_entry() {
   shift 2
   case "$skill" in
     marbles) _vetcoders_marbles "$tool" "$@" ;;
+    polarize) _vetcoders_skill "$tool" polarize "$@" ;;
     *) _vetcoders_skill "$tool" "$skill" "$@" ;;
   esac
 }
