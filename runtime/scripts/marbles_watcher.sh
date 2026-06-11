@@ -1025,18 +1025,12 @@ PY
     _render_loop_phase "$loop_nr" "confirmed" "$session_id"
   fi
 
-  actual_report=""
-  if [[ -n "$actual_report_hint" && -s "$actual_report_hint" ]]; then
-    actual_report="$actual_report_hint"
-  fi
-
   wait_status=0
-  if [[ -z "$actual_report" ]]; then
-    if actual_report="$(_wait_for_report_path "$actual_report_hint" "$report_timeout_s" "$actual_transcript" "$meta_path")"; then
-      :
-    else
-      wait_status=$?
-    fi
+  actual_report=""
+  if actual_report="$(_wait_for_report_path "$actual_report_hint" "$report_timeout_s" "$actual_transcript" "$meta_path")"; then
+    :
+  else
+    wait_status=$?
   fi
 
   if [[ -z "$actual_report" || ! -s "$actual_report" ]] && (( wait_status != 0 )); then

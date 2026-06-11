@@ -357,6 +357,7 @@ spawn_gc_dead_runs() {
 
 spawn_python_core_path() {
   local candidate_core=""
+  local candidate_root=""
   if [[ -n "${VIBECRAFTED_CORE_PYTHONPATH:-}" ]]; then
     printf '%s\n' "$VIBECRAFTED_CORE_PYTHONPATH"
     return 0
@@ -368,6 +369,18 @@ spawn_python_core_path() {
       return 0
     fi
   fi
+  for candidate_root in "${SPAWN_ROOT:-}" "${VIBECRAFTED_STORE_ROOT:-}" "$PWD"; do
+    [[ -n "$candidate_root" ]] || continue
+    if [[ -d "$candidate_root/vibecrafted_core" ]]; then
+      printf '%s\n' "$candidate_root"
+      return 0
+    fi
+    candidate_core="$candidate_root/vibecrafted-core"
+    if [[ -d "$candidate_core/vibecrafted_core" ]]; then
+      printf '%s\n' "$candidate_core"
+      return 0
+    fi
+  done
   return 1
 }
 
