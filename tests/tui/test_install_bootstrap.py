@@ -500,7 +500,11 @@ def test_install_sh_verbose_output_is_a_superset_of_default(tmp_path: Path) -> N
     )
 
 
-def test_compact_onboarding_inner_log_viewer_shows_twelve_lines() -> None:
-    """W3-A: the vetcoders-install last-step inner log viewer grew to 12 lines."""
+def test_compact_onboarding_ends_with_finish_card_not_log_tail() -> None:
+    """CLI_PRODUCT_SPEC §6.1: the compact install ends with the bounded finish
+    card (result · key facts · one next step). The 12-line inner log viewer is
+    retired — the full transaction log stays on disk and errors point at it."""
     text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(encoding="utf-8")
-    assert "_tail[-12:]" in text
+    assert "_tail[-12:]" not in text
+    assert "Finish card (CLI_PRODUCT_SPEC §6.1)" in text
+    assert "vibecrafted init claude" in text
