@@ -467,7 +467,7 @@ fn terminal_launch_omits_session_flag_when_session_name_is_none() {
 }
 
 #[test]
-fn terminal_launch_probe_inherits_config_dir_from_launch_command() {
+fn terminal_launch_probe_inherits_config_dir_env_from_launch_command() {
     let _guard = env_lock().lock().unwrap();
     let previous = env::var_os("ZELLIJ_CONFIG_DIR");
     unsafe {
@@ -499,17 +499,16 @@ fn terminal_launch_probe_inherits_config_dir_from_launch_command() {
         .iter()
         .map(|value| value.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
-    let launch_config_idx = launch_args
-        .iter()
-        .position(|value| value == "--config-dir")
-        .expect("launch should carry --config-dir when repo has config/zellij/config.kdl");
-    let launch_config_dir = launch_args
-        .get(launch_config_idx + 1)
-        .expect("--config-dir flag must be followed by a path");
     let launch_layout_idx = launch_args
         .iter()
         .position(|value| value == "--layout-string")
         .expect("launch should carry --layout-string for terminal runtime");
+    let launch_config_dir = command
+        .env
+        .get("ZELLIJ_CONFIG_DIR")
+        .expect("launch should carry repo-local config through ZELLIJ_CONFIG_DIR")
+        .to_string_lossy()
+        .into_owned();
 
     let probe = command
         .readiness_probe()
@@ -520,35 +519,38 @@ fn terminal_launch_probe_inherits_config_dir_from_launch_command() {
         .map(|value| value.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
 
-    let probe_config_idx = probe_args
-        .iter()
-        .position(|value| value == "--config-dir")
-        .expect("probe must carry --config-dir to match launch namespace (P1-01)");
-    let probe_config_dir = probe_args
-        .get(probe_config_idx + 1)
-        .expect("probe --config-dir flag must be followed by a path");
-    let list_sessions_idx = probe_args
-        .iter()
-        .position(|value| value == "list-sessions")
-        .expect("probe must invoke list-sessions");
+    let probe_config_dir = probe
+        .env
+        .get("ZELLIJ_CONFIG_DIR")
+        .expect("probe must inherit ZELLIJ_CONFIG_DIR to match launch namespace")
+        .to_string_lossy()
+        .into_owned();
 
     assert_eq!(probe_config_dir, launch_config_dir);
-    assert!(
-        launch_config_idx < launch_layout_idx,
-        "--config-dir must be a top-level launch option before --layout-string: args={launch_args:?}"
+    assert_eq!(
+        probe_args,
+        vec!["list-sessions", "--short", "--no-formatting"]
     );
     assert!(
         !launch_args.iter().any(|value| value == "options"),
         "named operator launch must not use the stale `options --config-dir` ordering from the screenshot: args={launch_args:?}"
     );
     assert!(
-        probe_config_dir.contains(&canonical_zellij_dir.to_string_lossy().into_owned())
-            || probe_config_dir == &zellij_dir.to_string_lossy().into_owned(),
-        "probe config dir should match the repo-local namespace: probe={probe_config_dir:?} expected={canonical_zellij_dir:?}"
+        !launch_args.iter().any(|value| value == "--config-dir"),
+        "launch config must travel through ZELLIJ_CONFIG_DIR, not argv: args={launch_args:?}"
     );
     assert!(
-        probe_config_idx < list_sessions_idx,
-        "--config-dir must precede the list-sessions subcommand: args={probe_args:?}"
+        !probe_args.iter().any(|value| value == "--config-dir"),
+        "readiness probe config must travel through ZELLIJ_CONFIG_DIR, not argv: args={probe_args:?}"
+    );
+    assert!(
+        launch_layout_idx < launch_args.len() - 1,
+        "--layout-string must be followed by a layout payload: args={launch_args:?}"
+    );
+    assert!(
+        probe_config_dir.contains(&canonical_zellij_dir.to_string_lossy().into_owned())
+            || probe_config_dir == zellij_dir.to_string_lossy(),
+        "probe config dir should match the repo-local namespace: probe={probe_config_dir:?} expected={canonical_zellij_dir:?}"
     );
 
     match previous {

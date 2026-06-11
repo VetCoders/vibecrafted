@@ -167,10 +167,11 @@ impl LaunchCommand {
             .find(|pair| pair.first().is_some_and(|value| value == "--session"))
             .and_then(|pair| pair.get(1))
             .map(|value| value.to_string_lossy().into_owned())?;
-        let mut args: Vec<OsString> = Vec::new();
-        args.push("list-sessions".into());
-        args.push("--short".into());
-        args.push("--no-formatting".into());
+        let args: Vec<OsString> = vec![
+            "list-sessions".into(),
+            "--short".into(),
+            "--no-formatting".into(),
+        ];
         Some(LaunchReadinessProbe {
             program: self.program.clone(),
             args,

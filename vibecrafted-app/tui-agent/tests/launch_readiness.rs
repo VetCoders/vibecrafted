@@ -54,11 +54,6 @@ fn env_guard() -> std::sync::MutexGuard<'static, ()> {
 }
 
 const FAKE_SCRIPT: &str = r#"#!/bin/sh
-# Skip the optional top-level `--config-dir <dir>` flag so the same script
-# can stand in for both the launch invocation and the readiness probe.
-if [ "${1:-}" = "--config-dir" ]; then
-  shift 2
-fi
 case "${1:-}" in
   list-sessions)
     if [ -n "${FAKE_VISIBLE_FILE:-}" ] && [ -f "${FAKE_VISIBLE_FILE}" ]; then
@@ -129,7 +124,6 @@ fn build_command(
         args: vec![
             "--session".into(),
             session.into(),
-            "options".into(),
             "--layout-string".into(),
             "noop".into(),
         ],
