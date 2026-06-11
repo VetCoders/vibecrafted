@@ -1,22 +1,39 @@
 # vibecrafted-server
 
-Remote-observability server for the Vibecrafted control plane. **One core, two
-frontends.** The Python runtime
-(`vibecrafted-core/vibecrafted_core/control_plane.py`) is the source of truth
-that _writes_ `~/.vibecrafted/control_plane/`; this Rust workspace gives a
-typed, **read-only** view of the same data over HTTP.
+Local control-plane viewer for the Vibecrafted control plane (scaffold editor writes artifacts — local-only). **One core, two frontends.** The Python runtime (`vibecrafted-core/vibecrafted_core/control_plane.py`) is the source of truth that _writes_ `~/.vibecrafted/control_plane/`; this Rust workspace gives a typed, **read-only** view of the same data over HTTP.
 
 | crate          | role                                                                                                                                                  |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `control-core` | read-model: `ControlPlane` / `StateView`, the `*.meta.json` + `*.lock` + `marbles/**/state.json` merge, events. Never writes control-plane snapshots. |
 | `web`          | Leptos 0.8 SSR + axum app. Serves the console shell, the scaffold review surface, and the control-plane read API.                                     |
 
-> Not wired by `make install-all`. Run it explicitly with the targets below.
+> Not wired by `make install-all`. Run `make install-server` explicitly to install.
+
+## Installation
+
+Install as a real binary in `~/.local/bin/vibecrafted-server-web`:
+
+```bash
+make install-server
+```
+
+This builds the release binary and copies it along with public assets/fonts to the runtime home directory.
 
 ## Run
 
+Through the first-class command deck:
+
 ```bash
-# from the repo root
+vibecrafted server start        # start the daemonized viewer
+vibecrafted server status       # check daemon and HTTP health
+vibecrafted server open         # open the viewer in your default browser
+vibecrafted server doctor       # run diagnostic checks on paths/ports
+vibecrafted server stop         # stop the daemonized viewer
+```
+
+Or for local development from the repository root:
+
+```bash
 make server                      # build (ssr) + run on 127.0.0.1:3024
 make server SERVER_ADDR=127.0.0.1:8080   # pick another address
 ```
@@ -42,12 +59,9 @@ curl -s http://127.0.0.1:3024/api/control/runs  | python3 -c 'import sys,json;pr
 make server-build   # cargo build -p vibecrafted-server-web --features ssr
 make server-check   # cargo clippy -D warnings on both crates
 make server-test    # cargo test -p control-core
+make server-smoke   # run the installation and startup smoke tests (runs 3x)
 ```
 
 ## macOS linker note
 
-Leptos macro-expansion produces very long symbol names. Apple's default linker
-(`ld-prime`, Xcode 15+) asserts on them
-(`ld: Assertion failed: (name.size() <= maxLength)`). `.cargo/config.toml`
-pins the host target to the classic linker (`-ld_classic`) so a plain
-`cargo build` links cleanly; the wasm32 hydrate build is unaffected.
+Leptos macro-expansion produces very long symbol names. Apple's default linker (`ld-prime`, Xcode 15+) asserts on them (`ld: Assertion failed: (name.size() <= maxLength)`). `.cargo/config.toml` pins the host target to the classic linker (`-ld_classic`) so a plain `cargo build` links cleanly; the wasm32 hydrate build is unaffected.

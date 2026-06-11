@@ -11,7 +11,7 @@ BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server server-smoke
 
 help:
 	@printf "\n"
@@ -43,7 +43,7 @@ help-dev:
 	@printf "  \033[1mmisc\033[0m      doctor · list · update · uninstall · demo · demo-full · skill-new\n"
 	@printf "\n"
 	@printf "  \033[2minstall-all builds the Rust app binaries (voc, vc-admin) as real files into ~/.local/bin.\033[0m\n"
-	@printf "  \033[2mvibecrafted-server is excluded by design — use make server. RUNTIME=<horse> selects a lab runtime.\033[0m\n"
+	@printf "  \033[2mvibecrafted-server is excluded by design from install-all — use make install-server. RUNTIME=<horse> selects a lab runtime.\033[0m\n"
 	@printf "\n"
 
 vibecrafted: install
@@ -549,6 +549,8 @@ test-hammerspoon:
 SERVER_DIR  := vibecrafted-server
 SERVER_BIN  := vibecrafted-server-web
 SERVER_ADDR ?= 127.0.0.1:3024
+VIBECRAFTED_RUNTIME_HOME ?= $(HOME)/.local/share/vibecrafted
+SERVER_INSTALL_SITE_ROOT := $(VIBECRAFTED_RUNTIME_HOME)/server/site
 LEPTOS_RUN_ENV := \
 	LEPTOS_OUTPUT_NAME=$(SERVER_BIN) \
 	LEPTOS_SITE_ROOT=target/site \
@@ -571,3 +573,25 @@ server-check:
 
 server-test:
 	@cd $(SERVER_DIR) && cargo test -p control-core
+
+install-server:
+	@command -v cargo >/dev/null 2>&1 || { \
+		echo "[server] cargo not found — install rustup (https://rustup.rs) to build $(SERVER_BIN)" >&2; \
+		exit 1; \
+	}
+	@mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(SERVER_INSTALL_SITE_ROOT)"
+	@echo "[server] building release binary ($(SERVER_BIN))"
+	@ulimit -f unlimited; cd $(SERVER_DIR) && cargo build --release -p $(SERVER_BIN) --no-default-features --features ssr $(INSTALL_QUIET)
+	@rm -f "$(BIN_DIR)/$(SERVER_BIN)"
+	@install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_BIN)"
+	@echo "[server] copying public assets/fonts to $(SERVER_INSTALL_SITE_ROOT)"
+	@rm -rf "$(SERVER_INSTALL_SITE_ROOT)/*"
+	@cp -R "$(SERVER_DIR)/web/public/"* "$(SERVER_INSTALL_SITE_ROOT)/"
+	@echo "[server] installed: $(SERVER_BIN) -> $(BIN_DIR) (real file)"
+	@echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
+
+server-smoke:
+	@echo "[server-smoke] Run 1/3" && bash tests/server_smoke.sh
+	@echo "[server-smoke] Run 2/3" && bash tests/server_smoke.sh
+	@echo "[server-smoke] Run 3/3" && bash tests/server_smoke.sh
+

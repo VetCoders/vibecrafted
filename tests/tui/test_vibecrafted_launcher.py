@@ -2570,3 +2570,24 @@ def test_remaining_launchers_do_not_overwrite_worker_authored_reports(
     assert f"{agent} worker-authored report survived." in body
     assert final_message not in body
     assert final_message in last_message.read_text(encoding="utf-8")
+
+
+def test_launcher_server_help_and_invalid_verb() -> None:
+    result_help = subprocess.run(
+        [str(LAUNCHER), "server", "help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert "Manage the local control-plane viewer server" in result_help.stdout
+    assert "vibecrafted server [start|stop|status|open|doctor]" in result_help.stdout
+
+    result_invalid = subprocess.run(
+        [str(LAUNCHER), "server", "invalidaction"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result_invalid.returncode != 0
+    assert "Unknown server action: invalidaction" in result_invalid.stderr

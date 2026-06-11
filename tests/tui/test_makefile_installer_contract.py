@@ -354,3 +354,11 @@ def test_product_mcp_paths_do_not_hardcode_cargo_bin() -> None:
                 offenders.append(f"{rel}:{line_no}: {line.strip()}")
 
     assert offenders == []
+
+
+def test_install_server_not_in_install_all() -> None:
+    text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "install-server:" in text
+
+    install_all_block = text.split("install-all:", 1)[1].split("\nskills:", 1)[0]
+    assert "install-server" not in install_all_block

@@ -802,6 +802,27 @@ cmd_version_help() {
   printf '\n'
 }
 
+cmd_server_help() {
+  printf '\n'
+  printf '%b⚒%b  %bserver%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
+  printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
+  printf '  Manage the local control-plane viewer server.\n'
+  printf '\n'
+  printf '%bUsage:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted server [start|stop|status|open|doctor] [options]\n'
+  printf '\n'
+  printf '%bOptions:%b\n' "$_bold" "$_reset"
+  printf '  --port, -p <port>  Specify the port (default: 3024)\n'
+  printf '  --host, -h <host>  Specify the host (default: 127.0.0.1)\n'
+  printf '\n'
+  printf '%bExamples:%b\n' "$_bold" "$_reset"
+  printf '  vibecrafted server start --port 3024\n'
+  printf '  vibecrafted server status\n'
+  printf '  vibecrafted server stop\n'
+  printf '\n'
+}
+
+
 cmd_telemetry_help() {
   printf '\n'
   printf '%b⚒%b  %btelemetry%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
@@ -1033,6 +1054,359 @@ cmd_gui() {
   python3 "$gui_script" --source "$repo_source" "$@"
 }
 
+cmd_server() {
+  local verb="${1:-help}"
+  shift || true
+
+  if [[ "$verb" == "-h" || "$verb" == "--help" || "$verb" == "help" ]]; then
+    cmd_server_help
+    return 0
+  fi
+
+  case "$verb" in
+    start)
+      local port="3024"
+      local host="127.0.0.1"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --port|-p)
+            port="$2"
+            shift 2
+            ;;
+          --host|-h)
+            host="$2"
+            shift 2
+            ;;
+          *)
+            shift
+            ;;
+        esac
+      done
+
+      # 1. Check if already running
+      local pid_file="$HOME/.vibecrafted/server/server.pid"
+      local status_file="$HOME/.vibecrafted/server/status.json"
+      if [[ -f "$pid_file" ]]; then
+        local existing_pid
+        existing_pid=$(cat "$pid_file" 2>/dev/null || true)
+        if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+          # Check health
+          local actual_host="127.0.0.1"
+          local actual_port="3024"
+          if [[ -f "$status_file" ]]; then
+            actual_host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
+            actual_port=$(python3 -c "import json; print(json.load(open('$status_file')).get('port', '3024'))" 2>/dev/null || echo "3024")
+          fi
+          if python3 -c "import urllib.request; urllib.request.urlopen('http://$actual_host:$actual_port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+            printf "Server is already running (PID %s) at http://%s:%s\n" "$existing_pid" "$actual_host" "$actual_port"
+            return 0
+          else
+            # Stale PID or unhealthy - stop/cleanup
+            printf "Unhealthy or stale server process found at PID %s. Cleaning up...\n" "$existing_pid"
+            kill "$existing_pid" 2>/dev/null || true
+            sleep 0.5
+            kill -9 "$existing_pid" 2>/dev/null || true
+            rm -f "$pid_file"
+          fi
+        else
+          rm -f "$pid_file"
+        fi
+      fi
+
+      # 2. Pre-check port sanity
+      if ! python3 -c "import socket; s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('$host', $port)); s.close()" 2>/dev/null; then
+        printf "%b✗%b Port %s is already in use.\n" "$_red" "$_reset" "$port" >&2
+        return 1
+      fi
+
+      # 3. Locate binary & site root
+      local server_bin="$HOME/.local/bin/vibecrafted-server-web"
+      if [[ ! -f "$server_bin" ]]; then
+        printf "%b✗%b vibecrafted-server-web binary not found at %s. Please run 'make install-server' first.\n" "$_red" "$_reset" "$server_bin" >&2
+        return 1
+      fi
+
+      local site_root="${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}/server/site"
+      if [[ ! -d "$site_root" ]]; then
+        printf "%b✗%b site assets directory not found at %s. Please run 'make install-server' first.\n" "$_red" "$_reset" "$site_root" >&2
+        return 1
+      fi
+
+      # 4. Start process
+      mkdir -p "$HOME/.vibecrafted/server"
+      printf "Starting local control-plane viewer at http://%s:%s...\n" "$host" "$port"
+      
+      nohup env LEPTOS_OUTPUT_NAME="vibecrafted-server-web" \
+                LEPTOS_SITE_ROOT="$site_root" \
+                LEPTOS_SITE_PKG_DIR="pkg" \
+                LEPTOS_ENV="PROD" \
+                LEPTOS_SITE_ADDR="$host:$port" \
+                VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}" \
+                "$server_bin" > "$HOME/.vibecrafted/server/server.log" 2>&1 < /dev/null &
+      local server_pid=$!
+      echo "$server_pid" > "$pid_file"
+
+      # Write initial status.json
+      cat <<EOF > "$status_file"
+{
+  "pid": $server_pid,
+  "host": "$host",
+  "port": $port,
+  "started_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "status": "starting"
+}
+EOF
+
+      # 5. Wait for health
+      local timeout=15
+      local elapsed=0
+      local healthy=0
+      while [[ $elapsed -lt 30 ]]; do
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+          printf "%b✗%b Server process died immediately. Check log at %s/server.log\n" "$_red" "$_reset" "$HOME/.vibecrafted/server" >&2
+          python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='failed'; json.dump(d, open(p, 'w'))"
+          return 1
+        fi
+        if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+          healthy=1
+          break
+        fi
+        sleep 0.5
+        elapsed=$((elapsed + 1))
+      done
+
+      if [[ $healthy -eq 1 ]]; then
+        printf "%b✓%b Server is up and healthy at http://%s:%s\n" "$_green" "$_reset" "$host" "$port"
+        python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='running'; json.dump(d, open(p, 'w'))"
+        return 0
+      else
+        printf "%b✗%b Server started but failed health check at http://%s:%s/api/control/state after %s seconds.\n" "$_red" "$_reset" "$host" "$port" "$timeout" >&2
+        kill "$server_pid" 2>/dev/null || true
+        rm -f "$pid_file"
+        python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='failed'; json.dump(d, open(p, 'w'))"
+        return 1
+      fi
+      ;;
+    stop)
+      local pid_file="$HOME/.vibecrafted/server/server.pid"
+      local status_file="$HOME/.vibecrafted/server/status.json"
+      if [[ ! -f "$pid_file" ]]; then
+        printf "Server is not running.\n"
+        if [[ -f "$status_file" ]]; then
+          python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; d['pid']=None; json.dump(d, open(p, 'w'))"
+        fi
+        return 0
+      fi
+
+      local pid
+      pid=$(cat "$pid_file" 2>/dev/null || true)
+      if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+        printf "Server is not running.\n"
+        rm -f "$pid_file"
+        if [[ -f "$status_file" ]]; then
+          python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; d['pid']=None; json.dump(d, open(p, 'w'))"
+        fi
+        return 0
+      fi
+
+      printf "Stopping server (PID %s)...\n" "$pid"
+      kill -15 "$pid" 2>/dev/null || true
+
+      local elapsed=0
+      local exited=0
+      while [[ $elapsed -lt 50 ]]; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+          exited=1
+          break
+        fi
+        sleep 0.1
+        elapsed=$((elapsed + 1))
+      done
+
+      if [[ $exited -eq 0 ]]; then
+        printf "Server did not exit on SIGTERM, sending SIGKILL...\n"
+        kill -9 "$pid" 2>/dev/null || true
+      fi
+
+      rm -f "$pid_file"
+      if [[ -f "$status_file" ]]; then
+        python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; d['pid']=None; json.dump(d, open(p, 'w'))"
+      fi
+      printf "%b✓%b Server stopped.\n" "$_green" "$_reset"
+      return 0
+      ;;
+    status)
+      local pid_file="$HOME/.vibecrafted/server/server.pid"
+      local status_file="$HOME/.vibecrafted/server/status.json"
+      local pid=""
+      local host="127.0.0.1"
+      local port="3024"
+
+      if [[ -f "$status_file" ]]; then
+        host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
+        port=$(python3 -c "import json; print(json.load(open('$status_file')).get('port', '3024'))" 2>/dev/null || echo "3024")
+      fi
+
+      if [[ -f "$pid_file" ]]; then
+        pid=$(cat "$pid_file" 2>/dev/null || true)
+      fi
+
+      if [[ -z "$pid" ]]; then
+        printf "Status: STOPPED\n"
+        return 0
+      fi
+
+      if ! kill -0 "$pid" 2>/dev/null; then
+        printf "Status: STALE-PID (Process %s is dead, but pidfile exists)\n" "$pid"
+        return 0
+      fi
+
+      if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+        printf "Status: RUNNING (PID %s, listening on http://%s:%s)\n" "$pid" "$host" "$port"
+        return 0
+      else
+        printf "Status: UNHEALTHY (PID %s is active, but http://%s:%s/api/control/state is not responding)\n" "$pid" "$host" "$port"
+        return 0
+      fi
+      ;;
+    open)
+      local status_file="$HOME/.vibecrafted/server/status.json"
+      local host="127.0.0.1"
+      local port="3024"
+      if [[ -f "$status_file" ]]; then
+        host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
+        port=$(python3 -c "import json; print(json.load(open('$status_file')).get('port', '3024'))" 2>/dev/null || echo "3024")
+      fi
+
+      if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+        printf "Opening http://%s:%s/ in browser...\n" "$host" "$port"
+        if command -v open >/dev/null 2>&1; then
+          open "http://$host:$port/"
+        elif command -v xdg-open >/dev/null 2>&1; then
+          xdg-open "http://$host:$port/"
+        else
+          printf "Please open http://%s:%s/ manually.\n" "$host" "$port"
+        fi
+        return 0
+      else
+        printf "%b✗%b Server is not running or unhealthy. Start it first with 'vibecrafted server start'.\n" "$_red" "$_reset" >&2
+        return 1
+      fi
+      ;;
+    doctor)
+      local has_errors=0
+      printf "Checking vibecrafted-server installation and runtime health...\n"
+
+      # 1. Binary check
+      local server_bin="$HOME/.local/bin/vibecrafted-server-web"
+      if [[ -f "$server_bin" ]]; then
+        if [[ -x "$server_bin" ]]; then
+          printf "  [%b✓%b] Binary present and executable at %s\n" "$_green" "$_reset" "$server_bin"
+        else
+          printf "  [%b✗%b] Binary at %s is not executable\n" "$_red" "$_reset" "$server_bin"
+          has_errors=1
+        fi
+      else
+        printf "  [%b✗%b] Binary missing at %s\n" "$_red" "$_reset" "$server_bin"
+        has_errors=1
+      fi
+
+      # 2. Site root & Fonts check
+      local site_root="${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}/server/site"
+      if [[ -d "$site_root" ]]; then
+        printf "  [%b✓%b] Site root present at %s\n" "$_green" "$_reset" "$site_root"
+        if [[ -d "$site_root/fonts" ]]; then
+          local font_count
+          font_count=$(find "$site_root/fonts" -type f | wc -l | tr -d ' ')
+          if [[ "$font_count" -gt 0 ]]; then
+            printf "  [%b✓%b] Fonts present in %s/fonts (%s files)\n" "$_green" "$_reset" "$site_root" "$font_count"
+          else
+            printf "  [%b✗%b] Fonts directory is empty: %s/fonts\n" "$_red" "$_reset" "$site_root"
+            has_errors=1
+          fi
+        else
+          printf "  [%b✗%b] Fonts directory missing at %s/fonts\n" "$_red" "$_reset" "$site_root"
+          has_errors=1
+        fi
+      else
+        printf "  [%b✗%b] Site root missing at %s\n" "$_red" "$_reset" "$site_root"
+        has_errors=1
+      fi
+
+      # 3. Control plane check
+      local cp_dir="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/control_plane"
+      if [[ -d "$cp_dir" ]]; then
+        printf "  [%b✓%b] Control plane directory exists and is readable at %s\n" "$_green" "$_reset" "$cp_dir"
+      else
+        printf "  [%b!%b] Control plane directory not found at %s (this is fine; it will be created when runs start)\n" "$_yellow" "$_reset" "$cp_dir"
+      fi
+
+      # 4. Pid-vs-http coherence check
+      local pid_file="$HOME/.vibecrafted/server/server.pid"
+      local status_file="$HOME/.vibecrafted/server/status.json"
+      local pid=""
+      local host="127.0.0.1"
+      local port="3024"
+
+      if [[ -f "$status_file" ]]; then
+        host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
+        port=$(python3 -c "import json; print(json.load(open('$status_file')).get('port', '3024'))" 2>/dev/null || echo "3024")
+      fi
+
+      if [[ -f "$pid_file" ]]; then
+        pid=$(cat "$pid_file" 2>/dev/null || true)
+      fi
+
+      if [[ -n "$pid" ]]; then
+        local pid_alive=0
+        if kill -0 "$pid" 2>/dev/null; then
+          pid_alive=1
+          printf "  [%b✓%b] Server PID %s is active\n" "$_green" "$_reset" "$pid"
+        else
+          printf "  [%b✗%b] Stale PID file: process %s is dead\n" "$_red" "$_reset" "$pid"
+          has_errors=1
+        fi
+        
+        if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+          printf "  [%b✓%b] HTTP server is healthy and responding at http://%s:%s\n" "$_green" "$_reset" "$host" "$port"
+          if [[ $pid_alive -eq 0 ]]; then
+            printf "  [%b✗%b] Split brain: HTTP responds but PID is dead/mismatched\n" "$_red" "$_reset"
+            has_errors=1
+          fi
+        else
+          if [[ $pid_alive -eq 1 ]]; then
+            printf "  [%b✗%b] Process %s is running but HTTP health check at http://%s:%s/api/control/state is not responding\n" "$_red" "$_reset" "$pid" "$host" "$port"
+            has_errors=1
+          else
+            printf "  [i] Server is stopped (cleaned up)\n"
+          fi
+        fi
+      else
+        printf "  [i] Server is stopped (no pid file)\n"
+        if ! python3 -c "import socket; s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', 3024)); s.close()" 2>/dev/null; then
+          printf "  [%b!%b] Port 3024 is in use by another process (non-fatal, but 'vibecrafted server start' without custom port will fail)\n" "$_yellow" "$_reset"
+        else
+          printf "  [%b✓%b] Default port 3024 is free\n" "$_green" "$_reset"
+        fi
+      fi
+
+      if [[ $has_errors -eq 0 ]]; then
+        printf "\n%b✓%b Server doctor check passed.\n" "$_green" "$_reset"
+        return 0
+      else
+        printf "\n%b✗%b Server doctor check failed.\n" "$_red" "$_reset" >&2
+        return 1
+      fi
+      ;;
+    *)
+      printf "%b✗%b Unknown server action: %s\n" "$_red" "$_reset" "$verb" >&2
+      cmd_server_help >&2
+      return 1
+      ;;
+  esac
+}
+
+
 cmd_tui() {
   local tui_dir manifest_path binary_path external_binary deck_path state_root
   if _is_help_flag "${1:-}"; then
@@ -1157,6 +1531,10 @@ cmd_help() {
       ;;
     doctor)
       cmd_doctor_help
+      return
+      ;;
+    server)
+      cmd_server_help
       return
       ;;
     update)
@@ -1294,6 +1672,7 @@ cmd_help_full() {
   printf '  %bvibecrafted start%b [layout]            Alias for %bvibecrafted dashboard%b\n' "$_cyan" "$_reset" "$_cyan" "$_reset"
   printf '  %bvibecrafted gui%b                       Public/local-web launch + observe surface\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted tui%b                       Rust operator console over shared state\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted server%b <action>           Manage local control-plane viewer server\n' "$_cyan" "$_reset"
   printf '\n'
   printf '  Agents: %bclaude%b · %bcodex%b · %bgemini%b · %bagy%b · %bjunie%b · %bgrok%b\n' "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset"
   printf '\n'
@@ -2072,6 +2451,7 @@ main() {
     init) cmd_init "$@" ;;
     resume) cmd_resume "$@" ;;
     gui) cmd_gui "$@" ;;
+    server) cmd_server "$@" ;;
     tui) cmd_tui "$@" ;;
     doctor|check) cmd_doctor ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
