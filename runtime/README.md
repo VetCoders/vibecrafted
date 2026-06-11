@@ -1,10 +1,14 @@
-# Runtime Layer (Canonical)
+# Runtime Layer
 
-- `runtime/helpers/` contains helper functions used by interactive shell wrappers.
-- `runtime/scripts/` and `runtime/tools/` are reserved for shell wrappers and
-  runtime CLI tools moved in later phases.
+This directory is live runtime, not a parking lot for future migration.
+
+- `runtime/helpers/` contains degraded-path helpers used by shell wrappers.
+- `runtime/scripts/` contains active spawn, await, meta, watcher, marbles, and
+  install scripts.
+- `runtime/scripts/lib/` is the shared launcher/session/path/meta library.
+- `runtime/shell/lib/` contains installed shell facade modules.
 - `runtime/docs/` describes runtime boundaries and migration contracts.
-- `runtime/vc-<workflow>/` dirs hold per-workflow runtime (see below).
+- `runtime/vc-<workflow>/` dirs hold per-workflow runtime slices.
 
 ## Per-workflow runtime extraction pattern
 
@@ -35,7 +39,7 @@ subdirectory per component, on the `runtime/vc-marbles/` pattern:
 - `runtime/shell/lib/` — facade modules shared across workflows.
 - `runtime/helpers/vetcoders-runtime-core.sh` — degraded-path core helpers.
 
-### How to migrate the next workflow
+### How to migrate or extract the next workflow
 
 1. Map ownership: `loct impact` + `loct find --literal <script-name>` for
    every candidate file; string-path consumers (Makefile, zellij `*.kdl`
@@ -55,11 +59,11 @@ subdirectory per component, on the `runtime/vc-marbles/` pattern:
    `sync_control_plane_tree`.
 5. Write the workflow `README.md`, run the gates, one workflow per commit.
 
-`../runtime/shell/vetcoders.sh` is intentionally a compatibility shim in
-this phase: it only loads helpers from the default runtime layer and keeps the
-installed command surface unchanged.
+`runtime/shell/vetcoders.sh` is intentionally a compatibility shim in this
+phase: it loads helpers from the default runtime layer and keeps the installed
+command surface unchanged.
 
-Migration boundary for phase 1:
+Migration boundary:
 
 1. Keep the command contract and launcher behavior compatible.
 2. Route helper resolution through runtime helper files.

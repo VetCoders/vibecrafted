@@ -13,8 +13,8 @@
 A 10-prompt plan fired flat (all 10 simultaneously) loses on three axes:
 
 1. **Shared-state collisions**: prompts that touch the same provider /
-   context / shell will overwrite each other's work or trigger merge
-   conflicts that no agent owns.
+   context / shell can overwrite each other's work or create living-tree drift
+   that no agent owns.
 2. **Recovery surface**: a single stall in the middle of a flat fire taints
    every downstream prompt with stale baseline assumptions.
 3. **Operator legibility**: the operator cannot audit "is this on track"
@@ -39,8 +39,10 @@ extension, or a baseline contract.
 **Rules**:
 
 - Wave A is **always** sequential (size 1).
-- It branches off `develop` (or the operator's trunk) directly.
-- Its acceptance bar is whether the next wave can branch off its commit.
+- It starts from the operator's current baseline/head and names that baseline
+  in the brief.
+- Its acceptance bar is whether the next wave can safely use its report and
+  resulting head as the baseline.
 - If Wave A fails, the whole plan stalls. Recovery target = a fresh agent
   with sharper acceptance criteria, _not_ the same prompt to the same agent.
 
@@ -57,7 +59,8 @@ FAIRNESS rotation while keeping each step's baseline current.
 
 **Rules**:
 
-- Each prompt branches off the prior prompt's green commit (not off trunk).
+- Each prompt starts from the prior prompt's verified report/head, not from a
+  stale plan assumption.
 - Living Tree warning **VERBATIM** in every brief: _"re-read shared file
   IMMEDIATELY before edit; append-only fields; don't delete other agents'
   lines."_
@@ -79,10 +82,11 @@ simultaneously, await all, synthesize together.
 - File-scope disjointness is the operator-agent's responsibility to verify
   before grouping. If two prompts both mutate `TextForgeProvider.tsx`, they
   belong in a Wave B chain, not a Wave C parallel.
-- Branch every prompt off the **same trunk commit** (usually post-Wave-B
-  merge). Operator-side trunk integration happens between waves, not inside.
-- Use native parallel dispatch (or `vc-agents` fleet with `&` background).
-  Await all completions before firing the next wave.
+- Start every prompt from the **same verified baseline/head**. Operator-side
+  integration happens between waves, not inside.
+- Use telemetry-backed fleet dispatch for deliverable workers. Native
+  subagents are for bounded scouting/review sidecars, not substitutes for wave
+  dispatch. Await all completions before firing the next wave.
 - For dual-mutation prompts that can't be split, prefer **append-only +
   manual merge** explicitly in both briefs, with the operator's blessing
   that conflicts will be resolved operator-side.

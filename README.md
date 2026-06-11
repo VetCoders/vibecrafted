@@ -12,6 +12,7 @@
 <p align="center">
   <a href="https://vibecrafted.io/">Website</a> ·
   <a href="docs/QUICK_START.md">Quick Start</a> ·
+  <a href="docs/DOCUMENTATION_MAP.md">Docs Map</a> ·
   <a href="docs/DOCKER.md">Docker</a> ·
   <a href="docs/runtime/MANIFESTO_EN.md">Manifesto</a> ·
   <a href="docs/FAQ.md">FAQ</a>
@@ -61,10 +62,19 @@ The system finds the problems, fixes them, and repeats the loop until nothing im
 **1. The Draft:** You build an MVP using Cursor, Copilot, or Claude.
 **2. The Finding:** Quality gates and structural maps locate the exact failures.
 **3. The Fix:** The agent eliminates the counterexamples.
-**4. The Close:** We run the loop. We don't stop until P0 / P1 / P2 = 0.
+**4. The Close:** We run the loop. We do not call it done until the remaining
+risks are named, verified, or deliberately handed off.
 
-The full pipeline cadence behind the loop — 11 READ/WRITE phases plus Fanfary —
-is canonized in [docs/runtime/LIFECYCLE.md](docs/runtime/LIFECYCLE.md).
+The public ship cycle today is:
+
+```text
+workflow -> implement -> marbles -> review -> dou -> release
+```
+
+The deeper lifecycle and read/write cadence live in
+[docs/runtime/LIFECYCLE.md](docs/runtime/LIFECYCLE.md). The map that keeps the
+docs aligned with the live command deck lives in
+[docs/DOCUMENTATION_MAP.md](docs/DOCUMENTATION_MAP.md).
 
 ---
 
@@ -93,7 +103,7 @@ _(No longer guessing the architecture, but seeing it)._
 | `𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭`             | **Designed with**  | Design, UI, visual identity, brand work  |
 | `//𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.`          | **Developed with** | Source code, engineering, infrastructure |
 
-The `` is not decoration. It is the mark.
+The `//` is not decoration. It is the mark.
 
 ---
 
@@ -121,9 +131,13 @@ curl -fsSL https://vibecrafted.io/install.sh | bash
 The bootstrap prints the snapshot source, staging location, and next installer
 step before it stages or installs anything on your machine.
 
-Inside a local checkout, `make install` opens the terminal-native installer wizard — the built-in `vetcoders-installer` runner driven from `install.toml`, with reason + consent per phase and a quiet progress surface. `make setup-dev` opens the same meta-installer with advanced options, and `make install-auto` is the auto-approved automation path.
+Inside a local checkout, `make install` opens the terminal-native installer
+wizard. `make setup-dev` opens the same meta-installer with advanced options,
+and `make install-auto` is the auto-approved automation path. `make help` shows
+the operator surface; `make help-dev` shows the full target inventory.
 
-Shell is our everyday workforce entry and all the tools are terminal-native. Nevertheless if you need GUI we also offer it! Run `make wizard` to keep the same trust-building cadence directly in the browser.
+Shell is the everyday operator entry. When a browser-guided install is the
+better human surface, run `make wizard` or `make gui-install`.
 
 Verify:
 

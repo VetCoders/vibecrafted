@@ -8,8 +8,7 @@ description: >
   durable artifacts, verifying reports and gates, issuing recovery dispatches
   on stalls, and stopping at the operator button for actions not already
   permitted by the written plan or current session. Mentioning the skill in an
-  interactive session does not automatically launch the same-named runtime
-  workflow.
+  interactive session does not automatically launch a runtime workflow.
   Trigger phrases: "operator mode", "vc-operator", "Agent-Operator",
   "tryb operatora", "prowadz fleet", "konduktorze", "orkiestracja",
   "dispatch the plan", "fire the wave", "dirygentura",
@@ -78,8 +77,9 @@ a planned chain of work.
 
 Skill invocation is not runtime invocation. If the operator says
 `$vc-operator` inside the current conversation, the current agent adopts this
-orchestration posture. A separate runtime run exists only when the operator or
-framework launches `vibecrafted operator <agent> ...`.
+orchestration posture. The live runtime supervisor path is `vibecrafted dispatch`
+or a concrete workflow lane such as `workflow`, `implement`, `marbles`,
+`review`, `audit`, `followup`, `dou`, or `release`.
 
 See [CONTRACT.md](CONTRACT.md) for the binding posture/runtime split.
 
@@ -99,7 +99,7 @@ other documents are supporting surfaces:
 - [AWAIT.md](AWAIT.md) - await/recovery discipline.
 - [AUTONOMY.md](AUTONOMY.md) - autonomy boundaries and the operator button.
 - [JOURNAL.md](JOURNAL.md) - append-only operator journal.
-- [RUNTIME.md](RUNTIME.md) - runtime launch and artifact contract.
+- [RUNTIME.md](RUNTIME.md) - runtime lanes and artifact contract.
 - [WHY_MATRIX_TABLE.md](WHY_MATRIX_TABLE.md) - agent routing.
 
 ## Canonical Orientation Gate

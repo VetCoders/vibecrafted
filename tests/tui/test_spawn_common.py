@@ -2168,6 +2168,114 @@ def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
     assert any(call[:3] == ["action", "focus-pane-id", "terminal_42"] for call in calls)
 
 
+def test_spawn_await_watch_uses_active_meta_floating_pane_and_restores_focus(
+    tmp_path: Path,
+) -> None:
+    run_id = "just-104043-8314"
+    meta = tmp_path / "run.meta.json"
+    transcript = tmp_path / "run.transcript.log"
+    transcript.write_text("", encoding="utf-8")
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "running",
+                "agent": "codex",
+                "mode": "justdo",
+                "transcript": str(transcript),
+                "launcher_pid": os.getpid(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    capture_file = tmp_path / "zellij-calls.txt"
+    zellij = fake_bin / "zellij"
+    zellij.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "{",
+                '  printf -- "--CALL--\\n"',
+                '  printf "%s\\n" "$@"',
+                '} >> "$CAPTURE_FILE"',
+                'if [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then',
+                '  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then',
+                '  printf "terminal_99\\n"',
+                "  exit 0",
+                "fi",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    zellij.chmod(0o755)
+    _mirror_fake_vc_frame(zellij)
+
+    jq = fake_bin / "jq"
+    jq.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'if [[ "${1:-}" == "-r" ]]; then filter="${2:-}"; file="${3:-}"; else filter="${1:-}"; file="${2:-}"; fi',
+                'python3 - "$filter" "$file" <<\'PY\'',
+                "import json, sys",
+                "key = sys.argv[1].split()[0].lstrip('.')",
+                "with open(sys.argv[2], 'r', encoding='utf-8') as fh:",
+                "    payload = json.load(fh)",
+                "value = payload.get(key, '')",
+                "print('' if value is None else value)",
+                "PY",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    jq.chmod(0o755)
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export CAPTURE_FILE="{capture_file}"
+        export ZELLIJ=1
+        export ZELLIJ_PANE_ID=terminal_1
+        export SPAWN_RUN_ID="{run_id}"
+        export SPAWN_AGENT="codex"
+        export SPAWN_ROOT="{tmp_path}"
+        export SPAWN_META="{meta}"
+        source "{COMMON_SH}"
+        spawn_await_watch_pane "7" "{run_id}" "worker"
+        '''
+    )
+
+    assert result.stdout == ""
+    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    assert any(
+        call[:4] == ["action", "list-panes", "--json", "--state"] for call in calls
+    )
+    await_calls = [call for call in calls if call[:2] == ["action", "new-pane"]]
+    assert len(await_calls) == 1
+    await_call = await_calls[0]
+    assert "--tab-id" in await_call
+    assert "7" in await_call
+    assert "--floating" in await_call
+    assert "--stacked" not in await_call
+    assert "--name" in await_call
+    assert "await:codex:8314" in await_call
+    assert "--meta" in await_call
+    assert str(meta) in await_call
+    assert "--run-id" not in await_call
+    assert any(call[:3] == ["action", "focus-pane-id", "terminal_42"] for call in calls)
+
+
 def test_spawn_probe_watch_does_not_fail_live_worker_on_transient_error(
     tmp_path: Path,
 ) -> None:

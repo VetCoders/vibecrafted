@@ -27,7 +27,7 @@ proof after pressure.
 | 1   | VC Scaffold  | READ    | `vc-init`, `vc-loctree`, `vc-research`                                                              |                                                                    |
 | 2   | VC Implement | WRITE   | `vc-init`, `vc-operator`, `vc-agents`                                                               |                                                                    |
 | 3   | VC Review    | READ    | `vc-init`, `vc-loctree`, `vc-review`, `vc-screenscribe`, `vc-prview`                                | Deviation from "tests always last" — Review is test-heavy          |
-| 4   | VC Workflow  | WRITE   | `vc-init`, `vc-research`, `vc-justdo`                                                               |                                                                    |
+| 4   | VC Workflow  | WRITE   | `vc-init`, `vc-research`, `vc-implement`                                                            |                                                                    |
 | 5   | Follow-up    | READ    | `vc-init`, `vc-intents` (main intention engine), `vc-loctree`, TDD                                  | Tests always at the end                                            |
 | 6   | VC Marbles   | WRITE   | `vc-init` + `vc-marbles` (unique runtime)                                                           | ⬆ entropy — we fill every crack                                    |
 | 7   | VC Audit     | READ    | `vc-init`, `vc-loctree`, `vc-aicx`, `vc-research`                                                   |                                                                    |
@@ -39,9 +39,10 @@ proof after pressure.
 
 ## Invocation
 
-`vc-<faza> <agent>` — the agent starts after the Context Atlas is loaded
-(`loct context`). Separate runtime, separate agent. Target state: every
-workflow launchable the same way (today only three agents run interactively).
+`vibecrafted <phase> <agent>` is the public command grammar; `vc-<phase>`
+wrappers remain installed shell shortcuts. The agent starts after the Context
+Atlas is loaded (`loct context`). Separate runtime, separate agent. Target
+state: every workflow launchable the same way.
 
 ## Notes (operator)
 

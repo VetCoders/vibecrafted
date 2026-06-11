@@ -5,12 +5,17 @@ currently exposed by `scripts/vibecrafted`.
 
 `CI mode` means the skill can run headless from the launcher without requiring a
 zellij-attached operator tab. `Stand-alone` means the operator has a direct
-command-deck entry instead of reaching the surface only through another mode or
+skill-first command instead of reaching the surface only through another mode or
 workflow.
+
+Public docs should teach skill-first grammar: `vibecrafted <skill> <agent>`.
+Agent-mode grammar such as `vibecrafted codex implement plan.md` still exists
+for power users and the external fleet layer, but it is not the first-reader
+surface.
 
 | Skill          | Purpose                                                                                      | Primary entry                                                                   | CI mode | Stand-alone | Docs                                                                              |
 | -------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------- | ----------- | --------------------------------------------------------------------------------- |
-| `vc-agents`    | External execution fleet and agent-mode dispatch contract.                                   | `vibecrafted <agent> implement\|research\|review\|plan\|prompt\|observe\|await` | Yes     | No          | [SKILL](../skills/vc-agents/SKILL.md) · [FLOW](../skills/vc-agents/FLOW.md)       |
+| `vc-agents`    | External execution fleet and agent-mode dispatch contract.                                   | `vibecrafted <agent> implement\|research\|review\|plan\|prompt\|observe\|await` | Yes     | Power-user  | [SKILL](../skills/vc-agents/SKILL.md) · [FLOW](../skills/vc-agents/FLOW.md)       |
 | `vc-decorate`  | Late-stage visual finishing and coherence pass.                                              | `vibecrafted decorate <agent>`                                                  | Yes     | Yes         | [SKILL](../skills/vc-decorate/SKILL.md) · [FLOW](../skills/vc-decorate/FLOW.md)   |
 | `vc-delegate`  | Native in-session delegation for small bounded cuts.                                         | `vibecrafted delegate <agent>`                                                  | Yes     | Yes         | [SKILL](../skills/vc-delegate/SKILL.md) · [FLOW](../skills/vc-delegate/FLOW.md)   |
 | `vc-dou`       | Definition of Undone audit across repo, runtime, packaging, and market surface.              | `vibecrafted dou <agent>`                                                       | Yes     | Yes         | [SKILL](../skills/vc-dou/SKILL.md) · [FLOW](../skills/vc-dou/FLOW.md)             |
@@ -34,6 +39,7 @@ workflow.
 - Pipeline cadence canon: the `vc-ship` phase order, READ/WRITE cadence, and
   per-phase tooling for these skills live in
   [runtime/LIFECYCLE.md](runtime/LIFECYCLE.md).
+- Command grammar canon lives in [DOCUMENTATION_MAP](./DOCUMENTATION_MAP.md).
 - Artifact root: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/`
 - Lock path: `$VIBECRAFTED_HOME/locks/<org>/<repo>/<run_id>.lock`
 - Generic spawned skills write `reports/<timestamp>_<slug>_<agent>.md` with matching
@@ -55,6 +61,9 @@ workflow.
 - `vc-partner` keeps the user and agent in shared steering. `vc-ownership`
   means the agent takes operational ownership; neither mode implies delegation
   unless the operator explicitly invokes a delegation surface.
+- `vc-operator` is a posture for conducting a multi-wave plan. The current live
+  supervisor lane is `vibecrafted dispatch`, not a public `vibecrafted operator`
+  command.
 
 ## Compatibility aliases
 

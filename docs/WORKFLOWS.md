@@ -9,9 +9,14 @@ contracts in `skills/`.
 - `make install` launches the terminal-native installer wizard.
 - `make wizard` launches the browser-guided installer surface.
 - `vibecrafted help` is the command-deck front door once the framework is installed.
+- `vibecrafted help --all` is the full operator reference.
 - `vibecrafted init <agent>` is the interactive first context handoff.
 - `vibecrafted research --prompt|--file` is the triple-agent swarm launcher.
 - `vibecrafted <skill> <agent>` covers the agent-scoped workflow surfaces.
+- `vibecrafted dispatch <file.toml>` is the deterministic supervisor lane for
+  dispatch manifests and async lifecycle runs.
+- `vibecrafted gui`, `tui`, and `dashboard` are operator surfaces for a second
+  visit, not the front door.
 
 ## Framework flow
 
@@ -73,6 +78,7 @@ flowchart TD
 | Truth audit vs original plan | `vibecrafted intents <agent>`                            | `review`, `marbles`, `ownership`                                             |
 | Launch-readiness gap finding | `vibecrafted dou <agent>`                                | `hydrate`, `decorate`, `release`                                             |
 | Explicit ship path           | `vibecrafted decorate <agent>` or `hydrate` or `release` | `release`                                                                    |
+| Deterministic dispatch       | `vibecrafted dispatch <file.toml>`                       | `doctor`, `dry-run`, `resume`, async lifecycle runs                          |
 
 ## Runtime contract
 
@@ -97,8 +103,11 @@ flowchart TD
 - `vc-partner` is shared steering with the user. `vc-ownership` is operational
   ownership by the agent. Both can produce plans; neither silently means
   delegation unless the operator explicitly invokes a delegation path.
+- `vc-operator` is an orchestration posture. The live public supervisor command
+  is `vibecrafted dispatch`, not `vibecrafted operator`.
 
 ## Next reading
 
 - [SKILLS](./SKILLS.md) for the per-skill route index.
+- [DOCUMENTATION_MAP](./DOCUMENTATION_MAP.md) for command and documentation truth.
 - `skills/<skill>/FLOW.md` for individual flowcharts and CLI schemas.

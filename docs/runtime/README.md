@@ -1,10 +1,10 @@
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Runtime
+# Vibecrafted Runtime
 
-The execution layer of the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework.
+The execution layer of the Vibecrafted framework.
 
-This is the machinery that makes multi-agent orchestration possible:
-terminal management, session routing, telemetry, spawn mechanics,
-and the contracts that keep everything auditable.
+This is the machinery that makes agent work observable: command routing,
+terminal/session management, telemetry, spawn mechanics, durable artifacts, and
+the contracts that keep runs auditable.
 
 For the canonical product lifecycle — the read/write cadence of the
 `vc-ship` pipeline, the component architecture, and the async supervision
@@ -12,60 +12,59 @@ model — see [`LIFECYCLE.md`](./LIFECYCLE.md).
 
 ---
 
-## Architecture
+## Runtime Today
 
-In 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙. AI agents and humans are working together,
-like colleagues and equal partners. In regular teams there are
-differences in skills, experience, knowledge and specialized
-capabilities and talents. Knowing the strengths and weaknesses
-of each agent gives the ability to always pick the right one for
-the job.
+| Surface                                 | What it owns                                                     |
+| --------------------------------------- | ---------------------------------------------------------------- |
+| `scripts/vibecrafted`                   | The public command deck and route selection                      |
+| `runtime/scripts/`                      | Spawn, await, watcher, meta, marbles, and install script runtime |
+| `runtime/scripts/lib/`                  | Shared launcher/session/path/prompt/meta helpers                 |
+| `runtime/shell/lib/`                    | Installed shell facade modules                                   |
+| `runtime/vc-marbles/`                   | Extracted workflow runtime pattern                               |
+| `runtime/vc-research/`                  | Research launcher shell runtime                                  |
+| `runtime/vc-operator/`                  | Mission-control helper scripts                                   |
+| `vibecrafted dispatch`                  | Deterministic dispatch supervisor and async lifecycle lane       |
+| `vibecrafted gui` / `tui` / `dashboard` | Operator surfaces over local state                               |
 
-The framework consists of:
-
-### 1. Foundations
+## Foundations
 
 - [loctree](https://loct.io) — Codebase mapping and architectural perception.
 - [aicx](https://github.com/VetCoders/aicx) — Context boundaries and intentions retrieval.
 - [prview](https://github.com/VetCoders/prview) — Continuous review pipelines.
 - [ScreenScribe](https://github.com/VetCoders/ScreenScribe) — Voice-to-text context ingestion.
 
-The main VetCoders native framework drivers, designed to make
-non-programmers capable of production-grade implementation of
-complex development tasks.
+These are the senses and memory layer. They make agent work inspectable instead
+of theatrical.
 
-### 2. `vc-workflows`
+## Skills
 
-(Technically `skills`.) Specialized instructions based on VetCoders
-team experience, used to optimize the delegation of work to AI agents.
+Skills are the instruction contracts in `skills/`. Public docs should teach
+skill-first command grammar:
 
-### 3. `vc-runtime`
+```bash
+vibecrafted workflow claude --prompt "Plan and implement the fix"
+vibecrafted implement codex --prompt "Ship the bounded change"
+```
 
-- **`vibecrafted`** — Ultimate shell helper and the entry point for
-  `vc-workflows`. Used as the main framework launcher.
-- **`vc-term`** — A custom alacritty implementation providing a
-  terminal emulator.
-- **`vc-panes`** — A zellij-powered operator panel for `vc-term`.
-  Compatible with standard terminal emulators.
-- **`vc-metrics`** — A full frontmatter and `aicx` metadata-driven
-  session tracker using the `session_id`+`run_id` as the primary key.
+Agent-mode grammar exists for power users and fleet lanes, but it is not the
+first-reader surface.
 
-### 4. `vc-agents`
+## External Fleet
 
-The skill that spawns external specialized AI agents from the user's
-fleet (Codex, Claude, Gemini) using the `vc-why-matrix` picker,
-`vibecrafted` helper and (if applied) the magic of zellij panes that
-keeps the track, measurability, telemetry and auditability of the
-delegated work.
+`vc-agents` is the external specialized-agent layer. Native in-process
+subagents are a different thing; they are bounded sidecars under `vc-delegate`,
+not substitutes for telemetry-backed fleet dispatch.
 
 ---
 
 ## Documents in this directory
 
-| Document                                         | What it covers                                                                                                                                   |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [CONTRACT.md](./CONTRACT.md)                     | Session ownership, zellij layout, plan templates, living tree rule, spawn commands, output conventions, observation, quality gates, safety rules |
-| [EXECUTION_SURFACES.md](./EXECUTION_SURFACES.md) | Canonical command surfaces, agent PATH expectations, shell helper boundaries, and sandbox execution notes                                        |
+| Document                                                           | What it covers                                                                                                                                   |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [CONTRACT.md](./CONTRACT.md)                                       | Session ownership, zellij layout, plan templates, living tree rule, spawn commands, output conventions, observation, quality gates, safety rules |
+| [EXECUTION_SURFACES.md](./EXECUTION_SURFACES.md)                   | Canonical command surfaces, agent PATH expectations, shell helper boundaries, and sandbox execution notes                                        |
+| [TOPOLOGY.md](./TOPOLOGY.md)                                       | Current runtime component topology                                                                                                               |
+| [RUNTIME_INTEGRATION_ROADMAP.md](./RUNTIME_INTEGRATION_ROADMAP.md) | Runtime integration status and remaining work                                                                                                    |
 
 ---
 
@@ -76,13 +75,13 @@ delegated work.
 - vc-agents are copies of yourself or extensions of you as the main agent:
   same smart, same capable, just lighter and more agile because they do not
   carry your full context window.
-- You can spawn as many agents as you need, and thanks to `vc-why-matrix`
-  you can pick the best model for the job.
+- You can spawn multiple agents when the work is truly parallel, and the
+  `vc-why-matrix` keeps that choice explicit.
 - You and your human partner can discuss further features or issues keeping
   the pace and focus.
 - Spawn exists so field teams can implement, research, review, and converge
-  outside the main thread and store the canonically durable artifacts in the
-  central `$VIBECRAFTED_ROOT/.vibecrafted` store.
+  outside the main thread while storing durable artifacts under
+  `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/`.
 
 ---
 

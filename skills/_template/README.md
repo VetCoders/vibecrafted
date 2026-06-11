@@ -12,7 +12,8 @@ marker before opening a PR.
 | ---------------- | ------------------------------------- |
 | Name             | `{{SKILL_NAME}}`                      |
 | Version          | `0.1.0` (bump on first PR)            |
-| Operator command | `vc-{{SKILL_NAME_NO_PREFIX}} <agent>` |
+| Operator command | `vibecrafted {{SKILL_NAME_NO_PREFIX}} <agent>` |
+| Shell shortcut   | `vc-{{SKILL_NAME_NO_PREFIX}} <agent>` |
 | Canonical doc    | [`SKILL.md`](SKILL.md)                |
 
 ## Authoring checklist

@@ -1,13 +1,13 @@
-# Runtime Boundary Notes (Phase 1)
+# Runtime Boundary Notes
 
-Phase 1 keeps the launcher contract stable while extracting a focused helper
-surface into `runtime/helpers`.
+The launcher contract is stable enough to document as live runtime. Historical
+phase language belongs in roadmap notes, not in this directory index.
 
 - Source path for commands: `../../runtime/shell/vetcoders.sh`
 - Canonical helper source: `runtime/helpers/vetcoders-runtime-core.sh`
 - Responsibility: helper runtime + path/repo/store/session/research primitives
-- Responsibility retained in skill shim: command wrappers, user-facing aliases, and
-  command registration for backward compatibility.
+- Responsibility retained in shell facade: command wrappers, user-facing
+  aliases, and command registration for backward compatibility.
 
-The next migration phase can move spawn orchestration helpers and runtime scripts
-in the same way, but only after command and tests stay green in this phase.
+`runtime/scripts/` is active. `runtime/vc-*` directories show the extraction
+pattern for workflow-specific runtime.

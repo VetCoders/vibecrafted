@@ -131,7 +131,8 @@ That includes, when justified by the task and available in the environment:
 - running local servers and smoke tests
 - steering browser or desktop interactions through available tooling
 - orchestrating external agents fleet through `vc-agents`
-  in interactive sessions as default progress engine
+  in interactive sessions when the written plan or operator direction permits
+  external fleet work
 - orchestrating native workers through `vc-delegate` ruleset
   in detached non-interactive sessions highly recommended
 - converging through `vc-marbles`
@@ -272,8 +273,8 @@ Decide whether this is:
 Defaults:
 
 - `vc-agents` a doctrine and runbook with `why-matrix` definition
-- `vc-justdo` for code writing or refactoring (`vc-agents`
-  execution runner)
+- `vc-implement` for code writing or refactoring (`vc-justdo` remains a
+  compatibility alias)
 - `vc-marbles` for closing the gaps and unfinished jobs
 - `vc-polarize` for final shape carving after marbles
 - `vc-review`, `vc-followup`, `vc-audit`, and `vc-dou` as read-only perception

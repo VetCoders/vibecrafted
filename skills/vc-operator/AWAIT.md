@@ -15,7 +15,7 @@ Background-task runners notify completion automatically via
 For operator mode that translates into:
 
 - **Primary signal**: the `<task-notification>` payload that wakes you when
-  the background `vc-justdo` / `vc-implement` / `vc-agents` await loop
+  the background `vc-implement` / `vc-agents` / dispatch await loop
   exits. This is the contract.
 - **Fallback signal**: a scheduled heartbeat (long-interval `ScheduleWakeup`
   or `/loop` re-entry) that triggers only if the primary notify never
@@ -43,8 +43,8 @@ authorizes that step.
 ## The await life-cycle of one dispatch
 
 ```text
-1. Fire:  vc-justdo claude --file 01-textforge-editor-core.md
-          → run_id = just-181153-86836
+1. Fire:  vibecrafted implement claude --file 01-textforge-editor-core.md
+          → run_id = impl-181153-86836
           → background task tracker = b1h5dkw7s
           → operator-visible in a watched terminal tab (NIGDY HEADLESS rule)
 
@@ -93,7 +93,7 @@ Heartbeat reason field should always include the run_id:
 
 ```text
 ScheduleWakeup delaySeconds=1800
-  reason: "Wave B-1 await fallback for just-181153-86836 — verify completion if notify lost"
+  reason: "Wave B-1 await fallback for impl-181153-86836 — verify completion if notify lost"
 ```
 
 A heartbeat is wasted (no-op) if the notify arrived first. That's the
@@ -186,7 +186,7 @@ operator can't intervene. That violates the autonomy contract.
 
 When in doubt, prefer:
 
-1. `vc-justdo <agent> --file <path>` in a foreground watched tab.
+1. `vibecrafted implement <agent> --file <path>` in a foreground watched tab.
 2. Background background-task await for completion signals via notify.
 3. Operator can pull focus to the tab at any time and see the worker's
    live output.

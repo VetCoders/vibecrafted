@@ -13,23 +13,23 @@ interactive_skill:
     - user asks to conduct a plan or fleet
     - user asks for multi-wave dispatch
   does_not_automatically:
-    - launch "vibecrafted operator"
+    - launch "vibecrafted dispatch"
     - create a run_id
     - create transcript/meta artifacts
     - fire workers
 
-runtime_workflow:
-  name: vibecrafted operator
-  kind: runtime_workflow
+runtime_supervisor:
+  name: vibecrafted dispatch
+  kind: runtime_supervisor
   activates_when:
-    - operator launches "vibecrafted operator <agent>"
-    - framework dispatches an operator run explicitly
+    - operator launches "vibecrafted dispatch <file.toml>"
+    - operator launches "vibecrafted dispatch run ..."
+    - framework dispatches a supervisor run explicitly
   creates:
     - run_id
-    - operator/tracker.md
-    - operator/journal.md
+    - dispatch tracker/result artifacts
+    - reports
     - briefs
-    - close_out_reports
     - transcript.log
     - meta.json
 ```

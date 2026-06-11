@@ -11,6 +11,22 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v2 -->
+
+> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
+> `vibecrafted <workflow> <agent>` means dispatching through the Vibecrafted
+> launcher.
+>
+> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
+> Gemini, or another local agent does not mean self-dispatch. Read and apply the
+> skill in the current thread unless the operator explicitly asks for runtime
+> launch, dispatch, or native delegation.
+>
+> Native in-process subagents are allowed only through the bounded
+> `vc-delegate` doctrine.
+
+<!-- /fleet-imperative -->
+
 # {{SKILL_NAME}} — TODO one-line tagline
 
 > Scaffolded {{CREATED_DATE}} via `tools/vc-skill-new.sh`.
@@ -41,9 +57,8 @@ or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`
 Standard launcher:
 
 ```bash
-vibecrafted start
-vc-{{SKILL_NAME_NO_PREFIX}} claude
-vc-{{SKILL_NAME_NO_PREFIX}} codex --prompt 'TODO concrete operator example'
+vibecrafted {{SKILL_NAME_NO_PREFIX}} claude --prompt 'TODO concrete operator example'
+vc-{{SKILL_NAME_NO_PREFIX}} codex --prompt 'TODO shell-shortcut example'
 ```
 
 ---

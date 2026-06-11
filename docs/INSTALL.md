@@ -10,10 +10,9 @@
 > prerequisites you need in place first, and known platform-specific
 > limitations.
 
-Vibecrafted v1.x ships a native install path for **macOS**, **Linux**
-(Debian/Ubuntu/Arch/Fedora), and **WSL2**. Native Windows install is
-deferred to v2.x — see [Windows](#windows-native-deferred-to-v2x) below for
-the current bridge via WSL.
+The current release line ships a native install path for **macOS**, **Linux**
+(Debian/Ubuntu/Arch/Fedora), and **WSL2**. Native Windows still routes through
+WSL; see [Windows](#windows-native-use-wsl) below for the honest bridge.
 
 The installer is **idempotent** on every platform: re-running it never breaks
 an existing install. It uses `$HOME/.vibecrafted/` as its staging root unless
@@ -106,7 +105,7 @@ hammerspoon`).
 
 ## Linux
 
-Linux is a first-class v1.x target. The installer auto-detects your
+Linux is a first-class target. The installer auto-detects your
 distribution via `/etc/os-release` and emits copy-pasteable `apt`, `dnf`,
 or `pacman` hints if anything is missing.
 
@@ -168,13 +167,13 @@ vibecrafted doctor         # should report 100+ ok / 0 failures
 vc-help                    # cross-shell skill discovery
 ```
 
-### Linux-specific limitations (v1.x)
+### Linux-specific limitations
 
 - **iTerm2 dynamic profiles** — macOS only. Linux terminals (Kitty, Wezterm,
   Alacritty) get baseline `vc-help` + shell helpers but no profile injection
-  in v1.x.
+  from this repo today.
 - **Hammerspoon URL handlers** — macOS only. Linux terminal-level URL
-  dispatch is a v2.x roadmap item.
+  dispatch is planned, not shipped.
 - **Shell-agent .app** — macOS only. The Rust core under
   `operator/shell-agent/ffi/` is cross-platform, but the Swift/AppKit wrapper
   is not.
@@ -233,9 +232,9 @@ vc-help
 
 ---
 
-## Windows (native — deferred to v2.x)
+## Windows (native: use WSL)
 
-**v1.x status:** native Windows install is NOT supported. Use WSL.
+Native Windows install is not supported today. Use WSL.
 
 The `install.ps1` PowerShell entry point is operator-honest about this:
 
@@ -255,9 +254,9 @@ If WSL is not installed, it prints the WSL2 install command
 succeeds** — both branches exit with non-zero so any wrapping CI or
 automation knows the install did not happen yet.
 
-### v2.x roadmap
+### Native Windows roadmap
 
-Native Windows install is on the Vibecrafted v2.x roadmap and will land as:
+Native Windows install remains a planned surface and should land as:
 
 - Signed PowerShell module (`Install-Vibecrafted`)
 - Native Windows binaries for foundation tools (loctree, aicx, prview)
@@ -265,8 +264,8 @@ Native Windows install is on the Vibecrafted v2.x roadmap and will land as:
 - Windows Terminal profile injection (analogous to iTerm2 dynamic profiles
   on macOS)
 
-Track progress on the v2.x meta-roadmap:
-[`docs/plans/META_22_SCAFFOLD_TO_RELEASE.md`](plans/META_22_SCAFFOLD_TO_RELEASE.md).
+Track progress through the issue tracker and release notes. Do not treat an old
+plan filename as the current roadmap unless it exists in this checkout.
 
 ---
 
@@ -300,8 +299,7 @@ make restore                # undo last install/uninstall step
 rm -rf "$HOME/.vibecrafted" # nuclear option (removes EVERYTHING)
 ```
 
-The installer leaves a transaction log at `~/.vibecrafted/install.log`; see
-META_22 Plan 05 for the rollback path roadmap.
+The installer leaves a transaction log at `~/.vibecrafted/install.log`.
 
 ---
 

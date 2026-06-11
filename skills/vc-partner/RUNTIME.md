@@ -36,19 +36,19 @@ The journal is the memory spine. Reports are snapshots.
 
 ## Runtime Lanes
 
-| Need                                    | Runtime lane                    |
-| --------------------------------------- | ------------------------------- |
-| Single bounded build                    | `vibecrafted implement <agent>` |
-| Strict Examine -> Research -> Implement | `vibecrafted workflow <agent>`  |
-| Multiple field teams                    | `vibecrafted operator <agent>`  |
-| Full takeover                           | `vibecrafted ownership <agent>` |
-| Implementation review                   | `vibecrafted review <agent>`    |
-| Shape/trajectory check                  | `vibecrafted followup <agent>`  |
-| Independent falsification               | `vibecrafted audit <agent>`     |
-| Product-surface undone check            | `vibecrafted dou <agent>`       |
-| Gap convergence                         | `vibecrafted marbles <agent>`   |
-| Entropy reduction after marbles         | `vibecrafted polarize <agent>`  |
-| Release surface                         | `vibecrafted release <agent>`   |
+| Need                                    | Runtime lane                                                      |
+| --------------------------------------- | ----------------------------------------------------------------- |
+| Single bounded build                    | `vibecrafted implement <agent>`                                   |
+| Strict Examine -> Research -> Implement | `vibecrafted workflow <agent>`                                    |
+| Multiple field teams                    | `$vc-operator` posture + `vibecrafted dispatch` or workflow lanes |
+| Full takeover                           | `vibecrafted ownership <agent>`                                   |
+| Implementation review                   | `vibecrafted review <agent>`                                      |
+| Shape/trajectory check                  | `vibecrafted followup <agent>`                                    |
+| Independent falsification               | `vibecrafted audit <agent>`                                       |
+| Product-surface undone check            | `vibecrafted dou <agent>`                                         |
+| Gap convergence                         | `vibecrafted marbles <agent>`                                     |
+| Entropy reduction after marbles         | `vibecrafted polarize <agent>`                                    |
+| Release surface                         | `vibecrafted release <agent>`                                     |
 
 ## Runtime Close-Out
 

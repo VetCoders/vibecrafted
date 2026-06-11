@@ -1,58 +1,74 @@
-# Runtime Integration Roadmap — od luźnych scaffoldów do JEDNEGO runtime
+# Runtime Integration Status — from scaffolds to one runtime
 
-> Status: draft · branch `feat/runtime-integration` · 2026-06-05
-> Companion: `docs/runtime/CONTRACT.md` (kontrakt) + (planowany) `docs/runtime/TOPOLOGY.md` (mapa).
+> Status: living status note · branch `feat/runtime-integration` · refreshed 2026-06-11
+> Companion: `docs/runtime/CONTRACT.md`, `docs/runtime/TOPOLOGY.md`,
+> `docs/DOCUMENTATION_MAP.md`.
 
-## 0. Brutalna prawda (dlaczego to jeszcze NIE żyje)
+## What Is Live Now
 
-Pięć komponentów (`core`, `mcp`, `server`, `app`, `vm`), **zero w codziennym użyciu**.
-Wszystkie to wyniki scaffoldów (W1-a/b/c i pochodne), budowane **horyzontalnie** —
-każda fala dorzucała swój kawałek, **nic nie zostało spięte wertykalnie i nie jest
-dogfoodowane**. Dowód siedzi w pamięci AICX wszystkich pięciu scope'ów: recydywujący
-`AicxFailure` — _"closed the run as failed: blocked by W1-a's incomplete
-`server/control-core` substrate"_. To nie awaria komponentu — to **brak integracji**.
+The old version of this page correctly called out horizontal scaffolding. That
+warning is still useful, but it is no longer the whole truth. This branch now
+has active runtime lanes:
 
-**Antidotum: pion zamiast poziomu.** Najcieńsza rurka end-to-end przez wszystkie realne
-szwy → używana codziennie → dopiero potem szerokość. Scaffold się skończył; teraz spięcie.
+- `vibecrafted dispatch <file.toml>` exists in the command deck.
+- `runtime/scripts/` is active spawn/await/meta/watcher runtime.
+- `runtime/shell/lib/` is the installed shell facade layer.
+- `runtime/vc-marbles/`, `runtime/vc-research/`, and `runtime/vc-operator/`
+  show the per-workflow extraction pattern.
+- `vibecrafted gui`, `tui`, and `dashboard` are live operator surfaces, even
+  where they are still local/control-plane viewers rather than full supervisors.
+
+The remaining job is still vertical integration: one narrow path that starts a
+real worker, records durable artifacts, updates shared state, and shows the same
+truth in at least one operator surface without falling back to an undocumented
+side channel.
 
 ## Niezmienniki (trzymają cały plan)
 
-1. **Work decoupled from view** — silnik (`core`) niezależny od tego, czy ktoś patrzy.
-2. **Artifact-as-truth** — każdy run = `report` + `transcript` + `validation`. Prawda w artefakcie, nie w panelu.
-3. **One contract, many eyes** — control-plane: Python-writer → **typed** Rust-reader (`control-core`) → web + TUI. Żaden front nie parsuje JSON na piechotę.
-4. **Degrade, don't die** — brak zellij → headless; brak TTY → działa dalej; crash → zapisuje failure. Nigdy „Refusing AppleScript".
-5. **Vertical slices, dogfood daily** — „działa w demie" ≠ done. Done = używane codziennie bez fallbacku.
-6. **Seal-then-widen** — najpierw JEDNA ścieżka żyje codziennie, potem dokładamy oczy/substrat.
-7. **Determinism** — vm/sandbox; zero cargo-ghostów; instalacja się nie zmienia pod nogami (klasa zellij-SIGKILL/stale-binary).
+1. **Work decoupled from view** — engine work is not dependent on a watched tab.
+2. **Artifact-as-truth** — every run must leave report, transcript, metadata,
+   and machine-readable status where applicable.
+3. **One contract, many eyes** — Python writers, Rust readers, TUI, web, tray,
+   and shell surfaces must not invent separate state schemas.
+4. **Degrade, don't die** — no zellij, no TTY, crash, and interrupted shell paths
+   should still produce an honest failure artifact.
+5. **Vertical slices, dogfood daily** — demo success is not runtime truth.
+6. **Seal then widen** — prove one path, then add eyes.
+7. **Determinism** — install, sandbox, VM, and remote paths should not mutate
+   under the operator's feet.
 
 ## Ścieżka krytyczna (jedno zdanie)
 
-`control-plane schema (control-core)` → **walking skeleton** (1 komenda E2E: core→artifact→TUI)
-→ **seal seams** (szel out, mux natywny, degradacja) → **widen** (web/tray/iterm)
-→ **substrate** (sandbox/vm/remote) → **resilience/release**.
+`dispatch/run schema` -> **walking skeleton** (1 command E2E:
+supervisor -> worker -> artifacts -> shared state -> TUI/GUI visibility) ->
+**seal seams** -> **widen** (web/tray/iTerm) -> **substrate**
+(sandbox/vm/remote) -> **resilience/release**.
 
 ---
 
 ## Faza 0 — Freeze & Truth _(zabij wieloznaczność)_
 
-**Cel:** jeden launcher, jeden zapis stanu, jeden kontrakt. Koniec dwóch światów.
+**Goal:** one launcher language, one state contract, one artifact story.
 
-- Smoke każdego z 5 → oznacz REALNIE odpalalne vs scaffold-skeleton (tabela w TOPOLOGY.md).
-- **Zamroź control-plane schema** jako źródło prawdy: typed kontrakt run-state + events, wersjonowany. Pisze `core/control_plane.py`, czyta `server/control-core`.
-- Wytnij resztki szela: pępowiny `core` → `../../runtime/scripts/await.sh`, `agent_dispatch.py` → `../../runtime/scripts/lib/meta.sh`; napraw `doctor` spawn-pipeline (ma walidować core, nie usunięty `common.sh`).
+- Smoke each runtime lane and mark it live, partial, or scaffold in
+  `TOPOLOGY.md`.
+- Freeze the run-state/event contract used by dispatch, watchers, TUI, and GUI.
+- Keep shell compatibility where it is the installed facade; remove only
+  duplicate or undocumented launchers.
 
-**DoD:** `vibecrafted doctor` zielony bez warnów o szelu · jeden udokumentowany kontrakt schematu · zero martwych launcherów w drzewie.
+**DoD:** `vibecrafted doctor` green enough to trust, one documented state
+contract, no public docs pointing at dead launchers.
 
 ## Faza 1 — Walking Skeleton _(najcieńsza pionowa rurka, dogfood)_
 
-**Cel:** JEDNA komenda end-to-end, bez szela, używana codziennie.
-sas
+**Goal:** one daily command path used for real work.
 
 ```
-vc-implement <agent>  →  core.AsyncSupervisor.run  →  realny spawn
-                      →  artifact (report+transcript+validation)
-                      →  zapis do control-plane
-                      →  app/tui-agent (mission_control) pokazuje run NA ŻYWO + wynik
+vibecrafted dispatch run ... OR vibecrafted implement <agent>
+  -> real worker spawn
+  -> artifacts (report + transcript + meta/result)
+  -> shared state
+  -> TUI/GUI/dashboard visibility
 ```
 
 - Bez web, bez sandbox, bez tray, bez vm — ale **przez wszystkie realne szwy tej rurki**.

@@ -1,13 +1,14 @@
-# `vc-justdo` Flow — standalone posture skill
+# `vc-justdo` Flow — posture, compatibility runtime
 
-> Standalone. NON-pipeline. **NOT an alias of vc-implement.**
+> Posture is standalone. Runtime remains compatibility-wired to `vc-implement`
+> until the de-alias migration in `docs/adr/0001-vc-justdo-standalone.md` lands.
 > „Nie pierdol, po prostu zrób" — take the task, just do it, regardless of task type.
 
 ## Flow
 
 ```mermaid
 flowchart TD
-    A[Operator: vc-justdo claude --prompt '<task>'  ·  $vc-justdo in chat] --> G[Canonical Orientation Gate: vc-init + loctree — no-question ≠ no-orientation]
+    A[Operator: vibecrafted justdo claude --prompt '<task>'  ·  $vc-justdo in chat] --> G[Canonical Orientation Gate: vc-init + loctree — no-question ≠ no-orientation]
     G --> T{Task type — defined by PROMPT, not by the skill}
     T --> X[Take the task — no questions, no best-of-n]
     X --> Ex[Proactively explore if context is thin — exploration replaces questioning]
@@ -23,11 +24,12 @@ type (implement / review / audit / research / fix / anything) comes from the pro
 
 ## Routes
 
-| Entry                                     | Args                   | Produces                                             | Exit            |
-| ----------------------------------------- | ---------------------- | ---------------------------------------------------- | --------------- |
-| `vibecrafted justdo <agent>`              | `--prompt` or `--file` | delivered task (type per prompt) + transcript + meta | `0` on dispatch |
-| `vc-justdo <agent>`                       | same                   | same                                                 | `0` on dispatch |
-| `$vc-justdo` / `/vc-justdo` (interactive) | —                      | agent adopts the "just do" posture in-session        | —               |
+| Entry                                     | Args                   | Produces                                           | Exit            |
+| ----------------------------------------- | ---------------------- | -------------------------------------------------- | --------------- |
+| `vibecrafted implement <agent>`           | `--prompt` or `--file` | canonical autonomous implementation runtime        | `0` on dispatch |
+| `vibecrafted justdo <agent>`              | same                   | compatibility alias until de-alias migration lands | `0` on dispatch |
+| `vc-justdo <agent>`                       | same                   | shell shortcut / compatibility alias               | `0` on dispatch |
+| `$vc-justdo` / `/vc-justdo` (interactive) | —                      | agent adopts the "just do" posture in-session      | —               |
 
 ### Boundaries (carried from `../vc-ownership/SKILL.md`)
 

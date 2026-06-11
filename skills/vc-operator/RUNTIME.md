@@ -2,17 +2,20 @@
 
 `vc-operator` as an interactive skill does not automatically launch runtime.
 
-Runtime begins only when the framework launches:
+Runtime begins only when the operator chooses a live supervisor or workflow
+lane:
 
 ```bash
-vibecrafted operator <agent> --file /path/to/master-dispatch.md
-vibecrafted operator <agent> --prompt '<dispatch mandate>'
-vc-operator <agent> --file /path/to/master-dispatch.md
+vibecrafted dispatch plan.dispatch.toml --doctor
+vibecrafted dispatch plan.dispatch.toml --dry-run --json
+vibecrafted dispatch run --run-id <id> --root . --report report.md --transcript trace.log -- <worker>
+vibecrafted workflow claude --file /path/to/plan.md
+vibecrafted implement codex --prompt '<bounded slice>'
 ```
 
 ## Runtime Responsibilities
 
-The operator runtime creates durable state for fleet orchestration:
+The operator posture creates or consumes durable state for fleet orchestration:
 
 - run metadata
 - transcript
@@ -27,30 +30,32 @@ The operator runtime creates durable state for fleet orchestration:
 ## Artifact Layout
 
 ```text
-$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/operator/
-  tracker.md
-  journal.md
-  briefs/
-    <wave>-<position>_<slug>.md
+$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/
+  plans/
   reports/
-    <timestamp>_wave-<n>-close-out_operator.md
-    <timestamp>_stop-point_operator.md
-    <timestamp>_<slug>_operator.transcript.log
-    <timestamp>_<slug>_operator.meta.json
+  tmp/
+  dispatch-result.json or run-specific result files
+  <timestamp>_<slug>.transcript.log
+  <timestamp>_<slug>.meta.json
 ```
+
+An operator-mode session may also keep `tracker.md`, `journal.md`, and
+`briefs/` for a multi-wave plan, but those artifacts are posture discipline, not
+proof that a public `vibecrafted operator` command exists.
 
 ## Runtime Lanes
 
-| Need                        | Runtime lane                    |
-| --------------------------- | ------------------------------- |
-| Plan is fuzzy               | `vibecrafted scaffold <agent>`  |
-| One worker slice            | `vibecrafted implement <agent>` |
-| Strict ERi slice            | `vibecrafted workflow <agent>`  |
-| Truth-drift convergence     | `vibecrafted marbles <agent>`   |
-| A to Z polish for one slice | `vibecrafted ownership <agent>` |
-| Shared strategy pause       | `vibecrafted partner <agent>`   |
-| Independent verification    | `vibecrafted audit <agent>`     |
-| Outward ship                | `vibecrafted release <agent>`   |
+| Need                        | Runtime lane                       |
+| --------------------------- | ---------------------------------- |
+| Plan is fuzzy               | `vibecrafted scaffold <agent>`     |
+| One worker slice            | `vibecrafted implement <agent>`    |
+| Strict ERi slice            | `vibecrafted workflow <agent>`     |
+| Truth-drift convergence     | `vibecrafted marbles <agent>`      |
+| A to Z polish for one slice | `vibecrafted ownership <agent>`    |
+| Shared strategy pause       | `vibecrafted partner <agent>`      |
+| Independent verification    | `vibecrafted audit <agent>`        |
+| Deterministic supervisor    | `vibecrafted dispatch <file.toml>` |
+| Outward ship                | `vibecrafted release <agent>`      |
 
 ## Terminal States
 

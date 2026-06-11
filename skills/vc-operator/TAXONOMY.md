@@ -31,15 +31,16 @@ The operator posture is responsible for:
 ## Runtime Workflow
 
 ```yaml
-vibecrafted_operator_runtime:
+operator_runtime_lanes:
   entrypoints:
-    - vibecrafted operator <agent> --file <plan>
-    - vibecrafted operator <agent> --prompt <mandate>
-    - vc-operator <agent> --file <plan>
+    - vibecrafted dispatch <file.toml>
+    - vibecrafted dispatch run ...
+    - vibecrafted workflow <agent> --file <plan>
+    - vibecrafted implement <agent> --prompt <slice>
   creates:
     - run_id
-    - operator/tracker.md
-    - operator/journal.md
+    - dispatch/result artifacts
+    - tracker or journal when the posture maintains them
     - briefs
     - reports
     - transcript.log

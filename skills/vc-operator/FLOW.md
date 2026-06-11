@@ -50,7 +50,7 @@ flowchart TD
 | Agent choice     | Who should run each slice?                            | why-matrix rationale            |
 | Briefing         | Can a worker execute without guessing?                | rendered dispatch brief         |
 | Brief scan       | Does the prompt contain hard-stop/security triggers?  | scan note or refusal            |
-| Dispatch         | Did every spawn go through framework telemetry?       | run IDs and launch cards        |
+| Dispatch         | Did every spawn go through framework telemetry?       | run IDs, tracker, result state  |
 | Await            | Did each worker finish, stall, or fail with evidence? | report/transcript/meta state    |
 | Recovery         | Is the next action focused, not a blind retry?        | recovery brief or escalation    |
 | Commit scan      | Did worker commits leak local-only or sensitive data? | scan note or sanitized recommit |
@@ -72,11 +72,11 @@ memory-only explanations.
 
 ## Routes
 
-| Entry                          | Args                   | Produces                                              | Exit        |
-| ------------------------------ | ---------------------- | ----------------------------------------------------- | ----------- |
-| `vibecrafted operator <agent>` | `--prompt` or `--file` | tracker, journal, wave close-outs, stop-point handoff | `0` on stop |
-| `vc-operator <agent>`          | same                   | same                                                  | `0` on stop |
-| `vc-conductor <agent>`         | same                   | same                                                  | `0` on stop |
+| Entry                              | Args                                                                 | Produces                                                   | Exit            |
+| ---------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------- | --------------- |
+| `$vc-operator` in a session        | plan or mandate in context                                           | posture, wave atlas, briefs, journaled decisions           | returns handoff |
+| `vibecrafted dispatch <file.toml>` | manifest flags such as `--doctor`, `--dry-run`, `--json`, `--resume` | deterministic dispatch validation/result/tracker artifacts | command status  |
+| `vibecrafted dispatch run ...`     | run id, root, report/transcript paths, worker command                | async lifecycle state for one worker                       | command status  |
 
 ### Escalation edges
 
@@ -88,12 +88,10 @@ memory-only explanations.
 
 ### Session artifacts
 
-- Artifact root: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/operator/`
-- Tracker: `<artifact-root>/tracker.md`
-- Journal: `<artifact-root>/journal.md`
-- Briefs: `<artifact-root>/briefs/*.md`
-- Per-wave close-outs: `<artifact-root>/reports/<ts>_wave-<n>-close-out_operator.md`
-- Final stop-point handoff: `<artifact-root>/reports/<ts>_stop-point_operator.md`
+- Artifact root: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/`
+- Tracker/result state: dispatch-specific files under the run artifact root
+- Journal/briefs/close-outs: operator-managed artifacts when the posture is
+  conducting a multi-wave plan
 - Lock: `$VIBECRAFTED_HOME/locks/<org>/<repo>/<run_id>.lock`
 
 ## Anti-Patterns
