@@ -41,6 +41,10 @@ spawn_generate_launcher() {
   cat > "$launcher" <<EOF_LAUNCH
 #!/usr/bin/env bash
 set -euo pipefail
+# Inherited shells may carry a finite 'ulimit -f' (file-size cap); agent CLIs
+# appending to large logs (e.g. ~/.codex/logs_*.sqlite) then die on SIGXFSZ
+# within seconds of spawn. Lift it for the worker's process tree.
+ulimit -f unlimited 2>/dev/null || true
 source $q_common
 
 meta=$q_meta
