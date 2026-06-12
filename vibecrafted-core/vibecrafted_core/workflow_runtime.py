@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
-from .spawn import _default_command
+from .spawn import _stdin_command
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 
 RESEARCH_AGENTS = ("claude", "codex", "gemini")
@@ -62,6 +62,15 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     )
 
 
+def _read_prompt_file(path: str) -> str:
+    if not path:
+        return ""
+    try:
+        return Path(path).expanduser().read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return f"Read the requested prompt file yourself: {path}"
+
+
 def _child_prompt(kind: str, label: str, root: str, prompt: str) -> str:
     marbles_blindness = ""
     if kind == "marbles":
@@ -98,7 +107,9 @@ async def _run_child(
     report = base / f"{safe_label}.md"
     transcript = base / f"{safe_label}.transcript.log"
     meta = base / f"{safe_label}.meta.json"
-    command = _default_command(agent, _child_prompt(kind, label, root, prompt))
+    prompt_file = base / f"{safe_label}.prompt.md"
+    prompt_file.write_text(_child_prompt(kind, label, root, prompt), encoding="utf-8")
+    command = _stdin_command(agent)
     handle: AsyncRunHandle = await AsyncSupervisor().run(
         run_id=run_id,
         command=command,
@@ -107,6 +118,7 @@ async def _run_child(
         meta_path=meta,
         report_path=report,
         transcript_path=transcript,
+        prompt_file_path=prompt_file,
         require_report=True,
         require_transcript_output=False,
     )
@@ -245,10 +257,12 @@ def _parser() -> argparse.ArgumentParser:
     research = sub.add_parser("research")
     research.add_argument("--root", required=True)
     research.add_argument("--prompt", default="")
+    research.add_argument("--prompt-file", default="")
     marbles = sub.add_parser("marbles")
     marbles.add_argument("--agent", default="codex")
     marbles.add_argument("--root", required=True)
     marbles.add_argument("--prompt", default="")
+    marbles.add_argument("--prompt-file", default="")
     marbles.add_argument("--count", type=int, default=3)
     marbles.add_argument("--depth", type=int, default=3)
     return parser
@@ -257,11 +271,11 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     ns = _parser().parse_args(argv)
     if ns.command == "research":
-        return asyncio.run(run_research(ns.root, ns.prompt))
+        prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
+        return asyncio.run(run_research(ns.root, prompt))
     if ns.command == "marbles":
-        return asyncio.run(
-            run_marbles(ns.root, ns.agent, ns.prompt, ns.count, ns.depth)
-        )
+        prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
+        return asyncio.run(run_marbles(ns.root, ns.agent, prompt, ns.count, ns.depth))
     return 2
 
 

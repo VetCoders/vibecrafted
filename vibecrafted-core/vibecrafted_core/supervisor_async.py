@@ -58,6 +58,7 @@ class AsyncSupervisor:
         meta_path: str | Path | None = None,
         report_path: str | Path | None = None,
         transcript_path: str | Path | None = None,
+        prompt_file_path: str | Path | None = None,
     ) -> AsyncRunHandle:
         if not command:
             raise ValueError("command must not be empty")
@@ -65,12 +66,21 @@ class AsyncSupervisor:
         transcript = Path(transcript_path) if transcript_path is not None else None
         if transcript is not None:
             transcript.parent.mkdir(parents=True, exist_ok=True)
+        prompt_file = Path(prompt_file_path).expanduser() if prompt_file_path else None
 
         merged_env = os.environ.copy()
         if env:
             merged_env.update(env)
         session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
         merged_env["VIBECRAFTED_SESSION_ID"] = session_id
+        if meta_path is not None:
+            merged_env["VIBECRAFTED_META_PATH"] = str(meta_path)
+        if report_path is not None:
+            merged_env["VIBECRAFTED_REPORT_PATH"] = str(report_path)
+        if transcript_path is not None:
+            merged_env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(transcript_path)
+        if prompt_file is not None:
+            merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_file)
         started_at = _utc_now()
 
         await self._emit(
@@ -83,20 +93,29 @@ class AsyncSupervisor:
                 "meta": str(meta_path or ""),
                 "report": str(report_path or ""),
                 "transcript": str(transcript_path or ""),
+                "prompt_file": str(prompt_file or ""),
                 "started_at": started_at.isoformat(),
                 "session_id": session_id,
                 "identity_required": True,
             },
         )
 
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            cwd=str(cwd),
-            env=merged_env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
-        )
+        stdin_handle = None
+        try:
+            if prompt_file is not None:
+                stdin_handle = prompt_file.open("rb")
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=str(cwd),
+                env=merged_env,
+                stdin=stdin_handle,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                start_new_session=True,
+            )
+        finally:
+            if stdin_handle is not None:
+                stdin_handle.close()
         handle = AsyncRunHandle(
             run_id=run_id,
             command=tuple(command),
@@ -137,6 +156,7 @@ class AsyncSupervisor:
         meta_path: str | Path | None = None,
         report_path: str | Path | None = None,
         transcript_path: str | Path | None = None,
+        prompt_file_path: str | Path | None = None,
         timeout: float | None = None,
         require_report: bool = True,
         require_transcript_output: bool = False,
@@ -149,6 +169,7 @@ class AsyncSupervisor:
             meta_path=meta_path,
             report_path=report_path,
             transcript_path=transcript_path,
+            prompt_file_path=prompt_file_path,
         )
         try:
             if timeout is None:

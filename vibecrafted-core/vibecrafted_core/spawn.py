@@ -132,6 +132,53 @@ def _default_command(agent: str, prompt: str) -> list[str]:
     raise ValueError(f"unsupported agent: {agent}")
 
 
+def _stdin_command(agent: str) -> list[str]:
+    """Build an agent command that receives the full prompt on stdin.
+
+    The command argv must carry flags and paths only; large prompt bodies belong
+    on stdin so they do not leak through ps(1) or hit ARG_MAX.
+    """
+
+    if agent == "claude":
+        return [
+            "claude",
+            "--print",
+            "--verbose",
+            "--dangerously-skip-permissions",
+        ]
+    if agent == "codex":
+        return ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "-"]
+    if agent == "gemini":
+        return ["gemini", "--yolo", "--prompt", ""]
+    if agent == "agy":
+        return [
+            "agy",
+            "--print",
+            "--dangerously-skip-permissions",
+            "--add-dir",
+            ".",
+            "--print-timeout",
+            "30m",
+            "",
+        ]
+    if agent == "junie":
+        return [
+            "junie",
+            "--project",
+            ".",
+            "--skip-update-check",
+            "--input-format",
+            "text",
+        ]
+    if agent == "grok":
+        return [
+            "bash",
+            "-lc",
+            'exec grok --cwd . --permission-mode bypassPermissions --no-alt-screen --prompt-file "$VIBECRAFTED_PROMPT_PATH"',
+        ]
+    raise ValueError(f"unsupported agent: {agent}")
+
+
 def _parse_launcher_assignment(path: Path, key: str) -> str:
     if not path.is_file():
         return ""

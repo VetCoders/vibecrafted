@@ -29,8 +29,9 @@ def test_build_launch_command_passes_new_agent_to_command_deck(tmp_path: Path) -
 
     command = workflow.build_launch_command(spec, tmp_path / "src")
 
-    assert command[:2] == ["junie", "--task"]
-    assert "Skill: vc-workflow" in command[2]
+    assert command[:2] == ["junie", "--project"]
+    assert "--input-format" in command
+    assert "Skill: vc-workflow" not in command
 
 
 def test_supervisor_defaults_and_sandbox_support_cover_agy_junie_grok() -> None:

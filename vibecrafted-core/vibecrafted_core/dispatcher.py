@@ -21,6 +21,10 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--meta")
     run.add_argument("--report")
     run.add_argument("--transcript")
+    run.add_argument(
+        "--prompt-file",
+        help="deliver this prompt file to the worker on stdin and VIBECRAFTED_PROMPT_PATH",
+    )
     run.add_argument("--timeout", type=float)
     run.add_argument(
         "--no-require-report",
@@ -59,6 +63,7 @@ async def _run(args: argparse.Namespace) -> int:
         meta_path=args.meta,
         report_path=args.report,
         transcript_path=args.transcript,
+        prompt_file_path=args.prompt_file,
         timeout=args.timeout,
         require_report=not args.no_require_report,
         require_transcript_output=args.require_transcript_output,

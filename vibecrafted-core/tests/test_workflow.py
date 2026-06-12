@@ -42,17 +42,21 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
 
     monkeypatch.setattr(
         workflow,
-        "_default_command",
-        lambda _agent, _prompt: [
+        "_stdin_command",
+        lambda _agent: [
             sys.executable,
             "-c",
-            "from pathlib import Path; import os; Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
+            "from pathlib import Path; import os, sys; "
+            "assert sys.stdin.read() == Path(os.environ['VIBECRAFTED_PROMPT_PATH']).read_text(); "
+            "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
         ],
     )
     payload = workflow.launch_workflow(spec, source)
 
     assert payload["accepted"] is True
     assert isinstance(payload["pid"], int)
+    assert payload["prompt_file"]
+    assert "go" not in payload["worker_command"]
     log_lines = Path(payload["launch_log"]).read_text(encoding="utf-8").splitlines()
     assert any(json.loads(line).get("event") == "spawned" for line in log_lines)
 
@@ -112,12 +116,13 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
 
     monkeypatch.setattr(
         workflow,
-        "_default_command",
-        lambda _agent, _prompt: [
+        "_stdin_command",
+        lambda _agent: [
             sys.executable,
             "-c",
             (
-                "from pathlib import Path; import os; "
+                "from pathlib import Path; import os, sys; "
+                "assert 'launcher truth worker complete' not in sys.stdin.read(); "
                 "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
                 "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
                 "); "
@@ -133,6 +138,7 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
     assert payload["report"]
     assert payload["transcript"]
     assert payload["meta"]
+    assert payload["prompt_file"]
     assert payload["control_plane_identity"] == {
         "run_id": payload["run_id"],
         "session_id": payload["session_id"],
@@ -368,17 +374,16 @@ def test_retry_run_relaunches_terminal_run(
     assert captured["retry_of"] == "wflw-010101-0001"
 
 
-def test_build_launch_command_uses_core_agent_command_not_legacy_deck(
+def test_build_launch_command_uses_core_stdin_agent_command_not_legacy_deck(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     captured: dict[str, str] = {}
 
-    def _fake_default(agent: str, prompt: str) -> list[str]:
+    def _fake_stdin(agent: str) -> list[str]:
         captured["agent"] = agent
-        captured["prompt"] = prompt
-        return ["agent-bin", prompt]
+        return ["agent-bin", "-"]
 
-    monkeypatch.setattr(workflow, "_default_command", _fake_default)
+    monkeypatch.setattr(workflow, "_stdin_command", _fake_stdin)
     spec = workflow.WorkflowLaunchSpec(
         agent="claude",
         mode="implement",
@@ -396,9 +401,8 @@ def test_build_launch_command_uses_core_agent_command_not_legacy_deck(
         "bash",
         str(tmp_path / "source" / "scripts" / "vibecrafted"),
     ]
-    assert "Skill: vc-implement" in captured["prompt"]
-    assert "Do not call legacy Vibecrafted skill launchers" in captured["prompt"]
-    assert "ship it" in captured["prompt"]
+    assert command == ["agent-bin", "-"]
+    assert captured["agent"] == "claude"
 
 
 def test_research_swarm_uses_core_codex_coordinator(
@@ -414,7 +418,8 @@ def test_research_swarm_uses_core_codex_coordinator(
     assert spec.agent == "swarm"
     assert command[:3] == [sys.executable, "-m", "vibecrafted_core.workflow_runtime"]
     assert command[3] == "research"
-    assert "map the surface" in command
+    assert "--prompt-file" in command
+    assert "map the surface" not in command
 
 
 def test_marbles_uses_supervised_core_runtime(tmp_path: Path) -> None:
@@ -434,5 +439,6 @@ def test_marbles_uses_supervised_core_runtime(tmp_path: Path) -> None:
 
     assert command[:3] == [sys.executable, "-m", "vibecrafted_core.workflow_runtime"]
     assert command[3] == "marbles"
+    assert "--prompt-file" in command
     assert command[command.index("--count") + 1] == "2"
     assert command[command.index("--depth") + 1] == "4"

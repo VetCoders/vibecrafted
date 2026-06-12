@@ -115,6 +115,53 @@ def test_dispatcher_cli_runs_full_lifecycle(
     assert "dispatcher lifecycle hello" in transcript.read_text(encoding="utf-8")
 
 
+def test_dispatcher_cli_delivers_prompt_file_on_stdin(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    prompt = tmp_path / "prompt.md"
+    prompt.write_text("line one\nline two\n", encoding="utf-8")
+    script = tmp_path / "worker.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        "import os, sys\n"
+        "body = sys.stdin.read()\n"
+        "assert body == Path(os.environ['VIBECRAFTED_PROMPT_PATH']).read_text()\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text(body, encoding='utf-8')\n"
+        "print('stdin prompt ok')\n",
+        encoding="utf-8",
+    )
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-test-prompt-file",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--prompt-file",
+            str(prompt),
+            "--require-transcript-output",
+            "--json",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifact_ok"] is True
+    assert report.read_text(encoding="utf-8") == "line one\nline two\n"
+    assert "stdin prompt ok" in transcript.read_text(encoding="utf-8")
+
+
 def test_dispatcher_cli_fails_missing_report_contract(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

@@ -11,6 +11,7 @@ def _fake_agent(bin_dir: Path, name: str) -> None:
     path.write_text(
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$@\"\n"
+        "cat\n"
         "printf 'fake worker ok\\n'\n"
         'printf "%s\\n" "---" "status: completed" "---" "report for $0" > "$VIBECRAFTED_REPORT_PATH"\n',
         encoding="utf-8",

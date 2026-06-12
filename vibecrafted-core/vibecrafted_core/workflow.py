@@ -22,7 +22,7 @@ from .control_plane import (
     sync_state,
 )
 from .events import append_event
-from .spawn import _default_command
+from .spawn import _stdin_command
 
 
 SUPPORTED_WORKFLOWS = {"workflow", "implement", "research", "review", "marbles"}
@@ -74,6 +74,7 @@ def _run_artifact_paths(run_id: str) -> dict[str, Path]:
     run_dir.mkdir(parents=True, exist_ok=True)
     return {
         "meta": run_dir / "meta.json",
+        "prompt": run_dir / "prompt.md",
         "report": run_dir / "report.md",
         "transcript": run_dir / "transcript.log",
     }
@@ -95,6 +96,7 @@ def _dispatcher_command(
     run_id: str,
     root: str,
     meta_path: Path,
+    prompt_path: Path | None = None,
     report_path: Path,
     transcript_path: Path,
     worker_command: list[str],
@@ -114,9 +116,20 @@ def _dispatcher_command(
         str(report_path),
         "--transcript",
         str(transcript_path),
-        "--json",
-        "--",
     ]
+    if prompt_path is not None:
+        command.extend(
+            [
+                "--prompt-file",
+                str(prompt_path),
+            ]
+        )
+    command.extend(
+        [
+            "--json",
+            "--",
+        ]
+    )
     command.extend(worker_command)
     return command
 
@@ -415,10 +428,19 @@ Operator prompt:
 """
 
 
+def _write_prompt_file(path: Path, body: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
 def build_launch_command(
-    spec: WorkflowLaunchSpec, _source_dir: str | Path
+    spec: WorkflowLaunchSpec,
+    _source_dir: str | Path,
+    *,
+    prompt_file: str | Path | None = None,
 ) -> list[str]:
-    source_prompt = _source_prompt(spec)
+    prompt_path = str(prompt_file or spec.file or "")
     if spec.skill == "research":
         return [
             sys.executable,
@@ -427,8 +449,8 @@ def build_launch_command(
             "research",
             "--root",
             spec.root,
-            "--prompt",
-            source_prompt,
+            "--prompt-file",
+            prompt_path,
         ]
     if spec.skill == "marbles":
         return [
@@ -440,8 +462,8 @@ def build_launch_command(
             spec.agent if spec.agent != "swarm" else "codex",
             "--root",
             spec.root,
-            "--prompt",
-            source_prompt,
+            "--prompt-file",
+            prompt_path,
             "--count",
             str(spec.count or 3),
             "--depth",
@@ -449,7 +471,7 @@ def build_launch_command(
         ]
 
     worker_agent = spec.agent
-    return _default_command(worker_agent, _runtime_prompt(spec))
+    return _stdin_command(worker_agent)
 
 
 def launch_workflow(
@@ -460,12 +482,20 @@ def launch_workflow(
     retry_of: str = "",
 ) -> dict[str, Any]:
     run_id = _run_id(spec.skill)
-    worker_command = build_launch_command(spec, source_dir)
     artifacts = _run_artifact_paths(run_id)
+    prompt_body = (
+        _source_prompt(spec)
+        if spec.skill in {"research", "marbles"}
+        else _runtime_prompt(spec)
+    )
+    prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
+    safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
+    worker_command = build_launch_command(spec, source_dir, prompt_file=prompt_path)
     command = _dispatcher_command(
         run_id=run_id,
         root=spec.root,
         meta_path=artifacts["meta"],
+        prompt_path=prompt_path,
         report_path=artifacts["report"],
         transcript_path=artifacts["transcript"],
         worker_command=worker_command,
@@ -484,6 +514,7 @@ def launch_workflow(
     merged_env["VIBECRAFTED_REPORT_PATH"] = str(artifacts["report"])
     merged_env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(artifacts["transcript"])
     merged_env["VIBECRAFTED_META_PATH"] = str(artifacts["meta"])
+    merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_path)
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
@@ -505,8 +536,9 @@ def launch_workflow(
             "session_id": session_id,
             "identity_required": True,
             "source_dir": str(Path(source_dir).resolve()),
-            "prompt": spec.prompt,
-            "file": spec.file,
+            "prompt": "",
+            "file": str(prompt_path),
+            "prompt_file": str(prompt_path),
             "report": str(artifacts["report"]),
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
@@ -520,7 +552,7 @@ def launch_workflow(
                 {
                     "ts": stamp,
                     "run_id": run_id,
-                    "spec": spec.to_payload(),
+                    "spec": safe_spec,
                     "worker_command": worker_command,
                     "dispatch_command": command,
                     "retry_of": retry_of,
@@ -557,7 +589,7 @@ def launch_workflow(
                 "command": command,
                 "worker_command": worker_command,
                 "launch_log": str(launch_log),
-                "spec": spec.to_payload(),
+                "spec": safe_spec,
                 "error": f"{type(exc).__name__}: {exc}",
                 "run_id": run_id,
                 "retry_of": retry_of,
@@ -579,8 +611,9 @@ def launch_workflow(
                 "session_id": session_id,
                 "identity_required": True,
                 "source_dir": str(Path(source_dir).resolve()),
-                "prompt": spec.prompt,
-                "file": spec.file,
+                "prompt": "",
+                "file": str(prompt_path),
+                "prompt_file": str(prompt_path),
                 "report": str(artifacts["report"]),
                 "transcript": str(artifacts["transcript"]),
                 "meta": str(artifacts["meta"]),
@@ -603,6 +636,7 @@ def launch_workflow(
         "report": str(artifacts["report"]),
         "transcript": str(artifacts["transcript"]),
         "meta": str(artifacts["meta"]),
+        "prompt_file": str(prompt_path),
         "session_id": session_id,
         "operator_session": operator_session,
         "control_plane_identity": {
@@ -612,7 +646,7 @@ def launch_workflow(
         },
         "retry_of": retry_of,
         "launch_log": str(launch_log),
-        "spec": spec.to_payload(),
+        "spec": safe_spec,
         "control_plane": snapshot,
     }
 
