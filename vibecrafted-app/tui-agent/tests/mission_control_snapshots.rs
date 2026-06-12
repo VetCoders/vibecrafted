@@ -729,6 +729,42 @@ fn vc_admin_status_renders_all_panels_from_disk_fixtures() {
         .arg("--artifact-root")
         .arg(&artifact_root)
         .env(
+            "VIBECRAFTED_DISK_HEALTH_JSON",
+            r#"{
+                "paths": [
+                    {
+                        "label": "disk ~/.vibecrafted/control_plane",
+                        "free_bytes": 10737418240,
+                        "total_bytes": 107374182400
+                    },
+                    {
+                        "label": "disk ~/.codex",
+                        "free_bytes": 10737418240,
+                        "total_bytes": 107374182400
+                    },
+                    {
+                        "label": "disk ~/.aicx",
+                        "free_bytes": 10737418240,
+                        "total_bytes": 107374182400
+                    },
+                    {
+                        "label": "disk ~/.vibecrafted/artifacts",
+                        "free_bytes": 10737418240,
+                        "total_bytes": 107374182400
+                    }
+                ],
+                "ulimit_unlimited": true
+            }"#,
+        )
+        .env(
+            "VIBECRAFTED_MCP_PROCESS_SCAN",
+            "/opt/vetcoders/bin/loctree-mcp\n/opt/vetcoders/bin/aicx-mcp\n",
+        )
+        .env(
+            "VIBECRAFTED_LOCTREE_SNAPSHOT_FRESHNESS_JSON",
+            r#"{"fresh": true, "head_label": "refs/heads/feat/runtime-integration"}"#,
+        )
+        .env(
             "VIBECRAFTED_TAILSCALE_STATUS_JSON",
             r#"{
                 "Peer": {

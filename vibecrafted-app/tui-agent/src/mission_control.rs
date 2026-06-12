@@ -50,6 +50,9 @@ const TAILSCALE_STATUS_JSON_ENV: &str = "VIBECRAFTED_TAILSCALE_STATUS_JSON";
 const TAILSCALE_DISPATCH_TARGETS: &[&str] = &["dragon", "div0"];
 const AICX_HEALTH_TIMEOUT_MS: u64 = 750;
 const AICX_HEALTH_JSON_ENV: &str = "VIBECRAFTED_AICX_HEALTH_JSON";
+const DISK_HEALTH_JSON_ENV: &str = "VIBECRAFTED_DISK_HEALTH_JSON";
+const MCP_PROCESS_SCAN_ENV: &str = "VIBECRAFTED_MCP_PROCESS_SCAN";
+const LOCTREE_SNAPSHOT_FRESHNESS_JSON_ENV: &str = "VIBECRAFTED_LOCTREE_SNAPSHOT_FRESHNESS_JSON";
 
 static TAILSCALE_STATUS_CACHE: OnceLock<Mutex<ProbeCache<Result<String, String>>>> =
     OnceLock::new();
@@ -1555,6 +1558,10 @@ fn loctree_snapshot_signal(loctree_alive: Option<bool>) -> FleetHealthSignal {
 }
 
 fn mcp_process_scan() -> Result<String, String> {
+    if let Ok(raw) = env::var(MCP_PROCESS_SCAN_ENV) {
+        return Ok(raw);
+    }
+
     let output = Command::new("ps")
         .args(["-axo", "command="])
         .output()
@@ -1589,6 +1596,12 @@ fn process_line_mentions_server(line: &str, server: &str) -> bool {
 }
 
 fn loctree_snapshot_freshness() -> Result<(bool, String), String> {
+    if let Ok(raw) = env::var(LOCTREE_SNAPSHOT_FRESHNESS_JSON_ENV) {
+        let fixture = serde_json::from_str::<LoctreeSnapshotFreshnessFixture>(&raw)
+            .map_err(|err| format!("invalid loctree snapshot fixture: {err}"))?;
+        return Ok((fixture.fresh, fixture.head_label));
+    }
+
     let cwd = env::current_dir().map_err(|err| err.to_string())?;
     let repo_root = find_git_root(&cwd).ok_or_else(|| "git root not found".to_string())?;
     let snapshot_path = repo_root.join(LOCTREE_CONTEXT_ATLAS_MANIFEST);
@@ -1598,6 +1611,12 @@ fn loctree_snapshot_freshness() -> Result<(bool, String), String> {
         .map_err(|err| format!("{}: {}", compact_home_path(&snapshot_path), err))?;
     let (head_modified, head_label) = git_head_modified(&repo_root)?;
     Ok((snapshot_modified >= head_modified, head_label))
+}
+
+#[derive(Debug, Deserialize)]
+struct LoctreeSnapshotFreshnessFixture {
+    fresh: bool,
+    head_label: String,
 }
 
 fn find_git_root(start: &Path) -> Option<PathBuf> {
@@ -1652,11 +1671,50 @@ fn git_dir(repo_root: &Path) -> Result<PathBuf, String> {
 }
 
 fn disk_health_signals() -> Vec<FleetHealthSignal> {
+    if let Ok(raw) = env::var(DISK_HEALTH_JSON_ENV) {
+        return disk_health_signals_from_fixture(&raw);
+    }
+
+    disk_health_signals_from_paths(&substrate_disk_paths())
+}
+
+fn disk_health_signals_from_paths(
+    substrates: &[(&'static str, PathBuf)],
+) -> Vec<FleetHealthSignal> {
     let mut signals = Vec::new();
-    for (label, path) in substrate_disk_paths() {
+    for (label, path) in substrates {
         signals.push(disk_path_signal(label, &path));
     }
-    signals.push(ulimit_fsize_signal(&substrate_disk_paths()));
+    signals.push(ulimit_fsize_signal(substrates));
+    signals
+}
+
+fn disk_health_signals_from_fixture(raw: &str) -> Vec<FleetHealthSignal> {
+    let fixture = match serde_json::from_str::<DiskHealthFixture>(raw) {
+        Ok(fixture) => fixture,
+        Err(err) => {
+            return vec![FleetHealthSignal {
+                label: "disk fixture".to_string(),
+                status: FleetHealthStatus::Unknown,
+                detail: format!("invalid disk fixture: {err}"),
+            }];
+        }
+    };
+
+    let mut signals = fixture
+        .paths
+        .iter()
+        .map(|path| {
+            disk_path_signal_from_stats(
+                &path.label,
+                DiskStats {
+                    free_bytes: path.free_bytes,
+                    total_bytes: path.total_bytes,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    signals.push(ulimit_fsize_signal_from_fixture(&fixture));
     signals
 }
 
@@ -1700,25 +1758,7 @@ fn existing_probe_path(path: &Path) -> PathBuf {
 
 fn disk_path_signal(label: &'static str, path: &Path) -> FleetHealthSignal {
     match statvfs_probe(&existing_probe_path(path)) {
-        Ok(stats) => {
-            let free_percent = stats.free_percent();
-            let status = if free_percent < DISK_BLOCKED_FREE_PERCENT {
-                FleetHealthStatus::Blocked
-            } else if free_percent <= DISK_WARN_FREE_PERCENT {
-                FleetHealthStatus::Warn
-            } else {
-                FleetHealthStatus::Ok
-            };
-            FleetHealthSignal {
-                label: label.to_string(),
-                status,
-                detail: format!(
-                    "{free_percent:.1}% free ({}/{})",
-                    format_bytes(stats.free_bytes),
-                    format_bytes(stats.total_bytes)
-                ),
-            }
-        }
+        Ok(stats) => disk_path_signal_from_stats(label, stats),
         Err(err) => FleetHealthSignal {
             label: label.to_string(),
             status: FleetHealthStatus::Unknown,
@@ -1727,15 +1767,71 @@ fn disk_path_signal(label: &'static str, path: &Path) -> FleetHealthSignal {
     }
 }
 
+fn disk_path_signal_from_stats(label: &str, stats: DiskStats) -> FleetHealthSignal {
+    let free_percent = stats.free_percent();
+    let status = if free_percent < DISK_BLOCKED_FREE_PERCENT {
+        FleetHealthStatus::Blocked
+    } else if free_percent <= DISK_WARN_FREE_PERCENT {
+        FleetHealthStatus::Warn
+    } else {
+        FleetHealthStatus::Ok
+    };
+    FleetHealthSignal {
+        label: label.to_string(),
+        status,
+        detail: format!(
+            "{free_percent:.1}% free ({}/{})",
+            format_bytes(stats.free_bytes),
+            format_bytes(stats.total_bytes)
+        ),
+    }
+}
+
 fn ulimit_fsize_signal(substrates: &[(&'static str, PathBuf)]) -> FleetHealthSignal {
     match rlimit_fsize_bytes() {
-        Ok(None) => FleetHealthSignal {
+        Ok(cap_bytes) => {
+            ulimit_fsize_signal_from_inputs(cap_bytes, largest_tracked_file(substrates))
+        }
+        Err(err) => FleetHealthSignal {
+            label: "ulimit -f".to_string(),
+            status: FleetHealthStatus::Unknown,
+            detail: err,
+        },
+    }
+}
+
+fn ulimit_fsize_signal_from_fixture(fixture: &DiskHealthFixture) -> FleetHealthSignal {
+    let largest = fixture
+        .largest_tracked_file
+        .as_ref()
+        .map(|file| TrackedFile {
+            label: file.label.clone(),
+            size_bytes: file.size_bytes,
+        });
+    if fixture.ulimit_unlimited {
+        ulimit_fsize_signal_from_inputs(None, largest)
+    } else if let Some(cap_bytes) = fixture.ulimit_fsize_bytes {
+        ulimit_fsize_signal_from_inputs(Some(cap_bytes), largest)
+    } else {
+        FleetHealthSignal {
+            label: "ulimit -f".to_string(),
+            status: FleetHealthStatus::Unknown,
+            detail: "disk fixture missing ulimit_fsize_bytes or ulimit_unlimited".to_string(),
+        }
+    }
+}
+
+fn ulimit_fsize_signal_from_inputs(
+    cap_bytes: Option<u64>,
+    largest: Option<TrackedFile>,
+) -> FleetHealthSignal {
+    match cap_bytes {
+        None => FleetHealthSignal {
             label: "ulimit -f".to_string(),
             status: FleetHealthStatus::Ok,
             detail: "unlimited".to_string(),
         },
-        Ok(Some(cap_bytes)) => {
-            let largest = largest_tracked_file(substrates);
+        Some(cap_bytes) => {
             let blocked_threshold = ulimit_blocked_threshold_bytes();
             let file_ratio = largest
                 .as_ref()
@@ -1765,11 +1861,6 @@ fn ulimit_fsize_signal(substrates: &[(&'static str, PathBuf)]) -> FleetHealthSig
                 detail,
             }
         }
-        Err(err) => FleetHealthSignal {
-            label: "ulimit -f".to_string(),
-            status: FleetHealthStatus::Unknown,
-            detail: err,
-        },
     }
 }
 
@@ -1795,6 +1886,30 @@ impl DiskStats {
         }
         self.free_bytes as f64 / self.total_bytes as f64 * 100.0
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct DiskHealthFixture {
+    paths: Vec<DiskPathFixture>,
+    #[serde(default)]
+    ulimit_unlimited: bool,
+    #[serde(default)]
+    ulimit_fsize_bytes: Option<u64>,
+    #[serde(default)]
+    largest_tracked_file: Option<TrackedFileFixture>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiskPathFixture {
+    label: String,
+    free_bytes: u64,
+    total_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct TrackedFileFixture {
+    label: String,
+    size_bytes: u64,
 }
 
 #[derive(Debug, Clone)]
