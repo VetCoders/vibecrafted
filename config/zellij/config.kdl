@@ -113,8 +113,15 @@ keybinds {
         bind "Ctrl n" { NewPane; }
     }
 
-    // Ctrl+Q closes the current focus, not the whole session.
-    shared_except "locked" "tab" "session" {
+    // Ctrl+Q = close the focused PANE, never quit the session. Kill the default
+    // `Ctrl q -> Quit` in EVERY mode first (deterministic — a plain override in
+    // shared_except does not reliably beat the default `shared` Quit during
+    // merge), then bind CloseFocus everywhere below. CloseFocus on the last pane
+    // of the last tab exits zellij on its own — pane by pane, last one quits.
+    shared {
+        unbind "Ctrl q"
+    }
+    shared_except "locked" {
         bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }
     }
 
@@ -135,16 +142,13 @@ keybinds {
     // Without this override, the default Zellij
     // `shared { bind "Ctrl q" { Quit; } }` leaked into locked mode
     // and killed the full Zellij instance instead of a single pane.
+    // shared_except excludes locked, so bind CloseFocus there explicitly too.
     locked {
         bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }
     }
 
-    tab {
-        bind "Ctrl q" { CloseTab; SwitchToMode "Normal"; }
-    }
-
-    // Quit the whole session: Ctrl+o (SESSION) then a confirm. Since Ctrl+q is
-    // remapped to CloseFocus everywhere, quit needs an explicit home.
+    // Explicit quit lives on Ctrl+o (SESSION) then 'q', since Ctrl+q now only
+    // ever closes a pane. (Normal full-quit path = close the last pane.)
     session {
         bind "q" { Quit; }
     }
