@@ -54,6 +54,10 @@ styled_underlines false
 auto_layout true
 show_startup_tips false
 show_release_notes false
+// Plain-Ctrl keybind scheme below needs no enhanced-keyboard negotiation, so
+// this stays off. (Ctrl+Shift+<letter> would have required it: a legacy
+// terminal can't encode the Shift bit on a Ctrl chord — Ctrl+x and Ctrl+Shift+x
+// arrive as the same byte. We sidestep that entirely by staying on plain Ctrl.)
 support_kitty_keyboard_protocol false
 
 // ─── Session Resilience ─────────────────────────────────────────────────────────
@@ -83,54 +87,48 @@ plugins {
 }
 
 // ─── Keybindings ────────────────────────────────────────────────────────────────
-// The Alt layer is freed up for Polish diacritics.
-// Quick actions move to Ctrl+Shift.
+// Plain-Ctrl scheme — works on iTerm2 and any legacy terminal, no enhanced
+// keyboard protocol required. Mode switches keep zellij's native Ctrl+<letter>
+// (Ctrl+p PANE, Ctrl+t TAB, Ctrl+o SESSION, Ctrl+n direct NewPane, Ctrl+g LOCK,
+// Ctrl+h MOVE, Ctrl+s SCROLL); every other action lives inside its mode.
+//
+// The Alt layer is left unbound so macOS Option still types Polish diacritics
+// (ź, ó, ł, ż, ć, ń …) instead of triggering zellij actions.
+//
+// History: a Ctrl+Shift+<letter> direct-action layer used to live here. On a
+// terminal without the kitty/CSI-u protocol the Shift bit is dropped from a
+// Ctrl chord, so that whole layer was unreachable. Removed in favour of plain
+// Ctrl. (See support_kitty_keyboard_protocol above.)
 keybinds {
     shared_except "locked" {
+        // Free the Alt layer for Polish diacritics.
         unbind "Alt f" "Alt n" "Alt i" "Alt o"
         unbind "Alt h" "Alt Left" "Alt l" "Alt Right"
         unbind "Alt j" "Alt Down" "Alt k" "Alt Up"
         unbind "Alt =" "Alt +" "Alt -" "Alt [" "Alt ]"
         unbind "Alt p" "Alt Shift p"
-        unbind "Ctrl o" "Ctrl n" "Ctrl h" "Ctrl s"
 
-        bind "Ctrl Shift f" { ToggleFloatingPanes; }
-        bind "Ctrl Shift n" { NewPane; }
-        bind "Ctrl Shift i" { MoveTab "Left"; }
-        bind "Ctrl Shift o" { MoveTab "Right"; }
-        bind "Ctrl Shift h" "Ctrl Shift Left" { MoveFocusOrTab "Left"; }
-        bind "Ctrl Shift l" "Ctrl Shift Right" { MoveFocusOrTab "Right"; }
-        bind "Ctrl Shift j" "Ctrl Shift Down" { MoveFocus "Down"; }
-        bind "Ctrl Shift k" "Ctrl Shift Up" { MoveFocus "Up"; }
-        bind "Ctrl Shift =" "Ctrl Shift +" { Resize "Increase"; }
-        bind "Ctrl Shift -" { Resize "Decrease"; }
-        bind "Ctrl Shift [" { PreviousSwapLayout; }
-        bind "Ctrl Shift ]" { NextSwapLayout; }
-        bind "Ctrl Shift p" { TogglePaneInGroup; }
-        bind "Ctrl Shift g" { ToggleGroupMarking; }
-
-        bind "Ctrl Shift q" {
-            LaunchOrFocusPlugin "session-manager" {
-                floating true
-                move_to_focused_tab true
-            };
-            SwitchToMode "Normal";
-        }
-        bind "Ctrl Shift c" {
-            Run "bash" "-lc" "tmp=$(mktemp -t vc-pane-dump.XXXXXX); pane_id=$(zellij action list-panes --json --all --state | python3 -c 'import json, os, sys; current=os.environ.get(\"ZELLIJ_PANE_ID\"); panes=json.load(sys.stdin); match=next((p for p in panes if p.get(\"is_focused\") and str(p.get(\"id\")) != current), None); print(((\"plugin_\" if match.get(\"is_plugin\") else \"\") + str(match.get(\"id\"))) if match else \"\")'); if [ -n \"$pane_id\" ]; then zellij action dump-screen --full --pane-id \"$pane_id\" --path \"$tmp\" && pbcopy < \"$tmp\"; fi; rm -f \"$tmp\"" {
-                close_on_exit true
-                floating true
-                name "copy-pane-scrollback"
-            };
-        }
-
-        // Quit confirmation lives on Ctrl+Shift+X so Ctrl+Shift+Q can truthfully open session switching.
-        bind "Ctrl Shift x" { SwitchToMode "Session"; }
+        // Direct new-pane on plain Ctrl+n (overrides the default resize-mode
+        // entry; resize stays reachable inside pane mode via +/-).
+        bind "Ctrl n" { NewPane; }
     }
 
     // Ctrl+Q closes the current focus, not the whole session.
     shared_except "locked" "tab" "session" {
         bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }
+    }
+
+    // Copy the *other* focused pane's full scrollback to the clipboard.
+    // Was Ctrl+Shift+c (dead without CSI-u); relocated to pane mode as 'y' (yank).
+    pane {
+        bind "y" {
+            Run "bash" "-lc" "tmp=$(mktemp -t vc-pane-dump.XXXXXX); pane_id=$(zellij action list-panes --json --all --state | python3 -c 'import json, os, sys; current=os.environ.get(\"ZELLIJ_PANE_ID\"); panes=json.load(sys.stdin); match=next((p for p in panes if p.get(\"is_focused\") and str(p.get(\"id\")) != current), None); print(((\"plugin_\" if match.get(\"is_plugin\") else \"\") + str(match.get(\"id\"))) if match else \"\")'); if [ -n \"$pane_id\" ]; then zellij action dump-screen --full --pane-id \"$pane_id\" --path \"$tmp\" && pbcopy < \"$tmp\"; fi; rm -f \"$tmp\"" {
+                close_on_exit true
+                floating true
+                name "copy-pane-scrollback"
+            };
+            SwitchToMode "Normal";
+        }
     }
 
     // Locked mode also closes the current focus instead of the session.
@@ -145,9 +143,9 @@ keybinds {
         bind "Ctrl q" { CloseTab; SwitchToMode "Normal"; }
     }
 
-    // Confirm-on-quit: Ctrl+Shift+X -> Session mode, y = quit, n/Esc = cancel.
+    // Quit the whole session: Ctrl+o (SESSION) then a confirm. Since Ctrl+q is
+    // remapped to CloseFocus everywhere, quit needs an explicit home.
     session {
-        bind "y" { Quit; }
-        bind "n" "Esc" "Ctrl q" "Ctrl Shift x" { SwitchToMode "Normal"; }
+        bind "q" { Quit; }
     }
 }
