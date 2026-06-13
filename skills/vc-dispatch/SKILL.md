@@ -12,12 +12,18 @@ description: >-
 
 <!-- fleet-imperative: v2 -->
 
-> **Operator CLI layer:** `vibecrafted <skill> <agent> --file <prompt.md>` is
-> an imperative to launch the external fleet. **Skill-loading layer:** reading
-> this file inside a local agent session means _apply the discipline in the
-> current thread as the dispatcher_ — you are the brain, the fleet is the
-> hands. Do not implement fleet work yourself; do not spawn native in-process
-> subagents for fleet jobs.
+> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
+> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
+> fleet through the launcher. In that layer, the invocation is an imperative to
+> act, not a no-op, and not native in-process subagents.
+>
+> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
+> Gemini, or another local agent does not mean self-dispatch. Read and apply the
+> skill in the current thread; do not spawn another agent unless the operator
+> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
+> command such as `vc-init codex` / `vibecrafted init claude`.
+>
+> The sole native in-process carve-out is `vc-delegate`.
 
 <!-- /fleet-imperative -->
 
@@ -52,6 +58,26 @@ workflow.
   journal, commits on the Living Tree, post-line backlog — handed to the
   audit skills (vc-followup, vc-audit, vc-dou). **Quality gates belong to the
   audit layer, not to the dispatch loop** (see Cadence).
+
+## Canonical Orientation Gate
+
+`vc-dispatch` requires current `vc-init` evidence before it conducts a line.
+No dispatcher should fire a worker, reshape a wave, or flip a tracker state
+from stale repository memory.
+
+`Loctree:loctree` is the default structural perception layer for that
+orientation. Use it to produce or refresh the Code-Derived Application Map
+before building wave order, composing worker briefs, judging file overlap, or
+accepting a baton from a previous cut. Missing Loctree evidence means the line
+is blind, not merely under-documented.
+
+## Repository Work Doctrine
+
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
 ## The loop
 
