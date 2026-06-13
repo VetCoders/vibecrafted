@@ -193,10 +193,16 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
         "write_start_here_guide",
         lambda _store, _state, _findings: crafted_home / "START_HERE.md",
     )
+
+    def fail_runtime_venv(*_args, **_kwargs):
+        raise AssertionError("compact install must not prepare runtime venv")
+
+    def fail_runtime_entrypoints(*_args, **_kwargs):
+        raise AssertionError("compact install must not publish runtime venv launchers")
+
+    monkeypatch.setattr(installer, "_ensure_runtime_venv", fail_runtime_venv)
     monkeypatch.setattr(
-        installer,
-        "_ensure_runtime_venv",
-        lambda current_tools, dry_run=False: current_tools / ".venv" / "bin" / "python",
+        installer, "_install_python_entrypoint_launchers", fail_runtime_entrypoints
     )
     _hide_rsync(monkeypatch)
 

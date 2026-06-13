@@ -87,27 +87,61 @@ def test_bundle_check_uses_portable_mktemp_template() -> None:
 def test_install_manifest_post_install_uses_mirror_sync() -> None:
     text = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
 
-    # --write-shell-rc is required so the non-interactive install re-activates
-    # the rc hook (not merely stages the shim). Without it `make install-all`
-    # leaves a freshly-cleaned machine unwired (shim present, source line absent
-    # or commented) — the single staged runtime exists but the shell never loads
-    # it. The flag guarantees one wired truth on every machine.
     assert (
         'python3 scripts/vetcoders_install.py install --source "." '
-        "--with-shell --write-shell-rc --compact --non-interactive --mirror"
+        "--compact --non-interactive --mirror"
     ) in text
+    assert "make --no-print-directory install-python-tools" in text
 
 
-def test_install_all_paths_write_shell_rc_for_wired_shell() -> None:
-    """make install-all and the install.toml installation phase must both pass
-    --write-shell-rc, or a cleaned/fresh machine's shell is never wired to the
-    staged runtime (vc-* missing in a new terminal)."""
+def test_install_all_paths_do_not_install_shell_helpers_by_default() -> None:
+    """New runtime contract: install-all installs tools and views, but does not
+    wire legacy shell helpers or mutate shell rc files by default."""
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     manifest = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
 
     install_all_block = makefile.split("install-all:", 1)[1].split("\nskills:", 1)[0]
-    assert "--with-shell --write-shell-rc" in install_all_block
-    assert "--with-shell --write-shell-rc" in manifest
+    assert "--with-shell" not in install_all_block
+    assert "--write-shell-rc" not in install_all_block
+
+    installation_phase = manifest.split('key = "installation"', 1)[1].split(
+        "\n\n[[phase]]", 1
+    )[0]
+    assert "--with-shell" not in installation_phase
+    assert "--write-shell-rc" not in installation_phase
+
+
+def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
+    """install-all owns Python console scripts through uv tool install.
+
+    The MCP server is installed as its own tool, with local vibecrafted-core
+    injected as the dependency source, so ~/.local/bin/vibecrafted-mcp comes
+    from the package entrypoint instead of a shell helper wrapper.
+    """
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    manifest = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
+
+    assert "install-python-tools:" in makefile
+
+    install_all_block = makefile.split("install-all:", 1)[1].split("\nskills:", 1)[0]
+    python_tools_block = makefile.split("install-python-tools:", 1)[1].split(
+        "\n# install-all owns", 1
+    )[0]
+
+    assert "$(MAKE) --no-print-directory install-python-tools" in install_all_block
+    assert (
+        'uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-core"'
+    ) in python_tools_block
+    assert (
+        "uv tool install --force --reinstall --editable "
+        '"$(SOURCE)/vibecrafted-mcp" --with-editable '
+        '"$(SOURCE)/vibecrafted-core"'
+    ) in python_tools_block
+    assert "vibecrafted-mcp" in (
+        REPO_ROOT / "vibecrafted-mcp" / "pyproject.toml"
+    ).read_text(encoding="utf-8")
+
+    assert "make --no-print-directory install-python-tools" in manifest
 
 
 def test_install_all_covers_app_binaries_as_real_files() -> None:

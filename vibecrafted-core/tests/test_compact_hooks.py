@@ -38,6 +38,73 @@ def test_precompact_extracts_conversation_and_user_only(
     assert '"event":"precompact"' in journal.read_text(encoding="utf-8")
 
 
+def test_precompact_resolves_codex_session_from_sessions_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    other = tmp_path / "other"
+    fake_bin = tmp_path / "bin"
+    capture = tmp_path / "aicx-args.txt"
+    sessions = home / ".codex" / "sessions" / "2026" / "06" / "13"
+    home.mkdir()
+    project.mkdir()
+    other.mkdir()
+    fake_bin.mkdir()
+    sessions.mkdir(parents=True)
+    session_file = sessions / "rollout-2026-06-13T19-09-57-019ec264.jsonl"
+    session_file.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-06-13T19:09:57.871Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "019ec264-0b50-7bb2-9336-0aae5c841209",
+                    "cwd": str(project),
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    other_session = sessions / "rollout-2026-06-13T19-10-57-other.jsonl"
+    other_session.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-06-13T19:10:57.871Z",
+                "type": "session_meta",
+                "payload": {
+                    "id": "other-session-id",
+                    "cwd": str(other),
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    aicx = fake_bin / "aicx"
+    aicx.write_text(
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$AICX_CAPTURE"\n',
+        encoding="utf-8",
+    )
+    aicx.chmod(0o755)
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", f"{fake_bin}:/usr/bin:/bin")
+    monkeypatch.setenv("AICX_CAPTURE", str(capture))
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_COMPACT_AGENT", "codex")
+    monkeypatch.chdir(project)
+
+    assert compact_hooks.precompact("{}") == 0
+
+    assert capture.read_text(encoding="utf-8").splitlines() == [
+        "extract --agent codex --session 019ec264-0b50-7bb2-9336-0aae5c841209 --conversation",
+        "extract --agent codex --session 019ec264-0b50-7bb2-9336-0aae5c841209 --conversation --user-only",
+    ]
+
+
 def test_postcompact_emits_manifest_and_chunks_extract(
     tmp_path: Path,
     monkeypatch,
@@ -65,6 +132,46 @@ def test_postcompact_emits_manifest_and_chunks_extract(
     assert "verified outcome" in context
     assert (recall_dir / "claude" / "sess-2" / "chunk-000").is_file()
     assert (recall_dir / "claude" / "sess-2" / "chunk-001").is_file()
+
+
+def test_postcompact_emits_only_delta_after_first_recall(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    extract_dir = home / ".aicx" / "extracts" / "codex"
+    recall_dir = tmp_path / "recall"
+    state = tmp_path / "compact-state.json"
+    extract_dir.mkdir(parents=True)
+    extract = extract_dir / "sess-delta_conversation.md"
+    extract.write_text("first claim\nsecond claim\n", encoding="utf-8")
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RECALL_DIR", str(recall_dir))
+    monkeypatch.setenv("VIBECRAFTED_COMPACT_STATE", str(state))
+    monkeypatch.setenv("VIBECRAFTED_COMPACT_AGENT", "codex")
+    monkeypatch.setenv("AICX_RECALL_CHUNK_LINES", "20")
+
+    assert compact_hooks.postcompact('{"session_id":"sess-delta","cwd":"/repo"}') == 0
+    first = json.loads(capsys.readouterr().out)["hookSpecificOutput"][
+        "additionalContext"
+    ]
+    assert "first claim" in first
+    assert "second claim" in first
+
+    extract.write_text(
+        "first claim\nsecond claim\nthird claim\n",
+        encoding="utf-8",
+    )
+
+    assert compact_hooks.postcompact('{"session_id":"sess-delta","cwd":"/repo"}') == 0
+    second = json.loads(capsys.readouterr().out)["hookSpecificOutput"][
+        "additionalContext"
+    ]
+    assert "third claim" in second
+    assert "first claim" not in second
+    assert "raw lines 2..3" in second
 
 
 def test_postcompact_missing_extract_is_loud(

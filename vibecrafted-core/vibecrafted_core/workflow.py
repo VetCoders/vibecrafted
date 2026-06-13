@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -19,13 +21,36 @@ from .control_plane import (
     normalize_run_root,
     operator_session_name,
     record_stop_transition,
+    run_snapshot_dir,
     sync_state,
 )
 from .events import append_event
 from .spawn import _stdin_command
 
 
-SUPPORTED_WORKFLOWS = {"workflow", "implement", "research", "review", "marbles"}
+SUPPORTED_WORKFLOWS = {
+    "audit",
+    "decorate",
+    "delegate",
+    "dou",
+    "followup",
+    "hydrate",
+    "implement",
+    "intents",
+    "marbles",
+    "ownership",
+    "partner",
+    "polarize",
+    "prune",
+    "release",
+    "research",
+    "review",
+    "scaffold",
+    "workflow",
+}
+WORKFLOW_ALIASES = {
+    "justdo": "implement",
+}
 SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "swarm"}
 SUPPORTED_RUNTIMES = {"headless", "terminal", "visible"}
 TERMINAL_STATES = {
@@ -132,6 +157,66 @@ def _dispatcher_command(
     )
     command.extend(worker_command)
     return command
+
+
+def _write_command_script(path: Path, command: list[str]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"#!/usr/bin/env bash\nset -euo pipefail\nexec {shlex.join(command)}\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+    return path
+
+
+def _launch_transport_command(
+    *,
+    spec: WorkflowLaunchSpec,
+    run_id: str,
+    operator_session: str,
+    dispatch_command: list[str],
+    launch_dir: Path,
+) -> tuple[list[str], str, Path | None]:
+    if spec.runtime not in {"terminal", "visible"}:
+        return dispatch_command, "headless", None
+
+    vc_frame = shutil.which("vc-frame")
+    if not vc_frame:
+        return dispatch_command, "headless", None
+
+    command_script = _write_command_script(
+        launch_dir / f"{run_id}-dispatcher.sh",
+        dispatch_command,
+    )
+    return (
+        [
+            vc_frame,
+            "--session",
+            operator_session,
+            "action",
+            "new-tab",
+            "--name",
+            run_id,
+            "--cwd",
+            spec.root,
+            "--",
+            str(command_script),
+        ],
+        "vc-frame",
+        command_script,
+    )
+
+
+def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) -> str:
+    for key in (
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ_SESSION_NAME",
+    ):
+        session_name = str(env.get(key) or "").strip()
+        if session_name:
+            return session_name
+    return operator_session_name(root, run_id)
 
 
 def _run_is_terminal(run: dict[str, Any]) -> bool:
@@ -351,7 +436,8 @@ def _coerce_positive_int(value: Any, default: int | None = None) -> int | None:
 def normalize_launch_spec(
     payload: dict[str, Any], source_dir: str | Path
 ) -> WorkflowLaunchSpec:
-    skill = str(payload.get("skill") or "workflow").strip()
+    requested_skill = str(payload.get("skill") or "workflow").strip()
+    skill = WORKFLOW_ALIASES.get(requested_skill, requested_skill)
     if skill not in SUPPORTED_WORKFLOWS:
         raise ValueError(f"Unsupported workflow: {skill}")
 
@@ -491,7 +577,7 @@ def launch_workflow(
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
     safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
     worker_command = build_launch_command(spec, source_dir, prompt_file=prompt_path)
-    command = _dispatcher_command(
+    dispatch_command = _dispatcher_command(
         run_id=run_id,
         root=spec.root,
         meta_path=artifacts["meta"],
@@ -518,7 +604,18 @@ def launch_workflow(
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
-    operator_session = operator_session_name(spec.root, run_id)
+    operator_session = _effective_operator_session(
+        root=spec.root,
+        run_id=run_id,
+        env=merged_env,
+    )
+    command, transport, command_script = _launch_transport_command(
+        spec=spec,
+        run_id=run_id,
+        operator_session=operator_session,
+        dispatch_command=dispatch_command,
+        launch_dir=launch_dir,
+    )
     merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
 
     append_event(
@@ -543,6 +640,10 @@ def launch_workflow(
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
             "worker_command": worker_command,
+            "dispatch_command": dispatch_command,
+            "command": command,
+            "transport": transport,
+            "command_script": str(command_script or ""),
             "retry_of": retry_of,
         },
     )
@@ -554,7 +655,10 @@ def launch_workflow(
                     "run_id": run_id,
                     "spec": safe_spec,
                     "worker_command": worker_command,
-                    "dispatch_command": command,
+                    "dispatch_command": dispatch_command,
+                    "command": command,
+                    "transport": transport,
+                    "command_script": str(command_script or ""),
                     "retry_of": retry_of,
                     "session_id": session_id,
                     "operator_session": operator_session,
@@ -588,6 +692,9 @@ def launch_workflow(
                 "message": f"Failed to launch {spec.skill}: {exc}",
                 "command": command,
                 "worker_command": worker_command,
+                "dispatch_command": dispatch_command,
+                "transport": transport,
+                "command_script": str(command_script or ""),
                 "launch_log": str(launch_log),
                 "spec": safe_spec,
                 "error": f"{type(exc).__name__}: {exc}",
@@ -618,6 +725,10 @@ def launch_workflow(
                 "transcript": str(artifacts["transcript"]),
                 "meta": str(artifacts["meta"]),
                 "worker_command": worker_command,
+                "dispatch_command": dispatch_command,
+                "command": command,
+                "transport": transport,
+                "command_script": str(command_script or ""),
                 "retry_of": retry_of,
             },
         )
@@ -630,9 +741,18 @@ def launch_workflow(
         "accepted": True,
         "message": f"Launched {spec.skill} via Vibecrafted core runtime.",
         "command": command,
+        "dispatch_command": dispatch_command,
         "worker_command": worker_command,
+        "transport": transport,
+        "command_script": str(command_script or ""),
         "pid": proc.pid,
         "run_id": run_id,
+        "agent": spec.agent,
+        "skill": spec.skill,
+        "root": spec.root,
+        "dispatch": 0,
+        "status": "launching",
+        "control": str(run_snapshot_dir() / f"{run_id}.json"),
         "report": str(artifacts["report"]),
         "transcript": str(artifacts["transcript"]),
         "meta": str(artifacts["meta"]),

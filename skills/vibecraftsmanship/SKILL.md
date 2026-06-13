@@ -1,16 +1,6 @@
 ---
 name: vibecraftsmanship
-description: >-
-  Meta-doctrine charter for structured human-AI partnership engineering. Use
-  when a session needs to declare or recalibrate posture before picking a
-  tactical charter (vc-ownership / vc-operator / vc-partner), when framing
-  drifts mid-flight and trajectory needs correction, when conventional
-  estimates feel wrong and time-rescale awareness is needed, or whenever the
-  question is "how should human taste, agent power, and reality survival
-  compose on this work?" — not "which tool do I run?". Trigger phrases:
-  "vibecraftsmanship", "manifest", "trinity", "ludzki gust agentyczna siła
-  rzeczywistość", "postawa", "ustaw się", "framing reset", "doctrine call",
-  "session-start doctrine", "what posture", "jak ja mam to ustawić".
+description: "Meta-doctrine for human taste, agent force, Loctree/AICX structure, and reality-tested shipping posture."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

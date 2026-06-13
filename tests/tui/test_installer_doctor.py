@@ -450,7 +450,7 @@ def test_product_tool_discovery_records_path_without_rehoming(
 
     _write_executable(cargo_bin / "loct", "#!/usr/bin/env bash\nprintf 'loct-dev\\n'\n")
     _write_executable(
-        cargo_bin / "zellij", "#!/usr/bin/env bash\nprintf 'zellij-dev\\n'\n"
+        cargo_bin / "vc-frame", "#!/usr/bin/env bash\nprintf 'vc-frame-dev\\n'\n"
     )
 
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
@@ -468,10 +468,12 @@ def test_product_tool_discovery_records_path_without_rehoming(
             ),
             installer.Foundation(
                 name="zellij",
-                description="Visible terminal workspace surface",
-                channels=["brew", "cargo", "github"],
-                packages={"cargo": "zellij"},
-                verify_cmd="zellij --version",
+                description="VC Frame multi-agent terminal workspace surface",
+                channels=["canonical"],
+                packages={
+                    "canonical": "curl -fsSL https://vibecrafted.io/install.sh | bash",
+                },
+                verify_cmd="vc-frame --version",
             ),
         ],
     )
@@ -480,16 +482,16 @@ def test_product_tool_discovery_records_path_without_rehoming(
 
     assert product_tools["loct"]["path"] == str(cargo_bin / "loct")
     assert product_tools["loct"]["managed_by"] == "external-path"
-    assert product_tools["zellij"]["path"] == str(cargo_bin / "zellij")
+    assert product_tools["zellij"]["path"] == str(cargo_bin / "vc-frame")
     assert not (launcher_bin / "loct").exists()
-    assert not (launcher_bin / "zellij").exists()
+    assert not (launcher_bin / "vc-frame").exists()
 
     state = installer.InstallState(product_tools=product_tools)
     state.save(store_path)
     loaded = installer.InstallState.load(store_path)
 
     assert loaded.product_tools["loct"]["path"] == str(cargo_bin / "loct")
-    assert loaded.product_tools["zellij"]["path"] == str(cargo_bin / "zellij")
+    assert loaded.product_tools["zellij"]["path"] == str(cargo_bin / "vc-frame")
 
 
 def test_product_tool_discovery_prefers_vc_frame_for_zellij_key(
@@ -515,10 +517,12 @@ def test_product_tool_discovery_prefers_vc_frame_for_zellij_key(
         [
             installer.Foundation(
                 name="zellij",
-                description="Visible terminal workspace surface",
-                channels=["brew", "cargo", "github"],
-                packages={"cargo": "zellij"},
-                verify_cmd="zellij --version",
+                description="VC Frame multi-agent terminal workspace surface",
+                channels=["canonical"],
+                packages={
+                    "canonical": "curl -fsSL https://vibecrafted.io/install.sh | bash",
+                },
+                verify_cmd="vc-frame --version",
             ),
         ],
     )
@@ -712,6 +716,34 @@ def test_install_python_entrypoint_launchers_replace_managed_shell_wrappers(
     assert (launcher_bin / "vibecrafted-resume").resolve(strict=False) == (
         console_bin / "vibecrafted-resume"
     )
+
+
+def test_doctor_executes_vibecrafted_launcher_without_bash() -> None:
+    installer_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    )
+
+    launcher_smoke = installer_text.split(
+        'launcher = wrapper_locations.get("vibecrafted")', 1
+    )[1].split("# 6b. Dashboard smoke", 1)[0]
+
+    assert '["bash", str(launcher)' not in launcher_smoke
+    assert '["bash", str(wrapper)' not in launcher_smoke
+    assert '[str(launcher), "--help"]' in launcher_smoke
+    assert "[str(wrapper)]" in launcher_smoke
+
+
+def test_doctor_executes_dashboard_wrapper_without_bash() -> None:
+    installer_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    )
+
+    dashboard_smoke = installer_text.split("# 6b. Dashboard smoke", 1)[1].split(
+        "# 6c. Zellij", 1
+    )[0]
+
+    assert '["bash", str(dashboard_wrapper)' not in dashboard_smoke
+    assert '[str(dashboard_wrapper), "--help"]' in dashboard_smoke
 
 
 def test_cleanse_state_home_agency_moves_only_executable_payloads(

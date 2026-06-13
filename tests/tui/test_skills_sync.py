@@ -53,10 +53,16 @@ def test_skills_sync_with_shell_targets_canonical_helper_and_both_shells(
     log = log_file.read_text(encoding="utf-8")
 
     assert "Syncing optional shell helper layer to fakehost" in stdout
+    assert "$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills" in stdout
+    assert "$HOME/.vibecrafted/skills" not in stdout
+    assert "_template" not in stdout
     assert "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" in stdout
     assert "ssh fakehost ln -sfn" in stdout
     assert "Skipping remote $HOME/.bashrc update" not in stdout
     assert "Skipping remote $HOME/.zshrc update" not in stdout
+    assert "$HOME/.local/share/vibecrafted/tools/vibecrafted-local/skills" in log
+    assert "$HOME/.vibecrafted/skills" not in log
+    assert "_template" not in log
     assert "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" in log
     assert ".bashrc" in log
     assert ".zshrc" in log

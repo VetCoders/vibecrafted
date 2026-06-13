@@ -1,19 +1,7 @@
 ---
 name: vc-prune
 version: 3.3.3
-description: >
-  Repository curation, not clear-cutting. Map what truly participates in runtime 
-  truth versus what is silently parked — then decide revive, archive, or delete. 
-  Includes the silencer strip: rip every `#[allow(...)]`, `// nosemgrep`, 
-  `eslint-disable`, `@ts-ignore`, `# noqa`, `# type: ignore`, panic-vs-skip pattern, 
-  and any other annotation that mutes a quality gate. Run the gates. Listen.
-  Triage with care — `#[allow(dead_code)]` (and equivalents) is often the most 
-  valuable smell in a repo: parked work the team forgot about. Surface those as 
-  forgotten gems for the operator to decide.
-  This skill is a gem hunter, not a clear-cutter.
-  Trigger phrases: "prune", "strip dead code", "wyczyść mądrze", "strip the silencers",
-  "zdejmij wszystkie ignore", "zobacz co realne", "forgotten gems",
-  "co tam zapomnieliśmy".
+description: "Curate runtime truth: revive, archive, or delete dead weight and expose silenced quality smells."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

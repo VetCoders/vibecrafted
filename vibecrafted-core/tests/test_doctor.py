@@ -26,6 +26,13 @@ def test_installer_module_loads_source_file_without_mutating_sys_path(
     assert sys.path == before
 
 
+def test_repo_root_from_source_detects_live_checkout() -> None:
+    repo_root = doctor._repo_root_from_source()
+
+    assert repo_root is not None
+    assert (repo_root / "scripts" / "vetcoders_install.py").is_file()
+
+
 def test_doctor_summary_counts_findings() -> None:
     payload = doctor.doctor_summary(
         [

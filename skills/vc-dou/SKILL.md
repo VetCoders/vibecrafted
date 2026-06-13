@@ -1,16 +1,7 @@
 ---
 name: vc-dou
 version: 2.1.0
-description: >
-  Definition of Undone audit skill. Runs a systematic gap analysis across the
-  ENTIRE product surface — not just code. Crawls public URLs, audits repo
-  governance, verifies install paths, checks SEO/discoverability, audits
-  representation surfaces for non-web products, and measures the gap between
-  internal capability and external visibility.
-  Trigger phrases: "definition of undone", "dou audit", "co jest niedokończone",
-  "what's undone", "product surface audit", "completion audit", "plague check",
-  "hydration check", "are we shippable", "czy jesteśmy gotowi", "gap analysis",
-  "co brakuje do launchu", "readiness audit", "packaging gap".
+description: "Definition of Undone audit across product, install, docs, discoverability, and release readiness."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

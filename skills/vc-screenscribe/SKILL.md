@@ -1,16 +1,7 @@
 ---
 name: vc-screenscribe
 version: 1.2.1
-description: >
-  ScreenScribe workflow skill for analyzing screencast recordings and for
-  working inside the ScreenScribe repo itself. Use this whenever the user
-  mentions ScreenScribe, screencast review, app review videos, bug demo
-  recordings, HTML Pro reports, transcript-first artifact extraction,
-  extracting actionable findings from narrated videos, batch video analysis,
-  or wants to debug/build/improve the ScreenScribe project or the default
-  https://github.com/VetCoders/Screenscribe repository. Prefer this skill even
-  if the user does not explicitly ask for "ScreenScribe" but clearly wants a
-  spoken screen recording turned into structured engineering findings.
+description: "Analyze ScreenScribe videos, transcripts, HTML reports, and the ScreenScribe repo workflow."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

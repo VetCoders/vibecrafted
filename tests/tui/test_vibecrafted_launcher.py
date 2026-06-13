@@ -30,6 +30,22 @@ def _write_fake_agent(bin_dir: Path, name: str, capture_file: Path) -> None:
     script.chmod(0o755)
 
 
+def _write_fake_python(bin_dir: Path, capture_file: Path) -> None:
+    script = bin_dir / "python3"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
 def _write_trimmed_launcher(script_path: Path) -> None:
     source = LAUNCHER.read_text(encoding="utf-8").splitlines()
     script_path.write_text("\n".join(source[:-1]) + "\n", encoding="utf-8")
@@ -1137,6 +1153,35 @@ def test_status_empty_state_is_explicit_when_artifact_dirs_exist(
     assert "No activity yet — run `vibecrafted init <agent>` to start." in result.stdout
 
 
+def test_stats_skills_reports_context_inventory(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    skill_dir = home / ".codex" / "skills" / "vc-demo"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        '---\nname: vc-demo\ndescription: "Short demo skill."\n---\n',
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "stats", "skills"],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Vibecrafted Skill Context Stats" in result.stdout
+    assert "Codex announced skills metadata budget: 2%" in result.stdout
+    assert "skill files:        1" in result.stdout
+    assert "unique names:       1" in result.stdout
+    assert "duplicate groups:   0" in result.stdout
+    assert "vc-demo" in result.stdout
+
+
 def test_implement_help_is_the_canonical_autonomous_delivery_surface() -> None:
     result = subprocess.run(
         [str(LAUNCHER), "implement", "--help"],
@@ -1179,6 +1224,35 @@ def test_justdo_help_points_back_to_implement() -> None:
         "Alias: vibecrafted justdo <claude|codex|gemini|agy|junie|grok> [flags]"
         in result.stdout
     )
+
+
+@pytest.mark.parametrize("skill", ["implement", "justdo"])
+def test_autonomous_delivery_skills_route_to_core_async_launcher(
+    tmp_path: Path, skill: str
+) -> None:
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "python-args.txt"
+    fake_bin.mkdir()
+    _write_fake_python(fake_bin, capture_file)
+
+    env = os.environ.copy()
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+
+    subprocess.run(
+        ["bash", str(LAUNCHER), skill, "codex", "--prompt", "Ship the cut"],
+        check=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+    args = capture_file.read_text(encoding="utf-8").splitlines()
+    assert args[:4] == ["-m", "vibecrafted_core.cli", "implement", "codex"]
+    assert "--source-dir" in args
+    assert str(REPO_ROOT) in args
+    assert "--prompt" in args
+    assert "Ship the cut" in args
 
 
 def test_compact_help_teaches_implement_before_alias() -> None:

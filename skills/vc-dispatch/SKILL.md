@@ -1,13 +1,6 @@
 ---
 name: vc-dispatch
-description: >-
-  Executive, non-pipeline skill defining the dyspozytura discipline: running
-  cut-lines through the external Vibecrafted fleet on a Living Tree — layered
-  prompt assembly via reverse checklist, artifact-based await, 3-signal pulse
-  monitoring, autonomous stall-recovery, single-writer ledger, refire as
-  mini-marbles. Consumed by vc-operator, vc-ship, vc-workflow at any pipeline
-  point. Triggers: "dispatch", "dyspozytura", "prowadź linię", "wyślij
-  workera", "czuwaj nad linią", "fleet the cuts".
+description: "Operate external Vibecrafted fleet lines with prompt assembly, await/observe, reports, and recovery."
 ---
 
 <!-- fleet-imperative: v2 -->

@@ -1,19 +1,7 @@
 ---
 name: vc-marbles
 version: 7.0.0
-description: >
-  WRITE step that floods every crack with deliberate over-correction.
-  Single workers see one round, one truth-forcing cut, one commit;
-  the skill at swarm level produces an intentional excess of fixes —
-  marbles in every hole — which `vc-polarize` then strips back to one
-  axis. Use when implementation already exists but the codebase still
-  lies: overgenerated surfaces, drift between runtime paths, false
-  certainty from one-shot agent output, or a product that "works"
-  while remaining fragile. Each worker invocation is isolated and
-  blind to prior marble history. Trigger phrases: "marbles", "kulki",
-  "stabilize", "stabilizacja", "loop until done", "reduce chaos",
-  "fortify the foundation", "adultification", "rzuć kulki",
-  "wypełnij pęknięcia".
+description: "Convergence loop that deliberately over-fixes fragile implementation until gates and runtime truth settle."
 default: vc-marbles
 aliases:
   - vc-fortify

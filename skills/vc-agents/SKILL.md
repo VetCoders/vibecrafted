@@ -1,11 +1,7 @@
 ---
 name: vc-agents
 version: 3.1.0
-description: >
-  Spawn external specialized AI agents from the user's fleet (Codex, Claude, Gemini).
-  Use this when you need parallel execution, deep isolation, or task-specific cognitive 
-  strengths that surpass generic in-thread delegation.
-  Trigger: "vc-agents", "/vc-agents", "delegate to agents", "spawn".
+description: "Dispatch external AI agents for isolated or parallel work; triggers: vc-agents, delegate, spawn."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

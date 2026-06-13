@@ -402,7 +402,9 @@ sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bi
 grep -q "Syncing skills from" <<<"$sync_output" || die "Sync dry-run failed to start"
 grep -q "rsync .* --dry-run" <<<"$sync_output" || die "Sync dry-run didn't pass dry-run to rsync"
 # shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
-grep -q '\$HOME/.vibecrafted/skills\|\$HOME/.agents/skills' <<<"$sync_output" || die "Sync dry-run didn't target the shared canonical skill store"
+grep -q '\$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills' <<<"$sync_output" || die "Sync dry-run didn't target the staged canonical skill store"
+# shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
+! grep -q '\$HOME/.vibecrafted/skills' <<<"$sync_output" || die "Sync dry-run still targets the legacy state-home skill store"
 
 log "docs truth checks"
 # shellcheck disable=SC2016 # backticks are literal content we're matching, not command substitution

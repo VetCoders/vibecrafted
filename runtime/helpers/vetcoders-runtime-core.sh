@@ -437,9 +437,17 @@ _vetcoders_skill_prefix() {
 
 _vetcoders_generate_run_id() {
   local prefix="$1"
-  # PID suffix defuses same-second collisions when parallel spawns race.
+  local entropy=""
+  entropy="$(python3 - <<'PY' 2>/dev/null || true
+import time
+print(f"{time.time_ns() % 100000:05d}")
+PY
+)"
+  [[ -n "$entropy" ]] || entropy="$(printf '%05d' "${RANDOM:-0}")"
+  # PID+entropy defuses same-second collisions from both parallel processes and
+  # repeated launches inside the same shell.
   # Format stays "prefix-HHMMSS-..." so existing regex matchers keep working.
-  printf '%s-%s-%s\n' "$prefix" "$(date +%H%M%S)" "$$"
+  printf '%s-%s-%s%s\n' "$prefix" "$(date +%H%M%S)" "$$" "$entropy"
 }
 
 _vetcoders_spawn_timestamp() {

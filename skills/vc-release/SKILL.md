@@ -1,14 +1,7 @@
 ---
 name: vc-release
 version: 0.2.1
-description: >
-  Final outward ship skill. Turns "done in the repo" into "safe, visible, deployable,
-  discoverable, and launchable in the world." Covers release mechanics, deployment
-  topology, reverse-proxy defaults, Semgrep-gated security hygiene, domain and DNS
-  wiring, SEO/indexability, verification challenges, onboarding truth, and post-release
-  smoke checks. Trigger phrases: "release", "ship to market", "publish",
-  "deploy to production", "vc-release", "go live", "launch", "wypuść wersję",
-  "deploy", "release prep", "launch path", "launch checklist", "production checklist".
+description: "Final outward ship pass for deployment, security hygiene, discoverability, onboarding, and smoke checks."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

@@ -1,19 +1,7 @@
 ---
 name: vc-followup
 version: 2.2.0
-description: >
-  AUDIT-FIRST post-implementation trajectory check. Evaluates whether
-  the work is heading in the right direction, what gaps remain, what
-  drift was introduced, and what the next highest-leverage move should
-  be. May inspect code, runtime behavior, UX, docs, or packaging
-  without requiring a single artifact like a PR or commit range as its
-  frame. Sibling to `vc-review` (per-implementation diff perception)
-  and `vc-audit` (per-plan spec falsification) in the AUDIT-FIRST
-  perception layer of the pipeline. Trigger phrases: "follow-up check",
-  "followup audit", "czy sa jeszcze luki", "readiness before hands-on",
-  "audit this implementation", "po implementacji", "gaps after agents",
-  "co zostało do zrobienia", "post-implementation review",
-  "czy to idzie dobrze", "czy ten kierunek ma sens", "what still feels off".
+description: "Audit-first post-implementation trajectory check; finds drift, gaps, and the next leverage point."
 compatibility:
   tools: []
 loctree_value: "primary repo map for structural/literal repository work"

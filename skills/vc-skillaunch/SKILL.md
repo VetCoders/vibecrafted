@@ -1,13 +1,6 @@
 ---
 name: vc-skillaunch
-description: >
-  Distills a completed user workflow, session interaction or pattern
-  into a reusable agent skill. Use when the user asks to turn their workflow,
-  interaction, or multi-step process into a skill, or when they say "make
-  this a skill", "create a skill from what we just did", "package this
-  workflow" or similar.
-  Do not use for creating skills from scratch without an existing workflow
-  (use a generic skill-creator for that).
+description: "Turn a completed workflow or session pattern into a reusable agent skill."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

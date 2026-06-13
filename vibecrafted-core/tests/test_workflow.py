@@ -30,6 +30,16 @@ def test_normalize_launch_spec_requires_prompt_or_file(tmp_path: Path) -> None:
         workflow.normalize_launch_spec({"skill": "workflow"}, tmp_path)
 
 
+def test_normalize_launch_spec_maps_justdo_to_implement(tmp_path: Path) -> None:
+    spec = workflow.normalize_launch_spec(
+        {"skill": "justdo", "agent": "codex", "prompt": "ship"},
+        tmp_path,
+    )
+
+    assert spec.skill == "implement"
+    assert spec.agent == "codex"
+
+
 def test_launch_workflow_returns_pid_and_logs_spawn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -84,6 +94,76 @@ def test_launch_workflow_keeps_dispatcher_launch_even_if_worker_command_is_bad(
     assert payload["accepted"] is True
     assert payload["run_id"]
     assert payload["worker_command"] == ["definitely-missing-vibecrafted-binary"]
+
+
+def test_terminal_runtime_launches_worker_in_vc_frame_tab(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VC_FRAME_SESSION_NAME", "operator-live")
+    source = _source_dir(tmp_path)
+    vc_frame = tmp_path / "bin" / "vc-frame"
+    vc_frame.parent.mkdir()
+    vc_frame.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    spec = workflow.WorkflowLaunchSpec(
+        agent="codex",
+        mode="implement",
+        skill="implement",
+        prompt="go",
+        file="",
+        runtime="terminal",
+        root=str(tmp_path),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: ["codex", "exec"],
+    )
+    monkeypatch.setattr(
+        workflow.shutil,
+        "which",
+        lambda name: str(vc_frame) if name == "vc-frame" else None,
+    )
+
+    captured: dict[str, Any] = {}
+
+    class FakeProc:
+        pid = 4242
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProc:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is True
+    assert payload["pid"] == 4242
+    assert payload["transport"] == "vc-frame"
+    assert captured["command"][:5] == [
+        str(vc_frame),
+        "--session",
+        "operator-live",
+        "action",
+        "new-tab",
+    ]
+    assert payload["operator_session"] == "operator-live"
+    assert "--name" in captured["command"]
+    assert (
+        captured["command"][captured["command"].index("--name") + 1]
+        == payload["run_id"]
+    )
+    assert "--cwd" in captured["command"]
+    assert captured["command"][captured["command"].index("--cwd") + 1] == str(tmp_path)
+    script = Path(captured["command"][-1])
+    assert script.is_file()
+    assert "vibecrafted_core.dispatcher" in script.read_text(encoding="utf-8")
+    assert payload["command"] == captured["command"]
+    assert payload["dispatch_command"] != payload["command"]
+    assert payload["control"].endswith(f"{payload['run_id']}.json")
 
 
 def test_runtime_prompt_keeps_metadata_runtime_owned(tmp_path: Path) -> None:

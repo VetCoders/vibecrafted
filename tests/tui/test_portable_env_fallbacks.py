@@ -58,7 +58,14 @@ def test_install_foundations_default_treats_agent_cli_bootstrap_as_best_effort(
     prefix = tmp_path / "prefix"
     home.mkdir()
 
-    for command in ("loct", "loctree", "loctree-mcp", "aicx-mcp", "zellij", "node"):
+    for command in (
+        "loct",
+        "loctree",
+        "loctree-mcp",
+        "aicx-mcp",
+        "vc-frame",
+        "node",
+    ):
         _write_fake_command(fake_bin, command)
     _write_fake_command(
         fake_bin,

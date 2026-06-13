@@ -8,7 +8,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from .runtime_paths import vibecrafted_home
 
@@ -29,6 +29,183 @@ def hook_agent() -> str:
     return os.environ.get("VIBECRAFTED_COMPACT_AGENT") or os.environ.get(
         "VIBECRAFTED_AGENT", "claude"
     )
+
+
+def codex_sessions_dir() -> Path:
+    codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+    return Path(
+        os.environ.get("CODEX_SESSIONS_DIR", str(codex_home / "sessions"))
+    ).expanduser()
+
+
+def normalize_path(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        return str(Path(value).expanduser().resolve())
+    except OSError:
+        return str(Path(value).expanduser())
+
+
+def hook_project_dir(payload: dict[str, object]) -> str:
+    raw = str(
+        payload.get("cwd")
+        or payload.get("project_dir")
+        or payload.get("repository")
+        or os.environ.get("CODEX_PROJECT_DIR")
+        or os.environ.get("CLAUDE_PROJECT_DIR")
+        or os.getcwd()
+    )
+    return normalize_path(raw)
+
+
+def session_meta_from_jsonl(path: Path) -> dict[str, str]:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if (
+                    '"type":"session_meta"' not in line
+                    and '"type": "session_meta"' not in line
+                ):
+                    continue
+                event = json.loads(line)
+                payload = event.get("payload") if isinstance(event, dict) else None
+                if not isinstance(payload, dict):
+                    continue
+                return {
+                    "id": str(payload.get("id") or "").strip(),
+                    "cwd": normalize_path(str(payload.get("cwd") or "")),
+                }
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {}
+
+
+def session_id_from_jsonl(path: Path) -> str:
+    return session_meta_from_jsonl(path).get("id", "")
+
+
+def latest_codex_session_path(project_dir: str = "") -> Path | None:
+    root = codex_sessions_dir()
+    if not root.is_dir():
+        return None
+    candidates = [path for path in root.glob("**/*.jsonl") if path.is_file()]
+    if project_dir:
+        scoped: list[Path] = []
+        for path in candidates:
+            meta = session_meta_from_jsonl(path)
+            if meta.get("cwd") == project_dir:
+                scoped.append(path)
+        if scoped:
+            candidates = scoped
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def codex_session_path_for(session_id: str) -> Path | None:
+    if not session_id:
+        return None
+    root = codex_sessions_dir()
+    if not root.is_dir():
+        return None
+    for path in root.glob(f"**/*{session_id}*.jsonl"):
+        if path.is_file():
+            return path
+    for path in root.glob("**/*.jsonl"):
+        if path.is_file() and session_id_from_jsonl(path) == session_id:
+            return path
+    return None
+
+
+def resolve_session_id(payload: dict[str, object], agent: str) -> str:
+    explicit = str(
+        payload.get("session_id") or payload.get("conversation_id") or ""
+    ).strip()
+    if agent != "codex":
+        return explicit
+
+    transcript = str(
+        payload.get("transcript_path")
+        or payload.get("transcript")
+        or payload.get("session_path")
+        or ""
+    ).strip()
+    if transcript:
+        transcript_path = Path(transcript).expanduser()
+        if transcript_path.is_file():
+            parsed = session_id_from_jsonl(transcript_path)
+            if parsed:
+                return parsed
+
+    if explicit:
+        session_path = codex_session_path_for(explicit)
+        if session_path:
+            parsed = session_id_from_jsonl(session_path)
+            return parsed or explicit
+        return explicit
+
+    latest = latest_codex_session_path(hook_project_dir(payload))
+    if latest:
+        return session_id_from_jsonl(latest)
+    return ""
+
+
+def compact_state_path() -> Path:
+    return Path(
+        os.environ.get(
+            "VIBECRAFTED_COMPACT_STATE",
+            str(vibecrafted_home() / "runtime" / "compact-hook-state.json"),
+        )
+    ).expanduser()
+
+
+def load_compact_state() -> dict[str, Any]:
+    path = compact_state_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_compact_state(state: dict[str, Any]) -> None:
+    path = compact_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError:
+        return
+
+
+def delta_lines(
+    agent: str,
+    session_id: str,
+    extract: Path,
+    raw_lines: list[str],
+    project_dir: str,
+) -> tuple[list[str], int, int]:
+    state = load_compact_state()
+    sessions = state.setdefault("sessions", {})
+    key = f"{agent}:{session_id}"
+    previous = sessions.get(key, {}) if isinstance(sessions, dict) else {}
+    previous_count = (
+        int(previous.get("raw_line_count", 0) or 0) if isinstance(previous, dict) else 0
+    )
+    if previous_count < 0 or previous_count > len(raw_lines):
+        previous_count = 0
+    delta = raw_lines[previous_count:]
+    if isinstance(sessions, dict):
+        sessions[key] = {
+            "agent": agent,
+            "session_id": session_id,
+            "project_dir": project_dir,
+            "extract": str(extract),
+            "raw_line_count": len(raw_lines),
+            "updated_at": utc_now(),
+        }
+        save_compact_state(state)
+    return delta, previous_count, len(raw_lines)
 
 
 def emit_postcompact_context(text: str) -> str:
@@ -95,10 +272,10 @@ def run_aicx_extract(agent: str, session_id: str, *, user_only: bool = False) ->
 
 def precompact(stdin: str) -> int:
     payload = load_hook_input(stdin)
-    session_id = str(payload.get("session_id") or "")
+    agent = hook_agent()
+    session_id = resolve_session_id(payload, agent)
     if not session_id:
         return 0
-    agent = hook_agent()
     if not shutil.which("aicx"):
         append_journal("precompact", agent, session_id, "skipped", "aicx not found")
         return 0
@@ -175,6 +352,7 @@ def fallback(reason: str, extract_path: Path | None = None) -> str:
                 "- run: aicx intents -p <project> --limit 20 --emit markdown",
                 "- fallback: aicx search --no-semantic -p <project> 'recent intent agent claims verified outcomes unresolved human decisions'",
                 "- run: vibecrafted loop status",
+                "- for active workers: use vibecrafted <agent> await --run-id <id> and vibecrafted <agent> observe --run-id <id>; do not hand-roll sleep/ps/stat probes",
                 "",
                 "Do not treat the lossy compact summary as full temporal truth.",
             ]
@@ -184,11 +362,13 @@ def fallback(reason: str, extract_path: Path | None = None) -> str:
 
 def postcompact(stdin: str) -> int:
     payload = load_hook_input(stdin)
-    session_id = str(payload.get("session_id") or "")
+    agent = hook_agent()
+    session_id = resolve_session_id(payload, agent)
     if not session_id:
         print("{}")
         return 0
-    agent = hook_agent()
+    if shutil.which("aicx"):
+        run_aicx_extract(agent, session_id)
     candidates = extract_candidates(agent, session_id)
     extract = next((candidate for candidate in candidates if candidate.is_file()), None)
     if extract is None:
@@ -207,7 +387,11 @@ def postcompact(stdin: str) -> int:
         print(fallback("extract is empty", extract))
         return 0
 
-    lines = raw_lines
+    project_dir = hook_project_dir(payload)
+    scoped_lines, previous_count, current_count = delta_lines(
+        agent, session_id, extract, raw_lines, project_dir
+    )
+    lines = scoped_lines
     if os.environ.get("AICX_RECALL_STRIP_SKILLS", "1") == "1":
         lines = strip_skill_bodies(lines)
     if os.environ.get("AICX_RECALL_DEDUP", "1") == "1":
@@ -228,7 +412,18 @@ def postcompact(stdin: str) -> int:
                 stale.unlink()
         chunks = [lines[i : i + chunk_size] for i in range(0, len(lines), chunk_size)]
         if not chunks:
-            print(fallback("chunking produced no recall chunks", extract))
+            context = "\n".join(
+                [
+                    f"Session {session_id} was just compacted. AICX has no new delta since the previous compact recall.",
+                    "",
+                    "Context discipline after compaction:",
+                    "- Keep continuity through AICX, not lossy compact memory.",
+                    "- Dispatcher continuity: use vibecrafted <agent> await --run-id <id> and vibecrafted <agent> observe --run-id <id>; never replace them with manual sleep/ps/stat/git probes.",
+                    f"- Full raw extract remains available: {extract}",
+                    f"- Cursor: raw lines {previous_count}..{current_count} for project {project_dir or '<unknown>'}.",
+                ]
+            )
+            print(emit_postcompact_context(clean_context(context)))
             return 0
         for idx, chunk in enumerate(chunks):
             (chunk_dir / f"chunk-{idx:03d}").write_text(
@@ -245,19 +440,21 @@ def postcompact(stdin: str) -> int:
     last_chunk = chunk_dir / f"chunk-{len(chunks) - 1:03d}"
     context = "\n".join(
         [
-            f"Session {session_id} was just compacted. AICX recall is available as bounded chunks.",
+            f"Session {session_id} was just compacted. AICX delta recall is available as bounded chunks.",
             "",
             "Context discipline after compaction:",
             "- LOOP is the foundation: run or inspect vibecrafted loop status before claiming continuity.",
             "- Loctree + AICX are the constant context: refresh with loct context --full --markdown and aicx intents/search when earlier turns matter.",
-            f"- Earlier recall chunks: {chunk_dir}/chunk-000 through {last_chunk} ({len(chunks)} chunks, skill-stripped + deduped, {reduction_pct}% smaller).",
+            "- Dispatcher continuity: use vibecrafted <agent> await --run-id <id> and vibecrafted <agent> observe --run-id <id>; never replace them with manual sleep/ps/stat/git probes.",
+            f"- Delta cursor: raw lines {previous_count}..{current_count} for project {project_dir or '<unknown>'}.",
+            f"- Delta recall chunks: {chunk_dir}/chunk-000 through {last_chunk} ({len(chunks)} chunks, skill-stripped + deduped, {reduction_pct}% smaller).",
             f"- Full raw extract: {extract}",
             "",
-            "Most recent recovered context is already loaded below. Read older chunks only when the next task touches earlier decisions, claims, or unresolved operator choices.",
+            "Only the new recovered delta is loaded below. Remember: when the task seems to be touching earlier decisions, you obligatory must recall previous intents, claims, or unresolved operator choices via `aicx intents`.",
             "",
-            f"== VERBATIM MOST-RECENT CONTEXT ({last_chunk.name}) ==",
+            f"== VERBATIM AICX DELTA ({last_chunk.name}) ==",
             last_chunk.read_text(encoding="utf-8", errors="replace"),
-            "== END MOST-RECENT CONTEXT ==",
+            "== END AICX DELTA ==",
         ]
     )
     print(emit_postcompact_context(clean_context(context)))

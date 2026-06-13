@@ -4,7 +4,7 @@
 # Asserts that the Wave 4 agent-native runtime cut is internally consistent:
 #
 #   1. Every shipped layout in config/zellij/layouts/*.kdl parses via
-#      `vc-frame --layout <name> setup --check` with zellij fallback.
+#      `vc-frame --layout <name> setup --check`.
 #   2. All four mesh themes in themes/vetcoders-mesh.kdl load alongside
 #      config.kdl without parse errors.
 #   3. auto-theme.sh passes `bash -n` and shellcheck (if shellcheck is
@@ -14,7 +14,7 @@
 #      including the mgbook16 → vetcoders-div0 alias from kronika 2026-05-05
 #      and the neutral fallback for unknown hosts.
 #
-# Designed to run inside `make test-zellij`. Tolerant of missing vc-frame/zellij
+# Designed to run inside `make test-zellij`. Tolerant of missing vc-frame
 # (e.g. CI image without the binary) — it warns and skips KDL syntax checks
 # rather than failing.
 #
@@ -35,8 +35,8 @@ red()   { printf '\033[31m%s\033[0m' "$*"; }
 green() { printf '\033[32m%s\033[0m' "$*"; }
 amber() { printf '\033[33m%s\033[0m' "$*"; }
 
-vc_frame_or_zellij_bin() {
-    command -v vc-frame 2>/dev/null || command -v zellij 2>/dev/null || return 1
+vc_frame_bin() {
+    command -v vc-frame 2>/dev/null || return 1
 }
 
 ok() {
@@ -99,8 +99,8 @@ fi
 # ───── 3. KDL layout parse ──────────────────────────────────────────────────
 printf '\n[3] zellij layout parse\n'
 
-if ! zellij_bin="$(vc_frame_or_zellij_bin)"; then
-    skip "vc-frame/zellij not installed — KDL syntax check deferred to CI"
+if ! zellij_bin="$(vc_frame_bin)"; then
+    skip "vc-frame not installed — KDL syntax check deferred to CI"
 else
     layouts=()
     while IFS= read -r l; do
@@ -125,8 +125,8 @@ fi
 # ───── 4. mesh themes parse ─────────────────────────────────────────────────
 printf '\n[4] mesh themes parse\n'
 
-if ! zellij_bin="$(vc_frame_or_zellij_bin)"; then
-    skip "vc-frame/zellij missing — mesh theme parse skipped"
+if ! zellij_bin="$(vc_frame_bin)"; then
+    skip "vc-frame missing — mesh theme parse skipped"
 else
     tmpcfg=$(mktemp -d)
     trap 'rm -rf "$tmpcfg"' EXIT

@@ -13,7 +13,7 @@ spawn_operator_session_name_for_run_id() {
   local run_id="${1:-}"
   local base
   base="$(spawn_session_base_name)"
-  if [[ "${VIBECRAFTED_ZELLIJ_GROUP_BY_CWD:-1}" != "0" ]]; then
+  if [[ "${VIBECRAFTED_ZELLIJ_GROUP_BY_CWD:-0}" == "1" ]]; then
     printf '%s\n' "$base"
     return 0
   fi
@@ -58,9 +58,17 @@ spawn_skill_prefix() {
 
 spawn_generate_run_id() {
   local prefix="${1:-impl}"
-  # PID suffix defuses same-second collisions when parallel spawns race.
+  local entropy=""
+  entropy="$(python3 - <<'PY' 2>/dev/null || true
+import time
+print(f"{time.time_ns() % 100000:05d}")
+PY
+)"
+  [[ -n "$entropy" ]] || entropy="$(printf '%05d' "${RANDOM:-0}")"
+  # PID+entropy defuses same-second collisions from both parallel processes and
+  # repeated launches inside the same shell.
   # Keep identical shape to _vetcoders_generate_run_id so downstream regex/matchers agree.
-  printf '%s-%s-%s\n' "$prefix" "$(date +%H%M%S)" "$$"
+  printf '%s-%s-%s%s\n' "$prefix" "$(date +%H%M%S)" "$$" "$entropy"
 }
 
 spawn_marbles_state_dir() {
@@ -248,13 +256,13 @@ spawn_prepare_paths() {
     SPAWN_LAUNCHER="$SPAWN_TMP_DIR/${agent}_launch.sh"
     mkdir -p "$SPAWN_PLAN_DIR" "$SPAWN_REPORT_DIR" "$SPAWN_LOG_DIR" "$SPAWN_TMP_DIR"
   else
-    SPAWN_BASE="$SPAWN_REPORT_DIR/${SPAWN_TS}_${SPAWN_SLUG}_${agent}"
+    SPAWN_BASE="$SPAWN_REPORT_DIR/${SPAWN_TS}_${SPAWN_RUN_ID}_${SPAWN_SLUG}_${agent}"
     SPAWN_REPORT="${SPAWN_BASE}.md"
     SPAWN_TRANSCRIPT="${SPAWN_BASE}.transcript.log"
     SPAWN_META="${SPAWN_BASE}.meta.json"
-    # Include run_id in launcher filename — even with second-resolution timestamps,
-    # two spawns can still race inside the same second. run_id carries a PID suffix
-    # so it is globally unique per dispatch and guarantees no append collisions.
+    # Include run_id in every durable launch artifact. The generated launcher
+    # removes its report/transcript before writing, so timestamp+slug naming is
+    # not safe after failed or prematurely closed terminal sessions.
     SPAWN_LAUNCHER="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_RUN_ID}_${SPAWN_SLUG}_${agent}_launch.sh"
     mkdir -p "$SPAWN_PLAN_DIR" "$SPAWN_REPORT_DIR" "$SPAWN_TMP_DIR"
   fi

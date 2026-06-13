@@ -1,15 +1,7 @@
 ---
 name: vc-intents
 version: 1.0.1
-description: >
-  Operator-side intention-to-runtime truth audit. Use when the team needs to
-  know which planned implementations actually landed in code, which are only
-  partially present, which never materialized, and what the highest remaining
-  truth is. This skill pulls intentions from aicx, reduces them to a bounded
-  implementation checklist, then verifies each item against the live repo.
-  Trigger phrases: "intents", "co z planu siedzi", "which planned items exist",
-  "what from the plan is in code", "check intent coverage", "planned vs code",
-  "highest truth", "checklist from intents".
+description: "Compare AICX intentions with live code to find landed, partial, missing, and highest-truth items."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

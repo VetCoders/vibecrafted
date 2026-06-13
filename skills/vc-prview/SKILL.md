@@ -1,12 +1,6 @@
 ---
 name: vc-prview
-description: >
-  Bounded PR, branch, commit-range, or artifact-pack review pipeline: generate
-  prview-rs artifacts then produce a findings-max audit. Use when the user asks
-  to "review PR", "analyze branch", "run prview", "sprawdź PR", "zrób review",
-  "audit PR", "daj findings", "zbadaj branch", "artifact pack", "PR quality
-  check", "merge gate", "findings-max", "deep review", or needs structured diff
-  artifacts with line-level analysis for AI review pipelines.
+description: "Generate PR/branch artifact packs and run findings-max review for bounded diff analysis."
 metadata:
   short-description: "Generate + audit PR artifacts, findings-max (v1)"
 loctree_value: "primary repo map for structural/literal repository work"

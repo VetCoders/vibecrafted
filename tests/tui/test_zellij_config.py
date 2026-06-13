@@ -7,30 +7,28 @@ ZELLIJ_CONFIG = REPO_ROOT / "config" / "zellij" / "config.kdl"
 LAYOUTS_DIR = REPO_ROOT / "config" / "zellij" / "layouts"
 
 
-def test_zellij_config_moves_secondary_shortcuts_off_alt() -> None:
+def test_zellij_config_uses_plain_ctrl_without_option_layer() -> None:
     payload = ZELLIJ_CONFIG.read_text(encoding="utf-8")
 
     assert 'unbind "Alt f" "Alt n" "Alt i" "Alt o"' in payload
-    assert 'bind "Ctrl Shift f" { ToggleFloatingPanes; }' in payload
-    assert 'bind "Ctrl Shift n" { NewPane; }' in payload
-    assert 'bind "Ctrl Shift h" "Ctrl Shift Left" { MoveFocusOrTab "Left"; }' in payload
-    assert 'bind "Ctrl Shift p" { TogglePaneInGroup; }' in payload
+    assert "support_kitty_keyboard_protocol false" in payload
+    assert 'bind "Ctrl n" { NewPane; }' in payload
+    assert "Ctrl Shift" not in payload
 
 
-def test_zellij_config_replaces_immediate_quit_with_confirm_flow() -> None:
+def test_zellij_config_ctrl_q_closes_focus_not_session() -> None:
     payload = ZELLIJ_CONFIG.read_text(encoding="utf-8")
+    active_lines = [
+        line.strip()
+        for line in payload.splitlines()
+        if line.strip() and not line.lstrip().startswith("//")
+    ]
 
-    # Brief 25-A1: Ctrl Shift q must open the session-manager (truthful hint),
-    # while the quit-confirmation gate lives on Ctrl Shift x.
-    assert 'bind "Ctrl Shift q" {' in payload
-    assert 'LaunchOrFocusPlugin "session-manager"' in payload
-    assert 'bind "Ctrl Shift x" { SwitchToMode "Session"; }' in payload
+    # Plain Ctrl+q must never map to Quit. Full quit stays inside session mode.
+    assert 'unbind "Ctrl q"' in payload
     assert 'bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }' in payload
-    assert 'bind "Ctrl q" { CloseTab; SwitchToMode "Normal"; }' in payload
-    assert 'bind "y" { Quit; }' in payload
-    assert (
-        'bind "n" "Esc" "Ctrl q" "Ctrl Shift x" { SwitchToMode "Normal"; }' in payload
-    )
+    assert 'bind "q" { Quit; }' in payload
+    assert 'bind "Ctrl q" { Quit; }' not in active_lines
 
 
 def test_zellij_config_has_vibecrafted_theme() -> None:

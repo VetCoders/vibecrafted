@@ -5,8 +5,8 @@ usage() {
   cat <<'EOF_USAGE'
 Usage: skills_sync.sh <host> [--source <repo-root>] [--tool <codex|claude|gemini>]... [--dry-run] [--mirror] [--with-shell] [--no-zshrc] [--no-bashrc] [--no-verify]
 
-Sync canonical skill directories from this repo to another machine's shared store:
-  $HOME/.vibecrafted/skills
+Sync canonical skill directories from this repo to the staged tools store:
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills
 
 Then create symlink views inside the remote tool homes:
   $HOME/.codex/skills
@@ -132,6 +132,7 @@ done < <(
   find "$skills_root" -mindepth 1 -maxdepth 1 -type d \
     ! -name '.git' \
     ! -name '.loctree' \
+    ! -name '_template' \
     ! -name 'docs' \
     ! -name '.github' \
     -exec test -f '{}/SKILL.md' ';' -print | sort
@@ -143,7 +144,7 @@ if [[ ${#tools[@]} -eq 0 ]]; then
   tools=(codex claude gemini)
 fi
 
-rsync_args=(-az --exclude '.DS_Store' --exclude '.loctree' -e ssh)
+rsync_args=(-az --exclude '.DS_Store' --exclude '.backup' --exclude '.loctree' -e ssh)
 if (( mirror )); then
   rsync_args+=(--delete)
 fi
@@ -153,21 +154,26 @@ fi
 
 printf 'Syncing skills from %s to %s\n' "$repo_root" "$host"
 # shellcheck disable=SC2088,SC2016
-remote_shared_target='$HOME/.vibecrafted/skills'
-printf -- '-- canonical store -> %s:%s\n' "$host" "$remote_shared_target"
+remote_tools_target='$HOME/.local/share/vibecrafted/tools/vibecrafted-local'
+# shellcheck disable=SC2088,SC2016
+remote_current_link='$HOME/.local/share/vibecrafted/tools/vibecrafted-current'
+# shellcheck disable=SC2088,SC2016
+remote_shared_target='$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills'
+printf -- '-- canonical staged tools -> %s:%s\n' "$host" "$remote_shared_target"
 if (( dry_run )); then
-  printf '  ssh %s mkdir -p %s\n' "$host" "$remote_shared_target"
+  printf '  ssh %s mkdir -p %s/skills && ln -sfn %s %s\n' "$host" "$remote_tools_target" "$remote_tools_target" "$remote_current_link"
 else
-  ssh -n "$host" "mkdir -p $remote_shared_target" || die "Could not prepare $remote_shared_target on $host"
+  ssh -n "$host" "mkdir -p $remote_tools_target/skills && ln -sfn $remote_tools_target $remote_current_link" \
+    || die "Could not prepare staged tools store on $host"
 fi
 for skill in "${skills[@]}"; do
   name="$(basename "$skill")"
   if (( ! dry_run )); then
-    ssh -n "$host" "mkdir -p $remote_shared_target/$name" || die "Could not create $remote_shared_target/$name on $host"
+    ssh -n "$host" "mkdir -p $remote_tools_target/skills/$name" || die "Could not create $remote_tools_target/skills/$name on $host"
   else
-    printf '  ssh %s mkdir -p %s/%s\n' "$host" "$remote_shared_target" "$name"
+    printf '  ssh %s mkdir -p %s/skills/%s\n' "$host" "$remote_tools_target" "$name"
   fi
-  rsync "${rsync_args[@]}" "$skill/" "$host:$remote_shared_target/$name/"
+  rsync "${rsync_args[@]}" "$skill/" "$host:$remote_tools_target/skills/$name/"
 done
 printf '\n'
 
@@ -243,7 +249,7 @@ fi
 printf 'Verifying shared skill store on %s\n' "$host"
 ssh -n "$host" 'for f in \
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/scripts/vibecrafted \
-  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills/vc-runtime/SKILL.md \
+  $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills/vc-agents/SKILL.md \
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/runtime/shell/vetcoders.sh \
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/runtime/helpers/vetcoders-runtime-core.sh; do
   if [ -e "$f" ]; then

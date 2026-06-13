@@ -5,13 +5,11 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-from .runtime_paths import vibecrafted_home
-
 _INSTALLER_MODULE: Any | None = None
 
 
 def _repo_root_from_source() -> Path | None:
-    package_root = Path(__file__).resolve().parents[2]
+    package_root = Path(__file__).resolve().parents[1]
     candidate = package_root.parent if package_root.name == "vibecrafted-core" else None
     if candidate and (candidate / "scripts" / "vetcoders_install.py").is_file():
         return candidate
@@ -33,11 +31,15 @@ def _installer_module() -> Any:
             raise ModuleNotFoundError(f"Cannot load installer module: {installer_path}")
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
+        previous_path = list(sys.path)
         try:
+            sys.path.insert(0, str(repo_root))
             spec.loader.exec_module(module)
         except Exception:
             sys.modules.pop(spec.name, None)
             raise
+        finally:
+            sys.path[:] = previous_path
         _INSTALLER_MODULE = module
         return module
 
@@ -54,7 +56,9 @@ def doctor_run(
     """Run the existing Vibecrafted installer doctor through a package API."""
     installer = _installer_module()
     resolved_store = (
-        Path(store_path) if store_path is not None else vibecrafted_home() / "skills"
+        Path(store_path)
+        if store_path is not None
+        else installer._canonical_store_path(installer.vibecrafted_home())
     )
     resolved_state = (
         state if state is not None else installer.InstallState.load(resolved_store)

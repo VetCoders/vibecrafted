@@ -1,11 +1,7 @@
 ---
-name: {{SKILL_NAME}}
+name: "{{SKILL_NAME}}"
 version: 0.1.0
-description: >
-  One-paragraph description of what this skill does, who triggers it, and the
-  decisive outcome it produces. Replace this paragraph entirely before shipping.
-  Trigger phrases: "{{SKILL_NAME_NO_PREFIX}}", "TODO add primary trigger",
-  "TODO add Polish trigger", "TODO add operator-natural-language trigger".
+description: "Template for a new Vibecrafted skill; replace before shipping."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

@@ -271,19 +271,26 @@ _vetcoders_skill() {
     return 0
   fi
 
+  local await_operator_tab_id="" await_operator_pane_id="" await_vc_frame_bin=""
+  await_vc_frame_bin="$(_vetcoders_vc_frame_bin 2>/dev/null || true)"
+  if [[ -n "$await_vc_frame_bin" ]] && _vetcoders_in_vc_frame; then
+    await_operator_tab_id="$(_vetcoders_current_focused_vc_frame_tab_id "$await_vc_frame_bin" 2>/dev/null || true)"
+    await_operator_pane_id="$(_vetcoders_current_focused_vc_frame_pane_id "$await_vc_frame_bin" 2>/dev/null || true)"
+  fi
+
   _vetcoders_dispatch_skill_prompt "$tool" "$skill" "$skill_code" "$loop_nr" "$run_id" "$run_lock" "$prompt" "${spawn_args[@]}"
   local _dispatch_rc=$?
   _vetcoders_print_launch_receipt "$tool" "$skill" "$run_id" "$root" "$_dispatch_rc"
-  _vetcoders_maybe_spawn_await_pane "$tool" "$skill" "$run_id" "$root"
+  _vetcoders_maybe_spawn_await_pane "$tool" "$skill" "$run_id" "$root" "$await_operator_tab_id" "$await_operator_pane_id"
   return "$_dispatch_rc"
 }
 
-# Spawn a zellij floating probe running vibecrafted-await-watch for the
-# just-fired worker, so the operator gets live transcript tail + automatic exit
-# without the legacy helper stealing operator layout space or focus.
+# Spawn a vc-frame floating probe running vibecrafted-await-watch on the
+# operator tab for the just-fired worker. observe/await stay artifact commands
+# for the dispatcher; this float is the user-facing status signal.
 #
 # Silent no-op unless:
-#   - the operator is inside an active zellij session
+#   - the operator is inside an active vc-frame session
 #   - the await-watch helper is installed and executable
 #   - jq is available (helper needs it to parse meta.json)
 #
@@ -340,10 +347,10 @@ _vetcoders_active_await_meta_for_run_id() {
   return 1
 }
 
-_vetcoders_current_focused_zellij_pane_id() {
-  local zellij_bin="$1"
+_vetcoders_current_focused_vc_frame_pane_id() {
+  local vc_frame_bin="$1"
   local raw=""
-  raw="$("$zellij_bin" action list-panes --json --state 2>/dev/null || true)"
+  raw="$("$vc_frame_bin" action list-panes --json --state 2>/dev/null || true)"
   python3 - "$raw" <<'PY'
 import json
 import sys
@@ -387,14 +394,60 @@ if not visit(payload):
 PY
 }
 
+_vetcoders_current_focused_vc_frame_tab_id() {
+  local vc_frame_bin="$1"
+  local raw=""
+  raw="$("$vc_frame_bin" action list-panes --json --state 2>/dev/null || true)"
+  python3 - "$raw" <<'PY'
+import json
+import sys
+
+raw = (sys.argv[1] if len(sys.argv) > 1 else "").strip()
+if not raw:
+    raise SystemExit(1)
+try:
+    payload = json.loads(raw)
+except Exception:
+    raise SystemExit(1)
+
+def is_truthy(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes"}
+    return False
+
+def visit(node):
+    if isinstance(node, dict):
+        if is_truthy(node.get("is_focused")) or is_truthy(node.get("focused")):
+            value = node.get("tab_id")
+            if value not in (None, ""):
+                print(value)
+                return True
+        for value in node.values():
+            if visit(value):
+                return True
+    elif isinstance(node, list):
+        for value in node:
+            if visit(value):
+                return True
+    return False
+
+if not visit(payload):
+    raise SystemExit(1)
+PY
+}
+
 _vetcoders_maybe_spawn_await_pane() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
-  local tool="$1" skill="$2" run_id="$3" root="$4"
-  local zellij_bin=""
-  zellij_bin="$(_vetcoders_zellij_bin)" || return 0
-  _vetcoders_in_zellij || return 0
+  local tool="$1" skill="$2" run_id="$3" root="$4" operator_tab_id="${5:-}" operator_pane_id="${6:-}"
+  local vc_frame_bin=""
+  vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 0
+  _vetcoders_in_vc_frame || return 0
   command -v jq >/dev/null 2>&1 || return 0
 
   local helper
@@ -406,11 +459,12 @@ _vetcoders_maybe_spawn_await_pane() {
     local meta=""
     meta="$(_vetcoders_active_await_meta_for_run_id "$run_id" 2>/dev/null || true)"
     [[ -n "$meta" && -f "$meta" ]] || exit 0
-    local focused_pane_id=""
-    focused_pane_id="$(_vetcoders_current_focused_zellij_pane_id "$zellij_bin" 2>/dev/null || true)"
     local pane_name="await:${tool}:${run_id##*-}"
     local cwd="${root:-$PWD}"
-    "$zellij_bin" action new-pane \
+    local tab_args=()
+    [[ -z "$operator_tab_id" ]] || tab_args=(--tab-id "$operator_tab_id")
+    "$vc_frame_bin" action new-pane \
+      "${tab_args[@]}" \
       --floating \
       --width 24% \
       --height 35% \
@@ -420,8 +474,8 @@ _vetcoders_maybe_spawn_await_pane() {
       --close-on-exit \
       --cwd "$cwd" \
       -- "$helper" --meta "$meta" >/dev/null 2>&1 || true
-    if [[ -n "$focused_pane_id" ]]; then
-      "$zellij_bin" action focus-pane-id "$focused_pane_id" >/dev/null 2>&1 || true
+    if [[ -n "$operator_pane_id" ]]; then
+      "$vc_frame_bin" action focus-pane-id "$operator_pane_id" >/dev/null 2>&1 || true
     fi
   ) &
 }

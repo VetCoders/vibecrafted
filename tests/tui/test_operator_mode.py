@@ -269,7 +269,7 @@ def test_vc_init_finds_bundled_zellij_and_creates_missing_operator_session(
     assert "There is no active session!" not in result.stderr
 
 
-def test_vc_init_missing_zellij_message_has_fresh_install_path_hint(
+def test_vc_init_missing_vc_frame_message_has_fresh_install_path_hint(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -301,7 +301,7 @@ def test_vc_init_missing_zellij_message_has_fresh_install_path_hint(
     assert result.returncode != 0
     assert "vc-frame is required for the Vibecrafted operator runtime." in result.stderr
     assert (
-        f"Expected vc-frame on PATH, zellij fallback, or bundled at: {home}/.local/share/vibecrafted/bin/vc-frame"
+        f"Expected vc-frame on PATH or bundled at: {home}/.local/share/vibecrafted/bin/vc-frame"
         in result.stderr
     )
 
@@ -527,18 +527,26 @@ def test_vc_start_resume_resurrects_dead_session(tmp_path: Path) -> None:
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
 
-    subprocess.run(
+    result = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-start resume'],
         check=True,
         cwd=REPO_ROOT,
         env=env,
+        capture_output=True,
+        text=True,
     )
 
     payload = capture_file.read_text(encoding="utf-8")
-    # Dead sessions are killed and recreated with the layout file.
+    # Dead sessions are recovery evidence: preserve them and launch a fresh
+    # frame session with the layout file.
     expected = _expected_operator_session()
-    assert f"kill-session {expected}" in payload
-    assert f"--session {expected}" in payload
+    created = re.search(r"creating '([^']+)'", result.stderr)
+    assert created is not None
+    recovery_session = created.group(1)
+    assert f"Session '{expected}' is dead; preserving it" in result.stderr
+    assert recovery_session != expected
+    assert f"kill-session {expected}" not in payload
+    assert f"--session {recovery_session}" in payload
     assert "--new-session-with-layout" in payload
 
 
@@ -573,18 +581,25 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
     env.pop("VIBECRAFTED_OPERATOR_MODE", None)
 
-    subprocess.run(
+    result = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-dashboard vc-marbles'],
         check=True,
         cwd=REPO_ROOT,
         env=env,
+        capture_output=True,
+        text=True,
     )
 
     payload = capture_file.read_text(encoding="utf-8")
     expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
-    # Dead sessions are killed and recreated with the layout file.
-    assert f"kill-session {expected_session}" in payload
-    assert f"--session {expected_session}" in payload
+    # Dead sessions are preserved; a fresh recovery session gets the layout.
+    created = re.search(r"creating '([^']+)'", result.stderr)
+    assert created is not None
+    recovery_session = created.group(1)
+    assert f"Session '{expected_session}' is dead; preserving it" in result.stderr
+    assert recovery_session != expected_session
+    assert f"kill-session {expected_session}" not in payload
+    assert f"--session {recovery_session}" in payload
     assert "--new-session-with-layout" in payload
     assert f"{expected_session}-marbles" not in payload
 
@@ -692,14 +707,16 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
 
     expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
     assert result.returncode == 0
-    assert result.stdout.strip().endswith(expected_session)
+    created = re.search(r"creating '([^']+)'", result.stderr)
+    assert created is not None
+    recovery_session = created.group(1)
+    assert result.stdout.strip() == recovery_session
     payload = capture_file.read_text(encoding="utf-8")
-    assert f"kill-session {expected_session}" in payload
+    assert f"Session '{expected_session}' is dead; preserving it" in result.stderr
+    assert f"kill-session {expected_session}" not in payload
     assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "operator.kdl") in payload
-    assert "--new-session-with-layout" in payload and expected_session in payload
+    assert "--new-session-with-layout" in payload and recovery_session in payload
     assert "OSA " not in payload
-    # Session name appears in the direct Zellij lifecycle command.
-    assert expected_session in payload
 
 
 def test_dashboard_alt_layout_reuses_live_repo_session_instead_of_layout_session(

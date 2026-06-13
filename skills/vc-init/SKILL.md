@@ -1,13 +1,7 @@
 ---
 name: vc-init
 version: 4.4.0
-description: >
-  Technical due diligence before stabilization. The vibe-coding weekend
-  got the app to launch. Now we find the taped-together auth, god tables, and silent
-  failures. Init equips the agent with Perception (via the MCP-first loctree
-  context engine), Intentions (AICX), and Security/Stability Ground Truth.
-  Trigger: "init", "initialize", "bootstrap", "daj kontekst", "zainicjuj",
-  "przygotuj agenta", "start fresh with context".
+description: "Bootstrap repo truth with Loctree, AICX intent, security, runtime, and stabilization context."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

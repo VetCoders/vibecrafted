@@ -3,20 +3,7 @@ name: vc-implement
 version: 2.1.0
 aliases:
   - vc-justdo
-description: >
-  End-to-end implementation skill for when the user is done talking and needs
-  the thing built. Not a shortcut — a full delivery with autonomous decision
-  making. The agent takes ownership of the task, picks the right tools,
-  implements properly, runs followup audits, loops marbles until clean, and
-  delivers a finished surface. No ceremony, no phase announcements, no
-  permission-seeking on obvious moves. The user says what, the agent figures
-  out how.
-  Trigger phrases: "implement", "vc-implement", "implement this e2e",
-  "build this properly", "ship the feature", "just do", "just do it",
-  "zrób to", "zaimplementuj to", "dowiez to", "I'm tired but this needs to ship",
-  "full implementation", "od pomyslu do realizacji", "caly feature",
-  "before tomorrow", "nie mam siły ale musi byc gotowe".
-  Alias: vc-justdo (kept for agents already wired to that name).
+description: "End-to-end implementation mode: own the task, build, verify, audit, converge, and hand off."
 compatibility:
   tools:
     - exec_command

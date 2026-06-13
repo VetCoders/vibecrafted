@@ -1,16 +1,7 @@
 ---
 name: vc-ownership
 version: 1.1.0
-description: >
-  Full-spectrum VetCoders ownership mode for moments when the user wants Agent
-  to take the wheel and drive a product from A to Z: architecture, coding,
-  runtime debugging, UI polish, packaging, docs, testing, local tooling,
-  agent orchestration, and wow-effect finish. Use whenever the user says things
-  like "take ownership", "you drive", "od a do z", "zrob to cale", "dowiez
-  to", "wow effect", "superprodukcyjny", "manufakturer produktowy", or when
-  the team clearly wants decisive end-to-end execution with minimal back-and-forth.
-  This skill is intentionally pushy: if the user is asking for total delivery,
-  use it even when they do not explicitly name the skill.
+description: "Full-spectrum product ownership mode from architecture through runtime, polish, docs, packaging, and ship."
 compatibility:
   tools:
     - exec_command

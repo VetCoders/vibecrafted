@@ -1,16 +1,7 @@
 ---
 name: vc-polarize
 version: 2.0.0
-description: >
-  WRITE step that strips back the marbles excess to one truth. Where
-  the swarm of marble workers plastered every crack in deliberate
-  over-application, polarize picks one axis, rejects the competing
-  ones, and aligns runtime, tests, docs, artifacts, and public
-  promises so they all agree. Gated on Loctree `loct prism` bands —
-  `0..4 abort`, `5..8 memo`, `9..12 pass`, `13..15 doctrine`. Emits
-  DoU / release handoff. Trigger phrases: "polarize", "vc-polarize",
-  "wyostrz", "one sharp truth", "code smear", "prism score", "after
-  marbles", "choose one axis", "decisive cut".
+description: "Strip marbles excess to one coherent runtime, test, docs, artifact, and product truth."
 default: vc-polarize
 aliases:
   - vc-cut

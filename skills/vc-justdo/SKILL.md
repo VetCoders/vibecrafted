@@ -1,17 +1,7 @@
 ---
 name: vc-justdo
 version: 3.0.0
-description: >
-  "Nie pierdol, po prostu zrób." Standalone posture skill + launcher — NOT an
-  alias of vc-implement. No question, take the task, just do it — regardless of
-  task type (implement, review, audit, research, fix, anything). The task type is
-  defined by the PROMPT, not by the skill. No best-offer / best-of-n deliberation.
-  Daily rescue of a tired founder: at 4am nobody answers, so don't ask — act, and
-  proactively explore when context is thin. Carries the vc-ownership posture.
-  Non-pipeline (it is NOT a VC-ship cadence phase, unlike vc-implement).
-  Trigger phrases: "just do", "just do it", "vc-justdo", "nie pierdol tylko zrób",
-  "weź i zrób", "zrób to", "ogarnij to", "nie mam siły ale zrób", "take the task",
-  "no questions just do it", "zrób review/audyt/research <X>".
+description: "Standalone no-ceremony execution posture; infer the task type from the prompt and act."
 compatibility:
   tools:
     - exec_command

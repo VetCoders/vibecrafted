@@ -195,16 +195,16 @@ def test_vetcoders_helper_source_does_not_prepend_bundled_bin_to_path(
     assert resolved_vibecrafted == str(preferred_vibecrafted)
 
 
-def test_vetcoders_require_zellij_uses_bundled_priority_without_path_leak(
+def test_vetcoders_require_zellij_uses_bundled_vc_frame_priority_without_path_leak(
     tmp_path: Path,
 ) -> None:
     staged_home = tmp_path / "home" / ".vibecrafted"
     runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
     bundled_bin = runtime_home / "bin"
     bundled_bin.mkdir(parents=True)
-    bundled_zellij = bundled_bin / "zellij"
-    bundled_zellij.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    bundled_zellij.chmod(0o755)
+    bundled_vc_frame = bundled_bin / "vc-frame"
+    bundled_vc_frame.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    bundled_vc_frame.chmod(0o755)
 
     initial_path = os.defpath
     result = _run_vetcoders_helper(
@@ -212,7 +212,7 @@ def test_vetcoders_require_zellij_uses_bundled_priority_without_path_leak(
         (
             "_vetcoders_require_zellij; "
             'printf "PATH=%s\\n" "$PATH"; '
-            "command -v zellij || true"
+            "command -v vc-frame || true"
         ),
         {
             "PATH": initial_path,
@@ -246,13 +246,13 @@ def test_vetcoders_zellij_bin_prefers_vc_frame_on_path(tmp_path: Path) -> None:
     assert result.stdout.strip() == str(fake_bin / "vc-frame")
 
 
-def test_dashboard_uses_bundled_zellij_priority_without_path_leak(
+def test_dashboard_uses_bundled_vc_frame_priority_without_path_leak(
     tmp_path: Path,
 ) -> None:
     staged_home = tmp_path / "home" / ".vibecrafted"
     runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
-    capture_file = tmp_path / "zellij-args.txt"
-    _write_capture_command(runtime_home / "bin", "zellij", capture_file)
+    capture_file = tmp_path / "vc-frame-args.txt"
+    _write_capture_command(runtime_home / "bin", "vc-frame", capture_file)
 
     initial_path = os.defpath
     result = _run_vetcoders_helper(
@@ -273,12 +273,43 @@ def test_dashboard_uses_bundled_zellij_priority_without_path_leak(
     assert result.stdout == f"PATH={initial_path}\n"
 
 
-def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
+def test_await_pane_stays_silent_without_meta_helper(
     tmp_path: Path,
 ) -> None:
     staged_home = tmp_path / "home" / ".vibecrafted"
     runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc-frame-args.txt"
+    _write_capture_command(runtime_home / "bin", "vc-frame", capture_file)
+
+    initial_path = os.defpath
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        (
+            '_vetcoders_maybe_spawn_await_pane codex review run-424242 "$PWD"; '
+            "sleep 0.2; "
+            'printf "PATH=%s\\n" "$PATH"'
+        ),
+        {
+            "CAPTURE_FILE": str(capture_file),
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+            "ZELLIJ": "operator",
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert not capture_file.exists()
+    assert result.stdout == f"PATH={initial_path}\n"
+
+
+def test_await_pane_targets_operator_tab_with_bundled_vc_frame_without_path_leak(
+    tmp_path: Path,
+) -> None:
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
+    capture_file = tmp_path / "vc-frame-args.txt"
     artifacts_dir = staged_home / "artifacts" / "repo" / "2026_0611" / "reports"
     artifacts_dir.mkdir(parents=True)
     meta = artifacts_dir / "run.meta.json"
@@ -306,7 +337,7 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
     helper.chmod(0o755)
     (helper_root / "config" / "starship.toml").write_text("", encoding="utf-8")
 
-    _write_capture_command(runtime_home / "bin", "zellij", capture_file)
+    _write_capture_command(runtime_home / "bin", "vc-frame", capture_file)
     jq = runtime_home / "bin" / "jq"
     jq.write_text(
         textwrap.dedent(
@@ -340,7 +371,7 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
     result = _run_vetcoders_helper(
         HELPER_SCRIPT,
         (
-            '_vetcoders_maybe_spawn_await_pane codex review run-424242 "$PWD"; '
+            '_vetcoders_maybe_spawn_await_pane codex review run-424242 "$PWD" 7 3; '
             "sleep 1.2; "
             'printf "PATH=%s\\n" "$PATH"'
         ),
@@ -359,10 +390,12 @@ def test_await_pane_uses_bundled_zellij_and_jq_without_path_leak(
     assert capture_file.exists()
     payload = capture_file.read_text(encoding="utf-8")
     assert "action\nnew-pane" in payload
+    assert "--tab-id\n7" in payload
     assert "--floating" in payload
     assert "--name\nawait:codex:424242" in payload
     assert f"--meta\n{meta}" in payload
     assert "--run-id" not in payload
+    assert "action\nfocus-pane-id\n3" in payload
     assert result.stdout == f"PATH={initial_path}\n"
 
 

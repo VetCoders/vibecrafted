@@ -1,14 +1,7 @@
 ---
 name: vc-delegate
 version: 2.0.0
-description: >
-  Native operator-side delegation doctrine for small bounded native cuts.
-  Use this when the operator agent must decide whether work should stay
-  in-process through native subagents or be escalated upward into vc-agents.
-  Trigger phrases: "implement with agents", "delegate to subagents", "zaimplementuj",
-  "run agents", "parallel tasks", "delegate safely", "native agents",
-  "Task tool agents", "implement plan", "uruchom agentów", "subagenty natywne",
-  "bezpieczne agenty", "implement without externals", "no osascript".
+description: "Choose and run native in-process delegation for small bounded implementation cuts."
 compatibility:
   tools: []
 loctree_value: "primary repo map for structural/literal repository work"

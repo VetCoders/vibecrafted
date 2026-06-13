@@ -25,6 +25,7 @@ CODEX_STREAM_FILTER = REPO_ROOT / "runtime" / "scripts" / "codex_stream_filter.j
 # instead of the asserted new-tab path.
 _ENV_SANITIZE = """
 unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME ZELLIJ_TAB_NAME ZELLIJ_CONFIG_DIR
+unset VC_FRAME_SESSION_NAME VC_FRAME_CONFIG_DIR
 unset VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION VIBECRAFTED_PANE_SEQ VIBECRAFTED_MARBLES_TAB_NAME
 unset VIBECRAFTED_OPERATOR_SESSION VIBECRAFTED_RUN_ID VIBECRAFTED_RUN_LOCK
 unset VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME VIBECRAFTED_LOOP_NR
@@ -51,7 +52,7 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     base = (
         re.sub(r"[^a-z0-9]+", "-", REPO_ROOT.name.lower()).strip("-") or "vibecrafted"
     )
-    return base
+    return f"{base}-{run_id}" if run_id else base
 
 
 def _mirror_fake_vc_frame(zellij: Path) -> None:
@@ -295,7 +296,7 @@ def test_terminal_spawn_refuses_osascript_fallback_when_zellij_fails(
     assert not osa_capture.exists()
 
 
-def test_operator_session_groups_spawns_from_same_directory() -> None:
+def test_operator_session_names_are_run_scoped_by_default() -> None:
     base = _expected_operator_session()
     legacy_a = _legacy_expected_operator_session("agnt-111111-111")
     legacy_b = _legacy_expected_operator_session("agnt-222222-222")
@@ -308,12 +309,73 @@ def test_operator_session_groups_spawns_from_same_directory() -> None:
         spawn_operator_session_name_for_run_id "agnt-111111-111"
         spawn_operator_session_name_for_run_id "agnt-222222-222"
 
-        VIBECRAFTED_ZELLIJ_GROUP_BY_CWD=0 spawn_operator_session_name_for_run_id "agnt-111111-111"
-        VIBECRAFTED_ZELLIJ_GROUP_BY_CWD=0 spawn_operator_session_name_for_run_id "agnt-222222-222"
+        VIBECRAFTED_ZELLIJ_GROUP_BY_CWD=1 spawn_operator_session_name_for_run_id "agnt-111111-111"
+        VIBECRAFTED_ZELLIJ_GROUP_BY_CWD=1 spawn_operator_session_name_for_run_id "agnt-222222-222"
         '''
     )
 
-    assert result.stdout.splitlines() == [base, base, legacy_a, legacy_b]
+    assert result.stdout.splitlines() == [legacy_a, legacy_b, base, base]
+
+
+def test_spawn_prepare_paths_include_run_id_for_durable_artifacts(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    plan = tmp_path / "plan.md"
+    root = tmp_path / "repo"
+    home.mkdir()
+    root.mkdir()
+    plan.write_text("# Plan\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            _ENV_SANITIZE
+            + f'''
+            set -euo pipefail
+            export HOME="{home}"
+            export VIBECRAFTED_HOME="{home / ".vibecrafted"}"
+            export VIBECRAFTED_SPAWN_TS="20260613_120000"
+            source "{COMMON_SH}"
+
+            spawn_prepare_paths codex "{plan}" "{root}" implement
+            printf '%s\\n' "$SPAWN_RUN_ID" "$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$SPAWN_META" "$SPAWN_LAUNCHER"
+
+            unset SPAWN_RUN_ID SPAWN_RUN_LOCK VIBECRAFTED_RUN_ID VIBECRAFTED_RUN_LOCK
+            spawn_prepare_paths codex "{plan}" "{root}" implement
+            printf '%s\\n' "$SPAWN_RUN_ID" "$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$SPAWN_META" "$SPAWN_LAUNCHER"
+            ''',
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    (
+        first_run,
+        first_report,
+        first_transcript,
+        first_meta,
+        first_launcher,
+        second_run,
+        second_report,
+        second_transcript,
+        second_meta,
+        second_launcher,
+    ) = result.stdout.splitlines()
+
+    assert first_run != second_run
+    for path in (first_report, first_transcript, first_meta, first_launcher):
+        assert first_run in path
+        assert second_run not in path
+    for path in (second_report, second_transcript, second_meta, second_launcher):
+        assert second_run in path
+        assert first_run not in path
+    assert first_report != second_report
+    assert first_transcript != second_transcript
+    assert first_meta != second_meta
 
 
 def _split_zellij_calls(payload: str) -> list[list[str]]:
@@ -1486,6 +1548,7 @@ def test_spawn_in_zellij_pane_honors_requested_direction(tmp_path: Path) -> None
         export ZELLIJ=1
         export ZELLIJ_PANE_ID=terminal_1
         export VIBECRAFTED_RUN_ID="{run_id}"
+        export VC_FRAME_SESSION_NAME="{operator_session}"
         export ZELLIJ_SESSION_NAME="{operator_session}"
         export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
         export VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=down
@@ -1988,6 +2051,7 @@ def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
             export CAPTURE_FILE="{capture_file}"
             export ZELLIJ=1
             export ZELLIJ_PANE_ID=terminal_1
+            export VC_FRAME_SESSION_NAME="{operator_session}"
             export ZELLIJ_SESSION_NAME="{operator_session}"
             export ZELLIJ_TAB_NAME="operator-tab"
             export VIBECRAFTED_RUN_ID="{run_id}"
@@ -2065,6 +2129,7 @@ def test_spawn_in_zellij_pane_marbles_tab_can_keep_agent_panes_for_forensics(
             export CAPTURE_FILE="{capture_file}"
             export ZELLIJ=1
             export ZELLIJ_PANE_ID=terminal_1
+            export VC_FRAME_SESSION_NAME="{operator_session}"
             export ZELLIJ_SESSION_NAME="{operator_session}"
             export VIBECRAFTED_RUN_ID="{run_id}"
             export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
@@ -2135,6 +2200,7 @@ def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
             export CAPTURE_FILE="{capture_file}"
             export ZELLIJ=1
             export ZELLIJ_PANE_ID=terminal_1
+            export VC_FRAME_SESSION_NAME="operator-session"
             export ZELLIJ_SESSION_NAME="operator-session"
             export ZELLIJ_TAB_NAME="operator-tab"
             export SPAWN_AGENT="gemini"

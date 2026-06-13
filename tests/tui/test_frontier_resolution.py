@@ -515,6 +515,7 @@ def test_spawn_export_frontier_sidecars_mix_repo_prompt_with_companion_zellij(
     env["SPAWN_ROOT"] = str(REPO_ROOT)
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env.pop("STARSHIP_CONFIG", None)
+    env.pop("ATUIN_CONFIG", None)
     env.pop("ZELLIJ_CONFIG_DIR", None)
 
     result = subprocess.run(

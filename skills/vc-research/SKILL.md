@@ -1,18 +1,7 @@
 ---
 name: vc-research
 version: 1.3.0
-description: >
-  Standalone triple-agent research skill. Co-define the problem with the user,
-  write a research plan, then spawn the configured triple-agent research lanes
-  on the same questions. Three independent reports come back. Synthesize into one
-  gap-free research document ready for implementation. Use whenever the team
-  needs ground truth before coding: unknown APIs, architecture decisions, library
-  assessment, protocol research, best-practice survey, competitive analysis,
-  or any situation where one agent's perspective is not enough. Trigger phrases:
-  "research this", "zbadaj to", "triple research", "research swarm", "3 agenty
-  research", "gap-free research", "zbadaj przed implementacją", "co mówi
-  dokumentacja", "state of the art", "SoTA research", "porównaj podejścia",
-  "analyze options", "research plan", "plan researchu".
+description: "Triple-agent research workflow for unknown APIs, architecture choices, libraries, protocols, and market facts."
 compatibility:
   tools:
     - Bash

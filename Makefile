@@ -11,7 +11,7 @@ BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server server-smoke
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server server-smoke
 
 help:
 	@printf "\n"
@@ -31,7 +31,7 @@ help-dev:
 	@printf "\n"
 	@printf "  \033[1m\033[38;5;173m⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. dev targets\033[0m\n"
 	@printf "\n"
-	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-app-binaries · install-hammerspoon\n"
+	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-python-tools · install-app-binaries · install-hammerspoon\n"
 	@printf "            skills · helpers · setup-dev · wizard · wizard-dev · gui-install · dry-run · restore\n"
 	@printf "            migrate · migrate-dry · foundations · foundations-check · bundle · bundle-check\n"
 	@printf "  \033[1mtests\033[0m     test · test-skills · test-install · test-parity · test-zellij · test-iterm2-migrate\n"
@@ -119,9 +119,19 @@ endif
 install-all: init-hooks
 	@bash scripts/install-foundations.sh $(INSTALL_QUIET)
 	@bash runtime/scripts/install-frontier-config.sh --source "$(SOURCE)" $(INSTALL_QUIET) || printf '[warn] Frontier config skipped (non-fatal)\n'
-	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --with-shell --write-shell-rc --compact --non-interactive --mirror
+	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --compact --non-interactive --mirror
 	@bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes $(INSTALL_QUIET)
+	@$(MAKE) --no-print-directory install-python-tools
 	@$(MAKE) --no-print-directory install-app-binaries
+
+install-python-tools:
+	@if ! command -v uv >/dev/null 2>&1; then \
+		echo "bootstrapping uv..."; \
+		curl -LsSf https://astral.sh/uv/install.sh | sh; \
+	fi; \
+	export PATH="$$HOME/.local/bin:$$PATH"; \
+	uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-core"; \
+	uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-mcp" --with-editable "$(SOURCE)/vibecrafted-core"
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
 # The vibecrafted-app members ship `voc` and `vc-admin` (both bins of the
@@ -594,4 +604,3 @@ server-smoke:
 	@echo "[server-smoke] Run 1/3" && bash tests/server_smoke.sh
 	@echo "[server-smoke] Run 2/3" && bash tests/server_smoke.sh
 	@echo "[server-smoke] Run 3/3" && bash tests/server_smoke.sh
-

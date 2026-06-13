@@ -1834,6 +1834,23 @@ cmd_dispatch() {
   PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.dispatch.cli "$@"
 }
 
+cmd_core_workflow_skill() {
+  local skill="$1"
+  local agent="$2"
+  shift 2 || true
+  local core_dir core_skill
+  core_skill="$skill"
+  [[ "$core_skill" != "justdo" ]] || core_skill="implement"
+  core_dir="$(_dispatcher_core_dir 2>/dev/null || true)"
+  [[ -n "$core_dir" ]] || {
+    printf '%b✗%b Vibecrafted Core module not found.\n' "$_red" "$_reset" >&2
+    printf '  Expected vibecrafted-core/vibecrafted_core/cli.py in the source or installed tools tree.\n' >&2
+    return 1
+  }
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m vibecrafted_core.cli "$core_skill" "$agent" --source-dir "$(_script_repo_root)" "$@"
+}
+
 cmd_init() {
   local agent="${1:-claude}"
   _prepend_repo_bin_path
@@ -1884,11 +1901,6 @@ _vc_frame_or_zellij_bin() {
     printf '%s\n' "$bin"
     return 0
   fi
-  bin="$(command -v zellij 2>/dev/null || true)"
-  if [[ -n "$bin" ]]; then
-    printf '%s\n' "$bin"
-    return 0
-  fi
   return 1
 }
 
@@ -1898,7 +1910,7 @@ cmd_dashboard() {
     return 0
   fi
 
-  # Thin shim subcommands — delegate directly to Zellij without loading
+  # Thin shim subcommands — delegate directly to vc-frame without loading
   # the full helper layer. This keeps ls/switch/attach/kill instant.
   case "${1:-}" in
     ls|list|sessions)
@@ -1960,6 +1972,13 @@ cmd_dashboard() {
 }
 
 cmd_stats() {
+  case "${1:-}" in
+    skills|skill-context|context)
+      cmd_stats_skills
+      return
+      ;;
+  esac
+
   local today_dir ts_prefix artifacts_dir local_artifacts_dir matches
   local search_dirs=()
   
@@ -1986,6 +2005,90 @@ cmd_stats() {
 
   printf '%s\n' "$matches" | sed 's#^#  #'
   printf '\n'
+}
+
+cmd_stats_skills() {
+  command -v python3 >/dev/null 2>&1 || {
+    printf '%b✗%b python3 is required for skill context stats.\n' "$_red" "$_reset" >&2
+    return 1
+  }
+
+  python3 - <<'PY'
+from __future__ import annotations
+
+from collections import defaultdict
+from pathlib import Path
+import os
+import re
+
+home = Path.home()
+roots = [
+    home / ".codex" / "skills",
+    home / ".agents" / "skills",
+    home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-current" / "skills",
+    home / ".local" / "share" / "vibecrafted" / "tools" / "vibecrafted-local" / "skills",
+    home / ".codex" / "plugins" / "cache",
+]
+
+records = []
+visited = set()
+for root in roots:
+    if not root.exists():
+        continue
+    for skill_file in sorted(root.rglob("SKILL.md")):
+        try:
+            real = skill_file.resolve()
+        except OSError:
+            real = skill_file
+        if real in visited:
+            continue
+        visited.add(real)
+        try:
+            text = skill_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        name_match = re.search(r"^name:\s*(.+)$", text, re.MULTILINE)
+        name = name_match.group(1).strip().strip("'\"") if name_match else skill_file.parent.name
+        desc_match = re.search(
+            r"^description:\s*(?:>[-]?\s*)?\n?(.*?)(?:\n[a-zA-Z_-]+:|\n---)",
+            text,
+            re.MULTILINE | re.DOTALL,
+        )
+        desc = ""
+        if desc_match:
+            desc = " ".join(line.strip().strip("'\"") for line in desc_match.group(1).splitlines() if line.strip())
+        records.append((name, len(desc), str(skill_file)))
+
+by_name = defaultdict(list)
+for name, desc_len, path in records:
+    by_name[name].append((desc_len, path))
+
+duplicates = {name: paths for name, paths in by_name.items() if len(paths) > 1}
+desc_chars = sum(desc_len for _, desc_len, _ in records)
+top = sorted(records, key=lambda row: row[1], reverse=True)[:12]
+
+print()
+print("⚒  Vibecrafted Skill Context Stats")
+print("─────────────────────────────────────────")
+print("  Codex announced skills metadata budget: 2%")
+print("  Exact total context allocation is runtime-private; this report measures local skill metadata only.")
+print()
+print(f"  skill files:        {len(records)}")
+print(f"  unique names:       {len(by_name)}")
+print(f"  duplicate groups:   {len(duplicates)}")
+print(f"  description chars:  {desc_chars}")
+print()
+if top:
+    print("  largest descriptions:")
+    for name, desc_len, path in top:
+        short_path = path.replace(str(home), "~")
+        print(f"    {desc_len:5d}  {name:28s} {short_path}")
+print()
+if duplicates:
+    print("  duplicate names:")
+    for name, paths in sorted(duplicates.items()):
+        print(f"    {name}: {len(paths)}")
+PY
 }
 
 cmd_uninstall() {
@@ -2285,16 +2388,6 @@ run_skill() {
     return
   fi
 
-  if [[ "$skill" == "research" ]]; then
-    _ensure_helpers_loaded || return 1
-    if [[ "$agent" == "await" ]]; then
-      _run_helper "vc-research-await" "$@"
-      return
-    fi
-    _run_helper "vc-research" "${agent:+$agent}" "$@"
-    return
-  fi
-
   if [[ "$skill" == "agents" ]]; then
     cmd_agents "$@"
     return
@@ -2335,6 +2428,13 @@ run_skill() {
     cmd_skill_help "$skill" >&2
     return 1
   }
+
+  case "$skill" in
+    implement|justdo|workflow|research|review|marbles)
+      cmd_core_workflow_skill "$skill" "$agent" "$@"
+      return
+      ;;
+  esac
 
   local dispatch_skill="$skill"
   [[ "$dispatch_skill" != "implement" ]] || dispatch_skill="justdo"
@@ -2460,7 +2560,7 @@ main() {
     ship) cmd_ship "$@" ;;
     dispatch|dispatcher) cmd_dispatch "$@" ;;
     telemetry) cmd_telemetry "$@" ;;
-    stats|status) cmd_stats ;;
+    stats|status) cmd_stats "$@" ;;
     update|upgrade) cmd_update "$@" ;;
     uninstall|remove) cmd_uninstall ;;
     version|--version|-v) printf 'vibecrafted %s\n' "$(_version)" ;;

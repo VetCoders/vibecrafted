@@ -1,16 +1,7 @@
 ---
 name: vc-hydrate
 version: 1.0.0
-description: >
-  Packaging and go-to-market hydration skill. Takes DoU audit findings and
-  executes the non-code work that bridges the gap between "it works" and
-  "someone can buy this." Generates marketplace listings, SEO fixes,
-  distribution artifacts, onboarding flows, landing page content, and
-  representation surfaces for products that do not naturally have a public web UI.
-  Trigger phrases: "hydrate", "package for market", "prepare for launch",
-  "przygotuj do launchu", "fix the packaging gap", "marketplace listing",
-  "nawodnij", "make it shippable", "go-to-market", "distribution",
-  "SEO fix", "landing page", "onboarding", "completion sprint".
+description: "Bridge working code to market surface: packaging, listings, onboarding, SEO, and distribution artifacts."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

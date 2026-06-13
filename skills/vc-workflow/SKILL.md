@@ -1,15 +1,7 @@
 ---
 name: vc-workflow
 version: 1.0.0
-description: >
-  This skill should be used when the user asks to "examine and implement",
-  "research then implement", "zbadaj i zaimplementuj", "workflow", "pipeline",
-  "examine → research → implement", "full workflow", "ERi pipeline", "ERi",
-  "plan and implement", "analyze then build", "structured implementation",
-  "przebadaj repo i zaimplementuj", or describes a task that requires
-  understanding code structure before making changes. Orchestrates a
-  three-phase pipeline: Examine (loctree), Research (Brave Search / web),
-  Implement (subagents). Each phase feeds context to the next.
+description: "Structured repo workflow: examine with Loctree, research when needed, implement and converge."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

@@ -1,12 +1,7 @@
 ---
 name: loctree
 version: 2.0.0
-description: >
-  Holographic structural perception of the codebase. Loctree gives you 
-  structural sight before you touch anything — architecture, dependencies, 
-  blast radius, dead code. No edit without orientation. No delete without 
-  impact. No create without search.
-  The craftsman studies the grain before cutting.
+description: "Use Loctree for structural sight: map files, symbols, dependencies, impact, and dead code before edits."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

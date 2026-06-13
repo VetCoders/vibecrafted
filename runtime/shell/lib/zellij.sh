@@ -1,14 +1,18 @@
 # shellcheck shell=bash
 # Extracted from vetcoders.sh; sourced only by the compatibility facade.
 
-_vetcoders_zellij_missing_message() {
+_vetcoders_vc_frame_missing_message() {
   local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
   local runtime_bin="${VIBECRAFTED_RUNTIME_BIN:-${VIBECRAFTED_RUNTIME_HOME:-$xdg_data_home/vibecrafted}/bin}"
   echo "vc-frame is required for the Vibecrafted operator runtime." >&2
   echo "Expected vc-frame on PATH or bundled at: $runtime_bin/vc-frame" >&2
 }
 
-_vetcoders_zellij_bin() {
+_vetcoders_zellij_missing_message() {
+  _vetcoders_vc_frame_missing_message
+}
+
+_vetcoders_vc_frame_bin() {
   local bin=""
   bin="$(command -v vc-frame 2>/dev/null || true)"
   if [[ -n "$bin" ]]; then
@@ -18,14 +22,22 @@ _vetcoders_zellij_bin() {
   return 1
 }
 
-_vetcoders_require_zellij() {
+_vetcoders_zellij_bin() {
+  _vetcoders_vc_frame_bin
+}
+
+_vetcoders_require_vc_frame() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
-  _vetcoders_zellij_bin >/dev/null 2>&1 || {
-    _vetcoders_zellij_missing_message
+  _vetcoders_vc_frame_bin >/dev/null 2>&1 || {
+    _vetcoders_vc_frame_missing_message
     return 1
   }
+}
+
+_vetcoders_require_zellij() {
+  _vetcoders_require_vc_frame
 }
 
 # Zellij needs a real PTY to enable raw mode. When stdin/stdout are pipes
@@ -38,7 +50,7 @@ _vetcoders_require_tty() {
   fi
   cat >&2 <<'EOF'
 
-vc-init requires an interactive terminal (TTY) to spawn a zellij session.
+vc-init requires an interactive terminal (TTY) to spawn a vc-frame session.
 
 Detected: stdin or stdout is not a TTY (pipe, redirect, or non-interactive
 SSH/agent context). Zellij needs a real PTY to switch into raw mode.
@@ -54,10 +66,14 @@ EOF
   return 1
 }
 
-_vetcoders_in_zellij() {
-  # ZELLIJ=0 is a valid pane index inside zellij — do NOT treat as false.
-  # Only absent ZELLIJ means we're outside.
+_vetcoders_in_vc_frame() {
+  # vc-frame still dual-emits the legacy ZELLIJ* pane env during transition.
+  # ZELLIJ=0 is a valid pane index — do NOT treat it as false.
   [[ -n "${ZELLIJ_PANE_ID:-}" ]] || [[ -n "${ZELLIJ+set}" ]]
+}
+
+_vetcoders_in_zellij() {
+  _vetcoders_in_vc_frame
 }
 
 _vetcoders_guess_active_zellij_session() {
@@ -72,7 +88,7 @@ _vetcoders_guess_active_zellij_session() {
 }
 
 _vetcoders_current_zellij_session_name() {
-  printf '%s\n' "${ZELLIJ_SESSION_NAME:-}"
+  printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 }
 
 _vetcoders_atuin_bin() {
@@ -221,7 +237,7 @@ _vetcoders_auto_gc_dead_zellij_sessions() {
 }
 
 
-_vetcoders_wait_for_zellij_session() {
+_vetcoders_wait_for_vc_frame_session() {
   local session_name="$1"
   local attempts="${2:-40}"
   local current=0
@@ -235,8 +251,14 @@ _vetcoders_wait_for_zellij_session() {
   return 1
 }
 
+_vetcoders_recovery_vc_frame_session_name() {
+  local original="${1:-vibecrafted}"
+  local suffix
+  suffix="r$(date +%H%M%S)-$$"
+  _vetcoders_compact_session_name "${original}-${suffix}" "$suffix"
+}
 
-_vetcoders_ensure_zellij_session() {
+_vetcoders_ensure_vc_frame_session() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
@@ -253,12 +275,14 @@ _vetcoders_ensure_zellij_session() {
   # (even ZELLIJ=0 is a valid pane index inside Zellij).
   [[ -n "${ZELLIJ_PANE_ID:-}" || -n "${ZELLIJ+set}" ]] && inside_zellij=1
 
-  local current_session="${ZELLIJ_SESSION_NAME:-}"
+  local current_session="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 
   # Already in the target session — nothing to do.
   if (( inside_zellij )) && [[ "$current_session" == "$session_name" ]]; then
     return 0
   fi
+
+  unset VIBECRAFTED_PREPARED_VC_FRAME_SESSION
 
   case "$(_vetcoders_zellij_session_state "$session_name")" in
     live)
@@ -267,10 +291,16 @@ _vetcoders_ensure_zellij_session() {
       else
         "$zellij_bin" "$@" attach "$session_name"
       fi
+      export VIBECRAFTED_PREPARED_VC_FRAME_SESSION="$session_name"
       ;;
     dead)
-      # Dead (EXITED) sessions cannot be switched to — kill and recreate.
-      "$zellij_bin" kill-session "$session_name" 2>/dev/null || true
+      # Dead (EXITED) sessions are recovery evidence. Never kill and recreate
+      # the same name during launch: that destroys the operator's last scrollback
+      # exactly when a dirty shutdown needs preservation most.
+      local dead_session_name="$session_name"
+      session_name="$(_vetcoders_recovery_vc_frame_session_name "$dead_session_name")"
+      printf "Session '%s' is dead; preserving it and creating '%s'.\n" \
+        "$dead_session_name" "$session_name" >&2
       if [[ -n "$layout_file" ]]; then
         if (( inside_zellij )); then
           env -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
@@ -288,14 +318,10 @@ _vetcoders_ensure_zellij_session() {
         else
           "$zellij_bin" "$@" --session "$session_name" --new-session-with-layout "$layout_file"
         fi
+        export VIBECRAFTED_PREPARED_VC_FRAME_SESSION="$session_name"
       else
-        # No layout — try force-run which may resurrect the session.
-        if (( inside_zellij )); then
-          echo "Session '$session_name' is dead and no layout is available to recreate it." >&2
-          return 1
-        else
-          "$zellij_bin" "$@" attach --force-run-commands "$session_name"
-        fi
+        echo "Session '$dead_session_name' is dead and no layout is available for a new recovery session." >&2
+        return 1
       fi
       ;;
     *)
@@ -320,6 +346,7 @@ _vetcoders_ensure_zellij_session() {
         else
           "$zellij_bin" "$@" --session "$session_name" --new-session-with-layout "$layout_file"
         fi
+        export VIBECRAFTED_PREPARED_VC_FRAME_SESSION="$session_name"
       else
         echo "Layout file missing and session not found." >&2
         return 1
@@ -346,6 +373,7 @@ _vetcoders_prepare_operator_runtime() {
   if _vetcoders_in_zellij; then
     VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
     export VIBECRAFTED_OPERATOR_SESSION
+    export VC_FRAME_SESSION_NAME="$VIBECRAFTED_OPERATOR_SESSION"
     return 0
   fi
 
@@ -358,6 +386,7 @@ _vetcoders_prepare_operator_runtime() {
   guessed_session="$(_vetcoders_guess_active_zellij_session)"
   if [[ -n "$guessed_session" ]]; then
     export VIBECRAFTED_OPERATOR_SESSION="$guessed_session"
+    export VC_FRAME_SESSION_NAME="$guessed_session"
     return 0
   fi
 
@@ -377,12 +406,14 @@ _vetcoders_prepare_operator_runtime() {
   layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
   [[ -n "$layout_file" ]] || return 1
 
-  if _vetcoders_ensure_zellij_session "$session_name" "$layout_file"; then
+  if _vetcoders_ensure_vc_frame_session "$session_name" "$layout_file"; then
+    session_name="${VIBECRAFTED_PREPARED_VC_FRAME_SESSION:-$session_name}"
     export VIBECRAFTED_OPERATOR_SESSION="$session_name"
+    export VC_FRAME_SESSION_NAME="$session_name"
     return 0
   fi
 
-  printf 'Failed to prepare Zellij operator session: %s\n' "$session_name" >&2
+  printf 'Failed to prepare vc-frame operator session: %s\n' "$session_name" >&2
   return 1
 }
 
@@ -404,8 +435,10 @@ _vetcoders_spawn_into_operator_session() {
     layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
     state="$(_vetcoders_zellij_session_state "$session_name")"
     if [[ "$state" != "live" ]]; then
-      _vetcoders_ensure_zellij_session "$session_name" "$layout_file" || return 1
+      _vetcoders_ensure_vc_frame_session "$session_name" "$layout_file" || return 1
+      session_name="${VIBECRAFTED_PREPARED_VC_FRAME_SESSION:-$session_name}"
       export VIBECRAFTED_OPERATOR_SESSION="$session_name"
+      export VC_FRAME_SESSION_NAME="$session_name"
     fi
   fi
   # zellij rejects inline command args carrying shell-quoted multibyte

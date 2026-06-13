@@ -131,7 +131,7 @@ _vetcoders_launch_dashboard() {
   session_name="$(_vetcoders_dashboard_session_name "$layout_name")"
   state="$(_vetcoders_zellij_session_state "$session_name")"
   [[ -n "${ZELLIJ_PANE_ID:-}" || -n "${ZELLIJ+set}" ]] && inside_zellij=1 || inside_zellij=0
-  current_session="${ZELLIJ_SESSION_NAME:-}"
+  current_session="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 
   if [[ "$layout_name" != "operator" && "$layout_name" != "dashboard" && "$state" == "live" ]]; then
     if (( inside_zellij )) && [[ "$current_session" == "$session_name" ]]; then
@@ -147,7 +147,12 @@ _vetcoders_launch_dashboard() {
     return 0
   fi
 
-  _vetcoders_ensure_zellij_session "$session_name" "$layout_file" "$@"
+  if _vetcoders_ensure_vc_frame_session "$session_name" "$layout_file" "$@"; then
+    export VIBECRAFTED_OPERATOR_SESSION="${VIBECRAFTED_PREPARED_VC_FRAME_SESSION:-$session_name}"
+    export VC_FRAME_SESSION_NAME="$VIBECRAFTED_OPERATOR_SESSION"
+    return 0
+  fi
+  return 1
 }
 
 _vetcoders_resume_operator_session() {
@@ -156,5 +161,10 @@ _vetcoders_resume_operator_session() {
   session_name="$(_vetcoders_operator_session_name)"
   layout_file="$(_vetcoders_operator_layout_file 2>/dev/null || true)"
 
-  _vetcoders_ensure_zellij_session "$session_name" "$layout_file"
+  if _vetcoders_ensure_vc_frame_session "$session_name" "$layout_file"; then
+    export VIBECRAFTED_OPERATOR_SESSION="${VIBECRAFTED_PREPARED_VC_FRAME_SESSION:-$session_name}"
+    export VC_FRAME_SESSION_NAME="$VIBECRAFTED_OPERATOR_SESSION"
+    return 0
+  fi
+  return 1
 }

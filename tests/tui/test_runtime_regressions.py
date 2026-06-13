@@ -15,7 +15,7 @@ def _write_fake_command(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
-def test_resume_terminal_runtime_routes_codex_resume_into_zellij(
+def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
     tmp_path: Path,
 ) -> None:
     fake_bin = tmp_path / "bin"
@@ -26,7 +26,7 @@ def test_resume_terminal_runtime_routes_codex_resume_into_zellij(
     home.mkdir()
 
     _write_fake_command(
-        fake_bin / "zellij",
+        fake_bin / "vc-frame",
         "\n".join(
             [
                 "#!/usr/bin/env bash",

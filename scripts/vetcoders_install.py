@@ -1707,8 +1707,10 @@ LAUNCHER_WRAPPERS = [
 
 PYTHON_ENTRYPOINT_LAUNCHERS = [
     "vc-agents",
+    "vc-cron",
     "vc-followup",
     "vc-implement",
+    "vc-loop",
     "vc-marbles",
     "vc-prune",
     "vc-research",
@@ -1717,6 +1719,10 @@ PYTHON_ENTRYPOINT_LAUNCHERS = [
     "vc-review",
     "vc-sandbox",
     "vc-scaffold",
+    "vc-ship",
+    "vibecrafted",
+    "vibecrafted-compact-hook",
+    "vibecrafted-mcp",
     "vibecrafted-resume",
 ]
 
@@ -2025,7 +2031,7 @@ def report_helper_conflicts(
 # ---------------------------------------------------------------------------
 
 
-_RSYNC_EXCLUDES = {".DS_Store", ".loctree"}
+_RSYNC_EXCLUDES = {".DS_Store", ".backup", ".loctree"}
 _CONTROL_PLANE_EXCLUDES = {
     ".DS_Store",
     ".git",
@@ -2060,7 +2066,16 @@ def rsync_skill(
         return
     dst.mkdir(parents=True, exist_ok=True)
     if shutil.which("rsync"):
-        cmd = ["rsync", "-az", "--exclude", ".DS_Store", "--exclude", ".loctree"]
+        cmd = [
+            "rsync",
+            "-az",
+            "--exclude",
+            ".DS_Store",
+            "--exclude",
+            ".backup",
+            "--exclude",
+            ".loctree",
+        ]
         if mirror:
             cmd.append("--delete")
         cmd += [str(src) + "/", str(dst) + "/"]
@@ -3443,6 +3458,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         )
 
     python_entrypoint_issues: List[str] = []
+    python_entrypoint_owners: Set[str] = set()
     for name in PYTHON_ENTRYPOINT_LAUNCHERS:
         launcher_path = _find_launcher_wrapper(name)
         if launcher_path is None:
@@ -3452,14 +3468,19 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             resolved = launcher_path.resolve(strict=False)
         except OSError:
             resolved = launcher_path
-        if ".venv" not in resolved.parts:
-            python_entrypoint_issues.append(f"{name}:not-runtime-venv")
+        if ".venv" in resolved.parts:
+            python_entrypoint_owners.add("runtime venv")
+            continue
+        if "uv" in resolved.parts and "tools" in resolved.parts:
+            python_entrypoint_owners.add("uv tool")
+            continue
+        python_entrypoint_issues.append(f"{name}:not-uv-tool")
     if python_entrypoint_issues:
         findings.append(
             DoctorFinding(
                 "warn",
                 "python-entrypoints",
-                "runtime venv launcher issue(s): "
+                "Python launcher ownership issue(s): "
                 + ", ".join(python_entrypoint_issues[:6])
                 + (" ..." if len(python_entrypoint_issues) > 6 else ""),
             )
@@ -3469,7 +3490,8 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             DoctorFinding(
                 "ok",
                 "python-entrypoints",
-                "all Python entrypoints resolve through runtime venv",
+                "all Python entrypoints resolve through "
+                + (" + ".join(sorted(python_entrypoint_owners)) or "managed tools"),
             )
         )
 
@@ -3477,14 +3499,12 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     wrapper = wrapper_locations.get("vc-help")
     if launcher is not None and wrapper is not None:
         launcher_ok, launcher_detail = _run_smoke_command(
-            ["bash", str(launcher), "help"],
+            [str(launcher), "--help"],
             env=os.environ.copy(),
-            expected_text="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.",
         )
         wrapper_ok, wrapper_detail = _run_smoke_command(
-            ["bash", str(wrapper)],
+            [str(wrapper)],
             env=os.environ.copy(),
-            expected_text="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.",
         )
         findings.append(
             DoctorFinding(
@@ -3500,14 +3520,14 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     dashboard_wrapper = wrapper_locations.get("vc-dashboard")
     if dashboard_wrapper is not None:
         dash_ok, dash_detail = _run_smoke_command(
-            ["bash", str(dashboard_wrapper), "--help"],
+            [str(dashboard_wrapper), "--help"],
             env=os.environ.copy(),
             expected_text="dashboard",
         )
         if not dash_ok:
             # Fallback: just check it runs without error
             dash_ok2, _ = _run_smoke_command(
-                ["bash", str(dashboard_wrapper), "--help"],
+                [str(dashboard_wrapper), "--help"],
                 env=os.environ.copy(),
                 expected_text="",
             )
@@ -4319,17 +4339,6 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         print(f"  {OK} {current_tools}")
     print()
 
-    if current_tools is not None:
-        print(bold("Preparing runtime Python..."))
-        try:
-            runtime_python = _ensure_runtime_venv(current_tools, dry_run=dry_run)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            print(f"  {MISS} Runtime venv failed: {exc}")
-            return 1
-        if runtime_python is not None:
-            print(f"  {OK} {runtime_python}")
-        print()
-
     # --- Execute: symlink views ---
     print(bold("Linking agent views..."))
     for rt in all_runtimes:
@@ -4399,13 +4408,6 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     # --- Execute: vibecrafted launcher ---
     _install_launcher(repo_root, dry_run, update_rc=write_shell_rc)
     if current_tools is not None:
-        print(bold("Installing runtime Python launchers..."))
-        installed_entrypoints = _install_python_entrypoint_launchers(
-            current_tools, dry_run=dry_run
-        )
-        print(f"  {OK} {len(installed_entrypoints)} launcher(s)")
-        print()
-
         moved_agency = cleanse_state_home_agency(current_tools, dry_run=dry_run)
         if moved_agency:
             print(f"  {OK} Moved {moved_agency} state-home agency payload(s)")
@@ -4758,23 +4760,6 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             _compact_line(out, green("\u2713"), "Tools", "staged current refreshed")
         print()
 
-        if current_tools is not None:
-            print("Preparing runtime Python:")
-            try:
-                runtime_python = _ensure_runtime_venv(current_tools, dry_run=dry_run)
-            except (OSError, subprocess.CalledProcessError) as exc:
-                print(f"  FAILED: {exc}")
-                _clear_compact_status(out)
-                err_line(
-                    "runtime venv could not import vibecrafted_core",
-                    "rerun `vibecrafted update`",
-                    str(log_path),
-                )
-                return 1
-            print(f"  python: {runtime_python}")
-            _compact_line(out, green("\u2713"), "Python", "runtime venv ready")
-            print()
-
         # Compact status lines on real stdout
         _compact_line(
             out, green("\u2713"), "Skills", f"{len(selected_skills)} installed"
@@ -4874,17 +4859,6 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         # Launcher
         _install_launcher(repo_root, dry_run, update_rc=write_shell_rc)
         if current_tools is not None:
-            print("Installing runtime Python launchers:")
-            installed_entrypoints = _install_python_entrypoint_launchers(
-                current_tools, dry_run=dry_run
-            )
-            print(f"  installed: {len(installed_entrypoints)}")
-            _compact_line(
-                out,
-                green("\u2713"),
-                "Py launchers",
-                f"{len(installed_entrypoints)} runtime venv entrypoints",
-            )
             moved_agency = cleanse_state_home_agency(current_tools, dry_run=dry_run)
             print(f"  state agency moved: {moved_agency}")
             _compact_line(

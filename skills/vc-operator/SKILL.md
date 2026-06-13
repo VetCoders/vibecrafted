@@ -1,18 +1,7 @@
 ---
 name: vc-operator
 version: 3.0.0-dev
-description: >
-  Autonomous orchestration posture for conducting a fleet through a planned
-  multi-wave dispatch chain. Use when the agent is not building one slice but
-  reading a plan, building a wave atlas, dispatching peer agents, awaiting
-  durable artifacts, verifying reports and gates, issuing recovery dispatches
-  on stalls, and stopping at the operator button for actions not already
-  permitted by the written plan or current session. Mentioning the skill in an
-  interactive session does not automatically launch a runtime workflow.
-  Trigger phrases: "operator mode", "vc-operator", "Agent-Operator",
-  "tryb operatora", "prowadz fleet", "konduktorze", "orkiestracja",
-  "dispatch the plan", "fire the wave", "dirygentura",
-  "multi-dispatch", "orchestrate this plan", "stop at the button".
+description: "Conduct planned multi-wave fleet orchestration with reports, gates, recovery, and operator handoff."
 default: vc-operator
 aliases:
   - vc-conductor

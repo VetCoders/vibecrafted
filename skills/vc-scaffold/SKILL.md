@@ -1,14 +1,7 @@
 ---
 name: vc-scaffold
 version: 0.2.0
-description: >
-  Founder-first main brainstorm + planwriting — the armored lighthouse (pancerna
-  latarnia) that carries a single cut, multiple cuts, or a whole project into the
-  autonomous VC-ship pipeline. The WRITE entry of the read/write cadence: produces a
-  measurable, self-sufficient plan a fleet executes with the operator absent mid-flight.
-  This skill should be used when the user asks to "scaffold", "plan this", "architect
-  this", "break this down", "I have an idea", "design the system", "vc-scaffold",
-  "zaplanuj to", "rozrysuj architekturę", "mam pomysł".
+description: "Founder-first brainstorming and planwriting that produces measurable fleet-executable implementation plans."
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"

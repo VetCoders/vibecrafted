@@ -1,17 +1,7 @@
 ---
 name: vc-partner
 version: 3.0.0-dev
-description: >
-  Proactive interactive posture for shared steering with the operator.
-  `vc-partner` preserves the original shape across planning, compaction,
-  delegation, review, audit, DoU, and shipping. Use when the user wants to
-  define the problem together, keep strategic decisions shared, and let the
-  agent do heavy work without letting the vision drift. Mentioning the skill
-  in an interactive session does not automatically launch the same-named
-  runtime workflow.
-  Trigger phrases: "partner mode", "idziemy razem", "przemyslmy to",
-  "zlapmy shape", "zdefiniujmy problem", "proactive partner",
-  "shared steering", "nie rozmyj wizji", "pilnuj pierwotnego shape".
+description: "Interactive shared-steering posture for strategy, planning, delegation, audit, and shipping without drift."
 compatibility:
   tools:
     - exec_command

@@ -18,7 +18,7 @@ spawn_zellij_bin() {
 }
 
 spawn_current_zellij_session_name() {
-  printf '%s\n' "${ZELLIJ_SESSION_NAME:-}"
+  printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 }
 
 spawn_effective_operator_session() {
@@ -29,7 +29,7 @@ spawn_effective_operator_session() {
     return 0
   fi
 
-  session_name="${ZELLIJ_SESSION_NAME:-}"
+  session_name="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
   if [[ -n "$session_name" ]]; then
     printf '%s\n' "$session_name"
     return 0
@@ -382,7 +382,7 @@ spawn_in_zellij_pane() {
       fi
     fi
 
-    launch_lock="$(spawn_acquire_zellij_launch_slot "${ZELLIJ_SESSION_NAME:-local}" 2>/dev/null || true)"
+    launch_lock="$(spawn_acquire_zellij_launch_slot "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-local}}" 2>/dev/null || true)"
 
     cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
     spawn_write_command_script "$cmd_script" "$launch_cmd"
@@ -499,6 +499,7 @@ spawn_in_operator_session() {
   [[ -n "$session_name" ]] || return 1
   zellij_bin="$(spawn_zellij_bin)" || return 1
   export VIBECRAFTED_OPERATOR_SESSION="$session_name"
+  export VC_FRAME_SESSION_NAME="$session_name"
 
   # When routing into a session from outside its active pane context, always
   # open a fresh tab. Otherwise zellij targets whichever operator tab is
