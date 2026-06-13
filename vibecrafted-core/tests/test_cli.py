@@ -99,6 +99,29 @@ def test_root_cli_agent_observe_accepts_receipt_command(monkeypatch, capsys) -> 
     assert "report:     /tmp/report.md" in out
 
 
+def test_root_cli_swarm_observe_accepts_research_receipt(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+    monkeypatch.setattr(
+        cli,
+        "lookup_run",
+        lambda run_id: {
+            "run_id": run_id,
+            "state": "process_spawned",
+            "agent": "swarm",
+            "skill": "research",
+            "root": "/repo",
+            "latest_report": "/tmp/report.md",
+            "latest_transcript": "/tmp/transcript.log",
+        },
+    )
+
+    assert cli.main(["swarm", "observe", "--run-id", "rese-1"]) == 0
+
+    assert "agent:      swarm" in capsys.readouterr().out
+
+
 def test_root_cli_agent_observe_prints_transcript_tail(
     monkeypatch, capsys, tmp_path: Path
 ) -> None:

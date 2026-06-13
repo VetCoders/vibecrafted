@@ -12,7 +12,7 @@ from . import doctor as doctor_module
 from .control_plane import lookup_run, sync_state
 from .workflow import await_launch_truth, launch_workflow, normalize_launch_spec
 
-AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
+AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "swarm"}
 LAUNCHERS = (
     "audit",
     "decorate",

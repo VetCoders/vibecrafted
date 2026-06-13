@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from typing import Sequence
 
@@ -108,6 +109,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command != "run":
         parser.print_help(sys.stderr)
         return 2
+    if "--tee-output" in (argv or sys.argv[1:]):
+        os.environ["VIBECRAFTED_TEE_OUTPUT"] = "1"
     try:
         return asyncio.run(_run(args))
     except ValueError as exc:

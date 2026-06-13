@@ -55,6 +55,10 @@ def _child_env(
     return env
 
 
+def _tee_enabled() -> bool:
+    return os.environ.get("VIBECRAFTED_TEE_OUTPUT") == "1"
+
+
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -110,6 +114,8 @@ async def _run_child(
     prompt_file = base / f"{safe_label}.prompt.md"
     prompt_file.write_text(_child_prompt(kind, label, root, prompt), encoding="utf-8")
     command = _stdin_command(agent)
+    if _tee_enabled():
+        print(f"\n===== {kind}:{label}:{agent} =====", flush=True)
     handle: AsyncRunHandle = await AsyncSupervisor().run(
         run_id=run_id,
         command=command,
@@ -121,6 +127,7 @@ async def _run_child(
         prompt_file_path=prompt_file,
         require_report=True,
         require_transcript_output=False,
+        tee_output=_tee_enabled(),
     )
     validation = handle.artifact_validation
     return ChildResult(

@@ -52,6 +52,24 @@ def test_research_runtime_supervises_three_tracks(monkeypatch, tmp_path: Path) -
     assert (home / "rsch-test-children" / "research-gemini.md").is_file()
 
 
+def test_research_runtime_tees_child_output(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    _runtime_env(monkeypatch, tmp_path, "rsch-visible")
+    monkeypatch.setenv("VIBECRAFTED_TEE_OUTPUT", "1")
+
+    rc = workflow_runtime.main(
+        ["research", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "===== research:research-claude:claude =====" in out
+    assert "===== research:research-codex:codex =====" in out
+    assert "===== research:research-gemini:gemini =====" in out
+    assert "fake worker ok" in out
+
+
 def test_marbles_runtime_supervises_loops(monkeypatch, tmp_path: Path) -> None:
     home = _runtime_env(monkeypatch, tmp_path, "marb-test")
 
