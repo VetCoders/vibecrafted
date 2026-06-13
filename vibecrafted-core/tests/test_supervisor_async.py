@@ -203,6 +203,53 @@ def test_dispatcher_cli_tees_visible_worker_output(
     assert "visible worker line" in transcript.read_text(encoding="utf-8")
 
 
+def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    claude = tmp_path / "claude"
+    claude.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        ")\n"
+        "print(json.dumps({'type': 'system', 'session_id': 'sess-123'}))\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': ["
+        "{'type': 'text', 'text': 'visible text from claude'}"
+        "]}}))\n",
+        encoding="utf-8",
+    )
+    claude.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="asup-claude-visible",
+            command=[
+                str(claude),
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+            ],
+            root=tmp_path,
+            report_path=report,
+            transcript_path=transcript,
+            tee_output=True,
+        )
+    )
+
+    assert handle.exit_code == 0
+    out = capsys.readouterr().out
+    assert "session_id: sess-123" in out
+    assert "visible text from claude" in out
+    assert '"type": "assistant"' not in out
+    assert '"type": "assistant"' in transcript.read_text(encoding="utf-8")
+
+
 def test_dispatcher_cli_fails_missing_report_contract(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

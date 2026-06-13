@@ -142,7 +142,9 @@ def _stdin_command(agent: str) -> list[str]:
     if agent == "claude":
         return [
             "claude",
-            "--print",
+            "-p",
+            "--output-format",
+            "stream-json",
             "--verbose",
             "--dangerously-skip-permissions",
         ]

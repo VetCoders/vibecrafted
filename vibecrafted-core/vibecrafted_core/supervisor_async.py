@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import signal
 import sys
@@ -17,6 +18,46 @@ from .lifecycle import EventKind, RunState
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _is_claude_stream_json(command: Sequence[str]) -> bool:
+    if not command:
+        return False
+    if Path(str(command[0])).name != "claude":
+        return False
+    return "--output-format" in command and "stream-json" in command
+
+
+def _render_claude_stream_json(chunk: bytes) -> bytes:
+    try:
+        payload = json.loads(chunk.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return chunk
+    if not isinstance(payload, dict):
+        return b""
+
+    out: list[str] = []
+    message = payload.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        out.append(text)
+
+    result = payload.get("result")
+    if isinstance(result, str) and result:
+        out.append(result)
+        if not result.endswith("\n"):
+            out.append("\n")
+
+    session_id = payload.get("session_id")
+    if payload.get("type") == "system" and isinstance(session_id, str) and session_id:
+        out.append(f"session_id: {session_id}\n")
+
+    return "".join(out).encode("utf-8")
 
 
 @dataclass
@@ -266,6 +307,7 @@ class AsyncSupervisor:
         self, handle: AsyncRunHandle, *, tee_output: bool = False
     ) -> None:
         assert handle.process.stdout is not None
+        render_claude_json = _is_claude_stream_json(handle.command)
         while True:
             chunk = await handle.process.stdout.readline()
             if not chunk:
@@ -274,8 +316,12 @@ class AsyncSupervisor:
                 with handle.transcript_path.open("ab") as transcript:
                     transcript.write(chunk)
             if tee_output:
-                sys.stdout.buffer.write(chunk)
-                sys.stdout.buffer.flush()
+                display_chunk = (
+                    _render_claude_stream_json(chunk) if render_claude_json else chunk
+                )
+                if display_chunk:
+                    sys.stdout.buffer.write(display_chunk)
+                    sys.stdout.buffer.flush()
             if not handle.first_output_seen:
                 handle.first_output_seen = True
                 await self._transition(
