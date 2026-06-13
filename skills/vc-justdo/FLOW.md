@@ -2,7 +2,7 @@
 
 > Posture is standalone. Runtime remains compatibility-wired to `vc-implement`
 > until the de-alias migration in `docs/adr/0001-vc-justdo-standalone.md` lands.
-> „Nie pierdol, po prostu zrób" — take the task, just do it, regardless of task type.
+> „Nie pierdol, po prostu zrób proszę" — take the task, just do it, regardless of task type.
 
 ## Flow
 

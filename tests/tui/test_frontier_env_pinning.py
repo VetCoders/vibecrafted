@@ -117,3 +117,61 @@ def test_sourcing_helper_sets_frontier_when_no_user_config(
     # Frontier defaults should be set
     assert "STARSHIP_CONFIG=" in result.stdout
     assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in result.stdout
+
+
+def test_sourcing_helper_respects_default_user_config_files(
+    tmp_path: Path,
+) -> None:
+    """Default config files are user-owned config even when env vars are unset."""
+    home = tmp_path / "home"
+    xdg_config_home = tmp_path / "xdg"
+    fake_bin = tmp_path / "bin"
+    frontier_zellij_config = (
+        xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
+    )
+
+    home.mkdir()
+    fake_bin.mkdir()
+    frontier_zellij_config.parent.mkdir(parents=True)
+    frontier_zellij_config.write_text("layout {}\n", encoding="utf-8")
+    (xdg_config_home / "atuin").mkdir(parents=True)
+    (xdg_config_home / "zellij").mkdir(parents=True)
+    (xdg_config_home / "starship.toml").write_text("# user\n", encoding="utf-8")
+    (xdg_config_home / "atuin" / "config.toml").write_text("# user\n", encoding="utf-8")
+    (xdg_config_home / "zellij" / "config.kdl").write_text(
+        "// user\n", encoding="utf-8"
+    )
+    _write_fake_binary(fake_bin, "starship")
+    _write_fake_binary(fake_bin, "atuin")
+    _write_fake_binary(fake_bin, "zellij")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["XDG_CONFIG_HOME"] = str(xdg_config_home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env.pop("STARSHIP_CONFIG", None)
+    env.pop("ATUIN_CONFIG", None)
+    env.pop("ZELLIJ_CONFIG_DIR", None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                'printf "STARSHIP_CONFIG=%s\\n" "${STARSHIP_CONFIG:-}"; '
+                'printf "ATUIN_CONFIG=%s\\n" "${ATUIN_CONFIG:-}"; '
+                'printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"'
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "STARSHIP_CONFIG=\n" in result.stdout
+    assert "ATUIN_CONFIG=\n" in result.stdout
+    assert "ZELLIJ_CONFIG_DIR=\n" in result.stdout

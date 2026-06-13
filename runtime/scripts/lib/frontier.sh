@@ -67,17 +67,24 @@ spawn_frontier_file() {
 
 spawn_export_frontier_sidecars() {
   local starship_config atuin_config zellij_config zellij_config_dir
+  local xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
   starship_config="$(spawn_frontier_file "starship.toml" 2>/dev/null || true)"
   atuin_config="$(spawn_frontier_file "atuin/config.toml" 2>/dev/null || true)"
   zellij_config="$(spawn_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
 
   # Re-pin the active frontier assets every time so spawned sessions do not
   # inherit stale shell config from an unrelated install or repo.
-  if command -v starship >/dev/null 2>&1 && [[ -n "$starship_config" ]]; then
+  if command -v starship >/dev/null 2>&1 \
+    && [[ -n "$starship_config" ]] \
+    && [[ -z "${STARSHIP_CONFIG:-}" ]] \
+    && [[ ! -e "$xdg_config_home/starship.toml" ]]; then
     export STARSHIP_CONFIG="$starship_config"
   fi
 
-  if command -v atuin >/dev/null 2>&1 && [[ -n "$atuin_config" ]]; then
+  if command -v atuin >/dev/null 2>&1 \
+    && [[ -n "$atuin_config" ]] \
+    && [[ -z "${ATUIN_CONFIG:-}" ]] \
+    && [[ ! -e "$xdg_config_home/atuin/config.toml" ]]; then
     export ATUIN_CONFIG="$atuin_config"
   fi
 
