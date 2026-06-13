@@ -6,8 +6,8 @@ include_live=0
 quiet=0
 max_age_hours="${VIBECRAFTED_ZELLIJ_MAX_AGE_HOURS:-24}"
 
-vc_frame_or_zellij_bin() {
-  command -v vc-frame 2>/dev/null || command -v zellij 2>/dev/null || return 1
+vc_frame_bin() {
+  command -v vc-frame 2>/dev/null || return 1
 }
 
 usage() {
@@ -59,7 +59,7 @@ while (($#)); do
   shift || true
 done
 
-zellij_bin="$(vc_frame_or_zellij_bin)" || {
+zellij_bin="$(vc_frame_bin)" || {
   echo "vc-frame is required." >&2
   exit 1
 }

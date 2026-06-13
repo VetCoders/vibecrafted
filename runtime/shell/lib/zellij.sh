@@ -5,17 +5,12 @@ _vetcoders_zellij_missing_message() {
   local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
   local runtime_bin="${VIBECRAFTED_RUNTIME_BIN:-${VIBECRAFTED_RUNTIME_HOME:-$xdg_data_home/vibecrafted}/bin}"
   echo "vc-frame is required for the Vibecrafted operator runtime." >&2
-  echo "Expected vc-frame on PATH, zellij fallback, or bundled at: $runtime_bin/vc-frame" >&2
+  echo "Expected vc-frame on PATH or bundled at: $runtime_bin/vc-frame" >&2
 }
 
 _vetcoders_zellij_bin() {
   local bin=""
   bin="$(command -v vc-frame 2>/dev/null || true)"
-  if [[ -n "$bin" ]]; then
-    printf '%s\n' "$bin"
-    return 0
-  fi
-  bin="$(command -v zellij 2>/dev/null || true)"
   if [[ -n "$bin" ]]; then
     printf '%s\n' "$bin"
     return 0

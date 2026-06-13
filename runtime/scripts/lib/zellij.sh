@@ -14,11 +14,6 @@ spawn_zellij_bin() {
     printf '%s\n' "$bin"
     return 0
   fi
-  bin="$(command -v zellij 2>/dev/null || true)"
-  if [[ -n "$bin" ]]; then
-    printf '%s\n' "$bin"
-    return 0
-  fi
   return 1
 }
 
