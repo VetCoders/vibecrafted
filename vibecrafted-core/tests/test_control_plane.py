@@ -18,6 +18,17 @@ def _write_meta(home: Path, payload: dict[str, object]) -> Path:
     return path
 
 
+def _write_lock(home: Path, payload: dict[str, object]) -> Path:
+    locks = home / "locks" / ".vibecrafted"
+    locks.mkdir(parents=True, exist_ok=True)
+    path = locks / f"{payload['run_id']}.lock"
+    path.write_text(
+        "\n".join(f"{key}={value}" for key, value in payload.items()) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_sync_state_preserves_runtime_observe_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -194,7 +205,7 @@ def test_sync_state_publishes_lifecycle_control_availability(
         "stop": False,
         "cancel": False,
         "resume": False,
-        "recovery_required": False,
+        "recovery_required": True,
     }
 
 
@@ -274,6 +285,75 @@ def test_sync_state_reconciles_dead_launcher_to_stalled(
     assert refreshed["recovery_required"] is True
     assert refreshed["lifecycle"]["recovery_required"] is True
     assert "recovery_required" in refreshed["last_error"]
+
+
+def test_sync_state_reaps_stale_lock_present_run_without_launcher_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    lock = _write_lock(
+        home,
+        {
+            "run_id": "just-233141-77774",
+            "status": "running",
+            "agent": "codex",
+            "mode": "justdo",
+            "root": str(tmp_path),
+            "skill": "just",
+            "started": "2026-06-11T06:31:41Z",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert lock.exists()
+    assert run["state"] == "stalled"
+    assert run["health"] == "stalled"
+    assert run["liveness"] == "pid_gone"
+    assert run["launcher_pid"] is None
+    assert run["heartbeat_at"] == "2026-06-11T06:31:41Z"
+    assert run["lock_present"] is True
+    assert run["recovery_required"] is True
+    assert run["lifecycle"]["recovery_required"] is True
+    assert "launcher_pid is missing" in run["last_error"]
+    assert "no live launcher proof" in run["last_error"]
+    assert "lock file remains present" in run["last_error"]
+
+
+def test_sync_state_leaves_fresh_lock_present_run_running(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "3600")
+    started_at = control_plane._now().isoformat()
+    lock = _write_lock(
+        home,
+        {
+            "run_id": "just-fresh-lock",
+            "status": "running",
+            "agent": "codex",
+            "mode": "justdo",
+            "root": str(tmp_path),
+            "skill": "just",
+            "started": started_at,
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert lock.exists()
+    assert run["state"] == "running"
+    assert run["health"] == "active"
+    assert run["liveness"] == "lock_present"
+    assert run["launcher_pid"] is None
+    assert run["heartbeat_at"] == started_at
+    assert run["lock_present"] is True
+    assert "recovery_required" not in run
+    assert run["lifecycle"]["recovery_required"] is False
 
 
 def test_sync_state_leaves_live_launcher_running(

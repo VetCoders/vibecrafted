@@ -368,12 +368,16 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         return result
     if str(result.get("state") or "") not in ACTIVE_STATES - {"stalled", "paused"}:
         return result
-    if str(result.get("liveness") or "") != "pid_alive":
-        return result
-
     launcher_pid = _coerce_int(result.get("launcher_pid"))
-    if launcher_pid is None or _pid_is_alive(launcher_pid):
-        return result
+    liveness = str(result.get("liveness") or "")
+    if liveness == "pid_alive":
+        if launcher_pid is None or _pid_is_alive(launcher_pid):
+            return result
+    else:
+        if launcher_pid is not None and _pid_is_alive(launcher_pid):
+            return result
+        if launcher_pid is None and _has_signal_target(result):
+            return result
 
     now = _now()
     age_seconds = _heartbeat_age_seconds(result, now)
@@ -386,12 +390,24 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
     result["liveness"] = "pid_gone"
     result["updated_at"] = now.isoformat()
     result["recovery_required"] = True
-    result["last_error"] = str(
-        result.get("last_error")
-        or (
-            f"launcher_pid {launcher_pid} disappeared after "
-            f"{int(age_seconds)}s without heartbeat; recovery_required"
-        )
+    pid_detail = (
+        f"launcher_pid {launcher_pid} is not alive"
+        if launcher_pid is not None
+        else "launcher_pid is missing"
+    )
+    lock_detail = (
+        "; lock file remains present for operator cleanup"
+        if result.get("lock_present")
+        else ""
+    )
+    explanation = (
+        f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
+        f"(threshold {threshold}s); no live launcher proof{lock_detail}; "
+        "recovery_required"
+    )
+    previous_error = str(result.get("last_error") or "").strip()
+    result["last_error"] = (
+        f"{previous_error}; {explanation}" if previous_error else explanation
     )
     return result
 
