@@ -48,6 +48,24 @@ def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 
+def test_root_cli_uses_terminal_runtime_when_operator_session_exists(
+    monkeypatch, capsys
+) -> None:
+    seen = {}
+    monkeypatch.setenv("VIBECRAFTED_OPERATOR_SESSION", "vc-frame")
+
+    def fake_launch(spec, _source_dir):
+        seen["runtime"] = spec.runtime
+        return _accepted_launch_payload()
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+
+    assert cli.main(["implement", "codex", "--prompt", "ship it"]) == 0
+
+    assert seen["runtime"] == "terminal"
+    assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
+
+
 def test_root_cli_prints_full_launch_receipt(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         cli, "launch_workflow", lambda _spec, _source: _accepted_launch_payload()

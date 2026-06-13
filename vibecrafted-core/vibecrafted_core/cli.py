@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -85,6 +86,13 @@ def _default_runtime(explicit_runtime: str) -> str:
     runtime = str(explicit_runtime or "").strip()
     if runtime:
         return runtime
+    for key in (
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ_SESSION_NAME",
+    ):
+        if str(os.environ.get(key) or "").strip():
+            return "terminal"
     return "terminal" if sys.stdin.isatty() and sys.stdout.isatty() else "headless"
 
 
