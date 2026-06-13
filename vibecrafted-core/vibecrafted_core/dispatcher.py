@@ -47,6 +47,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print the final lifecycle summary as JSON",
     )
+    run.add_argument(
+        "--quiet",
+        action="store_true",
+        help="do not print the final lifecycle summary",
+    )
     run.add_argument("worker", nargs=argparse.REMAINDER)
     return parser
 
@@ -88,7 +93,9 @@ async def _run(args: argparse.Namespace) -> int:
         "artifact_errors": list(validation.errors if validation is not None else ()),
     }
 
-    if args.json:
+    if args.quiet:
+        pass
+    elif args.json:
         print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
     else:
         print(f"run_id: {summary['run_id']}")

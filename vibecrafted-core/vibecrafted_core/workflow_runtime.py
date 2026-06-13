@@ -19,11 +19,18 @@ class ChildResult:
     label: str
     agent: str
     run_id: str
+    agent_session_id: str
+    agent_model: str
     report: Path
     transcript: Path
     exit_code: int | None
     artifact_ok: bool
     artifact_errors: tuple[str, ...]
+    tokens_input: int = 0
+    tokens_cached_input: int = 0
+    tokens_output: int = 0
+    cost_usd: float | None = None
+    resume_command: str = ""
 
 
 def _parent_run_id() -> str:
@@ -134,11 +141,18 @@ async def _run_child(
         label=label,
         agent=agent,
         run_id=run_id,
+        agent_session_id=handle.agent_session_id,
+        agent_model=handle.agent_model,
         report=report,
         transcript=transcript,
         exit_code=handle.exit_code,
         artifact_ok=bool(validation.ok if validation is not None else False),
         artifact_errors=tuple(validation.errors if validation is not None else ()),
+        tokens_input=handle.tokens_input,
+        tokens_cached_input=handle.tokens_cached_input,
+        tokens_output=handle.tokens_output,
+        cost_usd=handle.cost_usd,
+        resume_command=handle.resume_command,
     )
 
 
@@ -175,9 +189,14 @@ def _write_parent_report(
             [
                 f"- {result.label} ({result.agent})",
                 f"  - run_id: {result.run_id}",
+                f"  - agent_session_id: {result.agent_session_id or 'unknown'}",
+                f"  - agent_model: {result.agent_model or 'unknown'}",
                 f"  - exit_code: {result.exit_code}",
                 f"  - artifact_ok: {str(result.artifact_ok).lower()}",
                 f"  - artifact_errors: {errors}",
+                f"  - tokens: {result.tokens_input} in ({result.tokens_cached_input} cached) / {result.tokens_output} out",
+                f"  - cost_usd: {result.cost_usd if result.cost_usd is not None else 'unknown'}",
+                f"  - resume: {result.resume_command}",
                 f"  - report: {result.report}",
                 f"  - transcript: {result.transcript}",
             ]
@@ -195,11 +214,21 @@ def _write_parent_report(
                     "label": result.label,
                     "agent": result.agent,
                     "run_id": result.run_id,
+                    "agent_session_id": result.agent_session_id,
+                    "agent_model": result.agent_model,
                     "report": str(result.report),
                     "transcript": str(result.transcript),
                     "exit_code": result.exit_code,
                     "artifact_ok": result.artifact_ok,
                     "artifact_errors": list(result.artifact_errors),
+                    "tokens_input": result.tokens_input,
+                    "tokens_cached_input": result.tokens_cached_input,
+                    "tokens_output": result.tokens_output,
+                    "tokens_total": result.tokens_input + result.tokens_output,
+                    "cost_usd": result.cost_usd
+                    if result.cost_usd is not None
+                    else "unknown",
+                    "resume_command": result.resume_command,
                 }
                 for result in results
             ],

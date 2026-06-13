@@ -174,6 +174,89 @@ def test_root_cli_agent_observe_prints_transcript_tail(
     assert "line 1" not in out
 
 
+def test_root_cli_agent_observe_renders_json_transcript_tail(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(
+            [
+                '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"very noisy hook payload"}',
+                '{"type":"system","subtype":"init","session_id":"claude-sess","model":"claude-opus-4-8"}',
+                '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}',
+                '{"type":"result","result":"done","usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":2},"total_cost_usd":0.01}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+    monkeypatch.setattr(
+        cli,
+        "lookup_run",
+        lambda run_id: {
+            "run_id": run_id,
+            "state": "report_validated",
+            "agent": "claude",
+            "skill": "implement",
+            "root": "/repo",
+            "latest_report": "/tmp/report.md",
+            "latest_transcript": str(transcript),
+        },
+    )
+
+    assert cli.main(["claude", "observe", "--run-id", "impl-1"]) == 0
+
+    out = capsys.readouterr().out
+    assert "transcript_tail:" in out
+    assert "session: claude-sess" in out
+    assert "model: claude-opus-4-8" in out
+    assert "ok" in out
+    assert "hook_response" not in out
+    assert "very noisy hook payload" not in out
+
+
+def test_root_cli_agent_observe_recovers_model_when_tail_starts_after_init(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(
+            [
+                '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"noise"}',
+                '{"type":"assistant","session_id":"claude-sess","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"late body"}]}}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+    monkeypatch.setattr(
+        cli,
+        "lookup_run",
+        lambda run_id: {
+            "run_id": run_id,
+            "state": "report_validated",
+            "agent": "claude",
+            "skill": "implement",
+            "root": "/repo",
+            "latest_report": "/tmp/report.md",
+            "latest_transcript": str(transcript),
+        },
+    )
+
+    assert cli.main(["claude", "observe", "--run-id", "impl-1"]) == 0
+
+    out = capsys.readouterr().out
+    assert "session: claude-sess model: claude-opus-4-8" in out
+    assert "late body" in out
+    assert "noise" not in out
+
+
 def test_root_cli_agent_await_accepts_receipt_command(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}

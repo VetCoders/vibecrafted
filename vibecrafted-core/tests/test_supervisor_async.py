@@ -203,12 +203,48 @@ def test_dispatcher_cli_tees_visible_worker_output(
     assert "visible worker line" in transcript.read_text(encoding="utf-8")
 
 
+def test_dispatcher_cli_quiet_suppresses_final_summary(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    script = tmp_path / "worker.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n",
+        encoding="utf-8",
+    )
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-test-quiet",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--quiet",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 0
+    assert capsys.readouterr().out == ""
+
+
 def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
+    meta = tmp_path / "dispatch.meta.json"
     claude = tmp_path / "claude"
     claude.write_text(
         "#!/usr/bin/env python3\n"
@@ -217,7 +253,8 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
         "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
         "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
         ")\n"
-        "print(json.dumps({'type': 'system', 'session_id': 'sess-123'}))\n"
+        "print(json.dumps({'type': 'system', 'session_id': 'sess-123', "
+        "'model': 'claude-opus-4-8'}))\n"
         "print(json.dumps({'type': 'assistant', 'message': {'content': ["
         "{'type': 'text', 'text': 'visible text from claude'}"
         "]}}))\n",
@@ -236,6 +273,7 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
                 "--verbose",
             ],
             root=tmp_path,
+            meta_path=meta,
             report_path=report,
             transcript_path=transcript,
             tee_output=True,
@@ -244,10 +282,19 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
 
     assert handle.exit_code == 0
     out = capsys.readouterr().out
-    assert "session_id: sess-123" in out
+    assert "session: sess-123" in out
+    assert "model: claude-opus-4-8" in out
     assert "visible text from claude" in out
     assert '"type": "assistant"' not in out
-    assert '"type": "assistant"' in transcript.read_text(encoding="utf-8")
+    transcript_text = transcript.read_text(encoding="utf-8")
+    assert '"type": "assistant"' in transcript_text
+    assert handle.agent_session_id == "sess-123"
+    assert handle.agent_model == "claude-opus-4-8"
+    assert handle.resume_command.endswith("claude --resume sess-123")
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload["agent_session_id"] == "sess-123"
+    assert meta_payload["agent_model"] == "claude-opus-4-8"
+    assert meta_payload["resume_command"].endswith("claude --resume sess-123")
 
 
 def test_dispatcher_cli_fails_missing_report_contract(

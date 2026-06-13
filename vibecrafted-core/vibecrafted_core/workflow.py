@@ -127,6 +127,7 @@ def _dispatcher_command(
     worker_command: list[str],
     tee_output: bool = False,
     emit_json: bool = True,
+    quiet: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -153,6 +154,8 @@ def _dispatcher_command(
         )
     if tee_output:
         command.append("--tee-output")
+    if quiet:
+        command.append("--quiet")
     if emit_json:
         command.append("--json")
     command.append("--")
@@ -588,6 +591,7 @@ def launch_workflow(
         worker_command=worker_command,
         tee_output=spec.runtime in {"terminal", "visible"},
         emit_json=spec.runtime not in {"terminal", "visible"},
+        quiet=spec.runtime in {"terminal", "visible"},
     )
     launch_dir = control_plane_home() / "launches"
     launch_dir.mkdir(parents=True, exist_ok=True)

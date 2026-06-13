@@ -163,6 +163,7 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     script_body = script.read_text(encoding="utf-8")
     assert "vibecrafted_core.dispatcher" in script_body
     assert "--tee-output" in script_body
+    assert "--quiet" in script_body
     assert "--json" not in script_body
     assert payload["command"] == captured["command"]
     assert payload["dispatch_command"] != payload["command"]
@@ -185,6 +186,31 @@ def test_claude_terminal_command_streams_visible_json(tmp_path: Path) -> None:
     assert command[:4] == ["claude", "-p", "--output-format", "stream-json"]
     assert "--verbose" in command
     assert "--dangerously-skip-permissions" in command
+
+
+def test_stream_capable_agents_use_native_stream_commands(tmp_path: Path) -> None:
+    expected = {
+        "codex": ("--json",),
+        "gemini": ("-o", "stream-json"),
+        "junie": ("--output-format", "json-stream"),
+        "grok": ("--output-format", "streaming-json"),
+    }
+
+    for agent, required in expected.items():
+        spec = workflow.WorkflowLaunchSpec(
+            agent=agent,
+            mode="audit",
+            skill="audit",
+            prompt="prove it",
+            file="",
+            runtime="terminal",
+            root=str(tmp_path),
+        )
+
+        command = workflow.build_launch_command(spec, tmp_path)
+
+        for token in required:
+            assert token in command
 
 
 def test_runtime_prompt_keeps_metadata_runtime_owned(tmp_path: Path) -> None:

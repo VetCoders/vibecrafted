@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from . import doctor as doctor_module
+from .agent_stream import ANSI_PATTERN, AgentStreamParser
 from .control_plane import lookup_run, sync_state
 from .workflow import await_launch_truth, launch_workflow, normalize_launch_spec
 
@@ -106,7 +107,15 @@ def _field(payload: dict[str, Any], name: str, default: str = "") -> str:
     return str(payload.get(name) or default)
 
 
-def _tail_lines(path: str, *, max_lines: int = 40) -> tuple[list[str], str]:
+def _clip_line(line: str, *, max_chars: int = 500) -> str:
+    if len(line) <= max_chars:
+        return line
+    return line[: max_chars - 1] + "…"
+
+
+def _tail_lines(
+    path: str, *, agent: str = "", max_lines: int = 40
+) -> tuple[list[str], str]:
     if not path:
         return [], "missing_path"
     transcript = Path(path).expanduser()
@@ -118,7 +127,25 @@ def _tail_lines(path: str, *, max_lines: int = 40) -> tuple[list[str], str]:
         return [], f"read_error:{type(exc).__name__}"
     if not lines:
         return [], "empty"
-    return lines[-max_lines:], ""
+    tail = lines[-max_lines:]
+    if not agent:
+        return [_clip_line(line) for line in tail], ""
+    parser = AgentStreamParser(agent)
+    rendered: list[str] = []
+    saw_json = False
+    for line in tail:
+        if line.lstrip().startswith("{"):
+            saw_json = True
+        text = parser.feed_line((line + "\n").encode("utf-8"))
+        for rendered_line in text.splitlines():
+            clean = rendered_line.strip()
+            if clean and ANSI_PATTERN.sub("", clean).strip():
+                rendered.append(_clip_line(clean))
+    if rendered:
+        return rendered[-max_lines:], ""
+    if saw_json:
+        return [], "no_renderable_events"
+    return [_clip_line(line) for line in tail], ""
 
 
 def _parse_iso(raw: object) -> dt.datetime | None:
@@ -213,7 +240,7 @@ def _print_run_status(run: dict[str, Any], *, include_tail: bool = True) -> None
     print(f"transcript: {transcript}")
     if not include_tail:
         return
-    tail, tail_error = _tail_lines(transcript)
+    tail, tail_error = _tail_lines(transcript, agent=str(run.get("agent") or ""))
     if tail:
         print("transcript_tail:")
         for line in tail:

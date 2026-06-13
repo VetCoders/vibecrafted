@@ -149,9 +149,15 @@ def _stdin_command(agent: str) -> list[str]:
             "--dangerously-skip-permissions",
         ]
     if agent == "codex":
-        return ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", "-"]
+        return [
+            "codex",
+            "exec",
+            "--json",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-",
+        ]
     if agent == "gemini":
-        return ["gemini", "--yolo", "--prompt", ""]
+        return ["gemini", "-p", "", "--approval-mode", "yolo", "-o", "stream-json"]
     if agent == "agy":
         return [
             "agy",
@@ -171,12 +177,21 @@ def _stdin_command(agent: str) -> list[str]:
             "--skip-update-check",
             "--input-format",
             "text",
+            "--output-format",
+            "json-stream",
         ]
     if agent == "grok":
         return [
-            "bash",
-            "-lc",
-            'exec grok --cwd . --permission-mode bypassPermissions --no-alt-screen --prompt-file "$VIBECRAFTED_PROMPT_PATH"',
+            "grok",
+            "--cwd",
+            ".",
+            "--permission-mode",
+            "bypassPermissions",
+            "--no-alt-screen",
+            "--output-format",
+            "streaming-json",
+            "--prompt-file",
+            "/dev/stdin",
         ]
     raise ValueError(f"unsupported agent: {agent}")
 

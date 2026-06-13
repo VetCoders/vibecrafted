@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
+from .agent_stream import AgentStreamParser
 from .artifacts import ArtifactValidation, validate_artifacts
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
@@ -20,44 +21,15 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _is_claude_stream_json(command: Sequence[str]) -> bool:
+def _infer_agent(command: Sequence[str]) -> str:
     if not command:
-        return False
-    if Path(str(command[0])).name != "claude":
-        return False
-    return "--output-format" in command and "stream-json" in command
-
-
-def _render_claude_stream_json(chunk: bytes) -> bytes:
-    try:
-        payload = json.loads(chunk.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return chunk
-    if not isinstance(payload, dict):
-        return b""
-
-    out: list[str] = []
-    message = payload.get("message")
-    if isinstance(message, dict):
-        content = message.get("content")
-        if isinstance(content, list):
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text = item.get("text")
-                    if isinstance(text, str):
-                        out.append(text)
-
-    result = payload.get("result")
-    if isinstance(result, str) and result:
-        out.append(result)
-        if not result.endswith("\n"):
-            out.append("\n")
-
-    session_id = payload.get("session_id")
-    if payload.get("type") == "system" and isinstance(session_id, str) and session_id:
-        out.append(f"session_id: {session_id}\n")
-
-    return "".join(out).encode("utf-8")
+        return "agent"
+    name = Path(str(command[0])).name
+    if name in {"claude", "codex", "gemini", "agy", "junie", "grok"}:
+        return name
+    if name in {"python", "python3"}:
+        return "python"
+    return name or "agent"
 
 
 @dataclass
@@ -77,6 +49,14 @@ class AsyncRunHandle:
     artifact_validation: ArtifactValidation | None = None
     first_output_seen: bool = False
     session_id: str = ""
+    agent: str = ""
+    agent_session_id: str = ""
+    agent_model: str = ""
+    tokens_input: int = 0
+    tokens_cached_input: int = 0
+    tokens_output: int = 0
+    cost_usd: float | None = None
+    resume_command: str = ""
 
     @property
     def state(self) -> RunState:
@@ -123,6 +103,7 @@ class AsyncSupervisor:
             merged_env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(transcript_path)
         if prompt_file is not None:
             merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_file)
+        agent = str(merged_env.get("VIBECRAFTED_AGENT") or _infer_agent(command))
         started_at = _utc_now()
 
         await self._emit(
@@ -139,6 +120,7 @@ class AsyncSupervisor:
                 "started_at": started_at.isoformat(),
                 "session_id": session_id,
                 "identity_required": True,
+                "agent": agent,
             },
         )
 
@@ -168,6 +150,7 @@ class AsyncSupervisor:
             report_path=Path(report_path) if report_path is not None else None,
             transcript_path=transcript,
             session_id=session_id,
+            agent=agent,
         )
         try:
             handle.pgid = os.getpgid(process.pid)
@@ -279,6 +262,15 @@ class AsyncSupervisor:
                 "meta": str(handle.meta_path or ""),
                 "report": str(handle.report_path or ""),
                 "transcript": str(handle.transcript_path or ""),
+                "agent": handle.agent,
+                "agent_session_id": handle.agent_session_id,
+                "agent_model": handle.agent_model,
+                "tokens_input": handle.tokens_input,
+                "tokens_cached_input": handle.tokens_cached_input,
+                "tokens_output": handle.tokens_output,
+                "tokens_total": handle.tokens_input + handle.tokens_output,
+                "cost_usd": handle.cost_usd,
+                "resume_command": handle.resume_command,
                 **handle.artifact_validation.as_payload(),
             },
         )
@@ -307,7 +299,7 @@ class AsyncSupervisor:
         self, handle: AsyncRunHandle, *, tee_output: bool = False
     ) -> None:
         assert handle.process.stdout is not None
-        render_claude_json = _is_claude_stream_json(handle.command)
+        parser = AgentStreamParser(handle.agent)
         while True:
             chunk = await handle.process.stdout.readline()
             if not chunk:
@@ -315,12 +307,11 @@ class AsyncSupervisor:
             if handle.transcript_path is not None:
                 with handle.transcript_path.open("ab") as transcript:
                     transcript.write(chunk)
+            display_text = parser.feed_line(chunk)
+            self._sync_stream_summary(handle, parser)
             if tee_output:
-                display_chunk = (
-                    _render_claude_stream_json(chunk) if render_claude_json else chunk
-                )
-                if display_chunk:
-                    sys.stdout.buffer.write(display_chunk)
+                if display_text:
+                    sys.stdout.buffer.write(display_text.encode("utf-8"))
                     sys.stdout.buffer.flush()
             if not handle.first_output_seen:
                 handle.first_output_seen = True
@@ -342,6 +333,57 @@ class AsyncSupervisor:
                     },
                 )
         await handle.process.wait()
+        self._sync_stream_summary(handle, parser)
+        self._write_meta_summary(handle)
+
+    def _sync_stream_summary(
+        self, handle: AsyncRunHandle, parser: AgentStreamParser
+    ) -> None:
+        handle.agent_session_id = parser.session_id
+        handle.agent_model = parser.model_id
+        handle.tokens_input = parser.tokens_input
+        handle.tokens_cached_input = parser.tokens_cached_input
+        handle.tokens_output = parser.tokens_output
+        handle.cost_usd = parser.cost_usd
+        handle.resume_command = parser.resume_command(handle.root)
+
+    def _write_meta_summary(self, handle: AsyncRunHandle) -> None:
+        if handle.meta_path is None:
+            return
+        payload: dict[str, object] = {}
+        if handle.meta_path.exists():
+            try:
+                loaded = json.loads(handle.meta_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                loaded = {}
+            if isinstance(loaded, dict):
+                payload.update(loaded)
+        payload.update(
+            {
+                "run_id": handle.run_id,
+                "agent": handle.agent,
+                "session_id": handle.agent_session_id,
+                "agent_session_id": handle.agent_session_id,
+                "agent_model": handle.agent_model,
+                "runtime_session_id": handle.session_id,
+                "root": str(handle.root),
+                "report": str(handle.report_path or ""),
+                "transcript": str(handle.transcript_path or ""),
+                "tokens_input": handle.tokens_input,
+                "tokens_cached_input": handle.tokens_cached_input,
+                "tokens_output": handle.tokens_output,
+                "tokens_total": handle.tokens_input + handle.tokens_output,
+                "cost_usd": handle.cost_usd
+                if handle.cost_usd is not None
+                else "unknown",
+                "resume_command": handle.resume_command,
+            }
+        )
+        handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
+        handle.meta_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     async def _terminate(self, handle: AsyncRunHandle) -> None:
         if handle.process.returncode is not None:

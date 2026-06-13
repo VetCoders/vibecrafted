@@ -12,6 +12,9 @@ def _fake_agent(bin_dir: Path, name: str) -> None:
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$@\"\n"
         "cat\n"
+        f"printf '[12:00:00] model: {name}-model\\n'\n"
+        f"printf '[12:00:00] session: {name}-session\\n'\n"
+        "printf '[12:00:01] tokens: 10 in (3 cached) / 5 out\\n'\n"
         "printf 'fake worker ok\\n'\n"
         'printf "%s\\n" "---" "status: completed" "---" "report for $0" > "$VIBECRAFTED_REPORT_PATH"\n',
         encoding="utf-8",
@@ -47,6 +50,10 @@ def test_research_runtime_supervises_three_tracks(monkeypatch, tmp_path: Path) -
     assert "research-claude" in report
     assert "research-codex" in report
     assert "research-gemini" in report
+    assert "agent_session_id: claude-session" in report
+    assert "agent_model: claude-model" in report
+    assert "tokens: 10 in (3 cached) / 5 out" in report
+    assert "claude --resume claude-session" in report
     assert (home / "rsch-test-children" / "research-claude.md").is_file()
     assert (home / "rsch-test-children" / "research-codex.md").is_file()
     assert (home / "rsch-test-children" / "research-gemini.md").is_file()
@@ -94,6 +101,9 @@ def test_marbles_runtime_supervises_loops(monkeypatch, tmp_path: Path) -> None:
     assert "vc-marbles supervised run" in report
     assert "marbles-L1" in report
     assert "marbles-L2" in report
+    assert "agent_session_id: codex-session" in report
+    assert "agent_model: codex-model" in report
+    assert "codex resume codex-session" in report
     assert (home / "marb-test-children" / "marbles-L1.md").is_file()
     assert (home / "marb-test-children" / "marbles-L2.md").is_file()
     l2_transcript = (
