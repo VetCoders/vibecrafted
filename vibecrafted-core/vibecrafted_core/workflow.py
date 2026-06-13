@@ -125,6 +125,7 @@ def _dispatcher_command(
     report_path: Path,
     transcript_path: Path,
     worker_command: list[str],
+    tee_output: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -149,6 +150,8 @@ def _dispatcher_command(
                 str(prompt_path),
             ]
         )
+    if tee_output:
+        command.append("--tee-output")
     command.extend(
         [
             "--json",
@@ -585,6 +588,7 @@ def launch_workflow(
         report_path=artifacts["report"],
         transcript_path=artifacts["transcript"],
         worker_command=worker_command,
+        tee_output=spec.runtime in {"terminal", "visible"},
     )
     launch_dir = control_plane_home() / "launches"
     launch_dir.mkdir(parents=True, exist_ok=True)

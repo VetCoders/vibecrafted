@@ -37,6 +37,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="require at least one byte of captured stdout/stderr",
     )
     run.add_argument(
+        "--tee-output",
+        action="store_true",
+        help="also write worker stdout/stderr to this terminal while capturing transcript",
+    )
+    run.add_argument(
         "--json",
         action="store_true",
         help="print the final lifecycle summary as JSON",
@@ -67,6 +72,7 @@ async def _run(args: argparse.Namespace) -> int:
         timeout=args.timeout,
         require_report=not args.no_require_report,
         require_transcript_output=args.require_transcript_output,
+        tee_output=args.tee_output,
     )
     validation = handle.artifact_validation
     summary = {

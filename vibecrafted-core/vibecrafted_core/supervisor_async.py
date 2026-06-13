@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -160,6 +161,7 @@ class AsyncSupervisor:
         timeout: float | None = None,
         require_report: bool = True,
         require_transcript_output: bool = False,
+        tee_output: bool = False,
     ) -> AsyncRunHandle:
         handle = await self.spawn(
             run_id=run_id,
@@ -173,9 +175,12 @@ class AsyncSupervisor:
         )
         try:
             if timeout is None:
-                await self._watch_process(handle)
+                await self._watch_process(handle, tee_output=tee_output)
             else:
-                await asyncio.wait_for(self._watch_process(handle), timeout=timeout)
+                await asyncio.wait_for(
+                    self._watch_process(handle, tee_output=tee_output),
+                    timeout=timeout,
+                )
         except asyncio.TimeoutError:
             await self._terminate(handle)
             handle.exit_code = handle.process.returncode
@@ -257,7 +262,9 @@ class AsyncSupervisor:
             )
         return handle
 
-    async def _watch_process(self, handle: AsyncRunHandle) -> None:
+    async def _watch_process(
+        self, handle: AsyncRunHandle, *, tee_output: bool = False
+    ) -> None:
         assert handle.process.stdout is not None
         while True:
             chunk = await handle.process.stdout.readline()
@@ -266,6 +273,9 @@ class AsyncSupervisor:
             if handle.transcript_path is not None:
                 with handle.transcript_path.open("ab") as transcript:
                     transcript.write(chunk)
+            if tee_output:
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
             if not handle.first_output_seen:
                 handle.first_output_seen = True
                 await self._transition(

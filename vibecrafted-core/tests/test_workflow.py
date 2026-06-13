@@ -160,7 +160,9 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert captured["command"][captured["command"].index("--cwd") + 1] == str(tmp_path)
     script = Path(captured["command"][-1])
     assert script.is_file()
-    assert "vibecrafted_core.dispatcher" in script.read_text(encoding="utf-8")
+    script_body = script.read_text(encoding="utf-8")
+    assert "vibecrafted_core.dispatcher" in script_body
+    assert "--tee-output" in script_body
     assert payload["command"] == captured["command"]
     assert payload["dispatch_command"] != payload["command"]
     assert payload["control"].endswith(f"{payload['run_id']}.json")

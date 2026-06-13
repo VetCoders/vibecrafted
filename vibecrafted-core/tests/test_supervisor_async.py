@@ -162,6 +162,47 @@ def test_dispatcher_cli_delivers_prompt_file_on_stdin(
     assert "stdin prompt ok" in transcript.read_text(encoding="utf-8")
 
 
+def test_dispatcher_cli_tees_visible_worker_output(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    script = tmp_path / "worker.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n"
+        "print('visible worker line')\n",
+        encoding="utf-8",
+    )
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-test-visible",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--require-transcript-output",
+            "--tee-output",
+            "--json",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "visible worker line" in out
+    assert '"run_id": "disp-test-visible"' in out
+    assert "visible worker line" in transcript.read_text(encoding="utf-8")
+
+
 def test_dispatcher_cli_fails_missing_report_contract(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
