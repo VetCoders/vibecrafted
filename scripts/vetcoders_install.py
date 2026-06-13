@@ -244,7 +244,7 @@ class Foundation:
     def is_installed(self) -> Optional[str]:
         """Return path if installed, None otherwise."""
         if self.name == "zellij":
-            for candidate in ("vc-frame", "zellij"):
+            for candidate in ("vc-frame",):
                 found = shutil.which(candidate)
                 if found:
                     return found
@@ -391,14 +391,12 @@ FOUNDATIONS: List[Foundation] = [
     ),
     Foundation(
         name="zellij",
-        description="Visible multi-agent terminal workspace surface",
-        channels=["brew", "cargo", "github"],
+        description="VC Frame multi-agent terminal workspace surface",
+        channels=["canonical"],
         packages={
-            "brew": "zellij",
-            "cargo": "zellij",
-            "github": "https://github.com/zellij-org/zellij/releases",
+            "canonical": "curl -fsSL https://vibecrafted.io/install.sh | bash",
         },
-        verify_cmd="zellij --version",
+        verify_cmd="vc-frame --version",
         required=True,
     ),
 ]
@@ -3710,11 +3708,11 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 )
             )
 
-    # 7e. VC Frame/Zellij availability and version. ZELLIJ_* env/socket names
-    # remain engine-room canonical, but the rebranded binary is preferred.
-    zellij_bin = shutil.which("vc-frame") or shutil.which("zellij")
+    # 7e. VC Frame availability and version. ZELLIJ_* env/socket names
+    # remain engine-room canonical, but the product binary is vc-frame.
+    zellij_bin = shutil.which("vc-frame")
     if not zellij_bin:
-        for bundled_name in ("vc-frame", "zellij"):
+        for bundled_name in ("vc-frame",):
             bundled_zellij = vibecrafted_runtime_bin() / bundled_name
             if bundled_zellij.is_file() and os.access(bundled_zellij, os.X_OK):
                 zellij_bin = str(bundled_zellij)

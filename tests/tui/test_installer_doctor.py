@@ -232,20 +232,20 @@ def test_run_doctor_includes_dashboard_smoke(tmp_path: Path, monkeypatch) -> Non
     assert indexed["dashboard-smoke"].level == "ok"
 
 
-def test_run_doctor_uses_bundled_zellij_when_not_on_path(
+def test_run_doctor_uses_bundled_vc_frame_when_not_on_path(
     tmp_path: Path, monkeypatch
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
     runtime_home = home / ".local" / "share" / "vibecrafted"
     store_path = crafted_home / "skills"
-    zellij = runtime_home / "bin" / "zellij"
+    vc_frame = runtime_home / "bin" / "vc-frame"
 
     store_path.mkdir(parents=True)
-    zellij.parent.mkdir(parents=True)
+    vc_frame.parent.mkdir(parents=True)
     _write_executable(
-        zellij,
-        '#!/usr/bin/env bash\nif [[ "$1" == "--version" ]]; then echo \'zellij 0.test\'; else exit 0; fi\n',
+        vc_frame,
+        '#!/usr/bin/env bash\nif [[ "$1" == "--version" ]]; then echo \'vc-frame 0.test\'; else exit 0; fi\n',
     )
 
     state = installer.InstallState(framework_version="1.5.0")
@@ -259,7 +259,7 @@ def test_run_doctor_uses_bundled_zellij_when_not_on_path(
     indexed = {finding.component: finding for finding in findings}
 
     assert indexed["zellij"].level == "ok"
-    assert str(zellij) in indexed["zellij"].message
+    assert str(vc_frame) in indexed["zellij"].message
 
 
 def test_run_doctor_accepts_gemini_help_when_version_flag_exits_nonzero(
