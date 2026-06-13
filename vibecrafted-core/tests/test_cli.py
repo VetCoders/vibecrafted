@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from vibecrafted_core import cli
@@ -98,6 +99,40 @@ def test_root_cli_agent_observe_accepts_receipt_command(monkeypatch, capsys) -> 
     assert "report:     /tmp/report.md" in out
 
 
+def test_root_cli_agent_observe_prints_transcript_tail(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(f"line {idx}" for idx in range(1, 66)) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+    monkeypatch.setattr(
+        cli,
+        "lookup_run",
+        lambda run_id: {
+            "run_id": run_id,
+            "state": "stalled",
+            "agent": "codex",
+            "skill": "implement",
+            "root": "/repo",
+            "latest_report": "/tmp/report.md",
+            "latest_transcript": str(transcript),
+        },
+    )
+
+    assert cli.main(["codex", "observe", "--run-id", "impl-1"]) == 0
+
+    out = capsys.readouterr().out
+    assert "state:      stalled" in out
+    assert "transcript_tail:" in out
+    assert "line 65" in out
+    assert "line 1" not in out
+
+
 def test_root_cli_agent_await_accepts_receipt_command(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
@@ -108,26 +143,62 @@ def test_root_cli_agent_await_accepts_receipt_command(monkeypatch, capsys) -> No
         lambda run_id: {
             "run_id": run_id,
             "agent": "codex",
-        },
-    )
-    monkeypatch.setattr(
-        cli,
-        "await_launch_truth",
-        lambda run_id, **_kwargs: {
-            "run_id": run_id,
-            "completed": True,
-            "terminal": True,
+            "state": "report_validated",
+            "skill": "implement",
+            "root": "/repo",
             "artifact_ok": True,
-            "report": "/tmp/report.md",
-            "transcript": "/tmp/transcript.log",
+            "latest_report": "/tmp/report.md",
+            "latest_transcript": "/tmp/transcript.log",
         },
     )
 
     assert cli.main(["codex", "await", "--run-id", "impl-1", "--timeout", "0"]) == 0
 
     out = capsys.readouterr().out
-    assert "completed:   true" in out
-    assert "artifact_ok: true" in out
+    assert "await: initial status" in out
+    assert "await: completed" in out
+    assert "state:      report_validated" in out
+
+
+def test_root_cli_agent_await_fails_dead_stale_worker(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text("last useful line\n", encoding="utf-8")
+    run = {
+        "run_id": "impl-1",
+        "agent": "codex",
+        "state": "stalled",
+        "liveness": "pid_gone",
+        "skill": "implement",
+        "root": "/repo",
+        "updated_at": "2000-01-01T00:00:00+00:00",
+        "latest_report": "/tmp/report.md",
+        "latest_transcript": str(transcript),
+    }
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+    monkeypatch.setattr(cli, "lookup_run", lambda _run_id: run)
+
+    rc = cli.main(
+        [
+            "codex",
+            "await",
+            "--run-id",
+            "impl-1",
+            "--timeout",
+            "30",
+            "--stale-after",
+            "600",
+        ]
+    )
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "await: worker dead or stale" in captured.out
+    assert "state:      stalled" in captured.out
+    assert "last useful line" in captured.out
 
 
 def test_root_cli_doctor_routes_to_installer_doctor(monkeypatch, capsys) -> None:

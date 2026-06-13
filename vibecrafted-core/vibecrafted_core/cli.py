@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -34,6 +36,20 @@ LAUNCHERS = (
 )
 LAUNCH_ALIASES = {
     "justdo": "implement",
+}
+SUCCESS_STATES = {"report_validated", "completed", "closed"}
+TERMINAL_STATES = {
+    "blocked",
+    "closed",
+    "completed",
+    "contract_failed",
+    "failed",
+    "ghost",
+    "report_invalid",
+    "report_missing",
+    "report_validated",
+    "stopped",
+    "timed_out",
 }
 
 
@@ -82,6 +98,66 @@ def _field(payload: dict[str, Any], name: str, default: str = "") -> str:
     return str(payload.get(name) or default)
 
 
+def _tail_lines(path: str, *, max_lines: int = 40) -> tuple[list[str], str]:
+    if not path:
+        return [], "missing_path"
+    transcript = Path(path).expanduser()
+    try:
+        if not transcript.is_file():
+            return [], "missing_file"
+        lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        return [], f"read_error:{type(exc).__name__}"
+    if not lines:
+        return [], "empty"
+    return lines[-max_lines:], ""
+
+
+def _parse_iso(raw: object) -> dt.datetime | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed
+
+
+def _run_age_seconds(run: dict[str, Any]) -> float | None:
+    timestamp = _parse_iso(run.get("heartbeat_at") or run.get("updated_at"))
+    if timestamp is None:
+        return None
+    return (dt.datetime.now(dt.timezone.utc) - timestamp).total_seconds()
+
+
+def _run_succeeded(run: dict[str, Any]) -> bool:
+    state = str(run.get("state") or "")
+    errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
+    return (
+        state in SUCCESS_STATES and run.get("artifact_ok") is not False and not errors
+    )
+
+
+def _run_terminal(run: dict[str, Any]) -> bool:
+    if str(run.get("state") or "") in TERMINAL_STATES:
+        return True
+    if str(run.get("liveness") or "") == "terminal":
+        return True
+    return run.get("exit_code") is not None
+
+
+def _run_dead_or_stale(run: dict[str, Any], stale_after_seconds: float) -> bool:
+    liveness = str(run.get("liveness") or "")
+    state = str(run.get("state") or "")
+    if liveness not in {"pid_gone", "missing_signal_target"} and state != "stalled":
+        return False
+    age = _run_age_seconds(run)
+    return age is None or age >= stale_after_seconds
+
+
 def _print_launch_receipt(payload: dict[str, Any]) -> None:
     run_id = _field(payload, "run_id")
     agent = _field(payload, "agent")
@@ -115,6 +191,29 @@ def _run_for_agent(
     return None
 
 
+def _print_run_status(run: dict[str, Any], *, include_tail: bool = True) -> None:
+    print(f"run_id:     {run.get('run_id') or ''}")
+    print(f"state:      {run.get('state') or ''}")
+    print(f"agent:      {run.get('agent') or ''}")
+    print(f"skill:      {run.get('skill') or ''}")
+    print(f"root:       {run.get('root') or ''}")
+    print(f"liveness:   {run.get('liveness') or ''}")
+    if run.get("last_error"):
+        print(f"last_error: {run.get('last_error')}")
+    print(f"report:     {run.get('latest_report') or run.get('report') or ''}")
+    transcript = str(run.get("latest_transcript") or run.get("transcript") or "")
+    print(f"transcript: {transcript}")
+    if not include_tail:
+        return
+    tail, tail_error = _tail_lines(transcript)
+    if tail:
+        print("transcript_tail:")
+        for line in tail:
+            print(f"  {line}")
+    else:
+        print(f"transcript_tail: unavailable ({tail_error})")
+
+
 def _agent_observe(agent: str, argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(prog=f"vibecrafted {agent} observe")
     parser.add_argument("--run-id", default="")
@@ -128,13 +227,7 @@ def _agent_observe(agent: str, argv: Sequence[str]) -> int:
     if args.json:
         print(json.dumps(run, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
-    print(f"run_id:     {run.get('run_id') or ''}")
-    print(f"state:      {run.get('state') or ''}")
-    print(f"agent:      {run.get('agent') or ''}")
-    print(f"skill:      {run.get('skill') or ''}")
-    print(f"root:       {run.get('root') or ''}")
-    print(f"report:     {run.get('latest_report') or run.get('report') or ''}")
-    print(f"transcript: {run.get('latest_transcript') or run.get('transcript') or ''}")
+    _print_run_status(run)
     return 0
 
 
@@ -144,27 +237,70 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
     parser.add_argument("--last", action="store_true")
     parser.add_argument("--timeout", type=float, default=300)
     parser.add_argument("--interval", type=float, default=5)
+    parser.add_argument("--status-interval", type=float, default=60)
+    parser.add_argument("--stale-after", type=float, default=600)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(list(argv))
     run = _run_for_agent(agent, args.run_id, last=args.last)
     if run is None:
         print("No run found. Pass --run-id or --last.", file=sys.stderr)
         return 1
-    result = await_launch_truth(
-        str(run.get("run_id") or ""),
-        timeout_seconds=args.timeout,
-        interval_seconds=args.interval,
-    )
+    run_id = str(run.get("run_id") or "")
     if args.json:
+        result = await_launch_truth(
+            run_id,
+            timeout_seconds=args.timeout,
+            interval_seconds=args.interval,
+        )
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if result.get("completed") and result.get("artifact_ok") else 1
-    print(f"run_id:      {result.get('run_id') or ''}")
-    print(f"completed:   {str(bool(result.get('completed'))).lower()}")
-    print(f"terminal:    {str(bool(result.get('terminal'))).lower()}")
-    print(f"artifact_ok: {str(bool(result.get('artifact_ok'))).lower()}")
-    print(f"report:      {result.get('report') or ''}")
-    print(f"transcript:  {result.get('transcript') or ''}")
-    return 0 if result.get("completed") and result.get("artifact_ok") else 1
+
+    print("await: initial status")
+    _print_run_status(run)
+    last_status_printed_at = time.monotonic()
+
+    timeout = max(float(args.timeout), 0.0)
+    interval = max(float(args.interval), 0.1)
+    status_interval = max(float(args.status_interval), interval)
+    stale_after = max(float(args.stale_after), 0.0)
+    deadline = time.monotonic() + timeout
+    next_status = time.monotonic() + status_interval
+
+    while True:
+        run = lookup_run(run_id)
+        if run is None:
+            print(f"await: run disappeared: {run_id}", file=sys.stderr)
+            return 1
+        if _run_succeeded(run):
+            print("await: completed")
+            if time.monotonic() - last_status_printed_at > 1:
+                _print_run_status(run)
+            return 0
+        if _run_terminal(run):
+            print("await: terminal failure")
+            if time.monotonic() - last_status_printed_at > 1:
+                _print_run_status(run)
+            return 1
+        if _run_dead_or_stale(run, stale_after):
+            print(
+                f"await: worker dead or stale for >= {int(stale_after)}s",
+            )
+            if time.monotonic() - last_status_printed_at > 1:
+                _print_run_status(run)
+            return 1
+
+        now = time.monotonic()
+        if now >= deadline:
+            print("await: timed out")
+            if time.monotonic() - last_status_printed_at > 1:
+                _print_run_status(run)
+            return 1
+        if now >= next_status:
+            print("await: still running")
+            _print_run_status(run)
+            last_status_printed_at = now
+            next_status = now + status_interval
+        time.sleep(min(interval, max(deadline - now, 0.0)))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
