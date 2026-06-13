@@ -6,6 +6,7 @@ set -euo pipefail
 # Handles:
 #   loctree / loctree-mcp  — required Loctree product binaries via Loctree installer
 #   aicx / aicx-mcp       — required AICX product binaries via Loctree installer
+#   vc-frame               — required Vibecrafted frame binary via canonical installer
 #   prview                 — cargo install OR binary from GH releases
 #
 # Usage:
@@ -13,6 +14,7 @@ set -euo pipefail
 #   bash scripts/install-foundations.sh --all             # validate/install all framework-owned foundations
 #   bash scripts/install-foundations.sh loctree           # validate Loctree product binaries
 #   bash scripts/install-foundations.sh aicx              # validate AICX product binaries
+#   bash scripts/install-foundations.sh vc-frame          # validate Vibecrafted frame binary
 #   bash scripts/install-foundations.sh --check           # dry-run: show what would install
 #   bash scripts/install-foundations.sh --prefix /usr/local  # custom install prefix
 # ---------------------------------------------------------------------------
@@ -20,9 +22,8 @@ set -euo pipefail
 PRVIEW_CRATE="prview"
 PRVIEW_REPO="VetCoders/prview"
 
-ZELLIJ_REPO="zellij-org/zellij"
-ZELLIJ_VERSION="${ZELLIJ_VERSION:-0.44.3}"
 LOCTREE_INSTALL_URL="${LOCTREE_INSTALL_URL:-https://loct.io/install.sh}"
+VCFRAME_INSTALL_URL="${VCFRAME_INSTALL_URL:-https://vibecrafted.io/install.sh}"
 
 # Agent CLIs — npm packages when the vendor publishes an official package.
 AGENT_PACKAGES=(
@@ -235,53 +236,6 @@ install_from_bundled() {
   return 0
 }
 
-# ---------------------------------------------------------------------------
-# Toolchain bootstrap — brew → node → npm (macOS only)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Toolchain bootstrap — userspace-first, no sudo required
-# ---------------------------------------------------------------------------
-
-ensure_rustup() {
-  if has_cmd cargo; then
-    if has_cmd rustup && ! rustup default 2>/dev/null | grep -q '.'; then
-      rustup default stable 2>&1 | tail -3 || true
-    fi
-    has_cmd cargo && return 0
-  fi
-  has_cmd curl || return 1
-
-  if is_interactive; then
-    printf '\n'
-    info "Rust toolchain not found."
-    info "Installing rustup (no sudo needed, installs to ~/.cargo)..."
-    printf '  Press Enter to proceed, or Ctrl-C to skip: '
-    read -r _
-  else
-    info "Installing rustup (non-interactive)..."
-  fi
-
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path 2>&1 | tail -5 || {
-    warn "rustup installation failed."
-    return 1
-  }
-
-  # Source cargo env for this session
-  # shellcheck disable=SC1091
-  [[ -f "$HOME/.cargo/env" ]] && . "$HOME/.cargo/env"
-
-  # Ensure a default toolchain is set. On some non-interactive installs (notably
-  # CI macOS runners with pre-existing rustup but no default), `cargo install`
-  # emits `warning: no default toolchain set` and downstream commands can
-  # silently use the wrong channel. Idempotent: no-op when already pinned.
-  if has_cmd rustup && ! rustup default 2>/dev/null | grep -q '.'; then
-    rustup default stable 2>&1 | tail -3 || true
-  fi
-
-  has_cmd cargo
-}
-
 ensure_node() {
   has_cmd node && has_cmd npm && return 0
 
@@ -389,59 +343,6 @@ install_vc_wrappers() {
     chmod +x "$LAUNCHER_PREFIX/$name"
     ok "Installed $name -> $LAUNCHER_PREFIX/$name"
   done
-}
-
-github_release_json() {
-  local repo="$1" endpoint="$2"
-  curl -fsSL -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$repo/releases/$endpoint"
-}
-
-github_release_asset_url() {
-  local repo="$1" endpoint="$2"
-  shift 2
-  local patterns=("$@")
-  local json
-
-  has_cmd curl || return 1
-  has_cmd python3 || return 1
-  json="$(github_release_json "$repo" "$endpoint")" || return 1
-
-  python3 - "$json" "${patterns[@]}" <<'PY'
-import json
-import re
-import sys
-
-payload = json.loads(sys.argv[1])
-assets = payload.get("assets") or []
-patterns = [re.compile(p) for p in sys.argv[2:]]
-
-for pattern in patterns:
-    for asset in assets:
-        name = asset.get("name") or ""
-        if pattern.fullmatch(name):
-            print(asset.get("browser_download_url") or "")
-            raise SystemExit(0)
-
-raise SystemExit(1)
-PY
-}
-
-release_download_url() {
-  local repo="$1" tag="$2" asset="$3"
-  printf 'https://github.com/%s/releases/download/%s/%s\n' "$repo" "$tag" "$asset"
-}
-
-zellij_direct_asset_url() {
-  local os="$1" arch="$2" target=""
-  case "$os/$arch" in
-    linux/x86_64) target="x86_64-unknown-linux-musl" ;;
-    linux/aarch64) target="aarch64-unknown-linux-musl" ;;
-    macos/x86_64) target="x86_64-apple-darwin" ;;
-    macos/aarch64) target="aarch64-apple-darwin" ;;
-    *) return 1 ;;
-  esac
-  release_download_url "$ZELLIJ_REPO" "v${ZELLIJ_VERSION}" "zellij-${target}.tar.gz"
 }
 
 install_loctree() {
@@ -559,109 +460,28 @@ install_aicx() {
 }
 
 # ---------------------------------------------------------------------------
-# Zellij installer — prebuilt binary from GitHub releases
+# Zellij installer boundary — vc-frame validation only
 # ---------------------------------------------------------------------------
 
-zellij_asset_patterns() {
-  local os="$1" arch="$2"
-  case "$os" in
-    linux)
-      case "$arch" in
-        x86_64)  printf '%s\n' '^zellij-x86_64-unknown-linux-musl\.tar\.gz$' ;;
-        aarch64) printf '%s\n' '^zellij-aarch64-unknown-linux-musl\.tar\.gz$' ;;
-        *)       die "No zellij binary for linux/$arch" ;;
-      esac
-      ;;
-    macos)
-      case "$arch" in
-        x86_64)  printf '%s\n' '^zellij-x86_64-apple-darwin\.tar\.gz$' ;;
-        aarch64) printf '%s\n' '^zellij-aarch64-apple-darwin\.tar\.gz$' ;;
-        *)       die "No zellij binary for macos/$arch" ;;
-      esac
-      ;;
-    *) die "No zellij binary for $os" ;;
-  esac
-}
-
-install_zellij() {
+install_vcframe() {
   if binary_runs vc-frame; then
     ok "vc-frame already installed: $(command -v vc-frame)"
+    if (( CHECK_ONLY )); then
+      info "Canonical vc-frame installer:"
+      info "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
+    fi
     return 0
   fi
-  if binary_runs zellij; then
-    ok "zellij fallback already installed: $(command -v zellij)"
-    return 0
-  fi
-
-  local os arch patterns_text
-  local patterns=()
-  os="$(detect_os)"
-  arch="$(detect_arch)"
-  patterns_text="$(zellij_asset_patterns "$os" "$arch")"
-  while IFS= read -r pattern; do
-    [[ -n "$pattern" ]] && patterns+=("$pattern")
-  done <<< "$patterns_text"
 
   if (( CHECK_ONLY )); then
-    info "Would install terminal multiplexer fallback for ${os}/${arch}"
-    info "  Install to: $PREFIX"
+    info "Would install vc-frame from canonical Vibecrafted installer:"
+    info "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
     return 0
   fi
 
-  has_cmd curl || die "curl is required to download zellij"
-  ensure_prefix
-
-  local url asset tmpdir
-  url="$(zellij_direct_asset_url "$os" "$arch" || true)"
-  if [[ -z "$url" ]]; then
-    url="$(github_release_asset_url "$ZELLIJ_REPO" "latest" "${patterns[@]}")" || true
-  fi
-  if [[ -z "$url" ]]; then
-    warn "Could not resolve a zellij release asset for ${os}/${arch}."
-    warn "Falling back to cargo install..."
-    if ensure_rustup; then
-      install_from_cargo "zellij" "zellij" && return 0
-    fi
-    return 1
-  fi
-  asset="${url##*/}"
-
-  info "Downloading zellij for ${os}/${arch}..."
-  tmpdir="$(mktemp -d)"
-  local archive="$tmpdir/$asset"
-  if ! curl -fsSL -o "$archive" "$url"; then
-    rm -rf "$tmpdir"
-    warn "Failed to download zellij."
-    return 1
-  fi
-
-  info "Extracting..."
-  mkdir -p "$tmpdir/out"
-  tar -xzf "$archive" -C "$tmpdir/out"
-
-  local found=0
-  while IFS= read -r -d '' bin; do
-    local name
-    name="$(basename "$bin")"
-    if [[ "$name" == "zellij" ]]; then
-      cp "$bin" "$PREFIX/$name"
-      chmod +x "$PREFIX/$name"
-      ok "Installed $name -> $PREFIX/$name"
-      found=1
-    fi
-  done < <(find "$tmpdir/out" -type f -name 'zellij' -print0 2>/dev/null)
-
-  rm -rf "$tmpdir"
-
-  if (( found )) && binary_runs zellij; then
-    ok "Zellij installed to $PREFIX"
-    return 0
-  fi
-
-  warn "Zellij binary failed. Trying cargo..."
-  if ensure_rustup; then
-    install_from_cargo "zellij" "zellij" && return 0
-  fi
+  warn "vc-frame is required; stock zellij is not accepted as the Vibecrafted frame."
+  warn "Use the canonical installer, then rerun this check:"
+  warn "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
   return 1
 }
 
@@ -864,6 +684,7 @@ Usage: install-foundations.sh [options] [targets...]
 Targets:
   loctree         Validate loctree + loctree-mcp product binaries
   aicx            Validate aicx / aicx-mcp product binaries
+  vc-frame        Validate vc-frame product binary
   prview          Install prview (cargo)
   sandbox         Optional microsandbox/libkrun runtime
   iterm2-plugin   vibecrafted iTerm2 / locterm AutoLaunch plugin (macOS, opt-in)
@@ -885,7 +706,7 @@ while [[ $# -gt 0 ]]; do
     --help|-h)   usage; exit 0 ;;
     loctree)     TARGETS+=("loctree") ;;
     aicx)        TARGETS+=("aicx") ;;
-    zellij)      TARGETS+=("zellij") ;;
+    vc-frame)    TARGETS+=("vc-frame") ;;
     agents)      TARGETS+=("agents"); AGENTS_REQUIRED=1 ;;
     prview)      TARGETS+=("prview") ;;
     sandbox)     TARGETS+=("sandbox") ;;
@@ -899,7 +720,7 @@ enforce_runtime_root_contract || exit 1
 
 # Default: install required foundations
 if (( ${#TARGETS[@]} == 0 )); then
-  TARGETS=("loctree" "aicx" "zellij" "agents")
+  TARGETS=("loctree" "aicx" "vc-frame" "agents")
   if (( INSTALL_ALL )); then
     TARGETS+=("prview" "sandbox")
   fi
@@ -921,7 +742,7 @@ for target in "${TARGETS[@]}"; do
   case "$target" in
     loctree) install_loctree || exit_code=1 ;;
     aicx)    install_aicx    || exit_code=1 ;;
-    zellij)  install_zellij  || exit_code=1 ;;
+    vc-frame) install_vcframe || exit_code=1 ;;
     agents)
       if ! install_agents; then
         if (( AGENTS_REQUIRED )); then
