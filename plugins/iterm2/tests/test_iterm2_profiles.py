@@ -505,8 +505,7 @@ def test_cli_migrate_from_experimental_nothing_to_do(
 
 def test_clean_profile_name_idempotent() -> None:
     assert (
-        profiles._clean_profile_name("Vibecrafted / Classic")
-        == "Vibecrafted / Classic"
+        profiles._clean_profile_name("Vibecrafted / Classic") == "Vibecrafted / Classic"
     )
 
 

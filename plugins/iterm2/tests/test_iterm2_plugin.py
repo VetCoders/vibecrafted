@@ -244,9 +244,7 @@ def test_tail_events_uses_wide_stdio_limit(
         captured["kwargs"] = kwargs
         return _FakeProc()
 
-    monkeypatch.setattr(
-        asyncio, "create_subprocess_exec", _fake_create_subprocess_exec
-    )
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
 
     async def _on_event(_event: dict[str, Any]) -> None:
         return None

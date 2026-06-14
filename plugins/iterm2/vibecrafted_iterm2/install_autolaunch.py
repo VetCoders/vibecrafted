@@ -39,9 +39,7 @@ from . import iterm2_profiles
 AUTOLAUNCH_RELPATH = Path("Library/Application Support/iTerm2/Scripts/AutoLaunch")
 LAUNCHER_FILENAME = "vc_launcher.py"
 UNINSTALL_SCRIPT = "uninstall_vc_launcher.sh"
-DYNAMIC_PROFILES_RELPATH = Path(
-    "Library/Application Support/iTerm2/DynamicProfiles"
-)
+DYNAMIC_PROFILES_RELPATH = Path("Library/Application Support/iTerm2/DynamicProfiles")
 
 
 def autolaunch_dir(home: Path | None = None) -> Path:

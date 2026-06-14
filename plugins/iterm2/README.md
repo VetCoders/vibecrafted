@@ -84,12 +84,12 @@ bash "$HOME/Library/Application Support/iTerm2/Scripts/AutoLaunch/uninstall_vc_l
 
 ## Operator runbook
 
-| Symptom                                                                             | Likely cause                                                                                |
-| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Status bar component never appears                                                  | Python API not enabled in iTerm2 Preferences.                                               |
-| Status bar always shows `vc: 0`                                                     | `$VIBECRAFTED_HOME/control_plane/events.jsonl` not being written. Run `vibecrafted status`. |
-| `python -m vibecrafted_iterm2.install_autolaunch` fails with permission | Re-run from a shell that owns `~/Library/Application Support/iTerm2/`.                      |
-| Triggers do not fire                                                                | Select the `Vibecrafted` profile, then verify the `vibecrafted:` rows under Profiles → Advanced → Triggers. |
+| Symptom                                                                 | Likely cause                                                                                                |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Status bar component never appears                                      | Python API not enabled in iTerm2 Preferences.                                                               |
+| Status bar always shows `vc: 0`                                         | `$VIBECRAFTED_HOME/control_plane/events.jsonl` not being written. Run `vibecrafted status`.                 |
+| `python -m vibecrafted_iterm2.install_autolaunch` fails with permission | Re-run from a shell that owns `~/Library/Application Support/iTerm2/`.                                      |
+| Triggers do not fire                                                    | Select the `Vibecrafted` profile, then verify the `vibecrafted:` rows under Profiles → Advanced → Triggers. |
 
 Logs land in iTerm2's Scripts Console (`Scripts → Manage → Console`).
 Set `VIBECRAFTED_PLUGIN_LOGLEVEL=DEBUG` to widen the trace.
