@@ -56,15 +56,50 @@ def test_root_cli_launch_missing_work_prints_friendly_error(
 
     monkeypatch.setattr(cli, "launch_workflow", fail_launch)
 
-    assert cli.main(["prune", "claude"]) == 2
+    assert cli.main(["implement", "claude"]) == 2
 
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "Traceback" not in combined
     assert "ValueError" not in combined
     assert "error: Launch requires either --prompt text or --file path." in captured.err
-    assert "vibecrafted prune claude --prompt 'what to do'" in captured.err
-    assert "vibecrafted prune claude --file /path/to/brief.md" in captured.err
+    assert "vibecrafted implement claude --prompt 'what to do'" in captured.err
+    assert "vibecrafted implement claude --file /path/to/brief.md" in captured.err
+
+
+def test_root_cli_prune_without_work_uses_discovery_prompt(monkeypatch, capsys) -> None:
+    seen = {}
+
+    def fake_launch(spec, _source_dir):
+        seen["skill"] = spec.skill
+        seen["prompt"] = spec.prompt
+        return _accepted_launch_payload()
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+
+    assert cli.main(["prune", "claude"]) == 0
+
+    assert seen["skill"] == "prune"
+    assert "Repository health / prune discovery run." in seen["prompt"]
+    assert "Do not remove anything based on vibes." in seen["prompt"]
+    assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
+
+
+def test_root_cli_prune_without_agent_defaults_to_claude(monkeypatch, capsys) -> None:
+    seen = {}
+
+    def fake_launch(spec, _source_dir):
+        seen["agent"] = spec.agent
+        seen["prompt"] = spec.prompt
+        return _accepted_launch_payload()
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+
+    assert cli.main(["prune"]) == 0
+
+    assert seen["agent"] == "claude"
+    assert "Repository health / prune discovery run." in seen["prompt"]
+    assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 
 def test_root_cli_uses_terminal_runtime_when_operator_session_exists(

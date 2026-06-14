@@ -26,6 +26,7 @@ from .control_plane import (
 )
 from .events import append_event
 from .spawn import _stdin_command
+from .workflow_prompts import default_workflow_prompt
 
 
 SUPPORTED_WORKFLOWS = {
@@ -454,6 +455,8 @@ def normalize_launch_spec(
 
     prompt = str(payload.get("prompt") or "").strip()
     file_path = str(payload.get("file") or "").strip()
+    if not prompt and not file_path:
+        prompt = default_workflow_prompt(skill)
     root = normalize_run_root(payload.get("root"), source_dir)
     runtime = _normalized_runtime(str(payload.get("runtime") or "headless").strip())
     mode = str(payload.get("mode") or skill).strip() or skill

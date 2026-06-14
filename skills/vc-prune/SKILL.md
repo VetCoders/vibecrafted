@@ -57,9 +57,17 @@ If the task is explicitly non-repo or no-code, state the no-repo exception in th
 Launch through the command deck (see `vc-init` for the full operator-entry contract):
 
 ```bash
+vibecrafted prune
+vibecrafted prune <agent>
 vibecrafted prune <agent> --file /path/to/prune-plan.md
 vc-prune codex --prompt 'Strip silencers and listen'
 ```
+
+With no agent, `vc-prune` defaults to Claude. With no `--prompt` or `--file`, it
+launches the built-in repository health / prune discovery brief. That default is
+not a delete-everything mode: it requires Loctree/loct smoke evidence, grouped
+findings, vc-scaffold-ready cuts, and commits only removals proven safe with
+zero live references and low blast radius.
 
 A vibe-coded repo usually accumulates two layers of debris: **dead surface** (abandoned auth experiments, duplicate
 Stripe handlers, dead serverless functions) and **silenced surface** (warnings muted in a hurry, tests that always skip,

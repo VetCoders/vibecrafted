@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TD
-    A[Operator: vibecrafted prune codex --prompt 'Strip dead code'] --> B[Map runtime cone and blast radius]
+    A[Operator: vibecrafted prune codex] --> B[Map runtime cone and blast radius]
     B --> C[Identify deletable surfaces]
     C --> D[Cut dead or duplicate paths]
     D --> E[Run verification and impact checks]
@@ -16,10 +16,15 @@ flowchart TD
 
 ## Routes
 
-| Entry                       | Args                   | Produces                             | Exit            |
-| --------------------------- | ---------------------- | ------------------------------------ | --------------- |
-| `vibecrafted prune <agent>` | `--prompt` or `--file` | pruning report, transcript, and meta | `0` on dispatch |
-| `vc-prune <agent>`          | same                   | same                                 | `0` on dispatch |
+| Entry                       | Args                            | Produces                                       | Exit            |
+| --------------------------- | ------------------------------- | ---------------------------------------------- | --------------- |
+| `vibecrafted prune [agent]` | optional `--prompt` or `--file` | discovery/pruning report, transcript, and meta | `0` on dispatch |
+| `vc-prune [agent]`          | same                            | same                                           | `0` on dispatch |
+
+When no agent is provided, `claude` is used. When no `--prompt` or `--file` is
+provided, `vc-prune` uses the built-in repository health / prune discovery
+brief: classify first, prepare vc-scaffold-ready findings, and commit only
+removals proven safe with zero live references and low blast radius.
 
 ### Escalation edges
 

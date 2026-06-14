@@ -30,6 +30,22 @@ def test_normalize_launch_spec_requires_prompt_or_file(tmp_path: Path) -> None:
         workflow.normalize_launch_spec({"skill": "workflow"}, tmp_path)
 
 
+def test_normalize_launch_spec_prune_without_input_uses_discovery_prompt(
+    tmp_path: Path,
+) -> None:
+    spec = workflow.normalize_launch_spec(
+        {"skill": "prune", "agent": "claude", "root": str(tmp_path)},
+        tmp_path,
+    )
+
+    assert spec.skill == "prune"
+    assert spec.agent == "claude"
+    assert spec.file == ""
+    assert "Repository health / prune discovery run." in spec.prompt
+    assert "Do not push. Push is an operator button." in spec.prompt
+    assert "findings/dead-parrots.md" in spec.prompt
+
+
 def test_normalize_launch_spec_maps_justdo_to_implement(tmp_path: Path) -> None:
     spec = workflow.normalize_launch_spec(
         {"skill": "justdo", "agent": "codex", "prompt": "ship"},
