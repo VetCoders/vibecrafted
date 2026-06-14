@@ -194,6 +194,35 @@ def test_root_cli_swarm_observe_accepts_research_receipt(monkeypatch, capsys) ->
     assert "agent:      swarm" in capsys.readouterr().out
 
 
+def test_root_cli_observe_hides_stale_error_after_report_validated(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+    monkeypatch.setattr(
+        cli,
+        "lookup_run",
+        lambda run_id: {
+            "run_id": run_id,
+            "state": "report_validated",
+            "agent": "swarm",
+            "skill": "research",
+            "root": "/repo",
+            "liveness": "terminal",
+            "last_error": "launcher_pid is not alive; recovery_required",
+            "latest_report": "/tmp/report.md",
+            "latest_transcript": "/tmp/transcript.log",
+        },
+    )
+
+    assert cli.main(["swarm", "observe", "--run-id", "rese-1"]) == 0
+
+    out = capsys.readouterr().out
+    assert "state:      report_validated" in out
+    assert "last_error:" not in out
+
+
 def test_root_cli_agent_observe_prints_transcript_tail(
     monkeypatch, capsys, tmp_path: Path
 ) -> None:

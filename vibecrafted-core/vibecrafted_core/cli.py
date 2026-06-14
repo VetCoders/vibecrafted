@@ -238,13 +238,14 @@ def _run_for_agent(
 
 
 def _print_run_status(run: dict[str, Any], *, include_tail: bool = True) -> None:
+    state = str(run.get("state") or "")
     print(f"run_id:     {run.get('run_id') or ''}")
-    print(f"state:      {run.get('state') or ''}")
+    print(f"state:      {state}")
     print(f"agent:      {run.get('agent') or ''}")
     print(f"skill:      {run.get('skill') or ''}")
     print(f"root:       {run.get('root') or ''}")
     print(f"liveness:   {run.get('liveness') or ''}")
-    if run.get("last_error"):
+    if run.get("last_error") and state not in {"completed", "report_validated"}:
         print(f"last_error: {run.get('last_error')}")
     print(f"report:     {run.get('latest_report') or run.get('report') or ''}")
     transcript = str(run.get("latest_transcript") or run.get("transcript") or "")
