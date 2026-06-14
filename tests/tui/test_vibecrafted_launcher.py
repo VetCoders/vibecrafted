@@ -65,7 +65,7 @@ def _write_fake_command(bin_dir: Path, name: str, capture_file: Path) -> None:
                     "set -euo pipefail",
                     "{",
                     '  printf "%s\\n" "$@"',
-                    '  printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"',
+                    '  printf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}"',
                     '} > "$CAPTURE_FILE"',
                 ]
             )
@@ -90,7 +90,7 @@ def _write_fake_zellij_with_live_session(
                 "fi",
                 "{",
                 '  printf "%s\\n" "$@"',
-                '  printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"',
+                '  printf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}"',
                 '} > "$CAPTURE_FILE"',
             ]
         )
@@ -1741,7 +1741,7 @@ def test_dashboard_subcommand_launches_repo_owned_zellij_layout(tmp_path: Path) 
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
@@ -1759,7 +1759,7 @@ def test_dashboard_subcommand_launches_repo_owned_zellij_layout(tmp_path: Path) 
     assert _expected_operator_session() in payload
     assert "--new-session-with-layout" in payload
     assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "dashboard.kdl") in payload
-    assert f"ZELLIJ_CONFIG_DIR={REPO_ROOT / 'config' / 'zellij'}" in payload
+    assert f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'config' / 'zellij'}" in payload
 
 
 def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
@@ -1776,7 +1776,7 @@ def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) ->
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
@@ -1793,7 +1793,7 @@ def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) ->
     assert _expected_operator_session() in payload
     assert "--new-session-with-layout" in payload
     assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "operator.kdl") in payload
-    assert f"ZELLIJ_CONFIG_DIR={REPO_ROOT / 'config' / 'zellij'}" in payload
+    assert f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'config' / 'zellij'}" in payload
 
 
 def test_resume_subcommand_forwards_session_and_prompt_to_agent(

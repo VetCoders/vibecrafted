@@ -639,7 +639,7 @@ vc-frontier-paths() {
 
   printf 'STARSHIP_CONFIG=%s\n' "$starship_config"
   [[ -n "$atuin_config" ]] && printf 'ATUIN_CONFIG=%s\n' "$atuin_config"
-  [[ -n "$zellij_config" ]] && printf 'ZELLIJ_CONFIG_DIR=%s\n' "$(dirname "$zellij_config")"
+  [[ -n "$zellij_config" ]] && printf 'VC_FRAME_CONFIG_DIR=%s\n' "$(dirname "$zellij_config")"
   return 0
 }
 

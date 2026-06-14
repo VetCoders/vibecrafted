@@ -268,6 +268,7 @@ _vetcoders_ensure_vc_frame_session() {
   shift 2
 
   _vetcoders_require_zellij || return 1
+  _vetcoders_pin_vc_frame_config_dir
   zellij_bin="$(_vetcoders_zellij_bin)" || return 1
 
   local inside_zellij=0

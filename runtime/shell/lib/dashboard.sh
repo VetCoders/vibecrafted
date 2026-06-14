@@ -12,6 +12,7 @@ _vetcoders_dashboard_layout_name() {
     operator|vibecrafted) printf 'operator\n' ;;
     *)
       echo "Unknown dashboard layout: $requested" >&2
+      # shellcheck disable=SC2154 # sourced from core.sh by the facade.
       echo "Available layouts: ${_vetcoders_known_dashboard_layouts[*]}" >&2
       return 1
       ;;
@@ -123,7 +124,7 @@ _vetcoders_launch_dashboard() {
       local repo_layout="$repo_zellij_dir/layouts/${layout_name}.kdl"
       if [[ -f "$repo_layout" ]]; then
         layout_file="$repo_layout"
-        export ZELLIJ_CONFIG_DIR="$repo_zellij_dir"
+        export VC_FRAME_CONFIG_DIR="$repo_zellij_dir"
       fi
     fi
   fi

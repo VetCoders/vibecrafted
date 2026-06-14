@@ -39,7 +39,7 @@ def _write_capture_binary(bin_dir: Path, name: str, capture_file: Path) -> None:
                     "set -euo pipefail",
                     "{",
                     '  printf "%s\\n" "$@"',
-                    '  printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"',
+                    '  printf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}"',
                     '} > "$CAPTURE_FILE"',
                 ]
             )
@@ -139,7 +139,7 @@ def test_vc_frontier_paths_mix_repo_prompt_with_companion_zellij(
     env["XDG_CONFIG_HOME"] = str(xdg_config_home)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env.pop("STARSHIP_CONFIG", None)
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
 
     result = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-frontier-paths'],
@@ -155,7 +155,7 @@ def test_vc_frontier_paths_mix_repo_prompt_with_companion_zellij(
         f"ATUIN_CONFIG={REPO_ROOT / 'config' / 'atuin' / 'config.toml'}"
         in result.stdout
     )
-    assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in result.stdout
+    assert f"VC_FRAME_CONFIG_DIR={zellij_config.parent}" in result.stdout
 
 
 def test_vc_dashboard_mixes_companion_zellij_config_with_repo_layout(
@@ -179,7 +179,7 @@ def test_vc_dashboard_mixes_companion_zellij_config_with_repo_layout(
     env["XDG_CONFIG_HOME"] = str(xdg_config_home)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
@@ -197,7 +197,7 @@ def test_vc_dashboard_mixes_companion_zellij_config_with_repo_layout(
     assert f"{_expected_operator_session()}-marbles" not in payload
     assert "--new-session-with-layout" in payload
     assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "marbles.kdl") in payload
-    assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in payload
+    assert f"VC_FRAME_CONFIG_DIR={zellij_config.parent}" in payload
 
 
 def test_vc_dashboard_uses_base_run_id_session_without_layout_suffix(
@@ -223,7 +223,7 @@ def test_vc_dashboard_uses_base_run_id_session_without_layout_suffix(
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
     env.pop("ZELLIJ", None)
     env.pop("ZELLIJ_PANE_ID", None)
     env.pop("ZELLIJ_SESSION_NAME", None)
@@ -402,7 +402,7 @@ def test_sourcing_helper_exports_frontier_sidecars_per_asset(
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env.pop("STARSHIP_CONFIG", None)
     env.pop("ATUIN_CONFIG", None)
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
 
     result = subprocess.run(
         [
@@ -412,7 +412,7 @@ def test_sourcing_helper_exports_frontier_sidecars_per_asset(
                 f'source "{HELPER_SCRIPT}"; '
                 'printf "STARSHIP_CONFIG=%s\\n" "$STARSHIP_CONFIG"; '
                 'printf "ATUIN_CONFIG=%s\\n" "$ATUIN_CONFIG"; '
-                'printf "ZELLIJ_CONFIG_DIR=%s\\n" "$ZELLIJ_CONFIG_DIR"'
+                'printf "VC_FRAME_CONFIG_DIR=%s\\n" "$VC_FRAME_CONFIG_DIR"'
             ),
         ],
         check=True,
@@ -427,7 +427,7 @@ def test_sourcing_helper_exports_frontier_sidecars_per_asset(
         f"ATUIN_CONFIG={REPO_ROOT / 'config' / 'atuin' / 'config.toml'}"
         in result.stdout
     )
-    assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in result.stdout
+    assert f"VC_FRAME_CONFIG_DIR={zellij_config.parent}" in result.stdout
 
 
 def test_frontier_install_dry_run_succeeds_without_repo_alacritty_preset(
@@ -516,7 +516,7 @@ def test_spawn_export_frontier_sidecars_mix_repo_prompt_with_companion_zellij(
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env.pop("STARSHIP_CONFIG", None)
     env.pop("ATUIN_CONFIG", None)
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
 
     result = subprocess.run(
         [
@@ -527,7 +527,7 @@ def test_spawn_export_frontier_sidecars_mix_repo_prompt_with_companion_zellij(
                 "spawn_export_frontier_sidecars; "
                 'printf "STARSHIP_CONFIG=%s\\n" "$STARSHIP_CONFIG"; '
                 'printf "ATUIN_CONFIG=%s\\n" "$ATUIN_CONFIG"; '
-                'printf "ZELLIJ_CONFIG_DIR=%s\\n" "$ZELLIJ_CONFIG_DIR"'
+                'printf "VC_FRAME_CONFIG_DIR=%s\\n" "$VC_FRAME_CONFIG_DIR"'
             ),
         ],
         check=True,
@@ -542,4 +542,4 @@ def test_spawn_export_frontier_sidecars_mix_repo_prompt_with_companion_zellij(
         f"ATUIN_CONFIG={REPO_ROOT / 'config' / 'atuin' / 'config.toml'}"
         in result.stdout
     )
-    assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in result.stdout
+    assert f"VC_FRAME_CONFIG_DIR={zellij_config.parent}" in result.stdout
