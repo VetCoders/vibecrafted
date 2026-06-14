@@ -150,7 +150,7 @@ def build_server() -> Any:
 
     mcp = FastMCP("vibecrafted")
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_repo_full(project: str = ".") -> dict[str, Any]:
         """Git ground truth for ``project``.
 
@@ -163,7 +163,7 @@ def build_server() -> Any:
         """
         return _git.repo_full(project)
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_doctor(project: str | None = None) -> dict[str, Any]:
         """Runtime health summary from the vibecrafted installer doctor.
 
@@ -177,7 +177,7 @@ def build_server() -> Any:
         del project  # v0.1 ignores; preserved for forward compatibility
         return _doctor_payload(slim=False)
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_board_status(home: str | None = None) -> dict[str, Any]:
         """Operator control-plane snapshot: active runs, recent runs, events.
 
@@ -223,7 +223,13 @@ def build_server() -> Any:
             spec = _workflow.normalize_launch_spec(payload, source_dir)
             return _workflow.launch_workflow(spec, source_dir, env=dict(os.environ))
 
-    @mcp.tool
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
     def vc_launch(
         skill: str = "workflow",
         agent: str | None = None,
@@ -235,10 +241,11 @@ def build_server() -> Any:
         mode: str | None = None,
         home: str | None = None,
     ) -> dict[str, Any]:
-        """Launch a workflow through the Vibecrafted core runtime.
+        """Mutating: launch a workflow through the Vibecrafted core runtime.
 
-        This is intentionally a thin remote button: launch validation and
-        process creation stay in ``vibecrafted_core.workflow``.
+        This spawns an agent process and writes control-plane artifacts.
+        Launch validation and process creation stay in
+        ``vibecrafted_core.workflow``.
         """
         return _launch_workflow(
             skill=skill,
@@ -252,7 +259,13 @@ def build_server() -> Any:
             home=home,
         )
 
-    @mcp.tool
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
     def vc_run_launch(
         skill: str = "workflow",
         agent: str | None = None,
@@ -264,7 +277,10 @@ def build_server() -> Any:
         mode: str | None = None,
         home: str | None = None,
     ) -> dict[str, Any]:
-        """Alias of ``vc_launch`` for run-lifecycle naming symmetry."""
+        """Mutating alias of ``vc_launch`` for run-lifecycle naming symmetry.
+
+        This spawns an agent process and writes control-plane artifacts.
+        """
         return _launch_workflow(
             skill=skill,
             agent=agent,
@@ -277,7 +293,7 @@ def build_server() -> Any:
             home=home,
         )
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_run_status(run_id: str, home: str | None = None) -> dict[str, Any]:
         """Lookup one run by id from synced control-plane state."""
         with _override_vibecrafted_home(home):
@@ -291,7 +307,7 @@ def build_server() -> Any:
             "failure_card": (run or {}).get("failure_card") if run else None,
         }
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_await_run(
         run_id: str,
         timeout_seconds: float = 300,
@@ -306,23 +322,39 @@ def build_server() -> Any:
                 interval_seconds=interval_seconds,
             )
 
-    @mcp.tool
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "openWorldHint": True,
+        }
+    )
     def vc_run_stop(
         run_id: str,
         reason: str = "mcp operator stop",
         home: str | None = None,
     ) -> dict[str, Any]:
-        """Request graceful stop of an active run with an audit trail event."""
+        """Mutating: request graceful stop of an active run with an audit event."""
         with _override_vibecrafted_home(home):
             return _workflow.stop_run(run_id, reason=reason)
 
-    @mcp.tool
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
     def vc_run_retry(
         run_id: str,
         source_dir: str = ".",
         home: str | None = None,
     ) -> dict[str, Any]:
-        """Retry a terminal run using stored launch metadata and preconditions."""
+        """Mutating: retry a run using stored launch metadata and preconditions.
+
+        This may spawn a replacement agent process and writes control-plane
+        artifacts for the retry.
+        """
         with _override_vibecrafted_home(home):
             return _workflow.retry_run(
                 run_id,
@@ -330,18 +362,24 @@ def build_server() -> Any:
                 env=dict(os.environ),
             )
 
-    @mcp.tool
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "openWorldHint": True,
+        }
+    )
     def vc_run_blocked(
         run_id: str,
         reason: str = "mcp operator block",
         note: str = "",
         home: str | None = None,
     ) -> dict[str, Any]:
-        """Mark an active run as ``blocked`` (needs intervention) with an audit trail."""
+        """Mutating: mark an active run as blocked with an audit trail."""
         with _override_vibecrafted_home(home):
             return _workflow.block_run(run_id, reason=reason, note=note)
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_loct_capabilities(timeout: float = 5.0) -> dict[str, Any]:
         """Discover live capabilities of the loctree/aicx product foundations.
 
@@ -355,7 +393,7 @@ def build_server() -> Any:
         """
         return _capabilities.foundation_capabilities(timeout=timeout)
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_init(project: str = ".", slim: bool = True) -> dict[str, Any]:
         """Cold-start synthesis: 3 senses + v0.1 insight stubs.
 

@@ -46,16 +46,25 @@ vibecrafted-mcp --help
 
 ## Tools
 
-| Tool                              | Purpose                                                                                                      | Default budget |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------- |
-| `vc_repo_full(project=".")`       | Full git ground truth (branch, ahead/behind, dirt, recent commits, worktrees, remotes).                      | ~3-6k tokens   |
-| `vc_doctor(project=None)`         | Vibecrafted runtime health summary (ok / warnings / failures).                                               | ~2-4k tokens   |
-| `vc_board_status(home=None)`      | Operator control-plane snapshot (active runs, recent runs, event tail, warnings).                            | ~3-10k tokens  |
-| `vc_init(project=".", slim=True)` | Cold-start synthesis: composes the three senses + insight stubs. Slim default keeps the response under ~5KB. | ~5KB slim      |
+| Tool                               | Purpose                                                                                                      | Mutates? |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------- |
+| `vc_repo_full(project=".")`        | Full git ground truth (branch, ahead/behind, dirt, recent commits, worktrees, remotes).                      | No       |
+| `vc_doctor(project=None)`          | Vibecrafted runtime health summary (ok / warnings / failures).                                               | No       |
+| `vc_board_status(home=None)`       | Operator control-plane snapshot (active runs, recent runs, event tail, warnings).                            | No       |
+| `vc_init(project=".", slim=True)`  | Cold-start synthesis: composes the three senses + insight stubs. Slim default keeps the response under ~5KB. | No       |
+| `vc_launch(...)`                   | Launch a workflow through the Vibecrafted core runtime. Spawns an agent and writes control-plane artifacts.  | Yes      |
+| `vc_run_launch(...)`               | Lifecycle-name alias of `vc_launch`. Spawns an agent and writes control-plane artifacts.                     | Yes      |
+| `vc_run_status(run_id, home=None)` | Lookup one run from the synced control-plane projection.                                                     | No       |
+| `vc_await_run(...)`                | Bounded wait for a run to reach terminal state. This is not a transcript transport.                          | No       |
+| `vc_run_stop(...)`                 | Request graceful stop of an active run and write an audit event.                                             | Yes      |
+| `vc_run_retry(...)`                | Retry a run from stored launch metadata and write retry control-plane artifacts.                             | Yes      |
+| `vc_run_blocked(...)`              | Mark an active run blocked/needs-intervention and write an audit event.                                      | Yes      |
+| `vc_loct_capabilities(...)`        | Probe installed Loctree/AICX foundation capabilities.                                                        | No       |
 
-All v0.1 tools are read-only. Mutations (run launch, marbles trigger)
-are reserved for v0.2 once an explicit operator-permission contract is
-in place.
+MCP launch is experimental but real. The lifecycle tools are mutating:
+they can spawn agents, stop or retry runs, and write control-plane
+artifacts under `$VIBECRAFTED_HOME`. Operators should expose them only
+through a permissioned MCP client or trusted local agent session.
 
 ## Resources
 
@@ -66,10 +75,14 @@ in place.
 
 ## Constraints
 
-- v0.1 tools are read-only and never spawn agents — fleet dispatch is
-  an operator decision, not an MCP one.
-- Each tool response is bounded by FastMCP's 25K token cap; the
-  defaults aim for ≤20K to leave a safety margin.
+- Launch/stop/retry/block tools mutate runtime state and must be
+  treated as permissioned operator actions.
+- `vc_await_run` waits for terminal state only. Do not use it to
+  stream transcripts or reports.
+- Transcript and report reads must stay bounded; cursor-based
+  observation is the baseline for live UIs.
+- Each tool response should remain bounded by FastMCP's 25K token cap;
+  defaults aim for <=20K to leave a safety margin.
 - The doctor surface degrades gracefully (returns `unavailable=true`)
   when the package is consumed outside a vibecrafted source checkout.
 
