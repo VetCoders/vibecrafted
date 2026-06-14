@@ -6,6 +6,9 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
+from vibecrafted_core import workflow
 from vibecrafted_core.dispatch.model import (
     STATE_FAILED,
     STATE_PENDING,
@@ -18,6 +21,7 @@ from vibecrafted_core.dispatch.supervisor import (
     CellRun,
     DispatchSupervisor,
     run_dispatch,
+    workflow_cell_launcher,
 )
 
 FAST_AWAIT = "await = { poll_s = 0.02, timeout_min = 1.0 }"
@@ -108,6 +112,56 @@ def init_git_repo(path: Path) -> None:
         check=True,
         capture_output=True,
     )
+
+
+def test_workflow_cell_launcher_uses_canonical_report_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    dispatch, _reports_dir, _artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+prompt = "canonical dispatch report prompt"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+    )
+    captured: dict[str, object] = {}
+
+    class FakeProc:
+        pid = 4242
+
+    def fake_popen(command: list[str], **kwargs: object) -> FakeProc:
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+        return FakeProc()
+
+    monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
+
+    run = workflow_cell_launcher(dispatch, source_dir=tmp_path)(
+        dispatch.cuts[0],
+        "canonical dispatch report prompt",
+        "initial",
+    )
+
+    env = captured["env"]
+    command = captured["command"]
+    assert isinstance(env, dict)
+    assert isinstance(command, list)
+    assert run.accepted is True
+    assert run.report_path == env["VIBECRAFTED_REPORT_PATH"]
+    assert command[command.index("--report") + 1] == run.report_path
+    assert "/artifacts/local/repo/" in run.report_path
+    assert "/reports/implement/" in run.report_path
+    assert "canonical-dispatch-report" in Path(run.report_path).name
+    assert "/control_plane/runtime_runs/" not in run.report_path
+    assert "/control_plane/runtime_runs/" in env["VIBECRAFTED_TRANSCRIPT_PATH"]
+    assert "/control_plane/runtime_runs/" in env["VIBECRAFTED_META_PATH"]
 
 
 def test_passing_cuts_flip_to_verified_and_emit_artifacts(tmp_path: Path) -> None:

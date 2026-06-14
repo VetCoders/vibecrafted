@@ -143,7 +143,6 @@ def _run_artifact_paths(run_id: str) -> dict[str, Path]:
     return {
         "meta": run_dir / "meta.json",
         "prompt": run_dir / "prompt.md",
-        "report": run_dir / "report.md",
         "transcript": run_dir / "transcript.log",
     }
 
@@ -206,7 +205,7 @@ def _slug_words(text: str) -> list[str]:
     ]
 
 
-def _research_artifact_suffix(
+def _artifact_report_suffix(
     canonical_report_dir: Path | None,
     artifact_ts: str,
     artifact_slug: str,
@@ -219,6 +218,21 @@ def _research_artifact_suffix(
         if not any(canonical_report_dir.glob(pattern)):
             return suffix
     return "-99"
+
+
+def _canonical_report_path(
+    *,
+    canonical_report_dir: Path,
+    artifact_ts: str,
+    agent: str,
+    artifact_slug: str,
+    artifact_suffix: str,
+) -> Path:
+    safe_agent = "-".join(_slug_words(agent)) or "agent"
+    return (
+        canonical_report_dir
+        / f"{artifact_ts}_{safe_agent}_{artifact_slug}_report{artifact_suffix}.md"
+    )
 
 
 def _core_package_root() -> Path:
@@ -918,22 +932,26 @@ def launch_workflow(
     run_id = _run_id(spec.skill)
     artifacts = _run_artifact_paths(run_id)
     runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
+    source_prompt = _source_prompt(spec)
     prompt_body = (
-        _source_prompt(spec)
+        source_prompt
         if runtime_kind in {"supervised_research", "supervised_marbles"}
         else _runtime_prompt(spec)
     )
-    canonical_report_dir = (
-        _canonical_report_dir(spec.root, spec.skill)
-        if runtime_kind == "supervised_research"
-        else None
-    )
+    canonical_report_dir = _canonical_report_dir(spec.root, spec.skill)
     artifact_ts = time.strftime("%Y-%m-%d")
-    artifact_slug = _artifact_slug(prompt_body, run_id)
-    artifact_suffix = _research_artifact_suffix(
+    artifact_slug = _artifact_slug(source_prompt, run_id)
+    artifact_suffix = _artifact_report_suffix(
         canonical_report_dir,
         artifact_ts,
         artifact_slug,
+    )
+    report_path = _canonical_report_path(
+        canonical_report_dir=canonical_report_dir,
+        artifact_ts=artifact_ts,
+        agent=spec.agent,
+        artifact_slug=artifact_slug,
+        artifact_suffix=artifact_suffix,
     )
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
     safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
@@ -943,7 +961,7 @@ def launch_workflow(
         root=spec.root,
         meta_path=artifacts["meta"],
         prompt_path=prompt_path,
-        report_path=artifacts["report"],
+        report_path=report_path,
         transcript_path=artifacts["transcript"],
         worker_command=worker_command,
         tee_output=spec.runtime in {"terminal", "visible"},
@@ -961,19 +979,18 @@ def launch_workflow(
     session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
     merged_env["VIBECRAFTED_RUN_ID"] = run_id
     merged_env["VIBECRAFTED_SESSION_ID"] = session_id
-    merged_env["VIBECRAFTED_REPORT_PATH"] = str(artifacts["report"])
+    merged_env["VIBECRAFTED_REPORT_PATH"] = str(report_path)
     merged_env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(artifacts["transcript"])
     merged_env["VIBECRAFTED_META_PATH"] = str(artifacts["meta"])
     merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_path)
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
-    if canonical_report_dir is not None:
-        merged_env["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)
-        merged_env["VIBECRAFTED_ARTIFACT_SLUG"] = artifact_slug
-        merged_env["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
-        if artifact_suffix:
-            merged_env["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
+    merged_env["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)
+    merged_env["VIBECRAFTED_ARTIFACT_SLUG"] = artifact_slug
+    merged_env["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
+    if artifact_suffix:
+        merged_env["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
     operator_session = _effective_operator_session(
         root=spec.root,
         run_id=run_id,
@@ -986,7 +1003,7 @@ def launch_workflow(
         dispatch_command=dispatch_command,
         launch_dir=launch_dir,
         prompt_path=prompt_path,
-        report_path=artifacts["report"],
+        report_path=report_path,
         transcript_path=artifacts["transcript"],
         meta_path=artifacts["meta"],
         canonical_report_dir=canonical_report_dir,
@@ -1014,7 +1031,7 @@ def launch_workflow(
             "prompt": "",
             "file": str(prompt_path),
             "prompt_file": str(prompt_path),
-            "report": str(artifacts["report"]),
+            "report": str(report_path),
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
             "worker_command": worker_command,
@@ -1099,7 +1116,7 @@ def launch_workflow(
                 "prompt": "",
                 "file": str(prompt_path),
                 "prompt_file": str(prompt_path),
-                "report": str(artifacts["report"]),
+                "report": str(report_path),
                 "transcript": str(artifacts["transcript"]),
                 "meta": str(artifacts["meta"]),
                 "worker_command": worker_command,
@@ -1131,7 +1148,7 @@ def launch_workflow(
         "dispatch": 0,
         "status": "launching",
         "control": str(run_snapshot_dir() / f"{run_id}.json"),
-        "report": str(artifacts["report"]),
+        "report": str(report_path),
         "transcript": str(artifacts["transcript"]),
         "meta": str(artifacts["meta"]),
         "prompt_file": str(prompt_path),

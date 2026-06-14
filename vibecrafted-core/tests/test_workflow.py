@@ -121,6 +121,12 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     assert payload["accepted"] is True
     assert isinstance(payload["pid"], int)
     assert payload["prompt_file"]
+    assert ".vibecrafted/artifacts/local/src/" in payload["report"]
+    assert "/reports/workflow/" in payload["report"]
+    assert Path(payload["report"]).name.endswith("_go_report.md")
+    assert ".vibecrafted/control_plane/runtime_runs/" in payload["transcript"]
+    assert ".vibecrafted/control_plane/runtime_runs/" in payload["meta"]
+    assert ".vibecrafted/control_plane/runtime_runs/" in payload["prompt_file"]
     assert "go" not in payload["worker_command"]
     log_lines = Path(payload["launch_log"]).read_text(encoding="utf-8").splitlines()
     assert any(json.loads(line).get("event") == "spawned" for line in log_lines)
@@ -269,10 +275,16 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     runtime_bucket = (
         tmp_path / ".vibecrafted" / "control_plane" / "runtime_runs" / payload["run_id"]
     )
-    assert Path(payload["report"]).parent == runtime_bucket
+    assert Path(payload["report"]).parent.name == "research"
+    assert "/artifacts/local/" in payload["report"]
+    assert "/reports/research/" in payload["report"]
     assert Path(payload["transcript"]).parent == runtime_bucket
     assert Path(payload["meta"]).parent == runtime_bucket
     assert Path(payload["prompt_file"]).parent == runtime_bucket
+    assert captured["kwargs"]["env"]["VIBECRAFTED_REPORT_PATH"] == payload["report"]
+    assert captured["kwargs"]["env"]["VIBECRAFTED_CANONICAL_REPORT_DIR"] == str(
+        Path(payload["report"]).parent
+    )
     command = captured["command"]
     assert command[:5] == [
         str(vc_frame),
