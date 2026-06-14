@@ -132,6 +132,7 @@ install-python-tools:
 	fi; \
 	export PATH="$$HOME/.local/bin:$$PATH"; \
 	uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-core"; \
+	uv tool install --force --reinstall --editable "$(SOURCE)/plugins/iterm2"; \
 	uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-mcp" --with-editable "$(SOURCE)/vibecrafted-core"
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
@@ -287,23 +288,23 @@ check:
 	@echo "Check complete."
 
 iterm-plugin:
-	@uv run --project vibecrafted-core --quiet python -m vibecrafted_core.iterm2_profiles install
+	@uv run --project plugins/iterm2 --quiet python -m vibecrafted_iterm2.iterm2_profiles install
 
 iterm-plugin-refresh:
-	@uv run --project vibecrafted-core --quiet python -m vibecrafted_core.iterm2_profiles refresh
+	@uv run --project plugins/iterm2 --quiet python -m vibecrafted_iterm2.iterm2_profiles refresh
 
 iterm-plugin-show:
-	@uv run --project vibecrafted-core --quiet python -m vibecrafted_core.iterm2_profiles show
+	@uv run --project plugins/iterm2 --quiet python -m vibecrafted_iterm2.iterm2_profiles show
 
 iterm-plugin-uninstall:
-	@uv run --project vibecrafted-core --quiet python -m vibecrafted_core.iterm2_profiles uninstall
+	@uv run --project plugins/iterm2 --quiet python -m vibecrafted_iterm2.iterm2_profiles uninstall
 
 # Plan 10 (META_22) — operators with v1.7 [experimental] dynamic profiles run
 # this once on v1.8.0 upgrade. Reads vibecrafted-experimental.json, writes
 # vibecrafted.json with cleaned names + preserved GUIDs, .bak backup,
 # removes the legacy file. Idempotent: re-running is safe (no-op).
 iterm-plugin-migrate:
-	@uv run --project vibecrafted-core --quiet python -m vibecrafted_core.iterm2_profiles migrate-from-experimental
+	@uv run --project plugins/iterm2 --quiet python -m vibecrafted_iterm2.iterm2_profiles migrate-from-experimental
 
 demo:
 	@bash scripts/vc-dashboard
@@ -437,7 +438,7 @@ test-zellij:
 #
 # Verifies the migrate-from-experimental subcommand:
 #   - sets up a fixture vibecrafted-experimental.json
-#   - runs `python -m vibecrafted_core.iterm2_profiles migrate-from-experimental`
+#   - runs `python -m vibecrafted_iterm2.iterm2_profiles migrate-from-experimental`
 #     against a sandboxed install dir
 #   - asserts the new vibecrafted.json exists with cleaned profile names
 #     and preserved GUIDs

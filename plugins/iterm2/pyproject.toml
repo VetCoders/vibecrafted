@@ -1,0 +1,14 @@
+[project]
+name = "vibecrafted-iterm2"
+version = "0.1.0"
+description = "Standalone Vibecrafted iTerm2 AutoLaunch, Dynamic Profiles, and OSC helpers."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["iterm2 >= 2.7"]
+
+[project.scripts]
+vibecrafted-iterm2-autolaunch = "vibecrafted_iterm2.install_autolaunch:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

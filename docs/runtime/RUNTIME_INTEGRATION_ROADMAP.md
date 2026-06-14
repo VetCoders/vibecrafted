@@ -88,7 +88,7 @@ zero fallbacku do szela, runy widoczne w TUI, raporty czytelne. Nie używasz cod
 ## Faza 3 — Widen Surfaces _(one contract, many eyes)_
 
 - `server/web` (Leptos) czyta **ten sam** kontrakt `control-core` → dashboard.
-- `tray-agent` (menubar) + `iterm2_plugin` jako dodatkowe oczy.
+- `tray-agent` (menubar) + `vibecrafted_iterm2` jako dodatkowe oczy.
 
 **DoD:** ten sam run widoczny **identycznie** w TUI i web — bez osobnego parsowania po każdej stronie.
 

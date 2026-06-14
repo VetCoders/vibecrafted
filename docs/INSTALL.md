@@ -76,22 +76,22 @@ vc-help                   # cross-shell skill discovery
   iTerm2 ≥ 3.5. Hammerspoon is an opt-in extra (`brew install --cask
 hammerspoon`).
 - **vibecrafted iTerm2 / locterm AutoLaunch plugin** —
-  surfaces live spawn activity in the iTerm2 status bar, auto-tags panes
-  per agent + skill via Triggers, and posts native notifications on
-  terminal spawn lifecycle transitions. Separate-process IPC over the
-  documented iTerm2 Python API (clean GPL v2 boundary — no static
-  linking against locterm).
+  surfaces live spawn activity in the iTerm2 status bar, writes an
+  additive `Vibecrafted` DynamicProfile with managed trigger rows, and
+  posts native notifications on terminal spawn lifecycle transitions.
+  Separate-process IPC over the documented iTerm2 Python API (clean GPL v2
+  boundary — no static linking against locterm).
 
   ```bash
-  pip install -e 'vibecrafted-core/[iterm2]'
-  python -m vibecrafted_core.iterm2_plugin.install_autolaunch
+  pip install -e ./plugins/iterm2
+  python -m vibecrafted_iterm2.install_autolaunch
   # then: iTerm2 → Preferences → General → Magic → Enable Python API
   ```
 
   `scripts/install-foundations.sh` will prompt automatically when run
   interactively on macOS and iTerm2 / locterm is detected at
   `/Applications/iTerm.app` or `/Applications/locterm.app`.
-  See `vibecrafted-core/vibecrafted_core/iterm2_plugin/README.md` for
+  See `plugins/iterm2/README.md` for
   the operator runbook and uninstall steps.
 
 - **Codesigned binaries** — foundation binaries (loctree, aicx) ship signed

@@ -633,7 +633,7 @@ iterm2_app_present() {
   return 1
 }
 
-install_iterm2_plugin() {
+install_iterm2_integration() {
   if ! iterm2_app_present; then
     info "iTerm2 / locterm not detected — skipping vibecrafted plugin install"
     return 0
@@ -652,13 +652,13 @@ install_iterm2_plugin() {
     case "${answer:-}" in
       [yY]|[yY][eE][sS]) ;;
       *)
-        warn "Skipping vibecrafted iTerm2 plugin (run later: python -m vibecrafted_core.iterm2_plugin.install_autolaunch)"
+        warn "Skipping vibecrafted iTerm2 plugin (run later: python -m vibecrafted_iterm2.install_autolaunch)"
         return 0
         ;;
     esac
   else
     warn "Skipping iTerm2 plugin install in non-interactive mode."
-    warn "Run later: python -m vibecrafted_core.iterm2_plugin.install_autolaunch"
+    warn "Run later: python -m vibecrafted_iterm2.install_autolaunch"
     return 0
   fi
 
@@ -669,7 +669,7 @@ install_iterm2_plugin() {
     return 1
   fi
 
-  "$python_bin" -m vibecrafted_core.iterm2_plugin.install_autolaunch --force \
+  "$python_bin" -m vibecrafted_iterm2.install_autolaunch --force \
     || { warn "vibecrafted iTerm2 plugin install failed"; return 1; }
 }
 
@@ -754,7 +754,7 @@ for target in "${TARGETS[@]}"; do
       ;;
     prview)  install_prview  || exit_code=1 ;;
     sandbox) install_sandbox || exit_code=1 ;;
-    iterm2-plugin) install_iterm2_plugin || exit_code=1 ;;
+    iterm2-plugin) install_iterm2_integration || exit_code=1 ;;
   esac
   echo
 done

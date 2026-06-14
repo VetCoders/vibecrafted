@@ -337,10 +337,10 @@ install_locterm() {
   fi
 
   plugin_result="not-run"
-  if python3 -m vibecrafted_core.iterm2_plugin.install_autolaunch --force >/dev/null 2>&1; then
+  if python3 -m vibecrafted_iterm2.install_autolaunch --force >/dev/null 2>&1; then
     plugin_result="installed"
   else
-    warn "locterm AutoLaunch plugin install failed; run python -m vibecrafted_core.iterm2_plugin.install_autolaunch --force"
+    warn "locterm AutoLaunch plugin install failed; run python -m vibecrafted_iterm2.install_autolaunch --force"
     plugin_result="failed"
   fi
   write_status "locterm" "ok" "$app_src" "locterm app present; plugin=$plugin_result" "$platform"

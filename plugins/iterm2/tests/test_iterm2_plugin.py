@@ -60,9 +60,9 @@ def fake_iterm2(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     monkeypatch.setitem(sys.modules, "iterm2", stub)
     # Force-reload any plugin module that may have cached the missing import.
     for mod in [
-        "vibecrafted_core.iterm2_plugin.vc_launcher",
-        "vibecrafted_core.iterm2_plugin.vc_status_bar",
-        "vibecrafted_core.iterm2_plugin.vc_triggers",
+        "vibecrafted_iterm2.vc_launcher",
+        "vibecrafted_iterm2.vc_status_bar",
+        "vibecrafted_iterm2.vc_triggers",
     ]:
         sys.modules.pop(mod, None)
     return stub
@@ -79,8 +79,8 @@ def test_importing_plugin_does_not_load_any_locterm_module() -> None:
     """
     import importlib
 
-    importlib.import_module("vibecrafted_core.iterm2_plugin")
-    importlib.import_module("vibecrafted_core.iterm2_plugin.install_autolaunch")
+    importlib.import_module("vibecrafted_iterm2")
+    importlib.import_module("vibecrafted_iterm2.install_autolaunch")
 
     leaked = [name for name in sys.modules if "locterm" in name.lower()]
     assert leaked == [], f"GPL boundary violation: {leaked}"
@@ -90,7 +90,7 @@ def test_importing_plugin_does_not_load_any_locterm_module() -> None:
 
 
 def test_parse_event_line_decodes_spawn_update(fake_iterm2: Any) -> None:
-    from vibecrafted_core.iterm2_plugin import vc_launcher
+    from vibecrafted_iterm2 import vc_launcher
 
     line = json.dumps(
         {
@@ -115,7 +115,7 @@ def test_parse_event_line_decodes_spawn_update(fake_iterm2: Any) -> None:
 
 
 def test_parse_event_line_ignores_blank_and_garbage(fake_iterm2: Any) -> None:
-    from vibecrafted_core.iterm2_plugin import vc_launcher
+    from vibecrafted_iterm2 import vc_launcher
 
     assert vc_launcher._parse_event_line("") is None
     assert vc_launcher._parse_event_line("   \n") is None
@@ -123,7 +123,7 @@ def test_parse_event_line_ignores_blank_and_garbage(fake_iterm2: Any) -> None:
 
 
 def test_format_completion_label_includes_exit_code(fake_iterm2: Any) -> None:
-    from vibecrafted_core.iterm2_plugin import vc_launcher
+    from vibecrafted_iterm2 import vc_launcher
 
     payload = {
         "agent": "claude",
@@ -136,7 +136,7 @@ def test_format_completion_label_includes_exit_code(fake_iterm2: Any) -> None:
 
 
 def test_state_classifiers(fake_iterm2: Any) -> None:
-    from vibecrafted_core.iterm2_plugin import vc_launcher
+    from vibecrafted_iterm2 import vc_launcher
 
     assert vc_launcher._is_active_state("running")
     assert vc_launcher._is_active_state("launching")
@@ -149,7 +149,7 @@ def test_state_classifiers(fake_iterm2: Any) -> None:
 def test_vibecrafted_home_honours_env_override(
     fake_iterm2: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from vibecrafted_core.iterm2_plugin import vc_launcher
+    from vibecrafted_iterm2 import vc_launcher
 
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path))
     assert vc_launcher.vibecrafted_home() == tmp_path
@@ -164,7 +164,7 @@ def _run(coro: Any) -> Any:
 
 
 def test_runtime_active_count_tracks_lifecycle(fake_iterm2: Any) -> None:
-    from vibecrafted_core.iterm2_plugin import vc_launcher
+    from vibecrafted_iterm2 import vc_launcher
 
     runtime = vc_launcher.VcPluginRuntime()
     launching = {
@@ -194,25 +194,80 @@ def test_runtime_active_count_tracks_lifecycle(fake_iterm2: Any) -> None:
 
 
 def test_runtime_ignores_non_spawn_update_kinds(fake_iterm2: Any) -> None:
-    from vibecrafted_core.iterm2_plugin import vc_launcher
+    from vibecrafted_iterm2 import vc_launcher
 
     runtime = vc_launcher.VcPluginRuntime()
     _run(runtime.handle_event({"kind": "state", "payload": {"state": "running"}}))
     assert runtime.state.active_runs == {}
 
 
+def test_main_loop_does_not_mutate_default_profile(
+    fake_iterm2: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vibecrafted_iterm2 import vc_launcher
+
+    async def _noop_register(_connection: Any, _state: Any) -> None:
+        return None
+
+    async def _noop_tail(_path: Path, _on_event: Any) -> None:
+        return None
+
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path))
+    monkeypatch.setattr(vc_launcher, "register_status_bar", _noop_register)
+    monkeypatch.setattr(vc_launcher, "_tail_events", _noop_tail)
+
+    _run(vc_launcher._main_loop(object()))
+
+    assert not hasattr(vc_launcher, "apply_triggers_to_default_profile")
+
+
+def test_tail_events_uses_wide_stdio_limit(
+    fake_iterm2: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vibecrafted_iterm2 import vc_launcher
+
+    captured: dict[str, Any] = {}
+
+    class _FakeStdout:
+        async def readline(self) -> bytes:
+            return b""
+
+    class _FakeProc:
+        stdout = _FakeStdout()
+        returncode = 0
+
+        def terminate(self) -> None:  # pragma: no cover - not reached
+            raise AssertionError("process should not need termination")
+
+    async def _fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> _FakeProc:
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return _FakeProc()
+
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", _fake_create_subprocess_exec
+    )
+
+    async def _on_event(_event: dict[str, Any]) -> None:
+        return None
+
+    _run(vc_launcher._tail_events(tmp_path / "events.jsonl", _on_event))
+
+    assert captured["kwargs"]["limit"] == vc_launcher.STDIO_LIMIT_BYTES
+
+
 # ---------- Status bar render ------------------------------------------------
 
 
 def test_status_bar_render_with_no_runs(fake_iterm2: Any) -> None:
-    from vibecrafted_core.iterm2_plugin.vc_status_bar import VcStatusBarState
+    from vibecrafted_iterm2.vc_status_bar import VcStatusBarState
 
     state = VcStatusBarState()
     assert state.render() == "vc: 0"
 
 
 def test_status_bar_render_with_completion_tail(fake_iterm2: Any) -> None:
-    from vibecrafted_core.iterm2_plugin.vc_status_bar import VcStatusBarState
+    from vibecrafted_iterm2.vc_status_bar import VcStatusBarState
 
     state = VcStatusBarState(
         active_runs={"a": {}, "b": {}},
@@ -226,7 +281,7 @@ def test_status_bar_render_with_completion_tail(fake_iterm2: Any) -> None:
 def test_open_transcript_no_file_returns_false(
     fake_iterm2: Any, tmp_path: Path
 ) -> None:
-    from vibecrafted_core.iterm2_plugin.vc_status_bar import (
+    from vibecrafted_iterm2.vc_status_bar import (
         VcStatusBarState,
         _open_transcript,
     )
@@ -240,7 +295,7 @@ def test_open_transcript_no_file_returns_false(
 def test_open_transcript_invokes_open(
     fake_iterm2: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from vibecrafted_core.iterm2_plugin import vc_status_bar
+    from vibecrafted_iterm2 import vc_status_bar
 
     transcript = tmp_path / "t.log"
     transcript.write_text("hello", encoding="utf-8")
@@ -262,7 +317,7 @@ def test_open_transcript_invokes_open(
 
 
 def test_trigger_payload_shape(fake_iterm2: Any) -> None:
-    from vibecrafted_core.iterm2_plugin.vc_triggers import (
+    from vibecrafted_iterm2.vc_triggers import (
         VIBECRAFTED_TRIGGERS,
         triggers_as_iterm2_payload,
     )
@@ -276,7 +331,7 @@ def test_trigger_payload_shape(fake_iterm2: Any) -> None:
 
 def test_trigger_set_excludes_user_owned_rows(fake_iterm2: Any) -> None:
     """Re-applying triggers must preserve operator-authored rows verbatim."""
-    from vibecrafted_core.iterm2_plugin.vc_triggers import (
+    from vibecrafted_iterm2.vc_triggers import (
         VIBECRAFTED_TRIGGERS,
         triggers_as_iterm2_payload,
     )
@@ -306,7 +361,7 @@ def test_trigger_set_excludes_user_owned_rows(fake_iterm2: Any) -> None:
 def test_installer_symlinks_into_autolaunch(
     fake_iterm2: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from vibecrafted_core.iterm2_plugin import install_autolaunch
+    from vibecrafted_iterm2 import install_autolaunch
 
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -321,10 +376,42 @@ def test_installer_symlinks_into_autolaunch(
     assert os.access(uninstaller, os.X_OK)
 
 
+def test_installer_writes_dynamic_profile_with_managed_triggers(
+    fake_iterm2: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from vibecrafted_iterm2 import install_autolaunch
+    from vibecrafted_iterm2.vc_triggers import VIBECRAFTED_TRIGGERS
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    install_autolaunch.install(home=fake_home)
+
+    target = (
+        fake_home
+        / "Library/Application Support/iTerm2/DynamicProfiles/vibecrafted.json"
+    )
+    assert target.exists()
+    assert target.parent.parts[-3:] == (
+        "Application Support",
+        "iTerm2",
+        "DynamicProfiles",
+    )
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    trigger_rows = [
+        row
+        for profile in payload["Profiles"]
+        for row in profile.get("Triggers", [])
+        if str(row.get("name") or "").startswith("vibecrafted:")
+    ]
+    assert len(trigger_rows) == len(VIBECRAFTED_TRIGGERS)
+
+
 def test_installer_refuses_to_clobber_without_force(
     fake_iterm2: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from vibecrafted_core.iterm2_plugin import install_autolaunch
+    from vibecrafted_iterm2 import install_autolaunch
 
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -341,21 +428,27 @@ def test_installer_refuses_to_clobber_without_force(
 def test_installer_uninstall_cleans_up(
     fake_iterm2: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from vibecrafted_core.iterm2_plugin import install_autolaunch
+    from vibecrafted_iterm2 import install_autolaunch
 
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
 
     install_autolaunch.install(home=fake_home)
+    profile_target = (
+        fake_home
+        / "Library/Application Support/iTerm2/DynamicProfiles/vibecrafted.json"
+    )
+    assert profile_target.exists()
     assert install_autolaunch.uninstall(home=fake_home) is True
+    assert not profile_target.exists()
     assert install_autolaunch.uninstall(home=fake_home) is False
 
 
 def test_find_iterm2_app_returns_none_when_no_candidate_exists(
     fake_iterm2: Any, tmp_path: Path
 ) -> None:
-    from vibecrafted_core.iterm2_plugin import install_autolaunch
+    from vibecrafted_iterm2 import install_autolaunch
 
     bogus = (str(tmp_path / "iTerm.app"), str(tmp_path / "locterm.app"))
     assert install_autolaunch.find_iterm2_app(candidates=bogus) is None
@@ -365,14 +458,14 @@ def test_find_iterm2_app_returns_none_when_no_candidate_exists(
 
 
 def test_subpackage_exposes_constants(fake_iterm2: Any) -> None:
-    import vibecrafted_core.iterm2_plugin as plugin
+    import vibecrafted_iterm2 as plugin
 
     assert plugin.EVENTS_JSONL_RELPATH == "control_plane/events.jsonl"
     assert plugin.SPAWN_UPDATE_KIND == "spawn-update"
     assert plugin.STATUS_BAR_COMPONENT_ID.startswith("io.vetcoders.")
 
 
-def test_subpackage_listed_in_top_level_all(fake_iterm2: Any) -> None:
-    import vibecrafted_core
+def test_subpackage_exports_public_constants(fake_iterm2: Any) -> None:
+    import vibecrafted_iterm2 as plugin
 
-    assert "iterm2_plugin" in vibecrafted_core.__all__
+    assert "STATUS_BAR_COMPONENT_ID" in plugin.__all__

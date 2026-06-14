@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from vibecrafted_core import iterm2_osc as osc
+from vibecrafted_iterm2 import iterm2_osc as osc
 
 
 # Convenience: sequences should always start with ESC ] and end with BEL.
@@ -205,7 +205,7 @@ def test_module_cli_help_runs_without_import_warning() -> None:
             sys.executable,
             "-Werror",
             "-m",
-            "vibecrafted_core.iterm2_osc",
+            "vibecrafted_iterm2.iterm2_osc",
             "--help",
         ],
         check=False,
@@ -214,5 +214,5 @@ def test_module_cli_help_runs_without_import_warning() -> None:
     )
 
     assert result.returncode == 0
-    assert "Usage: python -m vibecrafted_core.iterm2_osc" in result.stdout
+    assert "Usage: python -m vibecrafted_iterm2.iterm2_osc" in result.stdout
     assert "RuntimeWarning" not in result.stderr

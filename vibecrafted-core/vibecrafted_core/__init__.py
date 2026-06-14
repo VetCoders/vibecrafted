@@ -41,75 +41,34 @@ from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 __version__ = "0.1.0"
 
 _LAZY_EXPORTS = {
-    "PROFILE_SPECS": ".iterm2_profiles",
-    "ProfileSpec": ".iterm2_profiles",
-    "block_end": ".iterm2_osc",
-    "block_start": ".iterm2_osc",
-    "build_profiles_document": ".iterm2_profiles",
-    "custom_button": ".iterm2_osc",
-    "cursor_shape": ".iterm2_osc",
-    "default_install_dir": ".iterm2_profiles",
-    "ftcs_command_executed": ".iterm2_osc",
-    "ftcs_command_finished": ".iterm2_osc",
-    "ftcs_command_start": ".iterm2_osc",
-    "ftcs_prompt": ".iterm2_osc",
-    "hex_to_iterm2": ".iterm2_profiles",
-    "highlight_cursor_line": ".iterm2_osc",
-    "hyperlink": ".iterm2_osc",
-    "install_profiles": ".iterm2_profiles",
-    "invalidate_buttons": ".iterm2_osc",
-    "iterm2_plugin": ".iterm2_plugin",
     "WorkflowLaunchSpec": ".workflow",
     "await_launch_truth": ".workflow",
     "build_launch_command": ".workflow",
     "launch_workflow": ".workflow",
     "normalize_launch_spec": ".workflow",
     "retry_run": ".workflow",
-    "post_notification": ".iterm2_osc",
-    "progress": ".iterm2_osc",
-    "remote_host": ".iterm2_osc",
-    "request_attention": ".iterm2_osc",
-    "serialize": ".iterm2_profiles",
-    "set_badge": ".iterm2_osc",
-    "set_colors": ".iterm2_osc",
-    "set_current_dir": ".iterm2_osc",
-    "set_mark": ".iterm2_osc",
-    "set_profile": ".iterm2_osc",
-    "set_user_var": ".iterm2_osc",
-    "stable_guid": ".iterm2_profiles",
-    "steal_focus": ".iterm2_osc",
     "stop_run": ".workflow",
-    "uninstall_profiles": ".iterm2_profiles",
-    "update_block": ".iterm2_osc",
     "vibecrafted_launcher": ".workflow",
 }
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily expose iTerm helpers without preloading CLI modules."""
+    """Lazily expose optional workflow helpers without preloading CLI modules."""
     module_name = _LAZY_EXPORTS.get(name)
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-    if module_name == ".iterm2_profiles":
-        from . import iterm2_profiles as module
-    elif module_name == ".iterm2_osc":
-        from . import iterm2_osc as module
-    elif module_name == ".iterm2_plugin":
-        from . import iterm2_plugin as module
-    elif module_name == ".workflow":
+    if module_name == ".workflow":
         from . import workflow as module
     else:  # pragma: no cover - _LAZY_EXPORTS is the whitelist.
         raise AttributeError(f"module {__name__!r} has no lazy module for {name!r}")
 
-    value = module if name == "iterm2_plugin" else getattr(module, name)
+    value = getattr(module, name)
     globals()[name] = value
     return value
 
 
 __all__ = [
-    "PROFILE_SPECS",
-    "ProfileSpec",
     "RunStatus",
     "Event",
     "EventKind",
@@ -122,60 +81,29 @@ __all__ = [
     "append_event",
     "await_run",
     "await_launch_truth",
-    "block_end",
-    "block_start",
     "build_launch_command",
-    "build_profiles_document",
     "control_plane_home",
-    "custom_button",
-    "cursor_shape",
-    "default_install_dir",
     "doctor_run",
     "doctor_summary",
     "event_stream_path",
     "foundation_capabilities",
     "probe_tool",
-    "ftcs_command_executed",
-    "ftcs_command_finished",
-    "ftcs_command_start",
-    "ftcs_prompt",
-    "hex_to_iterm2",
-    "highlight_cursor_line",
-    "hyperlink",
-    "install_profiles",
-    "invalidate_buttons",
-    "iterm2_plugin",
     "launch_workflow",
     "lookup_run",
     "normalize_launch_spec",
     "retry_run",
-    "post_notification",
-    "progress",
     "read_event_tail",
     "read_version_file",
-    "remote_host",
     "repo_full",
     "repo_full_summary",
-    "request_attention",
     "resolve_env_path",
     "run_snapshot_dir",
-    "serialize",
-    "set_badge",
-    "set_colors",
-    "set_current_dir",
-    "set_mark",
-    "set_profile",
-    "set_user_var",
     "stop_run",
-    "stable_guid",
-    "steal_focus",
     "subscribe_events",
     "sync_state",
     "is_final_state",
     "is_negative_state",
     "transition_allowed",
-    "uninstall_profiles",
-    "update_block",
     "validate_artifacts",
     "vibecrafted_home",
     "vibecrafted_launcher",

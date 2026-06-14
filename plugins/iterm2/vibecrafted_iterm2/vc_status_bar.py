@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover - sandbox path
 
 from . import STATUS_BAR_COMPONENT_ID
 
-_LOG = logging.getLogger("vibecrafted.iterm2_plugin.status_bar")
+_LOG = logging.getLogger("vibecrafted.iterm2.status_bar")
 
 
 @dataclass

@@ -19,10 +19,12 @@ EVENTS_JSONL_RELPATH = "control_plane/events.jsonl"
 SPAWN_UPDATE_KIND = "spawn-update"
 STATUS_BAR_COMPONENT_ID = "io.vetcoders.vibecrafted.status"
 DEFAULT_RECONNECT_BACKOFF = (1.0, 2.0, 4.0, 8.0, 16.0)
+STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 
 __all__ = [
     "EVENTS_JSONL_RELPATH",
     "SPAWN_UPDATE_KIND",
     "STATUS_BAR_COMPONENT_ID",
     "DEFAULT_RECONNECT_BACKOFF",
+    "STDIO_LIMIT_BYTES",
 ]

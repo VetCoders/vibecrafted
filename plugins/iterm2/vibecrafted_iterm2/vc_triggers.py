@@ -2,8 +2,8 @@
 
 Each trigger is a regex that matches text emitted by a running agent
 (claude, codex, gemini, ...) and an iTerm2 action that runs in response.
-We register them against the user's default profile so every newly
-spawned pane gets the tagging behaviour without manual setup.
+The installer writes them into the additive ``Vibecrafted`` Dynamic
+Profile; runtime code must not mutate the user's default profile.
 
 iTerm2 Triggers schema reference (stable since iTerm2 3.4):
 https://iterm2.com/documentation-triggers.html
@@ -15,12 +15,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-try:
-    import iterm2
-except ImportError:  # pragma: no cover - sandbox path
-    iterm2 = None  # type: ignore[assignment]
-
-_LOG = logging.getLogger("vibecrafted.iterm2_plugin.triggers")
+_LOG = logging.getLogger("vibecrafted.iterm2.triggers")
 
 # iTerm2 trigger action identifiers (stable keys in the profile dict).
 ACTION_SET_USER_VAR = "SetUserVarTrigger"
@@ -106,7 +101,12 @@ async def apply_triggers_to_default_profile(
     Returns True on success, False on a best-effort fallback (the
     AutoLaunch should keep going either way).
     """
-    if iterm2 is None:  # pragma: no cover - sandbox guard
+    try:
+        import iterm2
+    except ImportError as exc:  # pragma: no cover - sandbox guard
+        raise RuntimeError("iterm2 package unavailable") from exc
+
+    if iterm2 is None:  # pragma: no cover - type narrow for unusual import hooks
         raise RuntimeError("iterm2 package unavailable")
 
     try:

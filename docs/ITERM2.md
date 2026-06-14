@@ -2,23 +2,18 @@
 
 _Plan 10 (META_22) — promoted from `[experimental]` framing on 2026-05-12._
 
-The Vibecrafted iTerm2 stack ships two layers on top of stock iTerm2: a
-**Python OSC primitive library** (`vibecrafted_core.iterm2_osc`) for emitting
+The Vibecrafted iTerm2 stack ships as a standalone package in
+`plugins/iterm2`. It has two layers on top of stock iTerm2: a
+**Python OSC primitive library** (`vibecrafted_iterm2.iterm2_osc`) for emitting
 escape sequences from any program, and a **Dynamic Profiles generator**
-(`vibecrafted_core.iterm2_profiles`) that installs a small set of operator
-profiles into iTerm2's hot-reload directory.
-
-> **Anti-aesthetic note.** This surface exists for the AI-agent + operator
-> workflow — colored mesh-host profiles, badge-driven repo identity, OSC 8
-> clickable hyperlinks in agent dashboards. It is **not** a customer-facing
-> design system. Customers see Vibecrafted via the marketplace plugin and
-> the install funnel, not via your terminal chrome.
+(`vibecrafted_iterm2.iterm2_profiles`) that installs one additive,
+namespaced Vibecrafted profile into iTerm2's hot-reload directory.
 
 ## Status
 
 - **Module status:** GA since v1.8.0 / 2026-05-12.
 - **Wire contract:** stable. OSC primitive signatures, profile JSON shape,
-  and GUID derivation (`uuid5(DNS, "vetcoders.<namespace>.<name>")`) are
+  and GUID derivation (`uuid5(DNS, "vibecrafted.<namespace>.<name>")`) are
   public API.
 - **Predecessor:** v1.7 shipped this stack under the `[experimental]`
   prefix (kronika 2026-05-08). Operators with `vibecrafted-experimental.json`
@@ -27,7 +22,7 @@ profiles into iTerm2's hot-reload directory.
 
 ## What you get
 
-### OSC primitives — `vibecrafted_core.iterm2_osc`
+### OSC primitives — `vibecrafted_iterm2.iterm2_osc`
 
 A pure-stdlib library that returns the literal byte strings iTerm2
 understands. The functions never write to stdout themselves — callers
@@ -42,7 +37,7 @@ shell integration), OSC 4 (color reporting).
 Example — clickable hyperlink in an agent log:
 
 ```python
-from vibecrafted_core import iterm2_osc as osc
+from vibecrafted_iterm2 import iterm2_osc as osc
 
 print(
     osc.hyperlink(
@@ -64,35 +59,28 @@ print(osc.progress(0))               # clear
 CLI surface (handy for shell scripts):
 
 ```bash
-uv run --project vibecrafted-core python -m vibecrafted_core.iterm2_osc badge "🐉 dragon"
-uv run --project vibecrafted-core python -m vibecrafted_core.iterm2_osc hyperlink \
+uv run --project plugins/iterm2 python -m vibecrafted_iterm2.iterm2_osc badge "build green"
+uv run --project plugins/iterm2 python -m vibecrafted_iterm2.iterm2_osc hyperlink \
     https://vibecrafted.io "open landing"
-uv run --project vibecrafted-core python -m vibecrafted_core.iterm2_osc progress 1 75
+uv run --project plugins/iterm2 python -m vibecrafted_iterm2.iterm2_osc progress 1 75
 ```
 
 Reference: <https://iterm2.com/documentation-escape-codes.html>.
 
-### Dynamic Profiles — `vibecrafted_core.iterm2_profiles`
+### Dynamic Profiles — `vibecrafted_iterm2.iterm2_profiles`
 
-A small, opinionated set of iTerm2 Dynamic Profiles that ship alongside
-your existing profiles. iTerm2 hot-reloads
+An additive iTerm2 Dynamic Profile that ships alongside your existing
+profiles. iTerm2 hot-reloads
 `~/Library/Application Support/iTerm2/DynamicProfiles/vibecrafted.json`
 the moment it appears, so no app restart is required.
 
-Shipped profiles (8 total):
+Shipped profile:
 
-| Profile                   | Purpose                                       |
-| ------------------------- | --------------------------------------------- |
-| `VetCoders Repo`          | Parent profile — children inherit defaults    |
-| `VetCoders / dragon`      | Mesh host: `ssh dragon`, red identity         |
-| `VetCoders / sztudio`     | Mesh host: `ssh sztudio`, purple identity     |
-| `VetCoders / silver`      | Mesh host: silver via sztudio jump, cyan      |
-| `VetCoders / div0`        | Mesh host: local, green                       |
-| `VetCoders / vibecrafted` | Repo profile: amber tab, badge + window title |
-| `VetCoders / vista`       | Repo profile: emerald tab                     |
-| `VetCoders / loctree`     | Repo profile: map-blue tab                    |
+| Profile       | Purpose                                      |
+| ------------- | -------------------------------------------- |
+| `Vibecrafted` | Managed trigger rows + light status identity |
 
-GUIDs are deterministic (uuid5 of `vetcoders.<namespace>.<name>`), so
+GUIDs are deterministic (uuid5 of `vibecrafted.<namespace>.<name>`), so
 re-running `make iterm-plugin` is idempotent and does not create duplicate
 profile rows in iTerm2's Settings → Profiles.
 
@@ -108,11 +96,11 @@ make iterm-plugin-uninstall # remove the installed file
 make iterm-plugin-migrate   # migrate v1.7 vibecrafted-experimental.json → GA
 ```
 
-Under the hood these wrap `python -m vibecrafted_core.iterm2_profiles`,
+Under the hood these wrap `python -m vibecrafted_iterm2.iterm2_profiles`,
 which is documented via `--help`:
 
 ```bash
-uv run --project vibecrafted-core python -m vibecrafted_core.iterm2_profiles --help
+uv run --project plugins/iterm2 python -m vibecrafted_iterm2.iterm2_profiles --help
 ```
 
 ## Migration from v1.7 experimental
@@ -124,7 +112,7 @@ If you installed the iTerm2 stack on v1.7 — kronika 2026-05-08 ships it as
 ~/Library/Application Support/iTerm2/DynamicProfiles/vibecrafted-experimental.json
 ```
 
-with profile names like `[experimental] VetCoders / dragon`. On v1.8.0
+with profile names like `[experimental] Vibecrafted / Classic`. On v1.8.0
 upgrade, run **once**:
 
 ```bash
@@ -186,8 +174,8 @@ output before relying on it in production.
 
 ## Testing
 
-- In-process pytest: `vibecrafted-core/tests/test_iterm2_osc.py` +
-  `vibecrafted-core/tests/test_iterm2_profiles.py` (82 tests total, run
+- In-process pytest: `plugins/iterm2/tests/test_iterm2_osc.py` +
+  `plugins/iterm2/tests/test_iterm2_profiles.py` (82 tests total, run
   via `make test` or the vibecrafted-core test suite directly).
 - Bash smoke: `make test-iterm2-migrate` — sandboxed end-to-end check of
   the experimental→GA migration path.

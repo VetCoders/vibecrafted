@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["vibecrafted-core", "vibecrafted-mcp"]
+members = ["vibecrafted-core", "vibecrafted-mcp", "plugins/iterm2"]
 
 [dependency-groups]
 dev = [

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from vibecrafted_core import iterm2_profiles as profiles
+from vibecrafted_iterm2 import iterm2_profiles as profiles
 
 
 # --------------------------------------------------------------------- helpers
@@ -68,9 +68,9 @@ def test_profilespec_minimal_fields() -> None:
 
 
 def test_profilespec_with_parent_inheritance() -> None:
-    spec = profiles.ProfileSpec(name="Child", namespace="repo", parent="VetCoders Repo")
+    spec = profiles.ProfileSpec(name="Child", namespace="repo", parent="Vibecrafted")
     out = spec.to_iterm2_profile()
-    assert out["Dynamic Profile Parent Name"] == "VetCoders Repo"
+    assert out["Dynamic Profile Parent Name"] == "Vibecrafted"
 
 
 def test_profilespec_tab_color_sets_use_flag() -> None:
@@ -84,14 +84,14 @@ def test_profilespec_tab_color_sets_use_flag() -> None:
 
 def test_profilespec_custom_command_format() -> None:
     spec = profiles.ProfileSpec(
-        name="Dragon",
-        namespace="mesh",
+        name="Shell",
+        namespace="example",
         parent=None,
-        custom_command="ssh dragon",
+        custom_command="echo ready",
     )
     out = spec.to_iterm2_profile()
     assert out["Custom Command"] == "Yes"
-    assert out["Command"] == "ssh dragon"
+    assert out["Command"] == "echo ready"
 
 
 def test_profilespec_extras_merge() -> None:
@@ -116,10 +116,10 @@ def test_build_profiles_document_shape() -> None:
     assert len(doc["Profiles"]) == len(profiles.PROFILE_SPECS)
 
 
-def test_build_profiles_document_includes_parent_first() -> None:
+def test_build_profiles_document_includes_vibecrafted_profile() -> None:
     doc = profiles.build_profiles_document()
     first = doc["Profiles"][0]
-    assert first["Name"] == "VetCoders Repo"
+    assert first["Name"] == "Vibecrafted"
     assert "Dynamic Profile Parent Name" not in first
 
 
@@ -134,21 +134,17 @@ def test_build_profiles_document_all_have_guid_and_name() -> None:
     assert len(guids) == len(doc["Profiles"])
 
 
-def test_build_profiles_document_mesh_hosts_present() -> None:
+def test_build_profiles_document_installs_one_generic_profile() -> None:
     doc = profiles.build_profiles_document()
     names = {p["Name"] for p in doc["Profiles"]}
-    assert "VetCoders / dragon" in names
-    assert "VetCoders / sztudio" in names
-    assert "VetCoders / silver" in names
-    assert "VetCoders / div0" in names
+    assert names == {"Vibecrafted"}
 
 
-def test_build_profiles_document_repo_profiles_present() -> None:
+def test_build_profiles_document_includes_managed_triggers() -> None:
     doc = profiles.build_profiles_document()
-    names = {p["Name"] for p in doc["Profiles"]}
-    assert "VetCoders / vibecrafted" in names
-    assert "VetCoders / vista" in names
-    assert "VetCoders / loctree" in names
+    trigger_rows = doc["Profiles"][0]["Triggers"]
+    assert len(trigger_rows) == 6
+    assert all(row["name"].startswith("vibecrafted:") for row in trigger_rows)
 
 
 def test_no_profile_names_carry_legacy_experimental_prefix() -> None:
@@ -160,26 +156,24 @@ def test_no_profile_names_carry_legacy_experimental_prefix() -> None:
         )
 
 
-def test_all_profile_names_use_ga_vetcoders_namespace() -> None:
-    """All non-parent profiles share the ``VetCoders / <namespace>`` shape."""
+def test_generated_profiles_do_not_ship_plugin_machine_defaults() -> None:
     doc = profiles.build_profiles_document()
-    for p in doc["Profiles"]:
-        name = p["Name"]
-        if "Dynamic Profile Parent Name" not in p:
-            # parent itself
-            assert name == "VetCoders Repo"
-        else:
-            assert name.startswith("VetCoders / "), (
-                f"child profile {name!r} missing 'VetCoders / ' prefix"
-            )
+    forbidden = ("dra" + "gon", "sztudio", "silver", "div0")
+    payload = json.dumps(doc)
+    for literal in forbidden:
+        assert literal not in payload
 
 
-def test_children_reference_ga_parent_name() -> None:
-    """Children point at the cleaned ``VetCoders Repo`` parent, not the legacy one."""
+def test_all_profile_names_use_vibecrafted_namespace() -> None:
     doc = profiles.build_profiles_document()
     for p in doc["Profiles"]:
-        if "Dynamic Profile Parent Name" in p:
-            assert p["Dynamic Profile Parent Name"] == "VetCoders Repo"
+        assert p["Name"] == "Vibecrafted"
+
+
+def test_generated_profile_has_no_parent_reference() -> None:
+    doc = profiles.build_profiles_document()
+    for p in doc["Profiles"]:
+        assert "Dynamic Profile Parent Name" not in p
 
 
 def test_serialize_is_valid_json_with_trailing_newline() -> None:
@@ -297,7 +291,7 @@ def test_module_cli_help_runs_without_import_warning() -> None:
             sys.executable,
             "-Werror",
             "-m",
-            "vibecrafted_core.iterm2_profiles",
+            "vibecrafted_iterm2.iterm2_profiles",
             "--help",
         ],
         check=False,
@@ -306,7 +300,7 @@ def test_module_cli_help_runs_without_import_warning() -> None:
     )
 
     assert result.returncode == 0
-    assert "Usage: python -m vibecrafted_core.iterm2_profiles" in result.stdout
+    assert "Usage: python -m vibecrafted_iterm2.iterm2_profiles" in result.stdout
     assert "RuntimeWarning" not in result.stderr
 
 
@@ -345,21 +339,21 @@ def _write_legacy_fixture(target_dir: Path) -> Path:
     legacy_doc = {
         "Profiles": [
             {
-                "Name": "[experimental] VetCoders Repo",
+                "Name": "[experimental] Vibecrafted Legacy",
                 "Guid": "legacy-parent-guid",
-                "Tags": ["vetcoders", "parent"],
+                "Tags": ["plugin", "parent"],
             },
             {
-                "Name": "[experimental] VetCoders / dragon",
-                "Guid": "legacy-dragon-guid",
-                "Tags": ["vetcoders", "mesh", "ssh"],
-                "Dynamic Profile Parent Name": "[experimental] VetCoders Repo",
+                "Name": "[experimental] Vibecrafted / Classic",
+                "Guid": "legacy-classic-guid",
+                "Tags": ["plugin", "mesh", "ssh"],
+                "Dynamic Profile Parent Name": "[experimental] Vibecrafted Legacy",
             },
             {
-                "Name": "[experimental] VetCoders / vibecrafted",
+                "Name": "[experimental] Vibecrafted / Project",
                 "Guid": "legacy-vibecrafted-guid",
-                "Tags": ["vetcoders", "repo", "framework"],
-                "Dynamic Profile Parent Name": "[experimental] VetCoders Repo",
+                "Tags": ["plugin", "repo", "framework"],
+                "Dynamic Profile Parent Name": "[experimental] Vibecrafted Legacy",
             },
         ]
     }
@@ -384,7 +378,7 @@ def test_migrate_from_experimental_renames_file_and_preserves_guids(
     guids = [p["Guid"] for p in new_doc["Profiles"]]
     assert guids == [
         "legacy-parent-guid",
-        "legacy-dragon-guid",
+        "legacy-classic-guid",
         "legacy-vibecrafted-guid",
     ]
 
@@ -397,7 +391,11 @@ def test_migrate_from_experimental_cleans_profile_names(tmp_path: Path) -> None:
         (tmp_path / profiles.DEFAULT_FILENAME).read_text(encoding="utf-8")
     )
     names = [p["Name"] for p in new_doc["Profiles"]]
-    assert names == ["VetCoders Repo", "VetCoders / dragon", "VetCoders / vibecrafted"]
+    assert names == [
+        "Vibecrafted Legacy",
+        "Vibecrafted / Classic",
+        "Vibecrafted / Project",
+    ]
     for p in new_doc["Profiles"]:
         assert not p["Name"].startswith("[experimental]")
 
@@ -413,7 +411,7 @@ def test_migrate_from_experimental_rewrites_parent_references(
     )
     for p in new_doc["Profiles"]:
         if "Dynamic Profile Parent Name" in p:
-            assert p["Dynamic Profile Parent Name"] == "VetCoders Repo"
+            assert p["Dynamic Profile Parent Name"] == "Vibecrafted Legacy"
 
 
 def test_migrate_from_experimental_creates_bak_backup(tmp_path: Path) -> None:
@@ -506,11 +504,14 @@ def test_cli_migrate_from_experimental_nothing_to_do(
 
 
 def test_clean_profile_name_idempotent() -> None:
-    assert profiles._clean_profile_name("VetCoders / dragon") == "VetCoders / dragon"
+    assert (
+        profiles._clean_profile_name("Vibecrafted / Classic")
+        == "Vibecrafted / Classic"
+    )
 
 
 def test_clean_profile_name_strips_legacy_prefix() -> None:
     assert (
-        profiles._clean_profile_name("[experimental] VetCoders / dragon")
-        == "VetCoders / dragon"
+        profiles._clean_profile_name("[experimental] Vibecrafted / Classic")
+        == "Vibecrafted / Classic"
     )

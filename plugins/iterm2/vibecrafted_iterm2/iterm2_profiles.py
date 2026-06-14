@@ -1,16 +1,15 @@
 """iTerm2 Dynamic Profiles generator + runtime installer.
 
-Source-of-truth lives in ``PROFILE_SPECS`` below: the parent
-``VetCoders Repo`` profile plus per-host (mesh topology) and per-repo
-children. ``build_profiles_document()`` materializes the iTerm2-compatible
-JSON. ``install_profiles()`` writes that JSON to the user's
+Source-of-truth lives in ``PROFILE_SPECS`` below: a small, generic
+``Vibecrafted`` profile that carries the managed trigger rows.
+``build_profiles_document()`` materializes the iTerm2-compatible JSON.
+``install_profiles()`` writes that JSON to the user's
 ``~/Library/Application Support/iTerm2/DynamicProfiles/`` directory, where
 iTerm2 hot-reloads it.
 
 The default install filename is ``vibecrafted.json``. Profile names use
-the stable ``VetCoders / <namespace>`` shape — no ``[experimental]``
-prefix — and ship alongside the user's existing iTerm2 profiles without
-replacing them.
+the stable ``Vibecrafted`` namespace and ship alongside the user's existing
+iTerm2 profiles without replacing them.
 
 Status: **GA since v1.8.0 / 2026-05-12** (Plan 10, META_22). Wire contract
 stable: profile GUIDs are derived deterministically from
@@ -35,6 +34,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+
+from .vc_triggers import VIBECRAFTED_TRIGGERS, triggers_as_iterm2_payload
 
 # --------------------------------------------------------------------- helpers
 
@@ -68,14 +69,14 @@ def stable_guid(namespace: str, name: str) -> str:
     iTerm2 reuse existing profiles instead of duplicating them on each
     install. Uses uuid5 with the standard DNS namespace.
 
-    Note: when names changed from ``[experimental] VetCoders / X`` to
-    ``VetCoders / X`` at v1.8.0 GA, the resulting GUIDs *also* changed
+    Note: when names changed from ``[experimental] Vibecrafted / X`` to
+    ``Vibecrafted / X`` at v1.8.0 GA, the resulting GUIDs *also* changed
     because ``name`` is part of the seed. :func:`migrate_from_experimental`
     works around this by reading the old GUIDs out of the experimental
     JSON file and writing them straight through into the new file, so the
     operator does not see profile duplication in iTerm2.
     """
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"vetcoders.{namespace}.{name}"))
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"vibecrafted.{namespace}.{name}"))
 
 
 # --------------------------------------------------------------------- specs
@@ -136,10 +137,10 @@ class ProfileSpec:
         return out
 
 
-# --------------------------------------------------------------------- mesh + repos
+# --------------------------------------------------------------------- profile specs
 
-# Parent profile name — referenced by all children. GA stable shape.
-PARENT_NAME = "VetCoders Repo"
+# Profile name — GA stable shape for the standalone plugin.
+PROFILE_NAME = "Vibecrafted"
 
 # Filenames — GA shape vs. the v1.7 experimental shape kept around for
 # migration logic only. New code should reference :data:`DEFAULT_FILENAME`.
@@ -147,103 +148,18 @@ DEFAULT_FILENAME = "vibecrafted.json"
 LEGACY_EXPERIMENTAL_FILENAME = "vibecrafted-experimental.json"
 
 
-# Mesh topology — one profile per known VetCoders host. Colors carry
-# operator-readable identity from the command-tab overview.
-MESH_HOSTS: tuple[ProfileSpec, ...] = (
-    ProfileSpec(
-        name="VetCoders / dragon",
-        namespace="mesh",
-        parent=PARENT_NAME,
-        tags=("vetcoders", "mesh", "ssh"),
-        badge=r"🐉 dragon",
-        background="#1a0e0e",
-        foreground="#ffe5e0",
-        cursor="#ff6b6b",
-        tab_color="#ff6b6b",
-        custom_command="ssh dragon",
-    ),
-    ProfileSpec(
-        name="VetCoders / sztudio",
-        namespace="mesh",
-        parent=PARENT_NAME,
-        tags=("vetcoders", "mesh", "ssh"),
-        badge=r"🟣 sztudio",
-        background="#0f0a14",
-        foreground="#e9d5ff",
-        cursor="#a78bfa",
-        tab_color="#a78bfa",
-        custom_command="ssh sztudio",
-    ),
-    ProfileSpec(
-        name="VetCoders / silver",
-        namespace="mesh",
-        parent=PARENT_NAME,
-        tags=("vetcoders", "mesh", "ssh"),
-        badge=r"💿 silver (via sztudio)",
-        background="#06141b",
-        foreground="#cffafe",
-        cursor="#67e8f9",
-        tab_color="#67e8f9",
-        custom_command="ssh sztudio 'ssh silver'",
-    ),
-    ProfileSpec(
-        name="VetCoders / div0",
-        namespace="mesh",
-        parent=PARENT_NAME,
-        tags=("vetcoders", "mesh", "local"),
-        badge=r"🌱 div0 (local)",
-        background="#0a1410",
-        foreground="#dcfce7",
-        cursor="#86efac",
-        tab_color="#86efac",
-    ),
-)
-
-
-# Per-repo profiles — open new tab in repo working directory, set badge
-# from session variables. Parent inherits font/keys/global behavior.
-REPO_PROFILES: tuple[ProfileSpec, ...] = (
-    ProfileSpec(
-        name="VetCoders / vibecrafted",
-        namespace="repo",
-        parent=PARENT_NAME,
-        tags=("vetcoders", "repo", "framework"),
-        badge=r"\(user.vetcoders.repo) — \(user.vetcoders.zellij_session)",
-        tab_color="#fbbf24",  # vibecrafted brand amber
-        custom_window_title=r"𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 — \(session.path)",
-    ),
-    ProfileSpec(
-        name="VetCoders / vista",
-        namespace="repo",
-        parent=PARENT_NAME,
-        tags=("vetcoders", "repo", "vista"),
-        badge=r"Vista — \(user.vetcoders.zellij_session)",
-        tab_color="#10b981",  # vista emerald
-        custom_window_title=r"Vista — \(session.path)",
-    ),
-    ProfileSpec(
-        name="VetCoders / loctree",
-        namespace="repo",
-        parent=PARENT_NAME,
-        tags=("vetcoders", "repo", "loctree"),
-        badge=r"Loctree — \(user.vetcoders.zellij_session)",
-        tab_color="#3b82f6",  # loctree map blue
-        custom_window_title=r"Loctree — \(session.path)",
-    ),
-)
-
-
-# Parent profile — the only spec without `parent`. Inherits from iTerm2
-# default profile via implicit fallback. All children inherit unspecified
-# attributes from this one.
-PARENT_PROFILE = ProfileSpec(
-    name=PARENT_NAME,
-    namespace="parent",
+# Standalone profile. It inherits unspecified attributes from iTerm2's
+# implicit fallback and carries only Vibecrafted-managed trigger rows.
+VIBECRAFTED_PROFILE = ProfileSpec(
+    name=PROFILE_NAME,
+    namespace="plugin",
     parent=None,
-    tags=("vetcoders", "parent"),
-    badge=r"\(user.vetcoders.repo)",
+    tags=("vibecrafted", "plugin"),
+    badge="Vibecrafted",
+    tab_color="#fbbf24",
+    custom_window_title=r"Vibecrafted - \(session.path)",
     extras={
-        # Modest defaults — children override colors/badge/tabs.
+        "Triggers": triggers_as_iterm2_payload(VIBECRAFTED_TRIGGERS),
         "Working Directory": "Recycle",
         "Custom Directory": "Recycle",
         "Allow Title Setting": True,
@@ -252,7 +168,7 @@ PARENT_PROFILE = ProfileSpec(
 )
 
 
-PROFILE_SPECS: tuple[ProfileSpec, ...] = (PARENT_PROFILE,) + MESH_HOSTS + REPO_PROFILES
+PROFILE_SPECS: tuple[ProfileSpec, ...] = (VIBECRAFTED_PROFILE,)
 
 
 # --------------------------------------------------------------------- builders
@@ -354,7 +270,7 @@ class MigrationResult:
     migrated_profiles: int
 
 
-# Per-name cleanup: ``[experimental] VetCoders / X`` → ``VetCoders / X``.
+# Per-name cleanup: ``[experimental] Vibecrafted / X`` → ``Vibecrafted / X``.
 _LEGACY_PREFIX = "[experimental] "
 
 
@@ -464,9 +380,9 @@ def migrate_from_experimental(
 def _cli(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(
-            "Usage: python -m vibecrafted_core.iterm2_profiles <op>\n"
+            "Usage: python -m vibecrafted_iterm2.iterm2_profiles <op>\n"
             "\n"
-            "iTerm2 Dynamic Profiles for VetCoders mesh + repos (GA since v1.8.0).\n"
+            "iTerm2 Dynamic Profile for Vibecrafted triggers (standalone plugin).\n"
             "\n"
             "Operations:\n"
             "  show                        Print the JSON document to stdout\n"

@@ -269,7 +269,7 @@ _ALL_BUILDERS: dict[str, tuple[Callable[..., str], list[str]]] = {
 
 def _cli(argv: list[str]) -> int:
     if not argv or argv[0] in ("-h", "--help"):
-        print("Usage: python -m vibecrafted_core.iterm2_osc <op> [args...]\n")
+        print("Usage: python -m vibecrafted_iterm2.iterm2_osc <op> [args...]\n")
         print("Available ops:")
         for name, (_, params) in sorted(_ALL_BUILDERS.items()):
             sig = " ".join(f"<{p}>" for p in params)

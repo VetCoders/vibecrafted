@@ -2628,7 +2628,11 @@ def _ensure_runtime_venv(current_tools: Path, dry_run: bool = False) -> Optional
 
     _ensure_runtime_pip(python_bin)
 
-    packages = [current_tools / "vibecrafted-core", current_tools / "vibecrafted-mcp"]
+    packages = [
+        current_tools / "vibecrafted-core",
+        current_tools / "plugins" / "iterm2",
+        current_tools / "vibecrafted-mcp",
+    ]
     for package in packages:
         if not (package / "pyproject.toml").is_file():
             continue

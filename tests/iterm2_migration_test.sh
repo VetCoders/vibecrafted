@@ -63,10 +63,10 @@ BAK_FILE="$SANDBOX/vibecrafted-experimental.json.bak"
 # it; CI does).
 run_migrate() {
     cd "$REPO_ROOT"
-    uv run --project vibecrafted-core --quiet python -c "
+    uv run --project plugins/iterm2 --quiet python -c "
 import sys
 from pathlib import Path
-from vibecrafted_core import iterm2_profiles as p
+from vibecrafted_iterm2 import iterm2_profiles as p
 p.default_install_dir = lambda: Path('$SANDBOX')
 raise SystemExit(p._cli(['migrate-from-experimental']))
 "
@@ -77,21 +77,21 @@ write_legacy_fixture() {
 {
   "Profiles": [
     {
-      "Name": "[experimental] VetCoders Repo",
+      "Name": "[experimental] Vibecrafted Legacy",
       "Guid": "fixture-parent-guid",
-      "Tags": ["vetcoders", "parent"]
+      "Tags": ["plugin", "parent"]
     },
     {
-      "Name": "[experimental] VetCoders / dragon",
-      "Guid": "fixture-dragon-guid",
-      "Tags": ["vetcoders", "mesh", "ssh"],
-      "Dynamic Profile Parent Name": "[experimental] VetCoders Repo"
+      "Name": "[experimental] Vibecrafted / Classic",
+      "Guid": "fixture-classic-guid",
+      "Tags": ["plugin", "mesh", "ssh"],
+      "Dynamic Profile Parent Name": "[experimental] Vibecrafted Legacy"
     },
     {
-      "Name": "[experimental] VetCoders / vibecrafted",
+      "Name": "[experimental] Vibecrafted / Project",
       "Guid": "fixture-vibecrafted-guid",
-      "Tags": ["vetcoders", "repo", "framework"],
-      "Dynamic Profile Parent Name": "[experimental] VetCoders Repo"
+      "Tags": ["plugin", "repo", "framework"],
+      "Dynamic Profile Parent Name": "[experimental] Vibecrafted Legacy"
     }
   ]
 }
@@ -153,13 +153,13 @@ fi
 section "Scenario 2: profile names cleaned"
 
 assert_json_field "$GA_FILE" "doc['Profiles'][0]['Name']" \
-    "VetCoders Repo" \
+    "Vibecrafted Legacy" \
     "parent profile name cleaned"
 assert_json_field "$GA_FILE" "doc['Profiles'][1]['Name']" \
-    "VetCoders / dragon" \
-    "dragon profile name cleaned"
+    "Vibecrafted / Classic" \
+    "classic profile name cleaned"
 assert_json_field "$GA_FILE" "doc['Profiles'][2]['Name']" \
-    "VetCoders / vibecrafted" \
+    "Vibecrafted / Project" \
     "vibecrafted profile name cleaned"
 
 # Belt-and-suspenders: no [experimental] anywhere in the new file.
@@ -175,8 +175,8 @@ assert_json_field "$GA_FILE" "doc['Profiles'][0]['Guid']" \
     "fixture-parent-guid" \
     "parent GUID preserved"
 assert_json_field "$GA_FILE" "doc['Profiles'][1]['Guid']" \
-    "fixture-dragon-guid" \
-    "dragon GUID preserved"
+    "fixture-classic-guid" \
+    "classic GUID preserved"
 assert_json_field "$GA_FILE" "doc['Profiles'][2]['Guid']" \
     "fixture-vibecrafted-guid" \
     "vibecrafted GUID preserved"
@@ -185,11 +185,11 @@ section "Scenario 4: parent references rewritten"
 
 assert_json_field "$GA_FILE" \
     "doc['Profiles'][1]['Dynamic Profile Parent Name']" \
-    "VetCoders Repo" \
-    "dragon parent reference cleaned"
+    "Vibecrafted Legacy" \
+    "classic parent reference cleaned"
 assert_json_field "$GA_FILE" \
     "doc['Profiles'][2]['Dynamic Profile Parent Name']" \
-    "VetCoders Repo" \
+    "Vibecrafted Legacy" \
     "vibecrafted parent reference cleaned"
 
 section "Scenario 5: idempotent re-run"

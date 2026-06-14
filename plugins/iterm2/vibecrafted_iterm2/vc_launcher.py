@@ -2,7 +2,7 @@
 
 This script is symlinked into
 ``~/Library/Application Support/iTerm2/Scripts/AutoLaunch/vc_launcher.py``
-by :mod:`vibecrafted_core.iterm2_plugin.install_autolaunch` and is
+by :mod:`vibecrafted_iterm2.install_autolaunch` and is
 executed by iTerm2 at startup inside iTerm2's vendored Python sandbox.
 That sandbox is guaranteed to vendor ``iterm2`` and the Python stdlib,
 nothing else — so this module imports nothing from the rest of
@@ -18,8 +18,8 @@ What it does:
   count and the latest finished agent/skill string.
 * Posts iTerm2 native notifications on terminal spawn lifecycle
   transitions (launching → running → completed/failed).
-* Wires the pre-baked vibecrafted triggers onto the active profile so
-  panes auto-tag by agent/skill.
+* Leaves profile configuration alone at runtime. The installer writes an
+  additive DynamicProfile with the managed triggers instead.
 * Survives iTerm2 restarts and broken connections via exponential
   backoff reconnect.
 
@@ -47,11 +47,11 @@ from . import (
     DEFAULT_RECONNECT_BACKOFF,
     EVENTS_JSONL_RELPATH,
     SPAWN_UPDATE_KIND,
+    STDIO_LIMIT_BYTES,
 )
 from .vc_status_bar import VcStatusBarState, register_status_bar
-from .vc_triggers import VIBECRAFTED_TRIGGERS, apply_triggers_to_default_profile
 
-_LOG = logging.getLogger("vibecrafted.iterm2_plugin")
+_LOG = logging.getLogger("vibecrafted.iterm2")
 
 
 def vibecrafted_home() -> Path:
@@ -122,6 +122,7 @@ async def _tail_events(
         str(path),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
+        limit=STDIO_LIMIT_BYTES,
     )
     assert proc.stdout is not None
     try:
@@ -209,11 +210,6 @@ async def _main_loop(connection: Any) -> None:
     runtime.connection = connection
 
     await register_status_bar(connection, runtime.state)
-
-    try:
-        await apply_triggers_to_default_profile(connection, VIBECRAFTED_TRIGGERS)
-    except Exception:  # pragma: no cover - best-effort
-        _LOG.debug("trigger apply failed", exc_info=True)
 
     path = events_jsonl_path()
     _LOG.info("tailing %s", path)
