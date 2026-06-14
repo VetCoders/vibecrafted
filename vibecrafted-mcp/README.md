@@ -56,6 +56,7 @@ vibecrafted-mcp --help
 | `vc_run_launch(...)`               | Lifecycle-name alias of `vc_launch`. Spawns an agent and writes control-plane artifacts.                     | Yes      |
 | `vc_run_status(run_id, home=None)` | Lookup one run from the synced control-plane projection.                                                     | No       |
 | `vc_await_run(...)`                | Bounded wait for a run to reach terminal state. This is not a transcript transport.                          | No       |
+| `vc_run_observe(...)`              | Cursor-pull run events and transcript deltas. Transcript text is capped to 64 KiB per response.              | No       |
 | `vc_run_stop(...)`                 | Request graceful stop of an active run and write an audit event.                                             | Yes      |
 | `vc_run_retry(...)`                | Retry a run from stored launch metadata and write retry control-plane artifacts.                             | Yes      |
 | `vc_run_blocked(...)`              | Mark an active run blocked/needs-intervention and write an audit event.                                      | Yes      |
@@ -72,6 +73,10 @@ through a permissioned MCP client or trusted local agent session.
 | --------------------------------------------- | --------------------------------------------------------------------------------- |
 | `vibecrafted://board/runs`                    | `{generated_at, active_runs, recent_runs, warnings}` from the live control plane. |
 | `vibecrafted://control-plane/events/{run_id}` | Last 50 events for `run_id` from the operator event stream.                       |
+| `vibecrafted://runs/{run_id}/transcript`      | Bounded transcript text envelope for `run_id`.                                    |
+| `vibecrafted://runs/{run_id}/events`          | Bounded event delta envelope for `run_id`.                                        |
+| `vibecrafted://runs/{run_id}/status`          | Current control-plane projection for `run_id`.                                    |
+| `vibecrafted://runs/{run_id}/report`          | Bounded report text envelope for `run_id`.                                        |
 
 ## Constraints
 

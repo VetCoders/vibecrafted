@@ -8,6 +8,7 @@ installed in the test environment, and skipped otherwise.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import os
 from pathlib import Path
@@ -218,6 +219,7 @@ def test_build_server_registers_tools_and_resources() -> None:
         "vc_run_launch",
         "vc_run_status",
         "vc_await_run",
+        "vc_run_observe",
         "vc_run_stop",
         "vc_run_retry",
         "vc_run_blocked",
@@ -226,7 +228,54 @@ def test_build_server_registers_tools_and_resources() -> None:
     } <= tool_names
     assert any("vibecrafted://board/runs" in uri for uri in resource_uris)
     assert any("vibecrafted://control-plane/events" in uri for uri in resource_uris)
+    assert any("vibecrafted://runs/{run_id}/transcript" in uri for uri in resource_uris)
+    assert any("vibecrafted://runs/{run_id}/events" in uri for uri in resource_uris)
+    assert any("vibecrafted://runs/{run_id}/status" in uri for uri in resource_uris)
+    assert any("vibecrafted://runs/{run_id}/report" in uri for uri in resource_uris)
     assert any("vibecrafted://capabilities/foundations" in uri for uri in resource_uris)
+
+
+def _write_observe_fixture(
+    tmp_path: Path, run_id: str = "impl-061414-42"
+) -> dict[str, str]:
+    home = tmp_path / ".vibecrafted"
+    transcript = tmp_path / "transcript.log"
+    report = tmp_path / "report.md"
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    transcript.write_text("abcdefghij", encoding="utf-8")
+    report.write_text("# Report\nready\n", encoding="utf-8")
+    event_stream = home / "control_plane" / "events.jsonl"
+    event_stream.parent.mkdir(parents=True, exist_ok=True)
+    event_stream.write_text(
+        json.dumps(
+            {
+                "ts": now,
+                "run_id": run_id,
+                "kind": "launch",
+                "message": "launched",
+                "payload": {
+                    "state": "active",
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "session_id": "session-observe",
+                    "launcher_pid": os.getpid(),
+                    "heartbeat_at": now,
+                    "report": str(report),
+                    "transcript": str(transcript),
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "home": str(home),
+        "run_id": run_id,
+        "transcript": str(transcript),
+        "report": str(report),
+    }
 
 
 def test_vc_loct_capabilities_routes_to_core(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -512,6 +561,118 @@ def test_vc_run_status_and_await_use_control_plane_meta(
     assert status_payload["run"]["launcher_pid"] == 4242
     assert await_payload["completed"] is True
     assert await_payload["run"]["exit_code"] == 0
+
+
+def test_vc_run_observe_returns_bounded_cursor_deltas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _write_observe_fixture(tmp_path)
+    monkeypatch.setenv("VIBECRAFTED_HOME", fixture["home"])
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call(payload: dict[str, Any]) -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool("vc_run_observe", payload)
+
+    first = _run(
+        _call(
+            {
+                "run_id": fixture["run_id"],
+                "home": fixture["home"],
+                "cursor": {"event_offset": 0, "transcript_offset": 0},
+                "max_bytes": 4,
+                "max_events": 100,
+            }
+        )
+    ).data
+
+    assert first["found"] is True
+    assert first["operator_state"] == "running"
+    launch_events = [event for event in first["events"] if event["kind"] == "launch"]
+    assert len(launch_events) == 1
+    assert all(event["cursor"] > 0 for event in first["events"])
+    assert first["cursor"]["event_offset"] == max(
+        event["cursor"] for event in first["events"]
+    )
+    assert first["transcript"]["offset"] == 0
+    assert first["transcript"]["next_offset"] == 4
+    assert first["transcript"]["bytes"] == 4
+    assert first["transcript"]["text"] == "abcd"
+    assert first["transcript"]["truncated"] is True
+    assert first["cursor"]["transcript_offset"] == 4
+    assert first["terminal"] is False
+    assert first["report_ready"] is True
+
+    second = _run(
+        _call(
+            {
+                "run_id": fixture["run_id"],
+                "home": fixture["home"],
+                "cursor": first["cursor"],
+                "max_bytes": 4,
+            }
+        )
+    ).data
+
+    assert second["events"] == []
+    assert second["transcript"]["offset"] == 4
+    assert second["transcript"]["next_offset"] == 8
+    assert second["transcript"]["text"] == "efgh"
+    assert second["transcript"]["truncated"] is True
+
+    at_end = _run(
+        _call(
+            {
+                "run_id": fixture["run_id"],
+                "home": fixture["home"],
+                "cursor": {
+                    "event_offset": first["cursor"]["event_offset"],
+                    "transcript_offset": 10,
+                },
+                "max_bytes": 4,
+            }
+        )
+    ).data
+
+    assert at_end["events"] == []
+    assert at_end["transcript"]["bytes"] == 0
+    assert at_end["transcript"]["text"] == ""
+    assert at_end["cursor"]["transcript_offset"] == 10
+
+
+def test_run_resource_templates_resolve_bounded_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _write_observe_fixture(tmp_path)
+    monkeypatch.setenv("VIBECRAFTED_HOME", fixture["home"])
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+    run_id = fixture["run_id"]
+
+    async def _read(uri: str) -> Any:
+        async with Client(mcp) as client:
+            return await client.read_resource(uri)
+
+    status = json.loads(_run(_read(f"vibecrafted://runs/{run_id}/status"))[0].text)
+    events = json.loads(_run(_read(f"vibecrafted://runs/{run_id}/events"))[0].text)
+    transcript = json.loads(
+        _run(_read(f"vibecrafted://runs/{run_id}/transcript"))[0].text
+    )
+    report = json.loads(_run(_read(f"vibecrafted://runs/{run_id}/report"))[0].text)
+
+    assert status["found"] is True
+    assert status["operator_state"] == "running"
+    assert any(event["kind"] == "launch" for event in events["events"])
+    assert transcript["bytes"] == 10
+    assert transcript["truncated"] is False
+    assert transcript["text"] == "abcdefghij"
+    assert report["found"] is True
+    assert report["report"]["text"].startswith("# Report")
 
 
 def test_vc_run_stop_and_retry_route_to_workflow(
