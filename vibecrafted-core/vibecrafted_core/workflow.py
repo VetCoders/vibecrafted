@@ -465,7 +465,7 @@ def normalize_launch_spec(
     )
 
     if skill != "marbles" and not prompt and not file_path:
-        raise ValueError("Launch requires either prompt text or a file path.")
+        raise ValueError("Launch requires either --prompt text or --file path.")
 
     return WorkflowLaunchSpec(
         agent=agent,

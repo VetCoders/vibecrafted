@@ -211,6 +211,17 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
     print("=====================================================================")
 
 
+def _print_launch_input_error(*, command: str, agent: str | None, message: str) -> None:
+    base = f"vibecrafted {command}"
+    if agent:
+        base = f"{base} {agent}"
+    print(f"error: {message}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Provide work for the agent with one of:", file=sys.stderr)
+    print(f"  {base} --prompt 'what to do'", file=sys.stderr)
+    print(f"  {base} --file /path/to/brief.md", file=sys.stderr)
+
+
 def _run_for_agent(
     agent: str, run_id: str, *, last: bool = False
 ) -> dict[str, Any] | None:
@@ -391,7 +402,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "count": args.count,
         "depth": args.depth,
     }
-    spec = normalize_launch_spec(payload, source_dir)
+    try:
+        spec = normalize_launch_spec(payload, source_dir)
+    except ValueError as exc:
+        _print_launch_input_error(
+            command=str(args.command), agent=args.agent, message=str(exc)
+        )
+        return 2
     result = launch_workflow(spec, source_dir)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

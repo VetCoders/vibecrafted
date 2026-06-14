@@ -48,6 +48,25 @@ def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 
+def test_root_cli_launch_missing_work_prints_friendly_error(
+    monkeypatch, capsys
+) -> None:
+    def fail_launch(_spec, _source_dir):
+        raise AssertionError("launch_workflow should not run for invalid input")
+
+    monkeypatch.setattr(cli, "launch_workflow", fail_launch)
+
+    assert cli.main(["prune", "claude"]) == 2
+
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "Traceback" not in combined
+    assert "ValueError" not in combined
+    assert "error: Launch requires either --prompt text or --file path." in captured.err
+    assert "vibecrafted prune claude --prompt 'what to do'" in captured.err
+    assert "vibecrafted prune claude --file /path/to/brief.md" in captured.err
+
+
 def test_root_cli_uses_terminal_runtime_when_operator_session_exists(
     monkeypatch, capsys
 ) -> None:
