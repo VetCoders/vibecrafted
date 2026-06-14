@@ -340,6 +340,67 @@ def test_async_supervisor_uses_env_model_for_codex_thread_banner(
     assert meta_payload["agent_model"] == "gpt-5.3-codex"
 
 
+def test_async_supervisor_salvages_grok_report_from_streaming_json(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    meta = tmp_path / "dispatch.meta.json"
+    grok = tmp_path / "grok"
+    grok.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print('ERROR worker quit with fatal: Transport channel closed, when Auth(AuthorizationRequired)')\n"
+        "print(json.dumps({'type': 'thought', 'data': 'thinking'}))\n"
+        "print(json.dumps({'type': 'text', 'data': 'Ok'}))\n"
+        "print(json.dumps({'type': 'text', 'data': '.'}))\n"
+        "print(json.dumps({'type': 'end', 'sessionId': 'grok-session'}))\n",
+        encoding="utf-8",
+    )
+    grok.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="asup-grok-visible",
+            command=[str(grok), "--output-format", "streaming-json", "--single"],
+            root=tmp_path,
+            meta_path=meta,
+            report_path=report,
+            transcript_path=transcript,
+            tee_output=True,
+        )
+    )
+
+    assert handle.exit_code == 0
+    assert handle.artifact_validation is not None
+    assert handle.artifact_validation.ok
+    out = capsys.readouterr().out
+    assert "---\nrunner: vibecrafted" in out
+    assert "status: launching" in out
+    assert "status: report_validated" in out
+    assert "thinking" in out
+    assert "Ok." in out
+    assert "Transport channel" not in out
+    assert "None" not in out
+    assert "session_id: grok-session" in out
+    assert "tokens_input: 0" in out
+    assert "tokens_output: 0" in out
+    assert "cost_usd: unknown" in out
+    report_text = report.read_text(encoding="utf-8")
+    assert "fallback_report: true" in report_text
+    assert "tokens_input: 0" in report_text
+    assert "tokens_output: 0" in report_text
+    assert "cost_usd: unknown" in report_text
+    assert "Ok." in report_text
+    assert "thinking" not in report_text
+    assert "Transport channel" not in report_text
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload["agent_session_id"] == "grok-session"
+    assert meta_payload["exit_code"] == 0
+    assert meta_payload["status"] == "completed"
+
+
 def test_async_supervisor_survives_large_single_json_line_from_mcp(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

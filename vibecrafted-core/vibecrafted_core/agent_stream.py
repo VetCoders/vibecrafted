@@ -32,6 +32,7 @@ COST_PATTERNS = (
     re.compile(r"cost(?:_usd)?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
     re.compile(r"\$([0-9]+\.[0-9]+)\s*(?:usd)?", re.IGNORECASE),
 )
+GROK_IGNORABLE_TRANSPORT_ERROR = "worker quit with fatal: Transport channel closed"
 
 
 def stamp() -> str:
@@ -67,6 +68,21 @@ def _truncate_block(text: str, *, max_chars: int = 4000) -> str:
         preview = "\n".join(lines[:5])
         return f"\x1b[2m{preview}\n  ... ({len(lines)} lines)\x1b[0m\n"
     return f"\x1b[2m{text}\x1b[0m\n"
+
+
+def is_grok_ignorable_transport_error(text: str) -> bool:
+    clean = ANSI_PATTERN.sub("", text or "")
+    if GROK_IGNORABLE_TRANSPORT_ERROR not in clean:
+        return False
+    return any(
+        marker in clean
+        for marker in (
+            "AuthorizationRequired",
+            "AuthRequired",
+            "tcp connect error",
+            "dns error",
+        )
+    )
 
 
 def _as_int(value: Any) -> int:
@@ -151,6 +167,8 @@ class AgentStreamParser:
 
     def feed_line(self, chunk: bytes) -> str:
         text = chunk.decode("utf-8", errors="replace")
+        if self.agent == "grok" and is_grok_ignorable_transport_error(text):
+            return ""
         stripped = text.lstrip()
         if not stripped.startswith("{"):
             self._scan_text(text)
@@ -441,5 +459,32 @@ class AgentStreamParser:
         if isinstance(usage, dict):
             self._record_usage(usage)
         self._record_cost(event)
-        message = event.get("message") or event.get("text") or event.get("content")
-        return str(message) + ("\n" if message else "")
+        event_type = str(event.get("type") or "")
+        if event_type == "end":
+            value = event.get("sessionId") or event.get("session_id")
+            if isinstance(value, str) and value:
+                self.session_id = value
+            return ""
+        if event_type == "thought":
+            text = _stringish(event.get("data"))
+            return f"\x1b[2m{text}\x1b[0m" if text else ""
+        if event_type == "text":
+            return _stringish(event.get("data"))
+        if event_type in {"tool", "tool_use", "tool_call"}:
+            name = event.get("name") or event.get("tool") or event.get("toolName")
+            return "\n" + tool_tag(_stringish(name) or "?")
+        if event_type == "error":
+            message = event.get("message") or event.get("error") or event.get("data")
+            text = _stringish(message)
+            return f"\n\x1b[31m[{stamp()} error] {text or 'unknown'}\x1b[0m\n"
+
+        message = (
+            event.get("message")
+            or event.get("text")
+            or event.get("content")
+            or event.get("data")
+        )
+        text = _stringish(message)
+        if not text or text == "None":
+            return ""
+        return text + "\n"

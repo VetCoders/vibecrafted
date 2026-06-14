@@ -476,22 +476,24 @@ def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
         return None
     if not isinstance(payload, dict):
         return None
+    report = Path(str(payload.get("report") or meta_path.with_suffix(".md")))
+    transcript = Path(
+        str(payload.get("transcript") or meta_path.with_suffix(".transcript.log"))
+    )
     exit_code_raw = payload.get("exit_code")
     exit_code: int | None
     try:
         exit_code = int(exit_code_raw) if exit_code_raw is not None else None
     except (TypeError, ValueError):
         exit_code = None
-    report = Path(str(payload.get("report") or meta_path.with_suffix(".md")))
-    transcript = Path(
-        str(payload.get("transcript") or meta_path.with_suffix(".transcript.log"))
-    )
     errors = payload.get("artifact_errors") or []
     artifact_errors = (
         tuple(str(item) for item in errors)
         if isinstance(errors, list)
         else (str(errors),)
     )
+    if exit_code is None and not artifact_errors and _non_empty_file(report):
+        exit_code = 0
     return ChildResult(
         label=label,
         agent=str(payload.get("agent") or ""),
@@ -516,6 +518,13 @@ def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
             payload.get("completed_at") or payload.get("updated_at") or ""
         ),
     )
+
+
+def _non_empty_file(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 def _lane_meta_path(agent: str) -> Path:

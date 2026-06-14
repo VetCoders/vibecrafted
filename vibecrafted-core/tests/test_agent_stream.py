@@ -84,6 +84,31 @@ def test_agent_stream_parser_extracts_gemini_session_stats_and_text() -> None:
     assert parser.tokens_output == 7
 
 
+def test_agent_stream_parser_renders_grok_thought_text_and_session() -> None:
+    parser = AgentStreamParser("grok")
+
+    rendered = [
+        parser.feed_line(
+            b"\x1b[31mERROR\x1b[0m worker quit with fatal: Transport channel "
+            b"closed, when Auth(AuthorizationRequired)\n"
+        ),
+        parser.feed_line(b'{"type":"thought","data":"thinking"}\n'),
+        parser.feed_line(b'{"type":"text","data":"Ok"}\n'),
+        parser.feed_line(b'{"type":"text","data":"."}\n'),
+        parser.feed_line(
+            b'{"type":"end","stopReason":"EndTurn",'
+            b'"sessionId":"019ec430-9888-78e3-8ca0-b29387444fdb"}\n'
+        ),
+    ]
+
+    text = "".join(rendered)
+    assert "thinking" in text
+    assert "Ok." in text
+    assert "Transport channel" not in text
+    assert "None" not in text
+    assert parser.session_id == "019ec430-9888-78e3-8ca0-b29387444fdb"
+
+
 def test_agent_stream_parser_treats_agy_as_claude_family_text_stream() -> None:
     parser = AgentStreamParser("agy")
 

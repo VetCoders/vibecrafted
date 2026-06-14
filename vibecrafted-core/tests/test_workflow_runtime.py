@@ -195,6 +195,47 @@ def test_research_synthesis_waits_for_lane_meta_and_resumes_last_finisher(
     assert (child_dir / "research-synthesis.md").is_file()
 
 
+def test_research_synthesis_recovers_legacy_lane_meta_without_exit_code(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-legacy-meta")
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["grok"]\n',
+        encoding="utf-8",
+    )
+    child_dir = home / "rsch-legacy-meta-children"
+    child_dir.mkdir(parents=True)
+    report = child_dir / "research-grok.md"
+    transcript = child_dir / "research-grok.transcript.log"
+    report.write_text("---\nstatus: completed\n---\nbody\n", encoding="utf-8")
+    transcript.write_text("done\n", encoding="utf-8")
+    (child_dir / "research-grok.meta.json").write_text(
+        json.dumps(
+            {
+                "run_id": "rsch-legacy-meta-research-grok",
+                "agent": "grok",
+                "agent_session_id": "grok-session",
+                "report": str(report),
+                "transcript": str(transcript),
+                "resume_command": f"cd {tmp_path} && grok --resume grok-session",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = workflow_runtime.main(
+        ["research-synthesis", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 0
+    parent = (home / "parent.md").read_text(encoding="utf-8")
+    assert "research-grok" in parent
+    assert "exit_code: 0" in parent
+    assert "research-synthesis (grok)" in parent
+
+
 def test_research_synthesis_closes_when_lane_failed(
     monkeypatch, tmp_path: Path
 ) -> None:

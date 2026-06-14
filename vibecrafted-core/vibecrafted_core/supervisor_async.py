@@ -10,7 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .agent_stream import AgentStreamParser, resolve_default_model
+from .agent_stream import (
+    AgentStreamParser,
+    is_grok_ignorable_transport_error,
+    resolve_default_model,
+)
 from .artifacts import ArtifactValidation, validate_artifacts
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
@@ -32,6 +36,121 @@ def _infer_agent(command: Sequence[str]) -> str:
     if name in {"python", "python3"}:
         return "python"
     return name or "agent"
+
+
+def _json_text_fragment(event: dict[str, object]) -> str:
+    event_type = str(event.get("type") or "")
+    if event_type == "thought":
+        return ""
+    if event_type == "text":
+        value = event.get("data")
+        return value if isinstance(value, str) else ""
+    for key in ("message", "text", "content", "data"):
+        value = event.get(key)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _fallback_report_body(transcript_text: str) -> str:
+    text_fragments: list[str] = []
+    plain_lines: list[str] = []
+    for line in transcript_text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("{"):
+            try:
+                loaded = json.loads(stripped)
+            except json.JSONDecodeError:
+                if not is_grok_ignorable_transport_error(line):
+                    plain_lines.append(line)
+                continue
+            if isinstance(loaded, dict):
+                text_fragments.append(_json_text_fragment(loaded))
+            continue
+        if is_grok_ignorable_transport_error(line):
+            continue
+        plain_lines.append(line)
+    body = "".join(text_fragments).strip()
+    if body:
+        return body + "\n"
+    return "\n".join(plain_lines).strip() + ("\n" if plain_lines else "")
+
+
+def _render_fallback_report(handle: AsyncRunHandle, transcript_text: str) -> str:
+    body = _fallback_report_body(transcript_text)
+    if not body:
+        body = (
+            "Worker exited successfully without writing a standalone report and "
+            "without captured transcript text.\n"
+        )
+    now = (
+        handle.completed_at.isoformat()
+        if handle.completed_at
+        else _utc_now().isoformat()
+    )
+    return (
+        "---\n"
+        "status: completed\n"
+        f"run_id: {handle.run_id}\n"
+        f"agent: {handle.agent}\n"
+        f"session_id: {handle.agent_session_id or 'unknown'}\n"
+        f"tokens_input: {handle.tokens_input}\n"
+        f"tokens_cached_input: {handle.tokens_cached_input}\n"
+        f"tokens_output: {handle.tokens_output}\n"
+        f"tokens_total: {handle.tokens_input + handle.tokens_output}\n"
+        f"cost_usd: {handle.cost_usd if handle.cost_usd is not None else 'unknown'}\n"
+        f"completed_at: {now}\n"
+        "fallback_report: true\n"
+        "---\n\n"
+        f"{body}\n"
+        "## Runtime fallback\n\n"
+        "The worker exited with code 0 but did not write "
+        "`VIBECRAFTED_REPORT_PATH`; Vibecrafted salvaged this report from the "
+        "captured transcript.\n"
+    )
+
+
+def _terminal_frontmatter(handle: AsyncRunHandle) -> str:
+    return (
+        "---\n"
+        "runner: vibecrafted\n"
+        f"run_id: {handle.run_id}\n"
+        f"agent: {handle.agent}\n"
+        f"root: {handle.root}\n"
+        f"report: {handle.report_path or ''}\n"
+        f"transcript: {handle.transcript_path or ''}\n"
+        "status: launching\n"
+        "---\n"
+    )
+
+
+def _terminal_footer(handle: AsyncRunHandle) -> str:
+    tokens_total = handle.tokens_input + handle.tokens_output
+    return (
+        "\n---\n"
+        "runner: vibecrafted\n"
+        f"run_id: {handle.run_id}\n"
+        f"status: {handle.state.value}\n"
+        f"exit_code: {handle.exit_code if handle.exit_code is not None else 'unknown'}\n"
+        f"session_id: {handle.agent_session_id or 'unknown'}\n"
+        f"model: {handle.agent_model or 'unknown'}\n"
+        f"tokens_input: {handle.tokens_input}\n"
+        f"tokens_cached_input: {handle.tokens_cached_input}\n"
+        f"tokens_output: {handle.tokens_output}\n"
+        f"tokens_total: {tokens_total}\n"
+        f"cost_usd: {handle.cost_usd if handle.cost_usd is not None else 'unknown'}\n"
+        f"resume: {handle.resume_command}\n"
+        f"report: {handle.report_path or ''}\n"
+        f"transcript: {handle.transcript_path or ''}\n"
+        "---\n"
+    )
+
+
+def _write_terminal(text: str) -> None:
+    sys.stdout.write(text)
+    sys.stdout.flush()
 
 
 @dataclass
@@ -203,6 +322,8 @@ class AsyncSupervisor:
             transcript_path=transcript_path,
             prompt_file_path=prompt_file_path,
         )
+        if tee_output:
+            _write_terminal(_terminal_frontmatter(handle))
         try:
             if timeout is None:
                 await self._watch_process(handle, tee_output=tee_output)
@@ -229,6 +350,8 @@ class AsyncSupervisor:
 
         handle.exit_code = handle.process.returncode
         handle.completed_at = _utc_now()
+        self._write_report_fallback(handle)
+        self._write_meta_summary(handle)
         if handle.exit_code == 0:
             await self._transition(
                 handle,
@@ -299,6 +422,8 @@ class AsyncSupervisor:
                     "liveness": "terminal",
                 },
             )
+        if tee_output:
+            _write_terminal(_terminal_footer(handle))
         return handle
 
     async def _watch_process(
@@ -340,7 +465,26 @@ class AsyncSupervisor:
                 )
         await handle.process.wait()
         self._sync_stream_summary(handle, parser)
-        self._write_meta_summary(handle)
+
+    def _write_report_fallback(self, handle: AsyncRunHandle) -> None:
+        if (
+            handle.report_path is None
+            or handle.report_path.exists()
+            or handle.exit_code != 0
+            or handle.agent != "grok"
+        ):
+            return
+        transcript_text = ""
+        if handle.transcript_path is not None and handle.transcript_path.exists():
+            try:
+                transcript_text = handle.transcript_path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                transcript_text = ""
+        rendered = _render_fallback_report(handle, transcript_text)
+        handle.report_path.parent.mkdir(parents=True, exist_ok=True)
+        handle.report_path.write_text(rendered, encoding="utf-8")
 
     def _sync_stream_summary(
         self, handle: AsyncRunHandle, parser: AgentStreamParser
@@ -383,6 +527,13 @@ class AsyncSupervisor:
                 if handle.cost_usd is not None
                 else "unknown",
                 "resume_command": handle.resume_command,
+                "exit_code": handle.exit_code,
+                "completed_at": handle.completed_at.isoformat()
+                if handle.completed_at
+                else "",
+                "status": "completed"
+                if handle.exit_code == 0
+                else ("failed" if handle.exit_code is not None else "running"),
             }
         )
         handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
