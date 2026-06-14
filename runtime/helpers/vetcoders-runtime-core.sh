@@ -183,33 +183,6 @@ EOF
   printf '%s\n' "$summary_file"
 }
 
-_vetcoders_find_meta_for_run_id() {
-  local reports_dir="$1"
-  local target_run_id="$2"
-  python3 - "$reports_dir" "$target_run_id" <<'PY'
-import json
-import os
-import sys
-
-reports_dir, target_run_id = sys.argv[1:3]
-if not os.path.isdir(reports_dir):
-    sys.exit(0)
-
-for name in sorted(os.listdir(reports_dir)):
-    if not name.endswith(".meta.json"):
-        continue
-    path = os.path.join(reports_dir, name)
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except Exception:
-        continue
-    if payload.get("run_id") == target_run_id:
-        print(path)
-        break
-PY
-}
-
 _vetcoders_marbles_probe_ttl() {
   printf '%s\n' "${VIBECRAFTED_MARBLES_PROBE_TTL:-10}"
 }
