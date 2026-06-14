@@ -257,6 +257,48 @@ def test_root_cli_agent_observe_recovers_model_when_tail_starts_after_init(
     assert "noise" not in out
 
 
+def test_root_cli_agent_observe_uses_codex_config_model(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text('model = "gpt-5.5"\n', encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "\n".join(
+            [
+                '{"type":"thread.started","thread_id":"codex-thread"}',
+                '{"type":"item.completed","item":{"type":"agent_message","text":"codex body"}}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+    monkeypatch.setattr(
+        cli,
+        "lookup_run",
+        lambda run_id: {
+            "run_id": run_id,
+            "state": "report_validated",
+            "agent": "codex",
+            "skill": "implement",
+            "root": "/repo",
+            "latest_report": "/tmp/report.md",
+            "latest_transcript": str(transcript),
+        },
+    )
+
+    assert cli.main(["codex", "observe", "--run-id", "impl-1"]) == 0
+
+    out = capsys.readouterr().out
+    assert "session: codex-thread model: gpt-5.5" in out
+    assert "codex body" in out
+
+
 def test_root_cli_agent_await_accepts_receipt_command(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}

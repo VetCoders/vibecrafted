@@ -10,11 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .agent_stream import AgentStreamParser
+from .agent_stream import AgentStreamParser, resolve_default_model
 from .artifacts import ArtifactValidation, validate_artifacts
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
 from .lifecycle import EventKind, RunState
+
+STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 
 
 def _utc_now() -> datetime:
@@ -104,6 +106,7 @@ class AsyncSupervisor:
         if prompt_file is not None:
             merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_file)
         agent = str(merged_env.get("VIBECRAFTED_AGENT") or _infer_agent(command))
+        agent_model = resolve_default_model(agent, command=command, env=merged_env)
         started_at = _utc_now()
 
         await self._emit(
@@ -121,6 +124,7 @@ class AsyncSupervisor:
                 "session_id": session_id,
                 "identity_required": True,
                 "agent": agent,
+                "agent_model": agent_model,
             },
         )
 
@@ -136,6 +140,7 @@ class AsyncSupervisor:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True,
+                limit=STDIO_LIMIT_BYTES,
             )
         finally:
             if stdin_handle is not None:
@@ -151,6 +156,7 @@ class AsyncSupervisor:
             transcript_path=transcript,
             session_id=session_id,
             agent=agent,
+            agent_model=agent_model,
         )
         try:
             handle.pgid = os.getpgid(process.pid)
@@ -299,7 +305,7 @@ class AsyncSupervisor:
         self, handle: AsyncRunHandle, *, tee_output: bool = False
     ) -> None:
         assert handle.process.stdout is not None
-        parser = AgentStreamParser(handle.agent)
+        parser = AgentStreamParser(handle.agent, default_model=handle.agent_model)
         while True:
             chunk = await handle.process.stdout.readline()
             if not chunk:

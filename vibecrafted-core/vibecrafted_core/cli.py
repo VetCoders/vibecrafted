@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from . import doctor as doctor_module
-from .agent_stream import ANSI_PATTERN, AgentStreamParser
+from .agent_stream import ANSI_PATTERN, AgentStreamParser, resolve_default_model
 from .control_plane import lookup_run, sync_state
 from .workflow import await_launch_truth, launch_workflow, normalize_launch_spec
 
@@ -130,7 +130,7 @@ def _tail_lines(
     tail = lines[-max_lines:]
     if not agent:
         return [_clip_line(line) for line in tail], ""
-    parser = AgentStreamParser(agent)
+    parser = AgentStreamParser(agent, default_model=resolve_default_model(agent))
     rendered: list[str] = []
     saw_json = False
     for line in tail:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from vibecrafted_core.agent_stream import AgentStreamParser
+from vibecrafted_core.agent_stream import AgentStreamParser, resolve_default_model
 
 
 def test_agent_stream_parser_extracts_claude_session_usage_cost_and_text() -> None:
@@ -35,6 +35,7 @@ def test_agent_stream_parser_extracts_claude_session_usage_cost_and_text() -> No
 
 def test_agent_stream_parser_extracts_codex_thread_usage_and_text() -> None:
     parser = AgentStreamParser("codex")
+    parser.model_id = "gpt-5.3-codex"
 
     rendered = [
         parser.feed_line(b'{"type":"thread.started","thread_id":"codex-thread"}\n'),
@@ -50,8 +51,10 @@ def test_agent_stream_parser_extracts_codex_thread_usage_and_text() -> None:
 
     text = "".join(rendered)
     assert "session: codex-thread" in text
+    assert "model: gpt-5.3-codex" in text
     assert "codex body" in text
     assert parser.session_id == "codex-thread"
+    assert parser.model_id == "gpt-5.3-codex"
     assert parser.tokens_input == 11
     assert parser.tokens_cached_input == 4
     assert parser.tokens_output == 6
@@ -99,3 +102,22 @@ def test_agent_stream_parser_treats_agy_as_claude_family_text_stream() -> None:
     assert parser.tokens_input == 20
     assert parser.tokens_cached_input == 8
     assert parser.tokens_output == 9
+
+
+def test_resolve_default_model_reads_codex_config(tmp_path, monkeypatch) -> None:
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text('model = "gpt-5.5"\n', encoding="utf-8")
+    monkeypatch.delenv("CODEX_MODEL", raising=False)
+
+    assert (
+        resolve_default_model("codex", env={"CODEX_HOME": str(codex_home)}) == "gpt-5.5"
+    )
+    assert (
+        resolve_default_model(
+            "codex",
+            command=["codex", "exec", "--model", "gpt-5.3-codex", "-"],
+            env={"CODEX_HOME": str(codex_home)},
+        )
+        == "gpt-5.3-codex"
+    )

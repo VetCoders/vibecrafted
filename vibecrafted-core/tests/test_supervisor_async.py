@@ -297,6 +297,93 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     assert meta_payload["resume_command"].endswith("claude --resume sess-123")
 
 
+def test_async_supervisor_uses_env_model_for_codex_thread_banner(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CODEX_MODEL", "gpt-5.3-codex")
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    meta = tmp_path / "dispatch.meta.json"
+    codex = tmp_path / "codex"
+    codex.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        ")\n"
+        "print(json.dumps({'type': 'thread.started', 'thread_id': 'codex-thread'}))\n"
+        "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'codex text'}}))\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="asup-codex-visible",
+            command=[str(codex), "exec", "--json", "-"],
+            root=tmp_path,
+            meta_path=meta,
+            report_path=report,
+            transcript_path=transcript,
+            tee_output=True,
+        )
+    )
+
+    assert handle.exit_code == 0
+    out = capsys.readouterr().out
+    assert "session: codex-thread model: gpt-5.3-codex" in out
+    assert "codex text" in out
+    assert handle.agent_model == "gpt-5.3-codex"
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload["agent_model"] == "gpt-5.3-codex"
+
+
+def test_async_supervisor_survives_large_single_json_line_from_mcp(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    meta = tmp_path / "dispatch.meta.json"
+    worker = tmp_path / "codex"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        ")\n"
+        "print(json.dumps({'type': 'thread.started', 'thread_id': 'codex-thread'}))\n"
+        "huge = 'x' * 120000\n"
+        "print(json.dumps({'type': 'item.completed', 'item': {'type': 'mcp_tool_call', 'result': {'content': [{'text': huge}]}}}))\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="asup-large-json-line",
+            command=[str(worker), "exec", "--json", "-"],
+            root=tmp_path,
+            meta_path=meta,
+            report_path=report,
+            transcript_path=transcript,
+            tee_output=True,
+        )
+    )
+
+    assert handle.exit_code == 0
+    assert handle.artifact_validation is not None
+    assert handle.artifact_validation.ok
+    out = capsys.readouterr().out
+    assert "Separator is not found" not in out
+    assert "... (120000 chars)" in out
+    assert len(out) < 6000
+    assert transcript.stat().st_size > 120000
+
+
 def test_dispatcher_cli_fails_missing_report_contract(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

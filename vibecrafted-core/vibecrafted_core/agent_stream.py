@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
+import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 ANSI_PATTERN = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 SESSION_PATTERN = re.compile(
@@ -16,6 +18,16 @@ TOKEN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 MODEL_PATTERN = re.compile(r"model:\s*([^\s]+)", re.IGNORECASE)
+MODEL_ENV_VARS = (
+    "VIBECRAFTED_PARENT_MODEL",
+    "CLAUDE_MODEL",
+    "CODEX_MODEL",
+    "GEMINI_MODEL",
+    "GROK_MODEL",
+    "JUNIE_MODEL",
+    "AGY_MODEL",
+)
+MODEL_PLACEHOLDERS = {"", "none", "null", "unknown", "pending"}
 COST_PATTERNS = (
     re.compile(r"cost(?:_usd)?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
     re.compile(r"\$([0-9]+\.[0-9]+)\s*(?:usd)?", re.IGNORECASE),
@@ -46,8 +58,11 @@ def _stringish(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _truncate_block(text: str) -> str:
+def _truncate_block(text: str, *, max_chars: int = 4000) -> str:
     lines = text.splitlines()
+    if len(text) > max_chars:
+        preview = text[:max_chars]
+        return f"\x1b[2m{preview}\n  ... ({len(text)} chars)\x1b[0m\n"
     if len(lines) > 12:
         preview = "\n".join(lines[:5])
         return f"\x1b[2m{preview}\n  ... ({len(lines)} lines)\x1b[0m\n"
@@ -70,12 +85,65 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _clean_model(value: object) -> str:
+    raw = str(value or "").strip()
+    return "" if raw.lower() in MODEL_PLACEHOLDERS else raw
+
+
+def _command_model(command: Sequence[str] | None) -> str:
+    if not command:
+        return ""
+    items = [str(item) for item in command]
+    for index, item in enumerate(items):
+        if item in {"--model", "-m"} and index + 1 < len(items):
+            model = _clean_model(items[index + 1])
+            if model:
+                return model
+        if item.startswith("--model="):
+            model = _clean_model(item.split("=", 1)[1])
+            if model:
+                return model
+    return ""
+
+
+def _codex_config_model(env: Mapping[str, str]) -> str:
+    codex_home = Path(env.get("CODEX_HOME") or Path.home() / ".codex")
+    config = codex_home / "config.toml"
+    try:
+        with config.open("rb") as handle:
+            loaded = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
+    if isinstance(loaded, dict):
+        return _clean_model(loaded.get("model"))
+    return ""
+
+
+def resolve_default_model(
+    agent: str,
+    *,
+    command: Sequence[str] | None = None,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    model = _command_model(command)
+    if model:
+        return model
+    source_env = env or os.environ
+    for key in MODEL_ENV_VARS:
+        model = _clean_model(source_env.get(key))
+        if model:
+            return model
+    if agent == "codex":
+        return _codex_config_model(source_env)
+    return ""
+
+
 class AgentStreamParser:
-    def __init__(self, agent: str) -> None:
+    def __init__(self, agent: str, *, default_model: str = "") -> None:
         self.agent = agent
         self.session_id = ""
         self._rendered_session_ids: set[str] = set()
-        self.model_id = ""
+        self.model_id = _clean_model(default_model)
         self.tokens_input = 0
         self.tokens_cached_input = 0
         self.tokens_output = 0
