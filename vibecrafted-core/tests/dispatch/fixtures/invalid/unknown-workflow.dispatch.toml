@@ -7,7 +7,7 @@ repo = "/tmp/vibecrafted-dispatch-fixture"
 [[cuts]]
 id = "c1"
 agent = "codex"
-workflow = "audit"
+workflow = "moonshot"
 prompt = "Do it."
 
   [[cuts.verify]]

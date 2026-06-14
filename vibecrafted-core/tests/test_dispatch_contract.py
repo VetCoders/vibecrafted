@@ -96,17 +96,17 @@ def test_unknown_schema_versions_are_rejected() -> None:
 
 
 def test_unknown_workflow_names_are_rejected_unless_explicitly_mapped() -> None:
-    text = _valid_contract(workflow='"audit"')
+    text = _valid_contract(workflow='"moonshot"')
 
-    assert "unsupported workflow 'audit'" in _error_text(text)
+    assert "unsupported workflow 'moonshot'" in _error_text(text)
 
     mapped = text.replace(
         "[meta]",
-        '[workflow_map]\naudit = "review"\n\n[meta]',
+        '[workflow_map]\nmoonshot = "review"\n\n[meta]',
     )
     contract = parse_dispatch_contract(mapped)
 
-    assert contract.cuts[0].workflow == "audit"
+    assert contract.cuts[0].workflow == "moonshot"
     assert contract.cuts[0].resolved_workflow == "review"
 
 
