@@ -385,8 +385,17 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
     if age_seconds is None or age_seconds < threshold:
         return result
 
-    result["state"] = "stalled"
-    result["health"] = "stalled"
+    artifact_errors = {
+        str(item) for item in (result.get("artifact_errors") or []) if str(item)
+    }
+    artifact_failure_state = ""
+    if "report_missing" in artifact_errors:
+        artifact_failure_state = "report_missing"
+    elif artifact_errors.intersection({"report_invalid", "report_empty"}):
+        artifact_failure_state = "report_invalid"
+
+    result["state"] = artifact_failure_state or "stalled"
+    result["health"] = "final" if artifact_failure_state else "stalled"
     result["liveness"] = "pid_gone"
     result["updated_at"] = now.isoformat()
     result["recovery_required"] = True
@@ -400,10 +409,15 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         if result.get("lock_present")
         else ""
     )
+    artifact_detail = (
+        f"; artifact contract failed ({artifact_failure_state})"
+        if artifact_failure_state
+        else ""
+    )
     explanation = (
         f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
-        f"(threshold {threshold}s); no live launcher proof{lock_detail}; "
-        "recovery_required"
+        f"(threshold {threshold}s); no live launcher proof{lock_detail}"
+        f"{artifact_detail}; recovery_required"
     )
     previous_error = str(result.get("last_error") or "").strip()
     result["last_error"] = (

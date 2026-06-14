@@ -287,6 +287,50 @@ def test_sync_state_reconciles_dead_launcher_to_stalled(
     assert "recovery_required" in refreshed["last_error"]
 
 
+def test_sync_state_reconciles_dead_launcher_with_missing_report_to_terminal_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    _write_meta(
+        home,
+        {
+            "run_id": "just-missing-report",
+            "status": "running",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "report": str(tmp_path / "missing-report.md"),
+            "transcript": str(tmp_path / "transcript.log"),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "just",
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "report_missing"
+    assert run["health"] == "final"
+    assert run["operator_state"] == "blocked"
+    assert run["artifact_gate"] == "failed"
+    assert run["liveness"] == "pid_gone"
+    assert run["recovery_required"] is True
+    assert run["lifecycle"]["await"] is False
+    assert run["lifecycle"]["recovery_required"] is True
+    assert "report_missing" in run["artifact_errors"]
+    assert "artifact contract failed (report_missing)" in run["last_error"]
+
+    refreshed = control_plane.lookup_run("just-missing-report")
+    assert refreshed is not None
+    assert refreshed["state"] == "report_missing"
+    assert refreshed["health"] == "final"
+
+
 def test_sync_state_reaps_stale_lock_present_run_without_launcher_pid(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -447,6 +491,41 @@ def test_await_run_completes_from_metadata_without_transcript(
     assert payload["completed"] is True
     assert payload["timed_out"] is False
     assert payload["run"]["exit_code"] == 0
+
+
+def test_await_run_completes_when_dead_worker_missing_report_is_terminal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    _write_meta(
+        home,
+        {
+            "run_id": "wflw-missing-report",
+            "status": "running",
+            "agent": "codex",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "report": str(tmp_path / "missing-report.md"),
+            "transcript": str(tmp_path / "transcript.log"),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "wflw",
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    payload = control_plane.await_run(
+        "wflw-missing-report", timeout_seconds=0, interval_seconds=0.1
+    )
+
+    assert payload["found"] is True
+    assert payload["completed"] is True
+    assert payload["timed_out"] is False
+    assert payload["run"]["state"] == "report_missing"
+    assert "report_missing" in payload["run"]["artifact_errors"]
 
 
 def test_await_run_times_out_when_metadata_missing(
