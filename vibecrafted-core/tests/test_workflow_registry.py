@@ -17,6 +17,7 @@ def test_registry_classifies_workflow_runtime_kinds() -> None:
     assert registry.workflow_runtime_kind("prune") == "direct_agent"
     assert registry.workflow_runtime_kind("research") == "supervised_research"
     assert registry.workflow_runtime_kind("marbles") == "supervised_marbles"
+    assert registry.workflow_definition("research").terminal_layout == "research"
 
 
 def test_registry_models_input_policy() -> None:

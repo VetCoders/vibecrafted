@@ -199,6 +199,76 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert payload["control"].endswith(f"{payload['run_id']}.json")
 
 
+def test_research_terminal_runtime_uses_vc_frame_research_layout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VC_FRAME_SESSION_NAME", "operator-live")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    source = _source_dir(tmp_path)
+    vc_frame = tmp_path / "bin" / "vc-frame"
+    vc_frame.parent.mkdir()
+    vc_frame.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    spec = workflow.normalize_launch_spec(
+        {
+            "skill": "research",
+            "agent": "claude",
+            "prompt": "map it",
+            "runtime": "terminal",
+            "root": str(tmp_path),
+        },
+        source,
+    )
+    monkeypatch.setattr(
+        workflow.shutil,
+        "which",
+        lambda name: str(vc_frame) if name == "vc-frame" else None,
+    )
+
+    captured: dict[str, Any] = {}
+
+    class FakeProc:
+        pid = 4243
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProc:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return FakeProc()
+
+    monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is True
+    command = captured["command"]
+    assert command[:5] == [
+        str(vc_frame),
+        "--session",
+        "operator-live",
+        "action",
+        "new-tab",
+    ]
+    assert "--layout" in command
+    layout = Path(command[command.index("--layout") + 1])
+    assert layout.is_file()
+    layout_body = layout.read_text(encoding="utf-8")
+    assert 'pane name="synthesis"' in layout_body
+    assert 'pane name="claude"' in layout_body
+    assert 'pane name="codex"' in layout_body
+    assert 'pane name="gemini"' in layout_body
+    launch_dir = Path(payload["command_script"]).parent
+    lane_bodies = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(launch_dir.glob(f"{payload['run_id']}-research-*.sh"))
+    )
+    assert "research-lane --agent claude" in lane_bodies
+    assert "research-lane --agent codex" in lane_bodies
+    assert "research-lane --agent gemini" in lane_bodies
+    assert "--" not in command
+    assert payload["worker_command"][3] == "research-synthesis"
+    assert payload["transport"] == "vc-frame"
+
+
 def test_claude_terminal_command_streams_visible_json(tmp_path: Path) -> None:
     spec = workflow.WorkflowLaunchSpec(
         agent="claude",

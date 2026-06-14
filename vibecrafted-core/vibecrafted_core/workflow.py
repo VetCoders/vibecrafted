@@ -26,6 +26,7 @@ from .control_plane import (
 )
 from .events import append_event
 from .spawn import _stdin_command
+from .workflow_runtime import research_agent_selection
 from .workflows import registry as workflow_registry
 
 SUPPORTED_WORKFLOWS = workflow_registry.SUPPORTED_WORKFLOWS
@@ -152,6 +153,87 @@ def _write_command_script(path: Path, command: list[str]) -> Path:
     return path
 
 
+def _kdl_string(value: str | Path) -> str:
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _write_research_lane_scripts(
+    *,
+    launch_dir: Path,
+    run_id: str,
+    root: str,
+) -> dict[str, Path]:
+    scripts: dict[str, Path] = {}
+    for agent in research_agent_selection().agents:
+        path = launch_dir / f"{run_id}-research-{agent}.sh"
+        command_prefix = shlex.join(
+            [
+                sys.executable,
+                "-m",
+                "vibecrafted_core.workflow_runtime",
+                "research-lane",
+                "--agent",
+                agent,
+                "--root",
+                root,
+                "--prompt-file",
+            ]
+        )
+        path.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            f'exec {command_prefix} "${{VIBECRAFTED_PROMPT_PATH}}"\n',
+            encoding="utf-8",
+        )
+        path.chmod(0o755)
+        scripts[agent] = path
+    return scripts
+
+
+def _write_research_layout(
+    *,
+    path: Path,
+    synthesis_script: Path,
+    lane_scripts: dict[str, Path],
+) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lane_panes = []
+    for agent, script in lane_scripts.items():
+        lane_panes.append(
+            f"""                pane name={_kdl_string(agent)} command="bash" {{
+                    args {_kdl_string(script)}
+                }}"""
+        )
+    lane_panes_text = "\n".join(lane_panes)
+    path.write_text(
+        f"""layout {{
+    default_tab_template {{
+        pane size=1 borderless=true {{
+            plugin location="compact-bar"
+        }}
+        children
+        pane size=1 borderless=true {{
+            plugin location="status-bar"
+        }}
+    }}
+
+    tab name="Vibecrafted Research" {{
+        pane split_direction="vertical" {{
+            pane name="synthesis" size="55%" focus=true command="bash" {{
+                args {_kdl_string(synthesis_script)}
+            }}
+            pane split_direction="horizontal" size="45%" {{
+{lane_panes_text}
+            }}
+        }}
+    }}
+}}
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def _launch_transport_command(
     *,
     spec: WorkflowLaunchSpec,
@@ -171,20 +253,57 @@ def _launch_transport_command(
         launch_dir / f"{run_id}-dispatcher.sh",
         dispatch_command,
     )
-    return (
+    definition = workflow_registry.workflow_definition(spec.skill)
+    if spec.skill == "research":
+        lane_scripts = _write_research_lane_scripts(
+            launch_dir=launch_dir,
+            run_id=run_id,
+            root=spec.root,
+        )
+        layout_file = _write_research_layout(
+            path=launch_dir / f"{run_id}-research.kdl",
+            synthesis_script=command_script,
+            lane_scripts=lane_scripts,
+        )
+        return (
+            [
+                vc_frame,
+                "--session",
+                operator_session,
+                "action",
+                "new-tab",
+                "--layout",
+                str(layout_file),
+                "--name",
+                run_id,
+                "--cwd",
+                spec.root,
+            ],
+            "vc-frame",
+            command_script,
+        )
+
+    terminal_command = [
+        vc_frame,
+        "--session",
+        operator_session,
+        "action",
+        "new-tab",
+    ]
+    if definition is not None and definition.terminal_layout:
+        terminal_command.extend(["--layout", definition.terminal_layout])
+    terminal_command.extend(
         [
-            vc_frame,
-            "--session",
-            operator_session,
-            "action",
-            "new-tab",
             "--name",
             run_id,
             "--cwd",
             spec.root,
             "--",
             str(command_script),
-        ],
+        ]
+    )
+    return (
+        terminal_command,
         "vc-frame",
         command_script,
     )
@@ -514,11 +633,16 @@ def build_launch_command(
     prompt_path = str(prompt_file or spec.file or "")
     runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
     if runtime_kind == "supervised_research":
+        command = (
+            "research-synthesis"
+            if spec.runtime in {"terminal", "visible"}
+            else "research"
+        )
         return [
             sys.executable,
             "-m",
             "vibecrafted_core.workflow_runtime",
-            "research",
+            command,
             "--root",
             spec.root,
             "--prompt-file",

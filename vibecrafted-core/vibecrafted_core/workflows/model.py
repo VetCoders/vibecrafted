@@ -22,6 +22,7 @@ class WorkflowDefinition:
     runtime_kind: WorkflowRuntimeKind = "direct_agent"
     aliases: tuple[str, ...] = ()
     default_prompt_file: str = ""
+    terminal_layout: str = ""
     supports_count: bool = False
     supports_depth: bool = False
     tooling: tuple[str, ...] = ()

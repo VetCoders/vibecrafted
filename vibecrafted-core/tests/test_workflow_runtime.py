@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -26,9 +27,10 @@ def _runtime_env(monkeypatch, tmp_path: Path, run_id: str) -> Path:
     home = tmp_path / "home"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name in ("claude", "codex", "gemini"):
+    for name in ("claude", "codex", "gemini", "agy", "junie", "grok"):
         _fake_agent(bin_dir, name)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_RUN_ID", run_id)
     monkeypatch.setenv("VIBECRAFTED_REPORT_PATH", str(home / "parent.md"))
@@ -47,9 +49,12 @@ def test_research_runtime_supervises_three_tracks(monkeypatch, tmp_path: Path) -
     assert rc == 0
     report = (home / "parent.md").read_text(encoding="utf-8")
     assert "vc-research supervised run" in report
+    assert "Research Lane Selection" in report
+    assert "agents: claude, codex, gemini" in report
     assert "research-claude" in report
     assert "research-codex" in report
     assert "research-gemini" in report
+    assert "research-synthesis" in report
     assert "agent_session_id: claude-session" in report
     assert "agent_model: claude-model" in report
     assert "tokens: 10 in (3 cached) / 5 out" in report
@@ -57,6 +62,108 @@ def test_research_runtime_supervises_three_tracks(monkeypatch, tmp_path: Path) -
     assert (home / "rsch-test-children" / "research-claude.md").is_file()
     assert (home / "rsch-test-children" / "research-codex.md").is_file()
     assert (home / "rsch-test-children" / "research-gemini.md").is_file()
+    assert (home / "rsch-test-children" / "research-synthesis.md").is_file()
+
+
+def test_research_runtime_uses_user_configured_agents(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-config")
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["grok", "codex", "gemini"]\n',
+        encoding="utf-8",
+    )
+
+    rc = workflow_runtime.main(
+        ["research", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 0
+    report = (home / "parent.md").read_text(encoding="utf-8")
+    meta = (home / "parent.meta.json").read_text(encoding="utf-8")
+    assert "agents: grok, codex, gemini" in report
+    assert "research-grok" in report
+    assert "research-codex" in report
+    assert "research-gemini" in report
+    assert "research-claude" not in report
+    assert '"research_agents": [\n    "grok",\n    "codex",\n    "gemini"\n  ]' in meta
+
+
+def test_research_runtime_env_agents_override_user_config(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-env")
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["claude", "codex", "gemini"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBECRAFTED_RESEARCH_AGENTS", "grok,codex")
+
+    rc = workflow_runtime.main(
+        ["research", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 0
+    report = (home / "parent.md").read_text(encoding="utf-8")
+    assert "source: env:VIBECRAFTED_RESEARCH_AGENTS" in report
+    assert "agents: grok, codex" in report
+    assert "research-grok" in report
+    assert "research-codex" in report
+    assert "research-gemini" not in report
+
+
+def test_research_synthesis_waits_for_lane_meta_and_resumes_last_finisher(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-layout")
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["grok", "codex"]\n',
+        encoding="utf-8",
+    )
+    child_dir = home / "rsch-layout-children"
+    child_dir.mkdir(parents=True)
+    for agent, completed_at in (
+        ("grok", "2026-06-13T10:00:00+00:00"),
+        ("codex", "2026-06-13T10:01:00+00:00"),
+    ):
+        report = child_dir / f"research-{agent}.md"
+        transcript = child_dir / f"research-{agent}.transcript.log"
+        report.write_text("---\nstatus: completed\n---\n", encoding="utf-8")
+        transcript.write_text("done\n", encoding="utf-8")
+        (child_dir / f"research-{agent}.meta.json").write_text(
+            json.dumps(
+                {
+                    "run_id": f"rsch-layout-research-{agent}",
+                    "agent": agent,
+                    "agent_session_id": f"{agent}-session",
+                    "agent_model": f"{agent}-model",
+                    "report": str(report),
+                    "transcript": str(transcript),
+                    "exit_code": 0,
+                    "artifact_errors": [],
+                    "resume_command": f"cd {tmp_path} && {agent} resume {agent}-session",
+                    "completed_at": completed_at,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    rc = workflow_runtime.main(
+        ["research-synthesis", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 0
+    report = (home / "parent.md").read_text(encoding="utf-8")
+    assert "agents: grok, codex" in report
+    assert "research-synthesis (codex)" in report
+    assert "agent_session_id: codex-session" in report
+    assert (child_dir / "research-synthesis.md").is_file()
 
 
 def test_research_runtime_tees_child_output(
@@ -74,6 +181,7 @@ def test_research_runtime_tees_child_output(
     assert "===== research:research-claude:claude =====" in out
     assert "===== research:research-codex:codex =====" in out
     assert "===== research:research-gemini:gemini =====" in out
+    assert "===== research:research-synthesis:" in out
     assert "fake worker ok" in out
 
 

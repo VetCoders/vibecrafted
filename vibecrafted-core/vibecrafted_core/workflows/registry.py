@@ -120,6 +120,7 @@ WORKFLOW_DEFINITIONS: dict[str, WorkflowDefinition] = {
         lifecycle_order=12,
         default_agent="swarm",
         runtime_kind="supervised_research",
+        terminal_layout="research",
         tooling=("vc-init", "vc-research"),
     ),
     "review": _direct(
