@@ -1350,13 +1350,12 @@ button:hover > .icon-box {
 
 .server-console-hero {
     width: min(100%, var(--max-w-page));
-    min-height: 100vh;
     margin: 0 auto;
-    padding: clamp(24px, 4vw, 56px) var(--container-gutter);
+    padding: clamp(24px, 4vw, 44px) var(--container-gutter) var(--space-8);
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: var(--space-16);
+    gap: var(--space-8);
 }
 
 .server-console-topbar {
@@ -1407,7 +1406,7 @@ button:hover > .icon-box {
     margin: 0 0 var(--space-6);
     color: var(--text-primary);
     font-family: var(--font-display);
-    font-size: clamp(3rem, 7vw, 6.75rem);
+    font-size: clamp(2.5rem, 5vw, 5rem);
     font-weight: 400;
     line-height: 0.96;
     letter-spacing: var(--tracking-normal);
@@ -1509,4 +1508,168 @@ button:hover > .icon-box {
 .server-console-link {
     color: currentColor;
     font-weight: 700;
+}
+
+.control-plane-band {
+    width: min(100%, var(--max-w-page));
+    margin: 0 auto;
+    padding: 0 var(--container-gutter) var(--space-16);
+    display: grid;
+    gap: var(--space-6);
+}
+
+.control-plane-meta,
+.control-panel-head,
+.control-run-primary,
+.control-run-meta,
+.control-run-tags {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+}
+
+.control-plane-meta {
+    justify-content: space-between;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: var(--lh-tight);
+    overflow-wrap: anywhere;
+}
+
+.control-dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-5);
+}
+
+.control-panel {
+    min-width: 0;
+    padding: var(--space-5);
+    background: color-mix(in srgb, var(--surface-card) 94%, transparent);
+    border: var(--card-border);
+    border-radius: var(--radius-md);
+}
+
+.control-panel-wide {
+    display: grid;
+    gap: var(--space-4);
+}
+
+.control-panel-head {
+    justify-content: space-between;
+    margin-bottom: var(--space-4);
+}
+
+.control-panel-head h2 {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-weight: 700;
+    letter-spacing: var(--tracking-normal);
+    text-transform: uppercase;
+}
+
+.control-panel-head span {
+    color: var(--accent-narrative);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+}
+
+.control-run-list {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.control-run-row {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-4);
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+}
+
+.control-run-primary,
+.control-run-meta {
+    justify-content: space-between;
+}
+
+.control-run-id {
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.control-run-root,
+.control-run-meta {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: var(--lh-tight);
+    overflow-wrap: anywhere;
+}
+
+.control-run-tags {
+    flex-wrap: wrap;
+}
+
+.control-badge {
+    padding: 3px 8px;
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+
+.control-empty {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.control-warning-list,
+.control-event-list {
+    display: grid;
+    gap: var(--space-3);
+    list-style: none;
+}
+
+.control-warning-list li,
+.control-event-row {
+    padding: var(--space-3);
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+}
+
+.control-event-row {
+    display: grid;
+    grid-template-columns: minmax(130px, 0.8fr) minmax(90px, 0.5fr) minmax(100px, 0.7fr) minmax(0, 1fr);
+    gap: var(--space-3);
+    align-items: start;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 820px) {
+    .control-dashboard-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .control-plane-meta,
+    .control-run-primary,
+    .control-run-meta {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .control-event-row {
+        grid-template-columns: 1fr;
+    }
 }
