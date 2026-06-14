@@ -2,7 +2,7 @@
 # vibecrafted-server local control-plane viewer smoke test.
 #
 # Asserts:
-#   - install-server copies the binary and assets/fonts.
+#   - install-all / install-server copies the binary and assets/fonts.
 #   - Starts the installed binary with complete Leptos environment.
 #   - Binds to a free ephemeral port (no hardcoded port).
 #   - Polls /api/control/state to a 200 OK.
@@ -68,7 +68,7 @@ SERVER_BIN="$HOME/.local/bin/vibecrafted-server-web"
 if [[ -f "$SERVER_BIN" ]]; then
   ok "installed binary exists: $SERVER_BIN"
 else
-  fail "installed binary missing. Run make install-server first."
+  fail "installed binary missing. Run make install-all or make install-server first."
   exit 1
 fi
 

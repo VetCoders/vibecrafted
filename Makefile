@@ -31,7 +31,7 @@ help-dev:
 	@printf "\n"
 	@printf "  \033[1m\033[38;5;173m⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. dev targets\033[0m\n"
 	@printf "\n"
-	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-python-tools · install-app-binaries · install-hammerspoon\n"
+	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-python-tools · install-app-binaries · install-server · install-hammerspoon\n"
 	@printf "            skills · helpers · setup-dev · wizard · wizard-dev · gui-install · dry-run · restore\n"
 	@printf "            migrate · migrate-dry · foundations · foundations-check · bundle · bundle-check\n"
 	@printf "  \033[1mtests\033[0m     test · test-skills · test-install · test-parity · test-zellij · test-iterm2-migrate\n"
@@ -42,8 +42,8 @@ help-dev:
 	@printf "  \033[1mhooks\033[0m     init-hooks · seed-commit-msg-hooks · commit-safe\n"
 	@printf "  \033[1mmisc\033[0m      doctor · list · update · uninstall · demo · demo-full · skill-new\n"
 	@printf "\n"
-	@printf "  \033[2minstall-all builds the Rust app binaries (voc, vc-admin) as real files into ~/.local/bin.\033[0m\n"
-	@printf "  \033[2mvibecrafted-server is excluded by design from install-all — use make install-server. RUNTIME=<horse> selects a lab runtime.\033[0m\n"
+	@printf "  \033[2minstall-all builds the Rust app/server binaries (voc, vc-admin, vibecrafted-server-web) as real files into ~/.local/bin.\033[0m\n"
+	@printf "  \033[2mvibecrafted-server is installed with install-all; use make server for a foreground dev run. RUNTIME=<horse> selects a lab runtime.\033[0m\n"
 	@printf "\n"
 
 vibecrafted: install
@@ -123,6 +123,7 @@ install-all: init-hooks
 	@bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes $(INSTALL_QUIET)
 	@$(MAKE) --no-print-directory install-python-tools
 	@$(MAKE) --no-print-directory install-app-binaries
+	@$(MAKE) --no-print-directory install-server
 
 install-python-tools:
 	@if ! command -v uv >/dev/null 2>&1; then \
@@ -134,13 +135,10 @@ install-python-tools:
 	uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-mcp" --with-editable "$(SOURCE)/vibecrafted-core"
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
-# The vibecrafted-app members ship `voc` and `vc-admin` (both bins of the
-# tui-agent `voc` package): built from source in release and copied as REAL
+# The vibecrafted-app members ship `voc` and `vc-admin`; vibecrafted-server
+# ships `vibecrafted-server-web`. Build from source in release and copy REAL
 # files. Never `cargo install` here — that breeds ~/.local/bin -> ~/.cargo/bin
 # ghost symlinks, the exact pattern the runtime contract bans in BIN.
-# vibecrafted-server is intentionally NOT installed: control-core is a
-# library (no [[bin]]) and vibecrafted-server-web is a Leptos SSR app that
-# needs LEPTOS_* env + site assets to run — `make server` is its entry point.
 APP_DIR := vibecrafted-app
 APP_BINARIES := voc vc-admin
 BIN_DIR := $(HOME)/.local/bin
@@ -541,8 +539,9 @@ test-hammerspoon:
 # The Rust workspace under vibecrafted-server/ is the remote-observability
 # server: `control-core` is a read-only typed mirror of the same
 # ~/.vibecrafted/control_plane/ the Python runtime writes, and `web` is a
-# Leptos 0.8 SSR axum app that exposes it. It is NOT wired by install-all —
-# these targets are the reproducible run/build/verify entry points.
+# Leptos 0.8 SSR axum app that exposes it. install-all installs the release
+# binary and assets; these targets remain the reproducible run/build/verify
+# entry points.
 #
 # Live reads (curl-smoke after `make server`):
 #   GET /api/control/state         merged StateView (active/recent/warnings/events)

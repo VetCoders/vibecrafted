@@ -145,19 +145,21 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
 
 
 def test_install_all_covers_app_binaries_as_real_files() -> None:
-    """install-all must own the vibecrafted-app member binaries (voc,
-    vc-admin): built from source in release and copied into ~/.local/bin as
-    REAL files. `cargo install` is forbidden in that path — it is what breeds
-    the ~/.local/bin -> ~/.cargo/bin ghost symlinks the runtime contract bans.
-    The install.toml installation phase mirrors install-all line-by-line, so
-    it must carry the same step."""
+    """install-all must own the shipped Rust binaries (voc, vc-admin, and
+    vibecrafted-server-web): built from source in release and copied into
+    ~/.local/bin as REAL files. `cargo install` is forbidden in that path — it
+    is what breeds the ~/.local/bin -> ~/.cargo/bin ghost symlinks the runtime
+    contract bans. The install.toml installation phase mirrors install-all
+    line-by-line, so it must carry the same steps."""
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     manifest = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
 
     install_all_block = makefile.split("install-all:", 1)[1].split("\nskills:", 1)[0]
     assert "install-app-binaries" in install_all_block
+    assert "install-server" in install_all_block
 
     assert "APP_BINARIES := voc vc-admin" in makefile
+    assert "SERVER_BIN  := vibecrafted-server-web" in makefile
     assert "BIN_DIR := $(HOME)/.local/bin" in makefile
 
     app_block = makefile.split("\ninstall-app-binaries:", 1)[1].split("\nskills:", 1)[0]
@@ -168,6 +170,7 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     )
 
     assert "make --no-print-directory install-app-binaries" in manifest
+    assert "make --no-print-directory install-server" in manifest
 
 
 def test_bin_dir_owned_entries_are_never_cargo_ghost_symlinks() -> None:
@@ -390,9 +393,9 @@ def test_product_mcp_paths_do_not_hardcode_cargo_bin() -> None:
     assert offenders == []
 
 
-def test_install_server_not_in_install_all() -> None:
+def test_install_server_is_in_install_all() -> None:
     text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "install-server:" in text
 
     install_all_block = text.split("install-all:", 1)[1].split("\nskills:", 1)[0]
-    assert "install-server" not in install_all_block
+    assert "$(MAKE) --no-print-directory install-server" in install_all_block

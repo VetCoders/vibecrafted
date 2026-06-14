@@ -7,13 +7,16 @@ Local control-plane viewer for the Vibecrafted control plane (scaffold editor wr
 | `control-core` | read-model: `ControlPlane` / `StateView`, the `*.meta.json` + `*.lock` + `marbles/**/state.json` merge, events. Never writes control-plane snapshots. |
 | `web`          | Leptos 0.8 SSR + axum app. Serves the console shell, the scaffold review surface, and the control-plane read API.                                     |
 
-> Not wired by `make install-all`. Run `make install-server` explicitly to install.
+> Installed by `make install-all` as part of the product runtime. `make install-server`
+> remains the focused server-only install target.
 
 ## Installation
 
 Install as a real binary in `~/.local/bin/vibecrafted-server-web`:
 
 ```bash
+make install-all
+# or, for a focused server-only refresh:
 make install-server
 ```
 

@@ -66,7 +66,7 @@ We will install:
   - shared skills, launchers, and mirrored agent views
   - the selected runtime horse when RUNTIME=... is provided
   - the Python CLI and MCP packages through uv tool install
-  - the Rust app binaries (voc, vc-admin) as real files in ~/.local/bin
+  - the Rust app/server binaries (voc, vc-admin, vibecrafted-server-web) as real files in ~/.local/bin
 """
 cmd = [
     "bash",
@@ -79,6 +79,7 @@ python3 scripts/vetcoders_install.py install --source "." --compact --non-intera
 bash scripts/install-runtime.sh --runtime "${VIBECRAFTED_RUNTIME:-none}" --yes
 make --no-print-directory install-python-tools
 make --no-print-directory install-app-binaries
+make --no-print-directory install-server
 ''',
 ]
 

@@ -1122,13 +1122,13 @@ cmd_server() {
       # 3. Locate binary & site root
       local server_bin="$HOME/.local/bin/vibecrafted-server-web"
       if [[ ! -f "$server_bin" ]]; then
-        printf "%b✗%b vibecrafted-server-web binary not found at %s. Please run 'make install-server' first.\n" "$_red" "$_reset" "$server_bin" >&2
+        printf "%b✗%b vibecrafted-server-web binary not found at %s. Please run 'make install-all' or 'make install-server' first.\n" "$_red" "$_reset" "$server_bin" >&2
         return 1
       fi
 
       local site_root="${VIBECRAFTED_RUNTIME_HOME:-$HOME/.local/share/vibecrafted}/server/site"
       if [[ ! -d "$site_root" ]]; then
-        printf "%b✗%b site assets directory not found at %s. Please run 'make install-server' first.\n" "$_red" "$_reset" "$site_root" >&2
+        printf "%b✗%b site assets directory not found at %s. Please run 'make install-all' or 'make install-server' first.\n" "$_red" "$_reset" "$site_root" >&2
         return 1
       fi
 
