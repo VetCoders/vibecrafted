@@ -46,6 +46,19 @@ def test_normalize_launch_spec_prune_without_input_uses_discovery_prompt(
     assert "findings/dead-parrots.md" in spec.prompt
 
 
+def test_normalize_launch_spec_uses_registry_for_marbles_defaults(
+    tmp_path: Path,
+) -> None:
+    spec = workflow.normalize_launch_spec(
+        {"skill": "marbles", "agent": "codex", "root": str(tmp_path)},
+        tmp_path,
+    )
+
+    assert spec.prompt == ""
+    assert spec.count == 3
+    assert spec.depth == 3
+
+
 def test_normalize_launch_spec_maps_justdo_to_implement(tmp_path: Path) -> None:
     spec = workflow.normalize_launch_spec(
         {"skill": "justdo", "agent": "codex", "prompt": "ship"},

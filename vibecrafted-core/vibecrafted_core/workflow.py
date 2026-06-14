@@ -26,32 +26,10 @@ from .control_plane import (
 )
 from .events import append_event
 from .spawn import _stdin_command
-from .workflow_prompts import default_workflow_prompt
+from .workflows import registry as workflow_registry
 
-
-SUPPORTED_WORKFLOWS = {
-    "audit",
-    "decorate",
-    "delegate",
-    "dou",
-    "followup",
-    "hydrate",
-    "implement",
-    "intents",
-    "marbles",
-    "ownership",
-    "partner",
-    "polarize",
-    "prune",
-    "release",
-    "research",
-    "review",
-    "scaffold",
-    "workflow",
-}
-WORKFLOW_ALIASES = {
-    "justdo": "implement",
-}
+SUPPORTED_WORKFLOWS = workflow_registry.SUPPORTED_WORKFLOWS
+WORKFLOW_ALIASES = workflow_registry.WORKFLOW_ALIASES
 SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "swarm"}
 SUPPORTED_RUNTIMES = {"headless", "terminal", "visible"}
 TERMINAL_STATES = {
@@ -443,12 +421,12 @@ def normalize_launch_spec(
 ) -> WorkflowLaunchSpec:
     requested_skill = str(payload.get("skill") or "workflow").strip()
     skill = WORKFLOW_ALIASES.get(requested_skill, requested_skill)
-    if skill not in SUPPORTED_WORKFLOWS:
+    definition = workflow_registry.workflow_definition(skill)
+    if definition is None:
         raise ValueError(f"Unsupported workflow: {skill}")
 
-    default_agent = "swarm" if skill == "research" else "claude"
-    agent = str(payload.get("agent") or default_agent).strip()
-    if skill == "research":
+    agent = str(payload.get("agent") or definition.default_agent).strip()
+    if definition.runtime_kind == "supervised_research":
         agent = "swarm"
     if agent not in SUPPORTED_AGENTS:
         raise ValueError(f"Unsupported agent: {agent}")
@@ -456,18 +434,18 @@ def normalize_launch_spec(
     prompt = str(payload.get("prompt") or "").strip()
     file_path = str(payload.get("file") or "").strip()
     if not prompt and not file_path:
-        prompt = default_workflow_prompt(skill)
+        prompt = workflow_registry.workflow_default_prompt(skill)
     root = normalize_run_root(payload.get("root"), source_dir)
     runtime = _normalized_runtime(str(payload.get("runtime") or "headless").strip())
     mode = str(payload.get("mode") or skill).strip() or skill
     count = _coerce_positive_int(
-        payload.get("count"), 3 if skill == "marbles" else None
+        payload.get("count"), 3 if definition.supports_count else None
     )
     depth = _coerce_positive_int(
-        payload.get("depth"), 3 if skill == "marbles" else None
+        payload.get("depth"), 3 if definition.supports_depth else None
     )
 
-    if skill != "marbles" and not prompt and not file_path:
+    if definition.requires_input and not prompt and not file_path:
         raise ValueError("Launch requires either --prompt text or --file path.")
 
     return WorkflowLaunchSpec(
@@ -534,7 +512,8 @@ def build_launch_command(
     prompt_file: str | Path | None = None,
 ) -> list[str]:
     prompt_path = str(prompt_file or spec.file or "")
-    if spec.skill == "research":
+    runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
+    if runtime_kind == "supervised_research":
         return [
             sys.executable,
             "-m",
@@ -545,7 +524,7 @@ def build_launch_command(
             "--prompt-file",
             prompt_path,
         ]
-    if spec.skill == "marbles":
+    if runtime_kind == "supervised_marbles":
         return [
             sys.executable,
             "-m",
@@ -576,9 +555,10 @@ def launch_workflow(
 ) -> dict[str, Any]:
     run_id = _run_id(spec.skill)
     artifacts = _run_artifact_paths(run_id)
+    runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
     prompt_body = (
         _source_prompt(spec)
-        if spec.skill in {"research", "marbles"}
+        if runtime_kind in {"supervised_research", "supervised_marbles"}
         else _runtime_prompt(spec)
     )
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
