@@ -604,27 +604,6 @@ post_install_banner() {
   info "---------------------------------------------------------------"
 }
 
-bootstrap_log="$vibecrafted_home/bootstrap.log"
-
-write_bootstrap_log_header() {
-  mkdir -p "$(dirname "$bootstrap_log")"
-  {
-    printf 'vibecrafted bootstrap\n'
-    printf 'version: %s\n' "$_installed_version"
-    printf 'staged: %s\n' "$staged_dir"
-    printf 'current: %s\n' "$current_link"
-    printf '\n'
-  } > "$bootstrap_log"
-}
-
-compact_bootstrap_banner() {
-  printf '\n'
-  info "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. bootstrap"
-  info "  Staged      vibecrafted $_installed_version"
-  info "  Control     $current_link"
-  info "  Log         $bootstrap_log"
-}
-
 if [[ "$target" == "vibecrafted" && "$use_gui" == "1" ]]; then
   gui_installer="$current_link/scripts/installer_gui.py"
   [[ -f "$gui_installer" ]] || die "Guided installer not found: $gui_installer"
