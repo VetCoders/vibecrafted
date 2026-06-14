@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -61,6 +62,95 @@ def _child_dir() -> Path:
     base = _parent_report_path().parent / f"{_parent_run_id()}-children"
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+
+def _safe_label(label: str) -> str:
+    return "".join(ch if ch.isalnum() else "-" for ch in label).strip("-")
+
+
+def _slug(value: str, fallback: str) -> str:
+    raw = re.sub(r"[^A-Za-z0-9._-]+", "-", value.lower()).strip("-")
+    raw = raw[:64].strip("-")
+    return raw or fallback
+
+
+def _artifact_ts() -> str:
+    return os.environ.get("VIBECRAFTED_ARTIFACT_TS") or datetime.now().strftime(
+        "%Y-%m-%d"
+    )
+
+
+def _artifact_slug(prompt: str) -> str:
+    return os.environ.get("VIBECRAFTED_ARTIFACT_SLUG") or _slug(
+        prompt, _parent_run_id()
+    )
+
+
+def _artifact_suffix() -> str:
+    return os.environ.get("VIBECRAFTED_ARTIFACT_SUFFIX", "")
+
+
+def _research_artifact_agent(label: str, agent: str) -> str:
+    if label == "research-synthesis":
+        return "synthesis"
+    if agent:
+        return agent
+    if label.startswith("research-"):
+        return label.removeprefix("research-")
+    return _safe_label(label) or "research"
+
+
+def _canonical_research_dir() -> Path | None:
+    raw = os.environ.get("VIBECRAFTED_CANONICAL_REPORT_DIR", "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _research_artifact_paths(
+    *, label: str, agent: str, prompt: str
+) -> tuple[Path, Path, Path]:
+    base = _canonical_research_dir()
+    if base is None:
+        child_base = _child_dir()
+        safe_label = _safe_label(label)
+        return (
+            child_base / f"{safe_label}.md",
+            child_base / f"{safe_label}.transcript.log",
+            child_base / f"{safe_label}.meta.json",
+        )
+    stem = (
+        f"{_artifact_ts()}_"
+        f"{_slug(_research_artifact_agent(label, agent), 'agent')}_"
+        f"{_artifact_slug(prompt)}_report"
+        f"{_artifact_suffix()}"
+    )
+    return (
+        base / f"{stem}.md",
+        base / f"{stem}.transcript.log",
+        base / f"{stem}.meta.json",
+    )
+
+
+def _child_artifact_paths(
+    *, kind: str, label: str, agent: str, prompt: str
+) -> tuple[Path, Path, Path, Path]:
+    safe_label = _safe_label(label)
+    if kind == "research":
+        report, transcript, meta = _research_artifact_paths(
+            label=label, agent=agent, prompt=prompt
+        )
+        prompt_file = _child_dir() / f"{safe_label}.prompt.md"
+        return report, transcript, meta, prompt_file
+    base = _child_dir()
+    return (
+        base / f"{safe_label}.md",
+        base / f"{safe_label}.transcript.log",
+        base / f"{safe_label}.meta.json",
+        base / f"{safe_label}.prompt.md",
+    )
 
 
 def _child_env(
@@ -330,13 +420,15 @@ async def _run_child(
     command: Sequence[str] | None = None,
     prompt_body: str | None = None,
 ) -> ChildResult:
-    safe_label = "".join(ch if ch.isalnum() else "-" for ch in label).strip("-")
+    safe_label = _safe_label(label)
     run_id = f"{_parent_run_id()}-{safe_label}"
-    base = _child_dir()
-    report = base / f"{safe_label}.md"
-    transcript = base / f"{safe_label}.transcript.log"
-    meta = base / f"{safe_label}.meta.json"
-    prompt_file = base / f"{safe_label}.prompt.md"
+    report, transcript, meta, prompt_file = _child_artifact_paths(
+        kind=kind,
+        label=label,
+        agent=agent,
+        prompt=prompt,
+    )
+    prompt_file.parent.mkdir(parents=True, exist_ok=True)
     prompt_file.write_text(
         prompt_body or _child_prompt(kind, label, root, prompt), encoding="utf-8"
     )
@@ -427,7 +519,11 @@ def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
 
 
 def _lane_meta_path(agent: str) -> Path:
-    return _child_dir() / f"research-{agent}.meta.json"
+    return _research_artifact_paths(
+        label=f"research-{agent}",
+        agent=agent,
+        prompt="",
+    )[2]
 
 
 async def _wait_for_research_lanes(
@@ -448,6 +544,8 @@ async def _wait_for_research_lanes(
                 pending.append(agent)
             elif result.agent:
                 results.append(result)
+                if result.exit_code != 0:
+                    return results
         if not pending and len(results) == len(agents):
             return results
         if asyncio.get_running_loop().time() >= deadline:
@@ -458,10 +556,14 @@ async def _wait_for_research_lanes(
 
 
 def _failed_synthesis_result(last: ChildResult, reason: str) -> ChildResult:
-    base = _child_dir()
-    report = base / "research-synthesis.md"
-    transcript = base / "research-synthesis.transcript.log"
+    report, transcript, _meta, _prompt_file = _child_artifact_paths(
+        kind="research",
+        label="research-synthesis",
+        agent=last.agent,
+        prompt="",
+    )
     now = datetime.now(timezone.utc).isoformat()
+    report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(
         "---\nstatus: failed\n---\n\n"
         f"# vc-research synthesis failed\n\nReason: {reason}\n",

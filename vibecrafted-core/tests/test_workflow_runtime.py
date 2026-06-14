@@ -91,6 +91,35 @@ def test_research_runtime_uses_user_configured_agents(
     assert '"research_agents": [\n    "grok",\n    "codex",\n    "gemini"\n  ]' in meta
 
 
+def test_research_runtime_writes_canonical_named_lane_artifacts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-canonical")
+    canonical = (
+        home / "artifacts" / "local" / "repo" / "2026_0613" / "reports" / "research"
+    )
+    monkeypatch.setenv("VIBECRAFTED_CANONICAL_REPORT_DIR", str(canonical))
+    monkeypatch.setenv("VIBECRAFTED_ARTIFACT_TS", "2026-06-13")
+    monkeypatch.setenv("VIBECRAFTED_ARTIFACT_SLUG", "acp-versus-native")
+    monkeypatch.setenv("VIBECRAFTED_RESEARCH_AGENTS", "grok,codex")
+
+    rc = workflow_runtime.main(
+        [
+            "research",
+            "--root",
+            str(tmp_path),
+            "--prompt",
+            "ACP versus native cli agent versus Plugin",
+        ]
+    )
+
+    assert rc == 0
+    assert (canonical / "2026-06-13_grok_acp-versus-native_report.md").is_file()
+    assert (canonical / "2026-06-13_codex_acp-versus-native_report.md").is_file()
+    assert (canonical / "2026-06-13_synthesis_acp-versus-native_report.md").is_file()
+    assert (home / "parent.md").is_file()
+
+
 def test_research_runtime_env_agents_override_user_config(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -164,6 +193,54 @@ def test_research_synthesis_waits_for_lane_meta_and_resumes_last_finisher(
     assert "research-synthesis (codex)" in report
     assert "agent_session_id: codex-session" in report
     assert (child_dir / "research-synthesis.md").is_file()
+
+
+def test_research_synthesis_closes_when_lane_failed(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-lane-failed")
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["grok", "codex"]\n',
+        encoding="utf-8",
+    )
+    canonical = (
+        home / "artifacts" / "local" / "repo" / "2026_0613" / "reports" / "research"
+    )
+    monkeypatch.setenv("VIBECRAFTED_CANONICAL_REPORT_DIR", str(canonical))
+    monkeypatch.setenv("VIBECRAFTED_ARTIFACT_TS", "2026-06-13")
+    monkeypatch.setenv("VIBECRAFTED_ARTIFACT_SLUG", "acp-versus-native")
+    failed_report = canonical / "2026-06-13_grok_acp-versus-native_report.md"
+    failed_report.parent.mkdir(parents=True, exist_ok=True)
+    failed_report.write_text("---\nstatus: failed\n---\n", encoding="utf-8")
+    (canonical / "2026-06-13_grok_acp-versus-native_report.transcript.log").write_text(
+        "boom\n",
+        encoding="utf-8",
+    )
+    (canonical / "2026-06-13_grok_acp-versus-native_report.meta.json").write_text(
+        json.dumps(
+            {
+                "run_id": "rsch-lane-failed-research-grok",
+                "agent": "grok",
+                "report": str(failed_report),
+                "exit_code": 1,
+                "artifact_errors": ["worker_failed"],
+                "completed_at": "2026-06-13T10:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = workflow_runtime.main(
+        ["research-synthesis", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 1
+    report = (home / "parent.md").read_text(encoding="utf-8")
+    assert "status: failed" in report
+    assert "research-grok" in report
+    assert "artifact_errors: worker_failed" in report
 
 
 def test_research_runtime_tees_child_output(

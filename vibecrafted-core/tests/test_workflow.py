@@ -69,6 +69,32 @@ def test_normalize_launch_spec_maps_justdo_to_implement(tmp_path: Path) -> None:
     assert spec.agent == "codex"
 
 
+def test_artifact_slug_skips_boilerplate_research_words() -> None:
+    assert (
+        workflow._artifact_slug(
+            "perform the research workflow on ACP versus native cli agent", "fallback"
+        )
+        == "acp-versus-native"
+    )
+
+
+def test_artifact_org_repo_reads_git_config_with_duplicate_options(
+    tmp_path: Path,
+) -> None:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "config").write_text(
+        '[branch "release"]\n'
+        "\tvscode-merge-base = a\n"
+        "\tvscode-merge-base = b\n"
+        '[remote "origin"]\n'
+        "\turl = https://github.com/vetcoders/vibecrafted.git\n",
+        encoding="utf-8",
+    )
+
+    assert workflow._artifact_org_repo(tmp_path) == ("vetcoders", "vibecrafted")
+
+
 def test_launch_workflow_returns_pid_and_logs_spawn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -240,6 +266,13 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     payload = workflow.launch_workflow(spec, source)
 
     assert payload["accepted"] is True
+    runtime_bucket = (
+        tmp_path / ".vibecrafted" / "control_plane" / "runtime_runs" / payload["run_id"]
+    )
+    assert Path(payload["report"]).parent == runtime_bucket
+    assert Path(payload["transcript"]).parent == runtime_bucket
+    assert Path(payload["meta"]).parent == runtime_bucket
+    assert Path(payload["prompt_file"]).parent == runtime_bucket
     command = captured["command"]
     assert command[:5] == [
         str(vc_frame),
@@ -264,6 +297,19 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert "research-lane --agent claude" in lane_bodies
     assert "research-lane --agent codex" in lane_bodies
     assert "research-lane --agent gemini" in lane_bodies
+    assert "export VIBECRAFTED_RUN_ID=" in lane_bodies
+    assert "export VIBECRAFTED_REPORT_PATH=" in lane_bodies
+    assert "export VIBECRAFTED_TRANSCRIPT_PATH=" in lane_bodies
+    assert "export VIBECRAFTED_META_PATH=" in lane_bodies
+    assert "export VIBECRAFTED_PROMPT_PATH=" in lane_bodies
+    assert "export VIBECRAFTED_CANONICAL_REPORT_DIR=" in lane_bodies
+    assert "export VIBECRAFTED_ARTIFACT_SLUG=map-it" in lane_bodies
+    assert (
+        f"export VIBECRAFTED_ARTIFACT_TS={workflow.time.strftime('%Y-%m-%d')}"
+        in lane_bodies
+    )
+    assert "export VIBECRAFTED_TEE_OUTPUT=1" in lane_bodies
+    assert "${VIBECRAFTED_PROMPT_PATH}" not in lane_bodies
     assert "--" not in command
     assert payload["worker_command"][3] == "research-synthesis"
     assert payload["transport"] == "vc-frame"

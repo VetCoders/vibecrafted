@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -74,6 +75,68 @@ def _run_id(skill: str) -> str:
     return f"{code}-{stamp}-{entropy:05d}"
 
 
+def _artifact_org_repo(root: str | Path) -> tuple[str, str] | None:
+    root_path = Path(root).expanduser()
+    remote = _origin_remote_url(root_path)
+    match = re.search(r"[:/]([^/]+)/([^/.]+)(?:\.git)?$", remote)
+    if match:
+        return match.group(1), match.group(2)
+    fallback = root_path.name.strip()
+    return ("local", fallback) if fallback else None
+
+
+def _git_config_path(root: Path) -> Path | None:
+    git_entry = root / ".git"
+    if git_entry.is_dir():
+        return git_entry / "config"
+    if not git_entry.is_file():
+        return None
+    try:
+        raw = git_entry.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not raw.startswith("gitdir:"):
+        return None
+    git_dir = Path(raw.removeprefix("gitdir:").strip()).expanduser()
+    if not git_dir.is_absolute():
+        git_dir = (root / git_dir).resolve()
+    config = git_dir / "config"
+    if config.is_file():
+        return config
+    common_dir_file = git_dir / "commondir"
+    if common_dir_file.is_file():
+        try:
+            common = Path(common_dir_file.read_text(encoding="utf-8").strip())
+        except OSError:
+            return None
+        if not common.is_absolute():
+            common = (git_dir / common).resolve()
+        return common / "config"
+    return None
+
+
+def _origin_remote_url(root: Path) -> str:
+    config_path = _git_config_path(root)
+    if config_path is None or not config_path.is_file():
+        return ""
+    try:
+        lines = config_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    in_origin = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_origin = stripped == '[remote "origin"]'
+            continue
+        if not in_origin or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.strip() == "url":
+            return value.strip()
+    return ""
+
+
 def _run_artifact_paths(run_id: str) -> dict[str, Path]:
     run_dir = control_plane_home() / "runtime_runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -83,6 +146,79 @@ def _run_artifact_paths(run_id: str) -> dict[str, Path]:
         "report": run_dir / "report.md",
         "transcript": run_dir / "transcript.log",
     }
+
+
+def _canonical_report_dir(root: str | Path, skill: str) -> Path:
+    org_repo = _artifact_org_repo(root)
+    if org_repo is None:
+        base = Path(root).expanduser() / ".vibecrafted"
+    else:
+        org, repo = org_repo
+        base = (
+            control_plane_home().parent
+            / "artifacts"
+            / org
+            / repo
+            / time.strftime("%Y_%m%d")
+        )
+    path = base / "reports" / skill
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _artifact_slug(text: str, fallback: str) -> str:
+    frontmatter = re.match(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", text, re.S)
+    if frontmatter:
+        for key in ("slug", "title"):
+            match = re.search(
+                rf"(?im)^\s*{key}\s*:\s*[\"']?(.+?)[\"']?\s*$",
+                frontmatter.group(1),
+            )
+            if match:
+                words = _slug_words(match.group(1))
+                if words:
+                    return "-".join(words[:3])
+    words = _slug_words(text)
+    return "-".join(words[:3]) if words else fallback
+
+
+def _slug_words(text: str) -> list[str]:
+    boilerplate = {
+        "a",
+        "an",
+        "and",
+        "for",
+        "on",
+        "perform",
+        "please",
+        "research",
+        "run",
+        "skill",
+        "task",
+        "the",
+        "this",
+        "workflow",
+    }
+    return [
+        word
+        for word in re.findall(r"[A-Za-z0-9]+", text.lower())
+        if word not in boilerplate
+    ]
+
+
+def _research_artifact_suffix(
+    canonical_report_dir: Path | None,
+    artifact_ts: str,
+    artifact_slug: str,
+) -> str:
+    if canonical_report_dir is None:
+        return ""
+    for index in range(1, 100):
+        suffix = "" if index == 1 else f"-{index}"
+        pattern = f"{artifact_ts}_*_{artifact_slug}_report{suffix}.*"
+        if not any(canonical_report_dir.glob(pattern)):
+            return suffix
+    return "-99"
 
 
 def _core_package_root() -> Path:
@@ -143,14 +279,60 @@ def _dispatcher_command(
     return command
 
 
-def _write_command_script(path: Path, command: list[str]) -> Path:
+def _write_command_script(
+    path: Path, command: list[str], exports: dict[str, str] | None = None
+) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
+    export_lines = "".join(
+        f"export {key}={shlex.quote(value)}\n" for key, value in (exports or {}).items()
+    )
     path.write_text(
-        f"#!/usr/bin/env bash\nset -euo pipefail\nexec {shlex.join(command)}\n",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        f"{export_lines}"
+        f"exec {shlex.join(command)}\n",
         encoding="utf-8",
     )
     path.chmod(0o755)
     return path
+
+
+def _runtime_script_exports(
+    *,
+    run_id: str,
+    prompt_path: Path,
+    report_path: Path,
+    transcript_path: Path,
+    meta_path: Path,
+    agent: str,
+    skill: str,
+    runtime: str,
+    canonical_report_dir: Path | None = None,
+    artifact_slug: str = "",
+    artifact_ts: str = "",
+    artifact_suffix: str = "",
+) -> dict[str, str]:
+    exports = {
+        "VIBECRAFTED_RUN_ID": run_id,
+        "VIBECRAFTED_REPORT_PATH": str(report_path),
+        "VIBECRAFTED_TRANSCRIPT_PATH": str(transcript_path),
+        "VIBECRAFTED_META_PATH": str(meta_path),
+        "VIBECRAFTED_PROMPT_PATH": str(prompt_path),
+        "VIBECRAFTED_AGENT": agent,
+        "VIBECRAFTED_SKILL": skill,
+        "VIBECRAFTED_RUNTIME": runtime,
+    }
+    if canonical_report_dir is not None:
+        exports["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)
+    if artifact_slug:
+        exports["VIBECRAFTED_ARTIFACT_SLUG"] = artifact_slug
+    if artifact_ts:
+        exports["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
+    if artifact_suffix:
+        exports["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
+    if runtime in {"terminal", "visible"}:
+        exports["VIBECRAFTED_TEE_OUTPUT"] = "1"
+    return exports
 
 
 def _kdl_string(value: str | Path) -> str:
@@ -162,27 +344,52 @@ def _write_research_lane_scripts(
     launch_dir: Path,
     run_id: str,
     root: str,
+    prompt_path: Path,
+    report_path: Path,
+    transcript_path: Path,
+    meta_path: Path,
+    canonical_report_dir: Path,
+    artifact_slug: str,
+    artifact_ts: str,
+    artifact_suffix: str,
 ) -> dict[str, Path]:
     scripts: dict[str, Path] = {}
     for agent in research_agent_selection().agents:
         path = launch_dir / f"{run_id}-research-{agent}.sh"
-        command_prefix = shlex.join(
-            [
-                sys.executable,
-                "-m",
-                "vibecrafted_core.workflow_runtime",
-                "research-lane",
-                "--agent",
-                agent,
-                "--root",
-                root,
-                "--prompt-file",
-            ]
+        command = [
+            sys.executable,
+            "-m",
+            "vibecrafted_core.workflow_runtime",
+            "research-lane",
+            "--agent",
+            agent,
+            "--root",
+            root,
+            "--prompt-file",
+            str(prompt_path),
+        ]
+        exports = _runtime_script_exports(
+            run_id=run_id,
+            prompt_path=prompt_path,
+            report_path=report_path,
+            transcript_path=transcript_path,
+            meta_path=meta_path,
+            agent=agent,
+            skill="research",
+            runtime="terminal",
+            canonical_report_dir=canonical_report_dir,
+            artifact_slug=artifact_slug,
+            artifact_ts=artifact_ts,
+            artifact_suffix=artifact_suffix,
+        )
+        export_lines = "".join(
+            f"export {key}={shlex.quote(value)}\n" for key, value in exports.items()
         )
         path.write_text(
             "#!/usr/bin/env bash\n"
             "set -euo pipefail\n"
-            f'exec {command_prefix} "${{VIBECRAFTED_PROMPT_PATH}}"\n',
+            f"{export_lines}"
+            f"exec {shlex.join(command)}\n",
             encoding="utf-8",
         )
         path.chmod(0o755)
@@ -241,6 +448,14 @@ def _launch_transport_command(
     operator_session: str,
     dispatch_command: list[str],
     launch_dir: Path,
+    prompt_path: Path,
+    report_path: Path,
+    transcript_path: Path,
+    meta_path: Path,
+    canonical_report_dir: Path | None,
+    artifact_slug: str,
+    artifact_ts: str,
+    artifact_suffix: str,
 ) -> tuple[list[str], str, Path | None]:
     if spec.runtime not in {"terminal", "visible"}:
         return dispatch_command, "headless", None
@@ -252,6 +467,20 @@ def _launch_transport_command(
     command_script = _write_command_script(
         launch_dir / f"{run_id}-dispatcher.sh",
         dispatch_command,
+        exports=_runtime_script_exports(
+            run_id=run_id,
+            prompt_path=prompt_path,
+            report_path=report_path,
+            transcript_path=transcript_path,
+            meta_path=meta_path,
+            agent=spec.agent,
+            skill=spec.skill,
+            runtime=spec.runtime,
+            canonical_report_dir=canonical_report_dir,
+            artifact_slug=artifact_slug,
+            artifact_ts=artifact_ts,
+            artifact_suffix=artifact_suffix,
+        ),
     )
     definition = workflow_registry.workflow_definition(spec.skill)
     if spec.skill == "research":
@@ -259,6 +488,15 @@ def _launch_transport_command(
             launch_dir=launch_dir,
             run_id=run_id,
             root=spec.root,
+            prompt_path=prompt_path,
+            report_path=report_path,
+            transcript_path=transcript_path,
+            meta_path=meta_path,
+            canonical_report_dir=canonical_report_dir
+            or _canonical_report_dir(spec.root, spec.skill),
+            artifact_slug=artifact_slug,
+            artifact_ts=artifact_ts,
+            artifact_suffix=artifact_suffix,
         )
         layout_file = _write_research_layout(
             path=launch_dir / f"{run_id}-research.kdl",
@@ -685,6 +923,18 @@ def launch_workflow(
         if runtime_kind in {"supervised_research", "supervised_marbles"}
         else _runtime_prompt(spec)
     )
+    canonical_report_dir = (
+        _canonical_report_dir(spec.root, spec.skill)
+        if runtime_kind == "supervised_research"
+        else None
+    )
+    artifact_ts = time.strftime("%Y-%m-%d")
+    artifact_slug = _artifact_slug(prompt_body, run_id)
+    artifact_suffix = _research_artifact_suffix(
+        canonical_report_dir,
+        artifact_ts,
+        artifact_slug,
+    )
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
     safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
     worker_command = build_launch_command(spec, source_dir, prompt_file=prompt_path)
@@ -718,6 +968,12 @@ def launch_workflow(
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
+    if canonical_report_dir is not None:
+        merged_env["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)
+        merged_env["VIBECRAFTED_ARTIFACT_SLUG"] = artifact_slug
+        merged_env["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
+        if artifact_suffix:
+            merged_env["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
     operator_session = _effective_operator_session(
         root=spec.root,
         run_id=run_id,
@@ -729,6 +985,14 @@ def launch_workflow(
         operator_session=operator_session,
         dispatch_command=dispatch_command,
         launch_dir=launch_dir,
+        prompt_path=prompt_path,
+        report_path=artifacts["report"],
+        transcript_path=artifacts["transcript"],
+        meta_path=artifacts["meta"],
+        canonical_report_dir=canonical_report_dir,
+        artifact_slug=artifact_slug,
+        artifact_ts=artifact_ts,
+        artifact_suffix=artifact_suffix,
     )
     merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
 
