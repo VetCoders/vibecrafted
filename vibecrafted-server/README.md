@@ -12,7 +12,7 @@ Local control-plane viewer for the Vibecrafted control plane (scaffold editor wr
 
 ## Installation
 
-Install as a real binary in `~/.local/bin/vibecrafted-server-web`:
+Install as a real binary in `~/.local/bin/vc-server`:
 
 ```bash
 make install-all
@@ -20,13 +20,16 @@ make install-all
 make install-server
 ```
 
-This builds the release binary and copies it along with public assets/fonts to the runtime home directory.
+This builds the release binary, installs the compatibility `vibecrafted-server-web`
+copy, and copies public assets/fonts to the runtime home directory.
 
 ## Run
 
 Through the first-class command deck:
 
 ```bash
+vc-server                         # foreground dashboard on 127.0.0.1:3000
+vc-server --addr 127.0.0.1:3024   # explicit bind address
 vibecrafted server start        # start the daemonized viewer
 vibecrafted server status       # check daemon and HTTP health
 vibecrafted server open         # open the viewer in your default browser

@@ -2,11 +2,11 @@
 # vibecrafted-server local control-plane viewer smoke test.
 #
 # Asserts:
-#   - install-all / install-server copies the binary and assets/fonts.
-#   - Starts the installed binary with complete Leptos environment.
+#   - install-all / install-server copies vc-server and assets/fonts.
+#   - Starts a copied binary from /tmp with no LEPTOS_* environment.
 #   - Binds to a free ephemeral port (no hardcoded port).
-#   - Polls /api/control/state to a 200 OK.
-#   - Asserts JSON payload structure.
+#   - Polls /api/control/state and /api/control/runs to 200 OK.
+#   - Asserts JSON payload structure and dashboard visibility.
 #   - SIGTERM shuts down clean (no process leaks, no panics in log).
 #
 # Usage:
@@ -42,6 +42,7 @@ phase "setup temp environment"
 tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-server-smoke.XXXXXX")"
 export VIBECRAFTED_HOME="$tmp_home"
 export VIBECRAFTED_RUNTIME_HOME="$tmp_home/share"
+mkdir -p "$VIBECRAFTED_HOME/control_plane/runs"
 
 # Ensure clean teardown on exit
 cleanup() {
@@ -61,14 +62,78 @@ trap cleanup EXIT
 
 ok "temp VIBECRAFTED_HOME set to $VIBECRAFTED_HOME"
 
+cat > "$VIBECRAFTED_HOME/control_plane/runs/smoke-active.json" <<'EOF_RUN'
+{
+  "run_id": "smoke-active",
+  "state": "running",
+  "agent": "codex",
+  "skill": "implement",
+  "mode": "implement",
+  "root": "/tmp/vibecrafted-smoke",
+  "operator_session": "vibecrafted-smoke-active",
+  "latest_report": "/tmp/report-active.md",
+  "latest_transcript": "/tmp/transcript-active.log",
+  "last_error": "",
+  "updated_at": "2026-06-14T10:00:00Z",
+  "started_at": "2026-06-14T09:59:00Z",
+  "health": "active",
+  "source": "smoke",
+  "lock_present": true,
+  "exit_code": null,
+  "liveness": "running",
+  "launcher_pid": 12345,
+  "completed_at": "",
+  "session_id": "smoke-session-active",
+  "current_loop": null,
+  "total_loops": null
+}
+EOF_RUN
+
+cat > "$VIBECRAFTED_HOME/control_plane/runs/smoke-final.json" <<'EOF_RUN'
+{
+  "run_id": "smoke-final",
+  "state": "completed",
+  "agent": "claude",
+  "skill": "review",
+  "mode": "review",
+  "root": "/tmp/vibecrafted-smoke",
+  "operator_session": "vibecrafted-smoke-final",
+  "latest_report": "/tmp/report-final.md",
+  "latest_transcript": "/tmp/transcript-final.log",
+  "last_error": "",
+  "updated_at": "2026-06-14T09:00:00Z",
+  "started_at": "2026-06-14T08:59:00Z",
+  "health": "final",
+  "source": "smoke",
+  "lock_present": false,
+  "exit_code": 0,
+  "liveness": "terminal",
+  "launcher_pid": null,
+  "completed_at": "2026-06-14T09:01:00Z",
+  "session_id": "smoke-session-final",
+  "current_loop": null,
+  "total_loops": null
+}
+EOF_RUN
+
+ok "seeded control-plane run snapshots"
+
 # 2. Identify installed binary and assets
 phase "preflight checks"
 
-SERVER_BIN="$HOME/.local/bin/vibecrafted-server-web"
+SERVER_BIN="$HOME/.local/bin/vc-server"
 if [[ -f "$SERVER_BIN" ]]; then
   ok "installed binary exists: $SERVER_BIN"
 else
-  fail "installed binary missing. Run make install-all or make install-server first."
+  fail "installed vc-server binary missing. Run make install-all or make install-server first."
+  exit 1
+fi
+
+COMPAT_BIN="$HOME/.local/bin/vibecrafted-server-web"
+if [[ -e "$COMPAT_BIN" ]]; then
+  ok "compat command exists: $COMPAT_BIN"
+else
+  fail "compat command missing: $COMPAT_BIN"
   exit 1
 fi
 
@@ -93,26 +158,31 @@ else
   exit 1
 fi
 
-# 4. Start installed server with full environment
+# 4. Start copied server from /tmp with clean environment
 phase "spawn server"
 
 LOG_FILE="$tmp_home/server.log"
 PID_FILE="$tmp_home/server.pid"
+TMP_BIN="$tmp_home/vc-server"
+cp "$SERVER_BIN" "$TMP_BIN"
+chmod 0755 "$TMP_BIN"
 
 # Lift ulimit for safety
 ulimit -f unlimited
 
-env LEPTOS_OUTPUT_NAME="vibecrafted-server-web" \
-    LEPTOS_SITE_ROOT="$SITE_ROOT" \
-    LEPTOS_SITE_PKG_DIR="pkg" \
-    LEPTOS_ENV="PROD" \
-    LEPTOS_SITE_ADDR="127.0.0.1:$PORT" \
-    VIBECRAFTED_HOME="$VIBECRAFTED_HOME" \
-    "$SERVER_BIN" > "$LOG_FILE" 2>&1 < /dev/null &
+(
+  cd /tmp
+  env -i \
+      PATH="${PATH:-/usr/bin:/bin}" \
+      HOME="$HOME" \
+      VIBECRAFTED_HOME="$VIBECRAFTED_HOME" \
+      VC_SERVER_ADDR="127.0.0.1:$PORT" \
+      "$TMP_BIN" > "$LOG_FILE" 2>&1 < /dev/null
+) &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 
-ok "spawned server process (PID $SERVER_PID) on port $PORT"
+ok "spawned copied vc-server from /tmp (PID $SERVER_PID) on port $PORT without LEPTOS_* env"
 
 # 5. Poll health and assert JSON
 phase "poll and assert"
@@ -156,6 +226,34 @@ else
   exit 1
 fi
 
+if python3 -c '
+import urllib.request, json, sys
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/runs", timeout=1.0)
+data = json.loads(resp.read().decode())
+assert data["count"] == 2, data
+ids = [run["run_id"] for run in data["runs"]]
+assert ids == ["smoke-active", "smoke-final"], ids
+' >/dev/null 2>&1; then
+  ok "all-runs route returns every seeded snapshot newest-first"
+else
+  fail "all-runs route did not return the full seeded control plane"
+  cat "$LOG_FILE"
+  exit 1
+fi
+
+if python3 -c '
+import urllib.request, sys
+html = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/", timeout=1.0).read().decode()
+assert "smoke-active" in html, "dashboard missing active run"
+assert "smoke-final" in html, "dashboard missing final run"
+' >/dev/null 2>&1; then
+  ok "dashboard HTML exposes the seeded whole-control-plane runs"
+else
+  fail "dashboard HTML does not expose seeded runs"
+  cat "$LOG_FILE"
+  exit 1
+fi
+
 # 6. SIGTERM clean shutdown
 phase "shutdown verification"
 
@@ -184,6 +282,14 @@ if grep -iq "panic" "$LOG_FILE"; then
   exit 1
 else
   ok "no panics detected in log file"
+fi
+
+if grep -q "LEPTOS_OUTPUT_NAME" "$LOG_FILE"; then
+  fail "Leptos env warning detected in clean-env server log"
+  cat "$LOG_FILE"
+  exit 1
+else
+  ok "no LEPTOS_OUTPUT_NAME warning detected in clean-env server log"
 fi
 
 printf "\n%b✓%b All %s smoke tests passed.\n" "$_green" "$_reset" "$PASSES"

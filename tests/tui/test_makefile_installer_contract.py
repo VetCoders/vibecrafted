@@ -146,7 +146,7 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
 
 def test_install_all_covers_app_binaries_as_real_files() -> None:
     """install-all must own the shipped Rust binaries (voc, vc-admin, and
-    vibecrafted-server-web): built from source in release and copied into
+    vc-server): built from source in release and copied into
     ~/.local/bin as REAL files. `cargo install` is forbidden in that path — it
     is what breeds the ~/.local/bin -> ~/.cargo/bin ghost symlinks the runtime
     contract bans. The install.toml installation phase mirrors install-all
@@ -159,7 +159,9 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     assert "install-server" in install_all_block
 
     assert "APP_BINARIES := voc vc-admin" in makefile
-    assert "SERVER_BIN  := vibecrafted-server-web" in makefile
+    assert "SERVER_PACKAGE := vibecrafted-server-web" in makefile
+    assert "SERVER_BIN  := vc-server" in makefile
+    assert "SERVER_COMPAT_BIN := vibecrafted-server-web" in makefile
     assert "BIN_DIR := $(HOME)/.local/bin" in makefile
 
     app_block = makefile.split("\ninstall-app-binaries:", 1)[1].split("\nskills:", 1)[0]

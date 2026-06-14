@@ -42,8 +42,8 @@ help-dev:
 	@printf "  \033[1mhooks\033[0m     init-hooks · seed-commit-msg-hooks · commit-safe\n"
 	@printf "  \033[1mmisc\033[0m      doctor · list · update · uninstall · demo · demo-full · skill-new\n"
 	@printf "\n"
-	@printf "  \033[2minstall-all builds the Rust app/server binaries (voc, vc-admin, vibecrafted-server-web) as real files into ~/.local/bin.\033[0m\n"
-	@printf "  \033[2mvibecrafted-server is installed with install-all; use make server for a foreground dev run. RUNTIME=<horse> selects a lab runtime.\033[0m\n"
+	@printf "  \033[2minstall-all builds the Rust app/server binaries (voc, vc-admin, vc-server) as real files into ~/.local/bin.\033[0m\n"
+	@printf "  \033[2mvc-server is installed with install-all; use make server for a foreground dev run. RUNTIME=<horse> selects a lab runtime.\033[0m\n"
 	@printf "\n"
 
 vibecrafted: install
@@ -137,7 +137,7 @@ install-python-tools:
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
 # The vibecrafted-app members ship `voc` and `vc-admin`; vibecrafted-server
-# ships `vibecrafted-server-web`. Build from source in release and copy REAL
+# ships `vc-server`. Build from source in release and copy REAL
 # files. Never `cargo install` here — that breeds ~/.local/bin -> ~/.cargo/bin
 # ghost symlinks, the exact pattern the runtime contract bans in BIN.
 APP_DIR := vibecrafted-app
@@ -550,54 +550,51 @@ test-hammerspoon:
 #   GET /api/control/runs/{run_id} a single run, or 404 JSON
 #
 # The bin is built/run with the `ssr` feature (the bare `cargo build` main is a
-# hydrate stub). LEPTOS_* env is exported here because, run directly (not under
-# cargo-leptos), get_configuration(None) reads the environment, not the
-# Cargo.toml [package.metadata.leptos] block. The host linker fix
-# (-ld_classic, for Leptos' long symbol names) lives in
+# hydrate stub). vc-server constructs LeptosOptions itself, so foreground and
+# installed runs are path-independent and do not require LEPTOS_* environment.
+# The host linker fix (-ld_classic, for Leptos' long symbol names) lives in
 # vibecrafted-server/.cargo/config.toml so plain cargo works too.
 # -----------------------------------------------------------------------------
 SERVER_DIR  := vibecrafted-server
-SERVER_BIN  := vibecrafted-server-web
+SERVER_PACKAGE := vibecrafted-server-web
+SERVER_BIN  := vc-server
+SERVER_COMPAT_BIN := vibecrafted-server-web
 SERVER_ADDR ?= 127.0.0.1:3024
 VIBECRAFTED_RUNTIME_HOME ?= $(HOME)/.local/share/vibecrafted
 SERVER_INSTALL_SITE_ROOT := $(VIBECRAFTED_RUNTIME_HOME)/server/site
-LEPTOS_RUN_ENV := \
-	LEPTOS_OUTPUT_NAME=$(SERVER_BIN) \
-	LEPTOS_SITE_ROOT=target/site \
-	LEPTOS_SITE_PKG_DIR=pkg \
-	LEPTOS_ENV=DEV \
-	LEPTOS_SITE_ADDR=$(SERVER_ADDR)
 
 server-build:
-	@cd $(SERVER_DIR) && cargo build -p $(SERVER_BIN) --no-default-features --features ssr
+	@cd $(SERVER_DIR) && cargo build -p $(SERVER_PACKAGE) --no-default-features --features ssr
 
 server: server-build
 	@echo "[server] control plane: $${VIBECRAFTED_HOME:-$$HOME/.vibecrafted}/control_plane"
 	@echo "[server] listening on  http://$(SERVER_ADDR)   (Ctrl-C to stop)"
 	@echo "[server] reads: /api/control/state  /api/control/runs  /api/control/runs/{run_id}"
-	@cd $(SERVER_DIR) && env $(LEPTOS_RUN_ENV) ./target/debug/$(SERVER_BIN)
+	@cd $(SERVER_DIR) && ./target/debug/$(SERVER_PACKAGE) --addr "$(SERVER_ADDR)"
 
 server-check:
 	@cd $(SERVER_DIR) && cargo clippy -p control-core -- -D warnings
-	@cd $(SERVER_DIR) && cargo clippy -p $(SERVER_BIN) --no-default-features --features ssr -- -D warnings
+	@cd $(SERVER_DIR) && cargo clippy -p $(SERVER_PACKAGE) --no-default-features --features ssr -- -D warnings
 
 server-test:
 	@cd $(SERVER_DIR) && cargo test -p control-core
 
 install-server:
 	@command -v cargo >/dev/null 2>&1 || { \
-		echo "[server] cargo not found — install rustup (https://rustup.rs) to build $(SERVER_BIN)" >&2; \
+		echo "[server] cargo not found — install rustup (https://rustup.rs) to build $(SERVER_PACKAGE)" >&2; \
 		exit 1; \
 	}
 	@mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(SERVER_INSTALL_SITE_ROOT)"
-	@echo "[server] building release binary ($(SERVER_BIN))"
-	@ulimit -f unlimited; cd $(SERVER_DIR) && cargo build --release -p $(SERVER_BIN) --no-default-features --features ssr $(INSTALL_QUIET)
-	@rm -f "$(BIN_DIR)/$(SERVER_BIN)"
-	@install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_BIN)"
+	@echo "[server] building release package ($(SERVER_PACKAGE))"
+	@ulimit -f unlimited; cd $(SERVER_DIR) && cargo build --release -p $(SERVER_PACKAGE) --no-default-features --features ssr $(INSTALL_QUIET)
+	@rm -f "$(BIN_DIR)/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"
+	@install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"
+	@install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"
 	@echo "[server] copying public assets/fonts to $(SERVER_INSTALL_SITE_ROOT)"
-	@rm -rf "$(SERVER_INSTALL_SITE_ROOT)/*"
+	@rm -rf "$(SERVER_INSTALL_SITE_ROOT)"/*
 	@cp -R "$(SERVER_DIR)/web/public/"* "$(SERVER_INSTALL_SITE_ROOT)/"
 	@echo "[server] installed: $(SERVER_BIN) -> $(BIN_DIR) (real file)"
+	@echo "[server] compat: $(SERVER_COMPAT_BIN) -> $(BIN_DIR) (real file)"
 	@echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
 
 server-smoke:

@@ -66,7 +66,7 @@ We will install:
   - shared skills, launchers, and mirrored agent views
   - the selected runtime horse when RUNTIME=... is provided
   - the Python CLI and MCP packages through uv tool install
-  - the Rust app/server binaries (voc, vc-admin, vibecrafted-server-web) as real files in ~/.local/bin
+  - the Rust app/server binaries (voc, vc-admin, vc-server) as real files in ~/.local/bin
 """
 cmd = [
     "bash",

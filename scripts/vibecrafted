@@ -1120,9 +1120,9 @@ cmd_server() {
       fi
 
       # 3. Locate binary & site root
-      local server_bin="$HOME/.local/bin/vibecrafted-server-web"
+      local server_bin="$HOME/.local/bin/vc-server"
       if [[ ! -f "$server_bin" ]]; then
-        printf "%b✗%b vibecrafted-server-web binary not found at %s. Please run 'make install-all' or 'make install-server' first.\n" "$_red" "$_reset" "$server_bin" >&2
+        printf "%b✗%b vc-server binary not found at %s. Please run 'make install-all' or 'make install-server' first.\n" "$_red" "$_reset" "$server_bin" >&2
         return 1
       fi
 
@@ -1136,11 +1136,8 @@ cmd_server() {
       mkdir -p "$HOME/.vibecrafted/server"
       printf "Starting local control-plane viewer at http://%s:%s...\n" "$host" "$port"
       
-      nohup env LEPTOS_OUTPUT_NAME="vibecrafted-server-web" \
-                LEPTOS_SITE_ROOT="$site_root" \
-                LEPTOS_SITE_PKG_DIR="pkg" \
-                LEPTOS_ENV="PROD" \
-                LEPTOS_SITE_ADDR="$host:$port" \
+      nohup env VC_SERVER_ADDR="$host:$port" \
+                VC_SERVER_SITE_ROOT="$site_root" \
                 VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}" \
                 "$server_bin" > "$HOME/.vibecrafted/server/server.log" 2>&1 < /dev/null &
       local server_pid=$!
@@ -1298,7 +1295,7 @@ EOF
       printf "Checking vibecrafted-server installation and runtime health...\n"
 
       # 1. Binary check
-      local server_bin="$HOME/.local/bin/vibecrafted-server-web"
+      local server_bin="$HOME/.local/bin/vc-server"
       if [[ -f "$server_bin" ]]; then
         if [[ -x "$server_bin" ]]; then
           printf "  [%b✓%b] Binary present and executable at %s\n" "$_green" "$_reset" "$server_bin"
@@ -1309,6 +1306,12 @@ EOF
       else
         printf "  [%b✗%b] Binary missing at %s\n" "$_red" "$_reset" "$server_bin"
         has_errors=1
+      fi
+      local compat_server_bin="$HOME/.local/bin/vibecrafted-server-web"
+      if [[ -f "$compat_server_bin" ]]; then
+        printf "  [%b✓%b] Compatibility binary present at %s\n" "$_green" "$_reset" "$compat_server_bin"
+      else
+        printf "  [%b!%b] Compatibility binary missing at %s\n" "$_yellow" "$_reset" "$compat_server_bin"
       fi
 
       # 2. Site root & Fonts check
