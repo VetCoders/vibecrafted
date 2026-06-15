@@ -110,20 +110,24 @@ install-auto: init-hooks
 # installer's [1/4..4/4] storytelling is the only on-screen output.
 # VERBOSE=1 shows the full bazaar.
 VERBOSE ?= 0
+INSTALL_LOG := $(HOME)/.vibecrafted/install.log
+INSTALL_STEP := scripts/install-step.sh
 ifeq ($(VERBOSE),1)
 INSTALL_QUIET :=
 else
-INSTALL_QUIET := >> "$(HOME)/.vibecrafted/install.log" 2>&1
+INSTALL_QUIET := >> "$(INSTALL_LOG)" 2>&1
 endif
 
-install-all: init-hooks
-	@bash scripts/install-foundations.sh $(INSTALL_QUIET)
-	@bash runtime/scripts/install-frontier-config.sh --source "$(SOURCE)" $(INSTALL_QUIET) || printf '[warn] Frontier config skipped (non-fatal)\n'
-	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --compact --non-interactive --mirror
-	@bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes $(INSTALL_QUIET)
-	@$(MAKE) --no-print-directory install-python-tools
-	@$(MAKE) --no-print-directory install-app-binaries
-	@$(MAKE) --no-print-directory install-server
+install-all:
+	@mkdir -p "$(HOME)/.vibecrafted"
+	@: > "$(INSTALL_LOG)"
+	@printf "Installing Vibecrafted\n"
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "foundations" -- bash -e -c 'make --no-print-directory init-hooks; bash scripts/install-foundations.sh'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "frontier config" -- bash -c 'bash runtime/scripts/install-frontier-config.sh --source "$$1" || printf "[warn] Frontier config skipped (non-fatal)\n"' _ "$(SOURCE)"
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "skills and launchers" -- bash -e -c '$(PYTHON) $(INSTALLER) install --source "$$1" --compact --non-interactive --mirror; make --no-print-directory install-python-tools' _ "$(SOURCE)"
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "runtime tools" -- bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app and server" -- bash -e -c 'make --no-print-directory install-app-binaries; make --no-print-directory install-server'
+	@printf "\nVibecrafted is ready.\n\nStart here:\n  vc-start\n\nHealth:\n  vibecrafted doctor\n\nLog:\n  ~/.vibecrafted/install.log\n"
 
 install-python-tools:
 	@if ! command -v uv >/dev/null 2>&1; then \
@@ -138,8 +142,8 @@ install-python-tools:
 # install-all owns every binary the product ships into BIN (~/.local/bin).
 # The vibecrafted-app members ship `voc` and `vc-admin`; vibecrafted-server
 # ships `vc-server`. Build from source in release and copy REAL
-# files. Never `cargo install` here — that breeds ~/.local/bin -> ~/.cargo/bin
-# ghost symlinks, the exact pattern the runtime contract bans in BIN.
+# files. Never `cargo install` here — that creates ~/.local/bin -> ~/.cargo/bin
+# symlink drift, the exact pattern the runtime contract bans in BIN.
 APP_DIR := vibecrafted-app
 APP_BINARIES := voc vc-admin
 BIN_DIR := $(HOME)/.local/bin
@@ -156,7 +160,7 @@ install-app-binaries:
 		rm -f "$(BIN_DIR)/$$bin"; \
 		install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"; \
 	done
-	@echo "[app] installed: $(APP_BINARIES) -> $(BIN_DIR) (real files, no cargo ghosts)"
+	@echo "[app] installed: $(APP_BINARIES) -> $(BIN_DIR)"
 
 skills:
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --non-interactive

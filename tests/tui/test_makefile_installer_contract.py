@@ -111,6 +111,48 @@ def test_install_all_paths_do_not_install_shell_helpers_by_default() -> None:
     assert "--write-shell-rc" not in installation_phase
 
 
+def test_install_all_default_output_is_quiet_and_points_to_vc_start() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    step_runner = (REPO_ROOT / "scripts" / "install-step.sh").read_text(
+        encoding="utf-8"
+    )
+
+    install_all_block = makefile.split("install-all:", 1)[1].split("\nskills:", 1)[0]
+    receipt_start = install_all_block.index("Vibecrafted is ready.")
+    vc_start_index = install_all_block.index("vc-start")
+    doctor_index = install_all_block.index("vibecrafted doctor")
+    log_index = install_all_block.index("~/.vibecrafted/install.log")
+
+    assert 'printf "Installing Vibecrafted\\n"' in install_all_block
+    for label in (
+        "foundations",
+        "frontier config",
+        "skills and launchers",
+        "runtime tools",
+        "app and server",
+    ):
+        assert f'$(INSTALL_STEP) "{label}" --' in install_all_block
+
+    assert receipt_start < vc_start_index < doctor_index < log_index
+    assert "VIBECRAFTED_INSTALL_LOG" in install_all_block
+    assert ': > "$(INSTALL_LOG)"' in install_all_block
+    assert "VERBOSE ?= 0" in makefile
+    assert 'tee -a "$log_path"' in step_runner
+    assert "Install failed during: %s" in step_runner
+    assert "vibecrafted doctor" in step_runner
+
+
+def test_install_all_user_facing_output_has_no_ghost_anxiety_copy() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    output_lines = [
+        line for line in makefile.splitlines() if "echo " in line or "printf " in line
+    ]
+    output_text = "\n".join(output_lines).lower()
+
+    for forbidden in ("cargo " + "ghosts", "ghost " + "symlink", "cargo-" + "ghost"):
+        assert forbidden not in output_text
+
+
 def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
     """install-all owns Python console scripts through uv tool install.
 
@@ -128,7 +170,7 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
         "\n# install-all owns", 1
     )[0]
 
-    assert "$(MAKE) --no-print-directory install-python-tools" in install_all_block
+    assert "make --no-print-directory install-python-tools" in install_all_block
     assert (
         'uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-core"'
     ) in python_tools_block
@@ -147,10 +189,10 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
 def test_install_all_covers_app_binaries_as_real_files() -> None:
     """install-all must own the shipped Rust binaries (voc, vc-admin, and
     vc-server): built from source in release and copied into
-    ~/.local/bin as REAL files. `cargo install` is forbidden in that path — it
-    is what breeds the ~/.local/bin -> ~/.cargo/bin ghost symlinks the runtime
-    contract bans. The install.toml installation phase mirrors install-all
-    line-by-line, so it must carry the same steps."""
+    ~/.local/bin as REAL files. `cargo install` is forbidden in that path because
+    it can create ~/.local/bin -> ~/.cargo/bin symlink drift. The install.toml
+    installation phase mirrors install-all line-by-line, so it must carry the
+    same steps."""
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     manifest = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
 
@@ -175,11 +217,11 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     assert "make --no-print-directory install-server" in manifest
 
 
-def test_bin_dir_owned_entries_are_never_cargo_ghost_symlinks() -> None:
+def test_bin_dir_owned_entries_are_never_cargo_owned_symlink_drift() -> None:
     """Runtime contract: BIN (~/.local/bin) holds real files or symlinks into
     the vibecrafted runtime — never a symlink resolving into ~/.cargo/bin.
-    A cargo ghost is a side-installed binary the canonical installer does not
-    own; the machine then drifts the moment `cargo install` re-runs."""
+    A cargo-owned symlink is a side-installed binary the canonical installer
+    does not own; the machine then drifts the moment `cargo install` re-runs."""
     bin_dir = Path.home() / ".local" / "bin"
     if not bin_dir.is_dir():
         pytest.skip("no ~/.local/bin on this machine")
@@ -199,7 +241,7 @@ def test_bin_dir_owned_entries_are_never_cargo_ghost_symlinks() -> None:
             offenders.append(f"{entry.name} -> {resolved}")
 
     assert offenders == [], (
-        "cargo-ghost symlinks in ~/.local/bin (run `make install-all` to "
+        "unexpected cargo-owned symlinks in ~/.local/bin (run `make install-all` to "
         f"install real files): {offenders}"
     )
 
@@ -400,4 +442,4 @@ def test_install_server_is_in_install_all() -> None:
     assert "install-server:" in text
 
     install_all_block = text.split("install-all:", 1)[1].split("\nskills:", 1)[0]
-    assert "$(MAKE) --no-print-directory install-server" in install_all_block
+    assert "make --no-print-directory install-server" in install_all_block
