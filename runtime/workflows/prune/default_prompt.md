@@ -1,200 +1,176 @@
 ---
 Description: >-
-  Repository health / prune discovery run. Treat the repository investigation as
-  real and actionable. The tooling proof dimension is Loctree MCP + loct CLI
-  exercised on this repository, but do not describe the workflow itself as a
-  test-only run in the final report.
+  Repository health / prune ACTION run. The repository investigation is real and
+  the cuts are real. Loctree MCP + loct CLI are the sensory layer exercised on
+  this repository. This is not a test-only run and not a report-only run.
 
 Task target: $REPO_ROOT / current repository.
 
 Tooling proof target: loctree-mcp and loct CLI.
 
 Key distinction:
-  - Task target = the repository to investigate.
+  - Task target = the repository to investigate AND cut.
   - Tooling proof target = the Loctree tools to exercise while investigating.
-  - Do not interpret loctree-mcp or loct CLI as repository scope unless the
-    current repo actually contains those surfaces.
+  - Do not treat loctree-mcp / loct CLI as repository scope unless the current
+    repo actually contains those surfaces.
 
-Mode: Find, classify, prove, scaffold, and cut only verified dead surfaces.
-  Prefer discovery, evidence, classification, and vc-scaffold-ready artifacts.
-  Commit only removals that are proven safe with zero live references and low
-  blast radius.
+Mode: DISCOVER -> PROVE -> CUT -> COMMIT.
+  Discovery and classification are means, not the deliverable. The deliverable is
+  real removals of proven-dead surface, committed — or a proven "nothing to prune".
 ---
 
-Task:
-Investigate the repository for unhealthy, dead, ambiguous, risky, or forgotten
-surfaces.
+# ACTION DIRECTIVES — read first, obey literally
 
-Use Loctree as the primary sensory layer:
+You are not here to produce a findings report. You are here to **cut proven-dead
+weight out of the repository and commit it.**
 
-- `loct context --full --markdown`
-- `loct doctor`
-- `loct env-truth`
-- `loct follow all`
-- `loct health`
-- `loct suppressions`
-- `loct diff --since <rev>`
-- `loct report`
-- `loct focus <dir>`
-- `loct slice <file>`
-- `loct impact <file>`
-- `loct find --literal <text>`
-- `loct occurrences <id>`
-- `loct body <symbol>`
-- `loct dist <entrypoint-or-scope>` when available
-- `loct blame <file-or-symbol>` when useful
+This run has exactly TWO acceptable terminal states:
 
-If a Loctree command is missing or fails, report the command, failure, and
-fallback in the journal. Use raw text search only as a local fallback after
-Loctree evidence is unavailable or insufficient.
+1. **CUTS LANDED** — at least one commit that removes proven-dead surface
+   (`git rm` of files/dirs, or deletion of dead symbols/exports), each with
+   evidence, gates green.
+2. **NOTHING TO PRUNE** — an explicit verdict that no removal is safe this run,
+   with per-candidate evidence showing _why each candidate was kept_ (live ref,
+   hidden gem, insufficient proof).
 
-Look for:
+A discovery report that lists deletable surfaces but does **not** cut them is a
+**FAILED run**. If something is provably dead, you delete it this run. Do not
+defer obvious mechanical cleanup to "a follow-up". Do not leave the tree messy.
 
-1. Dead parrots / orphaned surfaces
-   - dead code,
-   - unused tools,
-   - unused scripts,
-   - unreachable commands,
-   - stale entrypoints,
-   - abandoned generated files,
-   - orphaned docs that describe removed behavior.
+You may be bold when evidence is strong: cut whole dead vertical slices, not just
+symbolic leaves. Boldness is earned by proof, never by vibes.
 
-2. Silly exports
-   - self-reexports,
-   - pointless reexports,
-   - exports with no runtime or test usage,
-   - public surfaces that are cargo-cult leftovers,
-   - bootstrapping/bottle/component/function surfaces without real callers.
+# The cut loop (repeat until the tree is clean or only unsafe candidates remain)
 
-3. Missing handlers / missing callers
-   - declared commands without handlers,
-   - handlers unreachable from runtime,
-   - routes/actions/events without callers,
-   - UI actions without target/action mapping,
-   - config keys with no consumer,
-   - consumers of config keys that are never produced.
+```
+discover  -> find candidates with Loctree
+prove     -> zero live references + runtime-cone + hidden-gem check
+cut       -> git rm / delete dead symbols
+verify    -> build/test/lint/semgrep green on the cut
+commit    -> scoped, canonical message (1-2 commits per run, not dozens)
+```
 
-4. Twins / high semantic similarity
-   - duplicated functions,
-   - near-identical modules,
-   - parallel implementations of the same concept,
-   - old/new implementations living side by side.
+## Loctree first — the real command deck (loct 0.13.0-dev)
 
-5. Cycles and race-condition risks
-   - dependency cycles,
-   - runtime control-plane cycles,
-   - async/state races,
-   - stale state vs runtime truth mismatches,
-   - lock/heartbeat/pid/state divergence.
+Loctree is the sensory layer. Grep is a magnifier of last resort, never the plan.
 
-6. Crowds / ambiguity hotspots
-   - symbols with ambiguous naming,
-   - too many similarly named commands/components,
-   - overloaded concepts,
-   - surfaces likely to confuse agents or humans.
+```bash
+loct context --full --markdown      # repo map + risk + next moves (read it whole)
+loct doctor                         # snapshot identity/health; record it
+loct health                         # aggregate dead/twins/cycles
+loct dead                           # unused exports / dead code
+loct twins                          # dead parrots (0 imports) + duplicate exports
+loct cycles                         # circular import chains
+loct follow all                     # dead/cycles/twins/hotspots/trace/commands/events
+loct suppressions                   # silencer inventory (allow/nosemgrep/ts-ignore/noqa/unsafe)
+loct env-truth                      # env declaration drift
+loct hotspots                       # import-frequency hubs (what must NOT break)
+loct focus <dir>                    # module ownership + internal/external edges
+loct slice <file>                   # deps + consumers (before edit)
+loct impact <file>                  # blast radius (before delete)
+loct query who-imports <file>       # reverse deps
+loct find --literal <text>          # exact identifier-boundary scan over indexed source
+loct occurrences <identifier>       # literal exact-identifier truth scan
+loct body <symbol>                  # bounded source body/range of a symbol
+loct diff --since <rev>             # drift since a base
+```
 
-7. Shadows
-   - code that is technically called but shadowed by a newer path,
-   - fallback paths that silently dominate primary paths,
-   - old implementations masked by wrappers,
-   - features present in code but unreachable in product flow.
+Loctree's primary power is the structural map and its embedded findings — `dead`,
+`twins`, `cycles`, `impact`, `slice`, `focus`, `hotspots`, `suppressions`,
+`env-truth`. Lead with those; they are what loctree is for. The literal trio
+(`loct find --literal`, `loct occurrences`, `loct body`) came last, out of
+necessity: so a raw identifier check stays _inside_ the map instead of dropping to
+grep. Each literal hit still carries map context — `occurrence_kind` (identifier
+vs string vs comment vs ...), symbol identity, file role, authority — which for
+prune is what separates a real call from a comment/string/doc mention (DELETE-NOW
+vs KEEP). It is also the completeness backstop where the edge-graph undercounts
+cross-module imports. Use grep only when `loct` itself is unavailable, and record
+that in the journal.
 
-8. Linter silencers and policy exceptions
-   Catalog, do not blindly remove:
-   - Rust clippy `#[allow(...)]`,
-   - eslint disable comments,
-   - TypeScript `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`,
-   - Python `# noqa`, `# type: ignore`, pylint disables,
-   - ShellCheck disables,
-   - Semgrep `nosemgrep`,
-   - skipped/ignored/theater tests,
-   - any local "ignore this warning" mechanism.
-     Classify each as justified, stale, dangerous, test theater, forgotten gem, or
-     follow-up.
+## PROOF GATE — pass this before every `git rm`
 
-9. Monoliths
-   - 1500+ LOC files,
-   - files with too many responsibilities,
-   - modules that repeatedly become collision hotspots,
-   - likely vc-prune/vc-scaffold follow-up candidates.
+A deletion is allowed ONLY when all hold:
 
-10. Forgotten local state
-    Inspect read-only:
-    - local branches,
-    - stashes,
-    - worktrees,
-    - untracked/ignored relevant files,
-    - hidden WIP surfaces.
-      Do not delete branches, stashes, or worktrees without explicit operator
-      approval.
+1. **Zero live references** — confirmed by `loct dead`/`loct twins`/`loct impact`
+   **AND cross-checked with `loct find --literal <symbol>`**.
+   ⚠️ The structural edge-graph (`impact`/`slice`/`query who-imports`) can
+   **undercount** consumers in some languages — notably Rust `use crate::a::b::Sym`
+   fully-qualified imports resolve through the module tree, so `impact = 0` is NOT
+   sufficient on its own. The **literal scan is the authoritative layer** for
+   "is this name referenced anywhere". Trust `find --literal`; verify `impact`.
+2. **Outside the runtime cone** — not reachable from a product entrypoint, CLI
+   command, route, event handler, build/release/installer path, generated-artifact
+   path, or a test that genuinely proves runtime behavior.
+3. **Not a hidden gem** — dormant-but-valuable code is preserved, not pruned.
+4. **Not dynamically loaded** — or the dynamic-loading exception is explained.
 
-11. Hidden gems
-    - useful but unreachable code,
-    - dormant capabilities,
-    - tooling that could become a robust, smart, secure, or healing extension of
-      the living runtime.
-      Do not prune hidden gems by default. Classify them separately as preserve,
-      scaffold, or revive.
+If any check is uncertain, the verdict is `VERIFY-FIRST` or `SCAFFOLD`, not delete.
 
-Verdicts:
+## What to hunt (categories)
 
-- `DELETE-NOW`: zero live references, low blast radius, no hidden-gem signal.
-- `ARCHIVE-THEN-DELETE`: useful context exists, but runtime surface is dead.
-- `REVIVE`: dormant capability should be wired into runtime.
-- `SCAFFOLD`: real finding, too broad/risky for prune.
-- `VERIFY-FIRST`: evidence is insufficient.
-- `KEEP-RUNTIME`: live product/build/test/release surface.
-- `KEEP-BUILD`: needed for packaging, CI, generated artifacts, or release.
-- `FORGOTTEN-GEM`: valuable dormant code; preserve and ask operator.
+1. Dead parrots / orphans — dead code, unused tools/scripts, unreachable commands,
+   stale entrypoints, abandoned generated files, docs describing removed behavior.
+2. Silly exports — self/pointless reexports, exports with no runtime or test use,
+   cargo-cult public surfaces, components/functions without real callers.
+3. Missing handlers / callers — declared commands without handlers, unreachable
+   handlers, routes/actions/events without callers, UI actions without
+   target/action mapping, config keys with no consumer (and vice versa).
+4. Twins — duplicated functions, near-identical modules, old/new side by side.
+5. Cycles & races — dependency/control-plane cycles, async/state races, stale
+   state vs runtime truth, lock/heartbeat/pid divergence.
+6. Crowds — ambiguous names, too many similar commands/components, overloaded
+   concepts that confuse humans or agents.
+7. Shadows — code called but shadowed by a newer path, fallback paths silently
+   dominating primary, old impls masked by wrappers, features unreachable in flow.
+8. Linter silencers — catalog via `loct suppressions`; classify each as justified,
+   stale, dangerous, test-theater, forgotten-gem, or follow-up. Do not blind-remove.
+9. Monoliths — 1500+ LOC / too many responsibilities / collision hotspots →
+   usually `SCAFFOLD`, not immediate deletion.
+10. Forgotten local state — branches, stashes, worktrees, untracked WIP. Inspect
+    READ-ONLY. NEVER delete branches/stashes/worktrees without operator approval.
+11. Hidden gems — useful-but-unreachable code, dormant capabilities. Preserve;
+    classify as preserve / scaffold / revive.
 
-Rules:
+## Verdicts
 
-- Do not remove anything based on vibes.
-- Prove every prune candidate with Loctree evidence where possible.
-- Before deleting, confirm zero live references or explain residual risk.
-- Treat silencers, monoliths, cycles, crowds, shadows, and hidden gems primarily
-  as findings unless a safe mechanical cleanup is obvious.
-- Be bold when evidence is strong: cut whole dead vertical slices rather than
-  trimming symbolic leaves.
-- Keep changes scoped and small.
-- Commit only verified removals.
-- Do not delete branches, stashes, worktrees, or hidden WIP.
-- Do not push. Push is an operator button.
-- If the repo is dirty at start, report it and avoid sweeping unrelated WIP.
-- Never use `--no-verify`.
+`DELETE-NOW` · `ARCHIVE-THEN-DELETE` · `REVIVE` · `SCAFFOLD` · `VERIFY-FIRST` ·
+`KEEP-RUNTIME` · `KEEP-BUILD` · `FORGOTTEN-GEM`.
 
-Report location:
-Append the investigation journal to:
+`DELETE-NOW` and small `ARCHIVE-THEN-DELETE` get cut THIS run. `FORGOTTEN-GEM` is
+**never auto-deleted** — preserve and surface to the operator.
 
-`$VIBECRAFTED_HOME/artifacts/<org>/<repo>/YYYY_MMDD/prune/reports/${RUN_ID}_JOURNAL.md`
+## Hard rules
 
-If RUN_ID or paths are unavailable, create the closest equivalent under the
-current Vibecrafted artifacts tree and report the exact path used.
+- No deletion on vibes. Prove every cut.
+- `impact = 0` alone never justifies a delete — cross-check `find --literal`.
+- Never delete a hidden gem, branch, stash, worktree, or hidden WIP.
+- Never delete live build/release/test scaffolding just because product code does
+  not import it.
+- If the repo is dirty at start, record it and do NOT sweep unrelated WIP into a
+  prune commit (commit your cuts by explicit pathspec).
+- Never `--no-verify`. Never `git push` — push is an operator button.
+- Commit canonical: `[<agent>/vc-prune] <type>(prune): <subject>` with an
+  explanatory body. One coherent vertical deletion per commit; 1-2 commits/run.
 
-Prepare vc-scaffold-ready artifacts:
-Create actionable follow-up artifacts suitable for dispatch to the vc-agents
-fleet. Group findings into small cuts, not one giant "fix everything" task.
+## Journal (the byproduct, not the product)
 
-Expected artifact shape:
+Append ONE journal — cuts are the deliverable, the journal documents them:
 
-- reports/${RUN_ID}\_JOURNAL.md
-- findings/dead-parrots.md
-- findings/silly-exports.md
-- findings/missing-handlers-callers.md
-- findings/twins.md
-- findings/cycles-races.md
-- findings/crowds-shadows.md
-- findings/linter-silencers.md
-- findings/monoliths.md
-- findings/forgotten-local-state.md
-- findings/hidden-gems.md
-- scaffold/README.md
-- scaffold/cuts/\*.md
+`$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/prune/reports/${RUN_ID}_JOURNAL.md`
 
-Final report:
-Include repository inspected, branch/HEAD/dirty state at start, Loctree MCP
-evidence if available, loct CLI evidence, Loctree failures/fallbacks,
-candidates found, candidates removed, candidates intentionally kept, hidden gems
-worth preserving/reviving, branches/stashes/worktrees observed, artifacts
-written, commands/evidence used, and commit SHA(s), files changed, deletion
-count, and blast-radius evidence if any commit was made.
+(If RUN_ID/paths are unavailable, use the closest equivalent under the current
+Vibecrafted artifacts tree and report the exact path used.)
+
+The journal must record, in-line (sections, not a dozen separate files):
+
+- repo inspected; branch / HEAD / dirty state at start
+- loctree-mcp + loct CLI evidence (commands run + key output); any failures/fallbacks
+- candidates found, grouped by category, each with its verdict + evidence
+- **candidates CUT**: commit SHA(s), files changed, deletion count, blast-radius proof
+- candidates kept (and why) — especially every `FORGOTTEN-GEM`
+- branches / stashes / worktrees observed (read-only)
+- `SCAFFOLD` follow-ups worth a future cut (named, small, fleet-executable)
+- if no cut was safe: "NOTHING TO PRUNE" + per-candidate keep-evidence
+
+A run that ends without either committed cuts or a proven "nothing to prune" is
+not finished.
