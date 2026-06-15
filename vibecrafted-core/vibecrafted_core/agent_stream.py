@@ -430,9 +430,28 @@ class AgentStreamParser:
             return f"\x1b[31m[{stamp()} error] {event.get('message') or event.get('error') or 'unknown'}\x1b[0m\n"
         if event_type == "result":
             stats = event.get("stats") or {}
-            if isinstance(stats, dict):
-                self._record_usage(stats)
-            return f"\n\x1b[32m[{stamp()}] {event.get('status') or 'done'}\x1b[0m\n"
+            status_line = (
+                f"\n\x1b[32m[{stamp()}] {event.get('status') or 'done'}\x1b[0m\n"
+            )
+            if not isinstance(stats, dict):
+                return status_line
+            self._record_usage(stats)
+            input_tokens = _as_int(stats.get("input_tokens"))
+            output_tokens = _as_int(stats.get("output_tokens"))
+            # Render the human-readable token line (same shape as codex/claude)
+            # so the regex-based token extractor in spawn.py picks gemini usage
+            # up from the transcript; without it research-swarm meta lands at 0.
+            if input_tokens or output_tokens:
+                cached = stats.get("cached_input_tokens") or stats.get(
+                    "cache_read_input_tokens"
+                )
+                cached_fragment = f" ({_as_int(cached)} cached)" if cached else ""
+                tokens_line = (
+                    f"\x1b[2m[{stamp()}] tokens: {input_tokens} in"
+                    f"{cached_fragment} / {output_tokens} out\x1b[0m\n"
+                )
+                return tokens_line + status_line
+            return status_line
         return ""
 
     def _format_junie_event(self, event: dict[str, Any]) -> str:

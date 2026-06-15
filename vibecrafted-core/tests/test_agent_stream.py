@@ -82,6 +82,18 @@ def test_agent_stream_parser_extracts_gemini_session_stats_and_text() -> None:
     assert parser.model_id == "gemini-pro"
     assert parser.tokens_input == 12
     assert parser.tokens_output == 7
+    # Regression: the result event MUST also render a human-readable token line
+    # in TOKEN_PATTERN shape, so the regex token extractor used by the
+    # research-swarm meta writer (spawn.py) recovers gemini usage from the
+    # transcript instead of landing on 0 / "unknown".
+    from vibecrafted_core.spawn import _extract_tokens
+
+    assert "tokens: 12 in" in text
+    assert "7 out" in text
+    extracted = _extract_tokens(text)
+    assert extracted["input"] == 12
+    assert extracted["output"] == 7
+    assert extracted["total"] == 19
 
 
 def test_agent_stream_parser_renders_grok_thought_text_and_session() -> None:
