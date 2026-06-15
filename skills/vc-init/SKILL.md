@@ -1,7 +1,13 @@
 ---
 name: vc-init
-version: 4.4.0
-description: "Bootstrap repo truth with Loctree, AICX intent, security, runtime, and stabilization context."
+version: 5.0.0
+description: >
+  Technical due diligence at the start of every repo session — the entrypoint
+  to all repo work, like reading CLAUDE.md. Before touching anything, see the
+  asset as it IS: materialize the Loctree context atlas and READ IT TO THE END,
+  recover intent (AICX), verify ground truth (git/security), and grade the risk.
+  Non-pipeline; runs every session. Trigger: "init", "initialize", "bootstrap",
+  "daj kontekst", "zainicjuj", "przygotuj agenta", "start fresh with context".
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
@@ -26,254 +32,115 @@ dogfooding: "required for repo-impacting work"
 
 # vc-init — Technical Due Diligence
 
-## Operator Entry
+Due diligence is the investor's move: before you commit capital to an asset, you
+investigate it on evidence — surface hidden liabilities, verify the pitch, grade
+the risk — so the decision is priced, not hoped. Here the pitch is the README and
+the founder's belief that it works; the asset is the live code. `vc-init` is that
+investigation at session entry: see what the code IS now, recover why it became
+that, find what is taped together, and grade the risk — so every later move is
+priced. It is **read-only orientation**, the entrypoint to all repo work.
 
-### Living Tree / Worktree Rule
+`vc-init` (DD on the asset, at entry) and `vc-dou` (DD on the product, at exit,
+from the buyer's frame) are the same discipline at the two ends.
 
-This workflow runs in the operator's current checkout and current branch. Do not create, switch to, or move execution into a git worktree unless the operator explicitly asks for a worktree in this prompt. Generic words like "isolate", "parallel", or "clean branch" are not enough. Re-read files before editing, adapt to concurrent changes, and report a substrate failure if the current tree is too poisoned to continue safely.
+## [HARD GATE] — materialize the atlas and READ IT TO THE END
 
-See [Living Tree Rule](../LIVING_TREE_RULE.md).
+The cheapest, fastest recon that exists is the Loctree context atlas read whole —
+empirically far cheaper than a recon agent and instant. Agents under-read; this
+gate exists because reading cannot be skipped.
 
-## Canonical Structural Gate
+1. **Materialize** the atlas: MCP `context()` (or `loct context`). It writes
+   `.loctree/context-atlas/` — a `manifest.md` plus cards.
+2. **Read `manifest.md`** — it is the reading path (per-card `why` +
+   `saves-you-from`) and the completeness rule.
+3. **Read the cards to the end, along the path.** The manifest's own bar:
+   a repo-level answer is INCOMPLETE until `00-core-map.md` (synthesis: identity,
+   risk, authority, safe commands), `01-structural-map.md` (files/symbols/
+   imports/consumers), and `02-runtime-map.md` (runtime/env/reachability) are
+   read. Also read `05-risk-register.md` (hotspots/fan-in/health). Cards are
+   separate files precisely so none overflows — read each whole.
 
-`vc-init` is the orientation procedure every other repo-bound workflow consumes.
-It does not recurse into another init pass; it produces the repo truth that
-unblocks `vc-workflow`, `vc-marbles`, `vc-review`, `vc-dou`, `vc-release`, and
-delegated agent work.
+Do NOT stop at the first card or the first screen. The synthesis and the risk
+register are distinct cards; a partial read is a blind start. You have not run
+init until the completeness bar is met.
 
-`Loctree:loctree` is default for this procedure. Start from structural truth,
-not README claims: repo-view, focus, slice, impact, find, and follow as relevant.
-Use it to produce or refresh the Code-Derived Application Map before tests,
-lint, Semgrep, release checks, docs comparison, or intent classification.
+CLI fallback when MCP is unavailable: `loct context --full --markdown` and read
+the WHOLE pack (its synthesis is at the end — read past the tables).
 
-The point is to find the hooks: load-bearing hubs, twins, dead code, drift,
-runtime entrypoints, and blast-radius traps. If Loctree MCP is unavailable,
-declare the degradation and fall back to `loct` CLI or manual tracing; do not
-pretend grep-only discovery is the default map.
+## Scope drill-down — same budget, concentrated
 
-Standard launcher (`vibecrafted start` / `vc-start`, then `vc-<workflow> <agent> [--prompt|--file ...]`).
-`vc-init` usually needs no extra task input — omit `--file`/`--prompt` when not
-needed. Launches in native interactive mode, not headless `-p` / `exec`.
+The whole-repo atlas is recency-weighted on a fixed ~800-line budget, so stale or
+peripheral subsystems get cut. Before working inside a specific subsystem X, read
+its scoped pack — this is not narrowing, it is _deeper_ coverage of X at the same
+cost:
 
 ```bash
-vibecrafted init claude
-vc-init codex
-vibecrafted init gemini --prompt 'Bootstrap context for the payments module'
+loct context --scope 'path:<X>' --task '<what you are doing>' --markdown
+# pre-baked shelf, when present:
+cat .loctree/context/scopes/path/<X>/context-compact.md
 ```
 
-Foundation deps (loaded with framework): `vc-loctree`, `vc-aicx`.
-
-> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 is the answer for the failure of vibe coding stuck in
-> the 80/20 ↔ 20/80 trap. See [MANIFESTO_EN.md](https://raw.githubusercontent.com/VetCoders/vibecrafted/refs/heads/main/docs/runtime/MANIFESTO_EN.md).
-> "Not hating on vibe coding. It got you to launch... but founders who built in
-> a weekend with Cursor are stuck. Can't close enterprise deals. Can't pass
-> security review. Their Stripe integration works until it doesn't."
-
-Init is **Technical Due Diligence**. We are here to stabilize. Acting without a
-complete initial overview on a vibe-coded codebase that overgrew half of Google's
-login agent in complexity is a quick way to catastrophic failure.
-
-We apply the VetCoders Axioms: **Perception over memory** and **Intentions
-retrieval over RAG**. We don't blindly load a million tokens of historical
-context — we see what the code is _now_ and find what's broken on the critical
-path before touching a line.
-
-## Repository Work Doctrine
-
-For repository work, start with Loctree as the map: use `loct context`,
-`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
-search. Use AICX for intent and session context. Use rg/grep as fallback or
-local magnifier, not as a replacement for structural mapping. If Loctree fails
-or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
-
-## Pipeline Position
-
-Init is the first important action in every session. The quality of the work
-done here affects everything that follows.
-
-## When To Use
-
-Execute at the start of every session, **before any implementation work**:
-
-- **Cold start** — first session on a repo (zero prior context)
-- **Resume after break** — stale context after 24+ hours away
-- **Subagent delegation** — agents inherit structured context
-- **Structural drift** — major changes by others since last session
-
-If tempted to skip init because "it's a small task" — that is exactly when init
-prevents the most damage.
-
----
+Reading the right scoped pill recovers exactly the surfaces the whole-repo atlas
+dropped — at ~12s and near-zero tokens, instead of dispatching a recon agent.
 
 ## The Triad of Diligence
 
-### Sense 1 — Intentions (`aicx intents` retrieval)
+### Perception — over memory
 
-Pull historical context from previous AI sessions. We seek the _why_, not a blind
-dump of _how_:
+The atlas is primary perception. Read authority labels before trusting a claim:
+`repo_verified` (snapshot fact) > `loctree_derived` (analyzer inference) >
+`aicx_operator` / `aicx_agent` (prior intent/outcome) > `aicx_failure` (a path
+that already failed — don't repeat) > `semantic_guess` (heuristic — verify) >
+`stale_or_unknown` (re-check). Drill with `slice` (before edit), `impact`
+(before delete), `find --literal` / `occurrences` / `body` (reference truth),
+`follow` (dead/cycles/twins/hotspots). Pass `project=` explicitly per repo — the
+MCP default is not your cwd.
 
-- What was the original intention behind the architecture?
-- What duct-tape was applied late at night to "just make it work"?
+### Intentions — retrieval, not RAG
 
-**Discipline:** AICX is an intention-retrieval engine, not a blind RAG cannon.
-Retrieve the context of decisions, then verify their current truth in Sense 2.
+`aicx intents -p <project>` + `aicx_search`/`aicx_steer`: recover _why_ the
+architecture is shaped this way and what duct-tape was applied late at night.
+Retrieve the decision context, then verify its current truth against perception.
 
-You have access to `aicx` (CLI) and `aicx-mcp` (stdio + streamable-http). The
-HTTP mode enables session retrieval from remote sources (other workstations,
-remote agents) — do not rely only on local retrieval if a remote `aicx-mcp`
-endpoint is configured.
+### Ground truth — over intuition
 
-Key MCP tools: `aicx_rank` (rank chunks by quality), `aicx_search` (fuzzy search
-with Polish diacritics normalization), `aicx_steer` (frontmatter-filtered
-retrieval by run_id/prompt_id/agent/kind/project/date).
+- Git history: `zsh -ic repo-full` (or `git log --graph -n 15` + `git status -sb`).
+- Read `.claude/CLAUDE.md` / `.codex/AGENTS.md` / `AGENTS.md`; if a config
+  contradicts the code, trust the code.
+- Due-diligence red flags: god tables with no indexes; auth where everyone is
+  admin/user with no row-level security; `.env` tracked in git; silent failures.
 
-CLI: `aicx intents -p <project> --emit json | tee intents.json`, then `jq` to
-summarize. Full reference in `vc-intents` and `vc-aicx` skills, or `aicx --help`.
+### Output — grade the risk
 
-### Sense 2 — Perception (over memory)
-
-**MCP-first, atlas-shaped.** `loctree-mcp` is the agent's primary discovery
-channel. A single `context()` call materializes the Context Atlas
-(`loctree.context_atlas.v1`) — structural + runtime + risk + next-moves +
-AICX overlay — into a versioned on-disk cache. Subsequent calls are instant
-reads. The CLI (`loct ...`) is the **operator** surface (markdown pill,
-shell pipes, interactive debugging); agents share the same engine through
-MCP and are allowed to use the CLI **only if the MCP server is not**
-**available**.
-
-#### Primary call
-
-```jsonc
-// Single first move — every session
-{ "tool": "context", "project": "<repo-root>", "with_aicx": true }
-```
-
-MCP **fails-fast** if `<repo-root>` lacks `.git`. The atlas materializes
-seven sections (six cards + `receipt`): core, structural, runtime,
-memory-trail, verification-gates, risk-register, receipt. A repo-level
-answer is incomplete until **core + structural + runtime** have been read.
-
-Scope by passing `file: "<path>"` (before edit), `task: "<text>"` (semantic
-relevance), or `changed: true` (Living Tree WIP). CI guards: `no_scan`,
-`fail_stale`, `fresh`. Full parameter map and atlas card index live in
-[`references/loct-context-engine.md`](references/loct-context-engine.md).
-
-#### Authority labels — read before acting
-
-`repo_verified` (snapshot fact, top trust) · `loctree_derived` (analyzer
-inference) · `aicx_operator` (sticky operator intent) · `aicx_agent` (prior
-agent outcome) · `aicx_failure` (prior failed path — don't repeat) ·
-`semantic_guess` (heuristic — verify) · `stale_or_unknown` (re-check).
-
-#### Drill-down (after the atlas, when scope is known)
-
-- `slice(file)` before edit · `impact(file)` before delete/rename ·
-  `find(pattern)` instead of grep · `follow(scope)` for dead/cycles/twins/
-  hotspots/trace · `focus(directory)` for module deep-dive · `query(kind,
-target)` for graph queries.
-- Analysis (signal, not orientation): `health` · `findings` · `audit` ·
-  `doctor` · `coverage` · `manifests` · `dist` · `insights`.
-- Atlas paging: `context_manifest` · `context_section` · `context_next`.
-
-**Living Tree reflex:** before any edit window longer than a few minutes,
-call `doctor()` to compare fingerprint against your last call. If it
-moved, re-issue `context(fresh: true)` — that's how concurrent agents
-avoid silent drift.
-
-### Sense 3 — Ground Truth over intuition
-
-#### 3a. Derive conventions from git history
-
-Run the canonical helper:
-
-```bash
-zsh -ic repo-full
-```
-
-Provides deep state beyond `git log` / `git status`. Fallback:
-`git log --oneline --decorate --graph -n 15` and `git status -sb`.
-
-**Due diligence focus:**
-
-- Prisma/SQL schema with a 35-column "User" God Table and zero indexes?
-- NextAuth/Clerk where everyone is "admin" or "user" with no row-level security?
-- `.env` files tracked in git?
-
-#### 3b. Absorb existing agent configs
-
-- Read `.claude/CLAUDE.md`, `.gemini/GEMINI.md`, `.codex/AGENTS.md`.
-- Read `AGENTS.md` — default cross-tool reference.
-- Verify against code. If a config claims a command that contradicts current
-  code, trust the code and update the agent files.
-
-#### 3c. Hunt for myliki before updating docs
-
-A **mylik** is a plausible misread that causes documentation drift: copying a
-true statement from one actor/layer/runtime into a place where it is no longer
-true.
-
-Before changing docs, topology notes, runbooks, or `AGENTS.md`,
-separate:
-
-- **actor** — operator, spawned agent, application user, CI, installer, runtime
-- **function** — admin UI, DSN/event ingestion, local helper, deploy path, fallback
-- **scope** — public Internet, tailnet, local machine, source checkout, staged install
-- **truth source** — code, generated template, deployed env, live endpoint, runtime artifact
-
-Same URL/command/file in two roles → do not merge. Operator fallback paths are
-not application runtime paths. Template placeholders are not deployed values.
-A code path is not a topology claim until live/runtime confirms it.
-
-### Sense 4 — Quality Gates (optional)
-
-Vibecraftsmanship cares deeply about quality gates, but they do **not** run at
-init. Init is the entry point for upcoming tasks; gates run as part of task
-execution. Running them at bootstrap wastes time and resources.
-
-Future reference (coming soon): `vc-gates` and `vc-tdd` foundation skills.
-
-If you do test instruments before cutting, locate the project's gate commands
-and record results:
-
-```bash
-uv run pytest tests/ -q --tb=no 2>&1 | tail -3
-cargo clippy --workspace -- -D warnings 2>&1 | tail -5
-```
-
-A green test suite on a broken architecture is just a faster train on the wrong
-tracks. Structural truth beats synthetic checks.
+Init's deliverable is a priced picture: what is load-bearing (hubs/fan-in), what
+is fragile, what is a landmine — so the next action is taken with eyes open.
 
 ## `.env` policy
 
-- Never commit `.env` files to version control.
-- `.env*` variants (`.env.local`, `.env.production`, ...) added to `.gitignore`.
-- Hardened pre-commit / pre-push hooks block accidental `.env` commits.
-- Direct, open reporting on env-var leaks → fast revoke / mitigation.
-- We work with `.env` files **locally** without anxiety; hesitating on local
-  use is itself a future-security vulnerability (workflows degrade around it).
-
----
+Never commit `.env*` (gitignored; pre-commit blocks it). Report leaks → revoke
+fast. Work with `.env` locally without anxiety — hesitating to use it locally is
+itself a future vulnerability.
 
 ## Anti-Patterns
 
-- Starting implementation without running init (blind coding)
-- Claiming weekend MVP architecture as "production-ready" without verification
-- Assuming Auth handles edge cases like token expiration
-- Writing "run pytest" without actually running pytest (unverified claims)
-- Committing `.env` while hesitating to work with it locally because "security risk"
-- Reaching for `repo-view` + `tree` + `focus` cascade when one `context()` call
-  materializes the same atlas plus risk, action, authority, and AICX overlay
-- Grepping or `find -name` before calling `context()` / `find()` —
-  authority labels and reverse deps are lost the moment you bypass the atlas
-- Treating empty `structural` / `runtime` cards as broken — that's the atlas
-  telling you to scope with `file:` or `task:`
-- Skipping `doctor()` / fingerprint check during long Living Tree edits —
-  multi-agent coordination silently fails when fingerprints diverge under you
-- Shelling out to `loct ...` from an agent for capabilities MCP already
-  exposes — split-brain between agent and operator surfaces, lost provenance
+- Acting before the atlas is read to the completeness bar (blind start).
+- Stopping at the first card/screen — the risk register is a later card.
+- Trusting the MCP default `project` instead of passing it (silent wrong-repo).
+- Reflex `grep`/`find` before `context()`/`find` — you lose authority labels and
+  reverse deps.
+- Dispatching a recon agent for what a scoped `context --scope` answers for free.
+- Claiming "production-ready" off a green test on an unexamined architecture.
+- Writing "ran the tests" without running them.
+
+## Living Tree
+
+Run in the operator's current checkout and branch; no worktree unless asked.
+Re-read before editing; if the tree moved under you (`doctor()` fingerprint),
+re-issue `context(fresh: true)`. If the substrate is too poisoned to continue,
+stop and report it.
 
 ---
 
-_"Perception. Intentions. Ground truth. Then — and only then — stabilize."_
+_"See the asset. Recover the intent. Verify the ground. Grade the risk. Then act."_
 
 _𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
