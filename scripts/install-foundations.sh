@@ -662,15 +662,34 @@ install_iterm2_integration() {
     return 0
   fi
 
-  local python_bin
-  python_bin="$(command -v python3 || command -v python || true)"
+  # The iTerm2 plugin is OPT-IN and OPTIONAL — its failure must NEVER abort the
+  # whole install (it used to: a bare system python3 lacks vibecrafted_iterm2 and
+  # returning 1 killed `make install-all` with Error 1). Prefer the installed
+  # uv-tool entry point, then the uv-tool venv python, then PATH python; warn on
+  # failure but always return 0.
+  if command -v vibecrafted-iterm2-autolaunch >/dev/null 2>&1; then
+    vibecrafted-iterm2-autolaunch --force \
+      || warn "vibecrafted iTerm2 plugin install failed (non-fatal); rerun: vibecrafted-iterm2-autolaunch --force"
+    return 0
+  fi
+
+  local python_bin=""
+  local candidate
+  for candidate in \
+    "${VIBECRAFTED_PYTHON:-}" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-iterm2/bin/python3" \
+    "$(command -v python3 || true)" \
+    "$(command -v python || true)"; do
+    [[ -n "$candidate" && -x "$candidate" ]] && { python_bin="$candidate"; break; }
+  done
   if [[ -z "$python_bin" ]]; then
-    warn "no python3 on PATH — cannot install vibecrafted iTerm2 plugin"
-    return 1
+    warn "no python on PATH — skipping vibecrafted iTerm2 plugin (non-fatal)"
+    return 0
   fi
 
   "$python_bin" -m vibecrafted_iterm2.install_autolaunch --force \
-    || { warn "vibecrafted iTerm2 plugin install failed"; return 1; }
+    || warn "vibecrafted iTerm2 plugin install failed (non-fatal); rerun: vibecrafted-iterm2-autolaunch --force"
+  return 0
 }
 
 # ---------------------------------------------------------------------------

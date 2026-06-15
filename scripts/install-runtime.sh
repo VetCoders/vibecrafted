@@ -336,11 +336,16 @@ install_locterm() {
     app_src="$app_dest"
   fi
 
+  # Prefer the installed uv-tool entry point; bare system python3 lacks
+  # vibecrafted_iterm2 and always failed here.
   plugin_result="not-run"
-  if python3 -m vibecrafted_iterm2.install_autolaunch --force >/dev/null 2>&1; then
+  if command -v vibecrafted-iterm2-autolaunch >/dev/null 2>&1 \
+       && vibecrafted-iterm2-autolaunch --force >/dev/null 2>&1; then
+    plugin_result="installed"
+  elif python3 -m vibecrafted_iterm2.install_autolaunch --force >/dev/null 2>&1; then
     plugin_result="installed"
   else
-    warn "locterm AutoLaunch plugin install failed; run python -m vibecrafted_iterm2.install_autolaunch --force"
+    warn "locterm AutoLaunch plugin install failed; rerun: vibecrafted-iterm2-autolaunch --force"
     plugin_result="failed"
   fi
   write_status "locterm" "ok" "$app_src" "locterm app present; plugin=$plugin_result" "$platform"
