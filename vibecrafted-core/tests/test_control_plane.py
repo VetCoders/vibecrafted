@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import uuid
@@ -138,6 +139,7 @@ def test_sync_state_publishes_lifecycle_control_availability(
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
     _write_meta(
         home,
         {
@@ -243,6 +245,7 @@ def test_sync_state_reconciles_dead_launcher_to_stalled(
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
     _write_meta(
         home,
         {
@@ -285,6 +288,123 @@ def test_sync_state_reconciles_dead_launcher_to_stalled(
     assert refreshed["recovery_required"] is True
     assert refreshed["lifecycle"]["recovery_required"] is True
     assert "recovery_required" in refreshed["last_error"]
+
+
+def test_sync_state_gc_terminalizes_old_stalled_dead_launcher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "60")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "3600")
+    now = dt.datetime(2026, 5, 19, 6, 0, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(control_plane, "_now", lambda: now)
+    _write_meta(
+        home,
+        {
+            "run_id": "just-old-stalled",
+            "status": "stalled",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "just",
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "gc"
+    assert run["health"] == "final"
+    assert run["liveness"] == "pid_gone"
+    assert run["completed_at"] == now.isoformat()
+    assert (
+        "garbage-collected: dead launcher, heartbeat stale >3600s" in run["last_error"]
+    )
+    assert all(item["run_id"] != "just-old-stalled" for item in snapshot["active_runs"])
+
+    persisted = json.loads(
+        (home / "control_plane" / "runs" / "just-old-stalled.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert persisted["state"] == "gc"
+
+
+def test_sync_state_keeps_stalled_dead_launcher_active_before_gc_grace(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "60")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "3600")
+    now = dt.datetime(2026, 5, 19, 0, 30, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(control_plane, "_now", lambda: now)
+    _write_meta(
+        home,
+        {
+            "run_id": "just-fresh-stalled",
+            "status": "stalled",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "just",
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "stalled"
+    assert run["health"] == "stalled"
+    assert run["liveness"] == "pid_gone"
+    assert run["run_id"] in {item["run_id"] for item in snapshot["active_runs"]}
+    assert "garbage-collected" not in run["last_error"]
+
+
+def test_sync_state_reconciles_dead_launcher_success_evidence_to_completed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    completed_at = "2026-05-19T00:02:00+00:00"
+    _write_meta(
+        home,
+        {
+            "run_id": "just-success-pid-gone",
+            "status": "running",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "just",
+            "exit_code": 0,
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+            "completed_at": completed_at,
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "completed"
+    assert run["health"] == "final"
+    assert run["liveness"] == "terminal"
+    assert run["completed_at"] == completed_at
+    assert all(
+        item["run_id"] != "just-success-pid-gone" for item in snapshot["active_runs"]
+    )
 
 
 def test_sync_state_reconciles_dead_launcher_with_missing_report_to_terminal_failure(
@@ -336,6 +456,7 @@ def test_sync_state_reaps_stale_lock_present_run_without_launcher_pid(
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
     lock = _write_lock(
         home,
         {
@@ -462,6 +583,52 @@ def test_sync_state_leaves_terminal_dead_launcher_untouched(
     assert run["health"] == "final"
     assert run["liveness"] == "terminal"
     assert "recovery_required" not in run
+
+
+def test_sync_state_archives_old_terminal_snapshots_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUN_SNAPSHOT_RETENTION_SECONDS", "3600")
+    monkeypatch.setenv("VIBECRAFTED_RUN_SNAPSHOT_RETENTION_COUNT", "100")
+    now = dt.datetime(2026, 5, 19, 6, 0, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(control_plane, "_now", lambda: now)
+    runs_dir = home / "control_plane" / "runs"
+    runs_dir.mkdir(parents=True)
+    terminal_path = runs_dir / "old-terminal.json"
+    active_path = runs_dir / "old-active.json"
+    terminal_path.write_text(
+        json.dumps(
+            {
+                "run_id": "old-terminal",
+                "state": "completed",
+                "health": "final",
+                "updated_at": "2026-05-19T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    active_path.write_text(
+        json.dumps(
+            {
+                "run_id": "old-active",
+                "state": "running",
+                "health": "active",
+                "updated_at": "2026-05-19T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    control_plane.sync_state()
+    control_plane.sync_state()
+
+    archived = runs_dir / "archive" / "old-terminal.json"
+    assert archived.exists()
+    assert not terminal_path.exists()
+    assert active_path.exists()
+    assert json.loads(archived.read_text(encoding="utf-8"))["run_id"] == "old-terminal"
 
 
 def test_await_run_completes_from_metadata_without_transcript(

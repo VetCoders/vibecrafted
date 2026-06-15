@@ -78,6 +78,12 @@ SKILL_CODE_MAP = {
 RUN_STALL_SECONDS = 20 * 60
 LIVENESS_STALE_HEARTBEAT_SECONDS = 120
 LIVENESS_STALE_HEARTBEAT_ENV = "VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS"
+RUN_GC_GRACE_SECONDS = 6 * 60 * 60
+RUN_GC_GRACE_ENV = "VIBECRAFTED_RUN_GC_GRACE_SECONDS"
+RUN_SNAPSHOT_RETENTION_SECONDS = 7 * 24 * 60 * 60
+RUN_SNAPSHOT_RETENTION_SECONDS_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_SECONDS"
+RUN_SNAPSHOT_RETENTION_COUNT = 2000
+RUN_SNAPSHOT_RETENTION_COUNT_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_COUNT"
 EVENT_TAIL_LIMIT = 16
 RECENT_RUN_LIMIT = 12
 MISSING_SESSION_IDS = {"", "pending", "none", "null", "unknown"}
@@ -225,13 +231,35 @@ def _now() -> dt.datetime:
 
 
 def _configured_stale_heartbeat_seconds() -> int:
-    raw = os.environ.get(LIVENESS_STALE_HEARTBEAT_ENV)
+    return _configured_nonnegative_int(
+        LIVENESS_STALE_HEARTBEAT_ENV, LIVENESS_STALE_HEARTBEAT_SECONDS
+    )
+
+
+def _configured_run_gc_grace_seconds() -> int:
+    return _configured_nonnegative_int(RUN_GC_GRACE_ENV, RUN_GC_GRACE_SECONDS)
+
+
+def _configured_snapshot_retention_seconds() -> int:
+    return _configured_nonnegative_int(
+        RUN_SNAPSHOT_RETENTION_SECONDS_ENV, RUN_SNAPSHOT_RETENTION_SECONDS
+    )
+
+
+def _configured_snapshot_retention_count() -> int:
+    return _configured_nonnegative_int(
+        RUN_SNAPSHOT_RETENTION_COUNT_ENV, RUN_SNAPSHOT_RETENTION_COUNT
+    )
+
+
+def _configured_nonnegative_int(env_name: str, default: int) -> int:
+    raw = os.environ.get(env_name)
     if not raw:
-        return LIVENESS_STALE_HEARTBEAT_SECONDS
+        return default
     try:
         return max(int(raw), 0)
     except ValueError:
-        return LIVENESS_STALE_HEARTBEAT_SECONDS
+        return default
 
 
 def _state_health(state: str, updated_at: str) -> str:
@@ -364,9 +392,14 @@ def _heartbeat_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | Non
 
 def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
     result = dict(run)
+    state = str(result.get("state") or "")
+    if state in FINAL_STATES:
+        return result
+    if _has_success_evidence(result):
+        return _reconcile_successful_terminal(result)
     if _run_is_terminal(result):
         return result
-    if str(result.get("state") or "") not in ACTIVE_STATES - {"stalled", "paused"}:
+    if state not in ACTIVE_STATES - {"paused"}:
         return result
     launcher_pid = _coerce_int(result.get("launcher_pid"))
     liveness = str(result.get("liveness") or "")
@@ -394,11 +427,16 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
     elif artifact_errors.intersection({"report_invalid", "report_empty"}):
         artifact_failure_state = "report_invalid"
 
-    result["state"] = artifact_failure_state or "stalled"
-    result["health"] = "final" if artifact_failure_state else "stalled"
+    gc_grace = _configured_run_gc_grace_seconds()
+    should_gc = not artifact_failure_state and age_seconds >= gc_grace
+    result["state"] = "gc" if should_gc else artifact_failure_state or "stalled"
+    result["health"] = "final" if artifact_failure_state or should_gc else "stalled"
     result["liveness"] = "pid_gone"
     result["updated_at"] = now.isoformat()
-    result["recovery_required"] = True
+    if should_gc:
+        result["completed_at"] = now.isoformat()
+    else:
+        result["recovery_required"] = True
     pid_detail = (
         f"launcher_pid {launcher_pid} is not alive"
         if launcher_pid is not None
@@ -414,15 +452,52 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         if artifact_failure_state
         else ""
     )
-    explanation = (
-        f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
-        f"(threshold {threshold}s); no live launcher proof{lock_detail}"
-        f"{artifact_detail}; recovery_required"
-    )
+    if should_gc:
+        explanation = (
+            f"garbage-collected: dead launcher, heartbeat stale >{gc_grace}s; "
+            f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
+            f"(threshold {threshold}s); no live launcher proof{lock_detail}"
+        )
+    else:
+        explanation = (
+            f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
+            f"(threshold {threshold}s); no live launcher proof{lock_detail}"
+            f"{artifact_detail}; recovery_required"
+        )
     previous_error = str(result.get("last_error") or "").strip()
     result["last_error"] = (
         f"{previous_error}; {explanation}" if previous_error else explanation
     )
+    return result
+
+
+def _has_success_evidence(run: dict[str, Any]) -> bool:
+    if run.get("artifact_ok") is False or run.get("artifact_errors"):
+        return False
+    exit_code = _coerce_int(run.get("exit_code"))
+    if exit_code not in (None, 0):
+        return False
+    state = str(run.get("state") or "")
+    if state in {"report_validated", "completed", "closed", "converged"}:
+        return True
+    if exit_code == 0:
+        return True
+    if str(run.get("completed_at") or "").strip():
+        return True
+    return str(run.get("liveness") or "") == "terminal"
+
+
+def _reconcile_successful_terminal(run: dict[str, Any]) -> dict[str, Any]:
+    result = dict(run)
+    completed_at = str(result.get("completed_at") or result.get("updated_at") or "")
+    if not completed_at:
+        completed_at = _now().isoformat()
+    result["state"] = "completed"
+    result["health"] = "final"
+    result["liveness"] = "terminal"
+    result["completed_at"] = completed_at
+    result["updated_at"] = completed_at
+    result.pop("recovery_required", None)
     return result
 
 
@@ -860,6 +935,10 @@ def _snapshot_path(run_id: str) -> Path:
     return run_snapshot_dir() / f"{run_id}.json"
 
 
+def _snapshot_archive_dir() -> Path:
+    return run_snapshot_dir() / "archive"
+
+
 def _load_existing_snapshots() -> dict[str, dict[str, Any]]:
     snapshots: dict[str, dict[str, Any]] = {}
     for path in run_snapshot_dir().glob("*.json"):
@@ -884,6 +963,56 @@ def _run_is_terminal(run: dict[str, Any]) -> bool:
     if str(run.get("liveness") or "") == "terminal":
         return True
     return _coerce_int(run.get("exit_code")) is not None
+
+
+def _snapshot_age_seconds(payload: dict[str, Any], now: dt.datetime) -> float | None:
+    timestamp = _parse_iso(
+        str(
+            payload.get("completed_at")
+            or payload.get("updated_at")
+            or payload.get("started_at")
+            or ""
+        )
+    )
+    if timestamp is None:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=dt.timezone.utc)
+    return (now - timestamp).total_seconds()
+
+
+def _archive_snapshot(path: Path) -> None:
+    archive_dir = _snapshot_archive_dir()
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    path.replace(archive_dir / path.name)
+
+
+def _archive_expired_snapshots() -> None:
+    now = _now()
+    retention_seconds = _configured_snapshot_retention_seconds()
+    retention_count = _configured_snapshot_retention_count()
+    terminal_snapshots: list[tuple[dt.datetime, Path, dict[str, Any]]] = []
+    expired_by_age: set[Path] = set()
+
+    for path in run_snapshot_dir().glob("*.json"):
+        payload = _read_json(path)
+        if not payload or not _run_is_terminal(payload):
+            continue
+        age_seconds = _snapshot_age_seconds(payload, now)
+        if age_seconds is not None and age_seconds >= retention_seconds:
+            expired_by_age.add(path)
+        updated_at = _parse_iso(
+            str(payload.get("updated_at") or "")
+        ) or dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=dt.timezone.utc)
+        terminal_snapshots.append((updated_at, path, payload))
+
+    terminal_snapshots.sort(key=lambda item: item[0], reverse=True)
+    expired_by_count = {path for _, path, _ in terminal_snapshots[retention_count:]}
+    for path in sorted(expired_by_age | expired_by_count):
+        if path.exists():
+            _archive_snapshot(path)
 
 
 def _select_run(snapshot: dict[str, Any], run_id: str) -> dict[str, Any] | None:
@@ -1173,6 +1302,7 @@ def sync_state() -> dict[str, Any]:
             _record_transition(previous, payload)
             _write_json(_snapshot_path(run_id), payload)
             payload_runs.append(payload)
+        _archive_expired_snapshots()
 
     payload_runs.sort(
         key=lambda item: (
