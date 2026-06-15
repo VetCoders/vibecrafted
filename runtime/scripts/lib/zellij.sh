@@ -290,6 +290,7 @@ spawn_current_tab_name() {
 }
 
 spawn_in_marbles_tab() {
+  vc_raise_launcher_limits
   # Route a pane into the dedicated marbles tab without stealing operator focus.
   # Called only when SPAWN_LOOP_NR > 0 AND VIBECRAFTED_MARBLES_TAB_NAME is set.
   local launcher="$1"
@@ -359,6 +360,7 @@ spawn_in_marbles_tab() {
 }
 
 spawn_in_zellij_pane() {
+  vc_raise_launcher_limits
   local launcher="$1"
   local pane_name="${2:-agent}"
   local direction="${VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION:-$(spawn_pane_direction)}"
@@ -442,6 +444,7 @@ spawn_await_status_is_active() {
 }
 
 spawn_await_watch_pane() {
+  vc_raise_launcher_limits
   local run_tab_id="$1" run_tab_name="$2" worker_pane_name="$3"
   command -v jq >/dev/null 2>&1 || return 0
   [[ -n "${SPAWN_RUN_ID:-}" ]] || return 0
@@ -483,6 +486,7 @@ spawn_await_watch_pane() {
 }
 
 spawn_in_operator_session() {
+  vc_raise_launcher_limits
   local launcher="$1"
   local pane_name="${2:-agent}"
   local session_name=""

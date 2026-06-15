@@ -2,11 +2,25 @@
 # 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. command deck
 set -euo pipefail
 
-# Raise the file-descriptor soft limit up front. The frame (zellij) opens a PTY
-# per pane and dispatch spawns many children; invoked from a low-limit context
-# (GUI/launchd, macOS default 256) the fleet dies with
-# "Too many open files (os error 24)". Raise soft to the hard cap; never fail.
-ulimit -n "$(ulimit -Hn 2>/dev/null)" 2>/dev/null || ulimit -n 184320 2>/dev/null || true
+_vc_source_launcher_ulimits() {
+  local script_dir candidate
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  for candidate in \
+    "$script_dir/../runtime/scripts/lib/ulimits.sh" \
+    "${VIBECRAFTED_ROOT:-}/runtime/scripts/lib/ulimits.sh" \
+    "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools}/vibecrafted-current/runtime/scripts/lib/ulimits.sh" \
+    "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime/scripts/lib/ulimits.sh"; do
+    [[ -n "$candidate" && -r "$candidate" ]] || continue
+    # shellcheck disable=SC1090
+    source "$candidate"
+    vc_raise_launcher_limits
+    return 0
+  done
+  printf '[warn] launcher ulimit helper not found; continuing without rlimit raise\n' >&2
+  return 0
+}
+_vc_source_launcher_ulimits
+unset -f _vc_source_launcher_ulimits
 
 _expand_home_path() {
   local raw="${1:-}"

@@ -357,6 +357,7 @@ _vetcoders_ensure_vc_frame_session() {
 }
 
 _vetcoders_prepare_operator_runtime() {
+  vc_raise_launcher_limits
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
@@ -419,6 +420,7 @@ _vetcoders_prepare_operator_runtime() {
 }
 
 _vetcoders_spawn_into_operator_session() {
+  vc_raise_launcher_limits
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH

@@ -16,13 +16,14 @@ spawn_generate_launcher() {
   [[ -f "$common_path" ]] || spawn_die "common.sh not found: $common_path"
   [[ -n "$command" ]] || spawn_die "Missing command payload for launcher."
 
-  local q_meta q_report q_transcript q_common q_cmd
+  local q_meta q_report q_transcript q_common q_ulimits q_cmd
   local q_root q_agent q_model q_prompt_id q_run_id q_run_lock q_loop_nr q_skill_code
   local q_skill_name q_operator_session q_spawn_direction q_marbles_tab q_marbles_watcher
   q_meta="$(spawn_shell_quote "$meta_path")"
   q_report="$(spawn_shell_quote "$report_path")"
   q_transcript="$(spawn_shell_quote "$transcript_path")"
   q_common="$(spawn_shell_quote "$common_path")"
+  q_ulimits="$(spawn_shell_quote "$(dirname "$common_path")/lib/ulimits.sh")"
   q_cmd="$(spawn_shell_quote "$command")"
   q_root="$(spawn_shell_quote "${SPAWN_ROOT:-}")"
   q_agent="$(spawn_shell_quote "${SPAWN_AGENT:-}")"
@@ -41,10 +42,9 @@ spawn_generate_launcher() {
   cat > "$launcher" <<EOF_LAUNCH
 #!/usr/bin/env bash
 set -euo pipefail
-# Inherited shells may carry a finite 'ulimit -f' (file-size cap); agent CLIs
-# appending to large logs (e.g. ~/.codex/logs_*.sqlite) then die on SIGXFSZ
-# within seconds of spawn. Lift it for the worker's process tree.
-ulimit -f unlimited 2>/dev/null || true
+# shellcheck source=lib/ulimits.sh
+source $q_ulimits
+vc_raise_launcher_limits
 source $q_common
 
 meta=$q_meta

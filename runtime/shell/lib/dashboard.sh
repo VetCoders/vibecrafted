@@ -37,10 +37,7 @@ _vetcoders_launch_dashboard() {
   local PATH="${PATH:-}"
   PATH="$(_vetcoders_path_with_bundled_bin_priority "$PATH")"
   export PATH
-  # FD headroom before launching the frame: zellij opens a PTY per pane; a frame
-  # started from a low-limit context (GUI/launchd, macOS default 256) hits EMFILE
-  # ("Too many open files") on dispatch spawn. Raise soft to the hard cap; never fail.
-  ulimit -n "$(ulimit -Hn 2>/dev/null)" 2>/dev/null || ulimit -n 184320 2>/dev/null || true
+  vc_raise_launcher_limits
   local first_arg="${1:-}"
 
   # Thin shim subcommands — delegate directly to native Zellij.

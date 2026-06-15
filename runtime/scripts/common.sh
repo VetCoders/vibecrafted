@@ -5,6 +5,8 @@
 _SPAWN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
 
 # Load order matters: util first (no deps), then paths, then the rest.
+source "$_SPAWN_LIB_DIR/ulimits.sh"
+vc_raise_launcher_limits
 source "$_SPAWN_LIB_DIR/util.sh"
 source "$_SPAWN_LIB_DIR/paths.sh"
 source "$_SPAWN_LIB_DIR/meta.sh"
