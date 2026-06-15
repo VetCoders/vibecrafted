@@ -18,18 +18,18 @@ CODEX_STREAM_FILTER = REPO_ROOT / "runtime" / "scripts" / "codex_stream_filter.j
 
 # Strip ambient env vars that affect spawn-routing decisions before each
 # test script runs. Without this, tests that source common.sh inherit the
-# parent shell's ZELLIJ / VIBECRAFTED_* state — and when pytest itself is
-# launched from inside a marbles-spawned zellij session whose name happens
+# parent shell's VC_FRAME / VIBECRAFTED_* state — and when pytest itself is
+# launched from inside a marbles-spawned vc_frame session whose name happens
 # to match the test's _expected_operator_session(run_id), the routing
 # guard in spawn_in_operator_session collapses to in-session pane routing
 # instead of the asserted new-tab path.
 _ENV_SANITIZE = """
-unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME ZELLIJ_TAB_NAME ZELLIJ_CONFIG_DIR
-unset VC_FRAME_SESSION_NAME VC_FRAME_CONFIG_DIR
-unset VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION VIBECRAFTED_PANE_SEQ VIBECRAFTED_MARBLES_TAB_NAME
+unset VC_FRAME VC_FRAME_PANE_ID VC_FRAME_SESSION_NAME VC_FRAME_TAB_NAME VC_FRAME_CONFIG_DIR
+unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME ZELLIJ_SOCKET_DIR
+unset VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION VIBECRAFTED_PANE_SEQ VIBECRAFTED_MARBLES_TAB_NAME
 unset VIBECRAFTED_OPERATOR_SESSION VIBECRAFTED_RUN_ID VIBECRAFTED_RUN_LOCK
 unset VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME VIBECRAFTED_LOOP_NR
-unset VIBECRAFTED_ZELLIJ_CLOSE_AGENT_PANES VIBECRAFTED_ZELLIJ_KEEP_AGENT_PANES VIBECRAFTED_INLINE_STARTUP_WATCH
+unset VIBECRAFTED_VC_FRAME_CLOSE_AGENT_PANES VIBECRAFTED_VC_FRAME_KEEP_AGENT_PANES VIBECRAFTED_INLINE_STARTUP_WATCH
 unset VIBECRAFTED_SPAWN_STAGGER VIBECRAFTED_SPAWN_STAGGER_SECONDS
 unset SPAWN_LOOP_NR SPAWN_META SPAWN_TRANSCRIPT SPAWN_REPORT SPAWN_ROOT
 unset SPAWN_RUN_ID SPAWN_RUN_LOCK SPAWN_AGENT SPAWN_SKILL_CODE SPAWN_SKILL_NAME
@@ -55,9 +55,9 @@ def _expected_operator_session(run_id: str | None = None) -> str:
     return f"{base}-{run_id}" if run_id else base
 
 
-def _mirror_fake_vc_frame(zellij: Path) -> None:
-    vc_frame = zellij.with_name("vc-frame")
-    vc_frame.write_text(zellij.read_text(encoding="utf-8"), encoding="utf-8")
+def _mirror_fake_vc_frame(vc_frame: Path) -> None:
+    vc_frame = vc_frame.with_name("vc-frame")
+    vc_frame.write_text(vc_frame.read_text(encoding="utf-8"), encoding="utf-8")
     vc_frame.chmod(0o755)
 
 
@@ -228,12 +228,12 @@ def test_skill_dry_run_reaches_spawn_launcher_without_launching(tmp_path: Path) 
     assert "Agent launched." not in result.stdout
 
 
-def test_terminal_spawn_refuses_osascript_fallback_when_zellij_fails(
+def test_terminal_spawn_refuses_osascript_fallback_when_vc_frame_fails(
     tmp_path: Path,
 ) -> None:
     fake_bin = tmp_path / "bin"
     launcher = tmp_path / "launch.sh"
-    zellij_capture = tmp_path / "zellij.txt"
+    vc_frame_capture = tmp_path / "vc-frame.txt"
     osa_capture = tmp_path / "osascript.txt"
     home = tmp_path / "home"
 
@@ -241,19 +241,19 @@ def test_terminal_spawn_refuses_osascript_fallback_when_zellij_fails(
     home.mkdir()
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
-    (fake_bin / "zellij").write_text(
+    (fake_bin / "vc-frame").write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
-                'printf "%s\\n" "$*" >> "$ZELLIJ_CAPTURE"',
+                'printf "%s\\n" "$*" >> "$VC_FRAME_CAPTURE"',
                 "exit 1",
             ]
         )
         + "\n",
         encoding="utf-8",
     )
-    (fake_bin / "zellij").chmod(0o755)
-    _mirror_fake_vc_frame(fake_bin / "zellij")
+    (fake_bin / "vc-frame").chmod(0o755)
+    _mirror_fake_vc_frame(fake_bin / "vc-frame")
     (fake_bin / "osascript").write_text(
         "\n".join(
             [
@@ -276,7 +276,7 @@ def test_terminal_spawn_refuses_osascript_fallback_when_zellij_fails(
             set -euo pipefail
             export HOME="{home}"
             export PATH="{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
-            export ZELLIJ_CAPTURE="{zellij_capture}"
+            export VC_FRAME_CAPTURE="{vc_frame_capture}"
             export OSA_CAPTURE="{osa_capture}"
             export VIBECRAFTED_OPERATOR_SESSION="operator-session"
             export SPAWN_ROOT="{tmp_path}"
@@ -292,7 +292,7 @@ def test_terminal_spawn_refuses_osascript_fallback_when_zellij_fails(
 
     assert result.returncode != 0
     assert "Refusing AppleScript/iTerm fallback" in result.stderr
-    assert zellij_capture.exists()
+    assert vc_frame_capture.exists()
     assert not osa_capture.exists()
 
 
@@ -309,8 +309,8 @@ def test_operator_session_names_are_run_scoped_by_default() -> None:
         spawn_operator_session_name_for_run_id "agnt-111111-111"
         spawn_operator_session_name_for_run_id "agnt-222222-222"
 
-        VIBECRAFTED_ZELLIJ_GROUP_BY_CWD=1 spawn_operator_session_name_for_run_id "agnt-111111-111"
-        VIBECRAFTED_ZELLIJ_GROUP_BY_CWD=1 spawn_operator_session_name_for_run_id "agnt-222222-222"
+        VIBECRAFTED_VC_FRAME_GROUP_BY_CWD=1 spawn_operator_session_name_for_run_id "agnt-111111-111"
+        VIBECRAFTED_VC_FRAME_GROUP_BY_CWD=1 spawn_operator_session_name_for_run_id "agnt-222222-222"
         '''
     )
 
@@ -378,7 +378,7 @@ def test_spawn_prepare_paths_include_run_id_for_durable_artifacts(
     assert first_meta != second_meta
 
 
-def _split_zellij_calls(payload: str) -> list[list[str]]:
+def _split_vc_frame_calls(payload: str) -> list[list[str]]:
     calls: list[list[str]] = []
     current: list[str] = []
     for line in payload.splitlines():
@@ -492,7 +492,7 @@ def test_generated_launcher_preserves_marbles_watcher_mode(tmp_path: Path) -> No
         export SPAWN_SKILL_NAME=marbles
         export VIBECRAFTED_MARBLES_WATCHER=1
         export VIBECRAFTED_MARBLES_TAB_NAME=marbles-marb-test
-        export VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right
+        export VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=right
         spawn_generate_launcher "{launcher}" "{meta}" "{report}" "{transcript}" "{COMMON_SH}" "true"
         grep -E 'SPAWN_LOOP_NR|VIBECRAFTED_MARBLES_WATCHER' "{launcher}"
         '''
@@ -1515,7 +1515,7 @@ def test_research_launcher_blocks_git_write_operations(tmp_path: Path) -> None:
     assert json.loads(meta.read_text(encoding="utf-8"))["status"] == "failed"
 
 
-def test_spawn_in_zellij_pane_honors_requested_direction(tmp_path: Path) -> None:
+def test_spawn_in_vc_frame_pane_honors_requested_direction(tmp_path: Path) -> None:
     run_id = "marb-014520"
     operator_session = _expected_operator_session(run_id)
     launcher = tmp_path / "launch.sh"
@@ -1524,9 +1524,9 @@ def test_spawn_in_zellij_pane_honors_requested_direction(tmp_path: Path) -> None
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    capture_file = tmp_path / "zellij-args.txt"
-    zellij = fake_bin / "zellij"
-    zellij.write_text(
+    capture_file = tmp_path / "vc_frame-args.txt"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
@@ -1537,23 +1537,23 @@ def test_spawn_in_zellij_pane_honors_requested_direction(tmp_path: Path) -> None
         + "\n",
         encoding="utf-8",
     )
-    zellij.chmod(0o755)
-    _mirror_fake_vc_frame(zellij)
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
 
     _bash(
         f'''
         set -euo pipefail
         export PATH="{fake_bin}:$PATH"
         export CAPTURE_FILE="{capture_file}"
-        export ZELLIJ=1
-        export ZELLIJ_PANE_ID=terminal_1
+        export VC_FRAME=1
+        export VC_FRAME_PANE_ID=terminal_1
         export VIBECRAFTED_RUN_ID="{run_id}"
         export VC_FRAME_SESSION_NAME="{operator_session}"
         export ZELLIJ_SESSION_NAME="{operator_session}"
         export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
-        export VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=down
+        export VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=down
         source "{COMMON_SH}"
-        spawn_in_zellij_pane "{launcher}" "workflow"
+        spawn_in_vc_frame_pane "{launcher}" "workflow"
         '''
     )
 
@@ -1562,6 +1562,22 @@ def test_spawn_in_zellij_pane_honors_requested_direction(tmp_path: Path) -> None
     assert "workflow" in payload
     assert "--direction" in payload
     assert "down" in payload
+
+
+def test_spawn_context_preserves_legacy_vc_frame_emitted_env() -> None:
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export ZELLIJ=1
+        export ZELLIJ_PANE_ID=terminal_legacy
+        export ZELLIJ_SESSION_NAME=legacy-session
+        source "{COMMON_SH}"
+        spawn_in_vc_frame_context
+        spawn_current_vc_frame_session_name
+        '''
+    )
+
+    assert result.stdout.strip() == "legacy-session"
 
 
 def test_generated_launcher_preserves_operator_session_contract(tmp_path: Path) -> None:
@@ -1584,8 +1600,8 @@ def test_generated_launcher_preserves_operator_session_contract(tmp_path: Path) 
         export SPAWN_SKILL_CODE="marb"
         export VIBECRAFTED_RUN_ID="{run_id}"
         export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
-        export VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION="right"
-        cmd='printf "%s\\n%s\\n" "$VIBECRAFTED_OPERATOR_SESSION" "$VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION" > "{report}"'
+        export VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION="right"
+        cmd='printf "%s\\n%s\\n" "$VIBECRAFTED_OPERATOR_SESSION" "$VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION" > "{report}"'
         spawn_write_meta "{meta}" "launching" "claude" "marbles" "{tmp_path}" "{launcher}" "{report}" "{transcript}" "{launcher}"
         spawn_generate_launcher "{launcher}" "{meta}" "{report}" "{transcript}" "{COMMON_SH}" "$cmd"
         chmod +x "{launcher}"
@@ -1910,9 +1926,9 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    capture_file = tmp_path / "zellij-args.txt"
-    zellij = fake_bin / "zellij"
-    zellij.write_text(
+    capture_file = tmp_path / "vc_frame-args.txt"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
@@ -1923,8 +1939,8 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
         + "\n",
         encoding="utf-8",
     )
-    zellij.chmod(0o755)
-    _mirror_fake_vc_frame(zellij)
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
 
     _bash(
         f'''
@@ -1943,14 +1959,14 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
     assert "--session" in payload
     assert operator_session in payload
     assert "action" in payload
-    # When spawning from outside a zellij context (no ZELLIJ/ZELLIJ_PANE_ID),
+    # When spawning from outside a vc_frame context (no VC_FRAME/VC_FRAME_PANE_ID),
     # the routing guard forces a new-tab to avoid landing in a stale operator tab.
     assert "new-tab" in payload
     assert "--name" in payload
     assert run_id in payload
 
 
-def test_spawn_in_operator_session_suppresses_zellij_tab_number_output(
+def test_spawn_in_operator_session_suppresses_vc_frame_tab_number_output(
     tmp_path: Path,
 ) -> None:
     run_id = "marb-014520"
@@ -1961,9 +1977,9 @@ def test_spawn_in_operator_session_suppresses_zellij_tab_number_output(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    capture_file = tmp_path / "zellij-args.txt"
-    zellij = fake_bin / "zellij"
-    zellij.write_text(
+    capture_file = tmp_path / "vc_frame-args.txt"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
@@ -1975,8 +1991,8 @@ def test_spawn_in_operator_session_suppresses_zellij_tab_number_output(
         + "\n",
         encoding="utf-8",
     )
-    zellij.chmod(0o755)
-    _mirror_fake_vc_frame(zellij)
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
 
     result = subprocess.run(
         [
@@ -2002,7 +2018,7 @@ def test_spawn_in_operator_session_suppresses_zellij_tab_number_output(
     assert result.stdout == ""
 
 
-def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
+def test_spawn_in_vc_frame_pane_marbles_tab_suppresses_tab_number_output(
     tmp_path: Path,
 ) -> None:
     run_id = "marb-014520"
@@ -2013,9 +2029,9 @@ def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    capture_file = tmp_path / "zellij-calls.txt"
-    zellij = fake_bin / "zellij"
-    zellij.write_text(
+    capture_file = tmp_path / "vc_frame-calls.txt"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
@@ -2038,8 +2054,8 @@ def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
         + "\n",
         encoding="utf-8",
     )
-    zellij.chmod(0o755)
-    _mirror_fake_vc_frame(zellij)
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
 
     result = subprocess.run(
         [
@@ -2049,18 +2065,18 @@ def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
             set -euo pipefail
             export PATH="{fake_bin}:$PATH"
             export CAPTURE_FILE="{capture_file}"
-            export ZELLIJ=1
-            export ZELLIJ_PANE_ID=terminal_1
+            export VC_FRAME=1
+            export VC_FRAME_PANE_ID=terminal_1
             export VC_FRAME_SESSION_NAME="{operator_session}"
             export ZELLIJ_SESSION_NAME="{operator_session}"
-            export ZELLIJ_TAB_NAME="operator-tab"
+            export VC_FRAME_TAB_NAME="operator-tab"
             export VIBECRAFTED_RUN_ID="{run_id}"
             export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
             export VIBECRAFTED_MARBLES_TAB_NAME="marbles"
             export SPAWN_ROOT="{tmp_path}"
             export SPAWN_LOOP_NR=1
             source "{COMMON_SH}"
-            spawn_in_zellij_pane "{launcher}" "workflow"
+            spawn_in_vc_frame_pane "{launcher}" "workflow"
             ''',
         ],
         check=True,
@@ -2070,7 +2086,7 @@ def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
     )
 
     assert result.stdout == ""
-    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    calls = _split_vc_frame_calls(capture_file.read_text(encoding="utf-8"))
     assert len(calls) == 2
     assert calls[0][:3] == ["action", "list-tabs", "--json"]
     assert calls[1][:2] == ["action", "new-pane"]
@@ -2081,7 +2097,7 @@ def test_spawn_in_zellij_pane_marbles_tab_suppresses_tab_number_output(
     assert not any("go-to-tab-name" in call for call in calls)
 
 
-def test_spawn_in_zellij_pane_marbles_tab_can_keep_agent_panes_for_forensics(
+def test_spawn_in_vc_frame_pane_marbles_tab_can_keep_agent_panes_for_forensics(
     tmp_path: Path,
 ) -> None:
     run_id = "marb-014520"
@@ -2092,9 +2108,9 @@ def test_spawn_in_zellij_pane_marbles_tab_can_keep_agent_panes_for_forensics(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    capture_file = tmp_path / "zellij-calls.txt"
-    zellij = fake_bin / "zellij"
-    zellij.write_text(
+    capture_file = tmp_path / "vc_frame-calls.txt"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
@@ -2116,8 +2132,8 @@ def test_spawn_in_zellij_pane_marbles_tab_can_keep_agent_panes_for_forensics(
         + "\n",
         encoding="utf-8",
     )
-    zellij.chmod(0o755)
-    _mirror_fake_vc_frame(zellij)
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
 
     subprocess.run(
         [
@@ -2127,18 +2143,18 @@ def test_spawn_in_zellij_pane_marbles_tab_can_keep_agent_panes_for_forensics(
             set -euo pipefail
             export PATH="{fake_bin}:$PATH"
             export CAPTURE_FILE="{capture_file}"
-            export ZELLIJ=1
-            export ZELLIJ_PANE_ID=terminal_1
+            export VC_FRAME=1
+            export VC_FRAME_PANE_ID=terminal_1
             export VC_FRAME_SESSION_NAME="{operator_session}"
             export ZELLIJ_SESSION_NAME="{operator_session}"
             export VIBECRAFTED_RUN_ID="{run_id}"
             export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
             export VIBECRAFTED_MARBLES_TAB_NAME="marbles"
-            export VIBECRAFTED_ZELLIJ_KEEP_AGENT_PANES=1
+            export VIBECRAFTED_VC_FRAME_KEEP_AGENT_PANES=1
             export SPAWN_ROOT="{tmp_path}"
             export SPAWN_LOOP_NR=1
             source "{COMMON_SH}"
-            spawn_in_zellij_pane "{launcher}" "workflow"
+            spawn_in_vc_frame_pane "{launcher}" "workflow"
             ''',
         ],
         check=True,
@@ -2147,7 +2163,7 @@ def test_spawn_in_zellij_pane_marbles_tab_can_keep_agent_panes_for_forensics(
         text=True,
     )
 
-    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    calls = _split_vc_frame_calls(capture_file.read_text(encoding="utf-8"))
     assert calls[1][:2] == ["action", "new-pane"]
     assert "--stacked" in calls[1]
     assert "--close-on-exit" not in calls[1]
@@ -2159,9 +2175,9 @@ def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    capture_file = tmp_path / "zellij-calls.txt"
-    zellij = fake_bin / "zellij"
-    zellij.write_text(
+    capture_file = tmp_path / "vc_frame-calls.txt"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
@@ -2187,8 +2203,8 @@ def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
-    zellij.chmod(0o755)
-    _mirror_fake_vc_frame(zellij)
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
 
     result = subprocess.run(
         [
@@ -2198,11 +2214,11 @@ def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
             set -euo pipefail
             export PATH="{fake_bin}:$PATH"
             export CAPTURE_FILE="{capture_file}"
-            export ZELLIJ=1
-            export ZELLIJ_PANE_ID=terminal_1
+            export VC_FRAME=1
+            export VC_FRAME_PANE_ID=terminal_1
             export VC_FRAME_SESSION_NAME="operator-session"
             export ZELLIJ_SESSION_NAME="operator-session"
-            export ZELLIJ_TAB_NAME="operator-tab"
+            export VC_FRAME_TAB_NAME="operator-tab"
             export SPAWN_AGENT="gemini"
             export VIBECRAFTED_SPAWN_PROBE_SECONDS=1
             export VIBECRAFTED_SPAWN_PROBE_DELAY_SECONDS=0
@@ -2218,7 +2234,7 @@ def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
     )
 
     assert result.stdout == ""
-    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    calls = _split_vc_frame_calls(capture_file.read_text(encoding="utf-8"))
     assert any(call[:3] == ["action", "current-tab-info", "--json"] for call in calls)
     assert any(
         call[:4] == ["action", "list-panes", "--json", "--state"] for call in calls
@@ -2257,9 +2273,9 @@ def test_spawn_await_watch_uses_active_meta_floating_pane_and_restores_focus(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    capture_file = tmp_path / "zellij-calls.txt"
-    zellij = fake_bin / "zellij"
-    zellij.write_text(
+    capture_file = tmp_path / "vc_frame-calls.txt"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
@@ -2281,8 +2297,8 @@ def test_spawn_await_watch_uses_active_meta_floating_pane_and_restores_focus(
         + "\n",
         encoding="utf-8",
     )
-    zellij.chmod(0o755)
-    _mirror_fake_vc_frame(zellij)
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
 
     jq = fake_bin / "jq"
     jq.write_text(
@@ -2311,8 +2327,8 @@ def test_spawn_await_watch_uses_active_meta_floating_pane_and_restores_focus(
         set -euo pipefail
         export PATH="{fake_bin}:$PATH"
         export CAPTURE_FILE="{capture_file}"
-        export ZELLIJ=1
-        export ZELLIJ_PANE_ID=terminal_1
+        export VC_FRAME=1
+        export VC_FRAME_PANE_ID=terminal_1
         export SPAWN_RUN_ID="{run_id}"
         export SPAWN_AGENT="codex"
         export SPAWN_ROOT="{tmp_path}"
@@ -2323,7 +2339,7 @@ def test_spawn_await_watch_uses_active_meta_floating_pane_and_restores_focus(
     )
 
     assert result.stdout == ""
-    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    calls = _split_vc_frame_calls(capture_file.read_text(encoding="utf-8"))
     assert any(
         call[:4] == ["action", "list-panes", "--json", "--state"] for call in calls
     )
@@ -2475,9 +2491,9 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    capture_file = tmp_path / "zellij-calls.txt"
-    zellij = fake_bin / "zellij"
-    zellij.write_text(
+    capture_file = tmp_path / "vc_frame-calls.txt"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
@@ -2491,8 +2507,8 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
         + "\n",
         encoding="utf-8",
     )
-    zellij.chmod(0o755)
-    _mirror_fake_vc_frame(zellij)
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
 
     _bash(
         f'''
@@ -2511,7 +2527,7 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
         '''
     )
 
-    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    calls = _split_vc_frame_calls(capture_file.read_text(encoding="utf-8"))
     assert len(calls) == 2
 
     list_tabs_call, workflow_call = calls
@@ -2547,9 +2563,9 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    capture_file = tmp_path / "zellij-calls.txt"
-    zellij = fake_bin / "zellij"
-    zellij.write_text(
+    capture_file = tmp_path / "vc_frame-calls.txt"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
         "\n".join(
             [
                 "#!/usr/bin/env bash",
@@ -2571,8 +2587,8 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
         + "\n",
         encoding="utf-8",
     )
-    zellij.chmod(0o755)
-    _mirror_fake_vc_frame(zellij)
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
 
     _bash(
         f'''
@@ -2587,7 +2603,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
         '''
     )
 
-    calls = _split_zellij_calls(capture_file.read_text(encoding="utf-8"))
+    calls = _split_vc_frame_calls(capture_file.read_text(encoding="utf-8"))
     assert len(calls) == 4
     assert calls[0][:5] == [
         "--session",
@@ -2633,7 +2649,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
     ]
 
 
-def test_zellij_launch_slot_serializes_parallel_spawns(tmp_path: Path) -> None:
+def test_vc_frame_launch_slot_serializes_parallel_spawns(tmp_path: Path) -> None:
     lock_root = tmp_path / "locks"
     done_file = tmp_path / "done"
 
@@ -2644,10 +2660,10 @@ def test_zellij_launch_slot_serializes_parallel_spawns(tmp_path: Path) -> None:
         export VIBECRAFTED_SPAWN_STAGGER_SECONDS=0.2
         source "{COMMON_SH}"
         (
-          lock="$(spawn_acquire_zellij_launch_slot session-a)"
+          lock="$(spawn_acquire_vc_frame_launch_slot session-a)"
           printf 'first-acquired\n' >> "{done_file}"
           sleep 0.4
-          spawn_release_zellij_launch_slot "$lock"
+          spawn_release_vc_frame_launch_slot "$lock"
         ) &
         first_pid=$!
         sleep 0.05
@@ -2656,13 +2672,13 @@ import time
 print(time.time())
 PY
 )
-        lock="$(spawn_acquire_zellij_launch_slot session-a)"
+        lock="$(spawn_acquire_vc_frame_launch_slot session-a)"
         end=$(python3 - <<'PY'
 import time
 print(time.time())
 PY
 )
-        spawn_release_zellij_launch_slot "$lock"
+        spawn_release_vc_frame_launch_slot "$lock"
         wait "$first_pid"
         python3 - "$start" "$end" <<'PY'
 import sys

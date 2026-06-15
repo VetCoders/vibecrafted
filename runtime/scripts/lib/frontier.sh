@@ -66,11 +66,11 @@ spawn_frontier_file() {
 }
 
 spawn_export_frontier_sidecars() {
-  local starship_config atuin_config zellij_config vc_frame_config_dir
+  local starship_config atuin_config vc_frame_config vc_frame_config_dir
   local xdg_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
   starship_config="$(spawn_frontier_file "starship.toml" 2>/dev/null || true)"
   atuin_config="$(spawn_frontier_file "atuin/config.toml" 2>/dev/null || true)"
-  zellij_config="$(spawn_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
+  vc_frame_config="$(spawn_frontier_file "vc-frame/config.kdl" 2>/dev/null || true)"
 
   # Re-pin the active frontier assets every time so spawned sessions do not
   # inherit stale shell config from an unrelated install or repo.
@@ -88,8 +88,8 @@ spawn_export_frontier_sidecars() {
     export ATUIN_CONFIG="$atuin_config"
   fi
 
-  if spawn_zellij_bin >/dev/null 2>&1 && [[ -n "$zellij_config" ]]; then
-    vc_frame_config_dir="$(dirname "$zellij_config")"
+  if spawn_vc_frame_bin >/dev/null 2>&1 && [[ -n "$vc_frame_config" ]]; then
+    vc_frame_config_dir="$(dirname "$vc_frame_config")"
     export VC_FRAME_CONFIG_DIR="$vc_frame_config_dir"
   fi
 }

@@ -24,7 +24,7 @@
     ✔ claude-code · 𐄂 codex · ✔ gemini-cli
 
   Additional tools
-    𐄂 zellij · 𐄂 mise · ✔ starship · ✔ atuin · 𐄂 zoxide
+    𐄂 vc_frame · 𐄂 mise · ✔ starship · ✔ atuin · 𐄂 zoxide
 
                                 ⏎ proceed ⌫ Back ⎋ quit
 ─────────────────────────────────────────────────────────

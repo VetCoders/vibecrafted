@@ -52,14 +52,14 @@ state: every workflow launchable the same way.
 
 ## Lifecycle — Architecture (components, all in this repo)
 
-| Component     | Role                                                                                    |
-| ------------- | --------------------------------------------------------------------------------------- |
-| Core (Engine) | Execution engine                                                                        |
-| MCP           | The agent's eyes and hands (invokes agents, observes the environment)                   |
-| VM            | Docker, isolated working environment                                                    |
-| Server        | Remote observability + future control                                                   |
-| App           | Full Swift application (branch `longtime/integration`)                                  |
-| TUI           | Terminal agent `vc-tui` (separate from Zellij, but launched INSIDE zellij / `vc-frame`) |
+| Component     | Role                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| Core (Engine) | Execution engine                                                                            |
+| MCP           | The agent's eyes and hands (invokes agents, observes the environment)                       |
+| VM            | Docker, isolated working environment                                                        |
+| Server        | Remote observability + future control                                                       |
+| App           | Full Swift application (branch `longtime/integration`)                                      |
+| TUI           | Terminal agent `vc-tui` (separate from vc-frame, but launched INSIDE vc_frame / `vc-frame`) |
 
 ## Lifecycle — Operation
 

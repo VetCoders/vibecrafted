@@ -1,169 +1,258 @@
 ---
 name: vc-prune
-version: 5.0.0
-description: >-
-  Action-first repository prune: find proven-dead weight with Loctree, prove it,
-  and CUT it (git rm + commit) — not a findings report. Use this whenever the
-  operator wants to prune, tree-shake, remove dead code/tools/scripts, kill
-  orphans/twins/shadows, clean a repo, catalog linter silencers, or surface
-  forgotten state and hidden gems. This is the INTERACTIVE orchestration layer:
-  it dispatches the prune worker (whose action-brief is
-  runtime/workflows/prune/default_prompt.md) and verifies real cuts before
-  calling the run done. Reach for it even when the operator just says "this repo
-  is messy" or "what's dead here".
-loctree_value: "primary sensory layer for dead code, twins, shadows, suppressions, env truth, blast radius, and literal reference truth"
-aicx_value: "intent/decision recovery before classifying dormant work as dead"
+version: 3.3.3
+description: >
+  Repository curation, not clear-cutting. Map what truly participates in runtime
+  truth versus what is silently parked — then decide revive, archive, or delete.
+  Includes the silencer strip: rip every `#[allow(...)]`, `// nosemgrep`,
+  `eslint-disable`, `@ts-ignore`, `# noqa`, `# type: ignore`, panic-vs-skip pattern,
+  and any other annotation that mutes a quality gate. Run the gates. Listen.
+  Triage with care — `#[allow(dead_code)]` (and equivalents) is often the most
+  valuable smell in a repo: parked work the team forgot about. Surface those as
+  forgotten gems for the operator to decide.
+  This skill is a gem hunter, not a clear-cutter.
+  Trigger phrases: "prune", "strip dead code", "wyczyść mądrze", "strip the silencers",
+  "zdejmij wszystkie ignore", "zobacz co realne", "forgotten gems",
+  "co tam zapomnieliśmy".
+loctree_value: "primary repo map for structural/literal repository work"
+aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-<!-- fleet-imperative: v2 -->
+# vc-prune — Curation, Not Clear-Cutting
 
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-prune codex` / `vibecrafted prune claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
+> Don't burn the house down. Strip it to the load-bearing walls and report what you found behind the wallpaper.
 
-<!-- /fleet-imperative -->
+## Operator Entry
 
-# vc-prune — Find, Prove, Cut
+### Living Tree / Worktree Rule
 
-`vc-prune` removes proven-dead weight from a repository. The product of a run is
-**committed cuts**, not a findings document. A run that only describes deletable
-surface without cutting it has failed.
+This workflow runs in the operator's current checkout and current branch. Do not create, switch to, or move execution
+into a git worktree unless the operator explicitly asks for a worktree in this prompt. Generic words like "isolate", "
+parallel", or "clean branch" are not enough. Re-read files before editing, adapt to concurrent changes, and report a
+substrate failure if the current tree is too poisoned to continue safely.
 
-## Two artifacts — do not conflate them
+See [Living Tree Rule](../LIVING_TREE_RULE.md).
 
-| Artifact           | Lives in                                    | Audience                  | Job                                                                              |
-| ------------------ | ------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------- |
-| **This SKILL**     | `skills/vc-prune/SKILL.md`                  | **you, interactively**    | the orchestration ritual: orient, dispatch, await, verify cuts, flip, checkpoint |
-| **Runtime prompt** | `runtime/workflows/prune/default_prompt.md` | **the dispatched worker** | the action directives the worker obeys: DISCOVER → PROVE → CUT → COMMIT          |
+## Canonical Orientation Gate
 
-When you run `vibecrafted prune [agent]`, the launcher injects the runtime prompt
-into the worker. The worker cuts. This skill is how _you_ drive that and prove it
-landed. Improve the worker's behavior by editing the runtime prompt — not by
-softening this skill into a report.
+Before this workflow performs repo-specific analysis, planning, implementation, review, release, or delegation, it MUST
+run or consume the `vc-init` procedure for the assigned repo. If fresh `vc-init` evidence is absent, perform the init
+pass first and treat workflow-specific work as blocked until repo truth exists.
 
-## The dispatcher ritual
+`Loctree:loctree` is the default structural perception skill for that pass. Use Loctree before grep or docs-driven
+claims to produce or refresh the Code-Derived Application Map: repo-view, focus, slice, impact, find, and follow as
+relevant. Search for existing symbols and contracts before creating new ones; run impact before delete or major
+refactor; run slice before editing.
 
-### 1. Orient (Loctree first — read whole, don't rummage)
+The point is to find the hooks: load-bearing hubs, twins, dead code, drift, runtime entrypoints, and blast-radius traps.
+If the task is explicitly non-repo or no-code, state the no-repo exception in the report. Otherwise, missing `vc-init`
+/Loctree evidence is a process failure.
+
+Launch through the command deck (see `vc-init` for the full operator-entry contract):
 
 ```bash
-loct context --full --markdown   # read it WHOLE (pelikan); it gives you the map up front
-loct doctor                      # snapshot identity + staleness
-git status -sb                   # branch + dirty state (record it; never an excuse for inaction)
+vibecrafted prune <agent> --file /path/to/prune-plan.md
+vc-prune codex --prompt 'Strip silencers and listen'
 ```
 
-Reading the full context pack once is cheaper and truer than blind grep/find
-sweeps. Grep is a last-resort magnifier, never the orientation plan.
+A vibe-coded repo usually accumulates two layers of debris: **dead surface** (abandoned auth experiments, duplicate
+Stripe handlers, dead serverless functions) and **silenced surface** (warnings muted in a hurry, tests that always skip,
+panics that always fire). `vc-prune` separates both layers from runtime truth — and from each other.
 
-### 2. Decide scope: cut-yourself vs dispatch
+## Repository Work Doctrine
 
-- **Hotfix-wprost (you cut directly):** a single, obviously-dead file/symbol you
-  have _already proven_ dead this turn — `loct impact <file>` = 0 **and**
-  `loct find --literal <name>` = 0 references. Trivial, mechanical, recoverable.
-  `git rm` + one canonical commit. This is the explicit exception to "you don't
-  cut code".
-- **Dispatch the worker (the default for a sweep):** anything broad, multi-file,
-  or requiring real classification. `vibecrafted prune codex` runs the action
-  prompt. You stay the brain; the worker is the hands.
+For repository work, start with Loctree as the map: use `loct context`,
+`loct occurrences`, `loct body`, and `loct find --literal` before broad manual
+search. Use AICX for intent and session context. Use rg/grep as fallback or
+local magnifier, not as a replacement for structural mapping. If Loctree fails
+or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
+
+## Axioms
+
+1. **Aggressive pruning, with belief in the VCS archive.** Dead code is not bad code — it's a graveyard of valuable
+   ideas. Its place is in Git history, not the runtime. Cut without sentiment — but only after axiom 4.
+2. **Move on over backward compatibility.** Rotten abstractions blocking stabilization get cut cleanly. The dependency
+   graph is part of runtime truth.
+3. **The code knows. Strip the silence and listen.** Every silencer is a deferred conversation. Most were added in a
+   hurry. The only honest test of which still earn their keep is to rip them all out and let the toolchain speak.
+4. **`#[allow(dead_code)]` (and cousins) is often the most valuable signal in a repo.** It usually marks parked work — a
+   90%-complete login flow, an export pipeline for a churned customer, a debug visualizer no one mentioned to new hires.
+   These are **forgotten gems**, not garbage. Surface them; never auto-delete.
+
+## Core Contract
+
+- For non-trivial prune, `vc-agents` external dispatch is the default first move.
+- Assume 30% of a vibe-coded repo is dead scaffolding.
+- Classify every candidate: `KEEP-RUNTIME`, `KEEP-BUILD`, `MOVE-ARCHIVE`, `DELETE-NOW`, `VERIFY-FIRST`, or
+  `FORGOTTEN-GEM`.
+- Prefer cutting whole dead vertical slices over trimming symbolic leaves.
+- Tighten contracts after every wave: manifests, docs, CI, package bounds.
+- Run gates after every wave. Require one real smoke or build proof.
+
+## Delegation Doctrine
+
+| Need                                             | Best model |
+| ------------------------------------------------ | ---------- |
+| Archaeology, hidden reachability, gem-hunting    | Claude     |
+| Exact deletions, manifest tightening, mech. work | Codex      |
+| Radical simplification, cutting whole subsystems | Gemini     |
+
+## Workflow
+
+### Phase 1 — Define the runtime cone
+
+Capture: real entrypoints, mandatory user flows, build/release path. Do not start from "unused exports" — start from "
+does this serve live traffic?"
+
+### Phase 2 — Map with `loct`
 
 ```bash
-vibecrafted prune codex                         # default action brief (runtime prompt)
-vibecrafted prune codex --file <scoped-brief>   # a narrowed prune cut
+loct auto && loct manifests && loct hotspots && loct dead
+loct routes      # web/API
+loct commands    # desktop/Tauri
+loct events
 ```
 
-### 3. Spanko (await without staring)
+### Phase 3 — Prune in waves (safest → riskiest)
 
-Await by **process liveness + transcript growth + report materialization** — the
-control-plane `observe`/`await` surface can be transiently inconsistent, so the
-trustworthy signal is "the log grows and the run process is alive", then "the run
-process exited and the report/commit exist". Do not poll tightly.
+- **Wave 1 — AI exhaust & prototype scaffolding.** `v1_backup.ts`, `old_auth_handler.js`, `stripe_test_claude.ts`, dead
+  `.claude/` `.codex/` session folders, stale screenshots.
+- **Wave 2 — Whole dead vertical slices.** Frontends with no consumers, alternate login pages never mounted, webhook
+  handlers replaced by SaaS. Cut the strand, let Git archive it.
+- **Wave 3 — Unreachable product surface.** Unmounted routes, duplicate engines (Prisma + raw SQL doing the same thing),
+  dead feature flags retained after launch.
+- **Wave 4 — Contract tightening.** `package.json` deps, `Cargo.toml` features, `pyproject.toml` extras, `.env.example`
+  stale secrets, CI workflows.
+- **Wave 5 — The Silencer Strip.** Separate wave because it's not about removing dead code — it's about un-muting the
+  toolchain so live code can speak. See below.
 
-### 4. Verify before flip (HARD-GATE)
+### Phase 4 — Verify reality
 
-A worker's "I cut X" is a claim, not a flip. Before you accept a cut as done:
+Green static gates are necessary, not sufficient. Add one real proof path: boot the app, run the CLI, hit the main
+route.
 
-- the **commit SHA exists** and its diff is scoped to the claimed removals;
-- **gates are green** (the worker ran them; verify via SHA + report, do not
-  re-run gates and collide with concurrent work);
-- the **proof holds** — especially: a delete justified by `impact = 0` alone is
-  **not proven**. Confirm the worker cross-checked `loct find --literal`. The
-  structural edge-graph undercounts some cross-module imports (e.g. Rust
-  `use crate::a::b::Sym`); the literal scan is the authoritative reference layer.
-- no **FORGOTTEN-GEM**, operator-deferred surface, or env-gated engine was
-  deleted as "dead" (those are false-positive-dead — preserve).
+---
 
-### 5. Checkpoint / terminal state (HARD-GATE)
+## Wave 5 — The Silencer Strip (Strip and Listen)
 
-A prune run is done only in one of two states:
+### Inventory
 
-1. **CUTS LANDED** — ≥1 verified commit removing proven-dead surface; OR
-2. **NOTHING TO PRUNE** — explicit, with per-candidate keep-evidence.
+```bash
+# Rust
+rg -n '#\[allow\(' src-tauri/src
+rg -n 'nosemgrep' .
 
-A findings report with no cuts when cuts were provable is not a finished run —
-re-dispatch with the action directives, or cut the obvious ones yourself.
+# TypeScript / JavaScript
+rg -n 'eslint-disable' src
+rg -n '@ts-(ignore|nocheck|expect-error)' src
+rg -n 'biome-ignore' src
 
-## Verdicts (reference)
+# Python
+rg -n '# noqa' .
+rg -n '# type: ignore' .
+rg -n '# pylint: disable' .
+rg -n '@pytest\.mark\.skip' .
 
-`DELETE-NOW` · `ARCHIVE-THEN-DELETE` · `REVIVE` · `SCAFFOLD` · `VERIFY-FIRST` ·
-`KEEP-RUNTIME` · `KEEP-BUILD` · `FORGOTTEN-GEM`.
+# Go
+rg -n '//nolint' .
+rg -n 'testing\.Short\(\) \|\| t\.Skip' .
 
-`DELETE-NOW` / small `ARCHIVE-THEN-DELETE` are cut this run. `SCAFFOLD` becomes a
-small fleet-executable follow-up. `FORGOTTEN-GEM` is never auto-deleted.
+# Test theater across languages
+rg -n 'panic!\("Test requires|throw new Error\("requires' .
+rg -n 'it\.skip|test\.skip|describe\.skip' .
+```
 
-## Loctree command deck (loct 0.13.0-dev)
+Capture **counts per category**. That's your before-baseline.
 
-`loct health` · `loct dead` · `loct twins` · `loct cycles` · `loct follow all` ·
-`loct hotspots` · `loct suppressions` · `loct env-truth` · `loct focus <dir>` ·
-`loct slice <file>` · `loct impact <file>` · `loct query who-imports <file>` ·
-`loct diff --since <rev>`.
+### Strip ALL of them in one pass
 
-Loctree's primary power is the structural map + embedded findings — lead with
-`dead` · `twins` · `cycles` · `impact` · `slice` · `focus` · `hotspots` ·
-`suppressions` · `env-truth`. The **literal trio** — `loct find --literal <text>` ·
-`loct occurrences <id>` · `loct body <symbol>` (verified in loct 0.13.0-dev) —
-came last, as a necessity: it keeps a raw identifier check _inside_ the map
-instead of dropping to grep. Each hit still carries map context (`occurrence_kind`
-— identifier vs string vs comment, symbol identity, file role, authority), which
-for prune separates a real call from a comment/string/doc mention (DELETE-NOW vs
-KEEP), and it backstops the edge-graph where it undercounts cross-module imports.
-Fall back to grep only when `loct` is unavailable. If a probe is missing in the
-installed `loct`, say so in the journal — do not pretend it ran.
+Bulk-delete the lines. Do not pre-curate "obvious keepers" — the bias that put them there is the same bias that would
+protect them. Let the toolchain decide.
 
-## Living Tree Rule
+### Run gates
 
-Run in the operator's current checkout and branch. Do not create/switch branches
-or worktrees unless the operator says the word "worktree". Re-read before editing;
-adapt to concurrent hands. Never delete branches, stashes, worktrees, or hidden
-WIP. If the repo is dirty at start, commit your cuts by explicit pathspec so you
-do not sweep a peer's staged WIP. Never `--no-verify`. Never push — push is an
-operator button. See [Living Tree Rule](../LIVING_TREE_RULE.md).
+Whatever the repo already has — do not invent new ones:
 
-## Anti-patterns
+```bash
+cargo clippy --all -- -D warnings && cargo test --all
+pnpm lint:tsc && pnpm code:all && pnpm vitest run
+ruff check . && mypy . && pytest          # Python
+golangci-lint run && go test ./...        # Go
+semgrep --config=auto .                   # if available
+pre-commit run --all-files                # if installed
+```
 
-- Producing a findings report and calling the run done while provable cuts sit uncut.
-- Deleting on `impact = 0` without a `loct find --literal` cross-check.
-- Flipping a cut to done on the worker's claim instead of SHA + scoped diff.
-- Auto-deleting hidden gems, FORGOTTEN-GEMs, or env-gated engines flagged "dead".
-- Starting with `grep`/`find` inventory when Loctree can answer.
-- Mandating a dozen `findings/*.md` files instead of one journal + real commits.
-- Treating `loctree-mcp`/`loct` as the repo scope instead of the tooling layer.
-- Pushing from a prune run.
+### Triage with care
 
-## Final principle
+| Finding                         | Resolution                                                                                                                                                             |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authentic code smell            | **Fix root cause.** Refactor, write proper types, add adapter, drop lock before await.                                                                                 |
+| False positive                  | **Refactor stylistically** so the warning never fires. No re-add.                                                                                                      |
+| Genuine technical constraint    | **Re-add silencer with incident-grade comment**: WHY (technical reason), WHEN (under what conditions), WHERE (specific code path). Not "intentional", not "by design". |
+| **Forgotten gem (gentle path)** | **Do not delete. Report.** A `dead_code` warning on a 200-line module with thoughtful structure is parked work. Add to **Forgotten Gems Report**. Operator decides.    |
+| Test theater unmasked           | **Stop. Bigger than the silencer.** A panic-or-skip pattern that always evaluates one way means the test was never real. Open a separate plan for real wiring.         |
+| Truly dead code revealed        | The silencer was hiding `dead_code` on a one-liner stub or scratch file. Delete — but only after a fast forgotten-gem check.                                           |
 
-The best run is not the one with the biggest deletion count. It is the one where
-every surviving surface has a reason, every dead surface got cut or a verdict,
-and every risky truth has a small next cut ready for the fleet. Make the repo
-braver and more legible — by cutting, not by reporting.
+The rule: **a silencer earns its keep only with a written technical reason that another engineer six months from now
+would accept as serious.** Vague "intentional" comments are not serious. Equally: **delete code only when it is
+unambiguously trash** — anything in between goes to the Forgotten Gems Report.
+
+### Forgotten Gems Report
+
+Output of Wave 5 is **not** a smaller repo — it's a written report. Save to
+`$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_forgotten-gems.md`.
+
+> See [references/case-studies.md](references/case-studies.md) for the full Forgotten Gems Report template, the
+> test-theater report template, and concrete real/hypothetical case studies (Vista 0.67.3 silencer-strip, vista-portal
+> billing-service equivalent, surprise-findings catalog).
+
+Test theater is debt, not gem. It always gets a follow-up plan saved to `<timestamp>_test-theater.md`. Never a silencer
+reinstatement.
+
+### Acceptance for the wave
+
+- Remaining silencer count is a **small fraction** of the inventory (target ≤25%, often ≤10%).
+- Every remaining silencer carries an incident-grade comment.
+- Every gate runs green without `--no-verify`, `cargo clippy --allow-dirty`, `pnpm lint --fix --quiet`, or any other "
+  make it green by hiding it" trick.
+
+### Surprise findings are the prize
+
+Watch for: tests that always skip / always panic, `dead_code` allow on functions whose only caller was deleted three
+releases ago, `@ts-ignore` on types correct for a year, `eslint-disable jsx-a11y/...` on real a11y violations,
+`nosemgrep: react-dangerouslysetinnerhtml` on HTML that is **not** sanitized, `# type: ignore[arg-type]` on a function
+whose signature was fixed two refactors ago. Each is a real bug or a real lie the silencer was hiding.
+
+## Anti-Patterns
+
+- Deleting ten dead symbols while a whole abandoned subsystem still stands.
+- Trusting "unused" reports without checking dynamic loading via framework router.
+- Preserving a chaotic 2000-line file because "we might need it" — that's what Git history is for.
+- Cleaning code but leaving stale dependencies in the lockfile.
+- Stripping silencers selectively. The whole point of Wave 5 is to bypass that bias.
+- Mass-restoring silencers because there were "too many warnings". That's burying the message again.
+- Adding new silencers to silence newly-uncovered warnings. Fix the warning or refactor it away.
+- Treating `panic!("Test requires X")` as a real gate, or `it.skip` / `@pytest.mark.skipif` as harmless. Tests that
+  always skip do not exist; they cost reviewer attention.
+- Auto-deleting code that a `dead_code` allow was hiding without a forgotten-gem check first.
+- Treating Wave 5 as adversarial. Past engineers added silencers for plausible reasons. Wave 5 is the reread, not a
+  verdict.
+
+## The Pruning Principle
+
+Do not ask the repo to explain every scar. Ask it to justify every surviving surface.
+
+If a surface does not run in production, build the release, or test integrity — the move is **not** automatically
+delete. The move is **decide with intent**: revive, archive, or delete. The skill exists to surface decisions, not make
+them on autopilot.
+
+**The toolchain is not an enemy to be muted. It is a witness to be interrogated.** Strip the silence. Run the gates.
+Listen. Then decide — case by case, with a written reason — what genuinely deserves to stay quiet, what needs a real
+fix, and what was a forgotten gem hiding behind the silencer all along.
+
+A repo that has been through `vc-prune` is not necessarily smaller. It is **legible**. Every surviving surface, every
+surviving silencer, every surviving test has a written reason to be there. That is the win.
 
 ---
 

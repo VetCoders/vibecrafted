@@ -83,7 +83,7 @@ live in `help --all` and in `help <skill>`.
 
 | Item                                                                             | Action                                                                                                                       |
 | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `vibecrafted start`                                                              | Fold into `dashboard` (both start a Zellij session); keep `start` as silent alias                                            |
+| `vibecrafted start`                                                              | Fold into `dashboard` (both start a vc-frame session); keep `start` as silent alias                                          |
 | `vibecrafted agents`                                                             | Delete as a command; becomes `help agents`                                                                                   |
 | `vc-research` listed twice in help (as `vibecrafted research` and `vc-research`) | One line; the `vc-*` layer gets a single footnote: "Every skill also installs a `vc-<skill>` shortcut."                      |
 | `help --full` vs `--verbose` shadowing                                           | `help --all` is the canonical flag (keep `--full` silent). `--verbose` is ONLY an output-verbosity mode, never a help switch |

@@ -1,28 +1,15 @@
 ---
 name: vc-agents
 version: 3.1.0
-description: "Dispatch external AI agents for isolated or parallel work; triggers: vc-agents, delegate, spawn."
+description: >
+  Spawn external specialized AI agents from the user's fleet (Codex, Claude, Gemini).
+  Use this when you need parallel execution, deep isolation, or task-specific cognitive
+  strengths that surpass generic in-thread delegation.
+  Trigger: "vc-agents", "/vc-agents", "delegate to agents", "spawn".
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-agents — The External Execution Fleet
 
@@ -68,7 +55,7 @@ vc-<workflow> <agent> \
   --prompt '<prompt>'
 ```
 
-If `vc-<workflow> <agent>` is invoked outside Zellij, the framework will attach
+If `vc-<workflow> <agent>` is invoked outside vc-frame, the framework will attach
 or create the operator session and run that workflow in a new tab. `vc-agents`
 defines how that workflow fans out into external workers.
 

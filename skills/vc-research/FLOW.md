@@ -8,7 +8,7 @@ flowchart TD
     B --> C[Create or inherit swarm run context]
     C --> D[Create research/<run_id> and prepare launchers]
     D --> E{Runtime?}
-    E -->|terminal or visible| F[Open shared zellij research tab]
+    E -->|terminal or visible| F[Open shared vc_frame research tab]
     E -->|headless| G[Print launcher paths and await command]
     F --> H[Each agent writes report plus logs inside the run directory]
     G --> H

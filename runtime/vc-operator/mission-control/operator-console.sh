@@ -38,8 +38,8 @@ printf '  close terminal: detach\n'
 printf '  Ctrl+q: quit intentionally\n'
 printf '\n'
 
-if [[ -x "$SCRIPT_DIR/zellij-gc.sh" ]]; then
-  bash "$SCRIPT_DIR/zellij-gc.sh" --apply --quiet || true
+if [[ -x "$SCRIPT_DIR/vc-frame-gc.sh" ]]; then
+  bash "$SCRIPT_DIR/vc-frame-gc.sh" --apply --quiet || true
 fi
 
 # restore-orphaned path retired 2026-04-22 — it reanimated zombie runs without

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# auto-theme.sh — host-aware zellij theme name resolver.
+# auto-theme.sh — host-aware vc_frame theme name resolver.
 #
 # Plan 12 (META_22) — Wave 4 agent-native runtime cut.
 #
 # Maps the current workstation to one of the canonical mesh themes shipped
-# in config/zellij/themes/vetcoders-mesh.kdl. Falls back to "vibecrafted"
+# in config/vc-frame/themes/vetcoders-mesh.kdl. Falls back to "vibecrafted"
 # (the neutral default in config.kdl) when the host is unknown.
 #
 # Mesh mapping (kronika 2026-05-05 — VetCoders mesh topology):

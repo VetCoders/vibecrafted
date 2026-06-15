@@ -258,8 +258,8 @@ def test_run_doctor_uses_bundled_vc_frame_when_not_on_path(
     findings = installer.run_doctor(store_path, state)
     indexed = {finding.component: finding for finding in findings}
 
-    assert indexed["zellij"].level == "ok"
-    assert str(vc_frame) in indexed["zellij"].message
+    assert indexed["vc-frame"].level == "ok"
+    assert str(vc_frame) in indexed["vc-frame"].message
 
 
 def test_run_doctor_accepts_gemini_help_when_version_flag_exits_nonzero(
@@ -467,7 +467,7 @@ def test_product_tool_discovery_records_path_without_rehoming(
                 verify_cmd="loct --version",
             ),
             installer.Foundation(
-                name="zellij",
+                name="vc-frame",
                 description="VC Frame multi-agent terminal workspace surface",
                 channels=["canonical"],
                 packages={
@@ -482,7 +482,7 @@ def test_product_tool_discovery_records_path_without_rehoming(
 
     assert product_tools["loct"]["path"] == str(cargo_bin / "loct")
     assert product_tools["loct"]["managed_by"] == "external-path"
-    assert product_tools["zellij"]["path"] == str(cargo_bin / "vc-frame")
+    assert product_tools["vc-frame"]["path"] == str(cargo_bin / "vc-frame")
     assert not (launcher_bin / "loct").exists()
     assert not (launcher_bin / "vc-frame").exists()
 
@@ -491,10 +491,10 @@ def test_product_tool_discovery_records_path_without_rehoming(
     loaded = installer.InstallState.load(store_path)
 
     assert loaded.product_tools["loct"]["path"] == str(cargo_bin / "loct")
-    assert loaded.product_tools["zellij"]["path"] == str(cargo_bin / "vc-frame")
+    assert loaded.product_tools["vc-frame"]["path"] == str(cargo_bin / "vc-frame")
 
 
-def test_product_tool_discovery_prefers_vc_frame_for_zellij_key(
+def test_product_tool_discovery_prefers_vc_frame_for_vc_frame_key(
     tmp_path: Path, monkeypatch
 ) -> None:
     home = tmp_path / "home"
@@ -506,7 +506,7 @@ def test_product_tool_discovery_prefers_vc_frame_for_zellij_key(
         cargo_bin / "vc-frame", "#!/usr/bin/env bash\nprintf 'vc-frame-dev\\n'\n"
     )
     _write_executable(
-        cargo_bin / "zellij", "#!/usr/bin/env bash\nprintf 'zellij-dev\\n'\n"
+        cargo_bin / "vc-frame", "#!/usr/bin/env bash\nprintf 'vc_frame-dev\\n'\n"
     )
 
     _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
@@ -516,7 +516,7 @@ def test_product_tool_discovery_prefers_vc_frame_for_zellij_key(
         "FOUNDATIONS",
         [
             installer.Foundation(
-                name="zellij",
+                name="vc-frame",
                 description="VC Frame multi-agent terminal workspace surface",
                 channels=["canonical"],
                 packages={
@@ -529,7 +529,7 @@ def test_product_tool_discovery_prefers_vc_frame_for_zellij_key(
 
     product_tools = installer.snapshot_product_tool_state()
 
-    assert product_tools["zellij"]["path"] == str(cargo_bin / "vc-frame")
+    assert product_tools["vc-frame"]["path"] == str(cargo_bin / "vc-frame")
 
 
 def test_layout_migrate_promotes_legacy_agents_scripts_to_current_tools(
@@ -739,7 +739,7 @@ def test_doctor_executes_dashboard_wrapper_without_bash() -> None:
     )
 
     dashboard_smoke = installer_text.split("# 6b. Dashboard smoke", 1)[1].split(
-        "# 6c. Zellij", 1
+        "# 6c. vc-frame", 1
     )[0]
 
     assert '["bash", str(dashboard_wrapper)' not in dashboard_smoke

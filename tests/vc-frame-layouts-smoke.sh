@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# zellij_layouts_smoke.sh — Plan 12 (META_22) verification gate.
+# vc-frame-layouts-smoke.sh — Plan 12 (META_22) verification gate.
 #
 # Asserts that the Wave 4 agent-native runtime cut is internally consistent:
 #
-#   1. Every shipped layout in config/zellij/layouts/*.kdl parses via
+#   1. Every shipped layout in config/vc-frame/layouts/*.kdl parses via
 #      `vc-frame --layout <name> setup --check`.
 #   2. All four mesh themes in themes/vetcoders-mesh.kdl load alongside
 #      config.kdl without parse errors.
@@ -14,7 +14,7 @@
 #      including the mgbook16 → vetcoders-div0 alias from kronika 2026-05-05
 #      and the neutral fallback for unknown hosts.
 #
-# Designed to run inside `make test-zellij`. Tolerant of missing vc-frame
+# Designed to run inside `make test-vc-frame`. Tolerant of missing vc-frame
 # (e.g. CI image without the binary) — it warns and skips KDL syntax checks
 # rather than failing.
 #
@@ -24,7 +24,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$HERE/.." && pwd)
-CFG_DIR="$REPO_ROOT/config/zellij"
+CFG_DIR="$REPO_ROOT/config/vc-frame"
 LAYOUT_DIR="$CFG_DIR/layouts"
 THEMES_FILE="$CFG_DIR/themes/vetcoders-mesh.kdl"
 
@@ -97,9 +97,9 @@ else
 fi
 
 # ───── 3. KDL layout parse ──────────────────────────────────────────────────
-printf '\n[3] zellij layout parse\n'
+printf '\n[3] vc-frame layout parse\n'
 
-if ! zellij_bin="$(vc_frame_bin)"; then
+if ! vc_frame_bin="$(vc_frame_bin)"; then
     skip "vc-frame not installed — KDL syntax check deferred to CI"
 else
     layouts=()
@@ -113,7 +113,7 @@ else
 
     for l in "${layouts[@]}"; do
         name=$(basename "$l" .kdl)
-        out=$(ZELLIJ_CONFIG_DIR="$CFG_DIR" "$zellij_bin" --layout "$name" setup --check 2>&1 || true)
+        out=$(VC_FRAME_CONFIG_DIR="$CFG_DIR" "$vc_frame_bin" --layout "$name" setup --check 2>&1 || true)
         if echo "$out" | grep -qiE "Failed to parse|error parsing|invalid layout"; then
             fail "layout $name failed to parse" "$(echo "$out" | head -3)"
         else
@@ -125,7 +125,7 @@ fi
 # ───── 4. mesh themes parse ─────────────────────────────────────────────────
 printf '\n[4] mesh themes parse\n'
 
-if ! zellij_bin="$(vc_frame_bin)"; then
+if ! vc_frame_bin="$(vc_frame_bin)"; then
     skip "vc-frame missing — mesh theme parse skipped"
 else
     tmpcfg=$(mktemp -d)
@@ -136,7 +136,7 @@ else
 
     for theme_name in vetcoders-dragon vetcoders-sztudio vetcoders-silver vetcoders-div0; do
         sed -i.bak "s/^theme \".*\"$/theme \"$theme_name\"/" "$tmpcfg/config.kdl"
-        out=$(ZELLIJ_CONFIG_DIR="$tmpcfg" "$zellij_bin" setup --check 2>&1 || true)
+        out=$(VC_FRAME_CONFIG_DIR="$tmpcfg" "$vc_frame_bin" setup --check 2>&1 || true)
         if echo "$out" | grep -qiE "Failed to parse|error parsing|invalid theme"; then
             fail "theme $theme_name failed to parse" "$(echo "$out" | head -3)"
         else

@@ -22,7 +22,7 @@ _vetcoders_dashboard_layout_name() {
 _vetcoders_dashboard_layout_file() {
   local layout_name
   layout_name="$(_vetcoders_dashboard_layout_name "${1:-}")" || return 1
-  _vetcoders_frontier_file "zellij/layouts/${layout_name}.kdl"
+  _vetcoders_frontier_file "vc-frame/layouts/${layout_name}.kdl"
 }
 
 _vetcoders_dashboard_session_name() {
@@ -40,57 +40,57 @@ _vetcoders_launch_dashboard() {
   vc_raise_launcher_limits
   local first_arg="${1:-}"
 
-  # Thin shim subcommands — delegate directly to native Zellij.
+  # Thin shim subcommands — delegate directly to native vc-frame.
   case "$first_arg" in
     ls|list|sessions)
-      local zellij_bin=""
-      zellij_bin="$(_vetcoders_zellij_bin)" || {
+      local vc_frame_bin=""
+      vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
         echo "vc-frame is required." >&2; return 1
       }
-      "$zellij_bin" list-sessions
+      "$vc_frame_bin" list-sessions
       return
       ;;
     switch)
       shift
-      local zellij_bin=""
-      zellij_bin="$(_vetcoders_zellij_bin)" || {
+      local vc_frame_bin=""
+      vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
         echo "vc-frame is required." >&2; return 1
       }
-      if [[ -n "${ZELLIJ+set}" ]]; then
-        "$zellij_bin" action switch-session "${1:?session name required}"
+      if [[ -n "${VC_FRAME+set}" ]]; then
+        "$vc_frame_bin" action switch-session "${1:?session name required}"
       else
-        "$zellij_bin" attach "${1:?session name required}"
+        "$vc_frame_bin" attach "${1:?session name required}"
       fi
       return
       ;;
     attach)
       shift
-      local zellij_bin=""
-      zellij_bin="$(_vetcoders_zellij_bin)" || {
+      local vc_frame_bin=""
+      vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
         echo "vc-frame is required." >&2; return 1
       }
-      if [[ -n "${ZELLIJ+set}" ]]; then
-        "$zellij_bin" action switch-session "${1:?session name required}"
+      if [[ -n "${VC_FRAME+set}" ]]; then
+        "$vc_frame_bin" action switch-session "${1:?session name required}"
       else
-        "$zellij_bin" attach "${1:?session name required}"
+        "$vc_frame_bin" attach "${1:?session name required}"
       fi
       return
       ;;
     kill)
       shift
-      local zellij_bin=""
-      zellij_bin="$(_vetcoders_zellij_bin)" || {
+      local vc_frame_bin=""
+      vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
         echo "vc-frame is required." >&2; return 1
       }
-      "$zellij_bin" kill-session "${1:?session name required}"
+      "$vc_frame_bin" kill-session "${1:?session name required}"
       return
       ;;
     gc)
       shift || true
       local gc_script
-      gc_script="$(_vetcoders_zellij_gc_script 2>/dev/null || true)"
+      gc_script="$(_vetcoders_vc_frame_gc_script 2>/dev/null || true)"
       [[ -n "$gc_script" && -f "$gc_script" ]] || {
-        echo "zellij GC helper not found." >&2
+        echo "vc-frame GC helper not found." >&2
         return 1
       }
       bash "$gc_script" "$@"
@@ -98,13 +98,13 @@ _vetcoders_launch_dashboard() {
       ;;
   esac
 
-  local layout_name layout_file session_name repo_source repo_zellij_dir state inside_zellij current_session zellij_bin
+  local layout_name layout_file session_name repo_source repo_vc_frame_dir state inside_vc_frame current_session vc_frame_bin
   _vetcoders_normalize_ambient_context
-  _vetcoders_auto_gc_dead_zellij_sessions
+  _vetcoders_auto_gc_dead_vc_frame_sessions
   layout_name="$(_vetcoders_dashboard_layout_name "${first_arg}")" || return 1
   (( $# )) && shift
 
-  zellij_bin="$(_vetcoders_zellij_bin)" || {
+  vc_frame_bin="$(_vetcoders_vc_frame_bin)" || {
     echo "vc-frame is required for vibecrafted dashboard." >&2
     return 1
   }
@@ -114,36 +114,36 @@ _vetcoders_launch_dashboard() {
   layout_file="$(_vetcoders_dashboard_layout_file "$layout_name" 2>/dev/null || true)"
   [[ -n "$layout_file" ]] || {
     echo "Dashboard layout not found for: $layout_name" >&2
-    echo "Expected zellij/layouts/${layout_name}.kdl in the active frontier config roots." >&2
+    echo "Expected vc-frame/layouts/${layout_name}.kdl in the active frontier config roots." >&2
     return 1
   }
 
-  if [[ "${VIBECRAFTED_PREFER_REPO_ZELLIJ:-0}" == "1" ]]; then
+  if [[ "${VIBECRAFTED_PREFER_REPO_VC_FRAME:-0}" == "1" ]]; then
     repo_source="$(_vetcoders_repo_root)"
-    repo_zellij_dir="$repo_source/config/zellij"
-    if [[ -d "$repo_zellij_dir" && -f "$repo_zellij_dir/config.kdl" ]]; then
-      local repo_layout="$repo_zellij_dir/layouts/${layout_name}.kdl"
+    repo_vc_frame_dir="$repo_source/config/vc-frame"
+    if [[ -d "$repo_vc_frame_dir" && -f "$repo_vc_frame_dir/config.kdl" ]]; then
+      local repo_layout="$repo_vc_frame_dir/layouts/${layout_name}.kdl"
       if [[ -f "$repo_layout" ]]; then
         layout_file="$repo_layout"
-        export VC_FRAME_CONFIG_DIR="$repo_zellij_dir"
+        export VC_FRAME_CONFIG_DIR="$repo_vc_frame_dir"
       fi
     fi
   fi
 
   session_name="$(_vetcoders_dashboard_session_name "$layout_name")"
-  state="$(_vetcoders_zellij_session_state "$session_name")"
-  [[ -n "${ZELLIJ_PANE_ID:-}" || -n "${ZELLIJ+set}" ]] && inside_zellij=1 || inside_zellij=0
+  state="$(_vetcoders_vc_frame_session_state "$session_name")"
+  [[ -n "${VC_FRAME_PANE_ID:-${ZELLIJ_PANE_ID:-}}" || -n "${VC_FRAME+set}" || -n "${ZELLIJ+set}" ]] && inside_vc_frame=1 || inside_vc_frame=0
   current_session="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 
   if [[ "$layout_name" != "operator" && "$layout_name" != "dashboard" && "$state" == "live" ]]; then
-    if (( inside_zellij )) && [[ "$current_session" == "$session_name" ]]; then
-      "$zellij_bin" action new-tab --layout "$layout_file"
+    if (( inside_vc_frame )) && [[ "$current_session" == "$session_name" ]]; then
+      "$vc_frame_bin" action new-tab --layout "$layout_file"
     else
-      "$zellij_bin" --session "$session_name" action new-tab --layout "$layout_file"
-      if (( inside_zellij )); then
-        "$zellij_bin" action switch-session "$session_name"
+      "$vc_frame_bin" --session "$session_name" action new-tab --layout "$layout_file"
+      if (( inside_vc_frame )); then
+        "$vc_frame_bin" action switch-session "$session_name"
       else
-        "$zellij_bin" attach "$session_name"
+        "$vc_frame_bin" attach "$session_name"
       fi
     fi
     return 0

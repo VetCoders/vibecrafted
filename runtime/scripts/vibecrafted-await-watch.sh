@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # vibecrafted-await-watch — auto-tail-await-die pane helper
 #
-# Spawned as a zellij floating probe by legacy shell shims after every
+# Spawned as a vc_frame floating probe by legacy shell shims after every
 # non-marbles dispatch. Tails the worker's transcript log, watches the
 # meta status + size delta + worker process liveness, and self-
 # terminates when the worker is done (or the wrapper zombies).
@@ -218,5 +218,5 @@ printf 'final meta status:     %s\n' "$status"
 printf '────────────────────────\n'
 
 # Keep pane open briefly so operator can read final state, then self-close.
-# zellij --close-on-exit will reap the pane after we exit.
+# vc_frame --close-on-exit will reap the pane after we exit.
 sleep "${VIBECRAFTED_AWAIT_FINAL_HOLD:-8}"

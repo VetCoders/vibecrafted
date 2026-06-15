@@ -30,7 +30,7 @@ def _write_fake_marbles_spawn(script_path: Path) -> None:
     script_path.chmod(0o755)
 
 
-def _write_replaying_zellij(script_path: Path) -> None:
+def _write_replaying_vc_frame(script_path: Path) -> None:
     payload = (
         "\n".join(
             [
@@ -42,14 +42,14 @@ def _write_replaying_zellij(script_path: Path) -> None:
                 "from pathlib import Path",
                 "",
                 "args = sys.argv[1:]",
-                'Path(os.environ["ZELLIJ_CAPTURE_FILE"]).write_text("\\n".join(args) + "\\n", encoding="utf-8")',
+                'Path(os.environ["VC_FRAME_CAPTURE_FILE"]).write_text("\\n".join(args) + "\\n", encoding="utf-8")',
                 "if args:",
                 "    cmd_script = Path(args[-1])",
                 '    expected_spawn = os.environ.get("EXPECTED_MARBLES_SPAWN", "")',
                 "    if expected_spawn and cmd_script.is_file():",
                 '        payload = cmd_script.read_text(encoding="utf-8", errors="ignore")',
                 "        if expected_spawn not in payload:",
-                '            print(f"unsafe zellij replay target: {cmd_script}", file=sys.stderr)',
+                '            print(f"unsafe vc_frame replay target: {cmd_script}", file=sys.stderr)',
                 "            sys.exit(97)",
                 "    shell = shutil.which('zsh') or shutil.which('bash') or '/bin/sh'",
                 "    subprocess.run([shell, '-lc', str(cmd_script)], check=True, env=os.environ.copy())",
@@ -59,7 +59,7 @@ def _write_replaying_zellij(script_path: Path) -> None:
     )
     script_path.write_text(payload, encoding="utf-8")
     script_path.chmod(0o755)
-    if script_path.name == "zellij":
+    if script_path.name == "vc-frame":
         vc_frame = script_path.with_name("vc-frame")
         vc_frame.write_text(payload, encoding="utf-8")
         vc_frame.chmod(0o755)
@@ -328,7 +328,7 @@ def test_marbles_spawn_chains_with_agent_and_ancestor_plan_contract() -> None:
 
 
 def _run_marbles_prompt(
-    tmp_path: Path, *, inside_zellij: bool
+    tmp_path: Path, *, inside_vc_frame: bool
 ) -> tuple[list[str], list[str], Path]:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
@@ -336,7 +336,7 @@ def _run_marbles_prompt(
     isolated_root = tmp_path / "isolated-root"
     tmpdir_root = tmp_path / "tmpdir"
     capture_file = tmp_path / "marbles-args.txt"
-    zellij_capture_file = tmp_path / "zellij-args.txt"
+    vc_frame_capture_file = tmp_path / "vc_frame-args.txt"
     spawn_script = crafted_home / "runtime" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
@@ -345,7 +345,7 @@ def _run_marbles_prompt(
     tmpdir_root.mkdir()
     spawn_script.parent.mkdir(parents=True)
     _write_fake_marbles_spawn(spawn_script)
-    _write_replaying_zellij(fake_bin / "zellij")
+    _write_replaying_vc_frame(fake_bin / "vc-frame")
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -353,20 +353,20 @@ def _run_marbles_prompt(
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["VIBECRAFTED_ROOT"] = str(isolated_root)
     env["CAPTURE_FILE"] = str(capture_file)
-    env["ZELLIJ_CAPTURE_FILE"] = str(zellij_capture_file)
+    env["VC_FRAME_CAPTURE_FILE"] = str(vc_frame_capture_file)
     env["EXPECTED_MARBLES_SPAWN"] = str(spawn_script)
     env["TMPDIR"] = f"{tmpdir_root}/"
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     operator_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
 
-    if inside_zellij:
-        env["ZELLIJ"] = "operator"
-        env["ZELLIJ_PANE_ID"] = "terminal_7"
-        env["ZELLIJ_SESSION_NAME"] = operator_session
+    if inside_vc_frame:
+        env["VC_FRAME"] = "operator"
+        env["VC_FRAME_PANE_ID"] = "terminal_7"
+        env["VC_FRAME_SESSION_NAME"] = operator_session
     else:
         env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
 
@@ -386,16 +386,16 @@ def _run_marbles_prompt(
 
     return (
         capture_file.read_text(encoding="utf-8").splitlines(),
-        zellij_capture_file.read_text(encoding="utf-8").splitlines(),
+        vc_frame_capture_file.read_text(encoding="utf-8").splitlines(),
         crafted_home,
     )
 
 
-def test_vc_marbles_preserves_prompt_as_single_argument_inside_zellij(
+def test_vc_marbles_preserves_prompt_as_single_argument_inside_vc_frame(
     tmp_path: Path,
 ) -> None:
-    payload, zellij_payload, crafted_home = _run_marbles_prompt(
-        tmp_path, inside_zellij=True
+    payload, vc_frame_payload, crafted_home = _run_marbles_prompt(
+        tmp_path, inside_vc_frame=True
     )
     expected_tmp_root = (
         crafted_home
@@ -411,24 +411,24 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_zellij(
     assert "1" in payload
     assert "--prompt" in payload
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
-    assert "new-pane" in zellij_payload
-    assert any("vibecrafted-marbles." in line for line in zellij_payload)
-    assert any(str(expected_tmp_root) in line for line in zellij_payload)
-    assert not any("//vibecrafted-marbles." in line for line in zellij_payload)
+    assert "new-pane" in vc_frame_payload
+    assert any("vibecrafted-marbles." in line for line in vc_frame_payload)
+    assert any(str(expected_tmp_root) in line for line in vc_frame_payload)
+    assert not any("//vibecrafted-marbles." in line for line in vc_frame_payload)
     assert not any(
         "weź i vc-justdo wszystko co marbles znajdzie" in line
-        for line in zellij_payload
+        for line in vc_frame_payload
     )
 
 
-def test_vc_marbles_inside_zellij_prints_launch_receipt(tmp_path: Path) -> None:
+def test_vc_marbles_inside_vc_frame_prints_launch_receipt(tmp_path: Path) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
     fake_bin = tmp_path / "bin"
     isolated_root = tmp_path / "isolated-root"
     tmpdir_root = tmp_path / "tmpdir"
     capture_file = tmp_path / "marbles-args.txt"
-    zellij_capture_file = tmp_path / "zellij-args.txt"
+    vc_frame_capture_file = tmp_path / "vc_frame-args.txt"
     spawn_script = crafted_home / "runtime" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
@@ -437,7 +437,7 @@ def test_vc_marbles_inside_zellij_prints_launch_receipt(tmp_path: Path) -> None:
     tmpdir_root.mkdir()
     spawn_script.parent.mkdir(parents=True)
     _write_fake_marbles_spawn(spawn_script)
-    _write_replaying_zellij(fake_bin / "zellij")
+    _write_replaying_vc_frame(fake_bin / "vc-frame")
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -445,12 +445,12 @@ def test_vc_marbles_inside_zellij_prints_launch_receipt(tmp_path: Path) -> None:
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["VIBECRAFTED_ROOT"] = str(isolated_root)
     env["CAPTURE_FILE"] = str(capture_file)
-    env["ZELLIJ_CAPTURE_FILE"] = str(zellij_capture_file)
+    env["VC_FRAME_CAPTURE_FILE"] = str(vc_frame_capture_file)
     env["EXPECTED_MARBLES_SPAWN"] = str(spawn_script)
     env["TMPDIR"] = f"{tmpdir_root}/"
-    env["ZELLIJ"] = "operator"
-    env["ZELLIJ_PANE_ID"] = "terminal_7"
-    env["ZELLIJ_SESSION_NAME"] = "ambient-session"
+    env["VC_FRAME"] = "operator"
+    env["VC_FRAME_PANE_ID"] = "terminal_7"
+    env["VC_FRAME_SESSION_NAME"] = "ambient-session"
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(
@@ -466,7 +466,7 @@ def test_vc_marbles_inside_zellij_prints_launch_receipt(tmp_path: Path) -> None:
         text=True,
     )
 
-    assert "Marbles run launched in zellij tab: marbles-marb-" in result.stdout
+    assert "Marbles run launched in vc_frame tab: marbles-marb-" in result.stdout
     assert "run_id:  marb-" in result.stdout
     assert "inspect: vc-marbles inspect marb-" in result.stdout
 
@@ -477,7 +477,7 @@ def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     isolated_root = tmp_path / "isolated-root"
     capture_file = tmp_path / "marbles-args.txt"
-    zellij_capture = tmp_path / "zellij-args.txt"
+    vc_frame_capture = tmp_path / "vc_frame-args.txt"
     spawn_script = crafted_home / "runtime" / "scripts" / "marbles_spawn.sh"
 
     home.mkdir()
@@ -485,11 +485,11 @@ def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
     isolated_root.mkdir()
     spawn_script.parent.mkdir(parents=True)
     _write_fake_marbles_spawn(spawn_script)
-    (fake_bin / "zellij").write_text(
-        '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\n\' "$@" > "$ZELLIJ_CAPTURE_FILE"\n',
+    (fake_bin / "vc-frame").write_text(
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\n\' "$@" > "$VC_FRAME_CAPTURE_FILE"\n',
         encoding="utf-8",
     )
-    (fake_bin / "zellij").chmod(0o755)
+    (fake_bin / "vc-frame").chmod(0o755)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -497,11 +497,11 @@ def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["VIBECRAFTED_ROOT"] = str(isolated_root)
     env["CAPTURE_FILE"] = str(capture_file)
-    env["ZELLIJ_CAPTURE_FILE"] = str(zellij_capture)
+    env["VC_FRAME_CAPTURE_FILE"] = str(vc_frame_capture)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-    env["ZELLIJ"] = "operator"
-    env["ZELLIJ_PANE_ID"] = "terminal_7"
-    env["ZELLIJ_SESSION_NAME"] = "ambient-session"
+    env["VC_FRAME"] = "operator"
+    env["VC_FRAME_PANE_ID"] = "terminal_7"
+    env["VC_FRAME_SESSION_NAME"] = "ambient-session"
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(
@@ -522,7 +522,7 @@ def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
     assert "headless" in payload
     assert "--no-watch" in payload
     assert payload.index("--no-watch") < payload.index("--prompt")
-    assert not zellij_capture.exists()
+    assert not vc_frame_capture.exists()
     assert re.search(
         r"Agent launched\. Report will land at: .*/marbles/reports/\d{8}_\d{4}_marbles-ancestor_L1_codex\.md",
         result.stdout,
@@ -532,8 +532,8 @@ def test_vc_marbles_uses_no_watch_for_headless_runtime(tmp_path: Path) -> None:
 def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
     tmp_path: Path,
 ) -> None:
-    payload, zellij_payload, crafted_home = _run_marbles_prompt(
-        tmp_path, inside_zellij=False
+    payload, vc_frame_payload, crafted_home = _run_marbles_prompt(
+        tmp_path, inside_vc_frame=False
     )
     expected_tmp_root = (
         crafted_home
@@ -549,13 +549,13 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
     assert "1" in payload
     assert "--prompt" in payload
     assert "weź i vc-justdo wszystko co marbles znajdzie" in payload
-    assert "new-tab" in zellij_payload
-    assert any("vc-spawn-cmd." in line for line in zellij_payload)
-    assert any(str(expected_tmp_root) in line for line in zellij_payload)
-    assert not any("//vc-spawn-cmd." in line for line in zellij_payload)
+    assert "new-tab" in vc_frame_payload
+    assert any("vc-spawn-cmd." in line for line in vc_frame_payload)
+    assert any(str(expected_tmp_root) in line for line in vc_frame_payload)
+    assert not any("//vc-spawn-cmd." in line for line in vc_frame_payload)
     assert not any(
         "weź i vc-justdo wszystko co marbles znajdzie" in line
-        for line in zellij_payload
+        for line in vc_frame_payload
     )
 
 
@@ -565,7 +565,7 @@ def test_vetcoders_shell_quote_join_stays_utf8_clean_for_multiline_prompt(
     env = os.environ.copy()
     env["PROMPT_PAYLOAD"] = (
         "Siemka! weź i zażółć gęślą jaźń.\n"
-        "_Run inside zellij - if there is any open window attach to it._\n"
+        "_Run inside vc_frame - if there is any open window attach to it._\n"
         "Don't drop UTF-8 on the floor."
     )
 
@@ -686,9 +686,9 @@ def test_marbles_runtime_steers_next_loop_from_ancestor_frontmatter(
     env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
     env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "0"
     env["MARBLES_TEST_EDIT_ANCESTOR"] = "1"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     subprocess.run(
@@ -752,9 +752,9 @@ def test_marbles_runtime_keeps_ancestor_focus_when_next_plan_write_lags(
     env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "0"
     env["MARBLES_TEST_EDIT_ANCESTOR"] = "1"
     env["MARBLES_TEST_DELAY_NEXT_PLAN"] = "2"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     subprocess.run(
@@ -802,9 +802,9 @@ def test_marbles_runtime_applies_rotation_schedule_without_ancestor_override(
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
     env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "0"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     subprocess.run(
@@ -903,9 +903,9 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
     env["MARBLES_TEST_ANCESTOR_SEQUENCE"] = (
         "gemini|accessibility|;claude|auth hardening|"
     )
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     subprocess.run(
@@ -1033,9 +1033,9 @@ def test_marbles_no_watch_still_creates_god_and_ancestor_contract(
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
     env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "0"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     subprocess.run(
@@ -1093,9 +1093,9 @@ def test_marbles_materializes_failed_loop_when_child_spawn_dies_before_meta(
     env["MARBLES_TEST_FAIL_BEFORE_META_LOOP"] = "2"
     env["VIBECRAFTED_MARBLES_META_TIMEOUT_S"] = "3"
     env["VIBECRAFTED_MARBLES_REPORT_TIMEOUT_S"] = "2"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(
@@ -1176,9 +1176,9 @@ def test_marbles_spawn_fails_fast_when_watcher_script_is_invalid(
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
     env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "0"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(
@@ -1224,9 +1224,9 @@ def test_marbles_watcher_waits_for_meta_completion_before_advancing(
     env["MARBLES_TEST_DELAY_META_AFTER_REPORT_S"] = "4"
     env["VIBECRAFTED_MARBLES_META_TIMEOUT_S"] = "8"
     env["VIBECRAFTED_MARBLES_REPORT_TIMEOUT_S"] = "10"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(
@@ -1282,9 +1282,9 @@ def test_marbles_no_watch_keeps_report_hint_enabled(
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
     env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "0"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     subprocess.run(
@@ -1329,9 +1329,9 @@ def test_marbles_watcher_does_not_consume_failed_fallback_report(
     env["MARBLES_TEST_FAIL_WITH_REPORT_LOOP"] = "1"
     env["VIBECRAFTED_MARBLES_META_TIMEOUT_S"] = "2"
     env["VIBECRAFTED_MARBLES_REPORT_TIMEOUT_S"] = "2"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(
@@ -1386,9 +1386,9 @@ def test_marbles_next_fails_zero_exit_failed_report_before_convergence(
     env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
     env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "0"
     env["MARBLES_TEST_REPORT_FAILED_META_COMPLETED_LOOP"] = "1"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(
@@ -1452,9 +1452,9 @@ def test_marbles_watcher_reception_guard_flags_missing_convergence(
     env["VIBECRAFTED_MARBLES_CONVERGENCE_BACKOFF_S"] = "0"
     env["VIBECRAFTED_MARBLES_CONVERGENCE_BACKOFF_MAX_S"] = "0"
     env["MARBLES_TEST_SKIP_SUCCESS_HOOK_LOOP"] = "1"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(
@@ -1524,9 +1524,9 @@ def test_marbles_verification_poll_survives_watcher_exit_without_job_noise(
     env["VIBECRAFTED_MARBLES_VERIFICATION_TIMEOUT_S"] = "1"
     env["VIBECRAFTED_MARBLES_VERIFICATION_POLL_S"] = "1"
     env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "1"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
 
     result = subprocess.run(

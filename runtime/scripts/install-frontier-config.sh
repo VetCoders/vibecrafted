@@ -8,7 +8,7 @@ Usage: install-frontier-config.sh [--source <repo-root>] [--dry-run] [--mode sym
 Install the repo-owned frontier shell presets:
 - starship
 - atuin
-- zellij (config + layouts)
+- vc-frame (config + layouts)
 
 By default this creates sidecar symlinks in $HOME/.config/vetcoders/frontier so the
 repo remains the source of truth without taking over your global shell layout.
@@ -108,11 +108,11 @@ printf '  frontier root: %s\n' "$frontier_root"
 
 install_one "$repo_root/config/starship.toml" "$frontier_root/starship.toml"
 install_one "$repo_root/config/atuin/config.toml" "$frontier_root/atuin/config.toml"
-install_one "$repo_root/config/zellij/config.kdl" "$frontier_root/zellij/config.kdl"
-install_one "$repo_root/config/zellij/layouts/research.kdl" "$frontier_root/zellij/layouts/research.kdl"
-install_one "$repo_root/config/zellij/layouts/workflow.kdl" "$frontier_root/zellij/layouts/workflow.kdl"
-install_one "$repo_root/config/zellij/layouts/marbles.kdl" "$frontier_root/zellij/layouts/marbles.kdl"
-install_one "$repo_root/config/zellij/layouts/dashboard.kdl" "$frontier_root/zellij/layouts/dashboard.kdl"
-install_one "$repo_root/config/zellij/layouts/operator.kdl" "$frontier_root/zellij/layouts/operator.kdl"
+install_one "$repo_root/config/vc-frame/config.kdl" "$frontier_root/vc-frame/config.kdl"
+install_one "$repo_root/config/vc-frame/layouts/research.kdl" "$frontier_root/vc-frame/layouts/research.kdl"
+install_one "$repo_root/config/vc-frame/layouts/workflow.kdl" "$frontier_root/vc-frame/layouts/workflow.kdl"
+install_one "$repo_root/config/vc-frame/layouts/marbles.kdl" "$frontier_root/vc-frame/layouts/marbles.kdl"
+install_one "$repo_root/config/vc-frame/layouts/dashboard.kdl" "$frontier_root/vc-frame/layouts/dashboard.kdl"
+install_one "$repo_root/config/vc-frame/layouts/operator.kdl" "$frontier_root/vc-frame/layouts/operator.kdl"
 
 printf 'Done.\n'

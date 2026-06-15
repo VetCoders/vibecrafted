@@ -41,9 +41,12 @@ def test_normalize_launch_spec_prune_without_input_uses_discovery_prompt(
     assert spec.skill == "prune"
     assert spec.agent == "claude"
     assert spec.file == ""
-    assert "Repository health / prune discovery run." in spec.prompt
-    assert "Do not push. Push is an operator button." in spec.prompt
-    assert "findings/dead-parrots.md" in spec.prompt
+    assert "Repository health / prune ACTION run." in spec.prompt
+    assert (
+        "Never `--no-verify`. Never `git push` — push is an operator button."
+        in spec.prompt
+    )
+    assert "Mode: DISCOVER -> PROVE -> CUT -> COMMIT." in spec.prompt
 
 
 def test_normalize_launch_spec_uses_registry_for_marbles_defaults(

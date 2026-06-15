@@ -20,16 +20,16 @@ everywhere.
 
 ## What's inside
 
-| Layer                     | Components                                                                                                                                                                    |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Base**                  | `debian:trixie-slim` (multi-arch)                                                                                                                                             |
-| **Toolchains**            | Rust (rustup stable) · Zig 0.13.0 · Node 22 LTS · Python 3 (uv)                                                                                                               |
-| **VetCoders foundations** | `loct` · `loctree` · `loctree-mcp` · `loctree-lsp` · `aicx` · `aicx-mcp` (all via loct.io) · `screenscribe` · `semgrep` · `mise` · `starship` · `atuin` · `zoxide` · `zellij` |
-| **Agent CLIs**            | `claude` (`@anthropic-ai/claude-code`) · `codex` (`@openai/codex`) · `gemini` (`@google/gemini-cli`)                                                                          |
-| **Framework**             | vibecrafted 21 vc-\* skills + agent symlinks + frontier config                                                                                                                |
-| **CLI niceties**          | `eza` · `bat` · `fd` · `rg` · `just` · `tokei`                                                                                                                                |
-| **Network**               | tailscale (userspace mode — no `/dev/net/tun` kernel module needed)                                                                                                           |
-| **Shell**                 | zsh + starship + atuin + zoxide                                                                                                                                               |
+| Layer                     | Components                                                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Base**                  | `debian:trixie-slim` (multi-arch)                                                                                                                                               |
+| **Toolchains**            | Rust (rustup stable) · Zig 0.13.0 · Node 22 LTS · Python 3 (uv)                                                                                                                 |
+| **VetCoders foundations** | `loct` · `loctree` · `loctree-mcp` · `loctree-lsp` · `aicx` · `aicx-mcp` (all via loct.io) · `screenscribe` · `semgrep` · `mise` · `starship` · `atuin` · `zoxide` · `vc_frame` |
+| **Agent CLIs**            | `claude` (`@anthropic-ai/claude-code`) · `codex` (`@openai/codex`) · `gemini` (`@google/gemini-cli`)                                                                            |
+| **Framework**             | vibecrafted 21 vc-\* skills + agent symlinks + frontier config                                                                                                                  |
+| **CLI niceties**          | `eza` · `bat` · `fd` · `rg` · `just` · `tokei`                                                                                                                                  |
+| **Network**               | tailscale (userspace mode — no `/dev/net/tun` kernel module needed)                                                                                                             |
+| **Shell**                 | zsh + starship + atuin + zoxide                                                                                                                                                 |
 
 ## Quick start
 
@@ -95,7 +95,7 @@ The container expects these host paths (mounted automatically by
 | `~/.codex/`              | `/root/.codex/`            | Codex sessions (persistent)                 |
 | `~/.gemini/`             | `/root/.gemini/`           | Gemini sessions (persistent)                |
 | `~/.vibecrafted/`        | `/root/.vibecrafted/`      | vibecrafted artifacts (plans, reports)      |
-| `~/.config/vetcoders/`   | `/root/.config/vetcoders/` | Frontier config (starship, atuin, zellij)   |
+| `~/.config/vetcoders/`   | `/root/.config/vetcoders/` | Frontier config (starship, atuin, vc_frame) |
 | `~/.gnupg/`              | `/root/.gnupg/` (ro)       | GPG keyring for release-tag signing         |
 
 ## Tailnet integration

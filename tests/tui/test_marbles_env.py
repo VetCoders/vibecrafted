@@ -89,9 +89,9 @@ def _base_env(tmp_path: Path) -> dict[str, str]:
     env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     for k in (
-        "ZELLIJ",
-        "ZELLIJ_PANE_ID",
-        "ZELLIJ_SESSION_NAME",
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
         "VIBECRAFTED_OPERATOR_SESSION",
         "VIBECRAFTED_RUN_ID",
         "VIBECRAFTED_SKILL_CODE",

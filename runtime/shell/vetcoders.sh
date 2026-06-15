@@ -87,7 +87,7 @@ fi
 # Load order: core -> runtime substrates -> workflow helpers -> public dispatch.
 _vetcoders_source_shell_module core || return $?
 _vetcoders_source_shell_module ulimits || return $?
-_vetcoders_source_shell_module zellij || return $?
+_vetcoders_source_shell_module vc_frame || return $?
 _vetcoders_source_shell_module frontier || return $?
 _vetcoders_source_shell_module atuin || return $?
 _vetcoders_source_shell_module dashboard || return $?

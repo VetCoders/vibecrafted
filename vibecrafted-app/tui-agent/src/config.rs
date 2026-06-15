@@ -92,13 +92,13 @@ pub fn parse_args() -> anyhow::Result<CliOptions> {
                     .unwrap_or_default();
                 options.launch_runtime = Some(value.parse::<LaunchRuntime>()?);
             }
-            "--terminal-binary" | "--zellij" => {
+            "--terminal-binary" | "--vc_frame" => {
                 let value = args
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("--terminal-binary requires a value"))?;
                 options.terminal_binary = Some(PathBuf::from(value));
             }
-            _ if arg.starts_with("--terminal-binary=") || arg.starts_with("--zellij=") => {
+            _ if arg.starts_with("--terminal-binary=") || arg.starts_with("--vc_frame=") => {
                 let value = arg
                     .split_once('=')
                     .map(|(_, value)| value)
@@ -187,7 +187,7 @@ pub fn default_terminal_binary() -> PathBuf {
             if command_on_path("vc-frame") {
                 PathBuf::from("vc-frame")
             } else {
-                PathBuf::from("zellij")
+                PathBuf::from("vc-frame")
             }
         })
 }
@@ -227,7 +227,7 @@ fn print_help() {
     println!("  --root <path>        Workspace root passed through to launched workflows");
     println!("  --runtime <kind>     Launch runtime (headless|terminal|visible)");
     println!(
-        "  --terminal-binary <path>  Terminal multiplexer binary (default: vc-frame, zellij fallback)"
+        "  --terminal-binary <path>  Terminal multiplexer binary (default: vc-frame, vc_frame fallback)"
     );
     println!("  --tick-ms <ms>       Refresh cadence for the TUI (default: 250)");
 }

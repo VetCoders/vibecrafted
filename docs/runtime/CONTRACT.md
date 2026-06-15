@@ -43,7 +43,7 @@ provides all the necessary tools to follow this pattern.
    - `vibecrafted` — Ultimate shell helper and the entry point for `vc-workflows`.
      Used as the main framework launcher.
    - `vc-term` — A custom alacritty implementation providing a terminal emulator.
-   - `vc-panes` — A zellij-powered operator panel for `vc-term`. Compatible with
+   - `vc-panes` — A vc_frame-powered operator panel for `vc-term`. Compatible with
      standard terminal emulators.
    - `vc-metrics` — A full frontmatter and `aicx` metadata-driven session tracker
      using the `session_id`+`run_id` as the primary key.
@@ -51,7 +51,7 @@ provides all the necessary tools to follow this pattern.
 4. **`vc-agents`:**
    The skill that spawns external specialized AI agents from the user's fleet
    (Codex, Claude, Gemini) using the `vc-why-matrix` picker, `vibecrafted` helper
-   and (if applied) the magic of zellij panes that keeps the track, measurability,
+   and (if applied) the magic of vc_frame panes that keeps the track, measurability,
    telemetry and auditability of the delegated work.
 
 ---
@@ -86,7 +86,7 @@ payload between `$HOME/.vibecrafted/skills/vc-agents` and
 `$HOME/.local/share/vibecrafted/tools/vibecrafted-current/agents`, writes a
 ledger entry to `.vc-install.json`, and refuses to overwrite a differing target
 file unless the operator explicitly passes `--force`. Product dependencies such
-as `loct`, `aicx`, and `zellij` stay external PATH discoveries; the layout
+as `loct`, `aicx`, and `vc_frame` stay external PATH discoveries; the layout
 transfer must not re-home or replace those binaries.
 
 ---

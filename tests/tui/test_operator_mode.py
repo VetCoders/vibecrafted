@@ -14,7 +14,7 @@ HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 
 def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None:
     script_names = [name]
-    if name == "zellij":
+    if name == "vc-frame":
         script_names.insert(0, "vc-frame")
     for script_name in script_names:
         script = bin_dir / script_name
@@ -32,11 +32,11 @@ def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None
         script.chmod(0o755)
 
 
-def _write_stateful_zellij(
+def _write_stateful_vc_frame(
     bin_dir: Path, capture_file: Path, session_state_file: Path
 ) -> None:
     default_session = _expected_operator_session()
-    script = bin_dir / "zellij"
+    script = bin_dir / "vc-frame"
     script.write_text(
         "\n".join(
             [
@@ -49,7 +49,7 @@ def _write_stateful_zellij(
                 'capture = Path(os.environ["CAPTURE_FILE"])',
                 'state_file = Path(os.environ["SESSION_STATE_FILE"])',
                 'state = state_file.read_text(encoding="utf-8").strip() if state_file.exists() else "missing"',
-                f'session = os.environ.get("FAKE_ZELLIJ_SESSION", "{default_session}")',
+                f'session = os.environ.get("FAKE_VC_FRAME_SESSION", "{default_session}")',
                 'if "--session" in args:',
                 '    idx = args.index("--session")',
                 "    if idx + 1 < len(args):",
@@ -57,7 +57,7 @@ def _write_stateful_zellij(
                 'elif args[:1] == ["attach"] and len(args) > 1:',
                 "    session = args[-1]",
                 'with capture.open("a", encoding="utf-8") as fh:',
-                '    fh.write("ZELLIJ " + " ".join(args) + "\\n")',
+                '    fh.write("VC_FRAME " + " ".join(args) + "\\n")',
                 'if args[:1] == ["ls"]:',
                 '    if state == "live":',
                 '        print(f"{session} [Created 1m ago]")',
@@ -141,11 +141,11 @@ def _org_repo() -> str:
 def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_capture_command(fake_bin, "zellij", capture_file)
+    _write_capture_command(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -153,11 +153,11 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
-    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
-    env.pop("ZELLIJ_CONFIG_DIR", None)
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME"] = "1"
+    env.pop("VC_FRAME_CONFIG_DIR", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-start'],
@@ -170,7 +170,9 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     assert "--session" in payload
     assert _expected_operator_session() in payload
     assert "--new-session-with-layout" in payload
-    assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "operator.kdl") in payload
+    assert (
+        str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "operator.kdl") in payload
+    )
 
 
 def test_operator_console_first_screen_is_actionable() -> None:
@@ -235,7 +237,7 @@ def test_helper_exports_vc_skill_wrappers() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_vc_init_finds_bundled_zellij_and_creates_missing_operator_session(
+def test_vc_init_finds_bundled_vc_frame_and_creates_missing_operator_session(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -249,7 +251,7 @@ def test_vc_init_finds_bundled_zellij_and_creates_missing_operator_session(
     home.mkdir()
     bundled_bin.mkdir(parents=True)
     fake_bin.mkdir()
-    _write_stateful_zellij(bundled_bin, capture_file, session_state_file)
+    _write_stateful_vc_frame(bundled_bin, capture_file, session_state_file)
     (fake_bin / "osascript").write_text(
         "#!/usr/bin/env bash\nexit 1\n", encoding="utf-8"
     )
@@ -264,12 +266,12 @@ def test_vc_init_finds_bundled_zellij_and_creates_missing_operator_session(
     env["CAPTURE_FILE"] = str(capture_file)
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
-    env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
     # This test exercises the real session-create path; allow it without a TTY.
-    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME"] = "1"
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     # Scrub any operator-session context leaked from a running operator shell so
     # the runtime computes a fresh session instead of latching onto the ambient one.
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
@@ -308,9 +310,9 @@ def test_vc_init_missing_vc_frame_message_has_fresh_install_path_hint(
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     result = subprocess.run(
         [
@@ -337,21 +339,21 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
 ) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_capture_command(fake_bin, "zellij", capture_file)
+    _write_capture_command(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
-    env["ZELLIJ"] = "operator"
+    env["VC_FRAME"] = "operator"
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     env["VIBECRAFTED_MARBLES_RUN_ID"] = "marb-014520"
-    env["ZELLIJ_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VC_FRAME_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
     subprocess.run(
         [
             "bash",
@@ -370,18 +372,18 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     assert any("vibecrafted-marbles." in line for line in payload)
 
 
-def test_marbles_inside_zellij_uses_bundled_zellij_priority(
+def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
     crafted_home = home / ".vibecrafted"
     runtime_home = home / ".local" / "share" / "vibecrafted"
     bundled_bin = runtime_home / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     bundled_bin.mkdir(parents=True)
-    _write_capture_command(bundled_bin, "zellij", capture_file)
+    _write_capture_command(bundled_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -389,10 +391,10 @@ def test_marbles_inside_zellij_uses_bundled_zellij_priority(
     env["PATH"] = os.defpath
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
-    env["ZELLIJ"] = "operator"
+    env["VC_FRAME"] = "operator"
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
     env["VIBECRAFTED_MARBLES_RUN_ID"] = "marb-014520"
-    env["ZELLIJ_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VC_FRAME_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
 
     result = subprocess.run(
         [
@@ -426,7 +428,7 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
 ) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
     run_id = "marb-424242"
     transcript = tmp_path / "l1.transcript.log"
     reports_dir = (
@@ -443,7 +445,7 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     home.mkdir()
     fake_bin.mkdir()
     reports_dir.mkdir(parents=True)
-    _write_capture_command(fake_bin, "zellij", capture_file)
+    _write_capture_command(fake_bin, "vc-frame", capture_file)
     (fake_bin / "osascript").write_text(
         "#!/usr/bin/env bash\nexit 0\n",
         encoding="utf-8",
@@ -469,9 +471,9 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
-    env["ZELLIJ"] = "operator"
+    env["VC_FRAME"] = "operator"
     env["VIBECRAFTED_RUN_ID"] = "marb-014521"
-    env["ZELLIJ_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VC_FRAME_SESSION_NAME"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
     env["VIBECRAFTED_MARBLES_RUN_ID"] = run_id
     env["VIBECRAFTED_MARBLES_PROBE_TTL"] = "10"
     env["VIBECRAFTED_PREFER_REPO_SPAWN"] = "1"
@@ -539,7 +541,7 @@ def test_vc_start_resume_resurrects_dead_session(tmp_path: Path) -> None:
     home.mkdir()
     fake_bin.mkdir()
     session_state_file.write_text("dead", encoding="utf-8")
-    _write_stateful_zellij(fake_bin, capture_file, session_state_file)
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -548,10 +550,10 @@ def test_vc_start_resume_resurrects_dead_session(tmp_path: Path) -> None:
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
     env["SESSION_STATE_FILE"] = str(session_state_file)
-    env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     result = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-start resume'],
@@ -587,7 +589,7 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
     home.mkdir()
     fake_bin.mkdir()
     session_state_file.write_text("dead", encoding="utf-8")
-    _write_stateful_zellij(fake_bin, capture_file, session_state_file)
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -597,11 +599,11 @@ def test_vc_dashboard_recreates_dead_run_id_session_without_layout_suffix(
     env["CAPTURE_FILE"] = str(capture_file)
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
-    env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
-    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME"] = "1"
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     # Scrub any operator-session context leaked from a running operator shell so
     # the dashboard resolves the run-id session rather than the ambient one.
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
@@ -638,7 +640,7 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
 
     home.mkdir()
     fake_bin.mkdir(parents=True)
-    _write_stateful_zellij(fake_bin, capture_file, session_state_file)
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
     _write_fake_osascript(fake_bin, capture_file, session_state_file)
     _write_capture_command(fake_bin, "codex", tmp_path / "unused-codex.txt")
 
@@ -650,12 +652,12 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
     env["CAPTURE_FILE"] = str(capture_file)
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
-    env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
     # This test exercises the real session-bootstrap path; allow it without a TTY.
-    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME"] = "1"
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     # Scrub any operator-session context leaked from a running operator shell so
     # the runtime bootstraps a session instead of latching onto the ambient one.
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
@@ -674,7 +676,7 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
 
     payload = capture_file.read_text(encoding="utf-8")
     assert "OSA " not in payload
-    assert "ZELLIJ ls" in payload
+    assert "VC_FRAME ls" in payload
     assert f"--session {_expected_operator_session()}" in payload
     assert "--new-session-with-layout" in payload
     assert "vc-spawn-cmd" in payload
@@ -692,7 +694,7 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
     home.mkdir()
     fake_bin.mkdir()
     session_state_file.write_text("dead", encoding="utf-8")
-    _write_stateful_zellij(fake_bin, capture_file, session_state_file)
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
     _write_fake_osascript(fake_bin, capture_file, session_state_file)
 
     env = os.environ.copy()
@@ -704,12 +706,12 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
     env["SESSION_STATE_FILE"] = str(session_state_file)
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
     env["VIBECRAFTED_RUN_ID"] = "fwup-014520"
-    env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])
     # This test exercises the real dead-session recreate path; allow it without a TTY.
-    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME"] = "1"
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     # Scrub any operator-session context leaked from a running operator shell so
     # the runtime recreates the dead run-id session instead of reusing the ambient one.
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
@@ -740,7 +742,9 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
     payload = capture_file.read_text(encoding="utf-8")
     assert f"Session '{expected_session}' is dead; preserving it" in result.stderr
     assert f"kill-session {expected_session}" not in payload
-    assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "operator.kdl") in payload
+    assert (
+        str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "operator.kdl") in payload
+    )
     assert "--new-session-with-layout" in payload and recovery_session in payload
     assert "OSA " not in payload
 
@@ -756,7 +760,7 @@ def test_dashboard_alt_layout_reuses_live_repo_session_instead_of_layout_session
     home.mkdir()
     fake_bin.mkdir()
     session_state_file.write_text("live", encoding="utf-8")
-    _write_stateful_zellij(fake_bin, capture_file, session_state_file)
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -765,11 +769,11 @@ def test_dashboard_alt_layout_reuses_live_repo_session_instead_of_layout_session
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
     env["SESSION_STATE_FILE"] = str(session_state_file)
-    env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
-    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_ZELLIJ"] = "1"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env["VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME"] = "1"
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-dashboard vc-marbles'],

@@ -195,7 +195,7 @@ def test_vetcoders_helper_source_does_not_prepend_bundled_bin_to_path(
     assert resolved_vibecrafted == str(preferred_vibecrafted)
 
 
-def test_vetcoders_require_zellij_uses_bundled_vc_frame_priority_without_path_leak(
+def test_vetcoders_require_vc_frame_uses_bundled_vc_frame_priority_without_path_leak(
     tmp_path: Path,
 ) -> None:
     staged_home = tmp_path / "home" / ".vibecrafted"
@@ -210,7 +210,7 @@ def test_vetcoders_require_zellij_uses_bundled_vc_frame_priority_without_path_le
     result = _run_vetcoders_helper(
         HELPER_SCRIPT,
         (
-            "_vetcoders_require_zellij; "
+            "_vetcoders_require_vc_frame; "
             'printf "PATH=%s\\n" "$PATH"; '
             "command -v vc-frame || true"
         ),
@@ -227,14 +227,14 @@ def test_vetcoders_require_zellij_uses_bundled_vc_frame_priority_without_path_le
     assert result.stdout == f"PATH={initial_path}\n"
 
 
-def test_vetcoders_zellij_bin_prefers_vc_frame_on_path(tmp_path: Path) -> None:
+def test_vetcoders_vc_frame_bin_prefers_vc_frame_on_path(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
-    _write_capture_command(fake_bin, "zellij", tmp_path / "zellij-args.txt")
+    _write_capture_command(fake_bin, "vc-frame", tmp_path / "vc_frame-args.txt")
     _write_capture_command(fake_bin, "vc-frame", tmp_path / "vc-frame-args.txt")
 
     result = _run_vetcoders_helper(
         HELPER_SCRIPT,
-        "_vetcoders_zellij_bin",
+        "_vetcoders_vc_frame_bin",
         {
             "PATH": f"{fake_bin}:{os.defpath}",
             "VIBECRAFTED_ROOT": str(REPO_ROOT),
@@ -294,7 +294,7 @@ def test_await_pane_stays_silent_without_meta_helper(
             "PATH": initial_path,
             "VIBECRAFTED_HOME": str(staged_home),
             "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
-            "ZELLIJ": "operator",
+            "VC_FRAME": "operator",
         },
     )
 
@@ -381,7 +381,7 @@ def test_await_pane_targets_operator_tab_with_bundled_vc_frame_without_path_leak
             "VIBECRAFTED_HOME": str(staged_home),
             "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
             "VIBECRAFTED_ROOT": str(helper_root),
-            "ZELLIJ": "operator",
+            "VC_FRAME": "operator",
         },
     )
 

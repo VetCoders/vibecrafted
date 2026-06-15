@@ -57,14 +57,14 @@ while IFS= read -r file; do
     esac
 done <<< "$ALL_FILES"
 
-echo "▸ zellij pane targeting guard"
+echo "▸ vc_frame pane targeting guard"
 leaks="$(
-    grep -nE 'zellij[^|]*action new-pane' runtime/scripts/lib/*.sh 2>/dev/null \
+    grep -nE 'vc_frame[^|]*action new-pane' runtime/scripts/lib/*.sh 2>/dev/null \
         | grep -vE 'tab-id|tab_id|--floating|# OPERATOR_TAB_OK' \
         || true
 )"
 if [[ -n "$leaks" ]]; then
-    printf 'pre-push: zellij new-pane without --tab-id / --floating / OPERATOR_TAB_OK marker:\n%s\n' "$leaks" >&2
+    printf 'pre-push: vc_frame new-pane without --tab-id / --floating / OPERATOR_TAB_OK marker:\n%s\n' "$leaks" >&2
     exit 1
 fi
 

@@ -41,7 +41,7 @@ accessed via SSH or `docker exec`, feels like a local shell.
 ### Co działa natywnie / What works natively
 
 - `zsh` shell z full color, starship prompt, autocomplete, history (atuin sync między sesjami)
-- `vim`, `nvim`, `tmux`, `zellij` — pełen TUI bez problemu
+- `vim`, `nvim`, `tmux`, `vc_frame` — pełen TUI bez problemu
 - `cargo`, `rustc`, `clippy` — natywna prędkość kompilacji (containerized = no overhead beyond Linux kernel call)
 - `aicx`, `loct`, `loctree-mcp` — single-binary execution, ~5ms cold-start
 - Agent CLIs (`claude`, `codex`, `gemini`) — same z host, ten sam UX
@@ -113,7 +113,7 @@ ll                              # eza alias dla ls -lah
 vc-init                         # vibecrafted init claude
 aicx all -H 4                   # build canonical corpus z 4h history
 loct context --full --markdown  # repo context pack
-zellij                          # terminal multiplexer
+vc_frame                          # terminal multiplexer
 ```
 
 ### Tailnet access

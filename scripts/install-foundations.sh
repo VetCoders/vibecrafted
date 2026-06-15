@@ -460,7 +460,7 @@ install_aicx() {
 }
 
 # ---------------------------------------------------------------------------
-# Zellij installer boundary — vc-frame validation only
+# vc-frame installer boundary — vc-frame validation only
 # ---------------------------------------------------------------------------
 
 install_vcframe() {
@@ -479,7 +479,7 @@ install_vcframe() {
     return 0
   fi
 
-  warn "vc-frame is required; stock zellij is not accepted as the Vibecrafted frame."
+  warn "vc-frame is required; stock vc_frame is not accepted as the Vibecrafted frame."
   warn "Use the canonical installer, then rerun this check:"
   warn "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
   return 1

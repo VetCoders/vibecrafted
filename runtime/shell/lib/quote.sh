@@ -32,7 +32,7 @@ _vetcoders_write_command_script() {
     shell_bin="$(command -v bash)"
   fi
 
-  # Keep the temp script stable on disk: zellij can re-run or resurrect panes
+  # Keep the temp script stable on disk: vc_frame can re-run or resurrect panes
   # against the original command path, so self-deleting wrappers break attach
   # and respawn semantics.
   mkdir -p "$(dirname "$script_path")"

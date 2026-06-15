@@ -58,9 +58,15 @@ def test_registry_models_read_write_lifecycle() -> None:
 def test_prune_default_prompt_is_runtime_workflow_asset() -> None:
     prompt = registry.workflow_default_prompt("prune")
 
-    assert "Repository health / prune discovery run." in prompt
-    assert "Do not remove anything based on vibes." in prompt
-    assert Path("runtime/workflows/prune/default_prompt.md").is_file()
+    assert "Repository health / prune ACTION run." in prompt
+    assert "No deletion on vibes. Prove every cut." in prompt
+    assert (
+        registry._source_root()
+        / "runtime"
+        / "workflows"
+        / "prune"
+        / "default_prompt.md"
+    ).is_file()
 
 
 def test_prune_default_prompt_can_be_overridden(monkeypatch, tmp_path: Path) -> None:

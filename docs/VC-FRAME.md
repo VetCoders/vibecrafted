@@ -1,8 +1,8 @@
-# Zellij Multi-Agent Layouts
+# vc-frame Multi-Agent Layouts
 
 > Plan 12 (META_22) — Wave 4 agent-native runtime cut.
 
-VibeCrafted ships a zellij configuration tuned for the way VetCoders actually
+VibeCrafted ships a vc-frame configuration tuned for the way VetCoders actually
 work: parallel agents, shared Living Tree, mesh of workstations, no babysitting.
 The shipped surface gives every layout host-aware identity colors so an
 operator instantly knows which machine they are looking at.
@@ -13,7 +13,7 @@ extend it.
 ## What ships
 
 ```
-config/zellij/
+config/vc-frame/
 ├── config.kdl                       # base config + neutral theme
 ├── auto-theme.sh                    # host detection -> theme name
 ├── themes/
@@ -27,14 +27,14 @@ config/zellij/
 ```
 
 Once installed (`vibecrafted install` or `make install`), the framework symlinks
-this directory under `~/.config/vetcoders/frontier/zellij/` and the layouts
+this directory under `~/.config/vetcoders/frontier/vc-frame/` and the layouts
 become reachable through the `vibecrafted dashboard <layout>` family of CLIs.
 
 ## Mesh-aware host theming
 
 Kronika 2026-05-05 fixed the VetCoders mesh topology and assigned a default
 accent color to each workstation so an operator can instantly tell which
-machine they are looking at through screen-share or browser-mirrored zellij:
+machine they are looking at through screen-share or browser-mirrored vc-frame:
 
 | host    | theme               | accent | role                             |
 | ------- | ------------------- | ------ | -------------------------------- |
@@ -44,13 +44,13 @@ machine they are looking at through screen-share or browser-mirrored zellij:
 | div0    | `vetcoders-div0`    | green  | Maciej's laptop, primary dev     |
 | \*      | `vibecrafted`       | amber  | neutral default (fleet baseline) |
 
-The themes live in `config/zellij/themes/vetcoders-mesh.kdl`. Zellij auto-loads
+The themes live in `config/vc-frame/themes/vetcoders-mesh.kdl`. vc-frame auto-loads
 nested theme blocks from the same config dir, so no extra wiring is needed at
 the framework level.
 
 ### Resolving the theme at runtime
 
-`config/zellij/auto-theme.sh` emits the theme name for the current workstation.
+`config/vc-frame/auto-theme.sh` emits the theme name for the current workstation.
 Detection order:
 
 1. `VIBECRAFTED_HOST_NAME` (operator override — useful for tests/staging)
@@ -69,18 +69,18 @@ operator can pin a fleet baseline theme even when running on a mesh host.
 
 The shipped `config.kdl` defaults to the neutral `vibecrafted` theme so a fresh
 install looks the same on every machine. To activate the host accent, wire one
-of the following in your shell init or in a host-local `config/zellij/local.kdl`
+of the following in your shell init or in a host-local `config/vc-frame/local.kdl`
 overlay:
 
 ```bash
 # Shell init — print the matching theme name for diagnostics.
-~/.config/vetcoders/frontier/zellij/auto-theme.sh
+~/.config/vetcoders/frontier/vc-frame/auto-theme.sh
 ```
 
 or pin via env:
 
 ```bash
-export VIBECRAFTED_THEME="$(~/.config/vetcoders/frontier/zellij/auto-theme.sh)"
+export VIBECRAFTED_THEME="$(~/.config/vetcoders/frontier/vc-frame/auto-theme.sh)"
 ```
 
 When the operator-facing launcher in a future plan rewrites the theme line on
@@ -89,19 +89,19 @@ session start, all five layouts will pick up the host accent automatically.
 ## Verification
 
 ```bash
-make test-zellij
+make test-vc-frame
 ```
 
-Runs `tests/zellij_layouts_smoke.sh`, which asserts:
+Runs `tests/vc-frame-layouts-smoke.sh`, which asserts:
 
-- every shipped layout parses via `zellij --layout <name> setup --check`
+- every shipped layout parses via `vc-frame --layout <name> setup --check`
 - every mesh theme loads alongside `config.kdl` without parse errors
 - `auto-theme.sh` passes `bash -n` and shellcheck (when installed)
 - `auto-theme.sh` maps `dragon|sztudio|silver|div0|mgbook16` to the right
   mesh theme and falls back to neutral for unknown hosts (case-insensitive,
   `.local` suffix tolerant)
 
-Tolerant of missing `zellij` / `shellcheck` — those checks are deferred to CI
+Tolerant of missing `vc-frame` / `shellcheck` — those checks are deferred to CI
 when the host doesn't have them.
 
 ## Living Tree etiquette
@@ -109,14 +109,14 @@ when the host doesn't have them.
 - Layout edits are **append-only**. Existing pane configurations are preserved
   byte-for-byte.
 - `auto-theme.sh` probes multiple roots
-  (`$VIBECRAFTED_HOME/tools/vibecrafted-current/config/zellij`,
-  `$VIBECRAFTED_ROOT/config/zellij`, `./config/zellij`) so it works whether
+  (`$VIBECRAFTED_HOME/tools/vibecrafted-current/config/vc-frame`,
+  `$VIBECRAFTED_ROOT/config/vc-frame`, `./config/vc-frame`) so it works whether
   invoked from the installed framework, a Living Tree worktree, or a CI runner.
 
 ## Related
 
 - Kronika 2026-05-05 — VetCoders mesh topology + per-host color assignments
-- Kronika 2026-04-12 — first zellij landing
+- Kronika 2026-04-12 — first vc-frame landing
 - `docs/plans/META_22_SCAFFOLD_TO_RELEASE.md` Plan 12 — full contract
 - `skills/vc-agents/SKILL.md` — operator-facing dispatch surface
 

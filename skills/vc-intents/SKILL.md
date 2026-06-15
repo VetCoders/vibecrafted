@@ -1,28 +1,19 @@
 ---
 name: vc-intents
 version: 1.0.1
-description: "Compare AICX intentions with live code to find landed, partial, missing, and highest-truth items."
+description: >
+  Operator-side intention-to-runtime truth audit. Use when the team needs to
+  know which planned implementations actually landed in code, which are only
+  partially present, which never materialized, and what the highest remaining
+  truth is. This skill pulls intentions from aicx, reduces them to a bounded
+  implementation checklist, then verifies each item against the live repo.
+  Trigger phrases: "intents", "co z planu siedzi", "which planned items exist",
+  "what from the plan is in code", "check intent coverage", "planned vs code",
+  "highest truth", "checklist from intents".
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-intents — Intention To Runtime Truth
 

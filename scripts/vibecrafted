@@ -590,7 +590,7 @@ cmd_start_help() {
   printf '\n'
   printf '%b⚒%b  %bstart%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  Start the operator Zellij session (default board: operator).\n'
+  printf '  Start the operator vc-frame session (default board: operator).\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted start\n'
@@ -604,7 +604,7 @@ cmd_start_help() {
   printf '  vc-start operator\n'
   printf '  vc-start resume\n'
   printf '\n'
-  printf '  Direct %bvc-<workflow> <agent>%b calls outside Zellij auto-enter the\n' "$_cyan" "$_reset"
+  printf '  Direct %bvc-<workflow> <agent>%b calls outside vc-frame auto-enter the\n' "$_cyan" "$_reset"
   printf '  operator session and run the workflow in a new tab.\n'
   printf '\n'
 }
@@ -613,14 +613,14 @@ cmd_dashboard_help() {
   printf '\n'
   printf '%b⚒%b  %bdashboard%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  Thin shim over native Zellij for operator session management.\n'
+  printf '  Thin shim over native vc-frame for operator session management.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted dashboard [layout]          Open/switch to a dashboard layout\n'
-  printf '  vibecrafted dashboard ls                List active Zellij sessions\n'
-  printf '  vibecrafted dashboard switch <name>     Switch session (inside Zellij) or attach (outside)\n'
-  printf '  vibecrafted dashboard attach <name>     Attach to a session from outside Zellij\n'
-  printf '  vibecrafted dashboard kill <name>       Kill a Zellij session\n'
+  printf '  vibecrafted dashboard ls                List active vc-frame sessions\n'
+  printf '  vibecrafted dashboard switch <name>     Switch session (inside vc-frame) or attach (outside)\n'
+  printf '  vibecrafted dashboard attach <name>     Attach to a session from outside vc-frame\n'
+  printf '  vibecrafted dashboard kill <name>       Kill a vc-frame session\n'
   printf '  vibecrafted dashboard gc [flags]        Prune dead sessions and optionally stale detached ones\n'
   printf '\n'
   printf '%bLayouts:%b  dashboard (default), marbles, workflow, research, operator\n' "$_bold" "$_reset"
@@ -1700,15 +1700,15 @@ cmd_help_full() {
   printf '\n'
   printf '%b=== OPERATOR SURFACE ===%b\n' "$_bold" "$_reset"
   printf '\n'
-  printf '  %bvibecrafted dashboard%b [layout]        Open/switch to a Zellij dashboard\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard%b [layout]        Open/switch to a vc-frame dashboard\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted loop%b                      Interactive operator loop + async awaits\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted cron%b                      Cron-safe LOOP heartbeat + context capture\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted ship%b                      Start VC-Ship loop and dispatch a checkpoint\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dispatch%b <file.toml>      Deterministic dispatch.v1 supervisor\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dispatch%b run ...          Async lifecycle supervisor for one worker\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted dashboard ls%b              List active Zellij sessions\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted dashboard gc%b [flags]      Prune dead/stale Zellij sessions\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted dashboard switch%b <name>   Switch to session (Zellij-native)\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard ls%b              List active vc-frame sessions\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard gc%b [flags]      Prune dead/stale vc-frame sessions\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted dashboard switch%b <name>   Switch to session (vc-frame-native)\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted start%b [layout]            Alias for %bvibecrafted dashboard%b\n' "$_cyan" "$_reset" "$_cyan" "$_reset"
   printf '  %bvibecrafted gui%b                       Public/local-web launch + observe surface\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted tui%b                       Rust operator console over shared state\n' "$_cyan" "$_reset"
@@ -1798,16 +1798,16 @@ cmd_start() {
     cmd_start_help
     return 0
   fi
-  local previous_repo_zellij_pref="${VIBECRAFTED_PREFER_REPO_ZELLIJ-}"
+  local previous_repo_vc_frame_pref="${VIBECRAFTED_PREFER_REPO_VC_FRAME-}"
   local status
   _ensure_helpers_loaded || return 1
-  export VIBECRAFTED_PREFER_REPO_ZELLIJ=1
+  export VIBECRAFTED_PREFER_REPO_VC_FRAME=1
   _run_helper vc-start "$@"
   status=$?
-  if [[ -n "${previous_repo_zellij_pref}" ]]; then
-    export VIBECRAFTED_PREFER_REPO_ZELLIJ="${previous_repo_zellij_pref}"
+  if [[ -n "${previous_repo_vc_frame_pref}" ]]; then
+    export VIBECRAFTED_PREFER_REPO_VC_FRAME="${previous_repo_vc_frame_pref}"
   else
-    unset VIBECRAFTED_PREFER_REPO_ZELLIJ
+    unset VIBECRAFTED_PREFER_REPO_VC_FRAME
   fi
   return "$status"
 }
@@ -1934,7 +1934,7 @@ cmd_doctor() {
   python3 "$installer" doctor
 }
 
-_vc_frame_or_zellij_bin() {
+_vc_frame_or_vc_frame_bin() {
   local bin=""
   bin="$(command -v vc-frame 2>/dev/null || true)"
   if [[ -n "$bin" ]]; then
@@ -1954,49 +1954,49 @@ cmd_dashboard() {
   # the full helper layer. This keeps ls/switch/attach/kill instant.
   case "${1:-}" in
     ls|list|sessions)
-      local zellij_bin=""
-      zellij_bin="$(_vc_frame_or_zellij_bin)" || {
+      local vc_frame_bin=""
+      vc_frame_bin="$(_vc_frame_or_vc_frame_bin)" || {
         printf '%b✗%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
-      "$zellij_bin" list-sessions
+      "$vc_frame_bin" list-sessions
       return
       ;;
     switch)
       shift
-      local zellij_bin=""
-      zellij_bin="$(_vc_frame_or_zellij_bin)" || {
+      local vc_frame_bin=""
+      vc_frame_bin="$(_vc_frame_or_vc_frame_bin)" || {
         printf '%b✗%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b✗%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
-      if [[ -n "${ZELLIJ+set}" ]]; then
-        "$zellij_bin" action switch-session "$1"
+      if [[ -n "${VC_FRAME+set}" ]]; then
+        "$vc_frame_bin" action switch-session "$1"
       else
-        "$zellij_bin" attach "$1"
+        "$vc_frame_bin" attach "$1"
       fi
       return
       ;;
     attach)
       shift
-      local zellij_bin=""
-      zellij_bin="$(_vc_frame_or_zellij_bin)" || {
+      local vc_frame_bin=""
+      vc_frame_bin="$(_vc_frame_or_vc_frame_bin)" || {
         printf '%b✗%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b✗%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
-      if [[ -n "${ZELLIJ+set}" ]]; then
-        "$zellij_bin" action switch-session "$1"
+      if [[ -n "${VC_FRAME+set}" ]]; then
+        "$vc_frame_bin" action switch-session "$1"
       else
-        "$zellij_bin" attach "$1"
+        "$vc_frame_bin" attach "$1"
       fi
       return
       ;;
     kill)
       shift
-      local zellij_bin=""
-      zellij_bin="$(_vc_frame_or_zellij_bin)" || {
+      local vc_frame_bin=""
+      vc_frame_bin="$(_vc_frame_or_vc_frame_bin)" || {
         printf '%b✗%b vc-frame is required.\n' "$_red" "$_reset" >&2; return 1
       }
       [[ -n "${1:-}" ]] || { printf '%b✗%b Session name required.\n' "$_red" "$_reset" >&2; return 1; }
-      "$zellij_bin" kill-session "$1"
+      "$vc_frame_bin" kill-session "$1"
       return
       ;;
     gc)

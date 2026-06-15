@@ -6,14 +6,14 @@ with Docker), accessible from any other tailnet device via `tailscale ssh`.
 
 ## What is baked in
 
-| Layer       | What                                                                               |
-| ----------- | ---------------------------------------------------------------------------------- |
-| Base        | `node:22-bookworm-slim` + uv + python3 + git + zsh + ripgrep + jq                  |
-| Foundations | `loctree-mcp`, `aicx-mcp`, `prview`, `zellij` (via `install-foundations.sh --all`) |
-| Agent CLIs  | `claude`, `codex`, `gemini`, `agy` (npm globals)                                   |
-| Toolchain   | `rustup` stable, `clang`, `cmake`, `libclang-dev` (for cargo paths)                |
-| Runtime     | `openssh-server`, `tini`, `sudo`                                                   |
-| Network     | None of its own — joins the Tailscale sidecar's network namespace                  |
+| Layer       | What                                                                                 |
+| ----------- | ------------------------------------------------------------------------------------ |
+| Base        | `node:22-bookworm-slim` + uv + python3 + git + zsh + ripgrep + jq                    |
+| Foundations | `loctree-mcp`, `aicx-mcp`, `prview`, `vc_frame` (via `install-foundations.sh --all`) |
+| Agent CLIs  | `claude`, `codex`, `gemini`, `agy` (npm globals)                                     |
+| Toolchain   | `rustup` stable, `clang`, `cmake`, `libclang-dev` (for cargo paths)                  |
+| Runtime     | `openssh-server`, `tini`, `sudo`                                                     |
+| Network     | None of its own — joins the Tailscale sidecar's network namespace                    |
 
 ## Architecture
 

@@ -64,18 +64,20 @@ def test_named_launchers_source_shared_ulimit_helper() -> None:
     shell_facade = (REPO_ROOT / "runtime" / "shell" / "vetcoders.sh").read_text()
     command_deck = (REPO_ROOT / "scripts" / "vibecrafted").read_text()
     dashboard = (REPO_ROOT / "runtime" / "shell" / "lib" / "dashboard.sh").read_text()
-    scripts_zellij = (
-        REPO_ROOT / "runtime" / "scripts" / "lib" / "zellij.sh"
+    scripts_vc_frame = (
+        REPO_ROOT / "runtime" / "scripts" / "lib" / "vc_frame.sh"
     ).read_text()
-    shell_zellij = (REPO_ROOT / "runtime" / "shell" / "lib" / "zellij.sh").read_text()
+    shell_vc_frame = (
+        REPO_ROOT / "runtime" / "shell" / "lib" / "vc_frame.sh"
+    ).read_text()
 
     assert 'source "$_SPAWN_LIB_DIR/ulimits.sh"' in common
     assert "source $q_ulimits" in launcher
     assert "_vetcoders_source_shell_module ulimits" in shell_facade
     assert "_vc_source_launcher_ulimits" in command_deck
     assert "vc_raise_launcher_limits" in dashboard
-    assert scripts_zellij.count("vc_raise_launcher_limits") >= 4
-    assert shell_zellij.count("vc_raise_launcher_limits") >= 2
+    assert scripts_vc_frame.count("vc_raise_launcher_limits") >= 4
+    assert shell_vc_frame.count("vc_raise_launcher_limits") >= 2
 
     assert 'ulimit -n "$(ulimit -Hn' not in command_deck
     assert "ulimit -f unlimited 2>/dev/null || true" not in launcher

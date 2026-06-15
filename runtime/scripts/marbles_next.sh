@@ -792,7 +792,7 @@ _launch_next_loop() {
   VIBECRAFTED_RUN_ID="$loop_run_id" \
   VIBECRAFTED_SKILL_CODE="$loop_skill_code" \
   VIBECRAFTED_SKILL_NAME="$loop_skill_name" \
-  VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right \
+  VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=right \
   VIBECRAFTED_MARBLES_TAB_NAME="${VIBECRAFTED_MARBLES_TAB_NAME:-${loop_file_prefix}-${run_id}}" \
   VIBECRAFTED_STORE_DIR="$store" \
   VIBECRAFTED_STORE_ROOT="$root_dir" \

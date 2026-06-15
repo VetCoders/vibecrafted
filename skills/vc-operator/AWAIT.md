@@ -180,7 +180,7 @@ When the operator pings you during an await:
 ## NIGDY HEADLESS
 
 Every dispatch must be operator-visible in a watched terminal tab
-(Zellij, tmux, screen, or equivalent). If your dispatch mechanism doesn't
+(vc-frame, tmux, screen, or equivalent). If your dispatch mechanism doesn't
 surface to the operator's terminal, you're firing into the dark and the
 operator can't intervene. That violates the autonomy contract.
 

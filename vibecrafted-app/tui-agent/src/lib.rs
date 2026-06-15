@@ -176,7 +176,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
                     .any(|l| l.contains("Client drift detected")) =>
             {
                 let agent = app.selected_agent().to_string();
-                let _ = std::process::Command::new("zellij")
+                let _ = std::process::Command::new("vc-frame")
                     .args([
                         "run",
                         "--name",
@@ -460,7 +460,7 @@ pub enum LaunchRunError {
     Exec {
         message: String,
         stderr: String,
-        /// First error observed by the zellij readiness probe before the launch
+        /// First error observed by the vc_frame readiness probe before the launch
         /// gave up. Distinguishes "session not visible" from "probe could not
         /// run" (bad flags, socket/config errors, missing binary). When None,
         /// the probe either succeeded or was never attempted.
@@ -555,7 +555,7 @@ fn suspend_and_run(command: &LaunchCommand) -> Result<(), LaunchRunError> {
     }
 }
 
-/// How long `wait_for_interactive_launch` will keep polling the zellij
+/// How long `wait_for_interactive_launch` will keep polling the vc_frame
 /// readiness probe before giving up. Kept short so the operator does not
 /// freeze on a launch that never came up; long enough that real interactive
 /// launches on the host can register their named socket.
@@ -604,7 +604,7 @@ pub fn wait_for_interactive_launch(
                     if output.status.success() {
                         return Err(LaunchRunError::Exec {
                             message: format!(
-                                "zellij session '{}' exited before the readiness probe saw it",
+                                "vc_frame session '{}' exited before the readiness probe saw it",
                                 probe.session_name
                             ),
                             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -632,10 +632,10 @@ pub fn wait_for_interactive_launch(
         // to "a launch whose session never appears within the readiness
         // window is also a failure", and we do NOT silently fall through to
         // `child.wait_with_output()` (which would either hang on a healthy
-        // zellij forever or report success once the operator finally quits
+        // vc_frame forever or report success once the operator finally quits
         // it manually — both produce false-success class outcomes).
         //
-        // Kill the child so we do not leave a hanging zellij socket pointing
+        // Kill the child so we do not leave a hanging vc_frame socket pointing
         // at the same session name; subsequent launches with the same
         // `--session` value would fight an orphan otherwise.
         let _ = child.kill();
@@ -654,7 +654,7 @@ pub fn wait_for_interactive_launch(
         });
         return Err(LaunchRunError::Exec {
             message: format!(
-                "zellij session '{}' did not appear within the {}ms readiness window",
+                "vc_frame session '{}' did not appear within the {}ms readiness window",
                 probe.session_name,
                 READINESS_DEADLINE.as_millis()
             ),
@@ -735,7 +735,7 @@ mod tests {
                 command_deck: "/usr/bin/vibecrafted".into(),
                 launch_root: "/tmp/repo".into(),
                 launch_runtime: LaunchRuntime::Terminal,
-                terminal_binary: "zellij".into(),
+                terminal_binary: "vc-frame".into(),
                 tick_rate: Duration::from_millis(250),
             },
             state: ControlPlaneState::empty("/tmp/state"),
@@ -872,12 +872,12 @@ mod tests {
             message: "command exited with status: 1".to_string(),
             stderr: "boom\nstack\n".to_string(),
             probe_error: Some(
-                "failed to run zellij readiness probe: No such file or directory".to_string(),
+                "failed to run vc_frame readiness probe: No such file or directory".to_string(),
             ),
             probe_error_at_deadline: None,
         };
-        let lines = error.detail_lines("zellij --session foo".to_string());
-        assert_eq!(lines[0], "command: zellij --session foo");
+        let lines = error.detail_lines("vc_frame --session foo".to_string());
+        assert_eq!(lines[0], "command: vc_frame --session foo");
         assert_eq!(lines[1], "error: command exited with status: 1");
         assert!(
             lines.iter().any(|line| line.contains("readiness probe:")
@@ -896,7 +896,7 @@ mod tests {
             probe_error: None,
             probe_error_at_deadline: None,
         };
-        let lines = error.detail_lines("zellij --session foo".to_string());
+        let lines = error.detail_lines("vc_frame --session foo".to_string());
         assert!(
             !lines.iter().any(|line| line.contains("readiness probe:")),
             "probe_error=None must not render an empty probe section: lines={lines:?}"

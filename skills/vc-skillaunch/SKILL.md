@@ -1,27 +1,17 @@
 ---
 name: vc-skillaunch
-description: "Turn a completed workflow or session pattern into a reusable agent skill."
+description: >
+  Distills a completed user workflow, session interaction or pattern
+  into a reusable agent skill. Use when the user asks to turn their workflow,
+  interaction, or multi-step process into a skill, or when they say "make
+  this a skill", "create a skill from what we just did", "package this
+  workflow" or similar.
+  Do not use for creating skills from scratch without an existing workflow
+  (use a generic skill-creator for that).
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # Workflow-to-Skill Distiller
 
@@ -311,17 +301,3 @@ After implementation is complete:
 
 2.  **If a sample query/answer was provided** during brainstorming, run it
     through the skill and verify the output matches expectations.
-
-## Fleet Dispatch Terminal
-
-This skill's flow ends in action, never in absorbed prose. The named action here
-is writing the distilled SKILL.md and validating it (Phase 4 above). When the
-distillation spans more material than a bounded in-session pass can honestly
-cover, dispatch a fleet worker:
-
-```bash
-vibecrafted workflow <agent> --prompt 'Distill <workflow/session> into a SKILL.md and validate it'
-```
-
-No skill file written and no dispatch fired means the invocation was a no-op —
-the failure mode this terminal forbids.

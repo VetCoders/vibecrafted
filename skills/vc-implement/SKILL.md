@@ -3,7 +3,20 @@ name: vc-implement
 version: 2.1.0
 aliases:
   - vc-justdo
-description: "End-to-end implementation mode: own the task, build, verify, audit, converge, and hand off."
+description: >
+  End-to-end implementation skill for when the user is done talking and needs
+  the thing built. Not a shortcut — a full delivery with autonomous decision
+  making. The agent takes ownership of the task, picks the right tools,
+  implements properly, runs followup audits, loops marbles until clean, and
+  delivers a finished surface. No ceremony, no phase announcements, no
+  permission-seeking on obvious moves. The user says what, the agent figures
+  out how.
+  Trigger phrases: "implement", "vc-implement", "implement this e2e",
+  "build this properly", "ship the feature", "just do", "just do it",
+  "zrób to", "zaimplementuj to", "dowiez to", "I'm tired but this needs to ship",
+  "full implementation", "od pomyslu do realizacji", "caly feature",
+  "before tomorrow", "nie mam siły ale musi byc gotowe".
+  Alias: vc-justdo (kept for agents already wired to that name).
 compatibility:
   tools:
     - exec_command
@@ -17,23 +30,6 @@ loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-implement — For When It Must Get Done
 

@@ -1,4 +1,4 @@
-// VibeCrafted Zellij Configuration
+// VibeCrafted vc-frame Configuration
 // Branded terminal multiplexer configuration for the VibeCrafted framework.
 // VibeCrafted with AI Agents (c)2026 VetCoders
 
@@ -24,7 +24,7 @@ themes {
 // Plan 12 (META_22) — mesh-aware host theming (kronika 2026-05-05).
 //
 // Additional themes are loaded from `themes/vetcoders-mesh.kdl` in this
-// same config dir (zellij auto-discovers nested theme blocks). Variants:
+// same config dir (vc-frame auto-discovers nested theme blocks). Variants:
 //
 //   vetcoders-dragon   — red    — LibraxisAI server, central hub
 //   vetcoders-sztudio  — purple — Monika's desktop
@@ -32,10 +32,10 @@ themes {
 //   vetcoders-div0     — green  — Maciej's laptop, primary dev
 //   vibecrafted        — neutral default (this file)
 //
-// To switch theme per host, run `./config/zellij/auto-theme.sh` which emits
+// To switch theme per host, run `./config/vc-frame/auto-theme.sh` which emits
 // the matching theme name. Wire it into your shell init, e.g.:
 //
-//   export VIBECRAFTED_ZELLIJ_THEME="$(./auto-theme.sh)"
+//   export VIBECRAFTED_VC_FRAME_THEME="$(./auto-theme.sh)"
 //
 // Then either override `theme "..."` below or pass via overlay config.
 // The fleet default below (vibecrafted) is intentionally neutral so the
@@ -88,12 +88,12 @@ plugins {
 
 // ─── Keybindings ────────────────────────────────────────────────────────────────
 // Plain-Ctrl scheme — works on iTerm2 and any legacy terminal, no enhanced
-// keyboard protocol required. Mode switches keep zellij's native Ctrl+<letter>
+// keyboard protocol required. Mode switches keep vc-frame's native Ctrl+<letter>
 // (Ctrl+p PANE, Ctrl+t TAB, Ctrl+o SESSION, Ctrl+n direct NewPane, Ctrl+g LOCK,
 // Ctrl+h MOVE, Ctrl+s SCROLL); every other action lives inside its mode.
 //
 // The Alt layer is left unbound so macOS Option still types Polish diacritics
-// (ź, ó, ł, ż, ć, ń …) instead of triggering zellij actions.
+// (ź, ó, ł, ż, ć, ń …) instead of triggering vc-frame actions.
 //
 // History: a Ctrl+Shift+<letter> direct-action layer used to live here. On a
 // terminal without the kitty/CSI-u protocol the Shift bit is dropped from a
@@ -117,7 +117,7 @@ keybinds {
     // `Ctrl q -> Quit` in EVERY mode first (deterministic — a plain override in
     // shared_except does not reliably beat the default `shared` Quit during
     // merge), then bind CloseFocus everywhere below. CloseFocus on the last pane
-    // of the last tab exits zellij on its own — pane by pane, last one quits.
+    // of the last tab exits vc-frame on its own — pane by pane, last one quits.
     shared {
         unbind "Ctrl q"
     }
@@ -129,7 +129,7 @@ keybinds {
     // Was Ctrl+Shift+c (dead without CSI-u); relocated to pane mode as 'y' (yank).
     pane {
         bind "y" {
-            Run "bash" "-lc" "tmp=$(mktemp -t vc-pane-dump.XXXXXX); pane_id=$(zellij action list-panes --json --all --state | python3 -c 'import json, os, sys; current=os.environ.get(\"ZELLIJ_PANE_ID\"); panes=json.load(sys.stdin); match=next((p for p in panes if p.get(\"is_focused\") and str(p.get(\"id\")) != current), None); print(((\"plugin_\" if match.get(\"is_plugin\") else \"\") + str(match.get(\"id\"))) if match else \"\")'); if [ -n \"$pane_id\" ]; then zellij action dump-screen --full --pane-id \"$pane_id\" --path \"$tmp\" && pbcopy < \"$tmp\"; fi; rm -f \"$tmp\"" {
+            Run "bash" "-lc" "tmp=$(mktemp -t vc-pane-dump.XXXXXX); pane_id=$(vc-frame action list-panes --json --all --state | python3 -c 'import json, os, sys; current=os.environ.get(\"VC_FRAME_PANE_ID\"); panes=json.load(sys.stdin); match=next((p for p in panes if p.get(\"is_focused\") and str(p.get(\"id\")) != current), None); print(((\"plugin_\" if match.get(\"is_plugin\") else \"\") + str(match.get(\"id\"))) if match else \"\")'); if [ -n \"$pane_id\" ]; then vc-frame action dump-screen --full --pane-id \"$pane_id\" --path \"$tmp\" && pbcopy < \"$tmp\"; fi; rm -f \"$tmp\"" {
                 close_on_exit true
                 floating true
                 name "copy-pane-scrollback"
@@ -139,9 +139,9 @@ keybinds {
     }
 
     // Locked mode also closes the current focus instead of the session.
-    // Without this override, the default Zellij
+    // Without this override, the default vc-frame
     // `shared { bind "Ctrl q" { Quit; } }` leaked into locked mode
-    // and killed the full Zellij instance instead of a single pane.
+    // and killed the full vc-frame instance instead of a single pane.
     // shared_except excludes locked, so bind CloseFocus there explicitly too.
     locked {
         bind "Ctrl q" { CloseFocus; SwitchToMode "Normal"; }

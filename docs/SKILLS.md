@@ -4,7 +4,7 @@ This index documents the live framework inventory in `skills/` and the routes
 currently exposed by `scripts/vibecrafted`.
 
 `CI mode` means the skill can run headless from the launcher without requiring a
-zellij-attached operator tab. `Stand-alone` means the operator has a direct
+vc_frame-attached operator tab. `Stand-alone` means the operator has a direct
 skill-first command instead of reaching the surface only through another mode or
 workflow.
 

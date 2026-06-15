@@ -42,7 +42,7 @@ The TUI's self-tests pass for the launch-string contract, but the operator-facin
 | App state, deep actions, dispatch state machine     | `src/app.rs`              | 663 |
 | Ratatui draw functions, three tabs, help overlay    | `src/ui.rs`               | 675 |
 | Control-plane state loader, classification, age     | `src/state.rs`            | 412 |
-| Launch command builder, zellij layout, env join     | `src/launch.rs`           | 269 |
+| Launch command builder, vc_frame layout, env join   | `src/launch.rs`           | 269 |
 | Config + CLI parser                                 | `src/config.rs`           | 189 |
 | Integration tests (state contract + launch builder) | `tests/state_contract.rs` | 499 |
 
@@ -50,12 +50,12 @@ The TUI's self-tests pass for the launch-string contract, but the operator-facin
 
 ### Done (and why it matters)
 
-1. **In-place zellij multiplexer hand-off** is real. `build_terminal_launch_command` (`src/launch.rs:181-202`) emits `zellij options --config-dir … --layout-string …` with the deck `exec` quoted into a bash pane. `tests/state_contract.rs:148-189` pins the exact layout string. This was the most architecturally consequential intent — and it landed cleanly.
+1. **In-place vc_frame multiplexer hand-off** is real. `build_terminal_launch_command` (`src/launch.rs:181-202`) emits `vc_frame options --config-dir … --layout-string …` with the deck `exec` quoted into a bash pane. `tests/state_contract.rs:148-189` pins the exact layout string. This was the most architecturally consequential intent — and it landed cleanly.
 2. **TTY hygiene around subprocess launch** is real. `suspend_and_run` (`src/lib.rs:248-266`) restores raw mode + alternate screen even when the launched child fails — `leave_result?` and `raw_result?` run before `launch_result?`.
 
 ### Superseded (be honest about which plan died)
 
-The Ghostty-first plan in `NEXT_STEPS.md` is dead. Items A#1 (Ghostty env), A#2 (Ghostty-Zellij chain), A#4 (`terminal_binary`), A#6 ("new Ghostty window" for reports) all replaced by the terminal-agnostic shape from `NEXT_STEPS_AGNOSTIC.md`. Documenting this so the next worker doesn't re-implement Ghostty wrappers.
+The Ghostty-first plan in `NEXT_STEPS.md` is dead. Items A#1 (Ghostty env), A#2 (Ghostty-vc-frame chain), A#4 (`terminal_binary`), A#6 ("new Ghostty window" for reports) all replaced by the terminal-agnostic shape from `NEXT_STEPS_AGNOSTIC.md`. Documenting this so the next worker doesn't re-implement Ghostty wrappers.
 
 ### The unresolved 9 (ranked by user-visible impact)
 

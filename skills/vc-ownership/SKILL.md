@@ -1,7 +1,16 @@
 ---
 name: vc-ownership
 version: 1.1.0
-description: "Full-spectrum product ownership mode from architecture through runtime, polish, docs, packaging, and ship."
+description: >
+  Full-spectrum VetCoders ownership mode for moments when the user wants Agent
+  to take the wheel and drive a product from A to Z: architecture, coding,
+  runtime debugging, UI polish, packaging, docs, testing, local tooling,
+  agent orchestration, and wow-effect finish. Use whenever the user says things
+  like "take ownership", "you drive", "od a do z", "zrob to cale", "dowiez
+  to", "wow effect", "superprodukcyjny", "manufakturer produktowy", or when
+  the team clearly wants decisive end-to-end execution with minimal back-and-forth.
+  This skill is intentionally pushy: if the user is asking for total delivery,
+  use it even when they do not explicitly name the skill.
 compatibility:
   tools:
     - exec_command
@@ -15,23 +24,6 @@ loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-ownership
 
@@ -122,8 +114,7 @@ That includes, when justified by the task and available in the environment:
 - running local servers and smoke tests
 - steering browser or desktop interactions through available tooling
 - orchestrating external agents fleet through `vc-agents`
-  in interactive sessions when the written plan or operator direction permits
-  external fleet work
+  in interactive sessions as default progress engine
 - orchestrating native workers through `vc-delegate` ruleset
   in detached non-interactive sessions highly recommended
 - converging through `vc-marbles`
@@ -264,8 +255,8 @@ Decide whether this is:
 Defaults:
 
 - `vc-agents` a doctrine and runbook with `why-matrix` definition
-- `vc-implement` for code writing or refactoring (`vc-justdo` remains a
-  compatibility alias)
+- `vc-justdo` for code writing or refactoring (`vc-agents`
+  execution runner)
 - `vc-marbles` for closing the gaps and unfinished jobs
 - `vc-polarize` for final shape carving after marbles
 - `vc-review`, `vc-followup`, `vc-audit`, and `vc-dou` as read-only perception

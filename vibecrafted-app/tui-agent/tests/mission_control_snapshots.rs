@@ -9,8 +9,8 @@
 //! Theme truth (PLAN_23 §5 names a "mid-light / mid-dark tui-agent
 //! palette"): no such in-app palette exists in the tree. `voc` emits only
 //! named ANSI colors; the light/dark (and host-accent mesh) resolution
-//! happens terminal-side via the zellij themes in
-//! `config/zellij/themes/vetcoders-mesh.kdl`. Both themes therefore
+//! happens terminal-side via the vc_frame themes in
+//! `config/vc-frame/themes/vetcoders-mesh.kdl`. Both themes therefore
 //! consume the exact same buffer — the snapshots below freeze that buffer
 //! once for content and once for the color map, and
 //! `mission_control_palette_is_terminal_theme_adaptive` guards the
@@ -256,7 +256,7 @@ fn mission_app(state: MissionControlState) -> App {
             command_deck: "/usr/bin/vibecrafted".into(),
             launch_root: "/fixture/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
         },
         state: ControlPlaneState::empty("/fixture/state"),
@@ -584,7 +584,7 @@ fn mission_control_tab_renders_all_seven_panels() {
 
 /// The "both themes" invariant. There is no in-app light/dark palette in
 /// `voc` — PLAN_23's mid-light / mid-dark pair resolves terminal-side
-/// (zellij `vetcoders-mesh.kdl` remaps the named ANSI slots). That only
+/// (vc_frame `vetcoders-mesh.kdl` remaps the named ANSI slots). That only
 /// works while the dashboard emits exclusively named ANSI colors; a
 /// hardcoded Rgb/Indexed color would render identically in both themes
 /// and break the mesh identity-accent contract. Guard it.

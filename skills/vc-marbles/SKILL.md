@@ -1,7 +1,19 @@
 ---
 name: vc-marbles
 version: 7.0.0
-description: "Convergence loop that deliberately over-fixes fragile implementation until gates and runtime truth settle."
+description: >
+  WRITE step that floods every crack with deliberate over-correction.
+  Single workers see one round, one truth-forcing cut, one commit;
+  the skill at swarm level produces an intentional excess of fixes —
+  marbles in every hole — which `vc-polarize` then strips back to one
+  axis. Use when implementation already exists but the codebase still
+  lies: overgenerated surfaces, drift between runtime paths, false
+  certainty from one-shot agent output, or a product that "works"
+  while remaining fragile. Each worker invocation is isolated and
+  blind to prior marble history. Trigger phrases: "marbles", "kulki",
+  "stabilize", "stabilizacja", "loop until done", "reduce chaos",
+  "fortify the foundation", "adultification", "rzuć kulki",
+  "wypełnij pęknięcia".
 default: vc-marbles
 aliases:
   - vc-fortify
@@ -21,23 +33,6 @@ loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-marbles — Deliberate Excess (Worker-Blind, Swarm-Wide)
 

@@ -4,7 +4,7 @@ Active default runtime entry points live here.
 
 - `<agent>_spawn.sh` scripts launch external agent CLIs.
 - `await.sh`, `observe.sh`, and watcher scripts track durable artifacts.
-- `lib/` holds shared path, session, launcher, prompt, meta, lock, and zellij
+- `lib/` holds shared path, session, launcher, prompt, meta, lock, and vc_frame
   helpers.
 - marbles scripts implement the convergence runtime and watcher path.
 

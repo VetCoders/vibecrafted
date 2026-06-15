@@ -7,7 +7,7 @@ Workflow-owned runtime for the `vc-research` triple-agent research swarm
 
 - `shell/research.sh` — swarm launcher (`vc-research`, `_vetcoders_research`):
   prepares per-agent launchers via the shared spawn scripts, writes the run
-  summary, and hangs the research tab on the live zellij operator session.
+  summary, and hangs the research tab on the live vc_frame operator session.
 - `shell/research_prompts.sh` — research worker prompt composition
   (`_vetcoders_compose_research_worker_prompt`).
 

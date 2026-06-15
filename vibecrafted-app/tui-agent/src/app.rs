@@ -757,7 +757,7 @@ impl App {
             lines.push(format!(
                 "Attach hint: vibecrafted dashboard attach {session}"
             ));
-            lines.push(format!("Zellij hint: zellij attach {session}"));
+            lines.push(format!("vc-frame hint: vc-frame attach {session}"));
         }
         if let Some(agent) = snapshot.agent.as_deref() {
             lines.push(format!("Resume hint: vibecrafted resume {agent}"));
@@ -1133,9 +1133,9 @@ impl App {
             self.config.state_root.as_os_str().to_os_string(),
         );
         if let Some(config_dir) =
-            std::env::var_os("ZELLIJ_CONFIG_DIR").filter(|value| !value.is_empty())
+            std::env::var_os("VC_FRAME_CONFIG_DIR").filter(|value| !value.is_empty())
         {
-            env.insert("ZELLIJ_CONFIG_DIR".to_string(), config_dir);
+            env.insert("VC_FRAME_CONFIG_DIR".to_string(), config_dir);
         }
         env
     }

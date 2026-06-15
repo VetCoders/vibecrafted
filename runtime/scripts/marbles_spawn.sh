@@ -104,7 +104,7 @@ mkdir -p "$store/plans" "$store/reports"
 spawn_gc_dead_runs "$(dirname "$store")" 2>/dev/null || true
 
 # Honour inherited run_id ONLY when a parent spawn placed it deliberately.
-# A leaked env var from a previous zellij window/session must not clobber a
+# A leaked env var from a previous vc_frame window/session must not clobber a
 # fresh spawn with a recycled id.
 #
 # Four refusal reasons invalidate the inherited run_id and force fresh mint:
@@ -335,7 +335,7 @@ if (( use_watcher )); then
   # The watcher redraws the last three status lines in place. Suppress the
   # extra report-path hint from the child spawn so long paths do not get
   # interleaved into that redraw surface.
-  VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right \
+  VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=right \
     SPAWN_LOOP_NR=1 \
     VIBECRAFTED_STORE_DIR="$store" \
     VIBECRAFTED_STORE_ROOT="$root_dir" \
@@ -347,5 +347,5 @@ if (( use_watcher )); then
     "$marbles_run_id" "$state_dir" "$count" \
     "$root_dir" "$runtime" "$store" "$session_lock"
 else
-  VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=right SPAWN_LOOP_NR=1 VIBECRAFTED_STORE_DIR="$store" VIBECRAFTED_STORE_ROOT="$root_dir" bash "$SCRIPT_DIR/${agent}_spawn.sh" "${spawn_args[@]}" "$l1_plan"
+  VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=right SPAWN_LOOP_NR=1 VIBECRAFTED_STORE_DIR="$store" VIBECRAFTED_STORE_ROOT="$root_dir" bash "$SCRIPT_DIR/${agent}_spawn.sh" "${spawn_args[@]}" "$l1_plan"
 fi

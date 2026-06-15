@@ -2,7 +2,7 @@
 
 Vibecrafted now has a supervisor-level sandbox seam: `--sandbox` routes the
 agent command through microsandbox while preserving the existing control-plane
-contract. The terminal choice is orthogonal. WezTerm, vc-apprt, locterm, Zellij,
+contract. The terminal choice is orthogonal. WezTerm, vc-apprt, locterm, vc-frame,
 and headless mode all observe the same spawn events.
 
 ## Why This Matters

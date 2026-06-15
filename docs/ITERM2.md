@@ -164,9 +164,9 @@ output before relying on it in production.
 - **Plan 11 (next):** Hammerspoon URL handlers (`vc-*` clickable actions
   embedded in OSC 8 hyperlinks) — extends this stack with desktop-level
   routing for agent dashboards.
-- **Plan 12 (Wave 4):** Zellij multi-agent layouts + mesh theme switching
-  (`config/zellij/themes/vetcoders-mesh.kdl`). The iTerm2 profile colors
-  intentionally rhyme with the zellij mesh themes — same identity, two
+- **Plan 12 (Wave 4):** vc-frame multi-agent layouts + mesh theme switching
+  (`config/vc-frame/themes/vetcoders-mesh.kdl`). The iTerm2 profile colors
+  intentionally rhyme with the vc_frame mesh themes — same identity, two
   presentation layers.
 - **kronika 2026-05-08:** experimental ship landmark — documents the
   original 18 OSC primitives, 8 ProfileSpecs, and 58 tests that shipped

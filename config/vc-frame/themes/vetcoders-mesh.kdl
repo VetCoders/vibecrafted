@@ -1,10 +1,10 @@
-// VetCoders mesh-aware zellij themes
+// VetCoders mesh-aware vc_frame themes
 // Plan 12 (META_22) — Wave 4 agent-native runtime cut.
 //
 // Kronika 2026-05-05 — VetCoders mesh topology. Each workstation gets a
 // canonical accent so the operator instantly knows which machine they are
 // looking at when peering through screen-share, mirrored displays, or a
-// browser-shared tmux/zellij session.
+// browser-shared tmux/vc_frame session.
 //
 //   dragon   — red    — LibraxisAI server, central hub
 //   sztudio  — purple — Monika's desktop

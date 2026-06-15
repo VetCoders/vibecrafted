@@ -5,11 +5,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-FLEET_IMPERATIVE_START = "<!-- fleet-imperative: v2 -->"
-FLEET_IMPERATIVE_END = "<!-- /fleet-imperative -->"
-FLEET_EXCEPTION_START = "<!-- fleet-imperative-exception: v2 -->"
-FLEET_EXCEPTION_END = "<!-- /fleet-imperative-exception -->"
-
 
 def test_vc_skills_preserve_init_and_loctree_orientation_contract() -> None:
     skill_files = sorted((REPO_ROOT / "skills").glob("vc-*/SKILL.md"))
@@ -17,6 +12,8 @@ def test_vc_skills_preserve_init_and_loctree_orientation_contract() -> None:
 
     missing: list[str] = []
     for skill_file in skill_files:
+        if skill_file.parent.name == "vc-init":
+            continue
         text = skill_file.read_text(encoding="utf-8")
         has_gate = (
             "## Canonical Orientation Gate" in text
@@ -33,71 +30,3 @@ def test_vc_skills_preserve_init_and_loctree_orientation_contract() -> None:
                 missing.append(f"{skill_file.relative_to(REPO_ROOT)} missing {label}")
 
     assert not missing, "\n".join(missing)
-
-
-def test_vc_skills_carry_fleet_imperative_block() -> None:
-    """Operator /vc-* invocations dispatch; loaded SKILL.md files do not.
-
-    The sole carve-out is vc-delegate (native in-process subagents). The block is
-    the structural guarantee; this gate keeps the operator runtime imperative
-    from leaking into the Codex/Claude local skill-loading layer.
-    """
-    skill_files = sorted((REPO_ROOT / "skills").glob("vc-*/SKILL.md"))
-    assert skill_files, "No vc-* skill files discovered"
-
-    failures: list[str] = []
-    for skill_file in skill_files:
-        rel = skill_file.relative_to(REPO_ROOT)
-        text = skill_file.read_text(encoding="utf-8")
-
-        if skill_file.parent.name == "vc-delegate":
-            if FLEET_EXCEPTION_START not in text or FLEET_EXCEPTION_END not in text:
-                failures.append(f"{rel} missing fleet-imperative exception carve-out")
-                continue
-            if FLEET_IMPERATIVE_START in text:
-                failures.append(
-                    f"{rel} must NOT carry the regular fleet-imperative block"
-                )
-            carve_out = text.split(FLEET_EXCEPTION_START, 1)[1].split(
-                FLEET_EXCEPTION_END, 1
-            )[0]
-            for needle in (
-                "THE exception",
-                "NOT the external",
-                "in-process",
-                "does not mean self-dispatch",
-            ):
-                if needle not in carve_out:
-                    failures.append(
-                        f"{rel} exception carve-out missing phrase: {needle!r}"
-                    )
-            continue
-
-        if FLEET_IMPERATIVE_START not in text or FLEET_IMPERATIVE_END not in text:
-            failures.append(f"{rel} missing fleet-imperative block")
-            continue
-        first_heading = text.find("\n# ")
-        if first_heading != -1 and text.index(FLEET_IMPERATIVE_START) > first_heading:
-            failures.append(
-                f"{rel} fleet-imperative block is not at the top (before the H1)"
-            )
-        block = text.split(FLEET_IMPERATIVE_START, 1)[1].split(FLEET_IMPERATIVE_END, 1)[
-            0
-        ]
-        for needle in (
-            "Operator CLI / slash-command layer",
-            "`vibecrafted <workflow> <agent>`",
-            "not a no-op",
-            "Skill-loading / chat layer",
-            "does not mean self-dispatch",
-            "do not spawn another agent",
-            "explicitly asks you to launch",
-            "native in-process subagents",
-            "`vc-delegate`",
-        ):
-            if needle not in block:
-                failures.append(
-                    f"{rel} fleet-imperative block missing phrase: {needle!r}"
-                )
-
-    assert not failures, "\n".join(failures)

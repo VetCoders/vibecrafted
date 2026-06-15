@@ -64,7 +64,7 @@ _vetcoders_init_command_text() {
 # Operator-mode launcher helpers — parallel to init helpers above.
 # vc-operator is NOT a dispatchable Iter-3 worker mode; it is an
 # interactive session entry point per the vc-init pattern. Invocation
-# opens the operator's primary tab in zellij with the agent of choice
+# opens the operator's primary tab in vc_frame with the agent of choice
 # preloaded with the /vc-operator skill prompt.
 
 _vetcoders_operator_runtime() {

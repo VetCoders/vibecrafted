@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 
 # Shared launcher rlimit hardening. Source this before spawning vc-frame,
-# zellij panes/tabs, or worker launchers.
+# vc_frame panes/tabs, or worker launchers.
 
 vc_ulimit_warn() {
   printf '[warn] %s\n' "$*" >&2

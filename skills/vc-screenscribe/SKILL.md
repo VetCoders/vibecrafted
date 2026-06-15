@@ -1,28 +1,20 @@
 ---
 name: vc-screenscribe
 version: 1.2.1
-description: "Analyze ScreenScribe videos, transcripts, HTML reports, and the ScreenScribe repo workflow."
+description: >
+  ScreenScribe workflow skill for analyzing screencast recordings and for
+  working inside the ScreenScribe repo itself. Use this whenever the user
+  mentions ScreenScribe, screencast review, app review videos, bug demo
+  recordings, HTML Pro reports, transcript-first artifact extraction,
+  extracting actionable findings from narrated videos, batch video analysis,
+  or wants to debug/build/improve the ScreenScribe project or the default
+  https://github.com/VetCoders/Screenscribe repository. Prefer this skill even
+  if the user does not explicitly ask for "ScreenScribe" but clearly wants a
+  spoken screen recording turned into structured engineering findings.
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # Vibecrafted. ScreenScribe
 
@@ -403,17 +395,3 @@ A ScreenScribe task is done when:
 - output artifacts are named and located
 - blockers are concrete if the run could not finish
 - repo changes, if any, pass the closest real quality gates
-
-## Fleet Dispatch Terminal
-
-This skill's flow ends in action, never in absorbed prose. The named action here
-is running the actual `screenscribe` command (`review`, `preprocess`,
-`transcribe`, `analyze`) on the recording. When the findings demand repo work
-beyond a bounded in-session cut, dispatch a fleet worker on them:
-
-```bash
-vibecrafted workflow <agent> --file <plan-built-from-screenscribe-findings>
-```
-
-No `screenscribe` run and no dispatch fired means the invocation was a no-op —
-the failure mode this terminal forbids.

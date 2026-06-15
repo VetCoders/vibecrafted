@@ -5,7 +5,7 @@ description: >
   1st Row Agent Operator Almanach for marbles convergence loops.
   Canonical workflow reference derived from battle-tested session 2026-04-06
   (unicode-puzzles-portal, 5 parallel agents, 8 convergence reports, 10 bugs found).
-  Covers: fleet orchestration, zellij routing, plan authoring, spawn mechanics,
+  Covers: fleet orchestration, vc_frame routing, plan authoring, spawn mechanics,
   watcher lifecycle, convergence protocol, branch safety, and failure recovery.
 trigger_phrases:
   - "marbles workflow"
@@ -82,7 +82,7 @@ vc-marbles codex --count 4 --prompt "fix the stego round-trips"
     │     ├── Spawns L1 agent (codex_spawn.sh) with direction=right
     │     └── Starts marbles_watcher.sh (foreground, temporal guardian)
     │
-    ├── Zellij Layout
+    ├── vc-frame Layout
     │     ┌─────────────────┬─────────────────┐
     │     │  Watcher (left)  │  Agent (right)   │
     │     │  ◉───○───○───○   │  codex working   │
@@ -164,7 +164,7 @@ Bad prompts: vague goals, no scope, no gate, no branch guard.
 
 ### Spawning Multiple Agents
 
-Launch one at a time. Verify zellij placement before spawning next.
+Launch one at a time. Verify vc_frame placement before spawning next.
 
 ```bash
 # Track A — Codex (bounded surgery)
@@ -225,20 +225,20 @@ during a marbles run. Other agents' work was disrupted. Guard was added to
 
 ### Known Failure Modes (battle-tested)
 
-| Failure                     | Symptom                             | Root Cause                                           | Recovery                                                          |
-| --------------------------- | ----------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| Agent lands in Terminal.app | New window opens outside zellij     | `ZELLIJ=0` treated as false                          | Fix: `spawn_in_zellij_context()` checks `${ZELLIJ+set}` not value |
-| Watcher crashes on init     | `JSONDecodeError` in state.json     | `watcher_pid: $` instead of `$$`                     | Fix: `_init_state()` heredoc                                      |
-| L2+ opens new pane          | Pane proliferation in watcher tab   | Missing `SPAWN_DIRECTION=right` in `marbles_next.sh` | Fix: add direction env var                                        |
-| Agent hijacks stale tab     | Agent unresponsive, watcher timeout | Operator didn't close old tabs                       | Fix: always `new-pane`, never reuse; cleanup after convergence    |
-| Count overflow              | 4 agents on 3-count run             | Timeout counted as iteration                         | Fix: `_wait_for_loop_report()` guard — no report = no advance     |
-| Branch switch mid-run       | Living tree disrupted               | No branch guard in skill                             | Fix: hard rule in SKILL.md + substrate failure handoff            |
+| Failure                     | Symptom                             | Root Cause                                           | Recovery                                                              |
+| --------------------------- | ----------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------- |
+| Agent lands in Terminal.app | New window opens outside vc_frame   | `VC_FRAME=0` treated as false                        | Fix: `spawn_in_vc_frame_context()` checks `${VC_FRAME+set}` not value |
+| Watcher crashes on init     | `JSONDecodeError` in state.json     | `watcher_pid: $` instead of `$$`                     | Fix: `_init_state()` heredoc                                          |
+| L2+ opens new pane          | Pane proliferation in watcher tab   | Missing `SPAWN_DIRECTION=right` in `marbles_next.sh` | Fix: add direction env var                                            |
+| Agent hijacks stale tab     | Agent unresponsive, watcher timeout | Operator didn't close old tabs                       | Fix: always `new-pane`, never reuse; cleanup after convergence        |
+| Count overflow              | 4 agents on 3-count run             | Timeout counted as iteration                         | Fix: `_wait_for_loop_report()` guard — no report = no advance         |
+| Branch switch mid-run       | Living tree disrupted               | No branch guard in skill                             | Fix: hard rule in SKILL.md + substrate failure handoff                |
 
 ### Operator Hygiene
 
 After convergence:
 
-1. Close completed marbles tabs in zellij
+1. Close completed marbles tabs in vc_frame
 2. Review convergence reports
 3. Commit or cherry-pick agent work
 4. Clean stale locks: `rm ~/.vibecrafted/locks/<org>/<repo>/*.lock`
@@ -355,8 +355,8 @@ Full timeline: 181 entries, 5 hours, 1 session.
 | 08:28 | Both marbles converged                                                                        |
 | 08:30 | Discussion: CronCreate vs marbles watcher vs marbles orchestrator plugin                      |
 | 08:40 | Deep reading: vibecrafted docs (CONTRACT, PERCEPTION, FOUNDATION, VIBE_HANGOVER)              |
-| 08:50 | `ZELLIJ=0` bug discovered — `spawn_in_zellij_context()` fixed                                 |
-| 09:04 | Phase 2 fleet: 4 parallel marbles (A, B, D, I) — all in zellij                                |
+| 08:50 | `VC_FRAME=0` bug discovered — `spawn_in_vc_frame_context()` fixed                             |
+| 09:04 | Phase 2 fleet: 4 parallel marbles (A, B, D, I) — all in vc_frame                              |
 | 09:10 | `marbles_next.sh` direction fix — L2+ pane reuse                                              |
 | 09:17 | Gemini branch violation — guard added to SKILL.md                                             |
 | 09:51 | Claude marbles launched — design system + UX decorate                                         |

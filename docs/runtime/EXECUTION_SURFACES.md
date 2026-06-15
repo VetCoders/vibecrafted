@@ -5,7 +5,7 @@ different surfaces, not interchangeable assumptions.
 
 ## 1. Human Interactive Shell
 
-Use this when a human operator is working in zsh, usually inside Zellij.
+Use this when a human operator is working in zsh, usually inside vc-frame.
 
 - Surface: `vc-*` shell functions sourced from `vc-skills.sh`.
 - Canonical helper source: `${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh`.
@@ -26,13 +26,13 @@ Use this for headless execution, scripts, and agent subprocesses.
 Before invoking a command, agents verify it with `command -v`. They do not
 assume an interactive PATH or sourced shell helpers.
 
-## 3. Active Zellij Agent Session
+## 3. Active vc-frame Agent Session
 
 Use this when the operator already has a visible Vibecrafted session.
 
 - Surface: `vibecrafted start`, `vibecrafted dashboard`, and slash-command style
   workflow prompts inside the active agent pane.
-- State: Zellij session state plus Vibecrafted control-plane events.
+- State: vc-frame session state plus Vibecrafted control-plane events.
 - Strength: visible orchestration and operator observation.
 - Limit: this is a live terminal surface, not a portable subprocess contract.
 

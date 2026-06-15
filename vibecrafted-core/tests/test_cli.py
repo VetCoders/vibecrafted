@@ -80,8 +80,8 @@ def test_root_cli_prune_without_work_uses_discovery_prompt(monkeypatch, capsys) 
     assert cli.main(["prune", "claude"]) == 0
 
     assert seen["skill"] == "prune"
-    assert "Repository health / prune discovery run." in seen["prompt"]
-    assert "Do not remove anything based on vibes." in seen["prompt"]
+    assert "Repository health / prune ACTION run." in seen["prompt"]
+    assert "No deletion on vibes. Prove every cut." in seen["prompt"]
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 
@@ -98,7 +98,7 @@ def test_root_cli_prune_without_agent_defaults_to_claude(monkeypatch, capsys) ->
     assert cli.main(["prune"]) == 0
 
     assert seen["agent"] == "claude"
-    assert "Repository health / prune discovery run." in seen["prompt"]
+    assert "Repository health / prune ACTION run." in seen["prompt"]
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 

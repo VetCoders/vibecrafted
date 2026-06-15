@@ -30,7 +30,7 @@ side channel.
    and machine-readable status where applicable.
 3. **One contract, many eyes** — Python writers, Rust readers, TUI, web, tray,
    and shell surfaces must not invent separate state schemas.
-4. **Degrade, don't die** — no zellij, no TTY, crash, and interrupted shell paths
+4. **Degrade, don't die** — no vc_frame, no TTY, crash, and interrupted shell paths
    should still produce an honest failure artifact.
 5. **Vertical slices, dogfood daily** — demo success is not runtime truth.
 6. **Seal then widen** — prove one path, then add eyes.
@@ -79,8 +79,8 @@ zero fallbacku do szela, runy widoczne w TUI, raporty czytelne. Nie używasz cod
 
 ## Faza 2 — Seal the Seams _(rurka nie pęka pod brakiem substratu)_
 
-- **Degradacja jako test runtime** (nie tylko kod): kill terminal/zellij w trakcie runu → runtime przeżywa, artifact kompletny; brak TTY → headless; crash → failure zapisany.
-- `app/mux-agent` przejmuje natywne sesje (`mux_gen` + `jsonl_bridge`) — **zellij-launcher + osascript znikają**.
+- **Degradacja jako test runtime** (nie tylko kod): kill terminal/vc_frame w trakcie runu → runtime przeżywa, artifact kompletny; brak TTY → headless; crash → failure zapisany.
+- `app/mux-agent` przejmuje natywne sesje (`mux_gen` + `jsonl_bridge`) — **vc_frame-launcher + osascript znikają**.
 - `control-core/tests/schema_fidelity.rs` zielony — kontrakt Py↔Rust nie dryfuje.
 
 **DoD:** „zabij terminal w połowie runu" → runtime żyje, raport kompletny; schema_fidelity gate w CI.
@@ -120,5 +120,5 @@ zero fallbacku do szela, runy widoczne w TUI, raporty czytelne. Nie używasz cod
 
 - 1 launcher · 1 kontrakt · 0 szela.
 - E2E run zawsze produkuje artifact i jest widoczny w ≥1 oku.
-- Przeżywa brak zellij / brak TTY / crash.
+- Przeżywa brak vc_frame / brak TTY / crash.
 - **Używane codziennie przez zespół** (dogfood) — to jest definitywny test.

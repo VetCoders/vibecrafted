@@ -244,15 +244,15 @@ _vetcoders_session_base_name() {
   printf '%s\n' "$base"
 }
 
-_vetcoders_zellij_session_scope() {
-  case "${VIBECRAFTED_ZELLIJ_SESSION_SCOPE:-repo}" in
+_vetcoders_vc_frame_session_scope() {
+  case "${VIBECRAFTED_VC_FRAME_SESSION_SCOPE:-repo}" in
     folder) printf 'folder\n' ;;
     repo|*) printf 'repo\n' ;;
   esac
 }
 
 _vetcoders_session_scope_root() {
-  case "$(_vetcoders_zellij_session_scope)" in
+  case "$(_vetcoders_vc_frame_session_scope)" in
     folder)
       pwd -P
       ;;
@@ -262,7 +262,7 @@ _vetcoders_session_scope_root() {
   esac
 }
 
-_vetcoders_zellij_session_max_length() {
+_vetcoders_vc_frame_session_max_length() {
   printf '24\n'
 }
 
@@ -288,7 +288,7 @@ _vetcoders_compact_session_name() {
   local preserved_tail="${2:-}"
   local max_len hash prefix_len prefix compact
 
-  max_len="$(_vetcoders_zellij_session_max_length)"
+  max_len="$(_vetcoders_vc_frame_session_max_length)"
   if (( ${#full_name} <= max_len )); then
     printf '%s\n' "$full_name"
     return 0
@@ -456,7 +456,7 @@ _vetcoders_has_ambient_spawn_context() {
   [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
   [[ "${SPAWN_RUN_ID}" == "${VIBECRAFTED_RUN_ID}" ]] || return 1
   [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || return 1
-  _vetcoders_in_zellij && return 1
+  _vetcoders_in_vc_frame && return 1
   return 0
 }
 

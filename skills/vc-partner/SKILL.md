@@ -1,7 +1,17 @@
 ---
 name: vc-partner
 version: 3.0.0-dev
-description: "Interactive shared-steering posture for strategy, planning, delegation, audit, and shipping without drift."
+description: >
+  Proactive interactive posture for shared steering with the operator.
+  `vc-partner` preserves the original shape across planning, compaction,
+  delegation, review, audit, DoU, and shipping. Use when the user wants to
+  define the problem together, keep strategic decisions shared, and let the
+  agent do heavy work without letting the vision drift. Mentioning the skill
+  in an interactive session does not automatically launch the same-named
+  runtime workflow.
+  Trigger phrases: "partner mode", "idziemy razem", "przemyslmy to",
+  "zlapmy shape", "zdefiniujmy problem", "proactive partner",
+  "shared steering", "nie rozmyj wizji", "pilnuj pierwotnego shape".
 compatibility:
   tools:
     - exec_command
@@ -14,23 +24,6 @@ loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-partner
 

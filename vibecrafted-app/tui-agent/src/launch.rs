@@ -190,22 +190,22 @@ impl LaunchReadinessProbe {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
-            .context("failed to run zellij readiness probe")?;
+            .context("failed to run vc_frame readiness probe")?;
         if !output.status.success() {
             // A non-zero exit with diagnostic stderr is a real probe error
             // (bad flags, broken config, permission denied, missing socket
             // root, etc.) and must surface to the operator overlay rather
             // than collapsing into "session not visible". A non-zero exit
             // with empty stderr is treated as a benign "no sessions yet"
-            // signal so we keep polling. zellij itself prints the
-            // "No active zellij sessions found." message on stderr, so the
+            // signal so we keep polling. vc_frame itself prints the
+            // "No active vc_frame sessions found." message on stderr, so the
             // empty-stderr branch is only reached for stripped/quiet
             // implementations or wrappers that intentionally silence
             // diagnostics.
             let stderr = String::from_utf8_lossy(&output.stderr);
             if !stderr.trim().is_empty() {
                 anyhow::bail!(
-                    "zellij readiness probe exited with {}: {}",
+                    "vc_frame readiness probe exited with {}: {}",
                     output.status,
                     stderr.trim()
                 );
@@ -270,16 +270,16 @@ fn build_deck_launch_command(deck: &Path, request: &LaunchRequest) -> LaunchComm
 }
 
 fn build_terminal_launch_command(deck: &Path, request: &LaunchRequest) -> LaunchCommand {
-    let zellij_layout = build_zellij_layout_string(deck, request);
+    let vc_frame_layout = build_vc_frame_layout_string(deck, request);
     let mut env = request.env.clone();
-    if let Some(config_dir) = zellij_config_dir_for_request(request) {
-        env.insert("ZELLIJ_CONFIG_DIR".to_string(), config_dir.into_os_string());
+    if let Some(config_dir) = vc_frame_config_dir_for_request(request) {
+        env.insert("VC_FRAME_CONFIG_DIR".to_string(), config_dir.into_os_string());
     }
 
     let mut args = Vec::new();
 
     // Stable session name (when provided) goes before the subcommand so the
-    // operator can `zellij attach <name>` from another terminal and so future
+    // operator can `vc-frame attach <name>` from another terminal and so future
     // healthcheck paths can target the named socket.
     if let Some(name) = request.session_name.as_deref() {
         args.push("--session".into());
@@ -287,19 +287,19 @@ fn build_terminal_launch_command(deck: &Path, request: &LaunchRequest) -> Launch
     }
 
     args.push("--layout-string".into());
-    args.push(zellij_layout.into());
+    args.push(vc_frame_layout.into());
 
     LaunchCommand {
         program: request
             .terminal_binary
             .clone()
-            .unwrap_or_else(|| PathBuf::from("zellij")),
+            .unwrap_or_else(|| PathBuf::from("vc-frame")),
         args,
         env,
     }
 }
 
-fn build_zellij_layout_string(deck: &Path, request: &LaunchRequest) -> String {
+fn build_vc_frame_layout_string(deck: &Path, request: &LaunchRequest) -> String {
     let mut layout = format!(
         "layout {{ tab name={} focus=true {{ pane name={} focus=true command={} ",
         kdl_quote(&format!("Operator {}", request.kind.human_title())),
@@ -319,9 +319,9 @@ fn build_zellij_layout_string(deck: &Path, request: &LaunchRequest) -> String {
 
 fn build_pane_shell_command(deck: &Path, request: &LaunchRequest) -> String {
     let mut parts = Vec::new();
-    if let Some(config_dir) = zellij_config_dir_for_request(request) {
+    if let Some(config_dir) = vc_frame_config_dir_for_request(request) {
         parts.push(format!(
-            "export ZELLIJ_CONFIG_DIR={}",
+            "export VC_FRAME_CONFIG_DIR={}",
             shell_quote(&config_dir.to_string_lossy())
         ));
     }
@@ -340,23 +340,23 @@ fn build_pane_shell_command(deck: &Path, request: &LaunchRequest) -> String {
     parts.join("; ")
 }
 
-fn zellij_config_dir_for_request(request: &LaunchRequest) -> Option<PathBuf> {
+fn vc_frame_config_dir_for_request(request: &LaunchRequest) -> Option<PathBuf> {
     if let Some(explicit) = request
         .env
-        .get("ZELLIJ_CONFIG_DIR")
+        .get("VC_FRAME_CONFIG_DIR")
         .filter(|value| !value.is_empty())
     {
         return Some(PathBuf::from(explicit));
     }
-    resolved_zellij_config_dir(request.root.as_deref())
+    resolved_vc_frame_config_dir(request.root.as_deref())
 }
 
-fn resolved_zellij_config_dir(root: Option<&Path>) -> Option<PathBuf> {
-    if let Some(explicit) = env::var_os("ZELLIJ_CONFIG_DIR").filter(|value| !value.is_empty()) {
+fn resolved_vc_frame_config_dir(root: Option<&Path>) -> Option<PathBuf> {
+    if let Some(explicit) = env::var_os("VC_FRAME_CONFIG_DIR").filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(explicit));
     }
     let root = root?;
-    let repo_config_dir = root.join("config/zellij");
+    let repo_config_dir = root.join("config/vc-frame");
     repo_config_dir
         .join("config.kdl")
         .is_file()
@@ -457,7 +457,7 @@ mod tests {
             prompt: "Plan and implement.".to_string(),
             runtime: LaunchRuntime::Terminal,
             root: Some(root),
-            terminal_binary: Some(PathBuf::from("zellij")),
+            terminal_binary: Some(PathBuf::from("vc-frame")),
             env: BTreeMap::new(),
             count: None,
             depth: None,
@@ -466,15 +466,15 @@ mod tests {
     }
 
     #[test]
-    fn terminal_launch_uses_zellij_config_env_not_top_level_flag() {
+    fn terminal_launch_uses_vc_frame_config_env_not_top_level_flag() {
         let temp = tempfile::tempdir().unwrap();
-        let config_dir = temp.path().join("config/zellij");
+        let config_dir = temp.path().join("config/vc-frame");
         std::fs::create_dir_all(&config_dir).unwrap();
         std::fs::write(config_dir.join("config.kdl"), "layout {}\n").unwrap();
 
         let mut req = request(temp.path().into());
         req.env.insert(
-            "ZELLIJ_CONFIG_DIR".to_string(),
+            "VC_FRAME_CONFIG_DIR".to_string(),
             config_dir.clone().into_os_string(),
         );
 
@@ -482,7 +482,7 @@ mod tests {
 
         assert!(!command.args.iter().any(|arg| arg == "--config-dir"));
         assert_eq!(
-            command.env.get("ZELLIJ_CONFIG_DIR"),
+            command.env.get("VC_FRAME_CONFIG_DIR"),
             Some(&config_dir.into_os_string())
         );
         assert!(command.args.iter().any(|arg| arg == "--session"));
@@ -491,18 +491,18 @@ mod tests {
         let probe = command.readiness_probe().unwrap();
         assert!(!probe.args.iter().any(|arg| arg == "--config-dir"));
         assert_eq!(
-            probe.env.get("ZELLIJ_CONFIG_DIR"),
-            command.env.get("ZELLIJ_CONFIG_DIR")
+            probe.env.get("VC_FRAME_CONFIG_DIR"),
+            command.env.get("VC_FRAME_CONFIG_DIR")
         );
     }
 
     #[test]
-    fn terminal_launch_respects_explicit_zellij_config_env() {
+    fn terminal_launch_respects_explicit_vc_frame_config_env() {
         let temp = tempfile::tempdir().unwrap();
-        let explicit = temp.path().join("frontier/zellij");
+        let explicit = temp.path().join("frontier/vc-frame");
         let mut req = request(temp.path().into());
         req.env.insert(
-            "ZELLIJ_CONFIG_DIR".to_string(),
+            "VC_FRAME_CONFIG_DIR".to_string(),
             explicit.clone().into_os_string(),
         );
 
@@ -510,7 +510,7 @@ mod tests {
 
         assert!(!command.args.iter().any(|arg| arg == "--config-dir"));
         assert_eq!(
-            command.env.get("ZELLIJ_CONFIG_DIR"),
+            command.env.get("VC_FRAME_CONFIG_DIR"),
             Some(&explicit.into_os_string())
         );
     }

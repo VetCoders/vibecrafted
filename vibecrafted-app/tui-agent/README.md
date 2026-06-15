@@ -40,12 +40,12 @@ The TUI shells out to the existing `vibecrafted` command deck when you launch a
 workflow, research, review, or marbles run. Launches carry an explicit runtime
 and repo root so the Rust surface stays aligned with the shared control-plane
 launcher contract instead of inheriting whatever shell state happened to start
-the console. Terminal and visible launches get a stable zellij session name and
-an immediate readiness probe against `zellij list-sessions --short
+the console. Terminal and visible launches get a stable vc_frame session name and
+an immediate readiness probe against `vc-frame list-sessions --short
 --no-formatting`, so a launch that exits before its named session appears is
 reported as a failure instead of a false success. The probe inherits the same
-`--config-dir` namespace the launch uses, so a repo-local zellij config under
-`<root>/config/zellij/` is healthchecked against the same socket directory the
+`--config-dir` namespace the launch uses, so a repo-local vc_frame config under
+`<root>/config/vc-frame/` is healthchecked against the same socket directory the
 launcher actually wrote to. After a 2-second deadline the launch is killed and
 reported as `did not appear within the readiness window`, including any probe
 diagnostic surfaced through `LaunchRunError.probe_error`.

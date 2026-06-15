@@ -20,7 +20,7 @@ _vetcoders_skill_init() {
     return 1
   }
 
-  _vetcoders_require_zellij || return 1
+  _vetcoders_require_vc_frame || return 1
 
   runtime="$(_vetcoders_init_runtime "${_vetcoders_contract_runtime:-terminal}")" || return 1
   init_prompt="$(_vetcoders_compose_init_prompt "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1
@@ -31,7 +31,7 @@ _vetcoders_skill_init() {
 }
 
 # vc-operator launcher — interactive operator session entry point.
-# Behaves like _vetcoders_skill_init: spawns a zellij session with the
+# Behaves like _vetcoders_skill_init: spawns a vc_frame session with the
 # selected agent preloaded with the /vc-operator skill prompt. NOT a
 # background Iter-3 dispatchable mode.
 _vetcoders_skill_operator() {
@@ -53,7 +53,7 @@ _vetcoders_skill_operator() {
     return 1
   }
 
-  _vetcoders_require_zellij || return 1
+  _vetcoders_require_vc_frame || return 1
 
   runtime="$(_vetcoders_operator_runtime "${_vetcoders_contract_runtime:-terminal}")" || return 1
   operator_prompt="$(_vetcoders_compose_operator_prompt "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1

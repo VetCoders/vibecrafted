@@ -21,7 +21,7 @@ subdirectory per component, on the `runtime/vc-marbles/` pattern:
 - `runtime/vc-research/shell/` — facade-sourced shell modules for the
   research swarm launcher.
 - `runtime/vc-operator/mission-control/` — operator console / dashboard
-  watcher scripts used by the zellij layouts.
+  watcher scripts used by the vc_frame layouts.
 
 ### What belongs in a workflow dir
 
@@ -42,7 +42,7 @@ subdirectory per component, on the `runtime/vc-marbles/` pattern:
 ### How to migrate or extract the next workflow
 
 1. Map ownership: `loct impact` + `loct find --literal <script-name>` for
-   every candidate file; string-path consumers (Makefile, zellij `*.kdl`
+   every candidate file; string-path consumers (Makefile, vc_frame `*.kdl`
    layouts, tests, installer staging) do not show up as import edges, grep
    them explicitly.
 2. `git mv` the workflow-owned files into `runtime/vc-<workflow>/<component>/`.
@@ -52,7 +52,7 @@ subdirectory per component, on the `runtime/vc-marbles/` pattern:
 <workflow> <module>` in `runtime/shell/vetcoders.sh` (keep load order);
    - scripts resolved at runtime → `_vetcoders_workflow_script <workflow>
 <relative-path>` from `runtime/helpers/vetcoders-runtime-core.sh`;
-   - literal paths in zellij layouts/tests → point at
+   - literal paths in vc_frame layouts/tests → point at
      `<runtime-root>/vc-<workflow>/...`.
 4. Installer staging needs no edits: the whole repo tree (including
    `runtime/vc-*/`) is synced into `vibecrafted-current` by

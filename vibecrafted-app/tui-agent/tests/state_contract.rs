@@ -31,7 +31,7 @@ fn default_terminal_binary_prefers_vc_frame_when_available() {
 
     let dir = tempdir().unwrap();
     fs::write(dir.path().join("vc-frame"), "#!/bin/sh\n").unwrap();
-    fs::write(dir.path().join("zellij"), "#!/bin/sh\n").unwrap();
+    fs::write(dir.path().join("vc-frame"), "#!/bin/sh\n").unwrap();
     let path = previous_path
         .as_ref()
         .map(|value| {
@@ -69,21 +69,21 @@ async fn operator_console_launch_uses_vc_frame_top_level_layout_flags() {
     let _guard = env_lock().lock().unwrap();
     let previous_path = env::var_os("PATH");
     let previous_override = env::var_os("VIBECRAFTED_TERMINAL_BINARY");
-    let previous_config_dir = env::var_os("ZELLIJ_CONFIG_DIR");
+    let previous_config_dir = env::var_os("VC_FRAME_CONFIG_DIR");
     unsafe {
         env::remove_var("VIBECRAFTED_TERMINAL_BINARY");
-        env::remove_var("ZELLIJ_CONFIG_DIR");
+        env::remove_var("VC_FRAME_CONFIG_DIR");
     }
 
     let dir = tempdir().unwrap();
     let bin_dir = dir.path().join("bin");
     fs::create_dir_all(&bin_dir).unwrap();
     fs::write(bin_dir.join("vc-frame"), "#!/bin/sh\n").unwrap();
-    fs::write(bin_dir.join("zellij"), "#!/bin/sh\n").unwrap();
+    fs::write(bin_dir.join("vc-frame"), "#!/bin/sh\n").unwrap();
 
     let repo_root = dir.path().join("repo");
-    fs::create_dir_all(repo_root.join("config/zellij")).unwrap();
-    fs::write(repo_root.join("config/zellij/config.kdl"), "layout {}\n").unwrap();
+    fs::create_dir_all(repo_root.join("config/vc-frame")).unwrap();
+    fs::write(repo_root.join("config/vc-frame/config.kdl"), "layout {}\n").unwrap();
 
     let path = previous_path
         .as_ref()
@@ -118,16 +118,16 @@ async fn operator_console_launch_uses_vc_frame_top_level_layout_flags() {
 
     assert_eq!(command.program, Path::new("vc-frame"));
     assert_eq!(
-        command.env.get("ZELLIJ_CONFIG_DIR"),
-        Some(&repo_root.join("config/zellij").into_os_string())
+        command.env.get("VC_FRAME_CONFIG_DIR"),
+        Some(&repo_root.join("config/vc-frame").into_os_string())
     );
     assert!(
         !args.iter().any(|value| value == "--config-dir"),
-        "operator console must not pass --config-dir after a zellij subcommand: args={args:?}"
+        "operator console must not pass --config-dir after a vc_frame subcommand: args={args:?}"
     );
     assert!(
         !args.iter().any(|value| value == "options"),
-        "operator console must not emit the stale zellij options subcommand: args={args:?}"
+        "operator console must not emit the stale vc_frame options subcommand: args={args:?}"
     );
     let session_idx = args
         .iter()
@@ -144,7 +144,7 @@ async fn operator_console_launch_uses_vc_frame_top_level_layout_flags() {
 
     let layout = args.get(layout_idx + 1).expect("layout payload");
     assert!(layout.contains("pane name=\"launch\""));
-    assert!(layout.contains("export ZELLIJ_CONFIG_DIR="));
+    assert!(layout.contains("export VC_FRAME_CONFIG_DIR="));
     assert!(layout.contains("exec '/usr/bin/vibecrafted' 'workflow'"));
 
     match previous_path {
@@ -165,10 +165,10 @@ async fn operator_console_launch_uses_vc_frame_top_level_layout_flags() {
     }
     match previous_config_dir {
         Some(value) => unsafe {
-            env::set_var("ZELLIJ_CONFIG_DIR", value);
+            env::set_var("VC_FRAME_CONFIG_DIR", value);
         },
         None => unsafe {
-            env::remove_var("ZELLIJ_CONFIG_DIR");
+            env::remove_var("VC_FRAME_CONFIG_DIR");
         },
     }
 }
@@ -289,7 +289,7 @@ fn builds_existing_command_deck_launches() {
         prompt: "Investigate the state format.".to_string(),
         runtime: LaunchRuntime::Headless,
         root: Some("/tmp/vibecrafted".into()),
-        terminal_binary: Some("zellij".into()),
+        terminal_binary: Some("vc-frame".into()),
         env: BTreeMap::new(),
         count: Some(3),
         depth: Some(3),
@@ -307,16 +307,16 @@ fn builds_existing_command_deck_launches() {
 
 #[test]
 fn marbles_launches_keep_runtime_root_and_loop_controls() {
-    // Process env is shared across tests, so pin access while we mutate zellij config.
+    // Process env is shared across tests, so pin access while we mutate vc_frame config.
     let _guard = env_lock().lock().unwrap();
-    let previous = env::var_os("ZELLIJ_CONFIG_DIR");
+    let previous = env::var_os("VC_FRAME_CONFIG_DIR");
     unsafe {
-        env::remove_var("ZELLIJ_CONFIG_DIR");
+        env::remove_var("VC_FRAME_CONFIG_DIR");
     }
     let dir = tempdir().unwrap();
     let root = dir.path();
-    fs::create_dir_all(root.join("config/zellij")).unwrap();
-    fs::write(root.join("config/zellij/config.kdl"), "layout {}\n").unwrap();
+    fs::create_dir_all(root.join("config/vc-frame")).unwrap();
+    fs::write(root.join("config/vc-frame/config.kdl"), "layout {}\n").unwrap();
     let deck = Path::new("/usr/bin/vibecrafted");
     let request = LaunchRequest {
         kind: LaunchKind::Marbles,
@@ -324,7 +324,7 @@ fn marbles_launches_keep_runtime_root_and_loop_controls() {
         prompt: "Converge on the operator surface.".to_string(),
         runtime: LaunchRuntime::Terminal,
         root: Some(root.to_path_buf()),
-        terminal_binary: Some("zellij".into()),
+        terminal_binary: Some("vc-frame".into()),
         env: BTreeMap::new(),
         count: Some(4),
         depth: Some(7),
@@ -341,12 +341,12 @@ fn marbles_launches_keep_runtime_root_and_loop_controls() {
         root.to_string_lossy()
     );
 
-    assert_eq!(command.program, Path::new("zellij"));
+    assert_eq!(command.program, Path::new("vc-frame"));
 
     assert_eq!(
-        command.env.get("ZELLIJ_CONFIG_DIR"),
-        Some(&root.join("config/zellij").into_os_string()),
-        "repo-local zellij config should be passed through env so vc-frame does not parse it as a stale subcommand flag"
+        command.env.get("VC_FRAME_CONFIG_DIR"),
+        Some(&root.join("config/vc-frame").into_os_string()),
+        "repo-local vc_frame config should be passed through env so vc-frame does not parse it as a stale subcommand flag"
     );
     assert!(args.iter().any(|value| value == "--layout-string"));
     let layout_idx = args
@@ -355,41 +355,41 @@ fn marbles_launches_keep_runtime_root_and_loop_controls() {
         .expect("layout string flag should be present");
     assert!(
         !args.iter().any(|value| value == "--config-dir"),
-        "terminal launch must not pass --config-dir as argv; vc-frame/zellij version skew rejects it in this context: args={args:?}"
+        "terminal launch must not pass --config-dir as argv; vc-frame/vc_frame version skew rejects it in this context: args={args:?}"
     );
     assert!(
         !args.iter().any(|value| value == "options"),
-        "terminal launch must not put --config-dir after the stale zellij options subcommand: args={args:?}"
+        "terminal launch must not put --config-dir after the stale vc_frame options subcommand: args={args:?}"
     );
 
     let layout = args.get(layout_idx + 1).expect("layout string");
     assert!(layout.contains("pane name=\"launch\""));
     assert!(layout.contains("command=\"bash\""));
     assert!(layout.contains(&format!("cwd=\"{}\"", root.to_string_lossy())));
-    assert!(layout.contains("export ZELLIJ_CONFIG_DIR="));
+    assert!(layout.contains("export VC_FRAME_CONFIG_DIR="));
     assert!(layout.contains(&expected_deck_cmd));
 
     match previous {
         Some(value) => unsafe {
-            env::set_var("ZELLIJ_CONFIG_DIR", value);
+            env::set_var("VC_FRAME_CONFIG_DIR", value);
         },
         None => unsafe {
-            env::remove_var("ZELLIJ_CONFIG_DIR");
+            env::remove_var("VC_FRAME_CONFIG_DIR");
         },
     }
 }
 
 #[test]
-fn terminal_launches_preserve_explicit_zellij_config_dir() {
-    // Process env is shared across tests, so pin access while we mutate zellij config.
+fn terminal_launches_preserve_explicit_vc_frame_config_dir() {
+    // Process env is shared across tests, so pin access while we mutate vc_frame config.
     let _guard = env_lock().lock().unwrap();
     let deck = Path::new("/usr/bin/vibecrafted");
-    let explicit = Path::new("/tmp/custom-zellij");
-    let previous = env::var_os("ZELLIJ_CONFIG_DIR");
+    let explicit = Path::new("/tmp/custom-vc_frame");
+    let previous = env::var_os("VC_FRAME_CONFIG_DIR");
     // This test temporarily pins process env to verify that operator-tui
     // respects an already configured frontier location.
     unsafe {
-        env::set_var("ZELLIJ_CONFIG_DIR", explicit);
+        env::set_var("VC_FRAME_CONFIG_DIR", explicit);
     }
     let request = LaunchRequest {
         kind: LaunchKind::Workflow,
@@ -397,7 +397,7 @@ fn terminal_launches_preserve_explicit_zellij_config_dir() {
         prompt: "Ship the launcher.".to_string(),
         runtime: LaunchRuntime::Terminal,
         root: Some("/tmp/workspace".into()),
-        terminal_binary: Some("zellij".into()),
+        terminal_binary: Some("vc-frame".into()),
         env: BTreeMap::new(),
         count: Some(3),
         depth: Some(3),
@@ -416,14 +416,14 @@ fn terminal_launches_preserve_explicit_zellij_config_dir() {
         .and_then(|index| args.get(index + 1))
         .expect("layout string");
 
-    assert!(layout.contains("export ZELLIJ_CONFIG_DIR='/tmp/custom-zellij'"));
+    assert!(layout.contains("export VC_FRAME_CONFIG_DIR='/tmp/custom-vc_frame'"));
 
     match previous {
         Some(value) => unsafe {
-            env::set_var("ZELLIJ_CONFIG_DIR", value);
+            env::set_var("VC_FRAME_CONFIG_DIR", value);
         },
         None => unsafe {
-            env::remove_var("ZELLIJ_CONFIG_DIR");
+            env::remove_var("VC_FRAME_CONFIG_DIR");
         },
     }
 }
@@ -431,9 +431,9 @@ fn terminal_launches_preserve_explicit_zellij_config_dir() {
 #[test]
 fn terminal_launch_carries_named_session_as_top_level_flag() {
     let _guard = env_lock().lock().unwrap();
-    let previous = env::var_os("ZELLIJ_CONFIG_DIR");
+    let previous = env::var_os("VC_FRAME_CONFIG_DIR");
     unsafe {
-        env::remove_var("ZELLIJ_CONFIG_DIR");
+        env::remove_var("VC_FRAME_CONFIG_DIR");
     }
     let deck = Path::new("/usr/bin/vibecrafted");
     let request = LaunchRequest {
@@ -442,7 +442,7 @@ fn terminal_launch_carries_named_session_as_top_level_flag() {
         prompt: "Ship the launcher.".to_string(),
         runtime: LaunchRuntime::Terminal,
         root: Some("/tmp/workspace".into()),
-        terminal_binary: Some("zellij".into()),
+        terminal_binary: Some("vc-frame".into()),
         env: BTreeMap::new(),
         count: Some(3),
         depth: Some(3),
@@ -472,10 +472,10 @@ fn terminal_launch_carries_named_session_as_top_level_flag() {
 
     match previous {
         Some(value) => unsafe {
-            env::set_var("ZELLIJ_CONFIG_DIR", value);
+            env::set_var("VC_FRAME_CONFIG_DIR", value);
         },
         None => unsafe {
-            env::remove_var("ZELLIJ_CONFIG_DIR");
+            env::remove_var("VC_FRAME_CONFIG_DIR");
         },
     }
 }
@@ -483,9 +483,9 @@ fn terminal_launch_carries_named_session_as_top_level_flag() {
 #[test]
 fn terminal_launch_exposes_named_session_readiness_probe() {
     let _guard = env_lock().lock().unwrap();
-    let previous = env::var_os("ZELLIJ_CONFIG_DIR");
+    let previous = env::var_os("VC_FRAME_CONFIG_DIR");
     unsafe {
-        env::remove_var("ZELLIJ_CONFIG_DIR");
+        env::remove_var("VC_FRAME_CONFIG_DIR");
     }
     let deck = Path::new("/usr/bin/vibecrafted");
     let request = LaunchRequest {
@@ -494,7 +494,7 @@ fn terminal_launch_exposes_named_session_readiness_probe() {
         prompt: "Ship the launcher.".to_string(),
         runtime: LaunchRuntime::Terminal,
         root: Some("/tmp/workspace".into()),
-        terminal_binary: Some("/opt/bin/zellij".into()),
+        terminal_binary: Some("/opt/bin/vc_frame".into()),
         env: BTreeMap::new(),
         count: Some(3),
         depth: Some(3),
@@ -511,7 +511,7 @@ fn terminal_launch_exposes_named_session_readiness_probe() {
         .map(|value| value.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
 
-    assert_eq!(probe.program, Path::new("/opt/bin/zellij"));
+    assert_eq!(probe.program, Path::new("/opt/bin/vc_frame"));
     assert_eq!(probe.session_name, "vc-op-workflow-42");
     assert_eq!(
         probe_args,
@@ -520,10 +520,10 @@ fn terminal_launch_exposes_named_session_readiness_probe() {
 
     match previous {
         Some(value) => unsafe {
-            env::set_var("ZELLIJ_CONFIG_DIR", value);
+            env::set_var("VC_FRAME_CONFIG_DIR", value);
         },
         None => unsafe {
-            env::remove_var("ZELLIJ_CONFIG_DIR");
+            env::remove_var("VC_FRAME_CONFIG_DIR");
         },
     }
 }
@@ -531,9 +531,9 @@ fn terminal_launch_exposes_named_session_readiness_probe() {
 #[test]
 fn terminal_launch_omits_session_flag_when_session_name_is_none() {
     let _guard = env_lock().lock().unwrap();
-    let previous = env::var_os("ZELLIJ_CONFIG_DIR");
+    let previous = env::var_os("VC_FRAME_CONFIG_DIR");
     unsafe {
-        env::remove_var("ZELLIJ_CONFIG_DIR");
+        env::remove_var("VC_FRAME_CONFIG_DIR");
     }
     let deck = Path::new("/usr/bin/vibecrafted");
     let request = LaunchRequest {
@@ -542,7 +542,7 @@ fn terminal_launch_omits_session_flag_when_session_name_is_none() {
         prompt: "Ship the launcher.".to_string(),
         runtime: LaunchRuntime::Terminal,
         root: Some("/tmp/workspace".into()),
-        terminal_binary: Some("zellij".into()),
+        terminal_binary: Some("vc-frame".into()),
         env: BTreeMap::new(),
         count: Some(3),
         depth: Some(3),
@@ -567,10 +567,10 @@ fn terminal_launch_omits_session_flag_when_session_name_is_none() {
 
     match previous {
         Some(value) => unsafe {
-            env::set_var("ZELLIJ_CONFIG_DIR", value);
+            env::set_var("VC_FRAME_CONFIG_DIR", value);
         },
         None => unsafe {
-            env::remove_var("ZELLIJ_CONFIG_DIR");
+            env::remove_var("VC_FRAME_CONFIG_DIR");
         },
     }
 }
@@ -578,15 +578,15 @@ fn terminal_launch_omits_session_flag_when_session_name_is_none() {
 #[test]
 fn terminal_launch_probe_inherits_config_dir_env_from_launch_command() {
     let _guard = env_lock().lock().unwrap();
-    let previous = env::var_os("ZELLIJ_CONFIG_DIR");
+    let previous = env::var_os("VC_FRAME_CONFIG_DIR");
     unsafe {
-        env::remove_var("ZELLIJ_CONFIG_DIR");
+        env::remove_var("VC_FRAME_CONFIG_DIR");
     }
     let workspace = tempdir().unwrap();
-    let zellij_dir = workspace.path().join("config/zellij");
-    fs::create_dir_all(&zellij_dir).unwrap();
-    fs::write(zellij_dir.join("config.kdl"), "// repo-local zellij\n").unwrap();
-    let canonical_zellij_dir = zellij_dir.canonicalize().unwrap_or(zellij_dir.clone());
+    let vc_frame_dir = workspace.path().join("config/vc-frame");
+    fs::create_dir_all(&vc_frame_dir).unwrap();
+    fs::write(vc_frame_dir.join("config.kdl"), "// repo-local vc_frame\n").unwrap();
+    let canonical_vc_frame_dir = vc_frame_dir.canonicalize().unwrap_or(vc_frame_dir.clone());
 
     let deck = Path::new("/usr/bin/vibecrafted");
     let request = LaunchRequest {
@@ -595,7 +595,7 @@ fn terminal_launch_probe_inherits_config_dir_env_from_launch_command() {
         prompt: "Ship the launcher.".to_string(),
         runtime: LaunchRuntime::Terminal,
         root: Some(workspace.path().to_path_buf()),
-        terminal_binary: Some("/opt/bin/zellij".into()),
+        terminal_binary: Some("/opt/bin/vc_frame".into()),
         env: BTreeMap::new(),
         count: Some(3),
         depth: Some(3),
@@ -614,8 +614,8 @@ fn terminal_launch_probe_inherits_config_dir_env_from_launch_command() {
         .expect("launch should carry --layout-string for terminal runtime");
     let launch_config_dir = command
         .env
-        .get("ZELLIJ_CONFIG_DIR")
-        .expect("launch should carry repo-local config through ZELLIJ_CONFIG_DIR")
+        .get("VC_FRAME_CONFIG_DIR")
+        .expect("launch should carry repo-local config through VC_FRAME_CONFIG_DIR")
         .to_string_lossy()
         .into_owned();
 
@@ -630,8 +630,8 @@ fn terminal_launch_probe_inherits_config_dir_env_from_launch_command() {
 
     let probe_config_dir = probe
         .env
-        .get("ZELLIJ_CONFIG_DIR")
-        .expect("probe must inherit ZELLIJ_CONFIG_DIR to match launch namespace")
+        .get("VC_FRAME_CONFIG_DIR")
+        .expect("probe must inherit VC_FRAME_CONFIG_DIR to match launch namespace")
         .to_string_lossy()
         .into_owned();
 
@@ -646,28 +646,28 @@ fn terminal_launch_probe_inherits_config_dir_env_from_launch_command() {
     );
     assert!(
         !launch_args.iter().any(|value| value == "--config-dir"),
-        "launch config must travel through ZELLIJ_CONFIG_DIR, not argv: args={launch_args:?}"
+        "launch config must travel through VC_FRAME_CONFIG_DIR, not argv: args={launch_args:?}"
     );
     assert!(
         !probe_args.iter().any(|value| value == "--config-dir"),
-        "readiness probe config must travel through ZELLIJ_CONFIG_DIR, not argv: args={probe_args:?}"
+        "readiness probe config must travel through VC_FRAME_CONFIG_DIR, not argv: args={probe_args:?}"
     );
     assert!(
         launch_layout_idx < launch_args.len() - 1,
         "--layout-string must be followed by a layout payload: args={launch_args:?}"
     );
     assert!(
-        probe_config_dir.contains(&canonical_zellij_dir.to_string_lossy().into_owned())
-            || probe_config_dir == zellij_dir.to_string_lossy(),
-        "probe config dir should match the repo-local namespace: probe={probe_config_dir:?} expected={canonical_zellij_dir:?}"
+        probe_config_dir.contains(&canonical_vc_frame_dir.to_string_lossy().into_owned())
+            || probe_config_dir == vc_frame_dir.to_string_lossy(),
+        "probe config dir should match the repo-local namespace: probe={probe_config_dir:?} expected={canonical_vc_frame_dir:?}"
     );
 
     match previous {
         Some(value) => unsafe {
-            env::set_var("ZELLIJ_CONFIG_DIR", value);
+            env::set_var("VC_FRAME_CONFIG_DIR", value);
         },
         None => unsafe {
-            env::remove_var("ZELLIJ_CONFIG_DIR");
+            env::remove_var("VC_FRAME_CONFIG_DIR");
         },
     }
 }
@@ -743,7 +743,7 @@ fn mux_health_deep_actions_surface_per_known_service() {
             launch_root: "/tmp/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
 
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
             no_verify_gate: false,
         },
@@ -881,7 +881,7 @@ fn mux_status_lines_render_healthy_and_attention_headers() {
             launch_root: "/tmp/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
 
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
             no_verify_gate: false,
         },
@@ -994,7 +994,7 @@ fn launch_commands_propagate_operator_env_and_custom_terminal_binary() {
         prompt: "Ship launch env.".to_string(),
         runtime: LaunchRuntime::Terminal,
         root: Some("/tmp/repo".into()),
-        terminal_binary: Some("/opt/bin/zellij".into()),
+        terminal_binary: Some("/opt/bin/vc_frame".into()),
         env,
         count: Some(3),
         depth: Some(3),
@@ -1013,7 +1013,7 @@ fn launch_commands_propagate_operator_env_and_custom_terminal_binary() {
         .and_then(|index| args.get(index + 1))
         .expect("layout string");
 
-    assert_eq!(command.program, Path::new("/opt/bin/zellij"));
+    assert_eq!(command.program, Path::new("/opt/bin/vc_frame"));
     assert_eq!(
         command
             .env
@@ -1061,7 +1061,7 @@ fn deep_controls_expose_attach_resume_and_artifacts() {
             launch_root: "/tmp/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
 
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
             no_verify_gate: false,
         },
@@ -1146,7 +1146,7 @@ fn native_artifact_viewer_reads_files_and_clipboard_payload_prefers_resume_comma
             launch_root: "/tmp/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
 
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
             no_verify_gate: false,
         },
@@ -1196,7 +1196,7 @@ fn empty_state_detail_lines_offer_human_quick_start() {
             launch_root: "/tmp/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
 
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
             no_verify_gate: false,
         },
@@ -1243,7 +1243,7 @@ fn prompt_lines_include_human_kind_copy_and_command_preview() {
             launch_root: "/tmp/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
 
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
             no_verify_gate: false,
         },
@@ -1276,7 +1276,7 @@ fn prompt_lines_include_human_kind_copy_and_command_preview() {
     let lines = app.prompt_lines();
     assert!(lines.iter().any(|line| line.contains("Research swarm")));
     assert!(lines.iter().any(|line| line.contains("command:")
-        && line.contains("zellij")
+        && line.contains("vc-frame")
         && line.contains("research")));
     assert!(lines.iter().any(|line| line.contains("Arrows:")));
 }
@@ -1291,7 +1291,7 @@ fn tab_navigation_wraps_and_dispatch_focus_tracks_selected_field() {
             launch_root: "/tmp/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
 
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
             no_verify_gate: false,
         },
@@ -1369,7 +1369,7 @@ fn tab_labels_surface_monitor_dispatch_and_controls_context() {
             launch_root: "/tmp/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
 
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
             no_verify_gate: false,
         },
@@ -1445,7 +1445,7 @@ async fn queue_scope_and_search_filter_the_visible_run_list() {
         launch_root: "/tmp/repo".into(),
         launch_runtime: LaunchRuntime::Terminal,
 
-        terminal_binary: "zellij".into(),
+        terminal_binary: "vc-frame".into(),
         tick_rate: Duration::from_millis(250),
         no_verify_gate: false,
     })
@@ -1477,7 +1477,7 @@ fn changing_launch_kind_reorients_the_operator_into_dispatch() {
             launch_root: "/tmp/repo".into(),
             launch_runtime: LaunchRuntime::Terminal,
 
-            terminal_binary: "zellij".into(),
+            terminal_binary: "vc-frame".into(),
             tick_rate: Duration::from_millis(250),
             no_verify_gate: false,
         },
@@ -1877,7 +1877,7 @@ async fn mission_control_focus_wraps_across_seven_panels() {
         command_deck: "/usr/bin/vibecrafted".into(),
         launch_root: "/tmp/repo".into(),
         launch_runtime: LaunchRuntime::Terminal,
-        terminal_binary: "zellij".into(),
+        terminal_binary: "vc-frame".into(),
         tick_rate: Duration::from_millis(250),
         no_verify_gate: false,
     })
@@ -1907,7 +1907,7 @@ async fn mission_queue_preselects_matching_deep_action_for_controls_handoff() {
         command_deck: "/usr/bin/vibecrafted".into(),
         launch_root: "/tmp/repo".into(),
         launch_runtime: LaunchRuntime::Terminal,
-        terminal_binary: "zellij".into(),
+        terminal_binary: "vc-frame".into(),
         tick_rate: Duration::from_millis(250),
         no_verify_gate: false,
     })

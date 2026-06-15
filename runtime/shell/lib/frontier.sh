@@ -73,10 +73,10 @@ _vetcoders_frontier_source_root() {
 }
 
 _vetcoders_vc_frame_config_dir() {
-  local zellij_config
-  zellij_config="$(_vetcoders_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
-  [[ -n "$zellij_config" ]] || return 1
-  dirname "$zellij_config"
+  local vc_frame_config
+  vc_frame_config="$(_vetcoders_frontier_file "vc-frame/config.kdl" 2>/dev/null || true)"
+  [[ -n "$vc_frame_config" ]] || return 1
+  dirname "$vc_frame_config"
 }
 
 _vetcoders_pin_vc_frame_config_dir() {
@@ -93,7 +93,7 @@ _vetcoders_load_frontier_sidecars() {
   starship_config="$(_vetcoders_frontier_file "starship.toml" 2>/dev/null || true)"
   atuin_config="$(_vetcoders_frontier_file "atuin/config.toml" 2>/dev/null || true)"
 
-  # Frontier tools (starship, atuin, zellij) are suggested for the runtime,
+  # Frontier tools (starship, atuin, vc-frame) are suggested for the runtime,
   # not required. Never override a user's existing config — only set env vars
   # when the user has no config of their own. Users opt in explicitly.
   if command -v starship >/dev/null 2>&1 \
@@ -108,7 +108,7 @@ _vetcoders_load_frontier_sidecars() {
     export ATUIN_CONFIG="$atuin_config"
   fi
 
-  # vc-frame must never inherit the user's stock ~/.config/zellij namespace.
+  # vc-frame must never inherit the user's stock ~/.config/vc-frame namespace.
   _vetcoders_pin_vc_frame_config_dir
 }
 

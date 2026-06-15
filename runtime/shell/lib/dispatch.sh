@@ -305,10 +305,10 @@ Utilities:
   repo-full                      Full git context dump
   skills-sync                    Sync skills to agents
   vc-frontier-paths              Show frontier config paths
-  vc-frontier-install            Install frontier presets (starship/atuin/zellij)
+  vc-frontier-install            Install frontier presets (starship/atuin/vc_frame)
   vc-help                        This help
 
-Frontier docs:  docs/FRONTIER.md (starship, atuin, optional zellij)
+Frontier docs:  docs/FRONTIER.md (starship, atuin, optional vc_frame)
 HELP
   printf '\nInbox:     %s/inbox/\n' "$crafted_home"
   printf 'Artifacts: %s/artifacts/<org>/<repo>/<YYYY_MMDD>/\n' "$crafted_home"
@@ -632,14 +632,14 @@ vc-start() {
 }
 
 vc-frontier-paths() {
-  local starship_config atuin_config zellij_config
+  local starship_config atuin_config vc_frame_config
   starship_config="$(_vetcoders_frontier_file "starship.toml")" || return 1
   atuin_config="$(_vetcoders_frontier_file "atuin/config.toml" 2>/dev/null || true)"
-  zellij_config="$(_vetcoders_frontier_file "zellij/config.kdl" 2>/dev/null || true)"
+  vc_frame_config="$(_vetcoders_frontier_file "vc-frame/config.kdl" 2>/dev/null || true)"
 
   printf 'STARSHIP_CONFIG=%s\n' "$starship_config"
   [[ -n "$atuin_config" ]] && printf 'ATUIN_CONFIG=%s\n' "$atuin_config"
-  [[ -n "$zellij_config" ]] && printf 'VC_FRAME_CONFIG_DIR=%s\n' "$(dirname "$zellij_config")"
+  [[ -n "$vc_frame_config" ]] && printf 'VC_FRAME_CONFIG_DIR=%s\n' "$(dirname "$vc_frame_config")"
   return 0
 }
 

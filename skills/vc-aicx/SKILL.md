@@ -1,28 +1,18 @@
 ---
 name: aicx
 version: 3.0.0
-description: "Recover and query agent-session intent history with AICX; use for extraction, recall, and oversized logs."
+description: >
+  An Intention Retrieval Engine for Agents' sessions. aicx (formerly
+  ai-contexters) is a sophisticated parser tool that recovers and keeps the
+  central history of agents' sessions in both human- and agent-readable format.
+  Additionally it provides ad-hoc mode to recover agent output that is too large to
+  read or is unreadable. Works on any Claude Code, OpenAI Codex, Gemini JSON,
+  JSONL-format file regardless of extension (.jsonl, .txt, .output). Generates
+  output path automatically — no -o flag needed.
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 ## When To Use
 
@@ -147,19 +137,5 @@ aicx extract --format claude \
 # 2. Read the result
 Read /tmp/aicx-extract-xy9z.md
 ```
-
-## Fleet Dispatch Terminal
-
-This skill's flow ends in action, never in absorbed prose. The named action here
-is running the `aicx` commands above (extract, search, rank, read) in-session.
-When the recovery or synthesis outgrows a bounded in-session pass, dispatch a
-fleet worker instead of grinding in-thread:
-
-```bash
-vibecrafted workflow <agent> --prompt 'aicx-extract <path> and synthesize the intent trail'
-```
-
-No `aicx` command run and no dispatch fired means the invocation was a no-op —
-the failure mode this terminal forbids.
 
 _𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_

@@ -77,7 +77,7 @@ spawn_require_positive_int() {
 
 spawn_shell_quote() {
   local value="${1-}"
-  # printf '%q' can emit byte sequences that break zellij's UTF-8 validation.
+  # printf '%q' can emit byte sequences that break vc_frame's UTF-8 validation.
   python3 - "$value" <<'PY'
 import shlex
 import sys

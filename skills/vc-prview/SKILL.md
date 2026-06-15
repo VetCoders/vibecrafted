@@ -1,29 +1,18 @@
 ---
 name: vc-prview
-description: "Generate PR/branch artifact packs and run findings-max review for bounded diff analysis."
+description: >
+  Bounded PR, branch, commit-range, or artifact-pack review pipeline: generate
+  prview-rs artifacts then produce a findings-max audit. Use when the user asks
+  to "review PR", "analyze branch", "run prview", "sprawdź PR", "zrób review",
+  "audit PR", "daj findings", "zbadaj branch", "artifact pack", "PR quality
+  check", "merge gate", "findings-max", "deep review", or needs structured diff
+  artifacts with line-level analysis for AI review pipelines.
 metadata:
   short-description: "Generate + audit PR artifacts, findings-max (v1)"
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-prview — Bounded Review Pipeline (Generate + Audit)
 
@@ -475,19 +464,6 @@ prview --json --quiet | jq '.checks[] | select(.status == "Failed")'
 - Ignoring tooling issues (tool crash ≠ code issue, but still a finding)
 - Skipping pattern scans (the `.unwrap()` / `any` / PII checklist is mandatory)
 - Not cross-referencing coverage-delta with changed source files
-
-## Fleet Dispatch Terminal
-
-This skill's flow ends in action, never in absorbed prose. The named action here
-is generating the prview-rs artifact pack and producing the findings-max audit.
-When the review is dispatched rather than run in-session, fire a fleet worker:
-
-```bash
-vibecrafted review <agent> --file <artifact-pack-or-brief>
-```
-
-No artifact pack generated and no dispatch fired means the invocation was a
-no-op — the failure mode this terminal forbids.
 
 ---
 

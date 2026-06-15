@@ -13,7 +13,7 @@ spawn_operator_session_name_for_run_id() {
   local run_id="${1:-}"
   local base
   base="$(spawn_session_base_name)"
-  if [[ "${VIBECRAFTED_ZELLIJ_GROUP_BY_CWD:-0}" == "1" ]]; then
+  if [[ "${VIBECRAFTED_VC_FRAME_GROUP_BY_CWD:-0}" == "1" ]]; then
     printf '%s\n' "$base"
     return 0
   fi

@@ -14,26 +14,28 @@ def _write_fake_binary(bin_dir: Path, name: str) -> None:
     script.chmod(0o755)
 
 
-def test_ensure_vc_frame_session_uses_frontier_config_not_user_zellij(
+def test_ensure_vc_frame_session_uses_frontier_config_not_user_vc_frame(
     tmp_path: Path,
 ) -> None:
-    """The vc-frame launcher must be isolated from stock ~/.config/zellij."""
+    """The vc-frame launcher must be isolated from stock ~/.config/vc-frame."""
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
     fake_bin = tmp_path / "bin"
     capture = tmp_path / "vc-frame-env.log"
-    frontier_zellij = xdg_config_home / "vetcoders" / "frontier" / "zellij"
-    user_zellij = xdg_config_home / "zellij"
-    layout_file = frontier_zellij / "layouts" / "operator.kdl"
+    frontier_vc_frame = xdg_config_home / "vetcoders" / "frontier" / "vc-frame"
+    user_vc_frame = xdg_config_home / "vc-frame"
+    layout_file = frontier_vc_frame / "layouts" / "operator.kdl"
 
     home.mkdir()
     fake_bin.mkdir()
-    frontier_zellij.mkdir(parents=True)
-    (frontier_zellij / "config.kdl").write_text("// frontier\n", encoding="utf-8")
+    frontier_vc_frame.mkdir(parents=True)
+    (frontier_vc_frame / "config.kdl").write_text("// frontier\n", encoding="utf-8")
     layout_file.parent.mkdir()
     layout_file.write_text("layout {}\n", encoding="utf-8")
-    user_zellij.mkdir(parents=True)
-    (user_zellij / "config.kdl").write_text("// stale user zellij\n", encoding="utf-8")
+    user_vc_frame.mkdir(parents=True)
+    (user_vc_frame / "config.kdl").write_text(
+        "// stale user vc_frame\n", encoding="utf-8"
+    )
 
     vc_frame = fake_bin / "vc-frame"
     vc_frame.write_text(
@@ -76,8 +78,8 @@ def test_ensure_vc_frame_session_uses_frontier_config_not_user_zellij(
     )
 
     payload = capture.read_text(encoding="utf-8")
-    assert f"VC_FRAME_CONFIG_DIR={frontier_zellij}" in payload
-    assert str(user_zellij) not in payload
+    assert f"VC_FRAME_CONFIG_DIR={frontier_vc_frame}" in payload
+    assert str(user_vc_frame) not in payload
 
 
 def test_sourcing_helper_respects_existing_user_config(
@@ -88,12 +90,14 @@ def test_sourcing_helper_respects_existing_user_config(
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
     fake_bin = tmp_path / "bin"
-    zellij_config = xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
+    vc_frame_config = (
+        xdg_config_home / "vetcoders" / "frontier" / "vc-frame" / "config.kdl"
+    )
 
     home.mkdir()
     fake_bin.mkdir()
-    zellij_config.parent.mkdir(parents=True)
-    zellij_config.write_text("layout {}\n", encoding="utf-8")
+    vc_frame_config.parent.mkdir(parents=True)
+    vc_frame_config.write_text("layout {}\n", encoding="utf-8")
     _write_fake_binary(fake_bin, "starship")
     _write_fake_binary(fake_bin, "atuin")
     _write_fake_binary(fake_bin, "vc-frame")
@@ -142,12 +146,14 @@ def test_sourcing_helper_sets_frontier_when_no_user_config(
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
     fake_bin = tmp_path / "bin"
-    zellij_config = xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
+    vc_frame_config = (
+        xdg_config_home / "vetcoders" / "frontier" / "vc-frame" / "config.kdl"
+    )
 
     home.mkdir()
     fake_bin.mkdir()
-    zellij_config.parent.mkdir(parents=True)
-    zellij_config.write_text("layout {}\n", encoding="utf-8")
+    vc_frame_config.parent.mkdir(parents=True)
+    vc_frame_config.write_text("layout {}\n", encoding="utf-8")
     _write_fake_binary(fake_bin, "starship")
     _write_fake_binary(fake_bin, "atuin")
     _write_fake_binary(fake_bin, "vc-frame")
@@ -182,29 +188,29 @@ def test_sourcing_helper_sets_frontier_when_no_user_config(
 
     # Frontier defaults should be set
     assert "STARSHIP_CONFIG=" in result.stdout
-    assert f"VC_FRAME_CONFIG_DIR={zellij_config.parent}" in result.stdout
+    assert f"VC_FRAME_CONFIG_DIR={vc_frame_config.parent}" in result.stdout
 
 
-def test_sourcing_helper_pins_vc_frame_despite_default_user_zellij_config(
+def test_sourcing_helper_pins_vc_frame_despite_default_user_vc_frame_config(
     tmp_path: Path,
 ) -> None:
-    """vc-frame uses frontier config even when stock zellij has user config."""
+    """vc-frame uses frontier config even when stock vc_frame has user config."""
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
     fake_bin = tmp_path / "bin"
-    frontier_zellij_config = (
-        xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
+    frontier_vc_frame_config = (
+        xdg_config_home / "vetcoders" / "frontier" / "vc-frame" / "config.kdl"
     )
 
     home.mkdir()
     fake_bin.mkdir()
-    frontier_zellij_config.parent.mkdir(parents=True)
-    frontier_zellij_config.write_text("layout {}\n", encoding="utf-8")
+    frontier_vc_frame_config.parent.mkdir(parents=True)
+    frontier_vc_frame_config.write_text("layout {}\n", encoding="utf-8")
     (xdg_config_home / "atuin").mkdir(parents=True)
-    (xdg_config_home / "zellij").mkdir(parents=True)
+    (xdg_config_home / "vc-frame").mkdir(parents=True)
     (xdg_config_home / "starship.toml").write_text("# user\n", encoding="utf-8")
     (xdg_config_home / "atuin" / "config.toml").write_text("# user\n", encoding="utf-8")
-    (xdg_config_home / "zellij" / "config.kdl").write_text(
+    (xdg_config_home / "vc-frame" / "config.kdl").write_text(
         "// user\n", encoding="utf-8"
     )
     _write_fake_binary(fake_bin, "starship")
@@ -240,4 +246,4 @@ def test_sourcing_helper_pins_vc_frame_despite_default_user_zellij_config(
 
     assert "STARSHIP_CONFIG=\n" in result.stdout
     assert "ATUIN_CONFIG=\n" in result.stdout
-    assert f"VC_FRAME_CONFIG_DIR={frontier_zellij_config.parent}" in result.stdout
+    assert f"VC_FRAME_CONFIG_DIR={frontier_vc_frame_config.parent}" in result.stdout

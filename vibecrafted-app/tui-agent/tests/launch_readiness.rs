@@ -1,6 +1,6 @@
 //! Integration tests for `wait_for_interactive_launch`.
 //!
-//! Drives the readiness loop through a fake `zellij`-shaped shell script so
+//! Drives the readiness loop through a fake `vc_frame`-shaped shell script so
 //! the operator-visible behavior (success / "session exited before probe" /
 //! "session never appeared" / probe error preservation) is exercised end to
 //! end instead of just verified at command-shape level. Closes vc-review
@@ -84,21 +84,21 @@ case "${1:-}" in
 esac
 "#;
 
-struct FakeZellij {
+struct Fakevc-frame {
     _tmp: TempDir,
     program: PathBuf,
     visible_file: PathBuf,
 }
 
-fn fake_zellij() -> FakeZellij {
+fn fake_vc_frame() -> Fakevc-frame {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let program = tmp.path().join("zellij.sh");
+    let program = tmp.path().join("vc_frame.sh");
     let visible_file = tmp.path().join("visible.txt");
-    fs::write(&program, FAKE_SCRIPT).expect("write fake zellij");
+    fs::write(&program, FAKE_SCRIPT).expect("write fake vc_frame");
     let mut perms = fs::metadata(&program).expect("metadata").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&program, perms).expect("chmod +x");
-    FakeZellij {
+    Fakevc-frame {
         _tmp: tmp,
         program,
         visible_file,
@@ -133,7 +133,7 @@ fn build_command(
 
 #[test]
 fn quick_child_exit_before_visibility_reports_session_exited() {
-    let fake = fake_zellij();
+    let fake = fake_vc_frame();
     let session = "vc-op-fake-quickexit";
     let command = build_command(
         &fake.program,
@@ -144,7 +144,7 @@ fn quick_child_exit_before_visibility_reports_session_exited() {
     );
     let child = command
         .spawn_interactive_with_stderr()
-        .expect("spawn fake zellij");
+        .expect("spawn fake vc_frame");
     let result = wait_for_interactive_launch(&command, child);
     let error = result.expect_err("quick-exit should fail readiness check");
     assert!(
@@ -161,7 +161,7 @@ fn quick_child_exit_before_visibility_reports_session_exited() {
 
 #[test]
 fn slow_visibility_then_child_exits_returns_success() {
-    let fake = fake_zellij();
+    let fake = fake_vc_frame();
     let session = "vc-op-fake-slow";
     let command = build_command(
         &fake.program,
@@ -172,7 +172,7 @@ fn slow_visibility_then_child_exits_returns_success() {
     );
     let child = command
         .spawn_interactive_with_stderr()
-        .expect("spawn fake zellij");
+        .expect("spawn fake vc_frame");
     let started = Instant::now();
     let result = wait_for_interactive_launch(&command, child);
     let elapsed = started.elapsed();
@@ -186,12 +186,12 @@ fn slow_visibility_then_child_exits_returns_success() {
 
 #[test]
 fn deadline_kills_child_when_session_never_visible() {
-    let fake = fake_zellij();
+    let fake = fake_vc_frame();
     let session = "vc-op-fake-hang";
     let command = build_command(&fake.program, session, &fake.visible_file, "hang", "ok");
     let child = command
         .spawn_interactive_with_stderr()
-        .expect("spawn fake zellij");
+        .expect("spawn fake vc_frame");
     let started = Instant::now();
     let result = wait_for_interactive_launch(&command, child);
     let elapsed = started.elapsed();
@@ -216,12 +216,12 @@ fn deadline_kills_child_when_session_never_visible() {
 
 #[test]
 fn probe_failure_surfaces_in_launch_error() {
-    let fake = fake_zellij();
+    let fake = fake_vc_frame();
     let session = "vc-op-fake-probe-err";
     let command = build_command(&fake.program, session, &fake.visible_file, "hang", "err");
     let child = command
         .spawn_interactive_with_stderr()
-        .expect("spawn fake zellij");
+        .expect("spawn fake vc_frame");
     let result = wait_for_interactive_launch(&command, child);
     let error = result.expect_err("probe error + hang must produce a failure");
     let probe_error = get_probe_error(&error)
@@ -241,7 +241,7 @@ fn probe_failure_surfaces_in_launch_error() {
         "deadline diagnostic should include kill timing and last probe error: {deadline_probe}"
     );
     // Detail lines render the probe diagnostic in the operator overlay.
-    let detail = error.detail_lines("zellij ...".to_string());
+    let detail = error.detail_lines("vc_frame ...".to_string());
     assert!(
         detail
             .iter()

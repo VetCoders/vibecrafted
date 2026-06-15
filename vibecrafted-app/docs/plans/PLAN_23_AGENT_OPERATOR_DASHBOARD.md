@@ -310,7 +310,7 @@ themes + PLAN_23 close-out`) — Insta snapshot suite in
 - [x] Theme close-out truth: the "mid-light / mid-dark tui-agent palette"
       named in §5 does not exist as an in-app switch. `voc` emits named
       ANSI colors only; light/dark resolution happens terminal-side via
-      the zellij themes (`config/zellij/themes/vetcoders-mesh.kdl`), so
+      the vc_frame themes (`config/vc-frame/themes/vetcoders-mesh.kdl`), so
       both themes consume one identical buffer. The snapshot suite
       freezes that buffer (content + color placement) and the
       `mission_control_palette_is_terminal_theme_adaptive` test guards

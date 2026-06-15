@@ -2,7 +2,7 @@
 
 VetCoders ships a repo-tracked Hammerspoon configuration that registers eight
 `hammerspoon://vc-*` URL schemes with macOS Launch Services. Combined with the
-iTerm2 OSC 8 hyperlink GA (Plan 10) and the zellij mesh-aware theming (Plan 12),
+iTerm2 OSC 8 hyperlink GA (Plan 10) and the vc_frame mesh-aware theming (Plan 12),
 this closes the **stack agent-native runtime** loop documented in
 kronika 2026-05-08:
 
@@ -147,10 +147,10 @@ The smoke test verifies four default attacks are rejected:
 
 - **Plan 10 — iTerm2 stack GA** (`docs/ITERM2.md`): the OSC 8 hyperlink
   emitter that produces the URLs this stack consumes.
-- **Plan 12 — zellij mesh-aware theming** (`docs/ZELLIJ.md`): the
+- **Plan 12 — vc_frame mesh-aware theming** (`docs/VC_FRAME.md`): the
   layout/theme layer the spawned tabs render into.
 - **kronika 2026-05-08**: stack agent-native runtime moment —
-  _"memory (aicx) + structure (loctree) + execution (zellij + marbles + agents) +
+  _"memory (aicx) + structure (loctree) + execution (vc_frame + marbles + agents) +
   visual+dispatch (OSC primitives + Hammerspoon URL handlers) + discipline
   (vc-init + AGENT MODEL PARITY + Living Tree). Cross-layer round-trip w
   jednym kliku."_

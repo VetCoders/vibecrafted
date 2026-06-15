@@ -8,7 +8,7 @@ from vibecrafted_core import wrappers
 from vibecrafted_core import workflow
 
 
-def test_resume_main_routes_captured_session_through_zellij_aware_resume_helper(
+def test_resume_main_routes_captured_session_through_vc_frame_aware_resume_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[list[str]] = []

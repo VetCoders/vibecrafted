@@ -11,7 +11,7 @@ BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-zellij test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server server-smoke
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server server-smoke
 
 help:
 	@printf "\n"
@@ -34,7 +34,7 @@ help-dev:
 	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-python-tools · install-app-binaries · install-server · install-hammerspoon\n"
 	@printf "            skills · helpers · setup-dev · wizard · wizard-dev · gui-install · dry-run · restore\n"
 	@printf "            migrate · migrate-dry · foundations · foundations-check · bundle · bundle-check\n"
-	@printf "  \033[1mtests\033[0m     test · test-skills · test-install · test-parity · test-zellij · test-iterm2-migrate\n"
+	@printf "  \033[1mtests\033[0m     test · test-skills · test-install · test-parity · test-vc-frame · test-iterm2-migrate\n"
 	@printf "            test-memex · test-aicx-sync · test-hammerspoon · dispatch-test · test-race-protection · check · semgrep\n"
 	@printf "  \033[1miterm2\033[0m    iterm-plugin · iterm-plugin-refresh · iterm-plugin-show · iterm-plugin-uninstall · iterm-plugin-migrate\n"
 	@printf "  \033[1mserver\033[0m    server · server-build · server-check · server-test\n"
@@ -420,22 +420,22 @@ skill-new:
 	@bash tools/vc-skill-new.sh "$(NAME)"
 
 # -----------------------------------------------------------------------------
-# Plan 12 (META_22) — zellij multi-agent layouts smoke gate.
+# Plan 12 (META_22) — vc-frame multi-agent layouts smoke gate.
 #
 # Verifies:
-#   - all shipped layouts under config/zellij/layouts/*.kdl parse via
-#     `zellij --layout <name> setup --check`
+#   - all shipped layouts under config/vc-frame/layouts/*.kdl parse via
+#     `vc-frame --layout <name> setup --check`
 #   - all four mesh themes (vetcoders-dragon/sztudio/silver/div0) load
 #   - auto-theme.sh passes bash -n + shellcheck
 #   - auto-theme.sh maps each canonical host (dragon, sztudio, silver, div0,
 #     mgbook16 alias) to the correct mesh theme and falls back to neutral
 #     for unknown hosts
 #
-# Tolerant of missing zellij — falls back to script-level checks only.
+# Tolerant of missing vc-frame — falls back to script-level checks only.
 # -----------------------------------------------------------------------------
 
-test-zellij:
-	@bash tests/zellij_layouts_smoke.sh
+test-vc-frame:
+	@bash tests/vc-frame-layouts-smoke.sh
 
 # -----------------------------------------------------------------------------
 # Plan 10 (META_22) — iTerm2 stack GA promotion smoke gate.

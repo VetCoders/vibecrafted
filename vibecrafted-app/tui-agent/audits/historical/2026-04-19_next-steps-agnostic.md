@@ -4,30 +4,30 @@
 > plan został zrealizowany przez codex 2026-04-29 w commitach `8bc04a9`
 > (queue scope + archive controls), `1d55925` (launch env + failure feedback),
 > `3a3bfbd` (prompt artifact + clipboard ux), następnie domknięty przez stable
-> zellij session naming (`8930d05`) i named-session readiness probe 2026-04-30.
+> vc_frame session naming (`8930d05`) i named-session readiness probe 2026-04-30.
 > 2026-04-30 P.M. dokleciony przez claude: probe `--config-dir` parity, probe
-> error preservation, hard timeout z child kill, fake-zellij e2e coverage
+> error preservation, hard timeout z child kill, fake-vc_frame e2e coverage
 > (P1-01 / P2-01 / P2-02 / P2-03 z `2026-04-30_vc-review.md`). Plus rmcp-mux
 > MCP daemon visibility w Monitor tabie + `MuxHealth` deep action. Zachowany
 > jako historical evidence trail per `vc-intents` 2026-04-29 i 2026-04-30.
 
-Ten plan traktuje `operator-tui` jako niezależne, samodzielne narzędzie, które żyje wewnątrz dowolnego obecnie używanego emulatora terminala (Ghostty, Alacritty, iTerm2, WezTerm). Skupia się na tym, aby TUI było solidnym pomostem do orkiestracji (Zellij + agenci) bez wymuszania konkretnego okna.
+Ten plan traktuje `operator-tui` jako niezależne, samodzielne narzędzie, które żyje wewnątrz dowolnego obecnie używanego emulatora terminala (Ghostty, Alacritty, iTerm2, WezTerm). Skupia się na tym, aby TUI było solidnym pomostem do orkiestracji (vc-frame + agenci) bez wymuszania konkretnego okna.
 
 ### 1. In-Place Multiplexer Hand-off (Exec)
 
-Skoro działamy wewnątrz obecnego terminala, wywołanie `LaunchRuntime::Terminal` powinno sprowadzać się do eleganckiego przejęcia sesji przez `zellij attach` lub `zellij --session`. Należy upewnić się, że `operator-tui` używa mechanizmów pokrewnych do `exec` (zastąpienie procesu lub bezkolizyjne zawieszenie TUI na czas działania Zellij), aby nie tworzyć niepotrzebnej matrioszki procesów.
+Skoro działamy wewnątrz obecnego terminala, wywołanie `LaunchRuntime::Terminal` powinno sprowadzać się do eleganckiego przejęcia sesji przez `vc-frame attach` lub `vc_frame --session`. Należy upewnić się, że `operator-tui` używa mechanizmów pokrewnych do `exec` (zastąpienie procesu lub bezkolizyjne zawieszenie TUI na czas działania vc-frame), aby nie tworzyć niepotrzebnej matrioszki procesów.
 
 ### 2. Bezkolizyjne Zarządzanie TTY (Suspend/Resume)
 
-Dopracowanie mechanizmu `suspend_and_run` (w `launch.rs`). Przełączanie między trybem Raw (Ratatui) a subprocesem interaktywnym (Zellij) bywa kruche. Należy zagwarantować, że sygnały systemowe, przywracanie bufora ekranu i stan kursora działają perfekcyjnie, niezależnie od tego, jak ezoteryczny emulator terminala pod spodem wyświetla obraz.
+Dopracowanie mechanizmu `suspend_and_run` (w `launch.rs`). Przełączanie między trybem Raw (Ratatui) a subprocesem interaktywnym (vc-frame) bywa kruche. Należy zagwarantować, że sygnały systemowe, przywracanie bufora ekranu i stan kursora działają perfekcyjnie, niezależnie od tego, jak ezoteryczny emulator terminala pod spodem wyświetla obraz.
 
 ### 3. Hermetyzacja Środowiska (Env Passthrough)
 
-Bezpieczne przekazanie `ZELLIJ_CONFIG_DIR`, `VIBECRAFT_ROOT` oraz stanu sesji operatora do subprocesu. TUI musi działać jak zawór: odcina szum z powłoki użytkownika, ale dziedziczy kluczowe ustawienia terminala (np. wsparcie dla kolorów, TERM, wymiary ekranu) i wstrzykuje tylko to, co niezbędne dla agentów.
+Bezpieczne przekazanie `VC_FRAME_CONFIG_DIR`, `VIBECRAFT_ROOT` oraz stanu sesji operatora do subprocesu. TUI musi działać jak zawór: odcina szum z powłoki użytkownika, ale dziedziczy kluczowe ustawienia terminala (np. wsparcie dla kolorów, TERM, wymiary ekranu) i wstrzykuje tylko to, co niezbędne dla agentów.
 
 ### 4. Dynamiczne Wykrywanie Toolingu (Zoxide/Starship)
 
-Zamiast hardcodować zachowania powłoki, `operator-tui` przed odpaleniem sesji w Zellij powinno móc weryfikować w `PATH` dostępność narzędzi pomocniczych (Zoxide, Starship, Atuin). Na tej podstawie launcher może dynamicznie wstrzykiwać odpowiednie pliki `.zshrc` lub profile startowe do wewnątrz Zellij.
+Zamiast hardcodować zachowania powłoki, `operator-tui` przed odpaleniem sesji w vc-frame powinno móc weryfikować w `PATH` dostępność narzędzi pomocniczych (Zoxide, Starship, Atuin). Na tej podstawie launcher może dynamicznie wstrzykiwać odpowiednie pliki `.zshrc` lub profile startowe do wewnątrz vc-frame.
 
 ### 5. Asynchroniczny Watcher Stanu (Control-Plane)
 
@@ -51,4 +51,4 @@ Gdy historia operacji (runs) zacznie pęcznieć, przewijanie jej strzałkami sta
 
 ### 10. Testy Akceptacyjne Logiki Launchera
 
-Rozszerzenie zestawu testów w `operator-tui/tests/`. Główny nacisk musi pójść na hermetyczność `build_launch_command`: czy TUI pod każdym względem produkuje deterministyczny, terminalo-agnostyczny łańcuch wywołania dla Zellij, niezależnie od tego, czy odpalamy to na Linuksie pod tmuxem, czy na macOS pod Ghostty.
+Rozszerzenie zestawu testów w `operator-tui/tests/`. Główny nacisk musi pójść na hermetyczność `build_launch_command`: czy TUI pod każdym względem produkuje deterministyczny, terminalo-agnostyczny łańcuch wywołania dla vc-frame, niezależnie od tego, czy odpalamy to na Linuksie pod tmuxem, czy na macOS pod Ghostty.

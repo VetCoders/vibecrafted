@@ -113,7 +113,7 @@ vibecrafted followup <agent> --file '/path/to/context.md'
 vc-followup <agent> --prompt '<prompt>'
 ```
 
-If `vc-followup <agent>` is invoked outside Zellij, the framework will attach
+If `vc-followup <agent>` is invoked outside vc-frame, the framework will attach
 or create the operator session and run that workflow in a new tab.
 
 ## Repository Work Doctrine

@@ -565,7 +565,7 @@ def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) 
     for key in (
         "VIBECRAFTED_OPERATOR_SESSION",
         "VC_FRAME_SESSION_NAME",
-        "ZELLIJ_SESSION_NAME",
+        "VC_FRAME_SESSION_NAME",
     ):
         session_name = str(env.get(key) or "").strip()
         if session_name:

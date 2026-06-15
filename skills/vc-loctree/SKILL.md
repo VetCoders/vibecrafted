@@ -1,28 +1,16 @@
 ---
 name: loctree
 version: 2.0.0
-description: "Use Loctree for structural sight: map files, symbols, dependencies, impact, and dead code before edits."
+description: >
+  Holographic structural perception of the codebase. Loctree gives you
+  structural sight before you touch anything — architecture, dependencies,
+  blast radius, dead code. No edit without orientation. No delete without
+  impact. No create without search.
+  The craftsman studies the grain before cutting.
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # Loctree — Your Senses in the Codebase
 
@@ -269,20 +257,6 @@ After implementation, report:
 If loctree MCP is unavailable: fall back to `loct --for-ai` CLI if present,
 then `rg --files` + `rg -n` + manual dependency tracing.
 Announce the degradation. Do not pretend you have full senses when you do not.
-
-## Fleet Dispatch Terminal
-
-This skill's flow ends in action, never in absorbed prose. The named action here
-is running the perception commands (`loct context`, `slice`, `impact`, `find`,
-`follow`) before any edit. When the structural work the map reveals outgrows a
-bounded in-session cut, dispatch a fleet worker:
-
-```bash
-vibecrafted workflow <agent> --file <plan-built-from-the-map>
-```
-
-No perception command run and no dispatch fired means the invocation was a
-no-op — the failure mode this terminal forbids.
 
 ---
 

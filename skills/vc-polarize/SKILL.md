@@ -1,7 +1,16 @@
 ---
 name: vc-polarize
 version: 2.0.0
-description: "Strip marbles excess to one coherent runtime, test, docs, artifact, and product truth."
+description: >
+  WRITE step that strips back the marbles excess to one truth. Where
+  the swarm of marble workers plastered every crack in deliberate
+  over-application, polarize picks one axis, rejects the competing
+  ones, and aligns runtime, tests, docs, artifacts, and public
+  promises so they all agree. Gated on Loctree `loct prism` bands —
+  `0..4 abort`, `5..8 memo`, `9..12 pass`, `13..15 doctrine`. Emits
+  DoU / release handoff. Trigger phrases: "polarize", "vc-polarize",
+  "wyostrz", "one sharp truth", "code smear", "prism score", "after
+  marbles", "choose one axis", "decisive cut".
 default: vc-polarize
 aliases:
   - vc-cut
@@ -21,23 +30,6 @@ loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-polarize — Decisive Cut After Marbles
 

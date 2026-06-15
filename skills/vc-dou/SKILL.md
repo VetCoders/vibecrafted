@@ -72,7 +72,7 @@ Before this workflow performs repo-specific analysis, planning, implementation, 
 The point is to find the hooks: load-bearing hubs, twins, dead code, drift, runtime entrypoints, and blast-radius traps. If the task is explicitly non-repo or no-code, state the no-repo exception in the report. Otherwise, missing `vc-init`/Loctree evidence is a process failure.
 
 Standard launcher (`vibecrafted start` / `vc-start`, then `vc-<workflow> <agent> --file|--prompt ...`).
-Outside Zellij the framework attaches/creates the operator session.
+Outside vc-frame the framework attaches/creates the operator session.
 
 ```bash
 vibecrafted dou claude --prompt 'Audit launch readiness'

@@ -1,7 +1,18 @@
 ---
 name: vc-research
 version: 1.3.0
-description: "Triple-agent research workflow for unknown APIs, architecture choices, libraries, protocols, and market facts."
+description: >
+  Standalone triple-agent research skill. Co-define the problem with the user,
+  write a research plan, then spawn claude + codex + gemini simultaneously on the
+  same questions. Three independent reports come back. Synthesize into one
+  gap-free research document ready for implementation. Use whenever the team
+  needs ground truth before coding: unknown APIs, architecture decisions, library
+  assessment, protocol research, best-practice survey, competitive analysis,
+  or any situation where one agent's perspective is not enough. Trigger phrases:
+  "research this", "zbadaj to", "triple research", "research swarm", "3 agenty
+  research", "gap-free research", "zbadaj przed implementacją", "co mówi
+  dokumentacja", "state of the art", "SoTA research", "porównaj podejścia",
+  "analyze options", "research plan", "plan researchu".
 compatibility:
   tools:
     - Bash
@@ -12,23 +23,6 @@ loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-research — Triple-Agent Research Swarm
 
@@ -58,7 +52,7 @@ vc-research --prompt 'State of the art for MCP streaming transports'
 vibecrafted research --file /path/to/research-plan.md
 ```
 
-If invoked outside Zellij, the framework attaches/creates the operator session and runs in a new tab. Prefer `--file` for an existing plan, `--prompt` for inline intent.
+If invoked outside vc-frame, the framework attaches/creates the operator session and runs in a new tab. Prefer `--file` for an existing plan, `--prompt` for inline intent.
 
 <details>
 <summary>Foundation Dependencies</summary>
@@ -77,7 +71,7 @@ or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`
 
 ## Purpose
 
-Research a problem from three independent angles before writing code. The orchestrating agent co-defines the problem with the user, writes a plan, spawns the configured research lanes on the same questions, then synthesizes findings into one gap-free document. This is the Research phase from `vc-workflow`, extracted as a standalone skill and upgraded with triple-agent triangulation.
+Research a problem from three independent angles before writing code. The orchestrating agent co-defines the problem with the user, writes a plan, spawns claude + codex + gemini on the same questions, then synthesizes findings into one gap-free document. This is the Research phase from `vc-workflow`, extracted as a standalone skill and upgraded with triple-agent triangulation.
 
 ## When To Use
 
@@ -176,9 +170,7 @@ vc-research --file "$PLAN"
 
 Repo-owned spawn scripts remain the internal engine. Do not document raw `bash skills/...spawn.sh` paths as the operator entrypoint.
 
-Research lane picking is configurable at runtime. Precedence is `VIBECRAFTED_RESEARCH_AGENTS`, then `${XDG_CONFIG_HOME:-$HOME/.config}/vibecrafted/config.toml`, then the packaged `install.toml` defaults.
-
-The launcher opens one shared Zellij research tab using `research.kdl`, keeps a common `run_id`, and starts the configured research lanes against the same plan. Divergence between reports reveals blind spots.
+The launcher opens one shared vc-frame research tab using `research.kdl`, keeps a common `run_id`, and starts claude + codex + gemini against the same plan. Divergence between reports reveals blind spots.
 
 Immediately after spawn, the operator gets a launch card with shared `run_id`, run directory, reports directory, summary path, and the exact await command. **The launch card is the default surface.** `observe --last` is a drilldown tool, not the primary source of truth.
 
@@ -190,7 +182,7 @@ Reports land in:
 $VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/research/<run_id>/reports/{claude,codex,gemini}.md
 ```
 
-Launch card lives at `research/<run_id>/summary.md`. Metadata, transcripts, raw streams, prompts, launchers, Zellij layout stay inside `research/<run_id>/logs/` and `research/<run_id>/tmp/`.
+Launch card lives at `research/<run_id>/summary.md`. Metadata, transcripts, raw streams, prompts, launchers, vc-frame layout stay inside `research/<run_id>/logs/` and `research/<run_id>/tmp/`.
 
 Wait for all three through the dedicated runtime helper:
 

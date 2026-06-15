@@ -1,26 +1,20 @@
 ---
 name: vc-delegate
 version: 2.0.0
-description: "Choose and run native in-process delegation for small bounded implementation cuts."
+description: >
+  Native operator-side delegation doctrine for small bounded native cuts.
+  Use this when the operator agent must decide whether work should stay
+  in-process through native subagents or be escalated upward into vc-agents.
+  Trigger phrases: "implement with agents", "delegate to subagents", "zaimplementuj",
+  "run agents", "parallel tasks", "delegate safely", "native agents",
+  "Task tool agents", "implement plan", "uruchom agentów", "subagenty natywne",
+  "bezpieczne agenty", "implement without externals", "no osascript".
 compatibility:
   tools: []
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative-exception: v2 -->
-
-> **`vc-delegate` is THE exception to the Fleet Imperative:** native in-process
-> subagents, NOT the external Vibecrafted fleet. In the operator CLI layer, every
-> other `/vc-*` workflow invocation means dispatching real, out-of-process agents
-> through `vibecrafted <workflow> <agent>`.
->
-> In the skill-loading / chat layer, loading `vc-delegate` still does not mean self-dispatch.
-> Use native in-process delegation only when the current operator
-> task explicitly calls for bounded local subagents.
-
-<!-- /fleet-imperative-exception -->
 
 # vc-delegate
 

@@ -76,7 +76,7 @@ if [ -z "$VC_WORKSPACE_WELCOMED" ]; then
 
 ⚒  Vibecrafted dev container ready.
    Workspace: /workspace
-   Tools: aicx · loct · loctree-mcp · claude · codex · gemini · uv · zellij
+   Tools: aicx · loct · loctree-mcp · claude · codex · gemini · uv · vc_frame
    Helpers: vc · vc-init · vc-impl · ll · lt · cat
    Tailnet: $(tailscale status 2>/dev/null | head -1 || echo "not connected")
 

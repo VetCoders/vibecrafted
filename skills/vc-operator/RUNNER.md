@@ -168,7 +168,7 @@ or small bounded research inside the operator session.
 
 - telemetry — every launcher fire writes `meta.json` + transcript
   - report path, native subagents do not
-- observability — the operator's watched terminal tab (Zellij /
+- observability — the operator's watched terminal tab (vc-frame /
   tmux / screen) only surfaces launcher-fired dispatches; native
   subagents fire into the dark (NIGDY HEADLESS rule)
 - recovery — a stalled launcher dispatch has a known recovery

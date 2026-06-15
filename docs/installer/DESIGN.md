@@ -362,7 +362,7 @@ III. Action prompt or progress bar
     - Agents
       claude-code · codex · gemini-cli
     - Additional tools
-      zellij · mise · starship · atuin · zoxide
+      vc_frame · mise · starship · atuin · zoxide
   2. Installation
   We will install:
     - Missing dependencies

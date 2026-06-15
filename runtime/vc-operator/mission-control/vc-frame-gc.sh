@@ -4,7 +4,7 @@ set -euo pipefail
 apply=0
 include_live=0
 quiet=0
-max_age_hours="${VIBECRAFTED_ZELLIJ_MAX_AGE_HOURS:-24}"
+max_age_hours="${VIBECRAFTED_VC_FRAME_MAX_AGE_HOURS:-24}"
 
 vc_frame_bin() {
   command -v vc-frame 2>/dev/null || return 1
@@ -13,9 +13,9 @@ vc_frame_bin() {
 usage() {
   cat <<'EOF'
 Usage:
-  zellij-gc.sh [--apply] [--include-live] [--max-age-hours <hours>] [--quiet]
+  vc-frame-gc.sh [--apply] [--include-live] [--max-age-hours <hours>] [--quiet]
 
-Default behavior is a dry-run over Zellij sessions:
+Default behavior is a dry-run over vc-frame sessions:
   - always reports dead EXITED sessions
   - optionally targets detached live sessions older than the threshold
 
@@ -59,14 +59,14 @@ while (($#)); do
   shift || true
 done
 
-zellij_bin="$(vc_frame_bin)" || {
+vc_frame_bin="$(vc_frame_bin)" || {
   echo "vc-frame is required." >&2
   exit 1
 }
 
-listing="$("$zellij_bin" list-sessions 2>/dev/null || true)"
+listing="$("$vc_frame_bin" list-sessions 2>/dev/null || true)"
 [[ -n "$listing" ]] || {
-  (( quiet )) || echo "zellij-gc: no sessions reported"
+  (( quiet )) || echo "vc_frame-gc: no sessions reported"
   exit 0
 }
 
@@ -171,20 +171,20 @@ if (( include_live )) && (( ${#stale_live_sessions[@]} )); then
 fi
 
 if (( ${#targets[@]} == 0 )); then
-  (( quiet )) || echo "zellij-gc: nothing actionable"
+  (( quiet )) || echo "vc_frame-gc: nothing actionable"
   exit 0
 fi
 
 if (( apply )); then
   for session in "${targets[@]}"; do
-    "$zellij_bin" kill-session "$session" >/dev/null 2>&1 || true
+    "$vc_frame_bin" kill-session "$session" >/dev/null 2>&1 || true
   done
 fi
 
 if (( ! quiet )); then
   mode_label="dry-run"
   (( apply )) && mode_label="applied"
-  echo "zellij-gc: $mode_label"
+  echo "vc_frame-gc: $mode_label"
   if (( ${#dead_sessions[@]} )); then
     echo "  dead: ${dead_sessions[*]}"
   fi

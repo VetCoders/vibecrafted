@@ -37,7 +37,7 @@ about what the product is.
    make check
    make test
    make semgrep
-   env -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME -u VIBECRAFTED_OPERATOR_SESSION bash scripts/check-portable.sh
+   env -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME -u VIBECRAFTED_OPERATOR_SESSION bash scripts/check-portable.sh
    ```
 
    `make semgrep` is the security gate; the local pre-commit and

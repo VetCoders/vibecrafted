@@ -152,8 +152,8 @@
         "en": "~/.vibecrafted/ — vibecrafted artifacts (plans, reports)"
       },
       "vetcoders_config": {
-        "pl": "~/.config/vetcoders/ — konfiguracja frontier (starship, atuin, zellij)",
-        "en": "~/.config/vetcoders/ — frontier config (starship, atuin, zellij)"
+        "pl": "~/.config/vetcoders/ — konfiguracja frontier (starship, atuin, vc_frame)",
+        "en": "~/.config/vetcoders/ — frontier config (starship, atuin, vc_frame)"
       }
     }
   },

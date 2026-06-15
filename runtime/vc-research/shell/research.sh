@@ -197,23 +197,23 @@ EOF
 
 _vetcoders_research_session_ready() {
   # Non-blocking session discovery for research. The general
-  # _vetcoders_prepare_operator_runtime may run a BLOCKING zellij client
+  # _vetcoders_prepare_operator_runtime may run a BLOCKING vc_frame client
   # (attach / --new-session-with-layout) inside the calling terminal — the
   # operator's shell gets swallowed and the research flow freezes until the
   # client exits. Research only ever needs an EXISTING live session to hang
   # its tab on; when none exists we degrade to headless instead.
-  _vetcoders_zellij_bin >/dev/null 2>&1 || return 1
-  if _vetcoders_in_zellij; then
-    VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
+  _vetcoders_vc_frame_bin >/dev/null 2>&1 || return 1
+  if _vetcoders_in_vc_frame; then
+    VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_vc_frame_session_name)"
     export VIBECRAFTED_OPERATOR_SESSION
     return 0
   fi
   if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] \
-    && [[ "$(_vetcoders_zellij_session_state "$VIBECRAFTED_OPERATOR_SESSION")" == "live" ]]; then
+    && [[ "$(_vetcoders_vc_frame_session_state "$VIBECRAFTED_OPERATOR_SESSION")" == "live" ]]; then
     return 0
   fi
   local guessed_session
-  guessed_session="$(_vetcoders_guess_active_zellij_session 2>/dev/null || true)"
+  guessed_session="$(_vetcoders_guess_active_vc_frame_session 2>/dev/null || true)"
   if [[ -n "$guessed_session" ]]; then
     export VIBECRAFTED_OPERATOR_SESSION="$guessed_session"
     return 0
@@ -313,7 +313,7 @@ _vetcoders_research() {
   runtime="$(_vetcoders_effective_runtime)"
 
   if [[ "$runtime" =~ ^(terminal|visible)$ ]] && ! _vetcoders_research_session_ready; then
-    printf 'vc-research: no live zellij operator session to attach the research tab to.\n' >&2
+    printf 'vc-research: no live vc_frame operator session to attach the research tab to.\n' >&2
     printf 'Degrading to headless so your terminal stays yours (start one with vc-start for the shared tab).\n' >&2
     runtime="headless"
   fi
@@ -365,11 +365,11 @@ _vetcoders_research() {
   if [[ "$runtime" =~ ^(terminal|visible)$ ]]; then
     # Session readiness was proven non-blockingly above; never call the
     # blocking operator-runtime preparer from the research dispatch path.
-    local zellij_bin=""
-    zellij_bin="$(_vetcoders_zellij_bin)" || return 1
+    local vc_frame_bin=""
+    vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 1
     session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
     [[ -n "$session_name" ]] || {
-      echo "Could not determine the operator zellij session." >&2
+      echo "Could not determine the operator vc_frame session." >&2
       return 1
     }
 
@@ -385,7 +385,7 @@ _vetcoders_research() {
     done
     _vetcoders_write_research_layout "$layout_file" "${command_entries[@]}"
 
-    # Intended exports to env for the zellij child process — false-positive SC2031.
+    # Intended exports to env for the vc_frame child process — false-positive SC2031.
     # shellcheck disable=SC2031
     export VIBECRAFTED_RUN_ID="$run_id"
     # shellcheck disable=SC2031
@@ -402,7 +402,7 @@ _vetcoders_research() {
     export VIBECRAFTED_STORE_ROOT="$root"
     # shellcheck disable=SC2031
     export VIBECRAFTED_RESEARCH_RUN_DIR="$run_dir"
-    "$zellij_bin" --session "$session_name" action new-tab --layout "$layout_file" >/dev/null
+    "$vc_frame_bin" --session "$session_name" action new-tab --layout "$layout_file" >/dev/null
     launch_label="Research swarm"
     [[ "$research_mode" == "uno" ]] && launch_label="Research uno ($requested_research_agent)"
     printf '%s launched in shared tab (run_id=%s).\n' "$launch_label" "$run_id"
@@ -417,7 +417,7 @@ _vetcoders_research() {
 
   launch_label="Research swarm"
   [[ "$research_mode" == "uno" ]] && launch_label="Research uno ($requested_research_agent)"
-  printf '%s prepared (run_id=%s), but runtime %s does not use the shared zellij layout.\n' "$launch_label" "$run_id" "$runtime"
+  printf '%s prepared (run_id=%s), but runtime %s does not use the shared vc_frame layout.\n' "$launch_label" "$run_id" "$runtime"
   printf 'Run directory: %s\n' "$run_dir"
   printf 'Reports: %s\n' "$run_dir/reports"
   printf 'Summary: %s\n' "$summary_file"

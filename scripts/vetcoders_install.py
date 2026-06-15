@@ -243,7 +243,7 @@ class Foundation:
 
     def is_installed(self) -> Optional[str]:
         """Return path if installed, None otherwise."""
-        if self.name == "zellij":
+        if self.name == "vc-frame":
             for candidate in ("vc-frame",):
                 found = shutil.which(candidate)
                 if found:
@@ -390,7 +390,7 @@ FOUNDATIONS: List[Foundation] = [
         required=False,
     ),
     Foundation(
-        name="zellij",
+        name="vc-frame",
         description="VC Frame multi-agent terminal workspace surface",
         channels=["canonical"],
         packages={
@@ -1608,7 +1608,7 @@ def _snapshot_launcher_entries() -> List[str]:
 def snapshot_product_tool_state() -> Dict[str, Dict[str, str]]:
     """Record product dependency commands exactly where PATH resolves them.
 
-    Loctree/AICX/Zellij/etc. are dependencies, not Vibecrafted-owned payload.
+    Loctree/AICX/vc-frame/etc. are dependencies, not Vibecrafted-owned payload.
     Discovery must therefore observe the operator's PATH and persist the result;
     it must not re-home binaries into the launcher bin or replace dev installs.
     """
@@ -3627,7 +3627,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 "_",
                 str(common_sh),
             ],
-            env={k: v for k, v in os.environ.items() if not k.startswith("ZELLIJ")},
+            env={k: v for k, v in os.environ.items() if not k.startswith("VC_FRAME")},
             expected_text="spawn-e2e-ok",
         )
         findings.append(
@@ -3732,43 +3732,47 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 )
             )
 
-    # 7e. VC Frame availability and version. ZELLIJ_* env/socket names
+    # 7e. VC Frame availability and version. VC_FRAME_* env/socket names
     # remain engine-room canonical, but the product binary is vc-frame.
-    zellij_bin = shutil.which("vc-frame")
-    if not zellij_bin:
+    vc_frame_bin = shutil.which("vc-frame")
+    if not vc_frame_bin:
         for bundled_name in ("vc-frame",):
-            bundled_zellij = vibecrafted_runtime_bin() / bundled_name
-            if bundled_zellij.is_file() and os.access(bundled_zellij, os.X_OK):
-                zellij_bin = str(bundled_zellij)
+            bundled_vc_frame = vibecrafted_runtime_bin() / bundled_name
+            if bundled_vc_frame.is_file() and os.access(bundled_vc_frame, os.X_OK):
+                vc_frame_bin = str(bundled_vc_frame)
                 break
-    if zellij_bin:
+    if vc_frame_bin:
         try:
-            zellij_ver = subprocess.run(
-                [zellij_bin, "--version"],
+            vc_frame_ver = subprocess.run(
+                [vc_frame_bin, "--version"],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
             ver_str = (
-                zellij_ver.stdout.strip() if zellij_ver.returncode == 0 else "unknown"
+                vc_frame_ver.stdout.strip()
+                if vc_frame_ver.returncode == 0
+                else "unknown"
             )
-            findings.append(DoctorFinding("ok", "zellij", f"{ver_str} -> {zellij_bin}"))
+            findings.append(
+                DoctorFinding("ok", "vc-frame", f"{ver_str} -> {vc_frame_bin}")
+            )
         except (OSError, subprocess.TimeoutExpired):
-            findings.append(DoctorFinding("ok", "zellij", f"-> {zellij_bin}"))
+            findings.append(DoctorFinding("ok", "vc-frame", f"-> {vc_frame_bin}"))
     else:
         findings.append(
             DoctorFinding(
                 "warn",
-                "zellij",
+                "vc-frame",
                 "not found in PATH — dashboard/session commands unavailable",
             )
         )
 
-    # 7f. Zellij session health: detect dead/EXITED sessions that waste operator attention
-    if zellij_bin:
+    # 7f. vc-frame session health: detect dead/EXITED sessions that waste operator attention
+    if vc_frame_bin:
         try:
             ls_result = subprocess.run(
-                [zellij_bin, "list-sessions"],
+                [vc_frame_bin, "list-sessions"],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -3789,17 +3793,19 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                     findings.append(
                         DoctorFinding(
                             "warn",
-                            "zellij:dead-sessions",
+                            "vc_frame:dead-sessions",
                             f"{len(dead_sessions)} dead session(s): {names}{suffix}"
                             " — run 'vibecrafted dashboard gc --apply' to clean up safely",
                         )
                     )
                 else:
                     findings.append(
-                        DoctorFinding("ok", "zellij:dead-sessions", "no dead sessions")
+                        DoctorFinding(
+                            "ok", "vc_frame:dead-sessions", "no dead sessions"
+                        )
                     )
         except (OSError, subprocess.TimeoutExpired):
-            pass  # zellij not responsive — skip
+            pass  # vc_frame not responsive — skip
 
     # 7g. Agent CLI stream contract: verify expected flags are recognized
     _agent_flag_checks = {

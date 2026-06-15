@@ -90,7 +90,7 @@ def _default_runtime(explicit_runtime: str) -> str:
     for key in (
         "VIBECRAFTED_OPERATOR_SESSION",
         "VC_FRAME_SESSION_NAME",
-        "ZELLIJ_SESSION_NAME",
+        "VC_FRAME_SESSION_NAME",
     ):
         if str(os.environ.get(key) or "").strip():
             return "terminal"

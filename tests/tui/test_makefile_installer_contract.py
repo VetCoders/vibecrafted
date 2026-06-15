@@ -312,7 +312,7 @@ def test_foundations_product_binaries_are_validation_only() -> None:
         1,
     )[0]
     aicx_block = text.split("install_aicx() {", 1)[1].split(
-        "# ---------------------------------------------------------------------------\n# Zellij installer",
+        "# ---------------------------------------------------------------------------\n# vc-frame installer",
         1,
     )[0]
 

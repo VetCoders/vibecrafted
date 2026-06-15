@@ -42,7 +42,7 @@ spawn_has_ambient_run_context() {
   [[ -n "${VIBECRAFTED_RUN_ID:-}" ]] || return 1
   [[ "${SPAWN_RUN_ID}" == "${VIBECRAFTED_RUN_ID}" ]] || return 1
   [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || return 1
-  spawn_in_zellij_context && return 1
+  spawn_in_vc_frame_context && return 1
   return 0
 }
 

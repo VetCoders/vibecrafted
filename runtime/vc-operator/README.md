@@ -11,15 +11,15 @@ watches while a fleet runs.
 - `mission-control/recent-sessions.sh` — recent run/session watcher.
 - `mission-control/convergence-trend.sh` — marbles convergence monitor.
 - `mission-control/live-transcript.sh` — transcript tail pane.
-- `mission-control/zellij-gc.sh` — dead zellij session garbage collector
+- `mission-control/vc-frame-gc.sh` — dead vc_frame session garbage collector
   (resolved via `_vetcoders_workflow_script "vc-operator"
-"mission-control/zellij-gc.sh"` in `runtime/shell/lib/zellij.sh`).
+"mission-control/vc-frame-gc.sh"` in `runtime/shell/lib/vc-frame.sh`).
 - `mission-control/common.sh` — helpers shared between the panes above;
   sourced relative to the script dir, internal to this workflow.
 
 ## Consumers
 
-- `config/zellij/layouts/{dashboard,marbles,operator}.kdl` probe
+- `config/vc-frame/layouts/{dashboard,marbles,operator}.kdl` probe
   `<runtime-root>/vc-operator/mission-control/` first and fall back to the
   legacy `<runtime-root>/scripts/mission-control/` path for older installed
   runtimes.

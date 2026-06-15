@@ -178,7 +178,7 @@ Cross-cutting close-out notes:
   from the Known data gap note is live. Wave 0 telemetry fix landed in
   `40935d5` (mislabeled subject; `runtime/scripts/lib/meta.sh`).
 - Theme truth: there is no in-app light/dark palette — the dashboard
-  emits named ANSI colors only and the zellij mesh themes resolve them
+  emits named ANSI colors only and the vc_frame mesh themes resolve them
   terminal-side. Snapshot suite freezes content + color placement and
   guards the named-ANSI invariant.
 
@@ -227,7 +227,7 @@ built by an Agent-Operator using vc-operator doctrine.
 
 ## Why CLI / TUI before web
 
-The operator works in terminal (Zellij + ssh + git + AICX CLI). A web
+The operator works in terminal (vc-frame + ssh + git + AICX CLI). A web
 dashboard means context-switch to a browser tab. TUI keeps the operator
 in their existing flow:
 

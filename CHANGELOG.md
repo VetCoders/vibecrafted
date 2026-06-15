@@ -23,7 +23,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   durable operator references instead of transcript-only doctrine.
 - **Wave 5 await/watch rail landed**: `runtime/scripts/vibecrafted-await-watch.sh`
   plus the `spawn_await_watch_pane` hook in
-  `runtime/scripts/lib/zellij.sh` give long-running dispatches a
+  `runtime/scripts/lib/vc_frame.sh` give long-running dispatches a
   visible watch surface.
 - **`skills/vc-operator/SKILL.md` patched from 0.1.0 to 2.0.0** with the
   runner contract, why-matrix dispatch discipline, feedback intake, and
@@ -214,14 +214,14 @@ operator v0.1.1`) and release cycle. `scripts/vibecrafted` launcher gracefully
   and polling inline, it marks loops as `pending` and hands off to
   `marbles_verify_watch.sh` via `nohup`. Summary logic simplified; configurable
   verification grace period added.
-- Zellij spawn uses **tab/pane IDs** (not just names) for targeting marbles
+- vc-frame spawn uses **tab/pane IDs** (not just names) for targeting marbles
   panes — non-disruptive spawn that doesn't steal focus from operator's
   active pane; tab index noise suppressed in marbles spawn output.
-- Zellij layouts renamed (`operator` / `vc-marbles` / `vc-workflow` / `vc-
+- vc-frame layouts renamed (`operator` / `vc-marbles` / `vc-workflow` / `vc-
 research` / `vc-dashboard`) with matching launcher and test updates.
 - Uninstall now removes **only manifest-tracked entries** + framework
   artifacts — no broad filesystem sweeps that could clobber user files.
-- Operator TUI launches **Ghostty** natively (via `zellij`) as the terminal
+- Operator TUI launches **Ghostty** natively (via `vc-frame`) as the terminal
   surface when running in `terminal` / `visible` runtime.
 - Marbles active-only run filter in operator-tui so Monitor tab stops showing
   cold runs from previous sessions.
@@ -241,10 +241,10 @@ research` / `vc-dashboard`) with matching launcher and test updates.
 - `doctor` rc repair path for launcher rc files.
 - Operator TUI control-plane wiring — pane names + control-plane state
   aligned, polish pass on tab surfaces.
-- Operator TUI terminal agnosticism — no longer hard-codes Zellij or any
+- Operator TUI terminal agnosticism — no longer hard-codes vc-frame or any
   single terminal assumption.
-- Operator TUI Zellij env isolation in tests (previously leaked
-  `ZELLIJ_CONFIG_DIR` between parallel test runs).
+- Operator TUI vc-frame env isolation in tests (previously leaked
+  `VC_FRAME_CONFIG_DIR` between parallel test runs).
 - Flaky CI expectations for marbles statuses and Makefile dry-run output.
 - `uv` bootstrap assertion messages now align with export `PATH` checks.
 
@@ -273,15 +273,15 @@ operator` crate — see **Changed** above).
   a "what's about to happen" pause by default; CI / automation pipelines get
   a clean non-interactive path.
 - Regression tests for installer manifest / branding + codex_stream_bridge.
-- `zellij` panes for marbles dispatch (in place of bare new-tab).
+- `vc-frame` panes for marbles dispatch (in place of bare new-tab).
 
 ### Changed
 
 - **Installer TUI-first swap**: terminal front-door defaults to the guided
   TUI wizard; the GUI stays available via `--gui`. Sticky-bottom streaming
   log, unified `make install` entrypoint.
-- Zellij orchestration hardened: tab isolation, spawn probe before every
-  dispatch, session GC for stale zellij daemons.
+- vc-frame orchestration hardened: tab isolation, spawn probe before every
+  dispatch, session GC for stale vc-frame daemons.
 - Framework bumped **1.3.0 → 1.4.0**; VERSION truth propagated across all
   installer surfaces (no more "1.3.0 in README, 1.4.0 in bundle"
   disagreements).
@@ -388,7 +388,7 @@ operator` crate — see **Changed** above).
 - 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework overview and README branding
 - Marbles orchestration skill and hook/runtime fixes
 - AICX extract skill documentation
-- Mission-control layout for Zellij
+- Mission-control layout for vc-frame
 - Compact install mode and enhanced logging
 - ScreenScribe foundation setup
 - GitHub Pages onboarding pages for Quick Start and answered FAQ
@@ -421,7 +421,7 @@ operator` crate — see **Changed** above).
 - Codex `--json` JSONL streaming with structured event parsing
 - Spawn telemetry: `framework_version`, `prompt_id`, `run_id`, `loop_nr`, `skill_code`, `duration_s`
 - Skill helpers: `<agent>-dou`, `<agent>-hydrate`, `<agent>-marbles`, `<agent>-scaffold`, etc.
-- `vc-dashboard` for Zellij Mission Control layout
+- `vc-dashboard` for vc-frame Mission Control layout
 - Active spawn scan before each launch
 - Material palette: copper/patina/timber/steel/stone
 

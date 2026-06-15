@@ -80,23 +80,23 @@ _vetcoders_marbles() {
   quoted_args="$(_vetcoders_shell_quote_join "${marbles_args[@]}")"
   marbles_cmd="env ${quoted_env} bash $(_vetcoders_shell_quote "$script") ${quoted_args}"
   operator_session="${VIBECRAFTED_OPERATOR_SESSION:-}"
-  if [[ -z "$operator_session" ]] && _vetcoders_in_zellij; then
-    operator_session="$(_vetcoders_current_zellij_session_name)"
+  if [[ -z "$operator_session" ]] && _vetcoders_in_vc_frame; then
+    operator_session="$(_vetcoders_current_vc_frame_session_name)"
   fi
   if [[ -z "$operator_session" ]]; then
     operator_session="$(_vetcoders_operator_session_name)"
   fi
 
-  # Inside zellij: each marbles run_id gets its own tab named
+  # Inside vc_frame: each marbles run_id gets its own tab named
   # "marbles-<run_id>". Subsequent loops (L2, L3, ...) inherit
   # VIBECRAFTED_MARBLES_TAB_NAME via env and stay in the same tab — one
   # run_id = one tab, no crossover. The "marbles-" prefix distinguishes
   # the tab from workflow/research tabs which also carry run_ids.
-  # Temp script keeps zellij args ASCII-safe (no inline UTF-8 prompt bytes).
-  local zellij_bin=""
-  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && _vetcoders_in_zellij && zellij_bin="$(_vetcoders_zellij_bin)"; then
+  # Temp script keeps vc_frame args ASCII-safe (no inline UTF-8 prompt bytes).
+  local vc_frame_bin=""
+  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && _vetcoders_in_vc_frame && vc_frame_bin="$(_vetcoders_vc_frame_bin)"; then
     local cmd_script marbles_tab_name
-    VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_zellij_session_name)"
+    VIBECRAFTED_OPERATOR_SESSION="$(_vetcoders_current_vc_frame_session_name)"
     export VIBECRAFTED_OPERATOR_SESSION
     marbles_tab_name="${loop_file_prefix}-${marbles_run_id}"
     export VIBECRAFTED_MARBLES_TAB_NAME="$marbles_tab_name"
@@ -107,20 +107,20 @@ _vetcoders_marbles() {
     _vetcoders_write_command_script "$cmd_script" "$marbles_cmd" || return 1
     
     local original_tab
-    original_tab="${ZELLIJ_TAB_NAME:-}"
+    original_tab="${VC_FRAME_TAB_NAME:-}"
     
-    "$zellij_bin" action go-to-tab-name "$marbles_tab_name" --create >/dev/null 2>&1 || true
-    "$zellij_bin" action new-pane \
+    "$vc_frame_bin" action go-to-tab-name "$marbles_tab_name" --create >/dev/null 2>&1 || true
+    "$vc_frame_bin" action new-pane \
       --name "$marbles_run_id" \
       --cwd "$root_dir" \
       -- "$cmd_script" >/dev/null || return 1
 
-    printf '%s run launched in zellij tab: %s\n' "$loop_label" "$marbles_tab_name"
+    printf '%s run launched in vc_frame tab: %s\n' "$loop_label" "$marbles_tab_name"
     printf '  run_id:  %s\n' "$marbles_run_id"
     printf '  inspect: vc-marbles inspect %s\n' "$marbles_run_id"
       
     if [[ -n "$original_tab" ]]; then
-      "$zellij_bin" action go-to-tab-name "$original_tab" >/dev/null 2>&1 || true
+      "$vc_frame_bin" action go-to-tab-name "$original_tab" >/dev/null 2>&1 || true
     fi
     
     _vetcoders_marbles_emit_probe "$root_dir" "$marbles_run_id" "launched"
@@ -165,10 +165,10 @@ _vetcoders_resume_agent() {
   resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt")" || return 1
 
   # prepare_operator_runtime can create or attach an operator surface only when
-  # we are already in zellij, know an operator session, or have an interactive
+  # we are already in vc_frame, know an operator session, or have an interactive
   # terminal. Plain headless resume falls back to the agent CLI directly.
   if [[ "$runtime" =~ ^(terminal|visible)$ ]] && {
-    _vetcoders_in_zellij || [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || [[ -t 0 && -t 1 ]]
+    _vetcoders_in_vc_frame || [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || [[ -t 0 && -t 1 ]]
   }; then
     _vetcoders_prepare_operator_runtime "$runtime" || return 1
     if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then

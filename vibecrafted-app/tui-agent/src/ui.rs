@@ -1497,7 +1497,7 @@ mod tests {
                 command_deck: "/usr/bin/vibecrafted".into(),
                 launch_root: "/tmp/repo".into(),
                 launch_runtime: LaunchRuntime::Terminal,
-                terminal_binary: "zellij".into(),
+                terminal_binary: "vc-frame".into(),
                 tick_rate: Duration::from_millis(250),
             },
             state: ControlPlaneState::empty("/tmp/state"),

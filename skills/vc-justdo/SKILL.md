@@ -1,7 +1,17 @@
 ---
 name: vc-justdo
 version: 3.0.0
-description: "Standalone no-ceremony execution posture; infer the task type from the prompt and act."
+description: >
+  "Nie pierdol, po prostu zrób." Standalone posture skill + launcher — NOT an
+  alias of vc-implement. No question, take the task, just do it — regardless of
+  task type (implement, review, audit, research, fix, anything). The task type is
+  defined by the PROMPT, not by the skill. No best-offer / best-of-n deliberation.
+  Daily rescue of a tired founder: at 4am nobody answers, so don't ask — act, and
+  proactively explore when context is thin. Carries the vc-ownership posture.
+  Non-pipeline (it is NOT a VC-ship cadence phase, unlike vc-implement).
+  Trigger phrases: "just do", "just do it", "vc-justdo", "nie pierdol tylko zrób",
+  "weź i zrób", "zrób to", "ogarnij to", "nie mam siły ale zrób", "take the task",
+  "no questions just do it", "zrób review/audyt/research <X>".
 compatibility:
   tools:
     - exec_command
@@ -15,23 +25,6 @@ loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-justdo — „Nie pierdol, po prostu zrób"
 

@@ -6,7 +6,7 @@ strings; callers decide whether to print them, embed them in shell
 commands, or write them to a file.
 
 These primitives are independent of how a session was spawned — they work
-inside any iTerm2 pane (zellij child, ssh remote, agent shell) as long as
+inside any iTerm2 pane (vc_frame child, ssh remote, agent shell) as long as
 stdout is attached to an iTerm2 terminal.
 
 Status: **GA since v1.8.0 / 2026-05-12** (Plan 10, META_22). The function

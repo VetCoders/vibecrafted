@@ -20,7 +20,7 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
 ) -> None:
     fake_bin = tmp_path / "bin"
     home = tmp_path / "home"
-    zellij_capture = tmp_path / "zellij.txt"
+    vc_frame_capture = tmp_path / "vc_frame.txt"
     codex_capture = tmp_path / "codex.txt"
     fake_bin.mkdir()
     home.mkdir()
@@ -34,7 +34,7 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
                 "{",
                 '  printf "%s\\n" "--CALL--"',
                 '  printf "%s\\n" "$@"',
-                '} >> "$ZELLIJ_CAPTURE"',
+                '} >> "$VC_FRAME_CAPTURE"',
             ]
         )
         + "\n",
@@ -58,9 +58,9 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
         "VIBECRAFTED_SKILL_CODE",
         "VIBECRAFTED_SKILL_NAME",
         "VIBECRAFTED_LOOP_NR",
-        "ZELLIJ",
-        "ZELLIJ_PANE_ID",
-        "ZELLIJ_SESSION_NAME",
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
     ):
         env.pop(key, None)
     env["HOME"] = str(home)
@@ -68,7 +68,7 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-session"
-    env["ZELLIJ_CAPTURE"] = str(zellij_capture)
+    env["VC_FRAME_CAPTURE"] = str(vc_frame_capture)
     env["CODEX_CAPTURE"] = str(codex_capture)
 
     result = subprocess.run(
@@ -90,10 +90,10 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
 
     assert "Resume launched in operator session: operator-session" in result.stdout
     assert not codex_capture.exists()
-    zellij_lines = zellij_capture.read_text(encoding="utf-8").splitlines()
+    vc_frame_lines = vc_frame_capture.read_text(encoding="utf-8").splitlines()
     calls: list[list[str]] = []
     current: list[str] = []
-    for line in zellij_lines:
+    for line in vc_frame_lines:
         if line == "--CALL--":
             if current:
                 calls.append(current)

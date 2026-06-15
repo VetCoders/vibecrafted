@@ -35,7 +35,7 @@ spawn_generate_launcher() {
   q_skill_code="$(spawn_shell_quote "${SPAWN_SKILL_CODE:-}")"
   q_skill_name="$(spawn_shell_quote "${SPAWN_SKILL_NAME:-${VIBECRAFTED_SKILL_NAME:-}}")"
   q_operator_session="$(spawn_shell_quote "${VIBECRAFTED_OPERATOR_SESSION:-}")"
-  q_spawn_direction="$(spawn_shell_quote "${VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION:-}")"
+  q_spawn_direction="$(spawn_shell_quote "${VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION:-}")"
   q_marbles_tab="$(spawn_shell_quote "${VIBECRAFTED_MARBLES_TAB_NAME:-}")"
   q_marbles_watcher="$(spawn_shell_quote "${VIBECRAFTED_MARBLES_WATCHER:-}")"
 
@@ -65,7 +65,7 @@ export VIBECRAFTED_RUN_LOCK=$q_run_lock
 export VIBECRAFTED_SKILL_CODE=$q_skill_code
 export VIBECRAFTED_SKILL_NAME=\${VIBECRAFTED_SKILL_NAME:-$q_skill_name}
 export VIBECRAFTED_OPERATOR_SESSION=\${VIBECRAFTED_OPERATOR_SESSION:-$q_operator_session}
-export VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION=\${VIBECRAFTED_ZELLIJ_SPAWN_DIRECTION:-$q_spawn_direction}
+export VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=\${VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION:-$q_spawn_direction}
 export VIBECRAFTED_MARBLES_TAB_NAME=\${VIBECRAFTED_MARBLES_TAB_NAME:-$q_marbles_tab}
 export VIBECRAFTED_MARBLES_WATCHER=\${VIBECRAFTED_MARBLES_WATCHER:-$q_marbles_watcher}
 startup_watch_pid=""
@@ -222,16 +222,46 @@ spawn_launch() {
 
   case "$runtime" in
     terminal|visible)
-      if spawn_in_zellij_pane "$launcher" "$pane_name"; then
+      if spawn_in_vc_frame_pane "$launcher" "$pane_name"; then
         :
       elif spawn_in_operator_session "$launcher" "$pane_name"; then
         :
       else
-        printf 'Failed to launch %s runtime through Zellij. Refusing AppleScript/iTerm fallback.\n' "$runtime" >&2
-        printf 'Use --runtime headless for detached execution or fix the Zellij operator session.\n' >&2
-        return 1
+        # Degrade, don't die. No vc-frame operator session exists to host a
+        # visible tab (e.g. dispatched from a plain terminal, outside vc-frame).
+        # AppleScript/iTerm fallback stays forbidden — but a hard failure is
+        # worse UX than running detached. Fall back to headless, show a short
+        # honest live tail so the operator sees real progress, then hand off to
+        # observe/await. Start from inside vc-start if you want a visible tab.
+        printf 'No vc-frame operator session for %s runtime — running headless instead.\n' "$runtime" >&2
+        spawn_launch_headless "$launcher"
+        local _vc_transcript="${SPAWN_TRANSCRIPT:-}"
+        local _vc_agent="${SPAWN_AGENT:-agent}"
+        local _vc_run_id="${SPAWN_RUN_ID:-${VIBECRAFTED_RUN_ID:-}}"
+        local _vc_tail_secs="${VIBECRAFTED_DEGRADE_TAIL_SECONDS:-10}"
+        # The live tail is for a human at an interactive terminal. Skip it when
+        # stderr is not a TTY (pipes, tests, CI, nested dispatch) so automated
+        # callers are not blocked for 10s.
+        if [[ -n "$_vc_transcript" && -t 2 && "$_vc_tail_secs" != "0" ]]; then
+          local _vc_wait=0
+          while [[ ! -s "$_vc_transcript" && $_vc_wait -lt 14 ]]; do
+            sleep 0.5
+            _vc_wait=$((_vc_wait + 1))
+          done
+          printf -- '--- live agent output (%ss) ------------------------------------\n' "$_vc_tail_secs" >&2
+          tail -n 40 -F "$_vc_transcript" >&2 2>/dev/null &
+          local _vc_tail_pid=$!
+          sleep "$_vc_tail_secs"
+          kill "$_vc_tail_pid" 2>/dev/null || true
+          wait "$_vc_tail_pid" 2>/dev/null || true
+          printf -- '----------------------------------------------------------------\n' >&2
+        fi
+        printf 'Agent is still running headless. Continue to observe it:\n' >&2
+        printf '  vibecrafted %s observe --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
+        printf '  vibecrafted %s await   --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
+        return 0
       fi
-      ;; 
+      ;;
     headless|background|detached)
       spawn_launch_headless "$launcher"
       ;; 

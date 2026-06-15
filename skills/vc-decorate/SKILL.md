@@ -1,28 +1,21 @@
 ---
 name: vc-decorate
 version: 2.1.0
-description: "Late-stage UX and visual coherence pass; polish existing design without changing product identity."
+description: >
+  Late-stage visual finishing and experience coherence skill. Detects the user's
+  existing design language, audits system consistency, distinguishes identity
+  from drift, upgrades weak patterns, and proposes tasteful polish that works
+  WITHIN the user's system. Never imposes the agent's taste. Never decorates
+  chaos. First make the system coherent. Then make it feel premium.
+  Trigger phrases: "decorate", "make it look good", "add polish", "smaczki",
+  "micro-interactions", "udekoruj", "dopracuj wizualnie", "curb appeal",
+  "premium pass", "finish the experience", "make it feel intentional",
+  "coherence audit", "design system cleanup", "interactive demo", "animate",
+  "add hover effects", "make it feel nice", "visual polish".
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # vc-decorate — Coherence First. Premium Second.
 

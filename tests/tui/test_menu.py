@@ -60,7 +60,7 @@ def test_textual_install_preview_hides_raw_tail(monkeypatch) -> None:
     app.install_phase_reason = "Install foundations, skills, helpers, and runtime."
     app._add_install_log("╠════════ Live progress ════════╣")
     app._add_install_log(
-        "/Users/maciejgad/.config/vetcoders/frontier/zellij/layouts/operator.kdl"
+        "/Users/maciejgad/.config/vetcoders/frontier/vc-frame/layouts/operator.kdl"
     )
     app._add_install_log("already linked")
 

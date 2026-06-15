@@ -29,7 +29,7 @@ Answers from the trenches. This is the truth as of April 2026.
 
 - **What if I already have a Starship/Atuin config — will 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. overwrite it?**
   No. It detects existing configs and prompts you. It can install the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. versions alongside yours or skip them
-  entirely. The repo now ships optional Zellij sidecars too, but they stay opt-in: companion frontier paths can
+  entirely. The repo now ships optional vc-frame sidecars too, but they stay opt-in: companion frontier paths can
   override them per asset, and nothing launches a dashboard unless you ask for it.
 
 - **How do I move my installation to a custom directory?**
@@ -136,7 +136,7 @@ Answers from the trenches. This is the truth as of April 2026.
 
 - **Why is there a `config/` directory with Starship and Atuin configs?**
   Because the "Operator UX" matters. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. keeps a small, honest operator layer in-repo: prompt context and
-  history recall. That same layer now includes optional Zellij config and branded layouts, while terminal-emulator
+  history recall. That same layer now includes optional vc-frame config and branded layouts, while terminal-emulator
   presets such as Alacritty stay outside the core repo surface.
 
 - **What is mise and why does 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. include a `mise.toml`?**

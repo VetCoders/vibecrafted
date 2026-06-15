@@ -10,11 +10,11 @@ Ten plan skupia się wyłącznie na architekturze, refaktoringu i rozwoju narzę
 
 ### 1. Bezpieczna Iniekcja Zmiennych Środowiskowych
 
-W module `launch.rs` (w `LaunchCommand::spawn`) należy dodać jawną propagację zmiennych środowiskowych specyficznych dla VibeCrafted (np. `ZELLIJ_CONFIG_DIR`, `VIBECRAFT_ROOT`). Zapobiegnie to wyciekom i konfliktom z globalnym środowiskiem systemu.
+W module `launch.rs` (w `LaunchCommand::spawn`) należy dodać jawną propagację zmiennych środowiskowych specyficznych dla VibeCrafted (np. `VC_FRAME_CONFIG_DIR`, `VIBECRAFT_ROOT`). Zapobiegnie to wyciekom i konfliktom z globalnym środowiskiem systemu.
 
 ### 2. Rozszerzenie `LaunchCommand` pod Ghostty
 
-Zaktualizowanie struktury `build_launch_command`, aby poprawnie formatowała zagnieżdżone polecenia. Wywołanie Ghostty wymaga przekazania parametrów do Zellij (`ghostty -e zellij attach ...`). Należy upewnić się, że argumenty są poprawnie parsowane i escapowane przez `std::process::Command`.
+Zaktualizowanie struktury `build_launch_command`, aby poprawnie formatowała zagnieżdżone polecenia. Wywołanie Ghostty wymaga przekazania parametrów do vc-frame (`ghostty -e vc-frame attach ...`). Należy upewnić się, że argumenty są poprawnie parsowane i escapowane przez `std::process::Command`.
 
 ### 3. Graceful Error Handling przy Spawnowaniu
 
@@ -30,11 +30,11 @@ Przepisanie mechanizmu `suspend_and_run` tak, aby interfejs Ratatui nie zamarza�
 
 ### 6. Wzbogacenie `DeepAction` (Akcje Głębokiego Dostępu)
 
-W `app.rs` rozszerzenie `DeepAction`. Zamiast polegać tylko na systemowym `$PAGER` dla akcji `OpenReport` czy `OpenTranscript`, możemy dodać opcję "Open in new Ghostty window", co otworzy logi w osobnym, niezależnym od Zellij, czystym oknie terminala.
+W `app.rs` rozszerzenie `DeepAction`. Zamiast polegać tylko na systemowym `$PAGER` dla akcji `OpenReport` czy `OpenTranscript`, możemy dodać opcję "Open in new Ghostty window", co otworzy logi w osobnym, niezależnym od vc-frame, czystym oknie terminala.
 
 ### 7. Weryfikacja Kondycji Sesji (Healthcheck)
 
-Po wywołaniu Zellij przez Ghostty, `operator-tui` mogłoby sprawdzić (np. po gnieździe Zellij lub przez szybki poll), czy sesja faktycznie żyje. Umożliwi to automatyczne oznaczenie Run'a jako `Failed`, jeśli Zellij natychmiastowo zginie po starcie.
+Po wywołaniu vc-frame przez Ghostty, `operator-tui` mogłoby sprawdzić (np. po gnieździe vc-frame lub przez szybki poll), czy sesja faktycznie żyje. Umożliwi to automatyczne oznaczenie Run'a jako `Failed`, jeśli vc-frame natychmiastowo zginie po starcie.
 
 ### 8. Optymalizacja Kontekstu (Paging i Historia)
 
@@ -42,7 +42,7 @@ Przebudowa funkcji `pager_command`. Aktualny skrypt basha z `if/elif` jest podat
 
 ### 9. Testy Jednostkowe Komend Startowych
 
-Napisanie dedykowanych testów w `tests/` lub w samym `launch.rs`, które zweryfikują ciągi znaków generowane przez `build_launch_command`. Musimy mieć 100% pewności (Test Gate), że kombinacja `LaunchRuntime::Terminal` + Ghostty + Zellij renderuje perfekcyjnego stringa.
+Napisanie dedykowanych testów w `tests/` lub w samym `launch.rs`, które zweryfikują ciągi znaków generowane przez `build_launch_command`. Musimy mieć 100% pewności (Test Gate), że kombinacja `LaunchRuntime::Terminal` + Ghostty + vc-frame renderuje perfekcyjnego stringa.
 
 ### 10. Udoskonalenie Widoku Błędów (TUI Polish)
 

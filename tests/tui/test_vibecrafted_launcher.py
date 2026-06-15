@@ -54,7 +54,7 @@ def _write_trimmed_launcher(script_path: Path) -> None:
 
 def _write_fake_command(bin_dir: Path, name: str, capture_file: Path) -> None:
     script_names = [name]
-    if name == "zellij":
+    if name == "vc-frame":
         script_names.insert(0, "vc-frame")
     for script_name in script_names:
         script = bin_dir / script_name
@@ -75,10 +75,10 @@ def _write_fake_command(bin_dir: Path, name: str, capture_file: Path) -> None:
         script.chmod(0o755)
 
 
-def _write_fake_zellij_with_live_session(
+def _write_fake_vc_frame_with_live_session(
     bin_dir: Path, capture_file: Path, session_name: str
 ) -> None:
-    script = bin_dir / "zellij"
+    script = bin_dir / "vc-frame"
     script.write_text(
         "\n".join(
             [
@@ -103,8 +103,8 @@ def _write_fake_zellij_with_live_session(
     vc_frame.chmod(0o755)
 
 
-def _write_gc_zellij(bin_dir: Path, capture_file: Path, listing: str) -> None:
-    script = bin_dir / "zellij"
+def _write_gc_vc_frame(bin_dir: Path, capture_file: Path, listing: str) -> None:
+    script = bin_dir / "vc-frame"
     script.write_text(
         "\n".join(
             [
@@ -115,7 +115,7 @@ def _write_gc_zellij(bin_dir: Path, capture_file: Path, listing: str) -> None:
                 "",
                 "args = sys.argv[1:]",
                 'capture = Path(os.environ["CAPTURE_FILE"])',
-                'listing = os.environ.get("FAKE_ZELLIJ_LISTING", "")',
+                'listing = os.environ.get("FAKE_VC_FRAME_LISTING", "")',
                 'with capture.open("a", encoding="utf-8") as fh:',
                 '    fh.write(" ".join(args) + "\\n")',
                 'if args[:1] == ["list-sessions"]:',
@@ -257,11 +257,11 @@ def _write_generic_skill_helper(script_path: Path) -> None:
     )
 
 
-def _write_stateful_zellij(
+def _write_stateful_vc_frame(
     bin_dir: Path, capture_file: Path, session_state_file: Path
 ) -> None:
     default_session = _expected_operator_session()
-    script = bin_dir / "zellij"
+    script = bin_dir / "vc-frame"
     script.write_text(
         "\n".join(
             [
@@ -274,7 +274,7 @@ def _write_stateful_zellij(
                 'capture = Path(os.environ["CAPTURE_FILE"])',
                 'state_file = Path(os.environ["SESSION_STATE_FILE"])',
                 'state = state_file.read_text(encoding="utf-8").strip() if state_file.exists() else "missing"',
-                f'session = os.environ.get("FAKE_ZELLIJ_SESSION", "{default_session}")',
+                f'session = os.environ.get("FAKE_VC_FRAME_SESSION", "{default_session}")',
                 'if "--session" in args:',
                 '    idx = args.index("--session")',
                 "    if idx + 1 < len(args):",
@@ -282,7 +282,7 @@ def _write_stateful_zellij(
                 'elif args[:1] == ["attach"] and len(args) > 1:',
                 "    session = args[-1]",
                 'with capture.open("a", encoding="utf-8") as fh:',
-                '    fh.write("ZELLIJ " + " ".join(args) + "\\n")',
+                '    fh.write("VC_FRAME " + " ".join(args) + "\\n")',
                 'if args[:1] == ["ls"]:',
                 '    if state == "live":',
                 '        print(f"{session} [Created 1m ago]")',
@@ -341,7 +341,7 @@ def _write_fake_osascript(
 
 
 def _spawned_command_script(capture_payload: str) -> Path:
-    match = re.search(r"ZELLIJ .* action new-tab .* -- (\S+)", capture_payload)
+    match = re.search(r"VC_FRAME .* action new-tab .* -- (\S+)", capture_payload)
     assert match, capture_payload
     return Path(match.group(1))
 
@@ -363,7 +363,7 @@ def test_init_claude_uses_interactive_tab_without_print_mode(
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_stateful_zellij(fake_bin, capture_file, session_state_file)
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
     _write_fake_osascript(fake_bin, capture_file, session_state_file)
     _write_fake_agent(fake_bin, "claude", tmp_path / "unused-claude.txt")
 
@@ -376,11 +376,11 @@ def test_init_claude_uses_interactive_tab_without_print_mode(
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
-    # Sanitize real zellij env to prevent leaks from the host session.
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    # Sanitize real vc_frame env to prevent leaks from the host session.
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", str(LAUNCHER), "init", "claude"],
@@ -390,9 +390,11 @@ def test_init_claude_uses_interactive_tab_without_print_mode(
     )
 
     payload = capture_file.read_text(encoding="utf-8")
-    # When zellij operator session exists, spawn routes directly through zellij
+    # When vc_frame operator session exists, spawn routes directly through vc_frame
     # without opening a new terminal via osascript.
-    assert f"ZELLIJ --session {_expected_operator_session()} action new-tab" in payload
+    assert (
+        f"VC_FRAME --session {_expected_operator_session()} action new-tab" in payload
+    )
 
     command_script = _spawned_command_script(payload)
     script_body = command_script.read_text(encoding="utf-8")
@@ -409,7 +411,7 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_stateful_zellij(fake_bin, capture_file, session_state_file)
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
     _write_fake_osascript(fake_bin, capture_file, session_state_file)
     _write_fake_agent(fake_bin, "codex", tmp_path / "unused-codex.txt")
 
@@ -422,11 +424,11 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
     env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
     env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["FAKE_ZELLIJ_SESSION"] = _expected_operator_session()
-    # Sanitize real zellij env to prevent leaks from the host session.
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    # Sanitize real vc_frame env to prevent leaks from the host session.
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", str(LAUNCHER), "init", "codex"],
@@ -436,9 +438,11 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
     )
 
     payload = capture_file.read_text(encoding="utf-8")
-    # When zellij operator session exists, spawn routes directly through zellij
+    # When vc_frame operator session exists, spawn routes directly through vc_frame
     # without opening a new terminal via osascript.
-    assert f"ZELLIJ --session {_expected_operator_session()} action new-tab" in payload
+    assert (
+        f"VC_FRAME --session {_expected_operator_session()} action new-tab" in payload
+    )
 
     command_script = _spawned_command_script(payload)
     script_body = command_script.read_text(encoding="utf-8")
@@ -562,7 +566,7 @@ def test_vetcoders_shell_entrypoint_stays_thin_facade() -> None:
     assert lib_dir.is_dir()
     for module in [
         "core",
-        "zellij",
+        "vc-frame",
         "prompts",
         "dispatch_core",
         "dispatch_wrappers",
@@ -1727,14 +1731,16 @@ def test_agent_stop_mode_routes_to_core_cli_help() -> None:
     assert "Unknown mode: stop" not in result.stderr
 
 
-def test_dashboard_subcommand_launches_repo_owned_zellij_layout(tmp_path: Path) -> None:
+def test_dashboard_subcommand_launches_repo_owned_vc_frame_layout(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_fake_command(fake_bin, "zellij", capture_file)
+    _write_fake_command(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -1742,9 +1748,9 @@ def test_dashboard_subcommand_launches_repo_owned_zellij_layout(tmp_path: Path) 
     env["CAPTURE_FILE"] = str(capture_file)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     env.pop("VC_FRAME_CONFIG_DIR", None)
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", str(LAUNCHER), "dashboard"],
@@ -1758,18 +1764,20 @@ def test_dashboard_subcommand_launches_repo_owned_zellij_layout(tmp_path: Path) 
     # dashboard (default layout) uses the canonical operator session, no suffix.
     assert _expected_operator_session() in payload
     assert "--new-session-with-layout" in payload
-    assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "dashboard.kdl") in payload
-    assert f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'config' / 'zellij'}" in payload
+    assert (
+        str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "dashboard.kdl") in payload
+    )
+    assert f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'config' / 'vc-frame'}" in payload
 
 
 def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_fake_command(fake_bin, "zellij", capture_file)
+    _write_fake_command(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -1777,9 +1785,9 @@ def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) ->
     env["CAPTURE_FILE"] = str(capture_file)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     env.pop("VC_FRAME_CONFIG_DIR", None)
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", str(LAUNCHER), "start"],
@@ -1792,8 +1800,10 @@ def test_start_subcommand_launches_operator_entrypoint_layout(tmp_path: Path) ->
     assert "--session" in payload
     assert _expected_operator_session() in payload
     assert "--new-session-with-layout" in payload
-    assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "operator.kdl") in payload
-    assert f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'config' / 'zellij'}" in payload
+    assert (
+        str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "operator.kdl") in payload
+    )
+    assert f"VC_FRAME_CONFIG_DIR={REPO_ROOT / 'config' / 'vc-frame'}" in payload
 
 
 def test_resume_subcommand_forwards_session_and_prompt_to_agent(
@@ -1834,16 +1844,16 @@ def test_resume_subcommand_forwards_session_and_prompt_to_agent(
     assert payload == ["resume", "resume-session-123", "Continue the fix"]
 
 
-def test_resume_subcommand_wraps_terminal_runtime_in_zellij_operator_session(
+def test_resume_subcommand_wraps_terminal_runtime_in_vc_frame_operator_session(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_fake_zellij_with_live_session(fake_bin, capture_file, "operator-test")
+    _write_fake_vc_frame_with_live_session(fake_bin, capture_file, "operator-test")
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -1853,9 +1863,9 @@ def test_resume_subcommand_wraps_terminal_runtime_in_zellij_operator_session(
     env["VETCODERS_SPAWN_RUNTIME"] = "terminal"
     env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-test"
     env["CAPTURE_FILE"] = str(capture_file)
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
     env.pop("VIBECRAFTED_RUN_ID", None)
     env.pop("VIBECRAFTED_RUN_LOCK", None)
     env.pop("VIBECRAFTED_SKILL_CODE", None)
@@ -1870,7 +1880,7 @@ def test_resume_subcommand_wraps_terminal_runtime_in_zellij_operator_session(
             "--session",
             "resume-session-789",
             "--prompt",
-            "Continue inside zellij",
+            "Continue inside vc_frame",
         ],
         check=True,
         cwd=REPO_ROOT,
@@ -1931,22 +1941,22 @@ def test_vc_dashboard_wrapper_dispatches_to_dashboard(tmp_path: Path) -> None:
     """vc-dashboard wrapper (symlink) reaches cmd_dashboard, not run_skill."""
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
     wrapper = tmp_path / "vc-dashboard"
 
     home.mkdir()
     fake_bin.mkdir()
     wrapper.symlink_to(LAUNCHER)
-    _write_fake_command(fake_bin, "zellij", capture_file)
+    _write_fake_command(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     result = subprocess.run(
         ["bash", str(wrapper)],
@@ -1961,24 +1971,24 @@ def test_vc_dashboard_wrapper_dispatches_to_dashboard(tmp_path: Path) -> None:
     assert "--new-session-with-layout" in payload
 
 
-def test_dashboard_ls_delegates_to_zellij_list_sessions(tmp_path: Path) -> None:
-    """vibecrafted dashboard ls calls zellij list-sessions, not layout load."""
+def test_dashboard_ls_delegates_to_vc_frame_list_sessions(tmp_path: Path) -> None:
+    """vibecrafted dashboard ls calls vc-frame list-sessions, not layout load."""
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_fake_command(fake_bin, "zellij", capture_file)
+    _write_fake_command(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     result = subprocess.run(
         ["bash", str(LAUNCHER), "dashboard", "ls"],
@@ -1992,24 +2002,24 @@ def test_dashboard_ls_delegates_to_zellij_list_sessions(tmp_path: Path) -> None:
     assert "list-sessions" in payload
 
 
-def test_dashboard_switch_inside_zellij_uses_switch_session(tmp_path: Path) -> None:
-    """dashboard switch from inside Zellij uses 'action switch-session', not attach."""
+def test_dashboard_switch_inside_vc_frame_uses_switch_session(tmp_path: Path) -> None:
+    """dashboard switch from inside vc-frame uses 'action switch-session', not attach."""
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_fake_command(fake_bin, "zellij", capture_file)
+    _write_fake_command(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
-    # Simulate being inside Zellij
-    env["ZELLIJ"] = "0"
-    env["ZELLIJ_PANE_ID"] = "1"
-    env["ZELLIJ_SESSION_NAME"] = "existing-session"
+    # Simulate being inside vc-frame
+    env["VC_FRAME"] = "0"
+    env["VC_FRAME_PANE_ID"] = "1"
+    env["VC_FRAME_SESSION_NAME"] = "existing-session"
 
     result = subprocess.run(
         ["bash", str(LAUNCHER), "dashboard", "switch", "target-session"],
@@ -2023,27 +2033,27 @@ def test_dashboard_switch_inside_zellij_uses_switch_session(tmp_path: Path) -> N
     assert "action" in payload
     assert "switch-session" in payload
     assert "target-session" in payload
-    # Must NOT use 'attach' when inside Zellij
+    # Must NOT use 'attach' when inside vc-frame
     assert "attach" not in payload
 
 
-def test_dashboard_attach_inside_zellij_uses_switch_session(tmp_path: Path) -> None:
-    """dashboard attach from inside Zellij falls through to switch-session."""
+def test_dashboard_attach_inside_vc_frame_uses_switch_session(tmp_path: Path) -> None:
+    """dashboard attach from inside vc-frame falls through to switch-session."""
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_fake_command(fake_bin, "zellij", capture_file)
+    _write_fake_command(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
-    env["ZELLIJ"] = "0"
-    env["ZELLIJ_PANE_ID"] = "1"
-    env["ZELLIJ_SESSION_NAME"] = "existing-session"
+    env["VC_FRAME"] = "0"
+    env["VC_FRAME_PANE_ID"] = "1"
+    env["VC_FRAME_SESSION_NAME"] = "existing-session"
 
     result = subprocess.run(
         ["bash", str(LAUNCHER), "dashboard", "attach", "other-session"],
@@ -2060,23 +2070,23 @@ def test_dashboard_attach_inside_zellij_uses_switch_session(tmp_path: Path) -> N
     assert "attach" not in payload
 
 
-def test_dashboard_switch_outside_zellij_uses_attach(tmp_path: Path) -> None:
-    """dashboard switch from outside Zellij falls through to attach."""
+def test_dashboard_switch_outside_vc_frame_uses_attach(tmp_path: Path) -> None:
+    """dashboard switch from outside vc-frame falls through to attach."""
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_fake_command(fake_bin, "zellij", capture_file)
+    _write_fake_command(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     result = subprocess.run(
         ["bash", str(LAUNCHER), "dashboard", "switch", "target-session"],
@@ -2094,11 +2104,11 @@ def test_dashboard_switch_outside_zellij_uses_attach(tmp_path: Path) -> None:
 def test_dashboard_gc_prunes_dead_sessions(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_gc_zellij(
+    _write_gc_vc_frame(
         fake_bin,
         capture_file,
         "\n".join(
@@ -2115,7 +2125,7 @@ def test_dashboard_gc_prunes_dead_sessions(tmp_path: Path) -> None:
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
-    env["FAKE_ZELLIJ_LISTING"] = "\n".join(
+    env["FAKE_VC_FRAME_LISTING"] = "\n".join(
         [
             "vc-runtime [Created 144h ago]",
             "joyous-hill [Created 72h ago] (EXITED - attach to resurrect)",
@@ -2145,11 +2155,11 @@ def test_dashboard_gc_include_live_prunes_only_stale_detached_sessions(
 ) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_gc_zellij(
+    _write_gc_vc_frame(
         fake_bin,
         capture_file,
         "\n".join(
@@ -2166,7 +2176,7 @@ def test_dashboard_gc_include_live_prunes_only_stale_detached_sessions(
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["CAPTURE_FILE"] = str(capture_file)
-    env["FAKE_ZELLIJ_LISTING"] = "\n".join(
+    env["FAKE_VC_FRAME_LISTING"] = "\n".join(
         [
             "active-one [Created 72h ago] (current)",
             "stale-live [Created 72h ago]",
