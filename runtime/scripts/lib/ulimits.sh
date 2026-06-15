@@ -17,25 +17,39 @@ vc_ulimit_is_positive_int() {
 
 vc_ulimit_raise_nofile() {
   local requested="${VC_ULIMIT_NOFILE:-}"
-  local hard=""
-  local target=""
+  local soft="" hard="" target=""
+
+  soft="$(ulimit -Sn 2>/dev/null || true)"
+  hard="$(ulimit -Hn 2>/dev/null || true)"
+
+  # Soft cap already unlimited: raising it can only LOWER the headroom the
+  # fleet relies on. A clamp to a fixed number here (the old 65536) starves
+  # high-FD agents into EMFILE crashes. Leave an unlimited soft cap alone.
+  [[ "$soft" == "unlimited" ]] && return 0
 
   if [[ -n "$requested" ]]; then
     target="$requested"
+  elif [[ "$hard" == "unlimited" ]]; then
+    # Unlimited hard ceiling — lift the soft cap all the way to it. The kernel
+    # still clamps real opens at kern.maxfilesperproc, so this never overshoots.
+    target="unlimited"
+  elif vc_ulimit_is_positive_int "$hard"; then
+    target="$hard"
   else
-    hard="$(ulimit -Hn 2>/dev/null || true)"
-    if vc_ulimit_is_positive_int "$hard"; then
-      target="$hard"
-    else
-      target="65536"
-    fi
-  fi
-
-  if ulimit -S -n "$target" 2>/dev/null; then
+    # No trustworthy ceiling to raise toward; leave the current limit as-is
+    # rather than guessing a number that might be a decrease.
     return 0
   fi
 
-  if [[ -z "$requested" && "$target" != "65536" ]] && ulimit -S -n 65536 2>/dev/null; then
+  # Never DECREASE an existing numeric soft limit — only raise toward the hard
+  # ceiling. This is the invariant that the old fixed-65536 fallback violated.
+  if [[ "$target" != "unlimited" ]] \
+     && vc_ulimit_is_positive_int "$soft" \
+     && [[ "$target" -le "$soft" ]]; then
+    return 0
+  fi
+
+  if ulimit -S -n "$target" 2>/dev/null; then
     return 0
   fi
 
