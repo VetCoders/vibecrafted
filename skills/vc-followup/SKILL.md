@@ -1,7 +1,21 @@
 ---
 name: vc-followup
 version: 2.2.0
-description: "Audit-first post-implementation trajectory check; finds drift, gaps, and the next leverage point."
+description: >
+  AUDIT-FIRST post-implementation trajectory check. Evaluates whether
+  the work is heading in the right direction, what gaps remain, what
+  drift was introduced, and what the next highest-leverage move should
+  be. Reads the work in motion — code, runtime behavior, architecture,
+  integration — without requiring a single artifact like a PR or commit
+  range as its frame. Product-surface completeness (packaging, install,
+  discoverability) belongs to `vc-dou`, not here. Sibling to `vc-review`
+  (per-implementation diff perception) and `vc-audit` (per-plan spec
+  falsification) in the AUDIT-FIRST perception layer of the pipeline.
+  Trigger phrases: "follow-up check",
+  "followup audit", "czy sa jeszcze luki", "readiness before hands-on",
+  "audit this implementation", "po implementacji", "gaps after agents",
+  "co zostało do zrobienia", "post-implementation review",
+  "czy to idzie dobrze", "czy ten kierunek ma sens", "what still feels off".
 compatibility:
   tools: []
 loctree_value: "primary repo map for structural/literal repository work"
@@ -28,11 +42,28 @@ dogfooding: "required for repo-impacting work"
 
 # vc-followup — AUDIT-FIRST Trajectory Check
 
-> AUDIT-FIRST perception step. Sibling to `vc-review` (per-diff) and
-> `vc-audit` (per-plan). This one asks **"is the direction healthy?"**
-> across whatever surfaces the operator points at — code, UX, docs,
-> packaging, integration, install path — without a bounded artifact
-> requirement. Produces a report, never modifies code.
+> AUDIT-FIRST perception step. This one asks **"is the direction
+> healthy?"** about the work in motion — code, runtime, architecture,
+> integration — without a bounded artifact requirement. Produces a
+> report, never modifies code.
+
+## Frame — what makes this one distinct
+
+The four AUDIT-FIRST READ skills differ by **frame**, not by depth. Pick
+by what the question is bounded to:
+
+- `vc-review` → a bounded **diff** (PR / branch / commit range): _is this
+  change clean and safe to merge?_
+- `vc-audit` → a bounded **plan** (a written spec claiming completion):
+  _did the claimed work actually land in code?_
+- `vc-followup` → an unbounded **trajectory** (no artifact required):
+  _is the work heading the right way — continue, correct, or escalate?_
+- `vc-dou` → the whole **product surface** from the buyer's frame: _can
+  someone find, trust, try, and buy this?_
+
+Followup judges direction. It does **not** audit shippability — packaging,
+install paths, SEO, and representation are `vc-dou`'s frame. When you smell
+a product-surface gap, name it and hand it to `vc-dou`; do not grade it here.
 
 ## Pipeline Position
 
@@ -125,26 +156,30 @@ Use `vc-followup` when:
 - a task is "working" but still feels off
 - agents finished a pass and you want to see what remains open
 - you want a next-move recommendation after implementation
-- you need a post-implementation audit across code, runtime, UX, docs, or packaging
+- you need a post-implementation read of the work's direction across code,
+  runtime, and architecture
 
 Do not use `vc-followup` when:
 
-- you need findings on a specific PR, branch, or commit range
-- you need line-level review framing
-- the task is still in pre-implementation research mode
-
-In those cases, use `vc-review` or `vc-research`.
+- you need findings on a specific PR, branch, or commit range — that's `vc-review`
+- you need line-level review framing — that's `vc-review`
+- the target is a written plan claiming completion — that's `vc-audit`
+- the question is shippability / product-surface completeness — that's `vc-dou`
+- the task is still in pre-implementation research mode — that's `vc-research`
 
 ## Audit Contract
 
 `vc-followup` should evaluate:
 
-- residual gaps
+- residual gaps in the implementation arc
 - drift from intended shape
 - regressions or fragility
 - mismatches between code and runtime truth
-- missing finish around UX, docs, packaging, onboarding, or installability
+- whether the architecture is converging or fragmenting
 - whether the current direction deserves continuation, correction, or escalation
+
+A product-surface gap (packaging, install, discoverability) gets **named and
+handed to `vc-dou`** — followup flags it, it does not audit it.
 
 The result should not read like a code review.
 It should read like a post-implementation trajectory check.
@@ -162,8 +197,8 @@ If relevant, explicitly separate:
 
 - code gap
 - runtime gap
-- UX gap
-- docs/packaging gap
+- architecture / integration gap
+- (product-surface gap → tagged for `vc-dou`, not graded here)
 
 ## Relationship To Other Skills
 
@@ -180,4 +215,5 @@ Do not:
 - force it to depend on a PR or commit range when the real question is directional
 - return only findings without saying whether the current trajectory is healthy
 - confuse "there are still gaps" with "the direction is wrong"
-- skip product-surface followup and look only at code
+- drift into product-surface auditing (packaging, install, SEO, presence) —
+  that is `vc-dou`'s frame; followup judges the work's direction, not its shippability
