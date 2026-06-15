@@ -1,58 +1,23 @@
 // operator — operator entrypoint
 // Launch: vibecrafted start | vc-start | vibecrafted dashboard operator
 //
-// Design: operator gets a clean, full-screen workspace. Agents spawned via
-// marbles/workflow/research open as ADDITIONAL TABS in this session — visible
-// in the tab bar for at-a-glance monitoring, but never stealing focus from
-// the operator's active pane.
-//
-// Swap layouts let the operator toggle between full-screen work and a
-// split view with a monitoring sidebar — Ctrl+Shift+[ / Ctrl+Shift+].
-//
-// VibeCrafted with AI Agents (c)2026 VetCoders
+// Operator layout = the original, working strider layout.
+// The previous bespoke operator layout shipped a broken strider `cwd`
+// (`${VIBECRAFTED_HOME:-...}` is not expanded in a bare vc-frame layout `cwd`,
+// so strider opened a garbage path and died). The stock strider layout just
+// works: a file browser beside a shell. Agents spawned via marbles/workflow/
+// research still open as ADDITIONAL TABS in this session.
 layout {
-    // Template for dynamically spawned agent tabs — every new-tab gets this
-    // branded chrome automatically. Agents land here, not in operator's pane.
-    // new_tab_template removed: Zellij 0.44 broke `children` inside it.
-    // default_tab_template covers both existing and new tabs.
-    default_tab_template {
-        pane size=1 borderless=true {
-            plugin location="compact-bar"
-        }
-        children
-        pane size=1 borderless=true {
-            plugin location="status-bar"
-        }
+    pane size=1 borderless=true {
+        plugin location="tab-bar"
     }
-
-    // Primary operator tab — focused shell plus artifacts explorer.
-    tab name="Operator" focus=true {
-        pane split_direction="vertical" {
-            pane name="operator" size="68%" focus=true command="bash" start_suspended=false {
-                args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/runtime}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}\" \"./runtime\"; do for mc in \"$root/vc-operator/mission-control/operator-console.sh\" \"$root/scripts/mission-control/operator-console.sh\"; do if [[ -n \"$root\" && -x \"$mc\" ]]; then exec \"$mc\"; fi; done; done; export VIBECRAFTED_OPERATOR_MODE=1; printf 'Vibecrafted Operator\\n\\n'; printf 'Session\\n'; printf '  entrypoint: vc-start\\n'; printf '  agent tabs: new runs open in this session and stay visible in the tab bar\\n\\n'; printf 'Start here\\n'; printf '  vibecrafted workflow codex --prompt \"...\"\\n'; printf '  vibecrafted implement codex --file path/to/brief.md\\n'; printf '  vibecrafted research --prompt \"...\"\\n\\n'; printf 'Watch runs\\n'; printf '  vibecrafted codex observe --run-id <run_id>\\n'; printf '  vibecrafted codex await --run-id <run_id>\\n\\n'; printf 'Artifacts\\n'; printf '  ~/.vibecrafted/artifacts\\n'; printf '  explorer pane opens beside this shell when the terminal is wide enough\\n\\n'; printf 'Leaving\\n'; printf '  close terminal: detach\\n'; printf '  Ctrl+q: quit intentionally\\n\\n'; exec /bin/zsh -l"
-            }
-            pane name="artifacts" size="32%" {
-                plugin location="strider" {
-                    cwd "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/artifacts"
-                }
-            }
+    pane split_direction="Vertical" {
+        pane size="20%" {
+            plugin location="strider"
         }
+        pane
     }
-
-    // Swap layout: operator + monitoring sidebar (toggle with Ctrl+Shift+])
-    swap_tiled_layout name="monitoring" {
-        tab {
-            pane split_direction="vertical" {
-                pane name="operator" size="70%" focus=true
-                pane split_direction="horizontal" size="30%" {
-                    pane name="agents" command="bash" start_suspended=false {
-                        args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/runtime}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}\" \"./runtime\"; do for mc in \"$root/vc-operator/mission-control/active-agents.sh\" \"$root/scripts/mission-control/active-agents.sh\"; do if [[ -n \"$root\" && -x \"$mc\" ]]; then exec \"$mc\"; fi; done; done; printf 'Agent monitor not found.\\n'; exec /bin/zsh -l"
-                    }
-                    pane name="convergence" command="bash" start_suspended=false {
-                        args "-lc" "for root in \"${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/runtime}\" \"${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}\" \"./runtime\"; do for mc in \"$root/vc-operator/mission-control/convergence-trend.sh\" \"$root/scripts/mission-control/convergence-trend.sh\"; do if [[ -n \"$root\" && -x \"$mc\" ]]; then exec \"$mc\"; fi; done; done; printf 'Convergence monitor not found.\\n'; exec /bin/zsh -l"
-                    }
-                }
-            }
-        }
+    pane size=2 borderless=true {
+        plugin location="status-bar"
     }
 }
