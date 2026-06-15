@@ -2,6 +2,12 @@
 # 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. command deck
 set -euo pipefail
 
+# Raise the file-descriptor soft limit up front. The frame (zellij) opens a PTY
+# per pane and dispatch spawns many children; invoked from a low-limit context
+# (GUI/launchd, macOS default 256) the fleet dies with
+# "Too many open files (os error 24)". Raise soft to the hard cap; never fail.
+ulimit -n "$(ulimit -Hn 2>/dev/null)" 2>/dev/null || ulimit -n 184320 2>/dev/null || true
+
 _expand_home_path() {
   local raw="${1:-}"
   case "$raw" in
