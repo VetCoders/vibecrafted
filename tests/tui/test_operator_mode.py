@@ -173,6 +173,32 @@ def test_vc_start_launches_operator_entrypoint_layout(tmp_path: Path) -> None:
     assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "operator.kdl") in payload
 
 
+def test_operator_console_first_screen_is_actionable() -> None:
+    payload = (
+        REPO_ROOT
+        / "runtime"
+        / "vc-operator"
+        / "mission-control"
+        / "operator-console.sh"
+    ).read_text(encoding="utf-8")
+
+    expected_fragments = [
+        "Vibecrafted Operator",
+        "vc-start",
+        "vibecrafted workflow codex --prompt",
+        "vibecrafted implement codex --file",
+        "vibecrafted research --prompt",
+        "vibecrafted codex observe --run-id",
+        "vibecrafted codex await --run-id",
+        "~/.vibecrafted/artifacts",
+        "close terminal: detach",
+        "Ctrl+q: quit intentionally",
+    ]
+
+    for fragment in expected_fragments:
+        assert fragment in payload
+
+
 def test_helper_exports_vc_skill_wrappers() -> None:
     expected_wrappers = [
         "vc-agents",

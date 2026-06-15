@@ -98,6 +98,16 @@ def test_operator_layout_has_swap_layouts() -> None:
     assert "swap_tiled_layout" in payload
 
 
+def test_operator_layout_has_artifacts_explorer_pane() -> None:
+    """Operator first screen exposes run artifacts beside the usable shell."""
+    payload = (LAYOUTS_DIR / "operator.kdl").read_text(encoding="utf-8")
+
+    assert 'pane name="operator" size="68%" focus=true' in payload
+    assert 'pane name="artifacts"' in payload
+    assert 'plugin location="strider"' in payload
+    assert 'cwd "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/artifacts"' in payload
+
+
 def test_workflow_layout_has_swap_layouts() -> None:
     """Workflow layout should support solo/dual swap modes."""
     payload = (LAYOUTS_DIR / "workflow.kdl").read_text(encoding="utf-8")
