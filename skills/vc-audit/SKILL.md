@@ -1,7 +1,17 @@
 ---
 name: vc-audit
 version: 1.0.0
-description: "Read-only falsification of completed plans; proves or refuses claims against code, tests, and artifacts."
+description: >
+  READ-ONLY falsification of a completed plan or multi-task
+  implementation. Builds a per-task requirements matrix, then proves
+  or refuses each claim against code + tests evidence. Default verdict
+  is UNVERIFIED — PASS is earned, never assumed. Runs whenever a
+  written plan claims completion, regardless of upstream — workflow,
+  implement, marbles, human work, or a mix. Trigger phrases: "audit",
+  "vc-audit", "task-by-task audit", "verify implementation plan",
+  "spec falsification", "post-marbles audit", "did this plan actually
+  land", "weryfikuj implementację", "audyt planu", "co naprawdę
+  wylądowało", "falsyfikacja completion".
 default: vc-audit
 aliases:
   - vc-verify

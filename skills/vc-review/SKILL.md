@@ -1,7 +1,19 @@
 ---
 name: vc-review
 version: 2.0.0
-description: "Read-only bounded code review using prview artifacts and evidence-graded findings."
+description: >
+  READ-ONLY bounded code review. Generates structured artifacts with
+  prview-rs, then runs findings-max analysis with falsification-first
+  discipline. Every finding carries an explicit evidence grade
+  (STRONG / MEDIUM / WEAK / NONE) and either passes or fails an
+  adversarial pass. Stage-aware verdicts prevent mid-stage PRs from
+  being judged as fully-staged. Per-implementation perception step
+  in the pipeline; for per-plan post-marbles falsification use
+  `vc-audit` instead; for trajectory direction checking use
+  `vc-followup`. Trigger phrases: "review PR", "analyze branch",
+  "run prview", "sprawdź PR", "zrób review", "daj findings",
+  "zbadaj branch", "artifact pack", "PR quality check", "merge gate",
+  "findings-max", "deep review".
 default: vc-review
 aliases:
   - vc-pr
