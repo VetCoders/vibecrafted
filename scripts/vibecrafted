@@ -348,6 +348,23 @@ _dispatcher_core_dir() {
   return 1
 }
 
+# Resolve the interpreter that owns vibecrafted_core. `vibecrafted` is a
+# `uv tool install` package, so the canonical interpreter is the uv tool venv
+# python — it has vibecrafted_core + every dependency. Bare `python3` is the
+# SYSTEM interpreter (e.g. /opt/homebrew python@3.14) which lacks vibecrafted_core,
+# so any launcher run under it propagates a broken `sys.executable` into the
+# spawned dispatcher.sh (ModuleNotFoundError: No module named 'vibecrafted_core').
+_vibecrafted_python() {
+  local candidate
+  for candidate in \
+    "${VIBECRAFTED_PYTHON:-}" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-core/bin/python3" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-core/bin/python"; do
+    [[ -n "$candidate" && -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  command -v python3 2>/dev/null || command -v python 2>/dev/null || printf 'python3\n'
+}
+
 _sync_control_plane_best_effort() {
   local script_path
   script_path="$(_control_plane_script 2>/dev/null || true)"
@@ -1835,7 +1852,7 @@ cmd_ship() {
     printf '%b✗%b Vibecrafted Core module not found.\n' "$_red" "$_reset" >&2
     return 1
   }
-  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.ship "$@"
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" "$(_vibecrafted_python)" -m vibecrafted_core.ship "$@"
 }
 
 cmd_dispatch() {
@@ -1851,10 +1868,10 @@ cmd_dispatch() {
     return 1
   }
   if [[ "${1:-}" == "run" ]]; then
-    PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.dispatcher "$@"
+    PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" "$(_vibecrafted_python)" -m vibecrafted_core.dispatcher "$@"
     return $?
   fi
-  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.dispatch.cli "$@"
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" "$(_vibecrafted_python)" -m vibecrafted_core.dispatch.cli "$@"
 }
 
 cmd_core_workflow_skill() {
@@ -1871,7 +1888,7 @@ cmd_core_workflow_skill() {
     return 1
   }
   PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
-    python3 -m vibecrafted_core.cli "$core_skill" "$agent" --source-dir "$(_script_repo_root)" "$@"
+    "$(_vibecrafted_python)" -m vibecrafted_core.cli "$core_skill" "$agent" --source-dir "$(_script_repo_root)" "$@"
 }
 
 cmd_init() {
@@ -2366,7 +2383,7 @@ cmd_stop() {
     printf '%b✗%b Vibecrafted Core module not found.\n' "$_red" "$_reset" >&2
     return 1
   }
-  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" python3 -m vibecrafted_core.cli "$agent" stop "$@"
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" "$(_vibecrafted_python)" -m vibecrafted_core.cli "$agent" stop "$@"
 }
 
 run_mode() {
