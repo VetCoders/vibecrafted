@@ -230,6 +230,7 @@ pub mod api {
     {}
   </section>
 </main>
+{}
 </body>
 </html>"#,
             editor_css(),
@@ -244,7 +245,8 @@ pub mod api {
             url_component(&workspace.org),
             url_component(&workspace.repo),
             url_component(&workspace.day),
-            panels
+            panels,
+            save_on_close_guard()
         )
     }
 
@@ -321,6 +323,69 @@ pub mod api {
         )
     }
 
+    /// App-wide save-on-close guard for the editable artifact panels.
+    ///
+    /// The editor persisted only on an explicit "Save artifact" click, so
+    /// closing the window/tab (Cmd-W), or the SPA tearing the editor iframe
+    /// down on navigation, silently dropped any Markdown typed in the moments
+    /// before the click. This guard tracks dirty state per `editor-form` and
+    /// flushes every dirty buffer to the existing `POST /api/scaffold/artifact`
+    /// endpoint via `navigator.sendBeacon` on `pagehide` (iframe teardown / tab
+    /// close) and `beforeunload` (Cmd-W). It introduces no new persistence
+    /// path: it re-uses each form's own `action`, never the checkpoint form,
+    /// and only warns natively when a beacon flush is impossible.
+    fn save_on_close_guard() -> &'static str {
+        r#"<script>
+(function () {
+  var forms = Array.prototype.slice.call(
+    document.querySelectorAll("form.editor-form")
+  );
+  forms.forEach(function (form) {
+    var ta = form.querySelector("textarea[name=content]");
+    if (!ta) return;
+    form.dataset.baseline = ta.value;
+    ta.addEventListener("input", function () {
+      form.dataset.dirty = ta.value !== form.dataset.baseline ? "1" : "";
+    });
+    form.addEventListener("submit", function () {
+      form.dataset.baseline = ta.value;
+      form.dataset.dirty = "";
+    });
+  });
+
+  function flush() {
+    if (!navigator.sendBeacon) return;
+    forms.forEach(function (form) {
+      if (form.dataset.dirty !== "1") return;
+      var ta = form.querySelector("textarea[name=content]");
+      try {
+        var body = new URLSearchParams(new FormData(form));
+        if (navigator.sendBeacon(form.getAttribute("action"), body)) {
+          form.dataset.dirty = "";
+          if (ta) form.dataset.baseline = ta.value;
+        }
+      } catch (e) {}
+    });
+  }
+
+  function anyDirty() {
+    return forms.some(function (form) {
+      return form.dataset.dirty === "1";
+    });
+  }
+
+  window.addEventListener("pagehide", flush);
+  window.addEventListener("beforeunload", function (ev) {
+    flush();
+    if (anyDirty()) {
+      ev.preventDefault();
+      ev.returnValue = "";
+    }
+  });
+})();
+</script>"#
+    }
+
     fn hidden_context(workspace: &ScaffoldWorkspace, artifact_id: &str) -> String {
         format!(
             r#"<input type="hidden" name="org" value="{}">
@@ -380,5 +445,75 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
                 }
             })
             .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use control_core::{
+            ScaffoldArtifact, ScaffoldArtifactKind, ScaffoldCheckpoint, ScaffoldWorkspace,
+        };
+
+        fn fixture() -> ScaffoldWorkspace {
+            ScaffoldWorkspace {
+                org: "VetCoders".into(),
+                repo: "vibecrafted".into(),
+                day: "2026_0615".into(),
+                operator_dir: "/tmp/op".into(),
+                changes_path: "/tmp/op/.scaffold-changes.jsonl".into(),
+                checkpoints_path: "/tmp/op/.scaffold-checkpoints.json".into(),
+                artifacts: vec![ScaffoldArtifact {
+                    id: "master-dispatch".into(),
+                    title: "Master Dispatch".into(),
+                    kind: ScaffoldArtifactKind::WaveAtlas,
+                    path: "/tmp/op/master-dispatch.md".into(),
+                    relative_path: "operator/master-dispatch.md".into(),
+                    content: "# atlas".into(),
+                    bytes: 7,
+                    modified_at: "2026-06-15T00:00:00Z".into(),
+                    checkpoint: ScaffoldCheckpoint::default(),
+                }],
+            }
+        }
+
+        #[test]
+        fn editor_embeds_save_on_close_guard() {
+            let html = render_editor(&fixture());
+            // Flush on teardown, not just on the explicit Save click.
+            assert!(
+                html.contains("navigator.sendBeacon"),
+                "editor must flush unsaved edits via sendBeacon on close"
+            );
+            // pagehide covers iframe teardown on SPA nav + tab close.
+            assert!(
+                html.contains("\"pagehide\""),
+                "missing pagehide handler (sidebar/SPA teardown + tab close)"
+            );
+            // beforeunload covers Cmd-W / window close.
+            assert!(
+                html.contains("\"beforeunload\""),
+                "missing beforeunload handler (Cmd-W / window close)"
+            );
+            // Dirty tracking is scoped to the editable artifact panels.
+            assert!(
+                html.contains("form.editor-form"),
+                "guard must target the editable artifact panels"
+            );
+        }
+
+        #[test]
+        fn guard_reuses_typed_endpoint_and_skips_checkpoints() {
+            let guard = save_on_close_guard();
+            // No parallel persistence path: the guard posts to each form's own
+            // action (the typed /api/scaffold/artifact endpoint), nothing new.
+            assert!(
+                guard.contains("form.getAttribute(\"action\")"),
+                "guard must reuse the form's own typed save endpoint"
+            );
+            assert!(
+                !guard.contains("checkpoint"),
+                "checkpoint approval is a deliberate action and must not auto-flush"
+            );
+        }
     }
 }
