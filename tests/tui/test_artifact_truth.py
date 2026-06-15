@@ -10,13 +10,18 @@ AWAIT_SH = REPO_ROOT / "runtime" / "scripts" / "await.sh"
 
 
 def _bash(script: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", "-lc", script],
-        check=True,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        return subprocess.run(
+            ["bash", "-c", script],
+            check=True,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"STDOUT: {e.stdout}")
+        print(f"STDERR: {e.stderr}")
+        raise
 
 
 def _finalized_run(tmp_path: Path) -> tuple[Path, Path, Path]:

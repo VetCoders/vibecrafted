@@ -1,28 +1,19 @@
 ---
 name: vc-workflow
 version: 1.0.0
-description: "Structured repo workflow: examine with Loctree, research when needed, implement and converge."
+description: >
+  This skill should be used when the user asks to "examine and implement",
+  "research then implement", "zbadaj i zaimplementuj", "workflow", "pipeline",
+  "examine → research → implement", "full workflow", "ERi pipeline", "ERi",
+  "plan and implement", "analyze then build", "structured implementation",
+  "przebadaj repo i zaimplementuj", or describes a task that requires
+  understanding code structure before making changes. Orchestrates a
+  three-phase pipeline: Examine (loctree), Research (Brave Search / web),
+  Implement (subagents). Each phase feeds context to the next.
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
-
-<!-- fleet-imperative: v2 -->
-
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
->
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
->
-> The sole native in-process carve-out is `vc-delegate`.
-
-<!-- /fleet-imperative -->
 
 # 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Workflow — ERi Pipeline
 
@@ -42,7 +33,7 @@ Before this workflow performs repo-specific analysis, planning, implementation, 
 
 The point is to find the hooks: load-bearing hubs, twins, dead code, drift, runtime entrypoints, and blast-radius traps. If the task is explicitly non-repo or no-code, state the no-repo exception in the report. Otherwise, missing `vc-init`/Loctree evidence is a process failure.
 
-Standard launcher:
+Standard launcher (`vibecrafted start` / `vc-start`, then `vc-<workflow> <agent> [--prompt|--file ...]`).
 
 ```bash
 vibecrafted workflow claude --prompt 'Examine auth surface and implement fixes'
@@ -88,9 +79,8 @@ Canonical artifact root: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/{
 Final Markdown artifacts use `%Y-%m-%d_<org>_<repo>_<full_session_id>-<kind>.md`
 (`kind=report,plan,tracker,research,...`) with matching `.transcript.log` and
 `.meta.json` sidecars. `CONTEXT.md` and `RESEARCH.md` live in `plans/` as
-`<ts>_<slug>_CONTEXT.md` and `<ts>_<slug>_RESEARCH.md`. Runtime path resolution
-is owned by the shared runtime path/session helpers and the dispatch supervisor;
-do not pin this contract to one historical shell function.
+`<ts>_<slug>_CONTEXT.md` and `<ts>_<slug>_RESEARCH.md`. `../../runtime/scripts/common.sh`
+`spawn_prepare_paths()` is the source of truth for day-root resolution.
 Repo-local `.vibecrafted/plans` and `.vibecrafted/reports` are convenience
 symlinks only.
 

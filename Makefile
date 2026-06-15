@@ -48,7 +48,7 @@ help-dev:
 
 vibecrafted: install
 
-install: init-hooks
+tui-installer: init-hooks
 	@if ! command -v uv >/dev/null 2>&1; then \
 		echo "bootstrapping uv..."; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
@@ -91,13 +91,13 @@ wizard: init-hooks
 	echo "[wizard] Launching wizard with bundle from $$site_repo/site/dist"; \
 	$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)" --bundle-dir "$$site_repo/site/dist"
 
-gui-install: wizard
+gui-installer: wizard
 
 # Development helper preserved as an explicit alias for LiveInstaller work.
 # `make wizard` already rebuilds the sibling site when it is available.
 wizard-dev: wizard
 
-install-auto: init-hooks
+install-all: init-hooks
 	@if ! command -v uv >/dev/null 2>&1; then \
 		echo "bootstrapping uv..."; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
@@ -118,7 +118,7 @@ else
 INSTALL_QUIET := >> "$(INSTALL_LOG)" 2>&1
 endif
 
-install-all:
+install:
 	@mkdir -p "$(HOME)/.vibecrafted"
 	@: > "$(INSTALL_LOG)"
 	@printf "Installing Vibecrafted\n"
@@ -129,7 +129,7 @@ install-all:
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app and server" -- bash -e -c 'make --no-print-directory install-app-binaries; make --no-print-directory install-server'
 	@printf "\nVibecrafted is ready.\n\nStart here:\n  vc-start\n\nHealth:\n  vibecrafted doctor\n\nLog:\n  ~/.vibecrafted/install.log\n"
 
-install-python-tools:
+install-tools:
 	@if ! command -v uv >/dev/null 2>&1; then \
 		echo "bootstrapping uv..."; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
@@ -148,7 +148,7 @@ APP_DIR := vibecrafted-app
 APP_BINARIES := voc vc-admin
 BIN_DIR := $(HOME)/.local/bin
 
-install-app-binaries:
+install-app:
 	@command -v cargo >/dev/null 2>&1 || { \
 		echo "[app] cargo not found — install rustup (https://rustup.rs) to build $(APP_BINARIES)" >&2; \
 		exit 1; \
