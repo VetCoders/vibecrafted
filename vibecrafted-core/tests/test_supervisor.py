@@ -204,3 +204,36 @@ def test_subscribe_events_reads_appended_events(
     assert len(events) == 1
     assert events[0].kind == "unit"
     assert events[0].payload == {"ok": True}
+
+
+def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
+    """The footer totals are written for every agent; the regex extractor must
+    read them so research-swarm meta never lands at 0 for gemini/junie/grok
+    (only codex/claude formatters render the per-event token line)."""
+    from vibecrafted_core.spawn import _extract_tokens
+
+    # gemini-style: only the closure footer carries usage, no per-event line.
+    gemini_transcript = (
+        "[04:09] gemini body text\n"
+        "\x1b[32m[04:49] done\x1b[0m\n"
+        "---\n"
+        "runner: vibecrafted\n"
+        "model: gemini-3.1-pro-preview\n"
+        "tokens_input: 648618\n"
+        "tokens_cached_input: 0\n"
+        "tokens_output: 1680\n"
+        "tokens_total: 650298\n"
+    )
+    assert _extract_tokens(gemini_transcript)["total"] == 650298
+
+    # junie-style footer, no per-event render line either.
+    junie_transcript = "tokens_input: 5000\ntokens_output: 200\ntokens_total: 5200\n"
+    assert _extract_tokens(junie_transcript)["output"] == 200
+
+    # Footer present alongside a per-event line must NOT double count.
+    both = "tokens: 12 in / 7 out\ntokens_input: 12\ntokens_output: 7\n"
+    assert _extract_tokens(both)["total"] == 19
+
+    # No footer: fall back to the per-event line (backward compatible).
+    legacy = "[12:00] tokens: 12 in / 7 out\n"
+    assert _extract_tokens(legacy)["total"] == 19

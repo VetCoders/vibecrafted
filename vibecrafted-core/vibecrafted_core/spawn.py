@@ -33,6 +33,17 @@ TOKEN_PATTERN = re.compile(
     r"tokens:\s*([0-9]+)\s+in(?:\s*\(([0-9]+)\s+cached\))?\s*/\s*([0-9]+)\s+out",
     re.IGNORECASE,
 )
+# Authoritative per-run totals emitted by the run-closure footer
+# (supervisor_async writes these for EVERY agent). Preferred over the
+# per-event `tokens: N in / N out` lines, which only some provider
+# formatters render and which would otherwise sum partial streaming usage.
+FOOTER_TOKEN_PATTERNS = {
+    "input": re.compile(r"^tokens_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE),
+    "cached_input": re.compile(
+        r"^tokens_cached_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
+    ),
+    "output": re.compile(r"^tokens_output:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE),
+}
 COST_PATTERNS = (
     re.compile(r"cost(?:_usd)?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
     re.compile(r"\$([0-9]+\.[0-9]+)\s*(?:usd)?", re.IGNORECASE),
@@ -254,6 +265,22 @@ def _extract_session(text: str) -> str:
 
 def _extract_tokens(text: str) -> dict[str, int]:
     clean = _clean_text(text)
+    # Prefer the authoritative run-closure footer totals when present: they are
+    # written for every agent and carry the final per-run usage, so they work
+    # uniformly across providers and never sum partial streaming deltas.
+    footer_in = FOOTER_TOKEN_PATTERNS["input"].findall(clean)
+    footer_out = FOOTER_TOKEN_PATTERNS["output"].findall(clean)
+    if footer_in or footer_out:
+        footer_cached = FOOTER_TOKEN_PATTERNS["cached_input"].findall(clean)
+        input_tokens = int(footer_in[-1]) if footer_in else 0
+        cached_tokens = int(footer_cached[-1]) if footer_cached else 0
+        output_tokens = int(footer_out[-1]) if footer_out else 0
+        return {
+            "input": input_tokens,
+            "cached_input": cached_tokens,
+            "output": output_tokens,
+            "total": input_tokens + output_tokens,
+        }
     found = TOKEN_PATTERN.findall(clean)
     if not found:
         return {"input": 0, "cached_input": 0, "output": 0, "total": 0}
