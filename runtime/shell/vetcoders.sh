@@ -37,13 +37,17 @@ _vetcoders_resolve_shell_lib_dir() {
 
 _vetcoders_source_shell_module() {
   local module_name="$1"
-  local module_path="${_vetcoders_shell_lib_dir}/${module_name}.sh"
-  [[ -r "$module_path" ]] || {
-    printf 'Missing Vibecrafted shell module: %s\n' "$module_path" >&2
+  # NOTE: do NOT name this `module_path` — that is a reserved zsh special
+  # parameter (the zmodload .so search path). Shadowing it with a file path
+  # corrupts the autoload of `zsh/rlimits` (which provides `ulimit` in zsh),
+  # spamming dlopen errors on every shell start.
+  local module_file="${_vetcoders_shell_lib_dir}/${module_name}.sh"
+  [[ -r "$module_file" ]] || {
+    printf 'Missing Vibecrafted shell module: %s\n' "$module_file" >&2
     return 1
   }
   # shellcheck disable=SC1090
-  source "$module_path"
+  source "$module_file"
 }
 
 _vetcoders_source_workflow_module() {
@@ -52,13 +56,15 @@ _vetcoders_source_workflow_module() {
   # is the runtime root that hosts the per-workflow dirs.
   local workflow_name="$1"
   local module_name="$2"
-  local module_path="${_vetcoders_shell_lib_dir%/shell/lib}/${workflow_name}/shell/${module_name}.sh"
-  [[ -r "$module_path" ]] || {
-    printf 'Missing Vibecrafted workflow shell module: %s\n' "$module_path" >&2
+  # See note in _vetcoders_source_shell_module: `module_path` is a reserved zsh
+  # special parameter; never shadow it with a plain file path.
+  local module_file="${_vetcoders_shell_lib_dir%/shell/lib}/${workflow_name}/shell/${module_name}.sh"
+  [[ -r "$module_file" ]] || {
+    printf 'Missing Vibecrafted workflow shell module: %s\n' "$module_file" >&2
     return 1
   }
   # shellcheck disable=SC1090
-  source "$module_path"
+  source "$module_file"
 }
 
 _vetcoders_shell_lib_dir="$(_vetcoders_resolve_shell_lib_dir 2>/dev/null || true)"
