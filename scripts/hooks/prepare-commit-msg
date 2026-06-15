@@ -34,6 +34,14 @@ else
 fi
 
 session_id_raw="${CODEX_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-${ATUIN_SESSION:-}}}"
+# Git hooks do not receive the harness stdin the way Claude/Codex session hooks
+# do, so the env vars above are often empty in this subprocess. Ask aicx — it
+# authoritatively knows the current session per runtime — before inventing a
+# random UUID, so the session_id trailer keeps real provenance (commit ->
+# transcript -> aicx chunks).
+if [ -z "$session_id_raw" ] && command -v aicx >/dev/null 2>&1; then
+    session_id_raw="$(aicx sessions current 2>/dev/null || true)"
+fi
 if printf '%s' "$session_id_raw" | grep -Eq '^[0-9a-fA-F]{32}$'; then
     session_id="$(printf '%s' "$session_id_raw" | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/' | tr 'A-F' 'a-f')"
 elif printf '%s' "$session_id_raw" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
