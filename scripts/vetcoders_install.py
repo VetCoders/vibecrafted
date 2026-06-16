@@ -2042,6 +2042,20 @@ _CONTROL_PLANE_EXCLUDES = {
     ".pytest_cache",
     ".venv",
     "__pycache__",
+    # Regenerable build artifacts — never belong in the staged control-plane
+    # mirror. Without these the mirror balloons (a Swift-app DerivedData/build
+    # tree took vibecrafted-local to 47G and filled the disk, which surfaced as
+    # rsync "No space left on device" during install).
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "DerivedData",
+    ".build",
+    ".next",
+    ".air",
+    ".mypy_cache",
+    ".ruff_cache",
 }
 
 
@@ -2136,7 +2150,12 @@ def sync_control_plane_tree(
         return
     dst.mkdir(parents=True, exist_ok=True)
     if shutil.which("rsync"):
-        cmd = ["rsync", "-a"]
+        # --copy-dirlinks: materialise dir-symlinks (the dev compat-shims at
+        # top-level runtime/ and skills/ that point into the packaged tree) as
+        # real directories in the staged mirror. Without it, rsync tries to
+        # replace the destination's existing real dirs with symlinks and fails
+        # with exit 23 ("could not make way for new symlink: runtime/skills").
+        cmd = ["rsync", "-a", "--copy-dirlinks"]
         for name in sorted(_CONTROL_PLANE_EXCLUDES):
             cmd += ["--exclude", name]
         if mirror:

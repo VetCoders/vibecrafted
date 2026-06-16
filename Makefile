@@ -118,6 +118,11 @@ else
 INSTALL_QUIET := >> "$(INSTALL_LOG)" 2>&1
 endif
 
+# Headless entrypoint for install.sh (curl|bash). Mirrors the full
+# non-interactive install. Was previously undefined, so the piped
+# `curl ... | bash` path ran `make install-auto` as a silent no-op.
+install-auto: install
+
 install:
 	@mkdir -p "$(HOME)/.vibecrafted"
 	@: > "$(INSTALL_LOG)"
@@ -129,12 +134,18 @@ install:
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app and server" -- bash -e -c 'make --no-print-directory install-app-binaries; make --no-print-directory install-server'
 	@printf "\nVibecrafted is ready.\n\nStart here:\n  vc-start\n\nHealth:\n  vibecrafted doctor\n\nLog:\n  ~/.vibecrafted/install.log\n"
 
+# `make install` calls `install-python-tools`; it was an empty .PHONY name
+# (no recipe) so the uv-tool install never ran during `make install`. Alias it
+# to the real recipe.
+install-python-tools: install-tools
+
 install-tools:
 	@if ! command -v uv >/dev/null 2>&1; then \
 		echo "bootstrapping uv..."; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	fi; \
 	export PATH="$$HOME/.local/bin:$$PATH"; \
+	uv tool uninstall vibecrafted-core >/dev/null 2>&1 || true; \
 	uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-core"; \
 	uv tool install --force --reinstall --editable "$(SOURCE)/plugins/iterm2"; \
 	uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-mcp" --with-editable "$(SOURCE)/vibecrafted-core"
