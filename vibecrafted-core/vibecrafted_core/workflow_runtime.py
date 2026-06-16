@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+from .package_resources import package_root
 from .spawn import _stdin_command
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 
@@ -185,7 +186,7 @@ def _read_prompt_file(path: str) -> str:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return package_root()
 
 
 def _user_config_path() -> Path:

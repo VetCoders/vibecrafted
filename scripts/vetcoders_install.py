@@ -754,6 +754,8 @@ def discover_skills(repo_root: Path) -> List[Path]:
     """Find all default 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skill directories."""
     skills: List[Path] = []
     skills_dir = repo_root / "skills"
+    if not skills_dir.is_dir():
+        skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
     if not skills_dir.exists() or not skills_dir.is_dir():
         return skills
 
@@ -1747,7 +1749,7 @@ def _launcher_bin_dirs() -> List[Path]:
 def _find_launcher_wrapper(name: str) -> Optional[Path]:
     for launcher_bin_dir in _launcher_bin_dirs():
         candidate = launcher_bin_dir / name
-        if candidate.exists():
+        if candidate.exists() or candidate.is_symlink():
             return candidate
     return None
 
@@ -2148,10 +2150,17 @@ def sync_control_plane_tree(
 
 
 def _is_framework_source_root(repo_root: Path) -> bool:
+    skills_dir = repo_root / "skills"
+    packaged_skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
+    runtime_dir = repo_root / "runtime"
+    packaged_runtime_dir = (
+        repo_root / "vibecrafted-core" / "vibecrafted_core" / "runtime"
+    )
     return (
         (repo_root / "VERSION").is_file()
         and (repo_root / "scripts" / "vibecrafted").is_file()
-        and (repo_root / "skills").is_dir()
+        and (skills_dir.is_dir() or packaged_skills_dir.is_dir())
+        and (runtime_dir.is_dir() or packaged_runtime_dir.is_dir())
     )
 
 
@@ -4476,6 +4485,11 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     return 0
 
 
+def _uv_tool_shim() -> Path:
+    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(data_home) / "uv" / "tools" / "vibecrafted" / "bin" / "vibecrafted"
+
+
 def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -> None:
     """Install vibecrafted launcher to portable and compat bin surfaces."""
     launcher_src = repo_root / "scripts" / "vibecrafted"
@@ -4485,7 +4499,25 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
             canonical_bin_dir = vibecrafted_launcher_bin()
             canonical_bin_dir.mkdir(parents=True, exist_ok=True)
             canonical_launcher = canonical_bin_dir / "vibecrafted"
-            _copy_managed_launcher(launcher_src, canonical_launcher)
+
+            # Target 1: The installer must leave the uv-tool shim winning ~/.local/bin/vibecrafted.
+            # Do NOT copy the bash deck over that name. The deck stays reachable under its own path
+            # as a delegation target.
+            shim = _uv_tool_shim()
+            if canonical_launcher.exists() or canonical_launcher.is_symlink():
+                if canonical_launcher.is_symlink():
+                    try:
+                        link_target = Path(os.readlink(canonical_launcher))
+                    except OSError:
+                        link_target = Path("")
+                    if link_target != shim:
+                        canonical_launcher.unlink()
+                        create_symlink(shim, canonical_launcher)
+                else:
+                    canonical_launcher.unlink()
+                    create_symlink(shim, canonical_launcher)
+            else:
+                create_symlink(shim, canonical_launcher)
 
             canonical_legacy = canonical_bin_dir / "vibecraft"
             if legacy_redirect_src.exists():
@@ -4507,6 +4539,8 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
                         create_symlink(canonical_legacy, legacy_dst)
         else:
             for launcher_bin_dir in _launcher_bin_dirs():
+                shim = _uv_tool_shim()
+                create_symlink(shim, launcher_bin_dir / "vibecrafted", dry_run=True)
                 for wrapper in LAUNCHER_WRAPPERS:
                     if wrapper in PYTHON_ENTRYPOINT_LAUNCHERS:
                         continue

@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from .package_resources import deck_path, runtime_path, skills_path
+
 _INSTALLER_MODULE: Any | None = None
 
 
@@ -22,7 +24,7 @@ class _Finding:
 
 def _uv_tool_shim() -> Path:
     data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(data_home) / "uv" / "tools" / "vibecrafted-core" / "bin" / "vibecrafted"
+    return Path(data_home) / "uv" / "tools" / "vibecrafted" / "bin" / "vibecrafted"
 
 
 def _launcher_shim_findings(
@@ -43,7 +45,7 @@ def _launcher_shim_findings(
                 "warn",
                 "launcher",
                 "vibecrafted not found on PATH — run the installer or "
-                "`uv tool install vibecrafted-core`",
+                "`uv tool install vibecrafted`",
             )
         ]
     path = Path(resolved)
@@ -120,21 +122,51 @@ def _installer_module() -> Any:
     return vetcoders_install
 
 
+def _packaged_asset_findings() -> list[_Finding]:
+    checks = (
+        (
+            "runtime",
+            runtime_path() / "scripts" / "await.sh",
+            "packaged runtime scripts present",
+        ),
+        (
+            "skills",
+            skills_path() / "vc-justdo" / "SKILL.md",
+            "packaged canonical skills present",
+        ),
+        ("deck", deck_path(), "packaged command deck present"),
+    )
+    findings: list[_Finding] = []
+    for component, path, ok_message in checks:
+        if path.is_file():
+            findings.append(_Finding("ok", component, ok_message))
+        else:
+            findings.append(
+                _Finding("fail", component, f"missing package asset: {path}")
+            )
+    return findings
+
+
 def doctor_run(
     store_path: str | Path | None = None,
     state: Any | None = None,
 ) -> list[Any]:
     """Run the existing Vibecrafted installer doctor through a package API."""
-    installer = _installer_module()
-    resolved_store = (
-        Path(store_path)
-        if store_path is not None
-        else installer._canonical_store_path(installer.vibecrafted_home())
-    )
-    resolved_state = (
-        state if state is not None else installer.InstallState.load(resolved_store)
-    )
-    findings = list(installer.run_doctor(resolved_store, resolved_state))
+    try:
+        installer = _installer_module()
+    except ModuleNotFoundError:
+        findings = _packaged_asset_findings()
+    else:
+        resolved_store = (
+            Path(store_path)
+            if store_path is not None
+            else installer._canonical_store_path(installer.vibecrafted_home())
+        )
+        resolved_state = (
+            state if state is not None else installer.InstallState.load(resolved_store)
+        )
+        findings = list(installer.run_doctor(resolved_store, resolved_state))
+        findings.extend(_packaged_asset_findings())
     findings.extend(_launcher_shim_findings())
     return findings
 

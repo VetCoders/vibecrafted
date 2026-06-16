@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from ..package_resources import runtime_path
 from ..runtime_paths import vibecrafted_tools_home
 from .model import WorkflowCadence, WorkflowDefinition
 
@@ -167,10 +168,6 @@ def workflow_lifecycle() -> tuple[WorkflowDefinition, ...]:
     )
 
 
-def _source_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
 def _workflow_dirs(workflow_id: str) -> list[Path]:
     candidates: list[Path] = []
     override = str(os.environ.get("VIBECRAFTED_WORKFLOWS_DIR") or "").strip()
@@ -178,7 +175,7 @@ def _workflow_dirs(workflow_id: str) -> list[Path]:
         candidates.append(Path(override).expanduser() / workflow_id)
     candidates.extend(
         [
-            _source_root() / "runtime" / "workflows" / workflow_id,
+            runtime_path() / "workflows" / workflow_id,
             vibecrafted_tools_home()
             / "vibecrafted-local"
             / "runtime"

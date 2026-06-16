@@ -566,7 +566,7 @@ def test_vetcoders_shell_entrypoint_stays_thin_facade() -> None:
     assert lib_dir.is_dir()
     for module in [
         "core",
-        "vc-frame",
+        "vc_frame",
         "prompts",
         "dispatch_core",
         "dispatch_wrappers",
@@ -1243,6 +1243,7 @@ def test_autonomous_delivery_skills_route_to_core_async_launcher(
     env["CAPTURE_FILE"] = str(capture_file)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VIBECRAFTED_PYTHON"] = str(fake_bin / "python3")
 
     subprocess.run(
         ["bash", str(LAUNCHER), skill, "codex", "--prompt", "Ship the cut"],

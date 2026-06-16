@@ -1,11 +1,29 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 from vibecrafted_core import wrappers
 from vibecrafted_core import workflow
+
+
+def test_deck_path_resolves_packaged_command_deck() -> None:
+    deck = wrappers.deck_path()
+
+    assert deck.name == "vibecrafted"
+    assert deck.parent.name == "deck"
+    assert deck.is_file()
+
+
+def test_run_env_uses_current_interpreter_and_packaged_runtime() -> None:
+    env = wrappers._env_for_run("impl-test", "impl")
+
+    assert env["VIBECRAFTED_PYTHON"] == sys.executable
+    assert env["VIBECRAFTED_ROOT"] == str(wrappers.runtime_root())
+    assert Path(env["VIBECRAFTED_ROOT"]).name == "runtime"
 
 
 def test_resume_main_routes_captured_session_through_vc_frame_aware_resume_helper(

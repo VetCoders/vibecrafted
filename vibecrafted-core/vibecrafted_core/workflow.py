@@ -25,6 +25,7 @@ from .control_plane import (
     run_snapshot_dir,
     sync_state,
 )
+from .package_resources import deck_path as package_deck_path
 from .events import append_event
 from .spawn import _stdin_command
 from .workflow_runtime import research_agent_selection
@@ -65,7 +66,7 @@ class WorkflowLaunchSpec:
 
 
 def vibecrafted_launcher(source_dir: str | Path) -> Path:
-    return Path(source_dir).resolve() / "scripts" / "vibecrafted"
+    return package_deck_path()
 
 
 def _run_id(skill: str) -> str:

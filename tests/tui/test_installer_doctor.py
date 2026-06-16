@@ -404,6 +404,20 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
         source_root / "scripts" / "vibecrafted",
         (REPO_ROOT / "scripts" / "vibecrafted").read_text(encoding="utf-8"),
     )
+    (home / ".local" / "share" / "uv" / "tools" / "vibecrafted" / "bin").mkdir(
+        parents=True
+    )
+    _write_executable(
+        home
+        / ".local"
+        / "share"
+        / "uv"
+        / "tools"
+        / "vibecrafted"
+        / "bin"
+        / "vibecrafted",
+        "#!/usr/bin/env bash\nprintf 'uv-tool vibecrafted shim\\n'\n",
+    )
     (source_root / "VERSION").write_text("1.4.1-test\n", encoding="utf-8")
 
     _write_executable(

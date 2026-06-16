@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+import importlib.util
 from pathlib import Path
 
 from vibecrafted_core import workflow
@@ -56,16 +58,17 @@ def test_registry_models_read_write_lifecycle() -> None:
 
 
 def test_prune_default_prompt_is_runtime_workflow_asset() -> None:
+    assert importlib.util.find_spec("vibecrafted_core.package_resources") is not None
+    package_resources = importlib.import_module("vibecrafted_core.package_resources")
     prompt = registry.workflow_default_prompt("prune")
 
     assert "Repository health / prune ACTION run." in prompt
     assert "No deletion on vibes. Prove every cut." in prompt
+    assert registry._workflow_dirs("prune")[0] == (
+        package_resources.runtime_path() / "workflows" / "prune"
+    )
     assert (
-        registry._source_root()
-        / "runtime"
-        / "workflows"
-        / "prune"
-        / "default_prompt.md"
+        package_resources.runtime_path() / "workflows" / "prune" / "default_prompt.md"
     ).is_file()
 
 

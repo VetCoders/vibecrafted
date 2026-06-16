@@ -12,6 +12,8 @@ from typing import Any, Sequence
 
 from . import control_plane
 from .events import append_event
+from .package_resources import deck_path as package_deck_path
+from .package_resources import package_root, runtime_path
 from .spawn import Supervisor
 
 AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
@@ -27,11 +29,15 @@ SKILL_PREFIX = {
 
 
 def repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path.cwd()
+
+
+def runtime_root() -> Path:
+    return runtime_path()
 
 
 def deck_path() -> Path:
-    return repo_root() / "scripts" / "vibecrafted"
+    return package_deck_path()
 
 
 def _has_flag(args: Sequence[str], name: str) -> bool:
@@ -65,9 +71,10 @@ def _env_for_run(run_id: str, skill_code: str) -> dict[str, str]:
     env = os.environ.copy()
     env["VIBECRAFTED_RUN_ID"] = run_id
     env["VIBECRAFTED_SKILL_CODE"] = skill_code
-    env.setdefault("VIBECRAFTED_ROOT", str(repo_root()))
+    env.setdefault("VIBECRAFTED_ROOT", str(runtime_root()))
+    env.setdefault("VIBECRAFTED_PYTHON", sys.executable)
     env.setdefault("VETCODERS_SPAWN_RUNTIME", "headless")
-    core_path = str(repo_root() / "vibecrafted-core")
+    core_path = str(package_root().parent)
     env["PYTHONPATH"] = f"{core_path}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(
         os.pathsep
     )
@@ -269,9 +276,9 @@ def research_main(argv: Sequence[str] | None = None) -> int:
 
 def research_await_main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    script = repo_root() / "runtime" / "scripts" / "await.sh"
+    script = runtime_root() / "scripts" / "await.sh"
     return subprocess.call(
-        ["bash", str(script), "--research", *args], cwd=str(repo_root())
+        ["bash", str(script), "--research", *args], cwd=str(Path.cwd())
     )
 
 

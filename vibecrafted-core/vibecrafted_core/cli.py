@@ -12,6 +12,7 @@ from typing import Any, Sequence
 from . import doctor as doctor_module
 from .agent_stream import ANSI_PATTERN, AgentStreamParser, resolve_default_model
 from .control_plane import RunNotResolved, lookup_run, resolve_run, sync_state
+from .package_resources import deck_path, package_root
 from .workflow import await_launch_truth, launch_workflow, normalize_launch_spec
 
 AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "swarm"}
@@ -422,8 +423,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             vibecrafted_tools_home() / "vibecrafted-current" / "scripts" / "vibecrafted"
         )
         if not deck.is_file():
-            package_root = Path(__file__).resolve().parents[2]
-            deck = package_root / "scripts" / "vibecrafted"
+            deck = deck_path()
         if deck.is_file():
             res = subprocess.run([str(deck), *raw_args])
             return res.returncode
@@ -466,7 +466,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         return 0 if summary["failures"] == 0 else 1
 
-    source_dir = args.source_dir or Path(__file__).resolve().parents[2]
+    source_dir = args.source_dir or package_root()
     payload = {
         "skill": LAUNCH_ALIASES.get(args.command, args.command),
         "agent": args.agent,

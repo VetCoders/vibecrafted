@@ -34,7 +34,7 @@ def test_discover_bundle_skills_tracks_live_skill_surface() -> None:
 
 
 def test_top_level_skill_dirs_are_live_skills_or_foundations() -> None:
-    allowed_non_skill_dirs = {"experimental", "foundations"}
+    allowed_non_skill_dirs = {"experimental", "foundations", "pl"}
     offenders: list[str] = []
 
     for path in sorted((bundle.REPO_ROOT / "skills").iterdir()):
