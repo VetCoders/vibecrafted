@@ -99,6 +99,17 @@ impl ControlPlane {
         self.control_plane_home().join("runs")
     }
 
+    /// `<home>/control_plane/runtime_runs/<id>` — where the core runtime writes
+    /// a run (`prompt.md`/`transcript.log`; `meta.json` optional) before the
+    /// snapshot sync merges it into `runs/<id>.json`. Mirrors the Python
+    /// `control_plane._runtime_run_dir`.
+    #[must_use]
+    pub fn runtime_run_dir(&self, run_id: &str) -> PathBuf {
+        self.control_plane_home()
+            .join("runtime_runs")
+            .join(run_id)
+    }
+
     /// `<home>/control_plane/events.jsonl`.
     #[must_use]
     pub fn event_stream_path(&self) -> PathBuf {
@@ -156,9 +167,67 @@ impl ControlPlane {
                 return Some(run);
             }
         }
-        self.load_snapshots()
+        if let Some(run) = self
+            .load_snapshots()
             .into_iter()
             .find(|run| run.run_id == target)
+        {
+            return Some(run);
+        }
+        // Read-follows-write: a still-launching run lives in runtime_runs/ before
+        // the snapshot sync merges it into runs/<id>.json. Mirror the first probe
+        // of control_plane.resolve_run so this frontend eye reads the same place
+        // the runtime wrote (Niezmiennik 3 — one contract, many eyes).
+        self.resolve_runtime_run(target)
+    }
+
+    /// Resolve a run straight from `runtime_runs/<id>/` — the read-follows-write
+    /// fallback mirroring `control_plane.resolve_run`. A just-launched run lives
+    /// here (`transcript.log`; `meta.json` optional and frequently absent at
+    /// launch) before the Python sync merges it into the `runs/` snapshots.
+    /// Returns a minimal `launching` [`RunStatus`] carrying the transcript path
+    /// so the frontend surfaces it instead of a silent miss. `None` when the run
+    /// directory does not exist yet (the "still launching → await" case).
+    #[must_use]
+    pub fn resolve_runtime_run(&self, run_id: &str) -> Option<RunStatus> {
+        let target = run_id.trim();
+        if target.is_empty() {
+            return None;
+        }
+        let dir = self.runtime_run_dir(target);
+        if !dir.is_dir() {
+            return None;
+        }
+        let transcript = dir.join("transcript.log");
+        let latest_transcript = if transcript.is_file() {
+            transcript.to_string_lossy().into_owned()
+        } else {
+            String::new()
+        };
+        Some(RunStatus {
+            run_id: target.to_string(),
+            state: "launching".to_string(),
+            agent: String::new(),
+            skill: String::new(),
+            mode: String::new(),
+            root: String::new(),
+            operator_session: String::new(),
+            latest_report: String::new(),
+            latest_transcript,
+            last_error: String::new(),
+            updated_at: String::new(),
+            started_at: String::new(),
+            health: "active".to_string(),
+            source: "runtime_runs".to_string(),
+            lock_present: false,
+            exit_code: None,
+            liveness: String::new(),
+            launcher_pid: None,
+            completed_at: String::new(),
+            session_id: String::new(),
+            current_loop: None,
+            total_loops: None,
+        })
     }
 
     /// Read the newest-first event tail (default [`crate::model::EVENT_TAIL_LIMIT`]).
