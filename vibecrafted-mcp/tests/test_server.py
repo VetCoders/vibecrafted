@@ -278,6 +278,38 @@ def _write_observe_fixture(
     }
 
 
+def test_observe_falls_back_to_runtime_runs_when_snapshot_lags(
+    tmp_path: Path,
+) -> None:
+    """A just-launched run lives in ``runtime_runs/`` before the snapshot sync
+    merges it. observe must read it there (Niezmiennik 3) — not a silent miss."""
+    home = tmp_path / ".vibecrafted"
+    run_id = "marb-launching-1"
+    run_dir = home / "control_plane" / "runtime_runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "transcript.log").write_text("launching-bytes", encoding="utf-8")
+
+    payload = server._observe_run_once(run_id, home=str(home))
+
+    assert payload["found"] is True
+    assert payload["state"] == "launching"
+    assert payload["transcript"]["bytes"] > 0
+    assert payload["transcript"]["text"].startswith("launching")
+
+
+def test_observe_reports_missing_when_run_not_on_disk_yet(tmp_path: Path) -> None:
+    """A run id with nothing on disk (RunNotResolved) resolves to a benign
+    ``missing`` — loud-by-absence, never a crash."""
+    home = tmp_path / ".vibecrafted"
+    (home / "control_plane").mkdir(parents=True)
+
+    payload = server._observe_run_once("ghost-run", home=str(home))
+
+    assert payload["found"] is False
+    assert payload["state"] == "missing"
+    assert payload["transcript"]["bytes"] == 0
+
+
 def test_vc_loct_capabilities_routes_to_core(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 

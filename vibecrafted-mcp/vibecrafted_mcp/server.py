@@ -271,6 +271,26 @@ def _report_ready(run: dict[str, Any] | None) -> bool:
         return False
 
 
+def _resolve_run_location(run_id: str) -> Any | None:
+    """Read-follows-write fallback to where the runtime actually wrote a run.
+
+    ``lookup_run`` reads the merged ``runs/<id>.json`` snapshots, which lag a
+    still-launching run. ``control_plane.resolve_run`` probes ``runtime_runs/``
+    (where the core runtime writes) first, then legacy ``artifacts/``. Returns
+    the resolved :class:`control_plane.ResolvedRun`, or ``None`` when the run is
+    not on disk yet (``RunNotResolved`` — the "still launching → await" case) so
+    observe surfaces that loudly instead of a silent transcript miss. This is
+    the MCP eye reading the same contract as observe/await/CLI (Niezmiennik 3).
+    """
+    target = str(run_id or "").strip()
+    if not target:
+        return None
+    try:
+        return _control_plane.resolve_run(target)
+    except _control_plane.RunNotResolved:
+        return None
+
+
 def _observe_run_once(
     run_id: str,
     *,
@@ -295,16 +315,33 @@ def _observe_run_once(
         transcript_path = str(
             (run or {}).get("latest_transcript") or (run or {}).get("transcript") or ""
         )
+        resolved = None
+        if not transcript_path:
+            # Snapshot has no transcript yet — read-follows-write: probe where
+            # the runtime wrote (runtime_runs/), then legacy artifacts/. Closes
+            # the observe split-brain so a fresh run is not a silent miss.
+            resolved = _resolve_run_location(target)
+            if resolved is not None and resolved.transcript is not None:
+                transcript_path = str(resolved.transcript)
         transcript = _bounded_text_read(
             transcript_path,
             offset=transcript_offset,
             max_bytes=max_bytes,
         )
 
+    if run is not None:
+        state = (run or {}).get("health") or (run or {}).get("state") or "missing"
+    elif resolved is not None:
+        # Run dir exists where the runtime writes, but the snapshot sync has not
+        # merged it yet — report it as launching, never a silent "missing".
+        state = "launching"
+    else:
+        state = "missing"
+
     return {
         "run_id": target,
-        "found": run is not None,
-        "state": (run or {}).get("health") or (run or {}).get("state") or "missing",
+        "found": run is not None or resolved is not None,
+        "state": state,
         "operator_state": (run or {}).get("operator_state", "") if run else "",
         "cursor": {
             "event_offset": next_event_offset,
