@@ -362,13 +362,35 @@ spawn_python_core_path() {
   return 1
 }
 
+# Resolve an interpreter that can import vibecrafted_core. The package needs
+# tomllib (Python 3.11+); bare `python3` on macOS is often /usr/bin/python3 3.9.6
+# which lacks tomllib, so vibecrafted_core dies with ModuleNotFoundError. Prefer
+# the uv tool venv python (has the package + deps), then VIBECRAFTED_PYTHON, then
+# any 3.11+ python on PATH.
+spawn_python_bin() {
+  local candidate
+  for candidate in \
+    "${VIBECRAFTED_PYTHON:-}" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-core/bin/python3" \
+    python3.13 python3.12 python3.11 python3; do
+    [[ -n "$candidate" ]] || continue
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  printf 'python3\n'
+}
+
 spawn_python_module() {
-  local core_path
+  local core_path py
   core_path="$(spawn_python_core_path 2>/dev/null || true)"
+  py="$(spawn_python_bin)"
   if [[ -n "$core_path" ]]; then
-    PYTHONPATH="${core_path}${PYTHONPATH:+:$PYTHONPATH}" python3 -m "$@"
+    PYTHONPATH="${core_path}${PYTHONPATH:+:$PYTHONPATH}" "$py" -m "$@"
   else
-    python3 -m "$@"
+    "$py" -m "$@"
   fi
 }
 

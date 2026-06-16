@@ -290,8 +290,12 @@ def test_terminal_spawn_refuses_osascript_fallback_when_vc_frame_fails(
         text=True,
     )
 
-    assert result.returncode != 0
-    assert "Refusing AppleScript/iTerm fallback" in result.stderr
+    # Degrade, don't die: with no vc-frame operator session the terminal runtime
+    # falls back to headless and hands off to observe — it must NEVER reach for
+    # the AppleScript/iTerm fallback.
+    assert result.returncode == 0
+    assert "running headless" in result.stderr
+    assert "observe" in result.stderr
     assert vc_frame_capture.exists()
     assert not osa_capture.exists()
 

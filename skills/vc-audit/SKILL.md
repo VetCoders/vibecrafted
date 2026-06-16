@@ -48,12 +48,14 @@ dogfooding: "required for repo-impacting work"
 
 <!-- /fleet-imperative -->
 
-# vc-audit — READ-ONLY Plan-vs-Code Falsifier
+# vc-audit — READ-ONLY Plan-vs.-Code Falsifier
 
 > The falsification charter. Where `vc-review` says **"findings-max on
-> a diff"** and `vc-marbles` says **"plaster every crack in excess"**,
-> this one says **"default UNVERIFIED — PASS is earned, never assumed,
-> and the auditor never touches the code"**.
+> a diff"** and `vc-followup` says **"is that codebase going in the desired
+> direction"**, this one says \*\*"default UNVERIFIED — PASS is earned, but
+> Agents reports are just claims that vere not verified for real task completion.
+> Noone ever tested this code in real life scenarios
+> Noone ever
 
 ---
 
@@ -104,7 +106,7 @@ or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`
 
 ## Purpose
 
-Use this skill when a written plan, spec, or multi-task brief **claims
+Use this skill when a written plan, spec, or multitask brief **claims
 completion**. The implementation may have come from `vc-workflow`,
 `vc-implement`, `vc-marbles`, human work, or any combination — audit
 refuses to take the completion claim at face value regardless of
@@ -122,11 +124,11 @@ output is a verdict matrix, a report, and a trace — nothing else.
 
 Use `vc-audit` when:
 
-- a written plan / spec / multi-task brief claims completion
+- a written plan / spec / multitask brief claims completion
 - the operator hands over a directory of task files plus a checkout
 - `vc-marbles` finished a round and the codebase claims to satisfy
   the brief; audit checks what actually landed
-- a PR + written spec pair needs spec-vs-code falsification (not just
+- a PR + written spec pair needs spec-vs.-code falsification (not just
   diff hygiene — that's `vc-review`)
 
 Do **not** use this skill when:
@@ -205,8 +207,8 @@ phase detail in [`PHASES.md`](PHASES.md).
 2. **Task Ingestion Receipt** — full-read every task; emit `Tasks Loaded` table
 3. **Atomic Requirements Extraction** — testable items into `audit_requirements_matrix.jsonl`
 4. **Positive + Negative Code Verification** — loctree-first, both checks
-5. **Adversarial Pass** — actively prove implementation incomplete (5 sub-checks)
-6. **Stage-Aware Verdict** — landed vs deferred scope
+5. **Adversarial Pass** — actively prove implementation incomplete (five sub-checks)
+6. **Stage-Aware Verdict** — landed vs. deferred scope
 7. **Per-Task Verdict Table** — one row per task, no narrative collapse
 8. **Self-Attack Pass + Model Check** — attack PASS verdicts; emit `model_confidence`
 
@@ -234,7 +236,7 @@ P1 (key criterion missing), P2 (test/report/process gap), P3 (cosmetic).
    `STAGE_CHECK`, `CLASSIFY`, `SELF_ATTACK`, `WRITE_REPORT`, `END`)
 
 Executive verdict MUST include task counts per verdict, P0/P1/P2/P3
-counts, top 5 risks, next 5 actions, and `model_confidence: high |
+counts, top 5 risks, next five actions, and `model_confidence: high |
 medium | low`.
 
 Operator dispatch template lives in [`DISPATCH.md`](DISPATCH.md).
@@ -271,7 +273,7 @@ Do not in audit mode:
 - skip the adversarial pass or self-attack
 - treat Stage 1 landed as full-plan PASS
 - treat Stage 2 deferred as full-plan FAIL
-- produce only the report without matrix + trace
+- produce only the report without a matrix + trace
 - trust AICX / kronika / memory slices as repo truth
 - bypass Loctree on importer-graph / blast-radius / dead-code questions
 - protect your first verdict during self-attack instead of downgrading
@@ -319,4 +321,4 @@ UNVERIFIED is the only mood that ages well.  (._.)
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders ©2024–2026 LibraxisAI_
