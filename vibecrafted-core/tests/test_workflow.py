@@ -164,6 +164,7 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.delenv("VIBECRAFTED_OPERATOR_SESSION", raising=False)
     monkeypatch.setenv("VC_FRAME_SESSION_NAME", "operator-live")
     source = _source_dir(tmp_path)
     vc_frame = tmp_path / "bin" / "vc-frame"
@@ -189,6 +190,7 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
         "which",
         lambda name: str(vc_frame) if name == "vc-frame" else None,
     )
+    monkeypatch.setattr(workflow, "_vc_frame_session_active", lambda _vc, _s: True)
 
     captured: dict[str, Any] = {}
 
@@ -234,10 +236,76 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert payload["control"].endswith(f"{payload['run_id']}.json")
 
 
+def test_terminal_runtime_degrades_to_headless_when_session_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VC_FRAME_SESSION_NAME", "vibecrafted")
+    source = _source_dir(tmp_path)
+    vc_frame = tmp_path / "bin" / "vc-frame"
+    vc_frame.parent.mkdir()
+    vc_frame.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    spec = workflow.WorkflowLaunchSpec(
+        agent="codex",
+        mode="implement",
+        skill="implement",
+        prompt="go",
+        file="",
+        runtime="terminal",
+        root=str(tmp_path),
+    )
+    monkeypatch.setattr(workflow, "_stdin_command", lambda _agent: ["codex", "exec"])
+    monkeypatch.setattr(
+        workflow.shutil,
+        "which",
+        lambda name: str(vc_frame) if name == "vc-frame" else None,
+    )
+    # Requested operator session is not live -> must degrade, not strand worker.
+    monkeypatch.setattr(workflow, "_vc_frame_session_active", lambda _vc, _s: False)
+
+    captured: dict[str, Any] = {}
+
+    class FakeProc:
+        pid = 7777
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProc:
+        captured["command"] = command
+        return FakeProc()
+
+    monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is True
+    assert payload["transport"] == "headless"
+    # Headless transport runs the dispatcher directly, not a vc-frame new-tab.
+    assert str(vc_frame) not in captured["command"]
+    assert "vibecrafted_core.dispatcher" in " ".join(captured["command"])
+
+
+def test_vc_frame_session_active_parses_list_sessions(tmp_path: Path) -> None:
+    vc_frame = tmp_path / "vc-frame"
+    vc_frame.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "list-sessions" ]; then '
+        'printf "\\033[32;1mvc-frame\\033[m [Created 2h ago]\\n"; '
+        'printf "\\033[32;1maicx\\033[m [Created 3h ago]\\n"; fi\n',
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+
+    assert workflow._vc_frame_session_active(str(vc_frame), "vc-frame") is True
+    assert workflow._vc_frame_session_active(str(vc_frame), "aicx") is True
+    assert workflow._vc_frame_session_active(str(vc_frame), "vibecrafted") is False
+    assert workflow._vc_frame_session_active(str(vc_frame), "") is False
+
+
 def test_research_terminal_runtime_uses_vc_frame_research_layout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.delenv("VIBECRAFTED_OPERATOR_SESSION", raising=False)
     monkeypatch.setenv("VC_FRAME_SESSION_NAME", "operator-live")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     source = _source_dir(tmp_path)
@@ -259,6 +327,7 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
         "which",
         lambda name: str(vc_frame) if name == "vc-frame" else None,
     )
+    monkeypatch.setattr(workflow, "_vc_frame_session_active", lambda _vc, _s: True)
 
     captured: dict[str, Any] = {}
 

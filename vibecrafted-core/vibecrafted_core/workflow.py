@@ -455,6 +455,38 @@ def _write_research_layout(
     return path
 
 
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
+    """True only if `session` is a live vc-frame session.
+
+    A terminal-runtime launch opens a new tab in an existing operator session
+    (`vc-frame --session <name> action new-tab`). If that session does not
+    exist, vc-frame prints "Session '<name>' not found" and the tab — and the
+    dispatcher inside it — never runs, leaving the worker dead. Probe the live
+    session list first so the caller can degrade to headless instead.
+    """
+    if not session:
+        return False
+    try:
+        result = subprocess.run(
+            [vc_frame, "list-sessions"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if result.returncode != 0:
+        return False
+    for line in result.stdout.splitlines():
+        clean = _ANSI_SGR.sub("", line).strip()
+        if clean and clean.split()[0] == session:
+            return True
+    return False
+
+
 def _launch_transport_command(
     *,
     spec: WorkflowLaunchSpec,
@@ -476,6 +508,11 @@ def _launch_transport_command(
 
     vc_frame = shutil.which("vc-frame")
     if not vc_frame:
+        return dispatch_command, "headless", None
+
+    # Degrade-not-die: a terminal launch into a non-existent operator session
+    # would open no tab and silently strand the worker. Fall back to headless.
+    if not _vc_frame_session_active(vc_frame, operator_session):
         return dispatch_command, "headless", None
 
     command_script = _write_command_script(
