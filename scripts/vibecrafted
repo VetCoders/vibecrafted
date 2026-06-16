@@ -348,20 +348,28 @@ _dispatcher_core_dir() {
   return 1
 }
 
-# Resolve the interpreter that owns vibecrafted_core. `vibecrafted` is a
-# `uv tool install` package, so the canonical interpreter is the uv tool venv
-# python — it has vibecrafted_core + every dependency. Bare `python3` is the
-# SYSTEM interpreter (e.g. /opt/homebrew python@3.14) which lacks vibecrafted_core,
-# so any launcher run under it propagates a broken `sys.executable` into the
-# spawned dispatcher.sh (ModuleNotFoundError: No module named 'vibecrafted_core').
+# Resolve the interpreter that owns vibecrafted_core by reading the shebang
+# from the uv-tool shim on PATH, since it carries the correct uv python.
 _vibecrafted_python() {
-  local candidate
-  for candidate in \
-    "${VIBECRAFTED_PYTHON:-}" \
-    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-core/bin/python3" \
-    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-core/bin/python"; do
-    [[ -n "$candidate" && -x "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
-  done
+  local resolved shebang py
+  if [[ -n "${VIBECRAFTED_PYTHON:-}" && -x "$VIBECRAFTED_PYTHON" ]]; then
+    printf '%s\n' "$VIBECRAFTED_PYTHON"
+    return 0
+  fi
+  resolved="$(command -v vibecrafted 2>/dev/null || true)"
+  if [[ -n "$resolved" && -f "$resolved" ]]; then
+    shebang="$(head -n 1 "$resolved" 2>/dev/null || true)"
+    if [[ "$shebang" =~ ^#\! ]]; then
+      py="${shebang#\#!}"
+      # Strip leading/trailing whitespace
+      py="${py#"${py%%[![:space:]]*}"}"
+      py="${py%"${py##*[![:space:]]}"}"
+      if [[ -x "$py" ]]; then
+        printf '%s\n' "$py"
+        return 0
+      fi
+    fi
+  fi
   command -v python3 2>/dev/null || command -v python 2>/dev/null || printf 'python3\n'
 }
 
@@ -2374,16 +2382,28 @@ cmd_resume() {
   _run_helper vc-resume "$agent" "$@"
 }
 
-cmd_stop() {
+# Core owns the agent lifecycle verbs (observe / await / stop): they resolve a
+# run read-follows-write via resolve_run (runtime_runs/ first, artifacts/ fallback,
+# else a loud "still launching"). Route them straight to the core CLI — never the
+# legacy shell helper / observe.sh, which reads only artifacts/ and would emit
+# "No metadata" for a run the core already tracks. Closes the split-brain on the
+# path the tarball puts on PATH (the deck), not just in cli:main.
+cmd_lifecycle() {
   local agent="$1"
-  shift || true
+  local verb="$2"
+  shift 2 || true
   local core_dir
   core_dir="$(_dispatcher_core_dir 2>/dev/null || true)"
   [[ -n "$core_dir" ]] || {
     printf '%b✗%b Vibecrafted Core module not found.\n' "$_red" "$_reset" >&2
     return 1
   }
-  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" "$(_vibecrafted_python)" -m vibecrafted_core.cli "$agent" stop "$@"
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" "$(_vibecrafted_python)" -m vibecrafted_core.cli "$agent" "$verb" "$@"
+}
+
+# Back-compat thin wrapper; prefer cmd_lifecycle.
+cmd_stop() {
+  cmd_lifecycle "$1" stop "${@:2}"
 }
 
 run_mode() {
@@ -2405,10 +2425,12 @@ run_mode() {
     printf '\n'
     return 0
   fi
-  if [[ "$mode" == "stop" ]]; then
-    cmd_stop "$agent" "$@"
-    return
-  fi
+  case "$mode" in
+    observe|await|stop)
+      cmd_lifecycle "$agent" "$mode" "$@"
+      return
+      ;;
+  esac
   _ensure_helpers_loaded || return 1
   _run_helper "${agent}-${mode}" "$@"
 }
