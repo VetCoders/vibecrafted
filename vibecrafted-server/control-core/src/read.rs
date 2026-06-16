@@ -105,9 +105,7 @@ impl ControlPlane {
     /// `control_plane._runtime_run_dir`.
     #[must_use]
     pub fn runtime_run_dir(&self, run_id: &str) -> PathBuf {
-        self.control_plane_home()
-            .join("runtime_runs")
-            .join(run_id)
+        self.control_plane_home().join("runtime_runs").join(run_id)
     }
 
     /// `<home>/control_plane/events.jsonl`.
@@ -230,6 +228,29 @@ impl ControlPlane {
         })
     }
 
+    /// Every run currently materialised under `runtime_runs/` as a minimal
+    /// `launching` [`RunStatus`]. The aggregate counterpart to
+    /// [`Self::resolve_runtime_run`]; used by [`Self::compute_view`] so a fresh
+    /// run shows on the dashboard before the snapshot sync merges it.
+    fn iter_runtime_run_status(&self) -> Vec<RunStatus> {
+        let root = self.control_plane_home().join("runtime_runs");
+        let Ok(entries) = fs::read_dir(&root) else {
+            return Vec::new();
+        };
+        let mut runs = Vec::new();
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            if let Some(name) = entry.file_name().to_str() {
+                if let Some(run) = self.resolve_runtime_run(name) {
+                    runs.push(run);
+                }
+            }
+        }
+        runs
+    }
+
     /// Read the newest-first event tail (default [`crate::model::EVENT_TAIL_LIMIT`]).
     #[must_use]
     pub fn read_event_tail(&self, limit: usize) -> Vec<Event> {
@@ -279,6 +300,15 @@ impl ControlPlane {
                 .and_then(|state| state.normalize(now))
             {
                 absorb(status);
+            }
+        }
+        // runtime_runs/: a just-launched run no richer source has surfaced yet.
+        // Read-follows-write — keeps the dashboard from a silent gap before the
+        // sync merges the run (Niezmiennik 3). Only fills run ids no meta/lock/
+        // marbles source already provided.
+        for run in self.iter_runtime_run_status() {
+            if !merged.iter().any(|r| r.run_id == run.run_id) {
+                merged.push(run);
             }
         }
 
