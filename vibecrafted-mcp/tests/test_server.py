@@ -297,6 +297,24 @@ def test_observe_falls_back_to_runtime_runs_when_snapshot_lags(
     assert payload["transcript"]["text"].startswith("launching")
 
 
+def test_status_resource_resolves_launching_run_from_runtime_runs(
+    tmp_path: Path,
+) -> None:
+    """The status resource must also see a still-launching run (runtime_runs/),
+    not just observe — same contract, same eye (Niezmiennik 3)."""
+    home = tmp_path / ".vibecrafted"
+    run_id = "marb-status-launching-1"
+    run_dir = home / "control_plane" / "runtime_runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "transcript.log").write_text("launching", encoding="utf-8")
+
+    with server._override_vibecrafted_home(str(home)):
+        payload = server._run_status_resource_payload(run_id)
+
+    assert payload["found"] is True
+    assert payload["state"] == "launching"
+
+
 def test_observe_reports_missing_when_run_not_on_disk_yet(tmp_path: Path) -> None:
     """A run id with nothing on disk (RunNotResolved) resolves to a benign
     ``missing`` — loud-by-absence, never a crash."""

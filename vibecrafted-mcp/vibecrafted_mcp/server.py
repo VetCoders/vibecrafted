@@ -391,10 +391,12 @@ def _observe_run(
 
 def _run_status_resource_payload(run_id: str) -> dict[str, Any]:
     run = _control_plane.lookup_run(run_id)
+    resolved = _resolve_run_location(run_id) if run is None else None
     return {
         "run_id": run_id,
-        "found": run is not None,
+        "found": run is not None or resolved is not None,
         "run": run,
+        "state": "launching" if (run is None and resolved is not None) else "",
         "operator_state": (run or {}).get("operator_state", "") if run else "",
         "artifact_gate": (run or {}).get("artifact_gate", "") if run else "",
         "terminal": _run_terminal(run),
@@ -407,9 +409,16 @@ def _run_report_resource_payload(run_id: str) -> dict[str, Any]:
     report_path = str(
         (run or {}).get("latest_report") or (run or {}).get("report") or ""
     )
+    resolved = None
+    if not report_path:
+        # Read-follows-write: a run not yet in the snapshots may already have a
+        # report under runtime_runs/ (resolve_run reads it from meta.json there).
+        resolved = _resolve_run_location(run_id)
+        if resolved is not None and resolved.report is not None:
+            report_path = str(resolved.report)
     return {
         "run_id": run_id,
-        "found": run is not None,
+        "found": run is not None or resolved is not None,
         "report": _bounded_text_read(report_path, max_bytes=OBSERVE_MAX_BYTES),
     }
 
