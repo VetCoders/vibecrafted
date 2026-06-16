@@ -11,7 +11,7 @@ from typing import Any, Sequence
 
 from . import doctor as doctor_module
 from .agent_stream import ANSI_PATTERN, AgentStreamParser, resolve_default_model
-from .control_plane import lookup_run, sync_state
+from .control_plane import RunNotResolved, lookup_run, resolve_run, sync_state
 from .workflow import await_launch_truth, launch_workflow, normalize_launch_spec
 
 AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "swarm"}
@@ -269,12 +269,57 @@ def _agent_observe(agent: str, argv: Sequence[str]) -> int:
     args = parser.parse_args(list(argv))
     run = _run_for_agent(agent, args.run_id, last=args.last)
     if run is None:
+        if args.run_id:
+            # Control-plane projection missed it; resolve read-follows-write
+            # against runtime_runs/ (where the runtime writes) before giving up.
+            return _observe_resolved(args.run_id, json_output=args.json)
         print("No run found. Pass --run-id or --last.", file=sys.stderr)
         return 1
     if args.json:
         print(json.dumps(run, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     _print_run_status(run)
+    return 0
+
+
+def _observe_resolved(run_id: str, *, json_output: bool) -> int:
+    try:
+        resolved = resolve_run(run_id)
+    except RunNotResolved as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "run_id": resolved.run_id,
+                    "source": resolved.source,
+                    "run_dir": str(resolved.run_dir),
+                    "meta": str(resolved.meta) if resolved.meta else "",
+                    "transcript": str(resolved.transcript)
+                    if resolved.transcript
+                    else "",
+                    "report": str(resolved.report) if resolved.report else "",
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    print(f"run_id:     {resolved.run_id}")
+    print(f"source:     {resolved.source}")
+    print(f"run_dir:    {resolved.run_dir}")
+    print(f"report:     {resolved.report or ''}")
+    print(f"transcript: {resolved.transcript or ''}")
+    if resolved.transcript:
+        tail, tail_error = _tail_lines(str(resolved.transcript))
+        if tail:
+            print("transcript_tail:")
+            for line in tail:
+                print(f"  {line}")
+        else:
+            print(f"transcript_tail: unavailable ({tail_error})")
     return 0
 
 
@@ -353,6 +398,36 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = _normalize_raw_args(list(sys.argv[1:] if argv is None else argv))
     invoked_as = Path(sys.argv[0]).name if argv is None else "vibecrafted"
+
+    python_commands = {"dispatch", "doctor", "stop"} | set(LAUNCHERS)
+    agent_python_verbs = {"observe", "await", "stop"}
+    is_lifecycle = False
+    if raw_args:
+        first = raw_args[0]
+        second = raw_args[1] if len(raw_args) > 1 else ""
+        if first in AGENTS and second in agent_python_verbs:
+            # Core owns agent observe/await/stop (read-follows-write via
+            # resolve_run); never delegate these to the legacy deck/observe.sh.
+            is_lifecycle = False
+        elif first in {"-v", "--version", "version"}:
+            is_lifecycle = True
+        elif first not in python_commands and not first.startswith("-"):
+            is_lifecycle = True
+
+    if is_lifecycle:
+        from .runtime_paths import vibecrafted_tools_home
+        import subprocess
+
+        deck = (
+            vibecrafted_tools_home() / "vibecrafted-current" / "scripts" / "vibecrafted"
+        )
+        if not deck.is_file():
+            package_root = Path(__file__).resolve().parents[2]
+            deck = package_root / "scripts" / "vibecrafted"
+        if deck.is_file():
+            res = subprocess.run([str(deck), *raw_args])
+            return res.returncode
+
     if raw_args and raw_args[0] == "dispatch":
         from .dispatch.cli import main as dispatch_main
 

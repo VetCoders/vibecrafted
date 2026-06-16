@@ -1333,6 +1333,106 @@ def lookup_run(run_id: str) -> dict[str, Any] | None:
     return _select_run(snapshot, run_id)
 
 
+class RunNotResolved(Exception):
+    """Raised when a run id maps to no on-disk artifacts yet.
+
+    The actionable case is "still launching" — the dispatcher has accepted the
+    run but the worker has not produced its run directory yet. Point the caller
+    at ``await`` instead of failing silently.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+        super().__init__(
+            f"run {run_id!r} not found in runtime_runs/ or artifacts/ — it may "
+            f"still be launching. Wait with: vibecrafted await --run-id {run_id}"
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedRun:
+    """On-disk location of a run, resolved read-follows-write.
+
+    ``runtime_runs/`` is where the core runtime *writes*; ``artifacts/`` is the
+    legacy location older readers expect. One resolver so observe / await / CLI /
+    app / MCP read from the same place the runtime wrote (Niezmiennik 3).
+    """
+
+    run_id: str
+    source: str  # "runtime_runs" | "artifacts"
+    run_dir: Path
+    meta: Path | None
+    transcript: Path | None
+    report: Path | None
+
+
+def _runtime_run_dir(run_id: str) -> Path:
+    return control_plane_home() / "runtime_runs" / run_id
+
+
+def _report_from_meta(meta: Path) -> Path | None:
+    try:
+        payload = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    raw = str(payload.get("report") or payload.get("latest_report") or "")
+    if not raw:
+        return None
+    candidate = Path(raw).expanduser()
+    return candidate if candidate.is_file() else None
+
+
+def _resolve_run_in_artifacts(run_id: str) -> ResolvedRun | None:
+    artifacts_root = vibecrafted_home() / "artifacts"
+    if not artifacts_root.is_dir():
+        return None
+    for meta in sorted(artifacts_root.rglob(f"*{run_id}*.meta.json")):
+        transcript = meta.with_suffix("").with_suffix(".transcript.log")
+        return ResolvedRun(
+            run_id=run_id,
+            source="artifacts",
+            run_dir=meta.parent,
+            meta=meta,
+            transcript=transcript if transcript.is_file() else None,
+            report=_report_from_meta(meta),
+        )
+    return None
+
+
+def resolve_run(run_id: str) -> ResolvedRun:
+    """Resolve a run id to its on-disk artifacts, read-follows-write.
+
+    Probes ``runtime_runs/<id>/`` (where the core runtime writes) first, then the
+    legacy ``artifacts/`` location, then raises :class:`RunNotResolved` loudly so
+    a still-launching run is sent to ``await`` instead of a silent "no metadata".
+    This is the single resolver that closes the observe/await split-brain.
+    """
+    target = str(run_id or "").strip()
+    if not target:
+        raise ValueError("run_id is required")
+
+    run_dir = _runtime_run_dir(target)
+    if run_dir.is_dir():
+        meta = run_dir / "meta.json"
+        transcript = run_dir / "transcript.log"
+        return ResolvedRun(
+            run_id=target,
+            source="runtime_runs",
+            run_dir=run_dir,
+            meta=meta if meta.is_file() else None,
+            transcript=transcript if transcript.is_file() else None,
+            report=_report_from_meta(meta) if meta.is_file() else None,
+        )
+
+    legacy = _resolve_run_in_artifacts(target)
+    if legacy is not None:
+        return legacy
+
+    raise RunNotResolved(target)
+
+
 def await_run(
     run_id: str,
     *,

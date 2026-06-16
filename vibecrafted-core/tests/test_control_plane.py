@@ -30,6 +30,64 @@ def _write_lock(home: Path, payload: dict[str, object]) -> Path:
     return path
 
 
+def test_resolve_run_prefers_runtime_runs_where_core_writes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "marb-260615-000000-1"
+    run_dir = home / "control_plane" / "runtime_runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "transcript.log").write_text("hello\n", encoding="utf-8")
+    report = home / "artifacts" / "x" / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("done\n", encoding="utf-8")
+    (run_dir / "meta.json").write_text(
+        json.dumps({"run_id": run_id, "report": str(report)}), encoding="utf-8"
+    )
+
+    resolved = control_plane.resolve_run(run_id)
+
+    assert resolved.source == "runtime_runs"
+    assert resolved.run_dir == run_dir
+    assert resolved.transcript == run_dir / "transcript.log"
+    assert resolved.meta == run_dir / "meta.json"
+    assert resolved.report == report
+
+
+def test_resolve_run_falls_back_to_legacy_artifacts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "rvew-260615-000000-2"
+    meta = _write_meta(
+        home, {"run_id": run_id, "report": "legacy-report.md", "agent": "codex"}
+    )
+
+    resolved = control_plane.resolve_run(run_id)
+
+    assert resolved.source == "artifacts"
+    assert resolved.meta == meta
+    assert resolved.run_dir == meta.parent
+
+
+def test_resolve_run_raises_loud_when_still_launching(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "just-260615-000000-3"
+
+    with pytest.raises(control_plane.RunNotResolved) as excinfo:
+        control_plane.resolve_run(run_id)
+
+    message = str(excinfo.value)
+    assert run_id in message
+    assert "await" in message
+    assert excinfo.value.run_id == run_id
+
+
 def test_sync_state_preserves_runtime_observe_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
