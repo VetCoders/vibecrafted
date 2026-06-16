@@ -160,6 +160,50 @@ def test_launch_workflow_keeps_dispatcher_launch_even_if_worker_command_is_bad(
     assert payload["worker_command"] == ["definitely-missing-vibecrafted-binary"]
 
 
+def test_build_launch_command_never_delegates_to_legacy_shell_runtime() -> None:
+    """RC 3.2.0 polarize contract: vibecrafted-core is the single runtime.
+
+    build_launch_command must spawn through the Python runtime
+    (vibecrafted_core.workflow_runtime) or an agent stdin command — never a
+    legacy runtime/scripts/*_spawn.sh launcher or the bash deck. This locks the
+    split-brain shut so it cannot re-grow.
+    """
+    for skill, agent in (
+        ("marbles", "codex"),
+        ("research", "claude"),
+        ("implement", "codex"),
+    ):
+        spec = workflow.WorkflowLaunchSpec(
+            agent=agent,
+            mode=skill,
+            skill=skill,
+            prompt="x",
+            file="",
+            runtime="headless",
+            root="/tmp",
+        )
+        cmd = workflow.build_launch_command(spec, "/tmp", prompt_file="/tmp/p.md")
+        joined = " ".join(cmd)
+        assert "_spawn.sh" not in joined, f"{skill} delegates to legacy shell: {joined}"
+        assert "scripts/vibecrafted" not in joined, f"{skill} calls the deck: {joined}"
+
+    marbles = workflow.build_launch_command(
+        workflow.WorkflowLaunchSpec(
+            agent="codex",
+            mode="marbles",
+            skill="marbles",
+            prompt="x",
+            file="",
+            runtime="headless",
+            root="/tmp",
+        ),
+        "/tmp",
+        prompt_file="/tmp/p.md",
+    )
+    assert marbles[0] == sys.executable
+    assert "vibecrafted_core.workflow_runtime" in marbles
+
+
 def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
