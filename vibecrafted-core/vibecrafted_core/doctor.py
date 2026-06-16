@@ -1,11 +1,82 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 _INSTALLER_MODULE: Any | None = None
+
+
+@dataclass(frozen=True)
+class _Finding:
+    """Duck-typed finding compatible with the installer's DoctorFinding."""
+
+    level: str
+    component: str
+    message: str
+
+
+def _uv_tool_shim() -> Path:
+    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(data_home) / "uv" / "tools" / "vibecrafted-core" / "bin" / "vibecrafted"
+
+
+def _launcher_shim_findings(
+    which: Callable[[str], str | None] = shutil.which,
+) -> list[_Finding]:
+    """Verify that `vibecrafted` on PATH is the uv-tool shim, not the legacy deck.
+
+    The bash command-deck shadows the uv-tool entry point when installed into
+    ~/.local/bin; it calls bare `python3`, which breaks under a non-uv
+    interpreter. The uv-tool shim carries the uv python in its shebang and
+    imports `vibecrafted_core.cli`. Report the truth so the operator can see
+    which one wins PATH.
+    """
+    resolved = which("vibecrafted")
+    if not resolved:
+        return [
+            _Finding(
+                "warn",
+                "launcher",
+                "vibecrafted not found on PATH — run the installer or "
+                "`uv tool install vibecrafted-core`",
+            )
+        ]
+    path = Path(resolved)
+    try:
+        head = path.read_text(encoding="utf-8", errors="ignore")[:4096]
+    except OSError as exc:
+        return [_Finding("warn", "launcher", f"cannot read {path}: {exc}")]
+
+    if "vibecrafted_core.cli" in head and "import main" in head:
+        return [_Finding("ok", "launcher", f"uv-tool shim on PATH -> {path}")]
+
+    if head.lstrip().startswith("#!") and "bash" in head.splitlines()[0]:
+        shim = _uv_tool_shim()
+        shim_hint = f" (uv-tool shim lives at {shim})" if shim.exists() else ""
+        return [
+            _Finding(
+                "fail",
+                "launcher",
+                f"vibecrafted on PATH ({path}) is the legacy bash command-deck, "
+                f"not the uv-tool shim — it calls bare python3 and shadows the "
+                f"uv-tool entry point{shim_hint}. Reinstall so the uv-tool shim "
+                f"wins PATH.",
+            )
+        ]
+
+    return [
+        _Finding(
+            "warn",
+            "launcher",
+            f"vibecrafted on PATH ({path}) is neither the uv-tool shim nor the "
+            f"known deck — verify the install channel",
+        )
+    ]
 
 
 def _repo_root_from_source() -> Path | None:
@@ -63,7 +134,9 @@ def doctor_run(
     resolved_state = (
         state if state is not None else installer.InstallState.load(resolved_store)
     )
-    return installer.run_doctor(resolved_store, resolved_state)
+    findings = list(installer.run_doctor(resolved_store, resolved_state))
+    findings.extend(_launcher_shim_findings())
+    return findings
 
 
 def doctor_summary(findings: Sequence[Any]) -> dict[str, Any]:

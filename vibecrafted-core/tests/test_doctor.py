@@ -33,6 +33,45 @@ def test_repo_root_from_source_detects_live_checkout() -> None:
     assert (repo_root / "scripts" / "vetcoders_install.py").is_file()
 
 
+def test_launcher_shim_finding_flags_bash_deck(tmp_path: Path) -> None:
+    deck = tmp_path / "vibecrafted"
+    deck.write_text(
+        "#!/usr/bin/env bash\n# \U0001d7656 command deck\nset -euo pipefail\n",
+        encoding="utf-8",
+    )
+
+    findings = doctor._launcher_shim_findings(which=lambda _name: str(deck))
+
+    assert findings, "expected a launcher finding"
+    finding = findings[0]
+    assert finding.level == "fail"
+    assert finding.component == "launcher"
+    assert "deck" in finding.message.lower()
+
+
+def test_launcher_shim_finding_ok_for_uv_shim(tmp_path: Path) -> None:
+    shim = tmp_path / "vibecrafted"
+    shim.write_text(
+        "#!/path/uv/python3\nfrom vibecrafted_core.cli import main\n",
+        encoding="utf-8",
+    )
+
+    findings = doctor._launcher_shim_findings(which=lambda _name: str(shim))
+
+    assert findings
+    finding = findings[0]
+    assert finding.level == "ok"
+    assert finding.component == "launcher"
+
+
+def test_launcher_shim_finding_warns_when_absent() -> None:
+    findings = doctor._launcher_shim_findings(which=lambda _name: None)
+
+    assert findings
+    assert findings[0].level == "warn"
+    assert findings[0].component == "launcher"
+
+
 def test_doctor_summary_counts_findings() -> None:
     payload = doctor.doctor_summary(
         [
