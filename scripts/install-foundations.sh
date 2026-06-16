@@ -4,8 +4,8 @@ set -euo pipefail
 # install-foundations.sh — portable installer for 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. foundation layer
 #
 # Handles:
-#   loctree / loctree-mcp  — binary from GitHub releases (Loctree/Loctree)
-#   aicx / aicx-mcp       — cargo install OR binary from GH releases
+#   loctree / loctree-mcp  — official installer + binary releases
+#   aicx / aicx-mcp        — official installer (release mode) + binary releases
 #   prview                 — cargo install OR binary from GH releases
 #
 # Usage:
@@ -281,6 +281,34 @@ ensure_prefix() {
   esac
 }
 
+promote_to_prefix() {
+  local name="$1"
+  local src=""
+  local candidate
+
+  for candidate in \
+    "$(command -v "$name" 2>/dev/null || true)" \
+    "$HOME/.local/bin/$name" \
+    "$HOME/.cargo/bin/$name"
+  do
+    [[ -n "$candidate" && -x "$candidate" ]] || continue
+    src="$candidate"
+    break
+  done
+
+  [[ -n "$src" ]] || return 1
+  ensure_prefix
+
+  if [[ "$src" != "$PREFIX/$name" ]]; then
+    cp "$src" "$PREFIX/$name" || return 1
+    chmod +x "$PREFIX/$name"
+  fi
+
+  binary_runs "$name" || return 1
+  ok "Installed $name -> $PREFIX/$name"
+  return 0
+}
+
 install_vc_wrappers() {
   local source_bin="$SOURCE_DIR/bin"
   local name src
@@ -381,6 +409,7 @@ install_loctree() {
   done <<< "$patterns_text"
 
   if (( CHECK_ONLY )); then
+    info "Would run: curl -fsSL https://loct.io/install.sh | sh"
     info "Would download loctree v${LOCTREE_VERSION} release asset for ${os}/${arch}"
     info "  Install to: $PREFIX"
     return 0
@@ -389,14 +418,28 @@ install_loctree() {
   has_cmd curl || die "curl is required to download loctree"
   ensure_prefix
 
-  # --- Attempt 0: bundled tarball (notarized drop-in) ---
+  # --- Attempt 0: official installer path ---
+  if (( CHECK_ONLY )); then
+    info "Would run: curl -fsSL https://loct.io/install.sh | sh"
+  else
+    info "Installing loctree via official installer..."
+    if curl -fsSL https://loct.io/install.sh | sh; then
+      if promote_to_prefix "loctree-mcp"; then
+        promote_to_prefix "loctree" || true
+        promote_to_prefix "loct" || true
+        return 0
+      fi
+    fi
+  fi
+
+  # --- Attempt 1: bundled tarball (notarized drop-in) ---
   if install_from_bundled "loctree-mcp"; then
     install_from_bundled "loctree" || true
     install_from_bundled "loct" || true
     return 0
   fi
 
-  # --- Attempt 1: prebuilt binary from GH releases ---
+  # --- Attempt 2: prebuilt binary from GH releases ---
   local binary_ok=0
   url="$(github_release_asset_url "$LOCTREE_REPO" "tags/v${LOCTREE_VERSION}" "${patterns[@]}")" && {
     asset="${url##*/}"
@@ -448,18 +491,8 @@ install_loctree() {
   # Binary path succeeded — done
   (( binary_ok )) && return 0
 
-  # --- Attempt 2: cargo (will bootstrap rustup if needed) ---
-  info "Trying cargo install path for loctree-mcp..."
-  if ensure_rustup; then
-    install_from_cargo "loctree-mcp" "loctree-mcp" && return 0
-  fi
-
-  # --- Attempt 3: npm (will bootstrap node if needed) ---
-  info "Trying npm install path for loctree-mcp..."
-  install_from_npm "loctree-mcp" "loctree-mcp" && return 0
-
   warn "All loctree install paths exhausted."
-  warn "Install manually: cargo install loctree-mcp | npm i -g loctree-mcp"
+  warn "Install manually: curl -fsSL https://loct.io/install.sh | sh"
   return 1
 }
 
@@ -599,14 +632,40 @@ install_aicx() {
     return 0
   fi
 
-  # --- Attempt 0: bundled tarball (notarized drop-in) ---
+  # --- Attempt 0: official installer in release mode ---
+  if (( CHECK_ONLY )); then
+    info "Would run: curl -fsSL https://raw.githubusercontent.com/Loctree/aicx/main/install.sh | AICX_INSTALL_MODE=release bash"
+  else
+    info "Installing aicx via official release installer..."
+    if [[ -n "${AICX_RELEASE_TAG:-}" ]]; then
+      if curl -fsSL https://raw.githubusercontent.com/Loctree/aicx/main/install.sh \
+        | AICX_INSTALL_MODE=release AICX_RELEASE_TAG="$AICX_RELEASE_TAG" bash; then
+        if promote_to_prefix "aicx-mcp"; then
+          promote_to_prefix "aicx" || true
+          promote_to_prefix "aicx-extract" || true
+          return 0
+        fi
+      fi
+    else
+      if curl -fsSL https://raw.githubusercontent.com/Loctree/aicx/main/install.sh \
+        | AICX_INSTALL_MODE=release bash; then
+        if promote_to_prefix "aicx-mcp"; then
+          promote_to_prefix "aicx" || true
+          promote_to_prefix "aicx-extract" || true
+          return 0
+        fi
+      fi
+    fi
+  fi
+
+  # --- Attempt 1: bundled tarball (notarized drop-in) ---
   if install_from_bundled "aicx-mcp"; then
     install_from_bundled "aicx" || true
     install_from_bundled "aicx-extract" || true
     return 0
   fi
 
-  # Try binary release first, fall back to cargo
+  # Try binary release fallback
   local os arch
   os="$(detect_os)"
   arch="$(detect_arch)"
@@ -639,7 +698,7 @@ install_aicx() {
 
     if (( CHECK_ONLY )); then
       info "Would resolve latest aicx release asset for $target"
-      info "Fallback: cargo install $AICX_CRATE"
+      info "Fallback: release installer command (no cargo build fallback)"
       return 0
     fi
 
@@ -671,17 +730,13 @@ install_aicx() {
       fi
     fi
     rm -rf "$tmpdir"
-    info "No matching binary release found, falling back to cargo..."
+    info "No matching binary release found via API lookup; trying release installer fallback."
   fi
 
-  # Cargo path: aicx pulls llama-cpp-sys-2 (libclang+cmake+C++ at build time).
-  # Bail early with an actionable message instead of compiling for 5 minutes
-  # only to fail at link time with a confusing libclang error.
-  if ! aicx_cargo_prereqs_ok; then
-    return 1
-  fi
-
-  install_from_cargo "$AICX_CRATE" "aicx-mcp"
+  warn "No release installer path succeeded for aicx."
+  warn "Install manually:"
+  warn "  curl -fsSL https://raw.githubusercontent.com/Loctree/aicx/main/install.sh | AICX_INSTALL_MODE=release bash"
+  return 1
 }
 
 # ---------------------------------------------------------------------------
