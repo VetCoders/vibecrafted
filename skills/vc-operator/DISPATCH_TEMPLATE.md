@@ -103,6 +103,17 @@ Run these before committing:
 
 All green is the gate. Paste the final relevant output lines into the report.
 
+**Gates green is necessary, not sufficient — walk around the truck before you report "done":**
+
+```text
+Walk-around verification (see skills/VERIFICATION_RULE.md):
+- Run the REAL artifact the user runs — launch the app/binary, mount the DMG
+  and otool/launch the app inside, hit the runtime path. Not just `--version`.
+- Signed / notarized / spctl-accepted / green tests != works. Re-verify runtime.
+- Never trust an upstream agent's or pipeline's verification as proof. Re-run it.
+- Check your own check actually detects failure (a command that cannot fail lies).
+```
+
 ### 7. Out of scope
 
 Do not touch:
@@ -147,6 +158,14 @@ Grep fallback (only if loctree fails):
 - Acceptable only after loctree fails for the specific structural question.
 - Log a hook entry to `~/.vibecrafted/loctree/loctree-fail.md` describing
   why loctree was insufficient, so the loctree team can improve it.
+
+Literal vs semantic (first move on any structural question = semantic, not grep):
+- Semantic (AST/importer/dispatch graphs): who-imports, where-symbol, slice,
+  impact, follow dead|cycles|twins, health, suppressions, env-truth.
+- Literal (exact text/identifier): `loct find --literal`, `loct occurrences`,
+  `loct body`; MCP `find mode=literal`. occurrence_kind tags each hit.
+- Reflex: "AST/importer graph, or literal text?" First semantic, then literal,
+  grep only as a post-loct magnifier.
 ```
 
 ### 10. Recovery hint

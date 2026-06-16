@@ -253,3 +253,7 @@ For final handoff:
 3. Gates and unresolved risks.
 4. Recovery actions taken.
 5. Stop-point handoff: what button remains for the operator.
+
+## Verification in the dispatch footer
+
+Every worker prompt this operator composes carries the [Verification Rule](../VERIFICATION_RULE.md) — walk-around verification (Section 6, gates green ≠ works) + loct literal-vs-semantic (Section 9) — via `DISPATCH_TEMPLATE.md`.
