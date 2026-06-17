@@ -180,6 +180,10 @@ _vetcoders_resume_agent() {
     fi
   fi
 
+  # No operator surface (piped / async-supervisor baton-pass): run the agent's
+  # NON-INTERACTIVE resume invocation directly. Recompute in headless mode so we
+  # don't eval an interactive command that would hang without a tty.
+  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" headless)" || return 1
   eval "$resume_cmd"
 }
 
@@ -187,6 +191,10 @@ _vetcoders_resume_command() {
   local tool="$1"
   local session_id="$2"
   local resume_prompt="${3:-}"
+  # mode: "interactive" (resume into a visible operator pane) | "headless"
+  # (direct eval / async-supervisor baton-pass — no tty). Per-agent resume flags
+  # differ; the headless invocations were verified against each agent's --help.
+  local mode="${4:-interactive}"
   local quoted_session quoted_prompt
   quoted_session="$(_vetcoders_shell_quote "$session_id")"
   if [[ -n "$resume_prompt" ]]; then
@@ -195,34 +203,69 @@ _vetcoders_resume_command() {
 
   case "$tool" in
     claude)
-      if [[ -n "$resume_prompt" ]]; then
+      # headless resume needs --print (+ skip-permissions); plain --resume opens
+      # an interactive session and would hang under eval with no tty.
+      if [[ "$mode" == headless ]]; then
+        if [[ -n "$resume_prompt" ]]; then
+          printf 'claude --print --dangerously-skip-permissions --resume %s %s\n' "$quoted_session" "$quoted_prompt"
+        else
+          printf 'claude --print --dangerously-skip-permissions --resume %s\n' "$quoted_session"
+        fi
+      elif [[ -n "$resume_prompt" ]]; then
         printf 'claude --resume %s %s\n' "$quoted_session" "$quoted_prompt"
       else
         printf 'claude --resume %s\n' "$quoted_session"
       fi
       ;;
     codex)
-      if [[ -n "$resume_prompt" ]]; then
+      # headless = `codex exec resume` (non-interactive); `codex resume` is the
+      # interactive picker and cannot run under a pipe.
+      if [[ "$mode" == headless ]]; then
+        if [[ -n "$resume_prompt" ]]; then
+          printf 'codex exec --dangerously-bypass-approvals-and-sandbox resume %s %s\n' "$quoted_session" "$quoted_prompt"
+        else
+          printf 'codex exec --dangerously-bypass-approvals-and-sandbox resume %s\n' "$quoted_session"
+        fi
+      elif [[ -n "$resume_prompt" ]]; then
         printf 'codex resume %s %s\n' "$quoted_session" "$quoted_prompt"
       else
         printf 'codex resume %s\n' "$quoted_session"
       fi
       ;;
     gemini)
-      if [[ -n "$resume_prompt" ]]; then
+      # NOTE: gemini --resume takes an index or "latest", NOT a session UUID;
+      # resuming a specific session by id is a known gap (use --session-file for
+      # that). Best-effort: -p makes it headless.
+      if [[ "$mode" == headless ]]; then
+        if [[ -n "$resume_prompt" ]]; then
+          printf 'gemini --approval-mode yolo --resume %s -p %s\n' "$quoted_session" "$quoted_prompt"
+        else
+          printf 'gemini --approval-mode yolo --resume %s -p ""\n' "$quoted_session"
+        fi
+      elif [[ -n "$resume_prompt" ]]; then
         printf 'gemini --resume %s %s\n' "$quoted_session" "$quoted_prompt"
       else
         printf 'gemini --resume %s\n' "$quoted_session"
       fi
       ;;
     agy)
-      if [[ -n "$resume_prompt" ]]; then
+      # agy resumes by --conversation <id>; headless needs --print
+      # (--prompt-interactive is, as the name says, interactive).
+      if [[ "$mode" == headless ]]; then
+        if [[ -n "$resume_prompt" ]]; then
+          printf 'agy --print --dangerously-skip-permissions --conversation %s %s\n' "$quoted_session" "$quoted_prompt"
+        else
+          printf 'agy --print --dangerously-skip-permissions --conversation %s\n' "$quoted_session"
+        fi
+      elif [[ -n "$resume_prompt" ]]; then
         printf 'agy --conversation %s --prompt-interactive %s\n' "$quoted_session" "$quoted_prompt"
       else
         printf 'agy --conversation %s\n' "$quoted_session"
       fi
       ;;
     junie)
+      # junie is non-interactive by construction (runs a task and exits); the
+      # same command serves both modes.
       if [[ -n "$resume_prompt" ]]; then
         printf 'junie --session-id=%s --resume --task=%s --project=. --skip-update-check\n' "$quoted_session" "$quoted_prompt"
       else
@@ -230,10 +273,12 @@ _vetcoders_resume_command() {
       fi
       ;;
     grok)
+      # grok --single is one-shot non-interactive. NEVER pass --restore-code: it
+      # checks out the original session's commit and would clobber the working tree.
       if [[ -n "$resume_prompt" ]]; then
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --single %s\n' "$quoted_session" "$quoted_prompt"
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format plain --single %s\n' "$quoted_session" "$quoted_prompt"
       else
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen\n' "$quoted_session"
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format plain\n' "$quoted_session"
       fi
       ;;
     *)
