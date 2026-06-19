@@ -6,7 +6,8 @@ Ten glossariusz służy do tłumaczenia skillów Vibecrafted z EN na PL bez twor
 
 Zasada ogólna:
 
-Nazwy własne, nazwy skillów, nazwy mechanik runtime’u i pojęcia operacyjne zostają verbatim, jeśli polskie tłumaczenie brzmiałoby sztucznie, zmieniałoby sens albo psuło rozpoznawalność systemu.
+Nazwy własne, nazwy skillów, nazwy mechanik runtime’u i pojęcia operacyjne zostają verbatim, jeśli polskie tłumaczenie
+brzmiałoby sztucznie, zmieniałoby sens albo psuło rozpoznawalność systemu.
 
 W polskim tekście wolno je obudowywać naturalnym opisem, np.:
 
@@ -30,22 +31,22 @@ Nie robimy tłumaczeń typu:
 
 1. Nazwa systemu i formy bazowe
 
-Vibecrafted
+Vibecrafted.
 
 Zostaje: Vibecrafted
 
-Nie tłumaczyć. Nie spolszczać. Nie pisać “Widecrafted”, “Vibecraft”, “Wajbkrafted”.
+Nie tłumaczyć. Nie spolszczać. Nie pisać "VibeCrafted",“Widecrafted”, “Vibecraft”, “Wajbkrafted”.
 
 Dopuszczalne skróty w roboczych notatkach:
 
 - VC
-- Vibecrafted
-- Vibecrafted tylko jako nazwa CLI / komendy
+- vibecrafted
+- vibecrafted tylko jako nazwa CLI / komendy
 
 Przykłady:
 
 - “Vibecrafted prowadzi pracę przez operatora.”
-- “Odpal Vibecrafted init claude.”
+- “Odpal vibecrafted init claude.”
 - “To jest test VC jako systemu, nie pojedynczego promptu.”
 
 ⸻
@@ -58,9 +59,9 @@ To nazwa CLI, więc zawsze zapis techniczny, najlepiej w backtickach.
 
 Przykłady:
 
-- Vibecrafted init claude
-- Vibecrafted operator claude --file dispatch.md
-- Vibecrafted loop status
+- vibecrafted init claude
+- vibecrafted operator claude --file dispatch.md
+- vibecrafted loop status
 
 Nie tłumaczyć jako “wibrorzemiosło”, “vibestwórstwo”, “rzemieślnik nastroju” itd.
 
@@ -86,7 +87,8 @@ skill
 
 Zostaje: skill
 
-Nie tłumaczyć jako “umiejętność”, jeśli mowa o jednostce systemu VC. “Umiejętność” brzmi jak capability modelu, a nie artefakt runtime’u.
+Nie tłumaczyć jako “umiejętność”, jeśli mowa o jednostce systemu VC. “Umiejętność” brzmi jak capability modelu, a nie
+artefakt runtime’u.
 
 Przykłady:
 
@@ -100,7 +102,8 @@ vc-init
 
 Zostaje: vc-init
 
-Znaczenie: start orientacyjny w repo, ustalenie gdzie jesteśmy, jaki jest branch, stan, ryzyka, pamięć / loctree / kontekst.
+Znaczenie: start orientacyjny w repo, ustalenie gdzie jesteśmy, jaki jest branch, stan, ryzyka, pamięć / loctree /
+kontekst.
 
 Nie tłumaczyć jako “inicjalizacja”, chyba że opisowo.
 
@@ -109,7 +112,7 @@ Dobre:
 - “Najpierw robimy vc-init.”
 - “vc-init ustawia kontekst repo.”
 
-Złe:Vibecrafted
+Złe:
 
 - “uruchom inicjalizatora”
 - “zrób inicjację repo”
@@ -120,7 +123,8 @@ vc-followup
 
 Zostaje: vc-followup albo followup
 
-Znaczenie: diagnoza rzeczywistości po wejściu w repo / po zmianach / po etapie pracy. Patrzy, co jest zdrowe, co nie, jaki jest next move.
+Znaczenie: diagnoza rzeczywistości po wejściu w repo / po zmianach / po etapie pracy. Patrzy, co jest zdrowe, co nie,
+jaki jest next move.
 
 Nie tłumaczyć jako “następstwo”, “kontynuacja”, “przegląd następczy”.
 
@@ -150,7 +154,8 @@ Dobre:
 - “To jest audit kontraktu README vs kod.”
 - “vc-audit falsyfikuje wymagania.”
 
-Uwaga UX: dla normalnego usera “audit” brzmi jak ogólny przegląd kodu. W dokumentacji PL warto wyjaśnić, że w VC audit oznacza “sprawdzenie względem konkretnego kontraktu”.
+Uwaga UX: dla normalnego usera “audit” brzmi jak ogólny przegląd kodu. W dokumentacji PL warto wyjaśnić, że w VC audit
+oznacza “sprawdzenie względem konkretnego kontraktu”.
 
 Nie tłumaczyć jako “rewizja”, “kontrola”, “audytowanie” w nazwie skilla.
 
@@ -210,7 +215,8 @@ vc-workflow
 
 Zostaje: vc-workflow albo workflow
 
-Znaczenie: uporządkowany flow pracy typu examine → research → implement albo podobny. To nie jest “przepływ pracy” w każdym zdaniu.
+Znaczenie: uporządkowany flow pracy typu examine → research → implement albo podobny. To nie jest “przepływ pracy” w
+każdym zdaniu.
 
 Dobre:
 
@@ -245,7 +251,8 @@ Zostaje: vc-marbles albo marbles
 
 To nazwa mechaniki. Nie tłumaczyć jako “kulki”, “marmurki”, “koraliki”.
 
-Znaczenie: bounded convergence / równoległe lub wieloagentowe sondy na ograniczonym problemie, z raportami i recepcją wyników.
+Znaczenie: bounded convergence / równoległe lub wieloagentowe sondy na ograniczonym problemie, z raportami i recepcją
+wyników.
 
 Dobre:
 
@@ -311,7 +318,8 @@ vc-hydrate
 
 Zostaje: vc-hydrate albo hydrate
 
-Znaczenie: uzupełnienie powierzchni adopcji, docs, onboarding, install path, brakujących elementów, które pozwalają produktowi żyć poza kodem.
+Znaczenie: uzupełnienie powierzchni adopcji, docs, onboarding, install path, brakujących elementów, które pozwalają
+produktowi żyć poza kodem.
 
 Nie tłumaczyć jako “nawadniać”.
 
@@ -864,7 +872,8 @@ Zostaje: --then-cmd
 
 To flaga techniczna. Nie tłumaczyć.
 
-W dokumentacji PL opisać jako: komenda wykonywana po spełnieniu warunku / zakończeniu runu, jeśli operator ją zatwierdził.
+W dokumentacji PL opisać jako: komenda wykonywana po spełnieniu warunku / zakończeniu runu, jeśli operator ją
+zatwierdził.
 
 ⸻
 
@@ -1174,7 +1183,8 @@ Zostaje: convergence
 
 Znaczenie: domykanie rozbieżnych wyników / dojście do stabilnej prawdy / stabilnego fixa.
 
-Nie tłumaczyć jako “konwergencja” wszędzie, choć technicznie jest poprawne. W VC convergence brzmi jak koncept systemowy.
+Nie tłumaczyć jako “konwergencja” wszędzie, choć technicznie jest poprawne. W VC convergence brzmi jak koncept
+systemowy.
 
 Dobre:
 
@@ -2133,15 +2143,11 @@ W tłumaczonych skillach:
    - vc-audit
    - vc-marbles
    - vc-operator
-2. Nagłówki można tłumaczyć, ale nie trzeba tłumaczyć terminów systemowych.
-   EN:
-   “When to use this skill”
-   PL:
+2. Nagłówki można tłumaczyć, ale nie trzeba tłumaczyć terminów systemowych. EN:
+   “When to use this skill” PL:
    “Kiedy używać tego skilla”
-3. Opis celu tłumaczymy naturalnie po polsku.
-   EN:
-   “Use this skill to inspect whether the current trajectory is healthy.”
-   PL:
+3. Opis celu tłumaczymy naturalnie po polsku. EN:
+   “Use this skill to inspect whether the current trajectory is healthy.” PL:
    “Użyj tego skilla, gdy chcesz sprawdzić, czy aktualny kierunek pracy jest zdrowy i co powinno wydarzyć się dalej.”
 4. Mechaniki zostają verbatim, jeśli są nazwami wewnętrznymi.
    - operator
@@ -2154,13 +2160,10 @@ W tłumaczonych skillach:
    - audit pass
    - release gate
    - operator button
-5. Unikać fałszywej elegancji.
-   Lepiej napisać:
-   “Zrób followup pass i oddaj verdict.”
-   Niż:
+5. Unikać fałszywej elegancji. Lepiej napisać:
+   “Zrób followup pass i oddaj verdict.” Niż:
    “Przeprowadź następczą ocenę i zwróć werdykt operacyjny.”
-6. Polski ma być roboczy, operatorowy i jasny.
-   Nie akademicki. Nie marketingowy. Nie korporacyjny. Nie fantasy.
+6. Polski ma być roboczy, operatorowy i jasny. Nie akademicki. Nie marketingowy. Nie korporacyjny. Nie fantasy.
 
 ⸻
 
@@ -2268,7 +2271,8 @@ Te terminy można spokojnie tłumaczyć, jeśli zdanie brzmi lepiej:
 
 17. Jednozdaniowa reguła dla tłumacza
 
-Jeśli termin jest nazwą mechaniki VC, roli systemowej, trybu pracy, artefaktu runtime’u albo komendy, zostaw go verbatim i wyjaśnij po polsku.
+Jeśli termin jest nazwą mechaniki VC, roli systemowej, trybu pracy, artefaktu runtime’u albo komendy, zostaw go verbatim
+i wyjaśnij po polsku.
 
 Jeśli termin jest zwykłym opisem czynności, tłumacz naturalnie.
 
@@ -2430,7 +2434,9 @@ Nazwy opisowe vs opaque coinage
 
 Zbiorczo potwierdzone jako EN:
 
-checkout, worktree, hook w sensie git, commit, merge, rebase, deploy, build, runtime, endpoint, fallback, prompt, token, cache, baseline, no-op, greenfield, headless, lint, linter, dogfooding, split-brain, handoff, recon, vibe coding, vibe-coded.
+checkout, worktree, hook w sensie git, commit, merge, rebase, deploy, build, runtime, endpoint, fallback, prompt, token,
+cache, baseline, no-op, greenfield, headless, lint, linter, dogfooding, split-brain, handoff, recon, vibe coding,
+vibe-coded.
 
 Dopuszczalne PL tylko opisowo, jeśli zdanie tego potrzebuje, ale terminy operacyjne zostają EN.
 
@@ -2463,9 +2469,11 @@ Nie trzymać ślepo casing per-wystąpienie, jeśli istnieje decyzja produktowa.
 Decyzja:
 
 - screenscribe: normalizować do lowercase screenscribe, chyba że cytujesz historyczne/literalne wystąpienie.
-- loctree: trzymać casing zgodny z aktualną decyzją repo/produktu. Jeśli brak decyzji, w komendach/slugach lowercase loctree, w nazwie produktu można zostawić Loctree tylko jeśli tak występuje oficjalnie.
+- loctree: trzymać casing zgodny z aktualną decyzją repo/produktu. Jeśli brak decyzji, w komendach/slugach lowercase
+  loctree, w nazwie produktu można zostawić Loctree tylko jeśli tak występuje oficjalnie.
 - DoU: koncept = DoU. Komenda/slug = vc-dou, dou.
-- Closing rail: w PL ujednolicić jako Closing rail albo przetłumaczyć nagłówek całego bloku, jeśli cały rail jest po polsku. Nie mieszać Closing Rail i Closing rail w obrębie jednego pliku bez powodu.
+- Closing rail: w PL ujednolicić jako Closing rail albo przetłumaczyć nagłówek całego bloku, jeśli cały rail jest po
+  polsku. Nie mieszać Closing Rail i Closing rail w obrębie jednego pliku bez powodu.
 
 Suchar / Dad’s joke
 
@@ -2479,16 +2487,16 @@ Nie zostawiać “Dad’s joke:” w PL, chyba że fragment jest celowo cytowany
 
 9. Dodatkowe reguły jakości tłumaczenia
 
-1. Nie tłumaczyć nazw mechanik, jeśli PL brzmi jak parodyjny onboarding do RPG.
-   Przykład: marbles, hydrate, dispatch, runtime, operator button.
-1. Nie robić fałszywej czystości językowej.
-   VC po polsku ma brzmieć jak narzędzie operatora AI/dev, nie jak instrukcja urzędowa.
-1. Jeśli termin jest user-facing i semantycznie mylący, dodać jednozdaniowe objaśnienie.
-   Najważniejszy przykład: audit w VC nie oznacza ogólnego code audit, tylko walidację względem kontraktu/specyfikacji.
-1. Terminy stage/skill/command zostają verbatim. Czasowniki wokół nich można naturalizować.
-   Dobre: “zrób followup pass”, “odpal marbles”, “przejdź do FIX”, “zrób hydrate dla docs”.
-1. Metafory tłumaczyć jako całe rodziny, nie punktowo.
-   Jeśli sąd, to sąd/świadkowie/oskarżenie/dowody. Jeśli drzewo, to drzewo/zatrute drzewo/Żywe Drzewo. Nie robić hybryd, które gubią obraz.
+1. Nie tłumaczyć nazw mechanik, jeśli PL brzmi jak parodyjny onboarding do RPG. Przykład: marbles, hydrate, dispatch,
+   runtime, operator button.
+1. Nie robić fałszywej czystości językowej. VC po polsku ma brzmieć jak narzędzie operatora AI/dev, nie jak instrukcja
+   urzędowa.
+1. Jeśli termin jest user-facing i semantycznie mylący, dodać jednozdaniowe objaśnienie. Najważniejszy przykład: audit w
+   VC nie oznacza ogólnego code audit, tylko walidację względem kontraktu/specyfikacji.
+1. Terminy stage/skill/command zostają verbatim. Czasowniki wokół nich można naturalizować. Dobre: “zrób followup pass”,
+   “odpal marbles”, “przejdź do FIX”, “zrób hydrate dla docs”.
+1. Metafory tłumaczyć jako całe rodziny, nie punktowo. Jeśli sąd, to sąd/świadkowie/oskarżenie/dowody. Jeśli drzewo, to
+   drzewo/zatrute drzewo/Żywe Drzewo. Nie robić hybryd, które gubią obraz.
 1. Wątpliwe coinage rozstrzygać tak:
    - jeśli jest capitalized, powtarzalne i działa jak mechanika: zostaw EN + PL objaśnienie,
    - jeśli jest zwykłą metaforą opisową: tłumacz,
@@ -2498,7 +2506,8 @@ Nie zostawiać “Dad’s joke:” w PL, chyba że fragment jest celowo cytowany
 
 10. Krótka wersja decyzji dla tłumacza
 
-- skill, runtime, operator, worker, dispatch, marbles, hydrate, decorate, prune, followup, audit, review, release, loop, run, pass, flow zostają jako żargon VC.
+- skill, runtime, operator, worker, dispatch, marbles, hydrate, decorate, prune, followup, audit, review, release, loop,
+  run, pass, flow zostają jako żargon VC.
 - gate w tłumaczonych skillach najczęściej jako bramka, ale literalne gate zostaje w nazwach/flagach.
 - truth jako rodzina: prawda repo/runtime’u/produktu/kodu, a ground truth = twarde fakty.
 - ship = dowieźć, chyba że mowa o formalnym release, wtedy wydać/wypuścić.
@@ -2513,7 +2522,8 @@ Nie zostawiać “Dad’s joke:” w PL, chyba że fragment jest celowo cytowany
 
 11. Dopiski po review `vc-marbles` — kwiatki językowe i decyzje praktyczne
 
-Te reguły wynikają z review tłumaczenia `vc-marbles`. Traktować je jako doprecyzowanie glosariusza, nie jako ogólną krytykę stylu.
+Te reguły wynikają z review tłumaczenia `vc-marbles`. Traktować je jako doprecyzowanie glosariusza, nie jako ogólną
+krytykę stylu.
 
 Checkpoint
 
@@ -2563,7 +2573,8 @@ Złe:
 
 Przykład docelowy:
 
-- “Warstwa odbioru wyników (operator / orchestrator) trzyma rejestr otwartych findingów, porównuje kandydatów między równoległymi rundami i decyduje, czy uznać zbieżność, czy odpalić kolejną falę.”
+- “Warstwa odbioru wyników (operator / orchestrator) trzyma rejestr otwartych findingów, porównuje kandydatów między
+  równoległymi rundami i decyduje, czy uznać zbieżność, czy odpalić kolejną falę.”
 
 ⸻
 
@@ -2586,9 +2597,13 @@ Ale sam “kontekst” lepiej opisywać jako:
 
 Dobre:
 
-- “Marbles nie zaczyna od zera. Kolejne runy pracują na już ustalonym kontekście, więc mniej czasu tracą na archeologię repo, a więcej na domykanie luk.”
-- “Marbles nie przepala kolejnych runów na ponowne odkrywanie repo. Trzyma ten sam kontekst pracy i każe workerom szukać tego, co jeszcze pęka.”
-- “Krótko: marbles nie zaczyna od zera przy każdym runie. Trzyma ten sam kontekst pracy, tę samą powierzchnię problemu i te same bramki, dzięki czemu kolejne workery mniej czasu tracą na archeologię repo, a więcej na brakujące luki, fałszywe fixy i kruche założenia.”
+- “Marbles nie zaczyna od zera. Kolejne runy pracują na już ustalonym kontekście, więc mniej czasu tracą na archeologię
+  repo, a więcej na domykanie luk.”
+- “Marbles nie przepala kolejnych runów na ponowne odkrywanie repo. Trzyma ten sam kontekst pracy i każe workerom szukać
+  tego, co jeszcze pęka.”
+- “Krótko: marbles nie zaczyna od zera przy każdym runie. Trzyma ten sam kontekst pracy, tę samą powierzchnię problemu i
+  te same bramki, dzięki czemu kolejne workery mniej czasu tracą na archeologię repo, a więcej na brakujące luki,
+  fałszywe fixy i kruche założenia.”
 
 Unikać:
 
@@ -2797,7 +2812,8 @@ W closing rail unikać konstrukcji:
 
 Lepszy wariant:
 
-- “tryb marbles to pozwolenie na napisanie małego albo szerzej zakrojonego, ale prawdziwego fixa, nie pozwolenie na refactor, chyba że wynika to wprost z opisu taska.”
+- “tryb marbles to pozwolenie na napisanie małego albo szerzej zakrojonego, ale prawdziwego fixa, nie pozwolenie na
+  refactor, chyba że wynika to wprost z opisu taska.”
 
 ⸻
 
@@ -2817,20 +2833,28 @@ Zamiast:
 
 12. Terminy i decyzje z realizacji tłumaczenia (Fala 1 + Fala 2)
 
-Skonsolidowane z roboczych plików (Fala1_glosariusz, GLOSARIUSZ_watpliwosci — usunięte po scaleniu). Sekcja 11 pokrywa review `vc-marbles`; tu reszta. Gdyby coś kolidowało, wygrywa nowsza decyzja (sekcje 11–12).
+Skonsolidowane z roboczych plików (Fala1_glosariusz, GLOSARIUSZ_watpliwosci — usunięte po scaleniu). Sekcja 11 pokrywa
+review `vc-marbles`; tu reszta. Gdyby coś kolidowało, wygrywa nowsza decyzja (sekcje 11–12).
 
 ⸻
 
 12a. Decyzje korpusowe (uzupełnienie sekcji 11)
 
-- Checkpoint strukturalny — odpowiednik „Canonical Structural Gate" (vc-init, vc-loctree). Analogicznie do „Checkpoint orientacji" z sekcji 11.
-- twins → (duplikaty). Gloss: „twins (duplikaty)”, NIE „bliźniaki”. Literalny scope Loctree (`twins`, `'twins'`, `follow twins`) zostaje verbatim.
-- „domyślny skill percepcji strukturalnej" → „domyślny skill do mapowania struktury repo" (zdanie o Loctree w checkpoincie orientacji).
-- Klauzula checkpointu: „…dopóki [prawda repo nie zaistnieje / nie istnieje / nie powstanie / nie pojawi się]" → „…dopóki nie ma aktualnej prawdy repo". NIE ruszać innych użyć: „produkuje prawdę repo", „otwiera prawdę repo/runtime'u", „mamy świeżą/bieżącą prawdę repo" (tabele FLOW), „znajomości / wyprowadź z / sprawdzenia prawdy repo".
+- Checkpoint strukturalny — odpowiednik „Canonical Structural Gate" (vc-init, vc-loctree). Analogicznie do „Checkpoint
+  orientacji" z sekcji 11.
+- twins → (duplikaty). Gloss: „twins (duplikaty)”, NIE „bliźniaki”. Literalny scope Loctree (`twins`, `'twins'`,
+  `follow twins`) zostaje verbatim.
+- „domyślny skill percepcji strukturalnej" → „domyślny skill do mapowania struktury repo" (zdanie o Loctree w
+  checkpoincie orientacji).
+- Klauzula checkpointu: „…dopóki [prawda repo nie zaistnieje / nie istnieje / nie powstanie / nie pojawi się]" →
+  „…dopóki nie ma aktualnej prawdy repo". NIE ruszać innych użyć: „produkuje prawdę repo", „otwiera prawdę
+  repo/runtime'u", „mamy świeżą/bieżącą prawdę repo" (tabele FLOW), „znajomości / wyprowadź z / sprawdzenia prawdy
+  repo".
 - charter → karta (Karta meta-doktryny, karta taktyczna). Default — baza tego nie rozstrzygała.
 - Closing Rail → Klamra końcowa; Call to Action → Wezwanie do działania; Non-Goals → Nie-cele (ujednolicone korpusowo).
 - „Detect, Don't Dictate" → „Wykrywaj, nie dyktuj".
-- „Flow" jako nagłówek/tytuł FLOW.md zostaje EN (mechanika); reszta nagłówków po PL (Trasy, Krawędzie eskalacji, Artefakty sesji).
+- „Flow" jako nagłówek/tytuł FLOW.md zostaje EN (mechanika); reszta nagłówków po PL (Trasy, Krawędzie eskalacji,
+  Artefakty sesji).
 
 ⸻
 
@@ -2853,13 +2877,17 @@ Skonsolidowane z roboczych plików (Fala1_glosariusz, GLOSARIUSZ_watpliwosci —
 - Silencer Strip → Silencer Strip (zdejmowanie wyciszeń) · runtime cone → stożek runtime'u · AI exhaust → spaliny AI
 - test theater / confidence theater / convergence cosplay → teatr testów / teatr pewności / cosplay zbieżności
 - court / witnesses / prosecution → sąd / świadkowie / oskarżenie (cała metafora spójnie)
-- seam / untrusted seam → szew / niezaufany szew · ladder → drabina · cold path → zimna ścieżka · meet strangers → wyjść do obcych
-- Release Canon → Kanon release'u · six planes → sześć płaszczyzn · buyer path → ścieżka kupującego · dataflow boundary → granica przepływu danych · verification challenge → wyzwanie weryfikacyjne
-- Self-Attack Pass → Self-Attack Pass (przebieg autoataku) · Stage-Aware Verdicts → werdykty świadome etapu · Prime Directive → Dyrektywa Naczelna
+- seam / untrusted seam → szew / niezaufany szew · ladder → drabina · cold path → zimna ścieżka · meet strangers → wyjść
+  do obcych
+- Release Canon → Kanon release'u · six planes → sześć płaszczyzn · buyer path → ścieżka kupującego · dataflow
+  boundary → granica przepływu danych · verification challenge → wyzwanie weryfikacyjne
+- Self-Attack Pass → Self-Attack Pass (przebieg autoataku) · Stage-Aware Verdicts → werdykty świadome etapu · Prime
+  Directive → Dyrektywa Naczelna
 - holographic → holograficzny · type laundering → pranie typów · trajectory → trajektoria
 - cadence → cadence / kadencja · lane → lane (tor) · POI → POI (points of interest)
 - exponential backoff → wykładniczy backoff · rate limiting → rate limiting / limit zapytań
-- screencast / transcript / screenshot → EN · smell / code smell → code smell (zapaszek) · churn / hotspot → EN (proza: odpływ)
+- screencast / transcript / screenshot → EN · smell / code smell → code smell (zapaszek) · churn / hotspot → EN (proza:
+  odpływ)
 - Always-in-Production → Always-in-Production (nazwa stanu) · „Done Done" → zrobione-zrobione
 
 ⸻
@@ -2868,53 +2896,72 @@ Skonsolidowane z roboczych plików (Fala1_glosariusz, GLOSARIUSZ_watpliwosci —
 
 - transmission belt → pas transmisyjny · forward plan → plan przyszłościowy · baseline → commit bazowy (baseline)
 - failure modality / failure board → modalność awarii / tablica awarii · fleet health → zdrowie floty
-- implementation envelope → koperta implementacji · safety net → siatka bezpieczeństwa · control surface → powierzchnia kontroli
+- implementation envelope → koperta implementacji · safety net → siatka bezpieczeństwa · control surface → powierzchnia
+  kontroli
 - stampede → stampeda · liveness → liveness (EN)
-- wave shapes → kształty fal · Foundation / Sequential chain / Parallel disjoint → Fundament / Łańcuch sekwencyjny / Rozłączna równoległość · final close-out → finalne zamknięcie
-- gate clamp → docisk bramki (gate clamp) · cascade effect / agent blindness → efekt kaskady / ślepota agenta · remediation → remediacja
+- wave shapes → kształty fal · Foundation / Sequential chain / Parallel disjoint → Fundament / Łańcuch sekwencyjny /
+  Rozłączna równoległość · final close-out → finalne zamknięcie
+- gate clamp → docisk bramki (gate clamp) · cascade effect / agent blindness → efekt kaskady / ślepota agenta ·
+  remediation → remediacja
 - dual-source truth → prawda z dwóch źródeł · memory spine → kręgosłup pamięci · snapshots → migawki
 - field teams → zespoły polowe · takeover → przejęcie / pełne przejęcie · mission diary → dziennik misji
-- adjacent postures → postawy sąsiadujące · runtime lane → pas runtime'u · terminal state → stan terminalny · binding artifacts → wiążące artefakty
+- adjacent postures → postawy sąsiadujące · runtime lane → pas runtime'u · terminal state → stan terminalny · binding
+  artifacts → wiążące artefakty
 - compat bridge → mostek kompatybilności · pattern scans → skany wzorców
 - Iron Law → Żelazne prawo · Red Flags / Stop → Czerwone flagi / Stop · Output Contract → Kontrakt wyjścia
-- Plan-shape Style Guide → Przewodnik stylu kształtu planu (plik EMIL.md) · market polish → polish rynkowy · battle-tested → sprawdzony w boju
+- Plan-shape Style Guide → Przewodnik stylu kształtu planu (plik EMIL.md) · market polish → polish rynkowy ·
+  battle-tested → sprawdzony w boju
 - graceful shutdown / static hosting / executive debugging → EN (terminy techniczne)
 
 ⸻
 
 12d. Review vc-hydrate (decyzje)
 
-- „Kod jest suchy… płynu… bezfrykcyjna" → „Kod działa, ale brakuje mu warstwy, która pozwala dotrzeć do użytkowników… możliwie bez tarcia"
+- „Kod jest suchy… płynu… bezfrykcyjna" → „Kod działa, ale brakuje mu warstwy, która pozwala dotrzeć do użytkowników…
+  możliwie bez tarcia"
 - bezfrykcyjna → bez tarcia · agent pakujący → skill od pakowania produktu · Reguła kanoniczna → Zasada nadrzędna
 - zewnętrzna/publiczna twarz → zewnętrzna powierzchnia prezentacji / publiczna powierzchnia produktu
 - Wejdź przez / uruchom przez command deck → Zacznij od / uruchom z Command Deck
 - Załataj luki → Domknij luki · relewantnych → trafnych · runtime-vs-prezentacja → runtime vs warstwa prezentacji
-- Scaffolding… / buduje (scaffold) → Scaffold… / tworzy scaffold · „pierwszych 5 minut" → pierwsze 5 minut użytkownika · szybki win → quick win
+- Scaffolding… / buduje (scaffold) → Scaffold… / tworzy scaffold · „pierwszych 5 minut" → pierwsze 5 minut użytkownika ·
+  szybki win → quick win
 - Protokół sprintu hydrate → Protokół hydrate sprintu · raport hydrate / per domena → raport po hydrate / według domen
 - Integracja z pipelinem → Integracja z pipeline'em · artefakty pakujące → artefakty do dystrybucji i prezentacji
 - deploymentem i launchem go-to-market → deployem i go-to-market launchem · preambuł living-tree → preambuła Living Tree
-- Hydrate repozytorium → Hydrate repo (pozostałe domeny: „Hydrate X" bez zmian) · „wszystkie sześć" (lista ma 7) → „wszystkie te warunki"
+- Hydrate repozytorium → Hydrate repo (pozostałe domeny: „Hydrate X" bez zmian) · „wszystkie sześć" (lista ma 7) →
+  „wszystkie te warunki"
 
 ⸻
 
 12e. Już po polsku w źródle (zostają PL)
 
-smaczki · dyspozytura · kronika · wydmuszka · bezpiecznik · pancerna latarnia · dirygentura · „bez odbioru" · „się zajebiemy" (internal; w public-facing złagodzić) · Ludzki gust / Agentyczna siła / Rzeczywistość · nawodnij (trigger) · mylik / myliki
+smaczki · dyspozytura · kronika · wydmuszka · bezpiecznik · pancerna latarnia · dirygentura · „bez odbioru" · „się
+zajebiemy" (internal; w public-facing złagodzić) · Ludzki gust / Agentyczna siła / Rzeczywistość · nawodnij (trigger) ·
+mylik / myliki
 
 ⸻
 
 12f. Świadome decyzje / quirki źródła (zachowane 1:1, nie tłumaczeniowe)
 
-- Etykiety szablonów zostają EN — 12-sekcyjny brief (Mission/Context/Gates/Acceptance/Out of scope…) w vc-operator/DISPATCH(\_TEMPLATE), vc-init/backlog/HOWTO, vc-scaffold/plans/HOWTO + plan-template; nazwy faz trace'u w vc-audit/PHASES (Context Receipt, Adversarial Pass…); pola raportów (Executive Summary, Evidence Index…). To literalne pola wyjścia.
-- Bank sucharów (vc-operator/DISPATCH) — 7 dowcipów zostało EN (źródło: „port-ready EN dad-jokes"; etykieta „Suchar:" ujednolicona).
+- Etykiety szablonów zostają EN — 12-sekcyjny brief (Mission/Context/Gates/Acceptance/Out of scope…) w
+  vc-operator/DISPATCH (\_TEMPLATE), vc-init/backlog/HOWTO, vc-scaffold/plans/HOWTO + plan-template; nazwy faz trace'u w
+  vc-audit/PHASES (Context Receipt, Adversarial Pass…); pola raportów (Executive Summary, Evidence Index…). To literalne
+  pola wyjścia.
+- Bank sucharów (vc-operator/DISPATCH) — 7 dowcipów zostało EN (źródło: „port-ready EN dad-jokes"; etykieta „Suchar:"
+  ujednolicona).
 - EMIL.md — nazwa pliku/dokumentu („Plan-shape Style Guide"), NIE persona; nazwa verbatim, treść PL.
-- Stopki niestandardowe — vc-prview / vc-research: „_Created by M&K (c)2026 VetCoders_" (verbatim); część plików (operator/partner/ownership/screenscribe/skillaunch) bez stopki — 1:1.
-- Quirki źródła zachowane 1:1: „braad" (vc-marbles), „handsoff" (vc-scaffold), `jp` zamiast `jq`? (vc-skillaunch), „dziurawy" fence szablonu w vc-workflow/references/phase-research, podwójny ukośnik `agents//…spawn.sh` w phase-implement. Do ewentualnego zgłoszenia autorom oryginału.
-- vc-skillaunch — w źródle ślady ogólnego skill-creatora (science bundle, reference papers); przetłumaczone dosłownie. Ewentualny rebranding = decyzja redakcyjna, nie tłumaczeniowa.
+- Stopki niestandardowe — vc-prview / vc-research: „ _Created by M&K (c)2026 VetCoders_" (verbatim); część plików
+  (operator/partner/ownership/screenscribe/skillaunch) bez stopki — 1:1.
+- Quirki źródła zachowane 1:1: „braad" (vc-marbles), „handsoff" (vc-scaffold), `jp` zamiast `jq`? (vc-skillaunch),
+  „dziurawy" fence szablonu w vc-workflow/references/phase-research, podwójny ukośnik `agents//…spawn.sh` w
+  phase-implement. Do ewentualnego zgłoszenia autorom oryginału.
+- vc-skillaunch — w źródle ślady ogólnego skill-creatora (science bundle, reference papers); przetłumaczone dosłownie.
+  Ewentualny rebranding = decyzja redakcyjna, nie tłumaczeniowa.
 
 ⸻
 
 12g. Rozwiązane resztki
 
 - vc-screenscribe: „narrowane wideo" → „wideo z narracją" (zastosowane).
-- vc-release H1: mantra „Done in the repo" / „done in the world" → „Zrobione w repo" / „zrobione w świecie" (zastosowane).
+- vc-release H1: mantra „Done in the repo" / „done in the world" → „Zrobione w repo" / „zrobione w świecie"
+  (zastosowane).

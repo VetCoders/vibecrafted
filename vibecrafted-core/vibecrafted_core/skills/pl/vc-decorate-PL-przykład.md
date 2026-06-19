@@ -21,8 +21,8 @@ description: >
 
 ### Zasada Żywego Drzewa / worktree
 
-Ten workflow działa w bieżącym checkoucie i na bieżącej gałęzi operatora. Nie twórz worktree gita, nie przełączaj się
-na niego ani nie przenoś do niego wykonania, chyba że operator wprost poprosi o worktree w tym prompcie. Ogólne słowa w
+Ten workflow działa w bieżącym checkoucie i na bieżącej gałęzi operatora. Nie twórz worktree gita, nie przełączaj się na
+niego ani nie przenoś do niego wykonania, chyba że operator wprost poprosi o worktree w tym prompcie. Ogólne słowa w
 stylu „isolate", „parallel" czy „clean branch" to za mało. Czytaj pliki ponownie przed edycją, dostosowuj się do
 równoległych zmian i zgłoś awarię podłoża (substrate failure), jeśli bieżące drzewo jest zbyt zatrute, by bezpiecznie
 kontynuować.
@@ -41,8 +41,8 @@ twierdzeniami opartymi na dokumentacji, aby wygenerować lub odświeżyć Mapę 
 Application Map): repo-view, focus, slice, impact, find i follow w odpowiednim zakresie. Szukaj istniejących symboli i
 kontraktów, zanim utworzysz nowe; uruchom impact przed usunięciem lub dużym refactorem; uruchom slice przed edycją.
 
-Chodzi o znalezienie zaczepów: nośnych hubów, bliźniaków, martwego kodu, dryfu, punktów wejścia runtime'u oraz pułapek
-o dużym promieniu rażenia. Jeśli zadanie jawnie nie dotyczy repo lub nie dotyczy kodu, odnotuj w raporcie wyjątek „bez
+Chodzi o znalezienie zaczepów: nośnych hubów, bliźniaków, martwego kodu, dryfu, punktów wejścia runtime'u oraz pułapek o
+dużym promieniu rażenia. Jeśli zadanie jawnie nie dotyczy repo lub nie dotyczy kodu, odnotuj w raporcie wyjątek „bez
 repo". W przeciwnym razie brak dowodów z `vc-init`/Loctree to błąd procesu.
 
 Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<workflow> <agent> [--prompt|--file ...]`).
@@ -120,26 +120,26 @@ są zbyt ubogie.
 
 ### Zestaw narzędzi Unicode dla CLI
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. dostarcza bazę danych Unicode (2601 znaków, 13 kategorii) oraz serwer `unicode-puzzles-mcp`. Używaj ich
-do dekoracji CLI zamiast zgadywać code pointy czy hardkodować sekwencje ucieczki ANSI.
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. dostarcza bazę danych Unicode (2601 znaków, 13 kategorii) oraz serwer `unicode-puzzles-mcp`. Używaj ich do
+dekoracji CLI zamiast zgadywać code pointy czy hardkodować sekwencje ucieczki ANSI.
 
 **Elementy dekoracji CLI** (baza Unicode):
 
-| Potrzeba    | Znaki               | Źródło                   |
-| ----------- | ------------------- | ------------------------ |
-| Ramki       | `╭─╮│╰─╯`           | Box Drawing              |
-| Separatory  | `·` `─` `━` `┄`     | Box Drawing, Punctuation |
-| Znaczniki   | `✓` `✗` `⚠`        | Dingbats                 |
-| Punktory    | `▸` `▪` `◆` `›`    | Geometric Shapes         |
-| Postęp      | `⣿⣶⣤⣀` `█▓▒░`       | Braille, Block Elements  |
-| Sparkline'y | `⣀⣤⣶⣿` (8px/komórkę)| Braille (256 kombinacji) |
-| Strzałki    | `→` `←` `↑` `↓` `⟶` | Arrows                   |
-| Status      | `⚒` `⚙` `⟳`  | Misc Symbols             |
-| Marki       | `🄵·🅁·🄰·🄼·🄴·🅆·🄾·🅁·🄺` | Enclosed Alphanumerics   |
+| Potrzeba    | Znaki                | Źródło                   |
+| ----------- | -------------------- | ------------------------ |
+| Ramki       | `╭─╮│╰─╯`            | Box Drawing              |
+| Separatory  | `·` `─` `━` `┄`      | Box Drawing, Punctuation |
+| Znaczniki   | `✓` `✗` `⚠`          | Dingbats                 |
+| Punktory    | `▸` `▪` `◆` `›`      | Geometric Shapes         |
+| Postęp      | `⣿⣶⣤⣀` `█▓▒░`        | Braille, Block Elements  |
+| Sparkline'y | `⣀⣤⣶⣿` (8px/komórkę) | Braille (256 kombinacji) |
+| Strzałki    | `→` `←` `↑` `↓` `⟶`  | Arrows                   |
+| Status      | `⚒` `⚙` `⟳`          | Misc Symbols             |
+| Marki       | `🄵·🅁·🄰·🄼·🄴·🅆·🄾·🅁·🄺`  | Enclosed Alphanumerics   |
 
 **Sparkline'y Braille'a** zasługują na uwagę. Pojedynczy znak Braille'a koduje 8 kropek w siatce 2×4 (256 kombinacji) —
-40 znaków = krzywa zbieżności o 320 punktach w terminalu, bez biblioteki graficznej. Używaj do: zużycia tokenów w czasie
-· znalezisk P0/P1/P2 w pętlach marbles · osi czasu aktywności agentów · dowolnych danych trendowych.
+40 znaków = krzywa zbieżności o 320 punktach w terminalu, bez biblioteki graficznej. Używaj do: zużycia tokenów w
+czasie · znalezisk P0/P1/P2 w pętlach marbles · osi czasu aktywności agentów · dowolnych danych trendowych.
 
 **Zasady:**
 
@@ -170,8 +170,8 @@ do dekoracji CLI zamiast zgadywać code pointy czy hardkodować sekwencje uciecz
 scaffold → init → workflow → followup → marbles → dou → [DECORATE] → hydrate → release
 ```
 
-Decorate znajduje się po `dou`, zapewniając, że już kompletna powierzchnia produktu jest spójna wizualnie przed
-finalnym pakowaniem (`hydrate`) i wysyłką (`release`).
+Decorate znajduje się po `dou`, zapewniając, że już kompletna powierzchnia produktu jest spójna wizualnie przed finalnym
+pakowaniem (`hydrate`) i wysyłką (`release`).
 
 ---
 

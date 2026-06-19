@@ -11,12 +11,11 @@
 
 ## 0. Reguła krytyczna — frontmatter zostaje w EN
 
-Pola `name` i `description` w YAML frontmatter to **literalne stringi do matchowania**,
-po których runtime decyduje, czy załadować skill. **NIE TŁUMACZ ICH.** Zostaw verbatim.
-(Tłumaczenie `description` może rozregulować triggering.)
+Pola `name` i `description` w YAML frontmatter to **literalne stringi do matchowania**, po których runtime decyduje, czy
+załadować skill. **NIE TŁUMACZ ICH.** Zostaw verbatim. (Tłumaczenie `description` może rozregulować triggering.)
 
-Jeśli kiedykolwiek potwierdzisz, że runtime matchuje semantycznie po polsku — dopiero wtedy
-to się zmienia. Domyślnie: EN.
+Jeśli kiedykolwiek potwierdzisz, że runtime matchuje semantycznie po polsku — dopiero wtedy to się zmienia. Domyślnie:
+EN.
 
 ---
 
@@ -44,8 +43,8 @@ Zasady:
 - Nazwa pliku zostaje **identyczna** (`SKILL.md`, nie `SKILL-PL.md`) — strukturę różnicuje root, nie nazwa.
 - **Twórz brakujące katalogi i pliki** pod `skills-PL/` w miarę potrzeby, zachowując hierarchię EN.
 - Tłumaczymy **tylko pliki `.md`**. Assety nie-doc (`agents/openai.yaml`, `engines/*.py`, `scripts/*.sh`,
-  `*.pyc`, `*.fileloc`) **nie są tłumaczone** — nie kopiuj ich do drzewa PL (chyba że operator chce
-  w pełni uruchamialne lustro — wtedy kopiuj 1:1 bez zmian).
+  `*.pyc`, `*.fileloc`) **nie są tłumaczone** — nie kopiuj ich do drzewa PL (chyba że operator chce w pełni uruchamialne
+  lustro — wtedy kopiuj 1:1 bez zmian).
 
 > **Uwaga o pliku przykładowym.** W `skills-PL/` leży już `vc-decorate-PL-przykład.md` (płaski, z sufiksem).
 > To **tylko referencja stylu i terminologii** — NIE jest to docelowy format nazewnictwa.
@@ -70,7 +69,7 @@ Nie mieszaj fal. Domknij i zatwierdź Falę 1, zanim ruszysz drugą.
 ## 1. NIE TŁUMACZ (zostaw verbatim)
 
 - Cały **frontmatter YAML** — klucze i wartości `name`, `description`, oraz wszystkie pozostałe klucze.
-- Wszystkie **bloki kodu** (```), **inline `code`**, komendy shell, **ścieżki**, **URL-e\*\*, zmienne env, flagi.
+- Wszystkie **bloki kodu** (```), **inline `code`**, komendy shell, **ścieżki**, **URL-e\ \*\*, zmienne env, flagi.
 - **Nazwy komend / narzędzi**: `vc-init`, cała rodzina `vc-*`, `Loctree` / `loct-*`, `screenscribe`,
   `unicode-puzzles-mcp`, `search_unicode`, `slice` / `impact` / `focus`, itp.
 - **Etapy pipeline'u** (w tym `dou`):
@@ -102,8 +101,8 @@ Brzmią naturalniej w polskim dev-slangu niż siłowe kalki.
 | central store / repo | wspólny katalog (NIE „centralny magazyn") |
 | runtime truth        | twardy wymóg runtime'u                    |
 
-Jeśli trafisz na nowy termin, którego nie ma w tabeli — przetłumacz naturalnie,
-ale **trzymaj się jednej wersji w obrębie całego zestawu plików**.
+Jeśli trafisz na nowy termin, którego nie ma w tabeli — przetłumacz naturalnie, ale **trzymaj się jednej wersji w
+obrębie całego zestawu plików**.
 
 ---
 
@@ -126,8 +125,8 @@ ale **trzymaj się jednej wersji w obrębie całego zestawu plików**.
 
 ## 6. Output
 
-Zwróć **cały plik** z identyczną strukturą; zmieniona ma być wyłącznie proza.
-Bez komentarzy, bez ```-fence wokół całości, bez preambuły — sam plik.
+Zwróć **cały plik** z identyczną strukturą; zmieniona ma być wyłącznie proza. Bez komentarzy, bez ```-fence wokół
+całości, bez preambuły — sam plik.
 
 ---
 
@@ -150,14 +149,13 @@ Jeśli diff nie jest pusty → model ruszył frontmatter → popraw przed akcept
 Per plik, w tej kolejności:
 
 1. **Przebieg tłumaczenia** — jeden plik, pełne skupienie.
-2. **Autoreview** — przeczytaj PL na głos „w głowie": czy brzmi jak pisał Polak-dev, nie jak kalka?
-   Zdania już dobre w oryginale po polsku nie mają być przekombinowane.
-3. **Spójność terminologiczna** — sprawdź każdy termin z sekcji 3. Jeśli trafił się **nowy** termin,
-   dopisz go do żywego glosariusza (niżej) i trzymaj tę samą wersję we wszystkich kolejnych plikach.
-4. **Integralność strukturalna** — frontmatter, bloki kodu, ścieżki, liczba sekcji bez zmian
-   (sanity-check z sekcji 7).
-5. **Wątpliwości → flaga, nie zgadywanie.** Niejednoznaczny termin albo gra słów, której nie da się
-   oddać 1:1 → zatrzymaj się i zapytaj operatora, nie wymyślaj.
+2. **Autoreview** — przeczytaj PL na głos „w głowie": czy brzmi jak pisał Polak-dev, nie jak kalka? Zdania już dobre w
+   oryginale po polsku nie mają być przekombinowane.
+3. **Spójność terminologiczna** — sprawdź każdy termin z sekcji 3. Jeśli trafił się **nowy** termin, dopisz go do żywego
+   glosariusza (niżej) i trzymaj tę samą wersję we wszystkich kolejnych plikach.
+4. **Integralność strukturalna** — frontmatter, bloki kodu, ścieżki, liczba sekcji bez zmian (sanity-check z sekcji 7).
+5. **Wątpliwości → flaga, nie zgadywanie.** Niejednoznaczny termin albo gra słów, której nie da się oddać 1:1 →
+   zatrzymaj się i zapytaj operatora, nie wymyślaj.
 
 **Żywy glosariusz (dopisuj w trakcie):**
 
