@@ -55,8 +55,8 @@ Prefer `--file` for an existing plan, `--prompt` for inline intent.
 <details>
 <summary>Foundation Dependencies</summary>
 
-- [vc-loctree](../foundations/vc-loctree/SKILL.md) — structural awareness
-- [vc-aicx](../foundations/vc-aicx/SKILL.md) — intentions and steerability
+- [vc-loctree](../vc-loctree/SKILL.md) — structural awareness
+- [vc-aicx](../vc-aicx/SKILL.md) — intentions and steerability
 </details>
 
 One skill, one stance: **shared executive brain**. User + agent stay at the strategic center. Agents do delegated fieldwork. Truth comes from comparison, synthesis, and explicit contracts.

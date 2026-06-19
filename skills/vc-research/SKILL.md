@@ -54,8 +54,8 @@ If invoked outside Zellij, the framework attaches/creates the operator session a
 <details>
 <summary>Foundation Dependencies</summary>
 
-- [vc-loctree](../foundations/vc-loctree/SKILL.md) — structural awareness
-- [vc-aicx](../foundations/vc-aicx/SKILL.md) — intentions and steerability
+- [vc-loctree](../vc-loctree/SKILL.md) — structural awareness
+- [vc-aicx](../vc-aicx/SKILL.md) — intentions and steerability
 </details>
 
 ## Purpose

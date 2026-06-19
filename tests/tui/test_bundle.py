@@ -30,7 +30,8 @@ def test_discover_bundle_skills_tracks_live_skill_surface() -> None:
     assert "vc-marbles" in skill_names
     assert "vc-ship" not in skill_names
     assert "vc-ownership" in skill_names
-    assert "vc-screenscribe" not in skill_names
+    # vc-screenscribe is now a flattened top-level skill (see write_bundle test).
+    assert "vc-screenscribe" in skill_names
 
 
 def test_top_level_skill_dirs_are_live_skills_or_foundations() -> None:
@@ -41,11 +42,12 @@ def test_top_level_skill_dirs_are_live_skills_or_foundations() -> None:
         if not path.is_dir() or path.name in allowed_non_skill_dirs:
             continue
 
-        missing = [
-            marker
-            for marker in ("SKILL.md", "FLOW.md")
-            if not (path / marker).is_file()
-        ]
+        # FLOW.md is a pipeline-skill artifact. After foundation/utility skills
+        # were flattened into skills/ (vc-loctree, vc-aicx, vc-audit, vc-prview,
+        # vc-screenscribe, vc-skillaunch, vibecraftsmanship), several legitimate
+        # skills ship with SKILL.md only. Require the skill contract; FLOW.md is
+        # optional.
+        missing = [marker for marker in ("SKILL.md",) if not (path / marker).is_file()]
         if missing:
             offenders.append(
                 f"{path.relative_to(bundle.REPO_ROOT)} missing {', '.join(missing)}"
@@ -70,7 +72,10 @@ def test_write_bundle_uses_current_metadata_and_skill_inventory(tmp_path: Path) 
     assert "skills/vc-marbles/SKILL.md" in members
     assert "skills/vc-ship/SKILL.md" not in members
     assert "skills/vc-ownership/SKILL.md" in members
-    assert "skills/vc-screenscribe/SKILL.md" not in members
+    # DECISION (revert if marketplace intent differs): vc-screenscribe flattened
+    # into skills/ as a real SKILL.md skill with no exclusion mechanism, so it now
+    # ships in the bundle like any other vc- skill.
+    assert "skills/vc-screenscribe/SKILL.md" in members
     assert "docs/RELEASE_KICKOFF.md" in members
     assert "docs/SUBMISSION_FORMS.md" in members
 

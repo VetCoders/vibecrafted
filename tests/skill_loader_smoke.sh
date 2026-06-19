@@ -26,7 +26,6 @@ SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SKILLS_DIR="$REPO_ROOT/skills"
 EXPERIMENTAL_DIR="$SKILLS_DIR/experimental"
-FOUNDATIONS_DIR="$SKILLS_DIR/foundations"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures"
 HELPER_SHIM="${HOME}/.config/vetcoders/vc-skills.sh"
 
@@ -200,24 +199,19 @@ fi
 
 printf '\n%s\n' "$(dim '─── phase 3: foundation wrappers ───')"
 
-if [[ ! -d "$FOUNDATIONS_DIR" ]]; then
-  log_fail "foundations dir missing at $FOUNDATIONS_DIR"
-else
-  shopt -s nullglob
-  foundation_count=0
-  for foundation_dir in "$FOUNDATIONS_DIR"/*/; do
+# Foundation skills were flattened out of skills/foundations/ into the skills/
+# root; verify the known foundation skills are present as top-level skill dirs.
+foundation_count=0
+for foundation in vc-init vc-loctree vc-aicx vc-research; do
+  if [[ -d "$SKILLS_DIR/$foundation" && -f "$SKILLS_DIR/$foundation/SKILL.md" ]]; then
+    log_pass "foundation/$foundation: present"
     foundation_count=$((foundation_count + 1))
-    name="foundation/$(basename "$foundation_dir")"
-    if [[ -d "$foundation_dir" ]]; then
-      log_pass "$name: wrapper dir present"
-    else
-      log_fail "$name: missing"
-    fi
-  done
-  shopt -u nullglob
-  if (( foundation_count < 4 )); then
-    log_warn "foundations: only $foundation_count discovered (expected ≥4)"
+  else
+    log_fail "foundation/$foundation: missing in $SKILLS_DIR"
   fi
+done
+if (( foundation_count < 4 )); then
+  log_warn "foundations: only $foundation_count of 4 present"
 fi
 
 # -----------------------------------------------------------------------------
