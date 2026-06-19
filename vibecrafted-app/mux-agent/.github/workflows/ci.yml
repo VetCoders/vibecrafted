@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust fmt
+        run: cargo fmt -- --check
+
+      - name: Rust clippy
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --no-default-features
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Prepare tarpaulin output directory
+        run: mkdir -p target/tarpaulin
+
+      - name: Coverage (tarpaulin)
+        run: cargo tarpaulin --all-targets --no-default-features --timeout 120 --out Lcov --output-dir target/tarpaulin
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: target/tarpaulin/tarpaulin-report.lcov
+          if-no-files-found: error

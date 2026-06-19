@@ -205,6 +205,10 @@ def test_install_sh_yes_skips_attended_prompt_for_pipe_bootstrap(
     staged_root = home / ".vibecrafted" / "tools" / "vibecrafted-current"
     assert exit_code == 0
     assert "Proceed? [y/N]" not in output
+    assert "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. bootstrap" in output
+    assert "Running     compact installer" in output
+    assert "Non-interactive bootstrap detected" not in output
+    assert "Launching installer:" not in output
     assert staged_root.is_symlink()
     assert python_capture.read_text(encoding="utf-8").splitlines() == [
         str(staged_root / "scripts" / "vetcoders_install.py"),

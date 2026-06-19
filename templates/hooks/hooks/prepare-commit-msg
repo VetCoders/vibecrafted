@@ -21,6 +21,8 @@ case "$COMMIT_SOURCE" in
   merge|squash|commit|message|template) exit 0 ;;
 esac
 
+# shellcheck disable=SC2012  # filenames are controlled (pre-commit-*.log, no spaces);
+# `ls -1t` is the portable newest-by-mtime — find -printf is GNU-only (absent on macOS).
 latest_warn="$(ls -1t "$(husky_warns_dir)"/pre-commit-*.log 2>/dev/null | head -1 || true)"
 [ -z "$latest_warn" ] && exit 0
 

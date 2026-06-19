@@ -562,69 +562,9 @@ install_from_cargo() {
 # aicx installer
 # ---------------------------------------------------------------------------
 
-# aicx pulls llama-cpp-sys-2 which links against llama.cpp via bindgen+cmake.
-# Detect Linux toolchain prereqs early so we don't burn 5+ minutes of cargo
-# compile only to fail on missing libclang. Returns 0 if everything needed
-# for an aicx cargo build is present (or we're on macOS where Apple's
-# toolchain ships them), 1 otherwise.
-aicx_cargo_prereqs_ok() {
-  local os
-  os="$(detect_os)"
-  # macOS + xcode CLT ship clang/libclang/cmake — assume OK.
-  [[ "$os" != "linux" ]] && return 0
-
-  local missing=()
-
-  # libclang: bindgen needs libclang.so. Look in common locations + LIBCLANG_PATH.
-  local found_libclang=0
-  if [[ -n "${LIBCLANG_PATH:-}" && -d "$LIBCLANG_PATH" ]]; then
-    found_libclang=1
-  else
-    local candidate
-    for candidate in \
-      /usr/lib/llvm-*/lib/libclang.so* \
-      /usr/lib/x86_64-linux-gnu/libclang*.so* \
-      /usr/lib/aarch64-linux-gnu/libclang*.so* \
-      /usr/lib64/libclang*.so* \
-      /usr/lib/libclang*.so*; do
-      [[ -e "$candidate" ]] && { found_libclang=1; break; }
-    done
-  fi
-  (( found_libclang )) || missing+=("libclang (libclang-dev / clang-devel)")
-
-  # cmake: llama.cpp build script invokes cmake.
-  has_cmd cmake || missing+=("cmake")
-
-  # C++ compiler: g++ or clang++.
-  has_cmd g++ || has_cmd clang++ || missing+=("g++ or clang++")
-
-  if (( ${#missing[@]} > 0 )); then
-    warn "aicx requires native toolchain dependencies missing on this system:"
-    local item
-    for item in "${missing[@]}"; do
-      warn "    - $item"
-    done
-    warn ""
-    warn "Install them first:"
-    if has_cmd apt-get; then
-      warn "    sudo apt-get install -y libclang-dev cmake build-essential"
-    elif has_cmd dnf; then
-      warn "    sudo dnf install -y clang-devel cmake gcc-c++ make"
-    elif has_cmd pacman; then
-      warn "    sudo pacman -S --needed clang cmake base-devel"
-    elif has_cmd zypper; then
-      warn "    sudo zypper install -y libclang-devel cmake gcc-c++"
-    elif has_cmd apk; then
-      warn "    sudo apk add clang-dev cmake g++ make"
-    else
-      warn "    Use your distro package manager to install: libclang-dev cmake g++"
-    fi
-    warn "Or grab a prebuilt binary directly:"
-    warn "    https://github.com/$AICX_REPO/releases"
-    return 1
-  fi
-  return 0
-}
+# NOTE: aicx_cargo_prereqs_ok() (a Linux libclang/cmake/g++ toolchain probe for
+# building aicx from source) was removed when foundations switched to the
+# prebuilt release installer below — there is no cargo build to gate anymore.
 
 install_aicx() {
   if has_cmd aicx-mcp; then
@@ -637,24 +577,35 @@ install_aicx() {
     info "Would run: curl -fsSL https://raw.githubusercontent.com/Loctree/aicx/main/install.sh | AICX_INSTALL_MODE=release bash"
   else
     info "Installing aicx via official release installer..."
+    # Download the official aicx release installer to a temp file and execute it
+    # from disk, rather than piping curl straight into bash. Same installer, same
+    # env — but the payload lands on disk first, leaving room to inspect / integrity-
+    # check it, and avoids the curl-pipe-bash anti-pattern.
+    local aicx_installer
     if [[ -n "${AICX_RELEASE_TAG:-}" ]]; then
-      if curl -fsSL https://raw.githubusercontent.com/Loctree/aicx/main/install.sh \
-        | AICX_INSTALL_MODE=release AICX_RELEASE_TAG="$AICX_RELEASE_TAG" bash; then
+      aicx_installer="$(mktemp)"
+      if curl -fsSL https://raw.githubusercontent.com/Loctree/aicx/main/install.sh -o "$aicx_installer" \
+        && AICX_INSTALL_MODE=release AICX_RELEASE_TAG="$AICX_RELEASE_TAG" bash "$aicx_installer"; then
         if promote_to_prefix "aicx-mcp"; then
           promote_to_prefix "aicx" || true
           promote_to_prefix "aicx-extract" || true
+          rm -f "$aicx_installer"
           return 0
         fi
       fi
+      rm -f "$aicx_installer"
     else
-      if curl -fsSL https://raw.githubusercontent.com/Loctree/aicx/main/install.sh \
-        | AICX_INSTALL_MODE=release bash; then
+      aicx_installer="$(mktemp)"
+      if curl -fsSL https://raw.githubusercontent.com/Loctree/aicx/main/install.sh -o "$aicx_installer" \
+        && AICX_INSTALL_MODE=release bash "$aicx_installer"; then
         if promote_to_prefix "aicx-mcp"; then
           promote_to_prefix "aicx" || true
           promote_to_prefix "aicx-extract" || true
+          rm -f "$aicx_installer"
           return 0
         fi
       fi
+      rm -f "$aicx_installer"
     fi
   fi
 

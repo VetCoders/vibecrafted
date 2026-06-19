@@ -49,3 +49,13 @@ vibecrafted-io-link
 /operator-tui/README.md
 /.loctree
 /.antigravitycli
+/.air
+/vibecrafted-app/mux-agent/target
+/vibecrafted-app/shell-agent/app/build
+/vibecrafted-app/shell-agent/build
+/vibecrafted-server/target
+/vibecrafted-core/vibecrafted_core/.loctree
+/vibecrafted-app/mux-agent/.vibecrafted
+/vibecrafted-app/tui-agent/audits
+*.txt
+/docs/plans

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import io
 import shutil
 from pathlib import Path
 
@@ -35,6 +36,72 @@ def _hide_rsync(monkeypatch) -> None:
         return real_which(name)
 
     monkeypatch.setattr(installer.shutil, "which", fake_which)
+
+
+class _TtyBuffer:
+    def __init__(self) -> None:
+        self.parts: list[str] = []
+
+    def write(self, text: str) -> int:
+        self.parts.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return True
+
+    @property
+    def text(self) -> str:
+        return "".join(self.parts)
+
+
+def test_compact_status_updates_one_tty_row() -> None:
+    out = _TtyBuffer()
+
+    installer._compact_line(out, "✓", "Skills", "27 installed")
+    installer._compact_line(out, "✓", "Store", "~/.vibecrafted/skills")
+    installer._clear_compact_status(out)
+
+    assert "\n" not in out.text
+    assert out.text.count("\r\033[K") == 3
+    assert "Skills" in out.text
+    assert "Store" in out.text
+    assert out.text.endswith("\r\033[K")
+
+
+def test_compact_status_appends_lines_for_non_tty_logs() -> None:
+    out = io.StringIO()
+
+    installer._compact_line(out, "✓", "Skills", "27 installed")
+    installer._compact_line(out, "✓", "Store", "~/.vibecrafted/skills")
+    installer._clear_compact_status(out)
+
+    assert out.getvalue().splitlines() == [
+        "  ✓ Skills        27 installed",
+        "  ✓ Store         ~/.vibecrafted/skills",
+    ]
+
+
+def test_compact_checkpoint_preserves_reason_context() -> None:
+    out = io.StringIO()
+
+    installer._compact_checkpoint(
+        out,
+        2,
+        "Diagnostics and Plan",
+        "We show the shape before changing files.",
+        ("Skills   27 -> ~/.vibecrafted/skills", "Shell    enabled"),
+    )
+
+    assert out.getvalue().splitlines() == [
+        "",
+        "  [2/4] Diagnostics and Plan",
+        "      REASON  We show the shape before changing files.",
+        "      Skills   27 -> ~/.vibecrafted/skills",
+        "      Shell    enabled",
+    ]
 
 
 def test_refresh_current_tools_mirrors_shadowing_files(

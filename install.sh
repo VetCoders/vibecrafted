@@ -467,15 +467,14 @@ verify_signature() {
 }
 
 if [[ -n "$archive_file" ]]; then
-  info "Unpacking local archive: $archive_file"
+  info "Staging source: local archive"
   extract_tarball "$archive_file" "$extract_root"
 else
-  info "Downloading 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. snapshot: $archive_url"
+  info "Staging source: download snapshot"
   local_archive="$tmpdir/$(basename "$archive_url")"
   curl -fsSL "$archive_url" -o "$local_archive"
 
   base_url="${archive_url%/*}"
-  info "Verifying integrity..."
   verify_signature "$local_archive" "$base_url"
 
   extract_tarball "$local_archive" "$extract_root"
@@ -500,11 +499,6 @@ rm -rf "$staged_dir"
 mv "$incoming_dir" "$staged_dir"
 ln -sfn "$staged_dir" "$current_link"
 
-info "Staged bootstrap source:"
-info "  $staged_dir"
-info "Current control plane:"
-info "  $current_link"
-
 # Read canonical VERSION file from the staged source tree for the post-install banner.
 # The repo ships VERSION at the root; fall back to 'unknown' if absent (e.g. custom tarballs).
 _installed_version=""
@@ -528,6 +522,27 @@ post_install_banner() {
   info "---------------------------------------------------------------"
 }
 
+bootstrap_log="$vibecrafted_home/bootstrap.log"
+
+write_bootstrap_log_header() {
+  mkdir -p "$(dirname "$bootstrap_log")"
+  {
+    printf 'vibecrafted bootstrap\n'
+    printf 'version: %s\n' "$_installed_version"
+    printf 'staged: %s\n' "$staged_dir"
+    printf 'current: %s\n' "$current_link"
+    printf '\n'
+  } > "$bootstrap_log"
+}
+
+compact_bootstrap_banner() {
+  printf '\n'
+  info "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. bootstrap"
+  info "  Staged      vibecrafted $_installed_version"
+  info "  Control     $current_link"
+  info "  Log         $bootstrap_log"
+}
+
 if [[ "$target" == "vibecrafted" && "$use_gui" == "1" ]]; then
   gui_installer="$current_link/scripts/installer_gui.py"
   [[ -f "$gui_installer" ]] || die "Guided installer not found: $gui_installer"
@@ -542,21 +557,27 @@ fi
 if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
   installer="$current_link/scripts/vetcoders_install.py"
   [[ -f "$installer" ]] || die "Installer not found: $installer"
-  info "Non-interactive bootstrap detected:"
-  info "  bypassing the browser UI and running compact installer"
+  write_bootstrap_log_header
+  compact_bootstrap_banner
 
   # Install foundations (loctree, aicx) from GH releases before the main installer.
   foundations_script="$current_link/scripts/install-foundations.sh"
   if [[ -x "$foundations_script" ]] || [[ -f "$foundations_script" ]]; then
-    info "Installing foundations..."
-    bash "$foundations_script" || info "  [warn] Foundation install had issues (non-fatal)"
+    if bash "$foundations_script" >> "$bootstrap_log" 2>&1; then
+      info "  [ok]        foundations ready"
+    else
+      info "  [warn]      foundations had issues; continuing"
+    fi
   fi
 
   runtime_script="$current_link/scripts/install-runtime.sh"
   if [[ "$runtime" != "none" ]]; then
     [[ -f "$runtime_script" ]] || die "Runtime installer not found: $runtime_script"
-    info "Installing runtime horse: $runtime"
-    bash "$runtime_script" --runtime "$runtime" --yes
+    if bash "$runtime_script" --runtime "$runtime" --yes >> "$bootstrap_log" 2>&1; then
+      info "  [ok]        runtime $runtime ready"
+    else
+      die "Runtime installer failed; see $bootstrap_log"
+    fi
   fi
 
   # Ensure foundations and tools installed by install-foundations.sh are visible.
@@ -567,9 +588,8 @@ if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
     esac
   done
 
-  post_install_banner
-  info "Launching installer:"
-  info "  python3 $installer install --source $current_link --with-shell --compact --non-interactive"
+  printf '\n'
+  info "  Running     compact installer"
   printf '\n'
   export VIBECRAFTED_RUNTIME="$runtime"
   exec python3 "$installer" install --source "$current_link" --with-shell --compact --non-interactive

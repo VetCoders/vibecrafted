@@ -238,6 +238,9 @@ _run_helper() {
   if [[ ! -t 0 || ! -t 1 ]]; then
     printf '  Non-interactive shells should use the standalone bin/vc-* wrappers.\n' >&2
     printf '  Add this repo bin directory to PATH or run scripts/install-foundations.sh:\n' >&2
+    # $PATH stays literal here — this is the command the user will run, where their
+    # own shell expands it; it is not a variable to expand at print time.
+    # shellcheck disable=SC2016
     printf '    export PATH="%s/bin:$PATH"\n' "$(_repo_source_root 2>/dev/null || _script_repo_root)" >&2
   fi
   return 1

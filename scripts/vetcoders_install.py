@@ -115,7 +115,7 @@ class TeeLogger:
     """Captures print output to a log file while optionally suppressing stdout."""
 
     def __init__(self, log_path: Path, quiet: bool = False):
-        self.log = open(log_path, "w")
+        self.log = open(log_path, "w", encoding="utf-8")
         self.quiet = quiet
         self._real_stdout = sys.__stdout__
 
@@ -149,8 +149,41 @@ def compact_logging(log_path: Path, quiet: bool = True):
 
 
 def _compact_line(out, icon: str, label: str, value: str) -> None:
-    """Print one compact status line to the real stdout."""
-    out.write(f"  {icon} {label:13s} {value}\n")
+    """Render one compact status update on stdout."""
+    line = f"  {icon} {label:13s} {value}"
+    if _compact_status_is_live(out):
+        out.write(f"\r\033[K{line}")
+        out.flush()
+        return
+    out.write(f"{line}\n")
+
+
+def _compact_status_is_live(out) -> bool:
+    isatty = getattr(out, "isatty", None)
+    return bool(callable(isatty) and isatty())
+
+
+def _clear_compact_status(out) -> None:
+    """Erase the live compact status row before printing a stable block."""
+    if _compact_status_is_live(out):
+        out.write("\r\033[K")
+        out.flush()
+
+
+def _compact_checkpoint(
+    out,
+    step: int,
+    title: str,
+    reason: str,
+    details: Sequence[str] = (),
+) -> None:
+    """Print a stable compact checkpoint with enough context to trust the install."""
+    _clear_compact_status(out)
+    out.write(f"\n  [{step}/4] {bold(title)}\n")
+    out.write(f"      REASON  {reason}\n")
+    for detail in details:
+        out.write(f"      {detail}\n")
+    out.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -415,9 +448,9 @@ def _is_writable(path: Path) -> bool:
         return False
 
 
-AGENT_RUNTIMES = ["codex", "claude", "gemini"]
+AGENT_RUNTIMES = ["codex", "claude", "gemini", "agy", "junie"]
 SYMLINK_TARGETS = ["agents", "claude", "codex"]
-SYMLINK_TARGET_CHOICES = [*SYMLINK_TARGETS, "gemini"]
+SYMLINK_TARGET_CHOICES = [*SYMLINK_TARGETS, "gemini", "agy", "junie"]
 
 # ---------------------------------------------------------------------------
 # Install state
@@ -1778,6 +1811,18 @@ KNOWN_HELPER_FUNCTIONS = [
     "gemini-research",
     "gemini-prompt",
     "gemini-observe",
+    "agy-implement",
+    "agy-plan",
+    "agy-review",
+    "agy-research",
+    "agy-prompt",
+    "agy-observe",
+    "junie-implement",
+    "junie-plan",
+    "junie-review",
+    "junie-research",
+    "junie-prompt",
+    "junie-observe",
     "skills-sync",
     "gemini-keychain-set",
     "gemini-keychain-get",
@@ -2880,6 +2925,8 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         "claude": [["--version"]],
         "codex": [["--version"]],
         "gemini": [["--version"], ["-v"], ["--help"]],
+        "agy": [["--version"], ["--help"]],
+        "junie": [["--version"], ["--help"]],
     }
     for agent_name, flag_options in _agent_flag_checks.items():
         agent_bin = shutil.which(agent_name)
@@ -3705,6 +3752,16 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         print(f"Source: {repo_root}")
         print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
         print()
+        _compact_checkpoint(
+            out,
+            1,
+            "Introduction",
+            "This keeps the terminal readable while the full transaction log stays on disk.",
+            (
+                f"Source  {repo_root}",
+                f"Log     {log_path}",
+            ),
+        )
 
         # Log system deps
         print("System check:")
@@ -3731,9 +3788,30 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 f"  {f.name}: {path or 'not installed'} {'(required)' if f.required else '(optional)'}"
             )
         print()
+        detected_agents = [
+            rt for rt in ("claude", "codex", "gemini") if available_runtimes.get(rt)
+        ]
+        _compact_checkpoint(
+            out,
+            2,
+            "Diagnostics and Plan",
+            "We show the shape before changing files, so the install is consentful and debuggable.",
+            (
+                f"Skills   {len(selected_skills)} -> {store_path}",
+                f"Views    {', '.join(all_runtimes)}",
+                f"Agents   {', '.join(detected_agents) if detected_agents else 'none detected'}",
+                f"Shell    {'enabled' if install_shell else 'skipped'}",
+            ),
+        )
 
         # Backup
         print("Backup:")
+        _compact_checkpoint(
+            out,
+            3,
+            "Installation",
+            "Now the installer backs up current state, stages tools, links views, and verifies the result.",
+        )
         orphaned_entries = collect_orphaned_skills(
             store_path, all_runtimes, set(selected_skills)
         )
@@ -3775,6 +3853,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             )
         except (OSError, subprocess.CalledProcessError) as exc:
             print(f"  FAILED: {exc}")
+            _clear_compact_status(out)
             out.write(
                 "\n  "
                 + red("Install stopped")
@@ -3925,6 +4004,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 # Surface critical issues on compact output too
                 critical = [f for f in issues if f.level == "fail"]
                 if critical:
+                    _clear_compact_status(out)
                     out.write(f"\n  {red('Issues found')} — check {log_path}\n")
             else:
                 print("  All checks passed")
@@ -3932,6 +4012,13 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         print()
 
     # --- Compact footer: header + commands (no repeated status lines) ---
+    _clear_compact_status(sys.stdout)
+    _compact_checkpoint(
+        sys.stdout,
+        4,
+        "Onboarding",
+        "The framework is installed; these are the first commands and recovery points.",
+    )
     fw_ver_display = get_framework_version(repo_root)
     sep = brand_separator(37)
     log_display = str(log_path).replace(str(Path.home()), "~")
