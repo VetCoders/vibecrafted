@@ -472,3 +472,33 @@ def test_root_cli_doctor_returns_failure_for_failed_findings(monkeypatch) -> Non
     )
 
     assert cli.main(["doctor"]) == 1
+
+
+def test_apply_live_liveness_flags_dead_launcher() -> None:
+    """observe must not echo the snapshot's stale 'heartbeat' for a run whose
+    launcher has already died (verification gap). A live pid check overrides it."""
+    import os
+
+    dead = cli._apply_live_liveness(
+        {"launcher_pid": 999999, "liveness": "heartbeat", "state": "process_spawned"}
+    )
+    assert dead["liveness"] == "pid_gone"
+
+    alive = cli._apply_live_liveness(
+        {
+            "launcher_pid": os.getpid(),
+            "liveness": "heartbeat",
+            "state": "process_spawned",
+        }
+    )
+    assert alive["liveness"] == "heartbeat"
+
+    # A completed run whose launcher legitimately exited stays terminal, not flagged.
+    done = cli._apply_live_liveness(
+        {"launcher_pid": 999999, "liveness": "terminal", "state": "completed"}
+    )
+    assert done["liveness"] == "terminal"
+
+    # No pid recorded → cannot tell, leave the snapshot untouched.
+    unknown = cli._apply_live_liveness({"liveness": "heartbeat", "state": "launching"})
+    assert unknown["liveness"] == "heartbeat"

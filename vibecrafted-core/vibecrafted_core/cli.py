@@ -223,18 +223,48 @@ def _print_launch_input_error(*, command: str, agent: str | None, message: str) 
     print(f"  {base} --file /path/to/brief.md", file=sys.stderr)
 
 
+def _pid_alive(pid: object) -> bool:
+    try:
+        os.kill(int(pid), 0)
+    except (ProcessLookupError, ValueError, TypeError):
+        return False
+    except PermissionError:
+        return True  # exists but owned by another user
+    return True
+
+
+def _apply_live_liveness(run: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Override a stale ``heartbeat`` liveness with a real-time pid check.
+
+    The snapshot can keep claiming a run is alive for tens of seconds after its
+    launcher dies, until the next ``sync_state`` reconciles it. observe must not
+    echo that stale "active" for a process that is already gone — that is the
+    verification gap (green/heartbeat shown for a dead run). If the recorded
+    launcher pid is gone and the run is not already terminal, report it as
+    ``pid_gone`` so the operator sees the truth, not the lag.
+    """
+    if not run:
+        return run
+    pid = run.get("launcher_pid")
+    if not pid or _run_terminal(run) or _pid_alive(pid):
+        return run
+    run = dict(run)
+    run["liveness"] = "pid_gone"
+    return run
+
+
 def _run_for_agent(
     agent: str, run_id: str, *, last: bool = False
 ) -> dict[str, Any] | None:
     snapshot = sync_state()
     if run_id:
-        return lookup_run(run_id)
+        return _apply_live_liveness(lookup_run(run_id))
     if not last:
         return None
     for key in ("active_runs", "recent_runs"):
         for run in snapshot.get(key) or []:
             if str(run.get("agent") or "") == agent:
-                return dict(run)
+                return _apply_live_liveness(dict(run))
     return None
 
 
