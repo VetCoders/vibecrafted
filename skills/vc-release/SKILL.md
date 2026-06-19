@@ -170,6 +170,8 @@ Every `vc-release` run must produce a report with actual evidence. Cannot honest
 > Full operator checklist: [`references/release-checklist.md`](references/release-checklist.md).
 > Deployment reality deep-dive: [`references/deployment-reality.md`](references/deployment-reality.md).
 
+## Release Report Contract
+
 **Mandatory sections:**
 
 1. **Security gate** — command run (`make semgrep` or equivalent), exit status and finding count, per-finding classification (rule id, severity, file, line range, dataflow boundary), resolution per finding (fixed in commit X / accepted with reason / deferred with tracking issue), explicit statement when gate was not actually satisfied.

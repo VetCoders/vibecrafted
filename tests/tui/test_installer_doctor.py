@@ -39,6 +39,7 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
                 "vc-init() { :; }",
                 "vc-intents() { :; }",
                 "vc-ownership() { :; }",
+                "vc-loop() { :; }",
                 "vc-marbles() { :; }",
                 "codex-implement() { :; }",
                 "codex-marbles() { :; }",
