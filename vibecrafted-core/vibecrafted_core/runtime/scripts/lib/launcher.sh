@@ -191,8 +191,33 @@ EOF_LAUNCH
 spawn_launch_headless() {
   local launcher="$1"
   [[ -x "$launcher" ]] || spawn_die "Launcher is not executable: $launcher"
-  nohup "$launcher" >/dev/null 2>&1 &
-  local launcher_pid=$!
+  # Detach into a NEW SESSION (setsid), not just background+nohup. A run dispatched
+  # from a GUI app (Pensieve) dies ~2s after spawn because nohup+& keeps the child
+  # in the parent's process group/session — when the app's Process teardown reaps
+  # that group, the "detached" run is killed before it writes a transcript.
+  # macOS has no setsid(1); use Python's start_new_session (posix setsid) for a
+  # portable true-detach, with stdio fully off the parent's (possibly piped) fds.
+  # Fall back to nohup+& only where python3 is unavailable.
+  local launcher_pid=""
+  if command -v python3 >/dev/null 2>&1; then
+    launcher_pid="$(VC_LAUNCHER="$launcher" python3 - <<'PY'
+import os, subprocess
+proc = subprocess.Popen(
+    [os.environ["VC_LAUNCHER"]],
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+    start_new_session=True,
+    close_fds=True,
+)
+print(proc.pid)
+PY
+)"
+  fi
+  if [[ -z "$launcher_pid" ]]; then
+    nohup "$launcher" >/dev/null 2>&1 &
+    launcher_pid=$!
+  fi
   printf 'Spawned headless launcher (pid=%s): %s\n' "$launcher_pid" "$launcher"
 }
 

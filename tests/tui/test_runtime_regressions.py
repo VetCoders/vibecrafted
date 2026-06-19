@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 from scripts import vetcoders_install
@@ -205,3 +206,57 @@ def test_copy_managed_launcher_replaces_broken_framework_symlink(
     assert dst.is_file()
     assert not dst.is_symlink()
     assert dst.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
+
+
+def test_spawn_launch_headless_detaches_into_new_session(tmp_path: Path) -> None:
+    """A headless launcher must run in its OWN session (setsid), not the spawner's
+    process group — otherwise a GUI app's Process teardown (the Pensieve dispatch)
+    kills the 'detached' run ~2s after spawn, before it writes a transcript."""
+    launcher = tmp_path / "launcher.sh"
+    sid_file = tmp_path / "child_sid.txt"
+    _write_fake_command(
+        launcher,
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                f'python3 -c \'import os; open("{sid_file}","w").write(str(os.getsid(0)))\'',
+                "sleep 2",
+            ]
+        )
+        + "\n",
+    )
+
+    launcher_sh = (
+        REPO_ROOT
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "runtime"
+        / "scripts"
+        / "lib"
+        / "launcher.sh"
+    )
+    # Spawn from a parent shell that exits immediately, then compare sessions.
+    parent_sid = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                "spawn_die(){ echo die >&2; exit 1; }; "
+                f'source <(sed -n "/^spawn_launch_headless()/,/^}}/p" "{launcher_sh}"); '
+                f'spawn_launch_headless "{launcher}" >/dev/null; '
+                "python3 -c 'import os; print(os.getsid(0))'"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    deadline = time.monotonic() + 5
+    while not sid_file.exists() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert sid_file.exists(), "headless child never ran (died at spawn)"
+    child_sid = sid_file.read_text(encoding="utf-8").strip()
+    assert child_sid and child_sid != parent_sid, (
+        f"headless child must be its own session leader (child={child_sid}, parent={parent_sid})"
+    )
