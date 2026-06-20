@@ -4,6 +4,8 @@ import argparse
 import datetime as dt
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -84,18 +86,62 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _default_runtime(explicit_runtime: str) -> str:
+def _live_operator_session_exists(root: str) -> bool:
+    """True when a live repo-bound vc-frame session exists to host a visible tab.
+
+    Mirrors the bash runtime's repo-bound discovery (``spawn_effective_operator_session``
+    / ``spawn_session_is_live`` in ``runtime/scripts/lib/vc_frame.sh``): the operator
+    session is named after ``basename "$root"`` and counts only when vc-frame lists it
+    as live (not ``EXITED``). Keeping the python runtime-default decision in lockstep
+    with the shell spawn path is what lets a CLI/headless/nested dispatch land as a
+    visible tab instead of degrading to an invisible headless orphan.
+    """
+    bin_path = shutil.which("vc-frame")
+    if not bin_path:
+        return False
+    name = os.path.basename(os.path.abspath(root.strip() or os.getcwd()))
+    if not name:
+        return False
+    try:
+        proc = subprocess.run(
+            [bin_path, "list-sessions"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    for line in proc.stdout.splitlines():
+        clean = ANSI_PATTERN.sub("", line)
+        parts = clean.split()
+        if parts and parts[0] == name and "EXITED" not in clean:
+            return True
+    return False
+
+
+def _default_runtime(explicit_runtime: str, root: str = "") -> str:
     runtime = str(explicit_runtime or "").strip()
     if runtime:
         return runtime
     for key in (
         "VIBECRAFTED_OPERATOR_SESSION",
         "VC_FRAME_SESSION_NAME",
-        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ_SESSION_NAME",
     ):
         if str(os.environ.get(key) or "").strip():
             return "terminal"
-    return "terminal" if sys.stdin.isatty() and sys.stdout.isatty() else "headless"
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        return "terminal"
+    # Non-TTY dispatch (headless agent, nested dispatch, pipe) with no inherited
+    # operator-session env would otherwise pick "headless" here, skipping the
+    # vc-frame tab path entirely in spawn_launch(). When the operator has a LIVE
+    # repo-bound vc-frame session to host it, prefer a visible tab — that is the
+    # whole "command -> vc-frame -> tab" mission. Headless stays the correct
+    # fallback only when no such live session exists.
+    if _live_operator_session_exists(root):
+        return "terminal"
+    return "headless"
 
 
 def _normalize_raw_args(raw_args: list[str]) -> list[str]:
@@ -512,7 +558,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "agent": args.agent,
         "prompt": args.prompt,
         "file": args.file,
-        "runtime": _default_runtime(args.runtime),
+        "runtime": _default_runtime(args.runtime, args.root),
         "root": args.root or str(Path.cwd()),
         "mode": args.mode or args.command,
         "count": args.count,
