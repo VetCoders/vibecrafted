@@ -9,6 +9,19 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
     case waves
     case skills
     case active
+    case failures
+    case health
+
+    var focusID: String {
+      switch self {
+      case .active: return "active_dispatches"
+      case .waves: return "waves"
+      case .agents: return "agents"
+      case .skills: return "skills"
+      case .failures: return "failures"
+      case .health: return "health"
+      }
+    }
   }
 
   private let scrollView = NSScrollView()
@@ -22,9 +35,15 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
   private let waveTableView = NSTableView()
   private let skillTableView = NSTableView()
   private let activeTableView = NSTableView()
+  private let failuresTableView = NSTableView()
+  private let healthStackView = NSStackView()
+  private let dataQualityFooterLabel = NSTextField(labelWithString: "")
 
   private var tableSections: [ObjectIdentifier: Section] = [:]
   private var heightConstraints: [ObjectIdentifier: NSLayoutConstraint] = [:]
+  private var sectionAnchors: [String: NSView] = [:]
+  private var highlightedAnchor: NSView?
+  private var focusResetWorkItem: DispatchWorkItem?
   private var snapshot: FfiMissionControlSnapshot?
   private var isLoading = false
 
@@ -78,6 +97,7 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
     root.addSubview(emptyLabel)
 
     configureTables()
+    configureHealthStrip()
 
     NSLayoutConstraint.activate([
       headerStack.topAnchor.constraint(equalTo: root.topAnchor, constant: 12),
@@ -108,6 +128,10 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
 
   override func viewDidLoad() {
     super.viewDidLoad()
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(handleMissionControlFocusSection),
+      name: NSNotification.Name("MissionControlFocusSection"), object: nil
+    )
     refreshSnapshot()
   }
 
@@ -118,6 +142,11 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
 
   @objc private func refreshButtonPressed(_ sender: NSButton) {
     refreshSnapshot()
+  }
+
+  @objc private func handleMissionControlFocusSection(_ notification: Notification) {
+    guard let section = notification.userInfo?["section"] as? String else { return }
+    focusSection(section)
   }
 
   func refreshSnapshot() {
@@ -161,6 +190,18 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
         ("ETA", "ETA", 110),
       ],
       title: "Active dispatches"
+    )
+    configure(
+      tableView: failuresTableView,
+      section: .failures,
+      columns: [
+        ("Run", "RUN_ID", 240),
+        ("Agent", "AGENT", 90),
+        ("Skill", "SKILL", 120),
+        ("Reason", "REASON", 320),
+        ("Age", "AGE", 90),
+      ],
+      title: "Failures board"
     )
     configure(
       tableView: waveTableView,
@@ -216,6 +257,7 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
     tableView.rowHeight = 24
     tableView.allowsColumnResizing = true
     tableView.allowsEmptySelection = true
+    tableView.allowsMultipleSelection = false
 
     for (title, identifier, width) in columns {
       let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(identifier))
@@ -226,6 +268,7 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
 
     let titleLabel = NSTextField(labelWithString: title)
     titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    sectionAnchors[section.focusID] = titleLabel
     stackView.addArrangedSubview(titleLabel)
 
     let scroll = NSScrollView()
@@ -246,18 +289,48 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
     ])
   }
 
+  private func configureHealthStrip() {
+    let titleLabel = NSTextField(labelWithString: "Fleet health")
+    titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    sectionAnchors[Section.health.focusID] = titleLabel
+    stackView.addArrangedSubview(titleLabel)
+
+    healthStackView.orientation = .vertical
+    healthStackView.alignment = .leading
+    healthStackView.spacing = 4
+    healthStackView.translatesAutoresizingMaskIntoConstraints = false
+    stackView.addArrangedSubview(healthStackView)
+    NSLayoutConstraint.activate([
+      healthStackView.leadingAnchor.constraint(equalTo: stackView.leadingAnchor),
+      healthStackView.trailingAnchor.constraint(lessThanOrEqualTo: stackView.trailingAnchor),
+    ])
+
+    dataQualityFooterLabel.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+    dataQualityFooterLabel.textColor = .secondaryLabelColor
+    dataQualityFooterLabel.lineBreakMode = .byTruncatingMiddle
+    dataQualityFooterLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    stackView.addArrangedSubview(dataQualityFooterLabel)
+  }
+
   private func apply(_ snapshot: FfiMissionControlSnapshot) {
     self.snapshot = snapshot
     isLoading = false
     refreshButton.isEnabled = true
 
     activeTableView.reloadData()
+    failuresTableView.reloadData()
     waveTableView.reloadData()
     agentTableView.reloadData()
     skillTableView.reloadData()
+    updateHealthStrip()
+    updateDataQualityFooter()
     updateTableHeights()
     updateEmptyState()
     updateStatus()
+    NotificationCenter.default.post(
+      name: NSNotification.Name("MissionControlSnapshotChanged"), object: self,
+      userInfo: ["snapshot": snapshot]
+    )
   }
 
   private func updateStatus() {
@@ -272,13 +345,45 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
       "Generated \(snapshot.generatedAt) - \(quality.scannedMetaFiles) meta files\(capped)"
   }
 
-  private func updateEmptyState() {
-    let hasRows = (snapshot?.activeDispatches.isEmpty == false)
-      || (snapshot?.waveAtlas.isEmpty == false)
-      || (snapshot?.agentStats.isEmpty == false)
-      || (snapshot?.skillStats.isEmpty == false)
+  private func updateHealthStrip() {
+    healthStackView.arrangedSubviews.forEach { view in
+      healthStackView.removeArrangedSubview(view)
+      view.removeFromSuperview()
+    }
 
-    if hasRows {
+    guard let snapshot else { return }
+    if snapshot.fleetHealth.isEmpty {
+      let label = NSTextField(labelWithString: "no health signals")
+      label.textColor = .secondaryLabelColor
+      healthStackView.addArrangedSubview(label)
+      return
+    }
+
+    for signal in snapshot.fleetHealth {
+      let status = fleetHealthStatusLabel(signal.status)
+      let detail = displayValue(signal.detail)
+      let label = NSTextField(labelWithString: "\(signal.label): \(status) - \(detail)")
+      label.textColor = fleetHealthStatusColor(signal.status)
+      label.lineBreakMode = .byTruncatingTail
+      healthStackView.addArrangedSubview(label)
+    }
+  }
+
+  private func updateDataQualityFooter() {
+    guard let snapshot else {
+      dataQualityFooterLabel.stringValue = ""
+      return
+    }
+
+    let quality = snapshot.dataQuality
+    let capped = quality.capped ? " · capped" : ""
+    let artifactRoot = quality.artifactRootPresent ? "artifact root present" : "artifact root missing"
+    dataQualityFooterLabel.stringValue =
+      "\(quality.scannedMetaFiles) meta files · \(quality.parseFailures) parse failures · \(quality.missingModel) missing model · \(quality.missingDuration) missing duration · \(artifactRoot)\(capped)"
+  }
+
+  private func updateEmptyState() {
+    if snapshot != nil {
       emptyLabel.isHidden = true
       scrollView.isHidden = false
       return
@@ -294,7 +399,7 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
   }
 
   private func updateTableHeights() {
-    for tableView in [activeTableView, waveTableView, agentTableView, skillTableView] {
+    for tableView in [activeTableView, failuresTableView, waveTableView, agentTableView, skillTableView] {
       let rows = max(1, tableView.numberOfRows)
       heightConstraints[ObjectIdentifier(tableView)]?.constant = CGFloat(rows * 24 + 30)
     }
@@ -312,7 +417,11 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
     case .skills:
       return snapshot.skillStats.count
     case .active:
-      return snapshot.activeDispatches.count
+      return max(1, snapshot.activeDispatches.count)
+    case .failures:
+      return max(1, snapshot.failures.count)
+    case .health:
+      return 0
     }
   }
 
@@ -350,14 +459,30 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
 
     switch section {
     case .active:
+      guard !snapshot.activeDispatches.isEmpty else {
+        return column == "RUN_ID" ? "no live dispatches" : "—"
+      }
       let item = snapshot.activeDispatches[row]
       switch column {
       case "RUN_ID": return item.runId
-      case "AGENT": return item.agent
-      case "SKILL": return item.skill
-      case "WAVE": return item.wave ?? "-"
-      case "AGE": return item.ageLabel
-      case "ETA": return item.etaLabel
+      case "AGENT": return displayValue(item.agent)
+      case "SKILL": return displayValue(item.skill)
+      case "WAVE": return displayValue(item.wave)
+      case "AGE": return displayValue(item.ageLabel)
+      case "ETA": return displayValue(item.etaLabel)
+      default: return ""
+      }
+    case .failures:
+      guard !snapshot.failures.isEmpty else {
+        return column == "RUN_ID" ? "no failures" : "—"
+      }
+      let item = snapshot.failures[row]
+      switch column {
+      case "RUN_ID": return item.runId
+      case "AGENT": return displayValue(item.agent)
+      case "SKILL": return displayValue(item.skill)
+      case "REASON": return displayValue(item.reason)
+      case "AGE": return displayValue(item.ageLabel)
       default: return ""
       }
     case .waves:
@@ -393,7 +518,79 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
       case "AVG_DUR": return duration(item.avgDurationS)
       default: return ""
       }
+    case .health:
+      return ""
     }
+  }
+
+  func tableViewSelectionDidChange(_ notification: Notification) {
+    guard let tableView = notification.object as? NSTableView,
+      let snapshot,
+      let section = tableSections[ObjectIdentifier(tableView)]
+    else { return }
+
+    let row = tableView.selectedRow
+    guard row >= 0 else { return }
+
+    switch section {
+    case .active:
+      guard row < snapshot.activeDispatches.count else { return }
+      let item = snapshot.activeDispatches[row]
+      postSelection(runId: item.runId, sourcePath: nil, kind: "dispatch")
+    case .failures:
+      guard row < snapshot.failures.count else { return }
+      let item = snapshot.failures[row]
+      postSelection(runId: item.runId, sourcePath: item.sourcePath, kind: "failure")
+    case .agents, .waves, .skills, .health:
+      return
+    }
+  }
+
+  private func postSelection(runId: String, sourcePath: String?, kind: String) {
+    var userInfo: [String: Any] = [
+      "run_id": runId,
+      "kind": kind,
+    ]
+    if let sourcePath {
+      userInfo["source_path"] = sourcePath
+    }
+    NotificationCenter.default.post(
+      name: Notification.Name("MissionControlSelection"),
+      object: self,
+      userInfo: userInfo
+    )
+  }
+
+  private func displayValue(_ value: String?) -> String {
+    guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return "—"
+    }
+    return value
+  }
+
+  private func focusSection(_ sectionID: String) {
+    guard let anchor = sectionAnchors[sectionID] else { return }
+    anchor.scrollToVisible(anchor.bounds)
+    flash(anchor)
+  }
+
+  private func flash(_ anchor: NSView) {
+    focusResetWorkItem?.cancel()
+    highlightedAnchor?.wantsLayer = false
+
+    anchor.wantsLayer = true
+    anchor.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.16).cgColor
+    anchor.layer?.cornerRadius = 4
+    highlightedAnchor = anchor
+
+    let workItem = DispatchWorkItem { [weak self, weak anchor] in
+      anchor?.wantsLayer = false
+      if self?.highlightedAnchor === anchor {
+        self?.highlightedAnchor = nil
+      }
+    }
+    focusResetWorkItem = workItem
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
   }
 
   private func waveStateLabel(_ state: FfiWaveState) -> String {
@@ -418,5 +615,23 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
       return String(format: "%.1fm", seconds / 60)
     }
     return String(format: "%.0fs", seconds)
+  }
+
+  private func fleetHealthStatusLabel(_ status: FfiFleetHealthStatus) -> String {
+    switch status {
+    case .ok: return "ok"
+    case .warn: return "warn"
+    case .blocked: return "blocked"
+    case .unknown: return "unknown"
+    }
+  }
+
+  private func fleetHealthStatusColor(_ status: FfiFleetHealthStatus) -> NSColor {
+    switch status {
+    case .ok: return .systemGreen
+    case .warn: return .systemOrange
+    case .blocked: return .systemRed
+    case .unknown: return .secondaryLabelColor
+    }
   }
 }
