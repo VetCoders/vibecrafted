@@ -20,6 +20,15 @@ def test_parse_listing_metadata_reads_current_registry_fields() -> None:
     assert "codex" in metadata.keywords
 
 
+def test_mcp_config_uses_streamable_http_transport() -> None:
+    # Canon transport for runs is streamable HTTP (one shared loctree-mcp per
+    # root via `loct watch --http`), not a stdio server spawned per run.
+    loctree = bundle.mcp_config()["mcpServers"]["loctree"]
+    assert loctree["type"] == "http"
+    assert loctree["url"] == "http://127.0.0.1:5174/mcp"
+    assert "command" not in loctree
+
+
 def test_discover_bundle_skills_tracks_live_skill_surface() -> None:
     skill_names = [
         skill.name for skill in bundle.discover_bundle_skills(bundle.REPO_ROOT)

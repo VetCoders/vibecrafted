@@ -20,6 +20,16 @@ from .capabilities import (
     foundation_capabilities,
     probe_tool,
 )
+from .perception import (
+    DEFAULT_MCP_TRANSPORT,
+    WatchOutcome,
+    ensure_watch,
+    loctree_mcp_config_entry,
+    mcp_endpoint,
+    mcp_servers_config,
+    port_for_root,
+    watcher_running,
+)
 from .doctor import doctor_run, doctor_summary
 from .git import repo_full, repo_full_summary
 from .artifacts import ArtifactValidation, validate_artifacts
@@ -74,6 +84,8 @@ __all__ = [
     "EventKind",
     "ArtifactValidation",
     "ToolCapability",
+    "WatchOutcome",
+    "DEFAULT_MCP_TRANSPORT",
     "AsyncRunHandle",
     "AsyncSupervisor",
     "RunState",
@@ -85,9 +97,15 @@ __all__ = [
     "control_plane_home",
     "doctor_run",
     "doctor_summary",
+    "ensure_watch",
     "event_stream_path",
     "foundation_capabilities",
+    "loctree_mcp_config_entry",
+    "mcp_endpoint",
+    "mcp_servers_config",
+    "port_for_root",
     "probe_tool",
+    "watcher_running",
     "launch_workflow",
     "lookup_run",
     "normalize_launch_spec",

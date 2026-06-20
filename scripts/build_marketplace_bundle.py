@@ -189,12 +189,17 @@ def plugin_manifest(version: str, metadata: ListingMetadata) -> dict[str, object
 
 
 def mcp_config() -> dict[str, object]:
+    # Canon transport for runs is streamable HTTP, not a stdio server spawned
+    # per run: a single `loct watch --http` per root co-hosts loctree-mcp at
+    # 127.0.0.1:5174/mcp and every agent shell on that root shares it. This is a
+    # shipped, root-less template, so it documents the default port; vibecrafted's
+    # own per-run wiring derives the port per root. Source of truth for this shape
+    # is vibecrafted_core.perception.default_loctree_mcp_config_entry().
     return {
         "mcpServers": {
             "loctree": {
-                "command": "loctree-mcp",
-                "args": [],
-                "env": {},
+                "type": "http",
+                "url": "http://127.0.0.1:5174/mcp",
             }
         }
     }

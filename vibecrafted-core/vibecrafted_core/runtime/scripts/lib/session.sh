@@ -1,6 +1,25 @@
 #!/usr/bin/env bash
 
 
+# Maintain exactly one loctree perception layer per root for a run: a single
+# `loct watch --http` (lock-held watcher + co-spawned streamable-HTTP
+# loctree-mcp at 127.0.0.1:<port>/mcp). loctree's own scan.lock makes it
+# single-instance; vibecrafted_core.perception detects an existing watcher and
+# handles contention gently (exit 75 -> skip), so this is best-effort and never
+# blocks or fails the spawn. Opt out with VIBECRAFTED_PERCEPTION_WATCH=0.
+spawn_ensure_perception() {
+  local root="${1:-${SPAWN_ROOT:-$PWD}}"
+  [[ "${VIBECRAFTED_PERCEPTION_WATCH:-1}" != "0" ]] || return 0
+  command -v loct >/dev/null 2>&1 || return 0
+  declare -F spawn_python_module >/dev/null 2>&1 || return 0
+  (
+    spawn_python_module vibecrafted_core.perception ensure-watch \
+      --root "$root" >/dev/null 2>&1 || true
+  ) &
+  disown 2>/dev/null || true
+  return 0
+}
+
 spawn_session_base_name() {
   local root base
   root="$(spawn_repo_root)"
@@ -196,6 +215,8 @@ spawn_prepare_paths() {
   else
     SPAWN_ROOT="$(spawn_repo_root)"
   fi
+
+  spawn_ensure_perception "$SPAWN_ROOT"
 
   if [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
     discovered_session="$(spawn_effective_operator_session 2>/dev/null || true)"
