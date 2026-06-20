@@ -45,6 +45,24 @@ spawn_effective_operator_session() {
       | sed 's/\x1b\[[0-9;]*m//g' \
       | awk '/\(current\)/ {print $1; exit}'
   )"
+
+  # No (current) marker → dispatched from OUTSIDE any vc-frame pane (plain
+  # terminal, headless agent, nested dispatch). The operator session is
+  # repo-bound — named after `basename "$root"` (see dispatch.sh) — so resolve it
+  # from SPAWN_ROOT and accept it only if that session is live (not EXITED).
+  # Without this, a CLI/headless dispatch degrades to an invisible headless run
+  # even when the operator has a live vc-frame waiting to host the tab.
+  if [[ -z "$session_name" ]]; then
+    local repo_session=""
+    repo_session="$(basename "${SPAWN_ROOT:-$(pwd)}")"
+    if [[ -n "$repo_session" ]] \
+      && "$vc_frame_bin" list-sessions 2>/dev/null \
+        | sed 's/\x1b\[[0-9;]*m//g' \
+        | awk -v s="$repo_session" '$1 == s && $0 !~ /EXITED/ { hit = 1 } END { exit hit ? 0 : 1 }'; then
+      session_name="$repo_session"
+    fi
+  fi
+
   [[ -n "$session_name" ]] || return 1
   printf '%s\n' "$session_name"
 }
