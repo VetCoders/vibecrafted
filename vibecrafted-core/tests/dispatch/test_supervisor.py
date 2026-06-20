@@ -142,6 +142,11 @@ prompt = "canonical dispatch report prompt"
         return FakeProc()
 
     monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
+    # Hermetic: an ambient vc-frame on the host would turn the launcher's
+    # liveness probe (added in 3d794af) into a real `list-sessions` subprocess
+    # routed through fake_popen, which carries no env kwarg. Keep the probe
+    # stubbed so this canonical-report test is independent of host vc-frame state.
+    monkeypatch.setattr(workflow, "_vc_frame_session_active", lambda _vc, _s: False)
 
     run = workflow_cell_launcher(dispatch, source_dir=tmp_path)(
         dispatch.cuts[0],
