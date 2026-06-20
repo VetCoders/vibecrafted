@@ -91,9 +91,11 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
    (shells may carry soft `ulimit -f` → SIGXFSZ/exit 153). Record the receipt
    (run_id, report, transcript, meta) in the tracker.
 3. **Spanko**: await through artifacts, never by staring at a pane. Use the
-   framework's automation ladder (top first):
-   `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next>'`
-   (chains the next dispatch hands-free), the await-watch probe
+   dedicated command as the standard dispatcher loop:
+   `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>' --tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'`
+   (framework cron heartbeat → control-plane await → verify → flip → baton),
+   the lower-level `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next>'`,
+   the await-watch probe
    (`vibecrafted-await-watch.sh --meta <meta.json>` — tail-await-die), or a
    plain backgrounded `vibecrafted <agent> await --run-id`. A living worker
    gets ZERO interference; interrupting during its gate phase is pure loss.
@@ -156,6 +158,9 @@ budget on deltas (vc-marbles: "Marbles exploits cache heat").
 Heartbeat is FRAMEWORK-FIRST — the loop/cron mechanics are already automated
 in vibecrafted; do not hand-roll timers when these exist:
 
+- `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>'
+--tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'` — the
+  command-rank dispatcher await loop: SPANKO → SPRAWDZENIE → FLIP → BATON;
 - `vibecrafted loop start|next|status|complete` — line state machine with
   `--max-iterations` and `--completion-promise`;
 - `vibecrafted cron line --root <repo> --every-minutes 10 --then-cmd
@@ -164,9 +169,10 @@ in vibecrafted; do not hand-roll timers when these exist:
 - `vibecrafted cron tick --after-idle-minutes 10 --then-cmd <cmd>` — resume
   an approved next command after an idle window.
 
-A harness-level loop (e.g. Claude `/loop 15m`) is the fallback when you
-dispatch from inside an interactive agent session without the framework
-heartbeat.
+Drive the await with the dedicated command (OUR vc-loop / cron) as the
+STANDARD even from an interactive session — a dispatched run HAS the CLI. The
+harness `/loop` is a true last-resort, only when the vibecrafted CLI is
+genuinely unavailable.
 
 On each tick, judge liveness by three independent signals per
 `references/pulse-and-stall.md`: control-plane status, agent session-file

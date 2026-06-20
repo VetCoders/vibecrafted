@@ -10,18 +10,21 @@ escalation event.
 
 vibecrafted ships the heartbeat — reach for it before hand-rolling timers:
 
-| Need                            | Mechanism                                                                                                                                                                                                       |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| chain next dispatch after a run | `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next dispatch>'`                                                                                                                             |
-| line state machine              | `vibecrafted loop start/next/status/cancel/complete` (`--max-iterations`, `--completion-promise`, `--state-file`)                                                                                               |
-| crontab heartbeat with context  | `vibecrafted cron line --root <repo> --every-minutes 10 --then-cmd 'vibecrafted loop next'` (captures Loctree + AICX per tick)                                                                                  |
-| resume after idle window        | `vibecrafted cron tick --after-idle-minutes 10 --then-cmd <cmd>`                                                                                                                                                |
-| per-dispatch auto-await pane    | `vibecrafted-await-watch.sh --meta <meta.json>` — tails transcript, watches meta status + size delta + process liveness, self-terminates (tunables: `VIBECRAFTED_AWAIT_IDLE_TIMEOUT`, `VIBECRAFTED_AWAIT_POLL`) |
+| Need                           | Mechanism                                                                                                                                                                                                       |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| command-rank dispatcher await  | `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>' --tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'`                                                                             |
+| lower-level await primitive    | `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next dispatch>'`                                                                                                                             |
+| line state machine             | `vibecrafted loop start/next/status/cancel/complete` (`--max-iterations`, `--completion-promise`, `--state-file`)                                                                                               |
+| crontab heartbeat with context | `vibecrafted cron line --root <repo> --every-minutes 10 --then-cmd 'vibecrafted loop next'` (captures Loctree + AICX per tick)                                                                                  |
+| resume after idle window       | `vibecrafted cron tick --after-idle-minutes 10 --then-cmd <cmd>`                                                                                                                                                |
+| per-dispatch auto-await pane   | `vibecrafted-await-watch.sh --meta <meta.json>` — tails transcript, watches meta status + size delta + process liveness, self-terminates (tunables: `VIBECRAFTED_AWAIT_IDLE_TIMEOUT`, `VIBECRAFTED_AWAIT_POLL`) |
 
-A harness-level loop (Claude `/loop 15m <watch prompt>`) is the fallback for
-interactive sessions without the framework heartbeat. The manual pulse below
-is the DIAGNOSTIC layer — what a tick inspects, and the forensics you run
-when automation says "still running" but nothing moves.
+Drive the await with the dedicated command (OUR vc-loop / cron) as the
+STANDARD even from an interactive session — a dispatched run HAS the CLI. A
+harness-level loop (Claude `/loop 15m <watch prompt>`) is a true last-resort,
+only when the vibecrafted CLI is genuinely unavailable. The manual pulse below
+is the DIAGNOSTIC layer — what a tick inspects, and the forensics you run when
+automation says "still running" but nothing moves.
 
 ## The pulse (every watch tick, ~15 min cadence)
 

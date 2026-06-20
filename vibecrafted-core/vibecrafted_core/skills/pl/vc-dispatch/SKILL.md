@@ -91,9 +91,11 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
    (shelle mogą nieść miękki `ulimit -f` → SIGXFSZ/exit 153). Zapisz receipt
    (run_id, report, transcript, meta) w trackerze.
 3. **Spanko**: czekaj przez artefakty, nigdy przez gapienie się w pane. Użyj
-   drabiny automatyzacji frameworka (góra najpierw):
-   `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next>'`
-   (łańcuchuje kolejny dispatch bez udziału rąk), probe await-watch
+   dedykowanej komendy jako standardowej pętli dyspozytora:
+   `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>' --tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'`
+   (heartbeat cron frameworka → control-plane await → sprawdzenie → flip → baton),
+   niższopoziomowego `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next>'`,
+   probe await-watch
    (`vibecrafted-await-watch.sh --meta <meta.json>` — tail-await-die), albo
    zwykły zbackgroundowany `vibecrafted <agent> await --run-id`. Żywy worker
    dostaje ZERO ingerencji; przerywanie mu w fazie bramki to czysta strata.
@@ -156,6 +158,9 @@ budżet na delty (vc-marbles: „Marbles exploits cache heat").
 Heartbeat jest FRAMEWORK-FIRST — mechanika loop/cron jest już zautomatyzowana
 w vibecrafted; nie sklecaj ręcznie timerów, gdy te istnieją:
 
+- `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>'
+--tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'` — komenda
+  rangi dyspozytorskiej dla pętli await: SPANKO → SPRAWDZENIE → FLIP → BATON;
 - `vibecrafted loop start|next|status|complete` — maszyna stanów linii z
   `--max-iterations` i `--completion-promise`;
 - `vibecrafted cron line --root <repo> --every-minutes 10 --then-cmd
@@ -164,9 +169,9 @@ w vibecrafted; nie sklecaj ręcznie timerów, gdy te istnieją:
 - `vibecrafted cron tick --after-idle-minutes 10 --then-cmd <cmd>` — wznawia
   zatwierdzoną następną komendę po oknie bezczynności.
 
-Pętla na poziomie harnessa (np. Claude `/loop 15m`) to fallback, gdy
-dispatchujesz z wnętrza interaktywnej sesji agenta bez frameworkowego
-heartbeatu.
+Prowadź await dedykowaną komendą (NASZ vc-loop / cron) jako STANDARD nawet z
+sesji interaktywnej — dispatchowany run MA CLI. Harness `/loop` to prawdziwy
+last-resort, tylko gdy CLI vibecrafted jest faktycznie niedostępne.
 
 Na każdym ticku oceniaj liveness po trzech niezależnych sygnałach wg
 `references/pulse-and-stall.md`: status control-plane, mtime+rozmiar pliku sesji

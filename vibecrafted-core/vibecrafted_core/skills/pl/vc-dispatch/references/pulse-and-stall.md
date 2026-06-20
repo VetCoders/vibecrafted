@@ -12,16 +12,19 @@ vibecrafted dostarcza heartbeat — sięgnij po niego, zanim ręcznie sklecisz t
 
 | Potrzeba                            | Mechanizm                                                                                                                                                                                                                  |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| połącz kolejny dispatch po runie    | `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next dispatch>'`                                                                                                                                        |
+| await dyspozytorski rangi komendy   | `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>' --tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'`                                                                                        |
+| niższopoziomowy prymityw await      | `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next dispatch>'`                                                                                                                                        |
 | maszyna stanów linii                | `vibecrafted loop start/next/status/cancel/complete` (`--max-iterations`, `--completion-promise`, `--state-file`)                                                                                                          |
 | heartbeat na crontabie z kontekstem | `vibecrafted cron line --root <repo> --every-minutes 10 --then-cmd 'vibecrafted loop next'` (łapie Loctree + AICX na każdy tick)                                                                                           |
 | wznów po oknie bezczynności         | `vibecrafted cron tick --after-idle-minutes 10 --then-cmd <cmd>`                                                                                                                                                           |
 | auto-await pane per-dispatch        | `vibecrafted-await-watch.sh --meta <meta.json>` — tailuje transcript, obserwuje status meta + deltę rozmiaru + liveness procesu, sam się terminuje (tunable'e: `VIBECRAFTED_AWAIT_IDLE_TIMEOUT`, `VIBECRAFTED_AWAIT_POLL`) |
 
-Pętla na poziomie harnessa (Claude `/loop 15m <watch prompt>`) to fallback dla
-sesji interaktywnych bez frameworkowego heartbeatu. Manualny puls poniżej to
-warstwa DIAGNOSTYCZNA — co inspekcjonuje tick i forensyka, którą uruchamiasz,
-gdy automatyzacja mówi „still running", a nic się nie rusza.
+Prowadź await dedykowaną komendą (NASZ vc-loop / cron) jako STANDARD nawet z
+sesji interaktywnej — dispatchowany run MA CLI. Pętla na poziomie harnessa
+(Claude `/loop 15m <watch prompt>`) to prawdziwy last-resort, tylko gdy CLI
+vibecrafted jest faktycznie niedostępne. Manualny puls poniżej to warstwa
+DIAGNOSTYCZNA — co inspekcjonuje tick i forensyka, którą uruchamiasz, gdy
+automatyzacja mówi „still running", a nic się nie rusza.
 
 ## Puls (na każdy watch tick, kadencja ~15 min)
 
