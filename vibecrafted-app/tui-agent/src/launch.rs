@@ -273,7 +273,10 @@ fn build_terminal_launch_command(deck: &Path, request: &LaunchRequest) -> Launch
     let vc_frame_layout = build_vc_frame_layout_string(deck, request);
     let mut env = request.env.clone();
     if let Some(config_dir) = vc_frame_config_dir_for_request(request) {
-        env.insert("VC_FRAME_CONFIG_DIR".to_string(), config_dir.into_os_string());
+        env.insert(
+            "VC_FRAME_CONFIG_DIR".to_string(),
+            config_dir.into_os_string(),
+        );
     }
 
     let mut args = Vec::new();

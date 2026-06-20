@@ -84,13 +84,13 @@ case "${1:-}" in
 esac
 "#;
 
-struct Fakevc-frame {
+struct FakeVcFrame {
     _tmp: TempDir,
     program: PathBuf,
     visible_file: PathBuf,
 }
 
-fn fake_vc_frame() -> Fakevc-frame {
+fn fake_vc_frame() -> FakeVcFrame {
     let tmp = tempfile::tempdir().expect("tempdir");
     let program = tmp.path().join("vc_frame.sh");
     let visible_file = tmp.path().join("visible.txt");
@@ -98,7 +98,7 @@ fn fake_vc_frame() -> Fakevc-frame {
     let mut perms = fs::metadata(&program).expect("metadata").permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&program, perms).expect("chmod +x");
-    Fakevc-frame {
+    FakeVcFrame {
         _tmp: tmp,
         program,
         visible_file,

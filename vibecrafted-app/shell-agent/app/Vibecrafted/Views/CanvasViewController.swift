@@ -1,11 +1,15 @@
-// Vibecrafted — Canvas View (Routing Matrix / Log Tail)
+// Vibecrafted — Canvas View (Mission Control / Routing Matrix / Log Tail)
 // Created by VetCoders
 
 import AppKit
 
 class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
   private let segmentedControl = NSSegmentedControl(
-    labels: ["Routing Matrix", "Log Tail"], trackingMode: .selectOne, target: nil, action: nil)
+    labels: ["Mission Control", "Routing Matrix", "Log Tail"], trackingMode: .selectOne, target: nil,
+    action: nil)
+
+  // Mission Control
+  private let missionControlVC = MissionControlViewController()
 
   // Routing Matrix
   private let matrixScrollView = NSScrollView()
@@ -28,6 +32,11 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
     segmentedControl.action = #selector(segmentChanged(_:))
     segmentedControl.translatesAutoresizingMaskIntoConstraints = false
     container.addSubview(segmentedControl)
+
+    addChild(missionControlVC)
+    let missionControlView = missionControlVC.view
+    missionControlView.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(missionControlView)
 
     // Matrix setup
     matrixScrollView.hasVerticalScroller = true
@@ -52,6 +61,7 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
     matrixTableView.delegate = self
     matrixScrollView.documentView = matrixTableView
     matrixScrollView.translatesAutoresizingMaskIntoConstraints = false
+    matrixScrollView.isHidden = true
     container.addSubview(matrixScrollView)
 
     // Log setup
@@ -67,6 +77,11 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
     NSLayoutConstraint.activate([
       segmentedControl.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
       segmentedControl.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+
+      missionControlView.topAnchor.constraint(equalTo: segmentedControl.bottomAnchor, constant: 12),
+      missionControlView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+      missionControlView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+      missionControlView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
 
       matrixScrollView.topAnchor.constraint(equalTo: segmentedControl.bottomAnchor, constant: 12),
       matrixScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
@@ -92,10 +107,14 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
   }
 
   @objc private func segmentChanged(_ sender: NSSegmentedControl) {
-    let isMatrix = sender.selectedSegment == 0
-    matrixScrollView.isHidden = !isMatrix
-    logScrollView.isHidden = isMatrix
-    if !isMatrix {
+    let selectedSegment = sender.selectedSegment
+    missionControlVC.view.isHidden = selectedSegment != 0
+    matrixScrollView.isHidden = selectedSegment != 1
+    logScrollView.isHidden = selectedSegment != 2
+
+    if selectedSegment == 0 {
+      missionControlVC.refreshSnapshot()
+    } else if selectedSegment == 2 {
       refreshLogs()
     }
   }
@@ -106,7 +125,7 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
 
   @objc private func handleSelectedServerChanged(_ notification: Notification) {
     currentServerName = notification.userInfo?["serverName"] as? String
-    if segmentedControl.selectedSegment == 1 {
+    if segmentedControl.selectedSegment == 2 {
       refreshLogs()
     }
   }

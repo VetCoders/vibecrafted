@@ -25,7 +25,8 @@ xcode:
 
 app: bindings xcode
 	@echo "Building Vibecrafted.app..."
-	@rm -rf build/DerivedData build/Vibecrafted.app
+	@mkdir -p build
+	@rm -rf build/Vibecrafted.app
 	@set -o pipefail && xcodebuild -project app/Vibecrafted.xcodeproj -scheme Vibecrafted -configuration Debug -derivedDataPath build/DerivedData build 2>&1 | tail -20
 	@BUILT_APP=$$(find build/DerivedData -name Vibecrafted.app -type d | head -1); \
 		if [ -z "$$BUILT_APP" ]; then \

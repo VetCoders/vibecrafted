@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0F83E26443735866DB5FC793 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DC22CD11479B2C9FC62F7A0 /* main.swift */; };
 		14EAC5B0973436D431AE7153 /* MainSplitViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 677ED311C0A0AC32FEDF5C9E /* MainSplitViewController.swift */; };
+		2C18E0FE8C18A73791678DC2 /* MissionControlViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6F03047FF22E0433924BDD7 /* MissionControlViewController.swift */; };
 		4A2BA6E287B0E5E51054F35F /* libvibecrafted_shell_ffi.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 66F000337318E7E1E774D5AD /* libvibecrafted_shell_ffi.dylib */; };
 		65E37AF5DAC0EC25D709DDB5 /* MainWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD9D34C38918A44FDA163417 /* MainWindowController.swift */; };
 		A60320E009ED2630B2CD138A /* SidebarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018846F7BFF32DDA55BEB6B3 /* SidebarViewController.swift */; };
@@ -44,6 +45,7 @@
 		9DC7FC1EB764722753755233 /* InspectorViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorViewController.swift; sourceTree = "<group>"; };
 		AD135782CD6D34B7A4639DF0 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AD9D34C38918A44FDA163417 /* MainWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowController.swift; sourceTree = "<group>"; };
+		B6F03047FF22E0433924BDD7 /* MissionControlViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissionControlViewController.swift; sourceTree = "<group>"; };
 		CB08FBAC6D3A32EA7AA68548 /* CanvasViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -103,6 +105,7 @@
 				9DC7FC1EB764722753755233 /* InspectorViewController.swift */,
 				677ED311C0A0AC32FEDF5C9E /* MainSplitViewController.swift */,
 				AD9D34C38918A44FDA163417 /* MainWindowController.swift */,
+				B6F03047FF22E0433924BDD7 /* MissionControlViewController.swift */,
 				018846F7BFF32DDA55BEB6B3 /* SidebarViewController.swift */,
 			);
 			path = Views;
@@ -222,6 +225,7 @@
 				AED4BA44792B0934E269B0C9 /* InspectorViewController.swift in Sources */,
 				14EAC5B0973436D431AE7153 /* MainSplitViewController.swift in Sources */,
 				65E37AF5DAC0EC25D709DDB5 /* MainWindowController.swift in Sources */,
+				2C18E0FE8C18A73791678DC2 /* MissionControlViewController.swift in Sources */,
 				A60320E009ED2630B2CD138A /* SidebarViewController.swift in Sources */,
 				0F83E26443735866DB5FC793 /* main.swift in Sources */,
 				AD8EDDBFCA0E035A3127FE9D /* vibecrafted_shell_ffi.swift in Sources */,

@@ -1683,7 +1683,7 @@ fn disk_health_signals_from_paths(
 ) -> Vec<FleetHealthSignal> {
     let mut signals = Vec::new();
     for (label, path) in substrates {
-        signals.push(disk_path_signal(label, &path));
+        signals.push(disk_path_signal(label, path));
     }
     signals.push(ulimit_fsize_signal(substrates));
     signals
@@ -2049,7 +2049,7 @@ mod unix_probe {
             stats.f_frsize
         } else {
             stats.f_bsize
-        } as u64;
+        };
         Ok(DiskStats {
             free_bytes: (stats.f_bavail as u64).saturating_mul(block_size),
             total_bytes: (stats.f_blocks as u64).saturating_mul(block_size),
@@ -2069,7 +2069,7 @@ mod unix_probe {
         if limit.rlim_cur == libc::RLIM_INFINITY {
             Ok(None)
         } else {
-            Ok(Some(limit.rlim_cur as u64))
+            Ok(Some(limit.rlim_cur))
         }
     }
 }
