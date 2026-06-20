@@ -348,6 +348,46 @@ def test_sync_state_reconciles_dead_launcher_to_stalled(
     assert "recovery_required" in refreshed["last_error"]
 
 
+def test_sync_state_keeps_run_live_when_worker_alive_despite_dead_launcher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # P0 regression: a detached/headless dispatch records an EPHEMERAL launcher
+    # pid (a spawn-shell that exits within seconds) while the dispatcher + worker
+    # keep running and DELIVER. The liveness reconciler must NOT mark such a run
+    # recovery_required just because the launcher pid is dead — a live worker_pid
+    # is proof the run is alive. (Before this fix, every detached dispatch was
+    # false-blocked as report_missing/recovery_required mid-delivery.)
+    import os
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
+    _write_meta(
+        home,
+        {
+            "run_id": "just-live-worker",
+            "status": "running",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "just",
+            "launcher_pid": 999999999,  # ephemeral spawn-shell, dead
+            "worker_pid": os.getpid(),  # the dispatcher/worker — ALIVE
+            "liveness": "pid_alive",
+        },
+    )
+
+    run = control_plane.sync_state()["recent_runs"][0]
+
+    assert run["state"] != "stalled"
+    assert run["liveness"] != "pid_gone"
+    assert run.get("recovery_required") is not True
+    assert "recovery_required" not in str(run.get("last_error") or "")
+
+
 def test_sync_state_gc_terminalizes_old_stalled_dead_launcher(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
