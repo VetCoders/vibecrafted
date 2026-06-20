@@ -86,8 +86,14 @@ search result:
   > [HH:MM:SS] assistant: <result>
   > [HH:MM:SS] user: <result>
 source file(s):
-$HOME/.aicx/store/<org>/<repo>/<date>/<type>/<agent>/<session_id>.md
+<aicx-store>/store/<org>/<repo>/<date>/<type>/<agent>/<session_id>.md
 ```
+
+> `aicx search` prints the absolute, **resolved** store path. `<aicx-store>` is aicx's
+> configured store home — NOT a fixed `~/.aicx`. Resolution chain: `$AICX_HOME` →
+> `~/.aicx/config.toml [storage].home` → `~/.aicx` default. Let `aicx` emit the path
+> (it follows the config); never hand-build `~/.aicx/store/...` — when the store is
+> redirected the bare `~/.aicx` holds only stale pre-migration remnants.
 
 ## The extract tool use when you cannot read an agent's result directly:
 

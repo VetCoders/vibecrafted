@@ -87,8 +87,14 @@ search result:
   > [HH:MM:SS] assistant: <result>
   > [HH:MM:SS] user: <result>
 source file(s):
-$HOME/.aicx/store/<org>/<repo>/<date>/<type>/<agent>/<session_id>.md
+<aicx-store>/store/<org>/<repo>/<date>/<type>/<agent>/<session_id>.md
 ```
+
+> `aicx search` wypisuje absolutną, **rozwiązaną** ścieżkę store'a. `<aicx-store>` to
+> skonfigurowany store home aicx — NIE sztywne `~/.aicx`. Łańcuch resolucji: `$AICX_HOME`
+> → `~/.aicx/config.toml [storage].home` → default `~/.aicx`. Pozwól, żeby `aicx` sam
+> wypisał ścieżkę (podąża za configiem); nigdy nie sklejaj `~/.aicx/store/...` ręcznie —
+> przy przekierowanym store gołe `~/.aicx` trzyma tylko nieświeże resztki sprzed migracji.
 
 ## Narzędzie extract — użyj, gdy nie możesz odczytać wyniku agenta bezpośrednio:
 
