@@ -1,6 +1,14 @@
+import pytest
+
 from scripts import installer_gui
 
-from scripts.installer.vetcoders_installer import tui as installer_textual
+# The TUI module imports `textual` (a dev-only dependency). When the suite is run
+# outside the managed env (e.g. bare `python -m pytest` instead of `make test`),
+# textual is absent — degrade to a clean module SKIP instead of aborting the whole
+# collection with a hard ImportError.
+pytest.importorskip("textual")
+
+from scripts.installer.vetcoders_installer import tui as installer_textual  # noqa: E402
 
 
 def _empty_diagnostics() -> dict[str, dict[str, dict[str, object]]]:
