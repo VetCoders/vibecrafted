@@ -936,6 +936,19 @@ Contract:
 - Let stdout/stderr form the transcript captured at VIBECRAFTED_TRANSCRIPT_PATH ({transcript_hint}).
 - Do not create, overwrite, or summarize run metadata yourself. The runtime owns VIBECRAFTED_META_PATH.
 
+Step 0 — orient before you touch (the vc-init pass).
+The operator prompt below is one framing — a hypothesis, not the ground truth. Reading a
+couple of files and feeling oriented is the trap: you'd cut from a partial, self-picked slice,
+and that is where silent drift gets in. So before any skill-specific work, run the vc-init
+due-diligence right here in this thread, because it is what makes every later move land:
+- Map: materialize the Loctree context atlas for {spec.root} and read it to the END
+  (entrypoints, blast radius, twins, dead surfaces, the real shape).
+- Intent: recover the AICX history — why the code became this, what was already tried.
+- Ground truth + risk: git/security sanity, then grade the blast radius before changing behavior.
+Your skill (vc-{spec.skill}) carries its own orientation gate — this is it. Not a rule barked at
+you: it is simply the move that separates a real cut from a confident guess, and it pays for
+itself in the very next step.
+
 Operator prompt:
 {source_prompt}
 """

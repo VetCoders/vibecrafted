@@ -554,6 +554,11 @@ def test_runtime_prompt_keeps_metadata_runtime_owned(tmp_path: Path) -> None:
     assert "Write your final report to the path in VIBECRAFTED_REPORT_PATH" in prompt
     assert "runtime owns VIBECRAFTED_META_PATH" in prompt
     assert "If you create or update run metadata" not in prompt
+    # Every dispatched worker is oriented first: the vc-init Step 0 rides in the
+    # runtime prompt itself, not left to each skill's prose gate to self-enforce.
+    assert "Step 0 — orient before you touch (the vc-init pass)." in prompt
+    assert "Loctree context atlas" in prompt
+    assert "AICX history" in prompt
 
 
 def test_launch_workflow_artifact_paths_are_terminal_truth(
