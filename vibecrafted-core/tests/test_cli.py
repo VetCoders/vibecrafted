@@ -30,6 +30,27 @@ def test_root_cli_vc_help_alias_returns_help_success(monkeypatch, capsys) -> Non
     assert "Vibecrafted core command surface" in capsys.readouterr().out
 
 
+def test_version_reads_installed_package_never_delegates_to_deck(
+    monkeypatch, capsys
+) -> None:
+    # `--version` / `-v` / `version` must report the INSTALLED runtime version
+    # straight from the package, never shell out to the legacy bash deck (whose
+    # `_version()` resolves VERSION from the current working directory, so invoked
+    # inside a checkout it reports that checkout's version, not the installed one).
+    # Make any deck subprocess fail loudly so a regression that re-delegates
+    # `--version` cannot pass silently.
+    from vibecrafted_core import __version__
+
+    def _no_deck(*_args, **_kwargs):
+        raise AssertionError("--version must not shell out to the deck")
+
+    monkeypatch.setattr("subprocess.run", _no_deck)
+
+    for flag in ("--version", "-v", "version"):
+        assert cli.main([flag]) == 0
+        assert capsys.readouterr().out.strip() == f"vibecrafted {__version__}"
+
+
 def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
     seen = {}
 

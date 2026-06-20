@@ -430,6 +430,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_args = _normalize_raw_args(list(sys.argv[1:] if argv is None else argv))
     invoked_as = Path(sys.argv[0]).name if argv is None else "vibecrafted"
 
+    # `--version` / `-v` / `version` report the INSTALLED runtime version — the
+    # one `vibecrafted start` / `vc-start` actually runs — read straight from the
+    # package. Never delegate to the legacy bash deck: its `_version()` resolves
+    # VERSION from the current working directory (`repo_root/VERSION`), so invoked
+    # from inside a checkout it reports that checkout's version, not the installed
+    # one. The package is what executes, so its `__version__` is the honest answer.
+    if raw_args and raw_args[0] in {"-v", "--version", "version"}:
+        from . import __version__
+
+        print(f"vibecrafted {__version__}")
+        return 0
+
     python_commands = {"dispatch", "doctor", "stop"} | set(LAUNCHERS)
     agent_python_verbs = {"observe", "await", "stop"}
     is_lifecycle = False
@@ -440,8 +452,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             # Core owns agent observe/await/stop (read-follows-write via
             # resolve_run); never delegate these to the legacy deck/observe.sh.
             is_lifecycle = False
-        elif first in {"-v", "--version", "version"}:
-            is_lifecycle = True
         elif first not in python_commands and not first.startswith("-"):
             is_lifecycle = True
 
