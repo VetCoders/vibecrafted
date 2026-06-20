@@ -587,6 +587,8 @@ def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
         actions.append("enable tracking and restore: run the installer once")
     if any(finding.component.startswith("orphan:") for finding in issues):
         actions.append("clean bundle leftovers: re-run the installer")
+    if any(finding.component.startswith("snapshot-orphan:") for finding in issues):
+        actions.append("reclaim disk from stale snapshots: `vibecrafted gc --prune`")
     if not actions:
         actions.append("review the warnings above, then re-run `vibecrafted doctor`")
     return actions
@@ -1099,6 +1101,154 @@ def collect_orphaned_skills(
                 orphans.append((rt, entry))
 
     return orphans
+
+
+def _dir_size(path: Path) -> int:
+    """Best-effort total byte size of a directory tree (symlinks not followed)."""
+    total = 0
+    try:
+        entries = list(os.scandir(path))
+    except OSError:
+        return total
+    for entry in entries:
+        try:
+            if entry.is_symlink():
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                total += _dir_size(Path(entry.path))
+            else:
+                total += entry.stat(follow_symlinks=False).st_size
+        except OSError:
+            continue
+    return total
+
+
+def _human_size(num_bytes: int) -> str:
+    """Render a byte count as a compact human string (e.g. 12.3MB)."""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{int(size)}{unit}" if unit == "B" else f"{size:.1f}{unit}"
+        size /= 1024
+    return f"{size:.1f}TB"
+
+
+def collect_orphaned_snapshots(
+    tools_home: Path,
+    legacy_tools_home: Optional[Path] = None,
+) -> List[Tuple[Path, int]]:
+    """Return de-pointed ``vibecrafted-<ref>`` snapshot trees with their sizes.
+
+    Each install stages a ``vibecrafted-<sanitized-ref>`` directory and repoints
+    the ``vibecrafted-current`` symlink at it. The installer only removes the SAME
+    ref it is staging (``rm -rf`` of that one staged dir), so switching refs — or
+    migrating the tools base dir (the legacy ``~/.vibecrafted`` -> XDG move) — leaves
+    the previous snapshot tree behind, never reclaimed. This surfaces what
+    ``vibecrafted-current`` no longer points at so the operator can trash it.
+
+    Pure detection — never deletes. The ``vibecrafted-current`` pointer itself and
+    any symlinked entries are skipped. Returns ``(path, size_bytes)`` per orphan,
+    largest first.
+    """
+    orphans: List[Tuple[Path, int]] = []
+    seen_roots: Set[Path] = set()
+
+    candidate_roots = [tools_home]
+    if legacy_tools_home is not None:
+        candidate_roots.append(legacy_tools_home)
+
+    for root in candidate_roots:
+        try:
+            resolved_root = root.resolve()
+        except OSError:
+            continue
+        if resolved_root in seen_roots or not resolved_root.is_dir():
+            continue
+        seen_roots.add(resolved_root)
+
+        current_link = resolved_root / "vibecrafted-current"
+        active_target: Optional[Path] = None
+        if current_link.is_symlink() or current_link.exists():
+            try:
+                active_target = current_link.resolve()
+            except OSError:
+                active_target = None
+
+        for entry in sorted(resolved_root.glob("vibecrafted-*")):
+            if entry.name == "vibecrafted-current":
+                continue
+            if entry.is_symlink() or not entry.is_dir():
+                continue
+            try:
+                if active_target is not None and entry.resolve() == active_target:
+                    continue
+            except OSError:
+                continue
+            orphans.append((entry, _dir_size(entry)))
+
+    orphans.sort(key=lambda item: item[1], reverse=True)
+    return orphans
+
+
+ORPHAN_QUARANTINE_DIRNAME = ".orphan-snapshots"
+
+
+def quarantine_orphaned_snapshots(
+    tools_home: Path,
+    legacy_tools_home: Optional[Path] = None,
+    dry_run: bool = False,
+) -> List[Tuple[Path, Path, int]]:
+    """Move de-pointed snapshot trees into a recoverable quarantine dir.
+
+    Mirrors the state-agency quarantine pattern (``_move_state_agency_path``): each
+    orphan is MOVED — not copied, not hard-deleted — into a
+    ``<root>/.orphan-snapshots/`` dir under its OWN tools root, so the move is an
+    atomic same-filesystem rename and stays fully recoverable. Disk is reclaimed
+    only later by ``purge_orphan_quarantine``. Returns ``(src, quarantine_dst,
+    size_bytes)`` for each moved snapshot.
+    """
+    moved: List[Tuple[Path, Path, int]] = []
+    for orphan, size in collect_orphaned_snapshots(tools_home, legacy_tools_home):
+        dst = orphan.parent / ORPHAN_QUARANTINE_DIRNAME / orphan.name
+        if _move_state_agency_path(orphan, dst, dry_run=dry_run):
+            moved.append((orphan, dst, size))
+    return moved
+
+
+def purge_orphan_quarantine(
+    tools_home: Path,
+    legacy_tools_home: Optional[Path] = None,
+    dry_run: bool = False,
+) -> List[Tuple[Path, int]]:
+    """Hard-remove the orphan-snapshot quarantine dirs to reclaim disk.
+
+    This is the only irreversible step in snapshot GC — quarantined trees are gone
+    after it. Returns ``(quarantine_path, size_bytes)`` per quarantine tree removed
+    (or that would be removed under ``dry_run``).
+    """
+    purged: List[Tuple[Path, int]] = []
+    seen_roots: Set[Path] = set()
+    for root in (tools_home, legacy_tools_home):
+        if root is None:
+            continue
+        try:
+            resolved_root = root.resolve()
+        except OSError:
+            continue
+        if resolved_root in seen_roots or not resolved_root.is_dir():
+            continue
+        seen_roots.add(resolved_root)
+        quarantine = resolved_root / ORPHAN_QUARANTINE_DIRNAME
+        if not quarantine.is_dir():
+            continue
+        size = _dir_size(quarantine)
+        if dry_run:
+            print(f"  {dim('remove')} {quarantine}")
+        else:
+            _clear_immutable_flags(quarantine)
+            shutil.rmtree(quarantine, ignore_errors=True)
+        purged.append((quarantine, size))
+    return purged
 
 
 def create_backup(
@@ -3225,6 +3375,23 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 "ok",
                 "channel",
                 "tarball — run 'vibecrafted update' to fetch latest release",
+            )
+        )
+
+    # 0c. Orphaned snapshot trees — de-pointed vibecrafted-<ref> dirs the
+    # installer never reclaims (it only removes the ref it is currently staging,
+    # so a ref switch or a tools-dir migration strands the previous snapshot).
+    # Detection only: warn with size + a copy-pasteable `trash`, never delete.
+    for snapshot_path, snapshot_size in collect_orphaned_snapshots(
+        vibecrafted_tools_home(), vibecrafted_home() / "tools"
+    ):
+        findings.append(
+            DoctorFinding(
+                "warn",
+                f"snapshot-orphan:{snapshot_path.name}",
+                f"de-pointed snapshot {snapshot_path} ({_human_size(snapshot_size)}) "
+                f"is not referenced by vibecrafted-current — reclaim with: "
+                f"vibecrafted gc --prune",
             )
         )
 

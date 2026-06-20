@@ -49,7 +49,9 @@ vibecrafted doctor
 ```
 
 Green means ready. Yellow means the doctor tells you what is weak and what to
-check next.
+check next. If it flags `snapshot-orphan` warnings (stale install snapshots
+wasting disk), run `vibecrafted gc` to list them and `vibecrafted gc --prune`
+/ `--purge` to reclaim the space — see [INSTALL.md](INSTALL.md#maintenance--reclaim-disk-from-old-install-snapshots).
 
 ## 3. Orient your agent
 

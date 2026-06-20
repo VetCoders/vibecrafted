@@ -291,6 +291,38 @@ See [`docs/DOCKER.md`](DOCKER.md) for the full container workflow.
 
 ---
 
+## Maintenance — reclaim disk from old install snapshots
+
+Each install stages the runtime under `<tools>/vibecrafted-<ref>` and repoints the
+`vibecrafted-current` symlink at it. Switching refs (or migrating the tools base
+dir) leaves the previous `vibecrafted-<ref>` tree behind: `vibecrafted-current` no
+longer points at it, but nothing reclaims it.
+
+`vibecrafted doctor` reports these as `snapshot-orphan` warnings — health stays
+green (they waste disk, they don't break the runtime). `vibecrafted gc` reclaims
+them through a recoverable, trash-like two-stage flow:
+
+```bash
+vibecrafted gc            # list de-pointed snapshots + total size (read-only)
+vibecrafted gc --prune    # move them into a recoverable quarantine (no disk freed yet)
+vibecrafted gc --purge    # hard-remove the quarantine — frees disk (irreversible)
+```
+
+| Flag        | Effect                                                       |
+| ----------- | ------------------------------------------------------------ |
+| _(none)_    | List orphaned snapshots and their sizes; change nothing      |
+| `--prune`   | Move orphans into `<tools>/.orphan-snapshots/` (recoverable) |
+| `--purge`   | Delete the quarantine to reclaim disk (asks to confirm)      |
+| `--dry-run` | Show what any mode would do, touching nothing                |
+| `--yes`     | Skip the `--purge` confirmation prompt                       |
+| `--json`    | Emit a machine-readable summary                              |
+
+The active `vibecrafted-current` snapshot is never touched. `--prune` is an atomic
+same-filesystem move (nothing is copied), and the quarantine stays recoverable
+until `--purge`.
+
+---
+
 ## Uninstall
 
 ```bash

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from . import doctor as doctor_module
+from . import gc as gc_module
 from .agent_stream import ANSI_PATTERN, AgentStreamParser, resolve_default_model
 from .control_plane import RunNotResolved, lookup_run, resolve_run, sync_state
 from .package_resources import deck_path, package_root
@@ -79,6 +80,26 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("dispatch", help="run or validate a dispatch plan")
     doctor = sub.add_parser("doctor", help="verify installed Vibecrafted runtime")
     doctor.add_argument("--json", action="store_true")
+    gc = sub.add_parser("gc", help="reclaim disk from orphaned install snapshots")
+    gc.add_argument(
+        "--prune",
+        action="store_true",
+        help="move orphaned snapshots into a recoverable quarantine",
+    )
+    gc.add_argument(
+        "--purge",
+        action="store_true",
+        help="hard-remove the quarantine (frees disk; irreversible)",
+    )
+    gc.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show what would happen, change nothing",
+    )
+    gc.add_argument(
+        "--yes", action="store_true", help="skip the --purge confirmation prompt"
+    )
+    gc.add_argument("--json", action="store_true")
     for name in LAUNCHERS:
         _add_launch_parser(sub, name)
     return parser
@@ -426,6 +447,52 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
         time.sleep(min(interval, max(deadline - now, 0.0)))
 
 
+def _print_gc_summary(summary: dict[str, Any]) -> None:
+    mode = summary["mode"]
+    items = summary["items"]
+    prefix = "[dry-run] " if summary["dry_run"] else ""
+    if not items:
+        print(f"{prefix}no orphaned snapshots found")
+        return
+    verb = {"collect": "orphan", "prune": "quarantined", "purge": "removed"}[mode]
+    for item in items:
+        loc = f" -> {item['quarantine']}" if item.get("quarantine") else ""
+        print(f"{prefix}{verb}: {item['path']} ({item['size_human']}){loc}")
+    print(f"{prefix}{summary['count']} snapshot(s), {summary['total_human']} total")
+    if mode == "collect":
+        print(
+            "reclaim: 'vibecrafted gc --prune' quarantines them, "
+            "then 'vibecrafted gc --purge' frees the disk"
+        )
+    elif mode == "prune" and not summary["dry_run"]:
+        print("recoverable in quarantine — 'vibecrafted gc --purge' frees the disk")
+
+
+def _run_gc(args: argparse.Namespace) -> int:
+    dry_run = bool(args.dry_run)
+    if args.purge:
+        if not dry_run and not args.yes:
+            try:
+                reply = input(
+                    "Hard-remove quarantined snapshots? Frees disk, irreversible [y/N] "
+                )
+            except EOFError:
+                reply = ""
+            if reply.strip().lower() not in {"y", "yes"}:
+                print("aborted — nothing removed")
+                return 0
+        summary = gc_module.gc_purge(dry_run=dry_run)
+    elif args.prune:
+        summary = gc_module.gc_prune(dry_run=dry_run)
+    else:
+        summary = gc_module.gc_collect()
+    if args.json:
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+    else:
+        _print_gc_summary(summary)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = _normalize_raw_args(list(sys.argv[1:] if argv is None else argv))
     invoked_as = Path(sys.argv[0]).name if argv is None else "vibecrafted"
@@ -442,7 +509,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"vibecrafted {__version__}")
         return 0
 
-    python_commands = {"dispatch", "doctor", "stop"} | set(LAUNCHERS)
+    python_commands = {"dispatch", "doctor", "gc", "stop"} | set(LAUNCHERS)
     agent_python_verbs = {"observe", "await", "stop"}
     is_lifecycle = False
     if raw_args:
@@ -505,6 +572,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{summary['failures']} failures"
             )
         return 0 if summary["failures"] == 0 else 1
+    if args.command == "gc":
+        return _run_gc(args)
 
     source_dir = args.source_dir or package_root()
     payload = {
