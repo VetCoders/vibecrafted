@@ -139,16 +139,34 @@ install:
 # to the real recipe.
 install-python-tools: install-tools
 
+# De-fragile contract: the uv-tool editable source is the STABLE runtime home
+# (~/.local/share/vibecrafted/tools/vibecrafted-current), NEVER the dev-workspace
+# checkout ($(SOURCE)). An editable install pointed at the checkout breaks the
+# daily-driver `vibecrafted` CLI the moment the dev tree switches to a branch
+# without `vibecrafted_core/cli.py` (ModuleNotFoundError). `make install` already
+# stages the runtime into the stable home (vetcoders_install.py refresh_current_tools)
+# before this target runs; we resolve that home via runtime_paths (single source
+# of truth, honours VIBECRAFTED_TOOLS_HOME / VIBECRAFTED_RUNTIME_HOME / XDG_DATA_HOME)
+# and refuse to fall back to the checkout if staging is missing.
 install-tools:
 	@if ! command -v uv >/dev/null 2>&1; then \
 		echo "bootstrapping uv..."; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	fi; \
 	export PATH="$$HOME/.local/bin:$$PATH"; \
+	stable_root="$$($(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/vibecrafted-core"); from vibecrafted_core.runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")')"; \
+	if [ ! -d "$$stable_root/vibecrafted-core" ]; then \
+		echo "[install-tools] staging runtime into stable home ($$stable_root missing)..."; \
+		$(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from pathlib import Path; import vetcoders_install as v; v.refresh_current_tools(Path("$(SOURCE)").resolve(), Path.home(), mirror=True)'; \
+	fi; \
+	if [ ! -d "$$stable_root/vibecrafted-core" ]; then \
+		echo "[install-tools] FATAL: stable runtime home not staged at $$stable_root; refusing to source the uv-tool from the dev checkout" >&2; \
+		exit 1; \
+	fi; \
 	uv tool uninstall vibecrafted-core >/dev/null 2>&1 || true; \
-	uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-core"; \
-	uv tool install --force --reinstall --editable "$(SOURCE)/plugins/iterm2"; \
-	uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-mcp" --with-editable "$(SOURCE)/vibecrafted-core"
+	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"; \
+	uv tool install --force --reinstall --editable "$$stable_root/plugins/iterm2"; \
+	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-mcp" --with-editable "$$stable_root/vibecrafted-core"
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
 # The vibecrafted-app members ship `voc` and `vc-admin`; vibecrafted-server

@@ -156,9 +156,12 @@ def test_install_all_user_facing_output_has_no_ghost_anxiety_copy() -> None:
 def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
     """install-all owns Python console scripts through uv tool install.
 
-    The MCP server is installed as its own tool, with local vibecrafted-core
-    injected as the dependency source, so ~/.local/bin/vibecrafted-mcp comes
-    from the package entrypoint instead of a shell helper wrapper.
+    De-fragile contract: the uv-tool editable source is the STABLE runtime home
+    (resolved via runtime_paths -> vibecrafted-current), NEVER the dev-workspace
+    checkout ($(SOURCE)). An editable install pointed at the checkout breaks the
+    `vibecrafted` CLI the moment the dev tree switches to a branch without
+    vibecrafted_core/cli.py. The MCP server is installed as its own tool, with
+    the stable-home vibecrafted-core injected as the dependency source.
     """
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     manifest = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
@@ -171,14 +174,23 @@ def test_install_all_installs_python_tools_with_uv_tool_install() -> None:
     )[0]
 
     assert "make --no-print-directory install-python-tools" in install_all_block
+    # The uv-tool editable installs must source from the resolved stable home
+    # ($$stable_root -> vibecrafted-current), not the dev checkout.
     assert (
-        'uv tool install --force --reinstall --editable "$(SOURCE)/vibecrafted-core"'
+        'uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"'
     ) in python_tools_block
     assert (
         "uv tool install --force --reinstall --editable "
-        '"$(SOURCE)/vibecrafted-mcp" --with-editable '
-        '"$(SOURCE)/vibecrafted-core"'
+        '"$$stable_root/vibecrafted-mcp" --with-editable '
+        '"$$stable_root/vibecrafted-core"'
     ) in python_tools_block
+    # Non-fakeable: no `uv tool install` may take its editable source from the
+    # dev-workspace checkout ($(SOURCE)). That is the whole point of de-fragiling.
+    assert (
+        'uv tool install --force --reinstall --editable "$(SOURCE)'
+        not in python_tools_block
+    )
+    assert "vibecrafted-current" in python_tools_block
     assert "vibecrafted-mcp" in (
         REPO_ROOT / "vibecrafted-mcp" / "pyproject.toml"
     ).read_text(encoding="utf-8")
