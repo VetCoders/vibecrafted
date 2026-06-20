@@ -108,11 +108,17 @@ You do not spawn agents blindly. You pick the cognitive profile required for the
 
     subgraph Gemini
         GeminiDesc[Radical Reframing]
-        GeminiBest[Best for:\n\n– Architecture leaps\n– Fearless simplification\n– Stripping dead scaffolding]
+        GeminiBest[Best for:\n\n– Architecture leaps\n– Fearless simplification\n– Stripping dead scaffolding\n\nText default:\n– Prose, docs, narrative\n– Human-facing copy & translation]
         Gemini --> GeminiDesc
         Gemini --> GeminiBest
     end
 ```
+
+**Words are their own cognitive profile.** Prose, docs, narrative, skill / marketing copy, translation, and
+human-facing wording → **Gemini** (the text default) or **Claude**. Codex's edge is precision surgery on code
+and contracts — register and voice aren't its lane, so for a mixed cut split the work: Codex takes the
+mechanical / code part, Gemini or Claude take the words. This is matching the mind to the work, never a verdict
+on any agent.
 
 ## Delegation Doctrine
 
