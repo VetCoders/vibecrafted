@@ -102,6 +102,10 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
       self, selector: #selector(handleSelectedServerChanged),
       name: NSNotification.Name("SelectedServerChanged"), object: nil
     )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(handleMissionControlFocusSection),
+      name: NSNotification.Name("MissionControlFocusSection"), object: nil
+    )
 
     refreshRoutes()
   }
@@ -127,6 +131,13 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
     currentServerName = notification.userInfo?["serverName"] as? String
     if segmentedControl.selectedSegment == 2 {
       refreshLogs()
+    }
+  }
+
+  @objc private func handleMissionControlFocusSection(_ notification: Notification) {
+    if segmentedControl.selectedSegment != 0 {
+      segmentedControl.selectedSegment = 0
+      segmentChanged(segmentedControl)
     }
   }
 
