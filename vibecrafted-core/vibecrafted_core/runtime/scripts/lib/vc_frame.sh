@@ -23,16 +23,37 @@ spawn_current_vc_frame_session_name() {
   printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 }
 
+# A vc-frame session is a usable spawn target only when it is actually live.
+# Guards against the dispatcher's per-run tracking id (operator_session_name() =
+# "<repo>-<run_id>", see control_plane.py) being treated as a real session.
+spawn_session_is_live() {
+  local name="$1"
+  [[ -n "$name" ]] || return 1
+  local bin=""
+  bin="$(spawn_vc_frame_bin 2>/dev/null || true)"
+  [[ -n "$bin" ]] || return 1
+  "$bin" list-sessions 2>/dev/null \
+    | sed 's/\x1b\[[0-9;]*m//g' \
+    | awk -v s="$name" '$1 == s && $0 !~ /EXITED/ { hit = 1 } END { exit hit ? 0 : 1 }'
+}
+
 spawn_effective_operator_session() {
   spawn_normalize_ambient_context
+
+  # Honour an env-provided session ONLY when it names a LIVE vc-frame session.
+  # The dispatcher sets VIBECRAFTED_OPERATOR_SESSION to a per-run tracking id
+  # (operator_session_name = "<repo>-<run_id>") which is NOT a live session;
+  # spawning a tab into it lands nowhere and the run degrades to an invisible
+  # headless orphan. Inside vc-frame these env vars DO name the live session, so
+  # the live-check keeps the in-frame path intact.
   local session_name="${VIBECRAFTED_OPERATOR_SESSION:-}"
-  if [[ -n "$session_name" ]]; then
+  if [[ -n "$session_name" ]] && spawn_session_is_live "$session_name"; then
     printf '%s\n' "$session_name"
     return 0
   fi
 
   session_name="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
-  if [[ -n "$session_name" ]]; then
+  if [[ -n "$session_name" ]] && spawn_session_is_live "$session_name"; then
     printf '%s\n' "$session_name"
     return 0
   fi
@@ -40,6 +61,7 @@ spawn_effective_operator_session() {
   local vc_frame_bin=""
   vc_frame_bin="$(spawn_vc_frame_bin)" || return 1
 
+  # Attached-pane marker: vc-frame tags the session you are currently in.
   session_name="$(
     "$vc_frame_bin" list-sessions 2>/dev/null \
       | sed 's/\x1b\[[0-9;]*m//g' \
@@ -47,18 +69,14 @@ spawn_effective_operator_session() {
   )"
 
   # No (current) marker → dispatched from OUTSIDE any vc-frame pane (plain
-  # terminal, headless agent, nested dispatch). The operator session is
-  # repo-bound — named after `basename "$root"` (see dispatch.sh) — so resolve it
-  # from SPAWN_ROOT and accept it only if that session is live (not EXITED).
-  # Without this, a CLI/headless dispatch degrades to an invisible headless run
-  # even when the operator has a live vc-frame waiting to host the tab.
+  # terminal, headless agent, nested dispatch). The operator session is repo-bound
+  # — named after `basename "$root"` (see dispatch.sh) — so resolve it from
+  # SPAWN_ROOT and accept it only if that session is live. This is what lets a
+  # command-line/headless dispatch land as a visible tab instead of headless.
   if [[ -z "$session_name" ]]; then
     local repo_session=""
     repo_session="$(basename "${SPAWN_ROOT:-$(pwd)}")"
-    if [[ -n "$repo_session" ]] \
-      && "$vc_frame_bin" list-sessions 2>/dev/null \
-        | sed 's/\x1b\[[0-9;]*m//g' \
-        | awk -v s="$repo_session" '$1 == s && $0 !~ /EXITED/ { hit = 1 } END { exit hit ? 0 : 1 }'; then
+    if spawn_session_is_live "$repo_session"; then
       session_name="$repo_session"
     fi
   fi
