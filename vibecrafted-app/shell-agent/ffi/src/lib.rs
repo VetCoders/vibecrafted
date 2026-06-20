@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use tray_agent::ipc_client::{ClientKind, MuxControlCommand, MuxControlResponse, send_command};
 use voc::config::{default_state_root, default_vibecrafted_home};
 use voc::mission_control::{self as mc, MissionControlState};
+use voc::run_detail::{self, RunDetail};
 use voc::state::ControlPlaneState;
 
 static SOCKET_PATH: OnceLock<PathBuf> = OnceLock::new();
@@ -408,6 +409,62 @@ pub fn load_mission_control_snapshot_at(
         .unwrap_or_else(|_| ControlPlaneState::empty(&state_path));
     let mission = MissionControlState::build(&control_plane, &artifact_path);
     Ok(convert_snapshot(mission))
+}
+
+// ═══════════════════════════════════════════════════════════
+// MC2 Run Inspector — drill into one run's real artifacts
+//
+// `load_mission_control_snapshot` shows the fleet poster; this is the
+// drill-down. Given a `run_id` (e.g. the `impl-…` ids the snapshot's
+// dispatches/failures carry), read that run's real `report.md`, the tail of
+// its `transcript.log`, and its `meta.json` header straight off disk under
+// `runtime_runs/<run_id>/`. Reading stays in `voc::run_detail`; this layer
+// only converts the record. Missing inputs surface as typed-empty.
+// ═══════════════════════════════════════════════════════════
+
+#[derive(uniffi::Record)]
+pub struct FfiRunDetail {
+    pub run_id: String,
+    pub agent: Option<String>,
+    pub skill: Option<String>,
+    pub state: Option<String>,
+    pub report_md: Option<String>,
+    pub transcript_tail: String,
+    pub report_path: Option<String>,
+    pub transcript_path: Option<String>,
+}
+
+impl From<RunDetail> for FfiRunDetail {
+    fn from(detail: RunDetail) -> Self {
+        FfiRunDetail {
+            run_id: detail.run_id,
+            agent: detail.agent,
+            skill: detail.skill,
+            state: detail.state,
+            report_md: detail.report_md,
+            transcript_tail: detail.transcript_tail,
+            report_path: detail.report_path,
+            transcript_path: detail.transcript_path,
+        }
+    }
+}
+
+/// Load one run's drill-down artifacts using the default control-plane root
+/// (`default_state_root()` => `~/.vibecrafted/control_plane`). The inspector
+/// calls this when a run is selected anywhere in Mission Control. Missing
+/// inputs (no meta, no report, no transcript) surface as typed-empty, never a
+/// panic.
+#[uniffi::export]
+pub fn load_run_detail(run_id: String) -> Result<FfiRunDetail, MuxError> {
+    let state_root = default_state_root();
+    Ok(run_detail::load_run_detail(&state_root, &run_id).into())
+}
+
+/// Variant for surfaces that already resolved their own control-plane root
+/// (tests, vendored workspaces). Mirrors `load_mission_control_snapshot_at`.
+#[uniffi::export]
+pub fn load_run_detail_at(state_root: String, run_id: String) -> Result<FfiRunDetail, MuxError> {
+    Ok(run_detail::load_run_detail(&PathBuf::from(state_root), &run_id).into())
 }
 
 // ═══════════════════════════════════════════════════════════

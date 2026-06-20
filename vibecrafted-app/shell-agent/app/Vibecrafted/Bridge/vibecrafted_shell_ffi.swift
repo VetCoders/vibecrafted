@@ -1208,6 +1208,82 @@ public func FfiConverterTypeFfiRoute_lower(_ value: FfiRoute) -> RustBuffer {
 }
 
 
+public struct FfiRunDetail: Equatable, Hashable {
+    public var runId: String
+    public var agent: String?
+    public var skill: String?
+    public var state: String?
+    public var reportMd: String?
+    public var transcriptTail: String
+    public var reportPath: String?
+    public var transcriptPath: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(runId: String, agent: String?, skill: String?, state: String?, reportMd: String?, transcriptTail: String, reportPath: String?, transcriptPath: String?) {
+        self.runId = runId
+        self.agent = agent
+        self.skill = skill
+        self.state = state
+        self.reportMd = reportMd
+        self.transcriptTail = transcriptTail
+        self.reportPath = reportPath
+        self.transcriptPath = transcriptPath
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiRunDetail: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRunDetail: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRunDetail {
+        return
+            try FfiRunDetail(
+                runId: FfiConverterString.read(from: &buf),
+                agent: FfiConverterOptionString.read(from: &buf),
+                skill: FfiConverterOptionString.read(from: &buf),
+                state: FfiConverterOptionString.read(from: &buf),
+                reportMd: FfiConverterOptionString.read(from: &buf),
+                transcriptTail: FfiConverterString.read(from: &buf),
+                reportPath: FfiConverterOptionString.read(from: &buf),
+                transcriptPath: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRunDetail, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.runId, into: &buf)
+        FfiConverterOptionString.write(value.agent, into: &buf)
+        FfiConverterOptionString.write(value.skill, into: &buf)
+        FfiConverterOptionString.write(value.state, into: &buf)
+        FfiConverterOptionString.write(value.reportMd, into: &buf)
+        FfiConverterString.write(value.transcriptTail, into: &buf)
+        FfiConverterOptionString.write(value.reportPath, into: &buf)
+        FfiConverterOptionString.write(value.transcriptPath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRunDetail_lift(_ buf: RustBuffer) throws -> FfiRunDetail {
+    return try FfiConverterTypeFfiRunDetail.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRunDetail_lower(_ value: FfiRunDetail) -> RustBuffer {
+    return FfiConverterTypeFfiRunDetail.lower(value)
+}
+
+
 public struct FfiServerStatus: Equatable, Hashable {
     public var name: String
     public var status: String
@@ -2564,6 +2640,32 @@ public func loadMissionControlSnapshotAt(stateRoot: String, artifactRoot: String
     )
 })
 }
+/**
+ * Load one run's drill-down artifacts using the default control-plane root
+ * (`default_state_root()` => `~/.vibecrafted/control_plane`). The inspector
+ * calls this when a run is selected anywhere in Mission Control. Missing
+ * inputs (no meta, no report, no transcript) surface as typed-empty, never a
+ * panic.
+ */
+public func loadRunDetail(runId: String)throws  -> FfiRunDetail  {
+    return try  FfiConverterTypeFfiRunDetail_lift(try rustCallWithError(FfiConverterTypeMuxError_lift) {
+    uniffi_vibecrafted_shell_ffi_fn_func_load_run_detail(
+        FfiConverterString.lower(runId),$0
+    )
+})
+}
+/**
+ * Variant for surfaces that already resolved their own control-plane root
+ * (tests, vendored workspaces). Mirrors `load_mission_control_snapshot_at`.
+ */
+public func loadRunDetailAt(stateRoot: String, runId: String)throws  -> FfiRunDetail  {
+    return try  FfiConverterTypeFfiRunDetail_lift(try rustCallWithError(FfiConverterTypeMuxError_lift) {
+    uniffi_vibecrafted_shell_ffi_fn_func_load_run_detail_at(
+        FfiConverterString.lower(stateRoot),
+        FfiConverterString.lower(runId),$0
+    )
+})
+}
 public func restartService(name: String)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -2638,6 +2740,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vibecrafted_shell_ffi_checksum_func_load_mission_control_snapshot_at() != 11312) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_vibecrafted_shell_ffi_checksum_func_load_run_detail() != 9516) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_vibecrafted_shell_ffi_checksum_func_load_run_detail_at() != 24709) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vibecrafted_shell_ffi_checksum_func_restart_service() != 60065) {
