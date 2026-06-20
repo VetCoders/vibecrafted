@@ -600,14 +600,47 @@ def _launch_transport_command(
 
 
 def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) -> str:
+    """Resolve the LIVE vc-frame session that can host a visible run tab.
+
+    Python mirror of the bash runtime's ``spawn_effective_operator_session``
+    (``runtime/scripts/lib/vc_frame.sh``). The ``vibecrafted <skill>`` workflow
+    dispatch routes through ``launch_workflow`` here — NOT the bash ``*_spawn.sh``
+    path — so the two fixes already landed on the bash side (eb346da, 2952f05)
+    have to be mirrored, or a CLI/headless/nested dispatch from OUTSIDE a pane
+    degrades to an invisible headless orphan even when a live operator session
+    exists. Two guards, both empirically the source of the outside→headless gap:
+
+    1. Honour an env-provided session ONLY when it names a LIVE session. The
+       dispatcher propagates ``VIBECRAFTED_OPERATOR_SESSION`` = a per-run tracking
+       id (``operator_session_name`` = ``"<repo>-<run_id>"``) which is NOT a live
+       session; targeting a tab at it lands nowhere (the 2952f05 bug).
+    2. With no live env session, discover the repo-bound operator session — named
+       after ``basename("$root")`` — and accept it only when live. This is what
+       lets an outside dispatch land as a visible tab (the eb346da fix). Only
+       when no live session exists at all do we return the per-run id, so the
+       caller (``_launch_transport_command``) honestly degrades to headless —
+       the correct fallback when there is nothing live to host a tab.
+    """
+    vc_frame = shutil.which("vc-frame")
+
+    def _live(name: str) -> bool:
+        return (
+            bool(name) and bool(vc_frame) and _vc_frame_session_active(vc_frame, name)
+        )
+
     for key in (
         "VIBECRAFTED_OPERATOR_SESSION",
         "VC_FRAME_SESSION_NAME",
-        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ_SESSION_NAME",
     ):
         session_name = str(env.get(key) or "").strip()
-        if session_name:
+        if session_name and _live(session_name):
             return session_name
+
+    repo_session = operator_session_name(root, "")
+    if _live(repo_session):
+        return repo_session
+
     return operator_session_name(root, run_id)
 
 
