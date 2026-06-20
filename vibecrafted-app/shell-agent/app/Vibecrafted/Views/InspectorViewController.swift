@@ -173,6 +173,9 @@ class InspectorViewController: NSViewController {
     openInFinderButton.isEnabled = false
 
     runStack.orientation = .vertical
+    // AppKit NSStackView has no cross-axis `.fill`; keep `.leading` and pin the
+    // wide subviews' trailing edge to the stack so the text panes span the full
+    // inspector width. Leading comes from the alignment + edge inset.
     runStack.alignment = .leading
     runStack.spacing = 8
     runStack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
@@ -184,11 +187,9 @@ class InspectorViewController: NSViewController {
     runStack.addArrangedSubview(transcriptTitle)
     runStack.addArrangedSubview(transcriptScrollView)
 
-    // Let both text panes stretch the full inspector width and share height.
-    for view in [runHeaderLabel, reportTitle, transcriptTitle, reportScrollView, transcriptScrollView] {
-      view.translatesAutoresizingMaskIntoConstraints = false
-      view.leadingAnchor.constraint(equalTo: runStack.leadingAnchor, constant: 16).isActive = true
-      view.trailingAnchor.constraint(equalTo: runStack.trailingAnchor, constant: -16).isActive = true
+    // Stretch the text panes (and header/titles) the full inspector width.
+    for wide in [runHeaderLabel, reportTitle, transcriptTitle, reportScrollView, transcriptScrollView] {
+      wide.trailingAnchor.constraint(equalTo: runStack.trailingAnchor, constant: -16).isActive = true
     }
     reportScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
     transcriptScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
