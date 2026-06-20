@@ -177,7 +177,7 @@ APP_DIR := vibecrafted-app
 APP_BINARIES := voc vc-admin
 BIN_DIR := $(HOME)/.local/bin
 
-install-app:
+install-app-binaries:
 	@command -v cargo >/dev/null 2>&1 || { \
 		echo "[app] cargo not found — install rustup (https://rustup.rs) to build $(APP_BINARIES)" >&2; \
 		exit 1; \

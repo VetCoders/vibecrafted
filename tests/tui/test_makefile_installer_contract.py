@@ -10,14 +10,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
-    """Contract: `make install` is the terminal-native human front door,
-    `make setup-dev` opens the same meta-installer in advanced mode, and
-    `make install-auto` is the auto-approved automation path.
+    """Contract: `make install` is the terminal-native human front door — a
+    compact, log-quiet step runner that greets, walks the canonical install
+    steps through $(INSTALL_STEP), and ends by pointing at `vc-start`.
+    `make install-auto` is the unattended automation path that reuses the same
+    front door, and `make setup-dev` opens the uv meta-installer in advanced
+    mode.
 
-    The installer recipes must also keep the uv bootstrap
-    and the `uv run` invocation inside one shell stanza, otherwise the
-    `export PATH=...` from the bootstrap leg dies before `uv run` sees it
-    (each `@`-prefixed recipe line spawns a fresh shell). See P1-01.
+    Every recipe that bootstraps uv (setup-dev, install-all, tui-installer)
+    must keep the uv bootstrap and the `uv run` invocation inside one shell
+    stanza, otherwise the `export PATH=...` from the bootstrap leg dies before
+    `uv run` sees it (each `@`-prefixed recipe line spawns a fresh shell).
+    See P1-01.
     """
     text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
 
@@ -30,51 +34,67 @@ def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
     assert "make skills" not in text.split("help:", 1)[1].split("\nvibecrafted:", 1)[0]
     assert "vibecrafted: install" in text
 
-    install_block = text.split("install: init-hooks", 1)[1].split("\n# BUNDLE_DIR", 1)[
-        0
-    ]
-    wizard_block = text.split("wizard: init-hooks", 1)[1].split(
-        "\ngui-install: wizard", 1
+    # The front door is the compact step runner: it greets, walks the canonical
+    # install steps through $(INSTALL_STEP), and ends by pointing at vc-start.
+    install_block = text.split("\ninstall:\n", 1)[1].split(
+        "\ninstall-python-tools:", 1
     )[0]
-    install_auto_block = text.split("install-auto: init-hooks", 1)[1].split(
-        "\nskills:", 1
-    )[0]
+    assert 'printf "Installing Vibecrafted\\n"' in install_block
+    for label in (
+        "foundations",
+        "skills and launchers",
+        "runtime tools",
+        "app and server",
+    ):
+        assert f'$(INSTALL_STEP) "{label}"' in install_block, (
+            f"front door must walk the `{label}` install step via $(INSTALL_STEP)"
+        )
+    assert "vc-start" in install_block
+
+    # install-auto is the unattended path: it reuses the same front door rather
+    # than forking a second installer recipe.
+    assert "install-auto: install" in text
+
+    # setup-dev opens the uv meta-installer in advanced mode. Advanced is an
+    # interactive surface, so it never carries the auto-approve `--yes`.
     setup_dev_block = text.split("setup-dev: init-hooks", 1)[1].split("\ndry-run:", 1)[
         0
     ]
+    assert "vetcoders-installer $(MANIFEST)" in setup_dev_block
+    assert "--advanced --quiet" in setup_dev_block
+    assert "--yes" not in setup_dev_block
 
-    # The terminal-native front door suppresses nested subprocess chatter while
-    # retaining the full log on disk.
-    assert (
-        "uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST) --quiet"
-        in install_block
-    )
-    assert "--yes" not in install_block
-    assert 'export PATH="$$HOME/.local/bin:$$PATH"' in install_block
-    assert "fi; \\" in install_block, (
-        "install recipe must chain the uv bootstrap `fi` into the same "
-        "shell as `uv run` via `fi; \\`"
-    )
-
-    assert '$(PYTHON) $(GUI_INSTALLER) --source "$(SOURCE)"' in wizard_block
-    assert "$$VIBECRAFTED_SITE_BUNDLE" in wizard_block
-    assert "$(CURDIR)/../vibecrafted-io" in wizard_block
-    assert "pnpm run build" in wizard_block
-    assert '--bundle-dir "$$site_repo/site/dist"' in wizard_block
-    assert "wizard-dev: wizard" in text
-
-    # Automation still shares the same runner, but the target name says what it does.
+    # install-all is the auto-approved meta-installer: same runner, but --yes.
+    install_all_block = text.split("install-all: init-hooks", 1)[1].split(
+        "\n# Output discipline", 1
+    )[0]
     assert (
         "uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST) --yes --quiet"
-        in install_auto_block
+        in install_all_block
     )
-    assert 'export PATH="$$HOME/.local/bin:$$PATH"' in install_auto_block
-    assert "fi; \\" in install_auto_block, (
-        "install-auto recipe must chain the uv bootstrap `fi` into the same "
-        "shell as `uv run` via `fi; \\`"
-    )
-    assert "--advanced --quiet" in setup_dev_block
-    assert "vetcoders-installer $(MANIFEST)" in setup_dev_block
+
+    # P1-01: every uv-bootstrapping recipe exports PATH first and chains the
+    # bootstrap `fi` into the same shell as `uv run` via `fi; \`, so the
+    # freshly-installed uv is visible to `uv run`.
+    tui_installer_block = text.split("tui-installer: init-hooks", 1)[1].split(
+        "\n# BUNDLE_DIR", 1
+    )[0]
+    for name, block in (
+        ("setup-dev", setup_dev_block),
+        ("install-all", install_all_block),
+        ("tui-installer", tui_installer_block),
+    ):
+        assert 'export PATH="$$HOME/.local/bin:$$PATH"' in block, (
+            f"{name} must export PATH before `uv run`"
+        )
+        assert "fi; \\" in block, (
+            f"{name} must chain the uv bootstrap `fi` into the same shell as "
+            "`uv run` via `fi; \\`"
+        )
+        assert (
+            "uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST)"
+            in block
+        ), f"{name} must invoke the uv meta-installer"
 
 
 def test_bundle_check_uses_portable_mktemp_template() -> None:
@@ -436,6 +456,11 @@ def test_product_mcp_paths_do_not_hardcode_cargo_bin() -> None:
     cargo_markers = ("~/.cargo/bin", "$HOME/.cargo/bin")
     for rel in tracked:
         path = REPO_ROOT / rel
+        # `git ls-files` lists tracked symlinks-to-directories (e.g. `runtime`,
+        # `skills`) and gitlinks as entries; those are not file content to
+        # scan. is_file() follows symlinks, so file-symlinks are still read.
+        if not path.is_file():
+            continue
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
