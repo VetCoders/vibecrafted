@@ -25,7 +25,8 @@ xcode:
 
 app: bindings xcode
 	@echo "Building Vibecrafted.app..."
-	@rm -rf build/DerivedData build/Vibecrafted.app
+	@mkdir -p build
+	@rm -rf build/Vibecrafted.app
 	@set -o pipefail && xcodebuild -project app/Vibecrafted.xcodeproj -scheme Vibecrafted -configuration Debug -derivedDataPath build/DerivedData build 2>&1 | tail -20
 	@BUILT_APP=$$(find build/DerivedData -name Vibecrafted.app -type d | head -1); \
 		if [ -z "$$BUILT_APP" ]; then \
@@ -33,6 +34,7 @@ app: bindings xcode
 			exit 1; \
 		fi; \
 		cp -R "$$BUILT_APP" build/Vibecrafted.app
+	@/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile icon1" build/Vibecrafted.app/Contents/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string icon1" build/Vibecrafted.app/Contents/Info.plist
 	@./scripts/fix-dylib-install-names.sh build/Vibecrafted.app
 	@codesign --force --deep --sign - build/Vibecrafted.app
 	@echo "App built: build/Vibecrafted.app"

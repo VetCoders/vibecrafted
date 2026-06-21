@@ -378,6 +378,13 @@ fn collect_meta_records(
     let window_floor = now - ChronoDuration::days(STATS_WINDOW_DAYS);
     let mut files = Vec::new();
     walk_meta_files(artifact_root, &mut files, &window_floor.date_naive());
+    // Most-recent-first so the scan cap keeps the FRESHEST runs (the operator's
+    // live activity), not whatever the directory walk reached first. Without this
+    // the cap was filled in directory order, so new runs in late-sorted dirs fell
+    // off it and the panel went silent about them.
+    files.sort_by_key(|path| {
+        std::cmp::Reverse(fs::metadata(path).and_then(|meta| meta.modified()).ok())
+    });
 
     for path in files.into_iter().take(META_SCAN_CAP) {
         let text = match fs::read_to_string(&path) {
@@ -433,17 +440,15 @@ fn collect_meta_records(
 }
 
 fn walk_meta_files(dir: &Path, out: &mut Vec<PathBuf>, window_floor: &NaiveDate) {
-    if out.len() >= META_SCAN_CAP {
-        return;
-    }
+    // Collect ALL in-window meta files — NO cap during the walk. The caller sorts
+    // newest-first and then applies META_SCAN_CAP, so the cap must see the whole
+    // in-window set; capping here (in directory order) hid fresh runs in late-
+    // walked directories. The date-window filter below still bounds the walk.
     let entries = match fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(_) => return,
     };
     for entry in entries.flatten() {
-        if out.len() >= META_SCAN_CAP {
-            return;
-        }
         let path = entry.path();
         let Ok(metadata) = entry.file_type() else {
             continue;
@@ -1683,7 +1688,7 @@ fn disk_health_signals_from_paths(
 ) -> Vec<FleetHealthSignal> {
     let mut signals = Vec::new();
     for (label, path) in substrates {
-        signals.push(disk_path_signal(label, &path));
+        signals.push(disk_path_signal(label, path));
     }
     signals.push(ulimit_fsize_signal(substrates));
     signals
@@ -2049,7 +2054,7 @@ mod unix_probe {
             stats.f_frsize
         } else {
             stats.f_bsize
-        } as u64;
+        };
         Ok(DiskStats {
             free_bytes: (stats.f_bavail as u64).saturating_mul(block_size),
             total_bytes: (stats.f_blocks as u64).saturating_mul(block_size),
@@ -2069,7 +2074,7 @@ mod unix_probe {
         if limit.rlim_cur == libc::RLIM_INFINITY {
             Ok(None)
         } else {
-            Ok(Some(limit.rlim_cur as u64))
+            Ok(Some(limit.rlim_cur))
         }
     }
 }

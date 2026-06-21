@@ -403,6 +403,14 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         return result
     launcher_pid = _coerce_int(result.get("launcher_pid"))
     liveness = str(result.get("liveness") or "")
+    # P0: a dead/absent launcher pid is NOT proof the run died. The launcher is an
+    # ephemeral spawn-shell that exits right after forking the detached dispatcher;
+    # for headless/detached dispatch it is gone within seconds while the dispatcher
+    # and worker keep running and DELIVER. If the worker (or its process group) is
+    # still alive, the run is live regardless of the launcher pid — reconciling it
+    # to stalled/recovery here false-blocks live, delivering runs.
+    if _worker_is_alive(result):
+        return result
     if liveness == "pid_alive":
         if launcher_pid is None or _pid_is_alive(launcher_pid):
             return result
@@ -528,6 +536,21 @@ def _has_signal_target(run: dict[str, Any]) -> bool:
     for key in ("worker_pgid", "worker_pid", "launcher_pid"):
         raw = run.get(key)
         if _coerce_int(raw):
+            return True
+    return False
+
+
+def _worker_is_alive(run: dict[str, Any]) -> bool:
+    """True when the run's worker process (or its group leader) is still alive.
+
+    Distinct from ``_has_signal_target`` (which only checks that a pid VALUE is
+    present): this checks actual OS liveness. The liveness reconciler uses it so
+    a run is never marked recovery_required merely because the ephemeral launcher
+    pid died while the worker keeps running and delivering.
+    """
+    for key in ("worker_pid", "worker_pgid"):
+        pid = _coerce_int(run.get(key))
+        if pid is not None and _pid_is_alive(pid):
             return True
     return False
 

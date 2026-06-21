@@ -4,6 +4,7 @@ pub mod launch;
 pub mod mission_control;
 pub mod mux;
 pub mod polarize;
+pub mod run_detail;
 pub mod skills_catalog;
 pub mod state;
 pub mod ui;
@@ -33,6 +34,7 @@ pub use mission_control::{
     WaveSegment, WaveState, default_artifact_root,
 };
 pub use polarize::{PolarizeBand, PolarizeIntent};
+pub use run_detail::{RunDetail, load_run_detail};
 pub use skills_catalog::{SkillAgent, SkillEntry, SkillPayload, SkillPayloadKind};
 
 pub fn run_cli() -> anyhow::Result<()> {

@@ -457,6 +457,38 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterFloat: FfiConverterPrimitive {
+    typealias FfiType = Float
+    typealias SwiftType = Float
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Float {
+        return try lift(readFloat(&buf))
+    }
+
+    public static func write(_ value: Float, into buf: inout [UInt8]) {
+        writeFloat(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDouble: FfiConverterPrimitive {
+    typealias FfiType = Double
+    typealias SwiftType = Double
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Double {
+        return try lift(readDouble(&buf))
+    }
+
+    public static func write(_ value: Double, into buf: inout [UInt8]) {
+        writeDouble(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -520,6 +552,220 @@ fileprivate struct FfiConverterString: FfiConverter {
 }
 
 
+public struct FfiActionQueueItem: Equatable, Hashable {
+    public var kind: FfiActionQueueKind
+    public var summary: String
+    public var sourcePath: String?
+    public var priority: FfiActionPriority
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: FfiActionQueueKind, summary: String, sourcePath: String?, priority: FfiActionPriority) {
+        self.kind = kind
+        self.summary = summary
+        self.sourcePath = sourcePath
+        self.priority = priority
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiActionQueueItem: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiActionQueueItem: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiActionQueueItem {
+        return
+            try FfiActionQueueItem(
+                kind: FfiConverterTypeFfiActionQueueKind.read(from: &buf),
+                summary: FfiConverterString.read(from: &buf),
+                sourcePath: FfiConverterOptionString.read(from: &buf),
+                priority: FfiConverterTypeFfiActionPriority.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiActionQueueItem, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiActionQueueKind.write(value.kind, into: &buf)
+        FfiConverterString.write(value.summary, into: &buf)
+        FfiConverterOptionString.write(value.sourcePath, into: &buf)
+        FfiConverterTypeFfiActionPriority.write(value.priority, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiActionQueueItem_lift(_ buf: RustBuffer) throws -> FfiActionQueueItem {
+    return try FfiConverterTypeFfiActionQueueItem.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiActionQueueItem_lower(_ value: FfiActionQueueItem) -> RustBuffer {
+    return FfiConverterTypeFfiActionQueueItem.lower(value)
+}
+
+
+public struct FfiActiveDispatch: Equatable, Hashable {
+    public var runId: String
+    public var agent: String
+    public var skill: String
+    public var wave: String?
+    public var startedAt: String?
+    public var ageLabel: String
+    public var etaLabel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(runId: String, agent: String, skill: String, wave: String?, startedAt: String?, ageLabel: String, etaLabel: String) {
+        self.runId = runId
+        self.agent = agent
+        self.skill = skill
+        self.wave = wave
+        self.startedAt = startedAt
+        self.ageLabel = ageLabel
+        self.etaLabel = etaLabel
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiActiveDispatch: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiActiveDispatch: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiActiveDispatch {
+        return
+            try FfiActiveDispatch(
+                runId: FfiConverterString.read(from: &buf),
+                agent: FfiConverterString.read(from: &buf),
+                skill: FfiConverterString.read(from: &buf),
+                wave: FfiConverterOptionString.read(from: &buf),
+                startedAt: FfiConverterOptionString.read(from: &buf),
+                ageLabel: FfiConverterString.read(from: &buf),
+                etaLabel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiActiveDispatch, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.runId, into: &buf)
+        FfiConverterString.write(value.agent, into: &buf)
+        FfiConverterString.write(value.skill, into: &buf)
+        FfiConverterOptionString.write(value.wave, into: &buf)
+        FfiConverterOptionString.write(value.startedAt, into: &buf)
+        FfiConverterString.write(value.ageLabel, into: &buf)
+        FfiConverterString.write(value.etaLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiActiveDispatch_lift(_ buf: RustBuffer) throws -> FfiActiveDispatch {
+    return try FfiConverterTypeFfiActiveDispatch.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiActiveDispatch_lower(_ value: FfiActiveDispatch) -> RustBuffer {
+    return FfiConverterTypeFfiActiveDispatch.lower(value)
+}
+
+
+public struct FfiAgentStatsRow: Equatable, Hashable {
+    public var agent: String
+    public var totalRuns: UInt32
+    public var completed: UInt32
+    public var failed: UInt32
+    public var successRate: Float
+    /**
+     * Average duration in seconds. None when no upstream meta.json
+     * carried `duration_s`; the operator surface should render an
+     * explicit `—` rather than zero.
+     */
+    public var avgDurationS: Double?
+    public var modelKnownRate: Float
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(agent: String, totalRuns: UInt32, completed: UInt32, failed: UInt32, successRate: Float,
+        /**
+         * Average duration in seconds. None when no upstream meta.json
+         * carried `duration_s`; the operator surface should render an
+         * explicit `—` rather than zero.
+         */avgDurationS: Double?, modelKnownRate: Float) {
+        self.agent = agent
+        self.totalRuns = totalRuns
+        self.completed = completed
+        self.failed = failed
+        self.successRate = successRate
+        self.avgDurationS = avgDurationS
+        self.modelKnownRate = modelKnownRate
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiAgentStatsRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiAgentStatsRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiAgentStatsRow {
+        return
+            try FfiAgentStatsRow(
+                agent: FfiConverterString.read(from: &buf),
+                totalRuns: FfiConverterUInt32.read(from: &buf),
+                completed: FfiConverterUInt32.read(from: &buf),
+                failed: FfiConverterUInt32.read(from: &buf),
+                successRate: FfiConverterFloat.read(from: &buf),
+                avgDurationS: FfiConverterOptionDouble.read(from: &buf),
+                modelKnownRate: FfiConverterFloat.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiAgentStatsRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.agent, into: &buf)
+        FfiConverterUInt32.write(value.totalRuns, into: &buf)
+        FfiConverterUInt32.write(value.completed, into: &buf)
+        FfiConverterUInt32.write(value.failed, into: &buf)
+        FfiConverterFloat.write(value.successRate, into: &buf)
+        FfiConverterOptionDouble.write(value.avgDurationS, into: &buf)
+        FfiConverterFloat.write(value.modelKnownRate, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAgentStatsRow_lift(_ buf: RustBuffer) throws -> FfiAgentStatsRow {
+    return try FfiConverterTypeFfiAgentStatsRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiAgentStatsRow_lower(_ value: FfiAgentStatsRow) -> RustBuffer {
+    return FfiConverterTypeFfiAgentStatsRow.lower(value)
+}
+
+
 public struct FfiClientConfig: Equatable, Hashable {
     public var kind: FfiClientKind
     public var config: String
@@ -569,6 +815,292 @@ public func FfiConverterTypeFfiClientConfig_lift(_ buf: RustBuffer) throws -> Ff
 #endif
 public func FfiConverterTypeFfiClientConfig_lower(_ value: FfiClientConfig) -> RustBuffer {
     return FfiConverterTypeFfiClientConfig.lower(value)
+}
+
+
+public struct FfiDataQuality: Equatable, Hashable {
+    public var scannedMetaFiles: UInt32
+    public var capped: Bool
+    public var missingModel: UInt32
+    public var missingDuration: UInt32
+    public var parseFailures: UInt32
+    public var artifactRoot: String?
+    public var artifactRootPresent: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(scannedMetaFiles: UInt32, capped: Bool, missingModel: UInt32, missingDuration: UInt32, parseFailures: UInt32, artifactRoot: String?, artifactRootPresent: Bool) {
+        self.scannedMetaFiles = scannedMetaFiles
+        self.capped = capped
+        self.missingModel = missingModel
+        self.missingDuration = missingDuration
+        self.parseFailures = parseFailures
+        self.artifactRoot = artifactRoot
+        self.artifactRootPresent = artifactRootPresent
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiDataQuality: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiDataQuality: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiDataQuality {
+        return
+            try FfiDataQuality(
+                scannedMetaFiles: FfiConverterUInt32.read(from: &buf),
+                capped: FfiConverterBool.read(from: &buf),
+                missingModel: FfiConverterUInt32.read(from: &buf),
+                missingDuration: FfiConverterUInt32.read(from: &buf),
+                parseFailures: FfiConverterUInt32.read(from: &buf),
+                artifactRoot: FfiConverterOptionString.read(from: &buf),
+                artifactRootPresent: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiDataQuality, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.scannedMetaFiles, into: &buf)
+        FfiConverterBool.write(value.capped, into: &buf)
+        FfiConverterUInt32.write(value.missingModel, into: &buf)
+        FfiConverterUInt32.write(value.missingDuration, into: &buf)
+        FfiConverterUInt32.write(value.parseFailures, into: &buf)
+        FfiConverterOptionString.write(value.artifactRoot, into: &buf)
+        FfiConverterBool.write(value.artifactRootPresent, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDataQuality_lift(_ buf: RustBuffer) throws -> FfiDataQuality {
+    return try FfiConverterTypeFfiDataQuality.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiDataQuality_lower(_ value: FfiDataQuality) -> RustBuffer {
+    return FfiConverterTypeFfiDataQuality.lower(value)
+}
+
+
+public struct FfiFailureEntry: Equatable, Hashable {
+    public var runId: String
+    public var agent: String
+    public var skill: String
+    public var reason: String
+    public var ageLabel: String
+    /**
+     * Absolute filesystem path to the source artifact (meta.json or
+     * report.md) when known. Shell-side surfaces should treat absence
+     * as "no permalink available" rather than synthesizing one.
+     */
+    public var sourcePath: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(runId: String, agent: String, skill: String, reason: String, ageLabel: String,
+        /**
+         * Absolute filesystem path to the source artifact (meta.json or
+         * report.md) when known. Shell-side surfaces should treat absence
+         * as "no permalink available" rather than synthesizing one.
+         */sourcePath: String?) {
+        self.runId = runId
+        self.agent = agent
+        self.skill = skill
+        self.reason = reason
+        self.ageLabel = ageLabel
+        self.sourcePath = sourcePath
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiFailureEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiFailureEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiFailureEntry {
+        return
+            try FfiFailureEntry(
+                runId: FfiConverterString.read(from: &buf),
+                agent: FfiConverterString.read(from: &buf),
+                skill: FfiConverterString.read(from: &buf),
+                reason: FfiConverterString.read(from: &buf),
+                ageLabel: FfiConverterString.read(from: &buf),
+                sourcePath: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiFailureEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.runId, into: &buf)
+        FfiConverterString.write(value.agent, into: &buf)
+        FfiConverterString.write(value.skill, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterString.write(value.ageLabel, into: &buf)
+        FfiConverterOptionString.write(value.sourcePath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiFailureEntry_lift(_ buf: RustBuffer) throws -> FfiFailureEntry {
+    return try FfiConverterTypeFfiFailureEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiFailureEntry_lower(_ value: FfiFailureEntry) -> RustBuffer {
+    return FfiConverterTypeFfiFailureEntry.lower(value)
+}
+
+
+public struct FfiFleetHealthSignal: Equatable, Hashable {
+    public var label: String
+    public var status: FfiFleetHealthStatus
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(label: String, status: FfiFleetHealthStatus, detail: String) {
+        self.label = label
+        self.status = status
+        self.detail = detail
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiFleetHealthSignal: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiFleetHealthSignal: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiFleetHealthSignal {
+        return
+            try FfiFleetHealthSignal(
+                label: FfiConverterString.read(from: &buf),
+                status: FfiConverterTypeFfiFleetHealthStatus.read(from: &buf),
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiFleetHealthSignal, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterTypeFfiFleetHealthStatus.write(value.status, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiFleetHealthSignal_lift(_ buf: RustBuffer) throws -> FfiFleetHealthSignal {
+    return try FfiConverterTypeFfiFleetHealthSignal.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiFleetHealthSignal_lower(_ value: FfiFleetHealthSignal) -> RustBuffer {
+    return FfiConverterTypeFfiFleetHealthSignal.lower(value)
+}
+
+
+public struct FfiMissionControlSnapshot: Equatable, Hashable {
+    public var generatedAt: String
+    public var activeDispatches: [FfiActiveDispatch]
+    public var waveAtlas: [FfiWaveSegment]
+    public var agentStats: [FfiAgentStatsRow]
+    public var skillStats: [FfiSkillStatsRow]
+    public var fleetHealth: [FfiFleetHealthSignal]
+    public var failures: [FfiFailureEntry]
+    public var actionQueue: [FfiActionQueueItem]
+    public var dataQuality: FfiDataQuality
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(generatedAt: String, activeDispatches: [FfiActiveDispatch], waveAtlas: [FfiWaveSegment], agentStats: [FfiAgentStatsRow], skillStats: [FfiSkillStatsRow], fleetHealth: [FfiFleetHealthSignal], failures: [FfiFailureEntry], actionQueue: [FfiActionQueueItem], dataQuality: FfiDataQuality) {
+        self.generatedAt = generatedAt
+        self.activeDispatches = activeDispatches
+        self.waveAtlas = waveAtlas
+        self.agentStats = agentStats
+        self.skillStats = skillStats
+        self.fleetHealth = fleetHealth
+        self.failures = failures
+        self.actionQueue = actionQueue
+        self.dataQuality = dataQuality
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiMissionControlSnapshot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiMissionControlSnapshot: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiMissionControlSnapshot {
+        return
+            try FfiMissionControlSnapshot(
+                generatedAt: FfiConverterString.read(from: &buf),
+                activeDispatches: FfiConverterSequenceTypeFfiActiveDispatch.read(from: &buf),
+                waveAtlas: FfiConverterSequenceTypeFfiWaveSegment.read(from: &buf),
+                agentStats: FfiConverterSequenceTypeFfiAgentStatsRow.read(from: &buf),
+                skillStats: FfiConverterSequenceTypeFfiSkillStatsRow.read(from: &buf),
+                fleetHealth: FfiConverterSequenceTypeFfiFleetHealthSignal.read(from: &buf),
+                failures: FfiConverterSequenceTypeFfiFailureEntry.read(from: &buf),
+                actionQueue: FfiConverterSequenceTypeFfiActionQueueItem.read(from: &buf),
+                dataQuality: FfiConverterTypeFfiDataQuality.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiMissionControlSnapshot, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.generatedAt, into: &buf)
+        FfiConverterSequenceTypeFfiActiveDispatch.write(value.activeDispatches, into: &buf)
+        FfiConverterSequenceTypeFfiWaveSegment.write(value.waveAtlas, into: &buf)
+        FfiConverterSequenceTypeFfiAgentStatsRow.write(value.agentStats, into: &buf)
+        FfiConverterSequenceTypeFfiSkillStatsRow.write(value.skillStats, into: &buf)
+        FfiConverterSequenceTypeFfiFleetHealthSignal.write(value.fleetHealth, into: &buf)
+        FfiConverterSequenceTypeFfiFailureEntry.write(value.failures, into: &buf)
+        FfiConverterSequenceTypeFfiActionQueueItem.write(value.actionQueue, into: &buf)
+        FfiConverterTypeFfiDataQuality.write(value.dataQuality, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMissionControlSnapshot_lift(_ buf: RustBuffer) throws -> FfiMissionControlSnapshot {
+    return try FfiConverterTypeFfiMissionControlSnapshot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiMissionControlSnapshot_lower(_ value: FfiMissionControlSnapshot) -> RustBuffer {
+    return FfiConverterTypeFfiMissionControlSnapshot.lower(value)
 }
 
 
@@ -676,6 +1208,82 @@ public func FfiConverterTypeFfiRoute_lower(_ value: FfiRoute) -> RustBuffer {
 }
 
 
+public struct FfiRunDetail: Equatable, Hashable {
+    public var runId: String
+    public var agent: String?
+    public var skill: String?
+    public var state: String?
+    public var reportMd: String?
+    public var transcriptTail: String
+    public var reportPath: String?
+    public var transcriptPath: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(runId: String, agent: String?, skill: String?, state: String?, reportMd: String?, transcriptTail: String, reportPath: String?, transcriptPath: String?) {
+        self.runId = runId
+        self.agent = agent
+        self.skill = skill
+        self.state = state
+        self.reportMd = reportMd
+        self.transcriptTail = transcriptTail
+        self.reportPath = reportPath
+        self.transcriptPath = transcriptPath
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiRunDetail: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiRunDetail: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiRunDetail {
+        return
+            try FfiRunDetail(
+                runId: FfiConverterString.read(from: &buf),
+                agent: FfiConverterOptionString.read(from: &buf),
+                skill: FfiConverterOptionString.read(from: &buf),
+                state: FfiConverterOptionString.read(from: &buf),
+                reportMd: FfiConverterOptionString.read(from: &buf),
+                transcriptTail: FfiConverterString.read(from: &buf),
+                reportPath: FfiConverterOptionString.read(from: &buf),
+                transcriptPath: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiRunDetail, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.runId, into: &buf)
+        FfiConverterOptionString.write(value.agent, into: &buf)
+        FfiConverterOptionString.write(value.skill, into: &buf)
+        FfiConverterOptionString.write(value.state, into: &buf)
+        FfiConverterOptionString.write(value.reportMd, into: &buf)
+        FfiConverterString.write(value.transcriptTail, into: &buf)
+        FfiConverterOptionString.write(value.reportPath, into: &buf)
+        FfiConverterOptionString.write(value.transcriptPath, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRunDetail_lift(_ buf: RustBuffer) throws -> FfiRunDetail {
+    return try FfiConverterTypeFfiRunDetail.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiRunDetail_lower(_ value: FfiRunDetail) -> RustBuffer {
+    return FfiConverterTypeFfiRunDetail.lower(value)
+}
+
+
 public struct FfiServerStatus: Equatable, Hashable {
     public var name: String
     public var status: String
@@ -740,6 +1348,70 @@ public func FfiConverterTypeFfiServerStatus_lower(_ value: FfiServerStatus) -> R
 }
 
 
+public struct FfiSkillStatsRow: Equatable, Hashable {
+    public var skill: String
+    public var invocations: UInt32
+    public var completed: UInt32
+    public var failed: UInt32
+    public var avgDurationS: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(skill: String, invocations: UInt32, completed: UInt32, failed: UInt32, avgDurationS: Double?) {
+        self.skill = skill
+        self.invocations = invocations
+        self.completed = completed
+        self.failed = failed
+        self.avgDurationS = avgDurationS
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiSkillStatsRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSkillStatsRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSkillStatsRow {
+        return
+            try FfiSkillStatsRow(
+                skill: FfiConverterString.read(from: &buf),
+                invocations: FfiConverterUInt32.read(from: &buf),
+                completed: FfiConverterUInt32.read(from: &buf),
+                failed: FfiConverterUInt32.read(from: &buf),
+                avgDurationS: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSkillStatsRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.skill, into: &buf)
+        FfiConverterUInt32.write(value.invocations, into: &buf)
+        FfiConverterUInt32.write(value.completed, into: &buf)
+        FfiConverterUInt32.write(value.failed, into: &buf)
+        FfiConverterOptionDouble.write(value.avgDurationS, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSkillStatsRow_lift(_ buf: RustBuffer) throws -> FfiSkillStatsRow {
+    return try FfiConverterTypeFfiSkillStatsRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSkillStatsRow_lower(_ value: FfiSkillStatsRow) -> RustBuffer {
+    return FfiConverterTypeFfiSkillStatsRow.lower(value)
+}
+
+
 public struct FfiVerifyResult: Equatable, Hashable {
     public var kind: FfiClientKind
     public var ok: Bool
@@ -794,6 +1466,225 @@ public func FfiConverterTypeFfiVerifyResult_lift(_ buf: RustBuffer) throws -> Ff
 public func FfiConverterTypeFfiVerifyResult_lower(_ value: FfiVerifyResult) -> RustBuffer {
     return FfiConverterTypeFfiVerifyResult.lower(value)
 }
+
+
+public struct FfiWaveSegment: Equatable, Hashable {
+    public var waveId: String
+    public var total: UInt32
+    public var completed: UInt32
+    public var failed: UInt32
+    public var active: UInt32
+    public var latestState: FfiWaveState
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(waveId: String, total: UInt32, completed: UInt32, failed: UInt32, active: UInt32, latestState: FfiWaveState) {
+        self.waveId = waveId
+        self.total = total
+        self.completed = completed
+        self.failed = failed
+        self.active = active
+        self.latestState = latestState
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiWaveSegment: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiWaveSegment: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiWaveSegment {
+        return
+            try FfiWaveSegment(
+                waveId: FfiConverterString.read(from: &buf),
+                total: FfiConverterUInt32.read(from: &buf),
+                completed: FfiConverterUInt32.read(from: &buf),
+                failed: FfiConverterUInt32.read(from: &buf),
+                active: FfiConverterUInt32.read(from: &buf),
+                latestState: FfiConverterTypeFfiWaveState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiWaveSegment, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.waveId, into: &buf)
+        FfiConverterUInt32.write(value.total, into: &buf)
+        FfiConverterUInt32.write(value.completed, into: &buf)
+        FfiConverterUInt32.write(value.failed, into: &buf)
+        FfiConverterUInt32.write(value.active, into: &buf)
+        FfiConverterTypeFfiWaveState.write(value.latestState, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWaveSegment_lift(_ buf: RustBuffer) throws -> FfiWaveSegment {
+    return try FfiConverterTypeFfiWaveSegment.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWaveSegment_lower(_ value: FfiWaveSegment) -> RustBuffer {
+    return FfiConverterTypeFfiWaveSegment.lower(value)
+}
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiActionPriority: Equatable, Hashable {
+
+    case critical
+    case high
+    case normal
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiActionPriority: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiActionPriority: FfiConverterRustBuffer {
+    typealias SwiftType = FfiActionPriority
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiActionPriority {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .critical
+
+        case 2: return .high
+
+        case 3: return .normal
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiActionPriority, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .critical:
+            writeInt(&buf, Int32(1))
+
+
+        case .high:
+            writeInt(&buf, Int32(2))
+
+
+        case .normal:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiActionPriority_lift(_ buf: RustBuffer) throws -> FfiActionPriority {
+    return try FfiConverterTypeFfiActionPriority.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiActionPriority_lower(_ value: FfiActionPriority) -> RustBuffer {
+    return FfiConverterTypeFfiActionPriority.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiActionQueueKind: Equatable, Hashable {
+
+    case stalledRun
+    case failure
+    case polarize
+    case reportReady
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiActionQueueKind: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiActionQueueKind: FfiConverterRustBuffer {
+    typealias SwiftType = FfiActionQueueKind
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiActionQueueKind {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .stalledRun
+
+        case 2: return .failure
+
+        case 3: return .polarize
+
+        case 4: return .reportReady
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiActionQueueKind, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .stalledRun:
+            writeInt(&buf, Int32(1))
+
+
+        case .failure:
+            writeInt(&buf, Int32(2))
+
+
+        case .polarize:
+            writeInt(&buf, Int32(3))
+
+
+        case .reportReady:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiActionQueueKind_lift(_ buf: RustBuffer) throws -> FfiActionQueueKind {
+    return try FfiConverterTypeFfiActionQueueKind.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiActionQueueKind_lower(_ value: FfiActionQueueKind) -> RustBuffer {
+    return FfiConverterTypeFfiActionQueueKind.lower(value)
+}
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -887,6 +1778,85 @@ public func FfiConverterTypeFfiClientKind_lower(_ value: FfiClientKind) -> RustB
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
+public enum FfiFleetHealthStatus: Equatable, Hashable {
+
+    case ok
+    case warn
+    case blocked
+    case unknown
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiFleetHealthStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiFleetHealthStatus: FfiConverterRustBuffer {
+    typealias SwiftType = FfiFleetHealthStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiFleetHealthStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .ok
+
+        case 2: return .warn
+
+        case 3: return .blocked
+
+        case 4: return .unknown
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiFleetHealthStatus, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .ok:
+            writeInt(&buf, Int32(1))
+
+
+        case .warn:
+            writeInt(&buf, Int32(2))
+
+
+        case .blocked:
+            writeInt(&buf, Int32(3))
+
+
+        case .unknown:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiFleetHealthStatus_lift(_ buf: RustBuffer) throws -> FfiFleetHealthStatus {
+    return try FfiConverterTypeFfiFleetHealthStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiFleetHealthStatus_lower(_ value: FfiFleetHealthStatus) -> RustBuffer {
+    return FfiConverterTypeFfiFleetHealthStatus.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
 public enum FfiSubscriberState: Equatable, Hashable {
 
     case connected
@@ -946,6 +1916,85 @@ public func FfiConverterTypeFfiSubscriberState_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeFfiSubscriberState_lower(_ value: FfiSubscriberState) -> RustBuffer {
     return FfiConverterTypeFfiSubscriberState.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FfiWaveState: Equatable, Hashable {
+
+    case pending
+    case inProgress
+    case completed
+    case failed
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiWaveState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiWaveState: FfiConverterRustBuffer {
+    typealias SwiftType = FfiWaveState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiWaveState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .pending
+
+        case 2: return .inProgress
+
+        case 3: return .completed
+
+        case 4: return .failed
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiWaveState, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .pending:
+            writeInt(&buf, Int32(1))
+
+
+        case .inProgress:
+            writeInt(&buf, Int32(2))
+
+
+        case .completed:
+            writeInt(&buf, Int32(3))
+
+
+        case .failed:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWaveState_lift(_ buf: RustBuffer) throws -> FfiWaveState {
+    return try FfiConverterTypeFfiWaveState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiWaveState_lower(_ value: FfiWaveState) -> RustBuffer {
+    return FfiConverterTypeFfiWaveState.lower(value)
 }
 
 
@@ -1174,6 +2223,54 @@ public func FfiConverterCallbackInterfaceEventCallback_lower(_ v: EventCallback)
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
+    typealias SwiftType = Double?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDouble.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDouble.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1191,6 +2288,131 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiActionQueueItem: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiActionQueueItem]
+
+    public static func write(_ value: [FfiActionQueueItem], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiActionQueueItem.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiActionQueueItem] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiActionQueueItem]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiActionQueueItem.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiActiveDispatch: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiActiveDispatch]
+
+    public static func write(_ value: [FfiActiveDispatch], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiActiveDispatch.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiActiveDispatch] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiActiveDispatch]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiActiveDispatch.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiAgentStatsRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiAgentStatsRow]
+
+    public static func write(_ value: [FfiAgentStatsRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiAgentStatsRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiAgentStatsRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiAgentStatsRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiAgentStatsRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiFailureEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiFailureEntry]
+
+    public static func write(_ value: [FfiFailureEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiFailureEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiFailureEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiFailureEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiFailureEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiFleetHealthSignal: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiFleetHealthSignal]
+
+    public static func write(_ value: [FfiFleetHealthSignal], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiFleetHealthSignal.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiFleetHealthSignal] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiFleetHealthSignal]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiFleetHealthSignal.read(from: &buf))
         }
         return seq
     }
@@ -1241,6 +2463,56 @@ fileprivate struct FfiConverterSequenceTypeFfiServerStatus: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiServerStatus.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiSkillStatsRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiSkillStatsRow]
+
+    public static func write(_ value: [FfiSkillStatsRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiSkillStatsRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiSkillStatsRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiSkillStatsRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiSkillStatsRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiWaveSegment: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiWaveSegment]
+
+    public static func write(_ value: [FfiWaveSegment], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiWaveSegment.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiWaveSegment] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiWaveSegment]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiWaveSegment.read(from: &buf))
         }
         return seq
     }
@@ -1341,6 +2613,59 @@ public func initRuntime(socketPath: String)throws   {try rustCallWithError(FfiCo
     )
 }
 }
+/**
+ * Load the operator's Mission Control snapshot using the default
+ * resolution: control-plane root under `VIBECRAFTED_HOME` and artifact
+ * root at `$VIBECRAFTED_HOME/artifacts/`.
+ *
+ * Shell surfaces (Swift/macOS app) should call this on focus / refresh
+ * and bind directly to the returned record. Missing inputs surface as
+ * typed empty states, never as panics.
+ */
+public func loadMissionControlSnapshot()throws  -> FfiMissionControlSnapshot  {
+    return try  FfiConverterTypeFfiMissionControlSnapshot_lift(try rustCallWithError(FfiConverterTypeMuxError_lift) {
+    uniffi_vibecrafted_shell_ffi_fn_func_load_mission_control_snapshot($0
+    )
+})
+}
+/**
+ * Variant for surfaces that already resolved their own roots (tests,
+ * agents that run in vendored workspaces, multi-tenant probing).
+ */
+public func loadMissionControlSnapshotAt(stateRoot: String, artifactRoot: String)throws  -> FfiMissionControlSnapshot  {
+    return try  FfiConverterTypeFfiMissionControlSnapshot_lift(try rustCallWithError(FfiConverterTypeMuxError_lift) {
+    uniffi_vibecrafted_shell_ffi_fn_func_load_mission_control_snapshot_at(
+        FfiConverterString.lower(stateRoot),
+        FfiConverterString.lower(artifactRoot),$0
+    )
+})
+}
+/**
+ * Load one run's drill-down artifacts using the default control-plane root
+ * (`default_state_root()` => `~/.vibecrafted/control_plane`). The inspector
+ * calls this when a run is selected anywhere in Mission Control. Missing
+ * inputs (no meta, no report, no transcript) surface as typed-empty, never a
+ * panic.
+ */
+public func loadRunDetail(runId: String)throws  -> FfiRunDetail  {
+    return try  FfiConverterTypeFfiRunDetail_lift(try rustCallWithError(FfiConverterTypeMuxError_lift) {
+    uniffi_vibecrafted_shell_ffi_fn_func_load_run_detail(
+        FfiConverterString.lower(runId),$0
+    )
+})
+}
+/**
+ * Variant for surfaces that already resolved their own control-plane root
+ * (tests, vendored workspaces). Mirrors `load_mission_control_snapshot_at`.
+ */
+public func loadRunDetailAt(stateRoot: String, runId: String)throws  -> FfiRunDetail  {
+    return try  FfiConverterTypeFfiRunDetail_lift(try rustCallWithError(FfiConverterTypeMuxError_lift) {
+    uniffi_vibecrafted_shell_ffi_fn_func_load_run_detail_at(
+        FfiConverterString.lower(stateRoot),
+        FfiConverterString.lower(runId),$0
+    )
+})
+}
 public func restartService(name: String)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -1409,6 +2734,18 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vibecrafted_shell_ffi_checksum_func_init_runtime() != 22518) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_vibecrafted_shell_ffi_checksum_func_load_mission_control_snapshot() != 40441) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_vibecrafted_shell_ffi_checksum_func_load_mission_control_snapshot_at() != 11312) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_vibecrafted_shell_ffi_checksum_func_load_run_detail() != 9516) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_vibecrafted_shell_ffi_checksum_func_load_run_detail_at() != 24709) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_vibecrafted_shell_ffi_checksum_func_restart_service() != 60065) {

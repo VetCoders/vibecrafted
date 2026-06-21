@@ -83,7 +83,13 @@ _vetcoders_pin_vc_frame_config_dir() {
   local config_dir
   config_dir="$(_vetcoders_vc_frame_config_dir 2>/dev/null || true)"
   [[ -n "$config_dir" ]] || return 0
-  [[ -z "${VC_FRAME_CONFIG_DIR:-}" ]] || return 0
+  # Self-heal: keep an already-exported VC_FRAME_CONFIG_DIR only if it actually
+  # resolves to a config.kdl. A stale value — e.g. a removed zellij-named sidecar
+  # left by an earlier rebrand — is re-pointed at the resolved vc-frame dir, so
+  # the frame loads the real config instead of falling back to a Ctrl-q=Quit default.
+  if [[ -n "${VC_FRAME_CONFIG_DIR:-}" && -f "${VC_FRAME_CONFIG_DIR%/}/config.kdl" ]]; then
+    return 0
+  fi
   export VC_FRAME_CONFIG_DIR="$config_dir"
 }
 

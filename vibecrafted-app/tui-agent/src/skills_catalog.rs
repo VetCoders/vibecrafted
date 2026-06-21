@@ -228,6 +228,13 @@ pub const CATALOG: &[SkillEntry] = &[
         accepts: SkillPayloadKind::PromptOrFile,
     },
     SkillEntry {
+        slug: "vc-dispatch",
+        display: "Dispatch",
+        one_line: "External fleet line conductor",
+        default_agent: SkillAgent::Any,
+        accepts: SkillPayloadKind::PromptOrFile,
+    },
+    SkillEntry {
         slug: "vc-skillaunch",
         display: "Skillaunch",
         one_line: "Distill a workflow into a skill",
