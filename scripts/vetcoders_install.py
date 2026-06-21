@@ -2095,8 +2095,16 @@ def rsync_skill(
         if mirror:
             cmd.append("--delete")
         cmd += [str(src) + "/", str(dst) + "/"]
+        # Capture rsync stderr — do NOT discard it. When this sync fails the
+        # operator needs the real reason (exit 23 "could not make way", exit
+        # 11/12 "No space left on device", a dangling symlink, a permission
+        # error), not an opaque "could not refresh staged tools".
         subprocess.run(
-            cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            cmd,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
     else:
         _copytree_skill(src, dst, mirror=mirror)
@@ -2161,11 +2169,34 @@ def sync_control_plane_tree(
         if mirror:
             cmd.append("--delete")
         cmd += [str(src) + "/", str(dst) + "/"]
+        # Capture rsync stderr — do NOT discard it. When this sync fails the
+        # operator needs the real reason (exit 23 "could not make way", exit
+        # 11/12 "No space left on device", a dangling symlink, a permission
+        # error), not an opaque "could not refresh staged tools".
         subprocess.run(
-            cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            cmd,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
     else:
         _copy_control_plane_contents(src, dst, mirror=mirror)
+
+
+def _staged_sync_failure_detail(exc: Exception) -> str:
+    """Detail for a staged-tools sync failure, with the rsync stderr tail folded
+    in (it is captured but otherwise unsurfaced) so the operator sees WHY the
+    sync failed instead of a bare 'returned non-zero exit status'."""
+    detail = str(exc)
+    stderr = getattr(exc, "stderr", None)
+    if stderr:
+        tail = " | ".join(
+            line.strip() for line in str(stderr).strip().splitlines() if line.strip()
+        )
+        if tail:
+            detail = f"{detail}: {tail}"
+    return detail
 
 
 def _is_framework_source_root(repo_root: Path) -> bool:
@@ -4366,7 +4397,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             repo_root, shared_home, dry_run=dry_run, mirror=mirror
         )
     except (OSError, subprocess.CalledProcessError) as exc:
-        print(f"  {dim(str(exc))}")
+        print(f"  {dim(_staged_sync_failure_detail(exc))}")
         err_line("could not refresh staged tools", "rerun `vibecrafted update`")
         return 1
     if current_tools is None:
@@ -4804,7 +4835,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 repo_root, shared_home, dry_run=dry_run, mirror=mirror
             )
         except (OSError, subprocess.CalledProcessError) as exc:
-            print(f"  FAILED: {exc}")
+            print(f"  FAILED: {_staged_sync_failure_detail(exc)}")
             _clear_compact_status(out)
             err_line(
                 "could not refresh staged tools",
