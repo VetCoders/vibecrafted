@@ -4,7 +4,7 @@ The zellij->vc-frame rebrand once left Ctrl+Q bound to `Quit` in the loaded
 config, so a single shortcut tore down the operator's entire frame (every pane,
 every dispatched run visible in it). The contract:
 
-- `Ctrl+Q`  -> CloseFocus (close the focused pane; zellij ends the session
+- `Ctrl+Q`  -> CloseFocus (close the focused pane; vc-frame ends the session
               gracefully only when the LAST pane closes).
 - `Ctrl+O` then `q` -> Quit (the explicit, immediate full-session quit).
 
@@ -17,24 +17,33 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_CONFIG = REPO_ROOT / "config" / "vc-frame" / "config.kdl"
 
 
+def _active_kdl(text: str) -> str:
+    """Drop KDL `//` line comments so we test live bindings, not documentation.
+
+    The config intentionally MENTIONS `bind "Ctrl q" { Quit; }` inside a comment
+    (explaining the old leak it fixed); that must not trip the contract.
+    """
+    return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+
+
 def test_canonical_config_exists() -> None:
     assert CANONICAL_CONFIG.is_file(), f"missing {CANONICAL_CONFIG}"
 
 
 def test_ctrl_q_closes_pane_never_quits_session() -> None:
-    text = CANONICAL_CONFIG.read_text(encoding="utf-8")
-    assert 'bind "Ctrl q" { CloseFocus' in text, (
+    code = _active_kdl(CANONICAL_CONFIG.read_text(encoding="utf-8"))
+    assert 'bind "Ctrl q" { CloseFocus' in code, (
         "Ctrl+Q must be bound to CloseFocus (close one pane), not the whole session"
     )
-    assert 'bind "Ctrl q" { Quit' not in text, (
-        "Ctrl+Q must never be bound to Quit — that kills the entire vc-frame session"
+    assert 'bind "Ctrl q" { Quit' not in code, (
+        "Ctrl+Q must never be actively bound to Quit — that kills the whole session"
     )
 
 
 def test_session_mode_keeps_explicit_hard_quit() -> None:
-    text = CANONICAL_CONFIG.read_text(encoding="utf-8")
+    code = _active_kdl(CANONICAL_CONFIG.read_text(encoding="utf-8"))
     # Immediate full quit stays available via Ctrl+O (session mode) then q.
-    assert 'bind "q" { Quit' in text, (
+    assert 'bind "q" { Quit' in code, (
         "session mode must keep `q -> Quit` so Ctrl+O then q remains the hard quit"
     )
 
