@@ -68,8 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     trayIcon?.accessibilityDescription = "Vibecrafted"
     item.button?.image =
       trayIcon ?? NSImage(systemSymbolName: "hammer.fill", accessibilityDescription: "Vibecrafted")
-    item.button?.imagePosition = .imageLeading
-    item.button?.title = "Vibecrafted"
+    item.button?.imagePosition = .imageOnly
 
     let menu = NSMenu()
     menu.addItem(
