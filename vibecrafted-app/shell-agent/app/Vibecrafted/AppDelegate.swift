@@ -61,8 +61,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
   private func buildStatusItem() {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    item.button?.image = NSImage(
-      systemSymbolName: "hammer.fill", accessibilityDescription: "Vibecrafted")
+    // Inherit the app (dock) icon for the menu-bar status item so the tray
+    // matches the dock panda instead of a generic SF Symbol.
+    let trayIcon = NSApp.applicationIconImage.copy() as? NSImage
+    trayIcon?.size = NSSize(width: 18, height: 18)
+    item.button?.image =
+      trayIcon ?? NSImage(systemSymbolName: "hammer.fill", accessibilityDescription: "Vibecrafted")
     item.button?.imagePosition = .imageLeading
     item.button?.title = "Vibecrafted"
 
