@@ -65,6 +65,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // matches the dock panda instead of a generic SF Symbol.
     let trayIcon = NSApp.applicationIconImage.copy() as? NSImage
     trayIcon?.size = NSSize(width: 18, height: 18)
+    trayIcon?.accessibilityDescription = "Vibecrafted"
     item.button?.image =
       trayIcon ?? NSImage(systemSymbolName: "hammer.fill", accessibilityDescription: "Vibecrafted")
     item.button?.imagePosition = .imageLeading
