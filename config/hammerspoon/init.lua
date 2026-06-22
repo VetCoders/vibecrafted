@@ -393,6 +393,14 @@ hs.urlevent.bind("vc-followup", function(eventName, params)
         return
     end
     latest_date = latest_date:gsub("%s+$", "")
+    -- `latest_date` is a directory name from `ls`; it is interpolated with
+    -- %s (unquoted) into the shell command below, so a name carrying shell
+    -- metacharacters would be command injection. Date dirs are `YYYY_MMDD`
+    -- (alnum + underscore) — reject anything else before shelling out.
+    if not latest_date:match("^[%w_]+$") then
+        vc_alert("vc-followup: invalid date dir name", 2)
+        return
+    end
     local cmd_file = string.format(
         "ls -1 %q/.vibecrafted/reports/marbles/%s/*.md 2>/dev/null | sort -r | head -1",
         repo, latest_date

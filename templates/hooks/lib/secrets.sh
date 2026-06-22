@@ -26,7 +26,10 @@ husky_secrets_scan_diff() {
     || true)"
   if [ -n "$matches" ]; then
     husky_err "Secret/token detected in added lines:"
-    printf '%s\n' "$matches" | sed 's/^/    + /' >&2
+    # Redact at the source: never echo the raw secret to stderr (it would
+    # land in terminal scrollback / CI logs). Callers may also redact the
+    # whole stream downstream — double-redaction is idempotent.
+    printf '%s\n' "$matches" | husky_secrets_redact | sed 's/^/    + /' >&2
     return 0
   fi
   return 1
