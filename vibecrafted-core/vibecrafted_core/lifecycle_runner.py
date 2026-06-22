@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -72,7 +73,7 @@ def _git_status(root: Path) -> list[str]:
         return []
     if proc.returncode != 0:
         return []
-    return sorted(line.strip() for line in proc.stdout.splitlines() if line.strip())
+    return sorted(line for line in proc.stdout.splitlines() if line.strip())
 
 
 def _status_paths(lines: list[str]) -> set[str]:
@@ -86,8 +87,72 @@ def _status_paths(lines: list[str]) -> set[str]:
     return paths
 
 
-def _changed_paths(before: list[str], after: list[str]) -> list[str]:
-    return sorted(_status_paths(after) - _status_paths(before))
+def _file_fingerprint(root: Path, relative_path: str) -> str:
+    path = root / relative_path
+    try:
+        if path.is_dir():
+            return "dir"
+        if not path.is_file():
+            return "missing"
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError as exc:
+        return f"error:{type(exc).__name__}"
+
+
+def _git_worktree_snapshot(root: Path, status_lines: list[str]) -> dict[str, str]:
+    return {path: _file_fingerprint(root, path) for path in _status_paths(status_lines)}
+
+
+def _changed_paths_between(
+    before_status: list[str],
+    after_status: list[str],
+    before_snapshot: dict[str, str],
+    after_snapshot: dict[str, str],
+) -> list[str]:
+    paths = _status_paths(after_status) - _status_paths(before_status)
+    for path in set(before_snapshot) | set(after_snapshot):
+        if before_snapshot.get(path) != after_snapshot.get(path):
+            paths.add(path)
+    return sorted(paths)
+
+
+def _commits_between(root: Path, before: str, after: str) -> list[str]:
+    if not before or not after or before == after:
+        return []
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "rev-list", "--reverse", f"{before}..{after}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return [after]
+    commits = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    return commits if proc.returncode == 0 else [after]
+
+
+def _committed_paths_between(root: Path, before: str, after: str) -> list[str]:
+    if not before or not after or before == after:
+        return []
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "diff", "--name-only", f"{before}..{after}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return sorted(line.strip() for line in proc.stdout.splitlines() if line.strip())
 
 
 def _read_file(path: str) -> str:
@@ -125,6 +190,19 @@ def load_context_atlas(root: Path, *, task: str) -> dict[str, Any]:
         "stdout": proc.stdout[-12000:],
         "stderr": proc.stderr[-4000:],
     }
+
+
+def _context_excerpt(context: dict[str, Any]) -> str:
+    stdout = str(context.get("stdout") or "").strip()
+    stderr = str(context.get("stderr") or "").strip()
+    if stdout:
+        return stdout[-6000:]
+    if stderr:
+        return f"Context Atlas stderr:\n{stderr[-2000:]}"
+    if context.get("ok"):
+        return "Context Atlas loaded; no text output captured."
+    error = str(context.get("error") or "").strip()
+    return f"Context Atlas unavailable: {error or 'unknown error'}"
 
 
 class LifecycleRunner:
@@ -176,6 +254,7 @@ class LifecycleRunner:
                 "command": context.get("command", []),
                 "returncode": context.get("returncode"),
                 "error": context.get("error", ""),
+                "excerpt": _context_excerpt(context),
             },
             "manifest": workflow_manifest_payload(manifest.id),
             "stages": [],
@@ -197,6 +276,7 @@ class LifecycleRunner:
                 source_prompt=source_prompt,
                 root=root,
                 previous_reports=previous_reports,
+                context=context,
             )
             state["stages"].append(record)
             self._write_state(state_path, state)
@@ -209,6 +289,8 @@ class LifecycleRunner:
                 state["next_stage"] = stage.next_stage
                 break
 
+            state["status"] = "running"
+            self._write_state(state_path, state)
             await_result = await asyncio.to_thread(self.awaiter, record["launch"])
             record["await"] = await_result
             record["status"] = (
@@ -216,9 +298,27 @@ class LifecycleRunner:
             )
             record["commit_after"] = _git_head(root)
             record["git_after"] = _git_status(root)
-            record["changed_files"] = _changed_paths(
+            record["git_snapshot_after"] = _git_worktree_snapshot(
+                root, list(record.get("git_after") or [])
+            )
+            status_changed_files = _changed_paths_between(
                 list(record.get("git_before") or []),
                 list(record.get("git_after") or []),
+                dict(record.get("git_snapshot_before") or {}),
+                dict(record.get("git_snapshot_after") or {}),
+            )
+            committed_changed_files = _committed_paths_between(
+                root,
+                str(record.get("commit_before") or ""),
+                str(record.get("commit_after") or ""),
+            )
+            record["changed_files"] = sorted(
+                set(status_changed_files) | set(committed_changed_files)
+            )
+            record["new_commits"] = _commits_between(
+                root,
+                str(record.get("commit_before") or ""),
+                str(record.get("commit_after") or ""),
             )
             if record["phase"] == "read" and record["changed_files"]:
                 record["read_phase_violation"] = True
@@ -252,12 +352,14 @@ class LifecycleRunner:
         source_prompt: str,
         root: Path,
         previous_reports: list[str],
+        context: dict[str, Any],
     ) -> dict[str, Any]:
         prompt = self._stage_prompt(
             manifest=manifest,
             stage=stage,
             source_prompt=source_prompt,
             previous_reports=previous_reports,
+            context=context,
         )
         launch_spec = WorkflowLaunchSpec(
             agent=spec.agent,
@@ -270,7 +372,9 @@ class LifecycleRunner:
             count=spec.count if stage.workflow == "marbles" else None,
             depth=spec.depth if stage.workflow == "marbles" else None,
         )
+        commit_before = _git_head(root)
         git_before = _git_status(root)
+        git_snapshot_before = _git_worktree_snapshot(root, git_before)
         launch = await asyncio.to_thread(self.launcher, launch_spec, root)
         return {
             "id": stage.id,
@@ -282,8 +386,9 @@ class LifecycleRunner:
             "next_stage": stage.next_stage,
             "fallback_stage": stage.fallback_stage,
             "audit_after": stage.audit_after,
-            "commit_before": _git_head(root),
+            "commit_before": commit_before,
             "git_before": git_before,
+            "git_snapshot_before": git_snapshot_before,
             "launch": launch,
             "status": "launching",
         }
@@ -295,9 +400,11 @@ class LifecycleRunner:
         stage: WorkflowStage,
         source_prompt: str,
         previous_reports: list[str],
+        context: dict[str, Any],
     ) -> str:
         previous = "\n".join(f"- {path}" for path in previous_reports) or "- none"
         mutation = "may modify code" if stage.can_modify_code else "must stay read-only"
+        atlas = _context_excerpt(context)
         return f"""Vibecrafted Lifecycle Runtime
 
 Workflow: {manifest.id} ({manifest.name})
@@ -317,6 +424,9 @@ WRITE phase rule:
 
 Previous stage reports:
 {previous}
+
+Context Atlas:
+{atlas}
 
 Operator prompt:
 {source_prompt}
@@ -364,6 +474,11 @@ Operator prompt:
                     f"- {stage.get('id')} ({stage.get('phase')}): {stage.get('status')}",
                     f"  - run_id: {stage.get('launch', {}).get('run_id', '')}",
                     f"  - report: {stage.get('launch', {}).get('report', '')}",
+                    f"  - commit_before: {stage.get('commit_before', '')}",
+                    f"  - commit_after: {stage.get('commit_after', '')}",
+                    f"  - exit_code: {stage.get('await', {}).get('exit_code', '')}",
+                    f"  - artifact_ok: {stage.get('await', {}).get('artifact_ok', '')}",
+                    "  - new_commits: " + ", ".join(stage.get("new_commits") or []),
                     "  - changed_files: " + ", ".join(stage.get("changed_files") or []),
                 ]
             )

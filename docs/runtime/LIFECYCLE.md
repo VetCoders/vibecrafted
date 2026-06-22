@@ -69,6 +69,32 @@ WRITE phases may modify code, remove legacy, refactor, integrate, and generate
 missing runtime pieces. The lifecycle runner records changed files after an
 awaited stage so the handoff shows what moved.
 
+## Human participation
+
+The operator is part of the lifecycle, but operator actions must leave a trace.
+The runtime should make the project feel steerable without turning manual
+intervention into invisible state mutation.
+
+Allowed operator moves:
+
+- approve transition to the next lifecycle stage;
+- interrupt a workflow and leave the run in a terminal or recoverable state;
+- force an audit when the current evidence feels weak;
+- mark a DoU finding as consciously accepted for this release;
+- choose a fallback or earlier stage when audit evidence says the run should
+  move backwards.
+
+Boundaries:
+
+- do not edit `state.json` by hand without recording why in the report or
+  transcript;
+- do not mix READ and WRITE behavior silently; if a READ stage needs to mutate
+  code, change the phase contract explicitly first;
+- do not treat a passing stage as product truth when install, docs, runtime, or
+  release surfaces remain unverified;
+- prefer baton handoff through lifecycle state and reports over side-channel
+  chat instructions.
+
 ## Notes (operator)
 
 - It must be clearly defined what the human can and cannot do.
