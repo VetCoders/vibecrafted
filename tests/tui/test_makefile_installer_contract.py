@@ -419,6 +419,11 @@ def test_installer_publishes_async_dispatch_wrapper() -> None:
     assert '"vc-cron"' in launcher_block
     assert '"vc-dispatch"' in launcher_block
     assert '"vc-dashboard"' in launcher_block
+    entrypoint_block = installer.split("PYTHON_ENTRYPOINT_LAUNCHERS = [", 1)[1].split(
+        "\n]", 1
+    )[0]
+    for name in ("vc-audit", "vc-dou", "vc-hydrate", "vc-polarize", "vc-marbles"):
+        assert f'"{name}"' in entrypoint_block
 
 
 def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:

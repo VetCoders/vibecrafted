@@ -179,8 +179,44 @@ def implement_main(argv: Sequence[str] | None = None) -> int:
     return supervised_skill_main("implement", argv)
 
 
+def _lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
+    from .lifecycle_runner import lifecycle_main
+
+    return lifecycle_main(workflow_id, argv)
+
+
+def audit_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-audit", argv)
+
+
+def dou_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-dou", argv)
+
+
+def hydrate_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-hydrate", argv)
+
+
 def marbles_main(argv: Sequence[str] | None = None) -> int:
-    return supervised_skill_main("marbles", argv)
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in {
+        "-h",
+        "--help",
+        "help",
+        "pause",
+        "stop",
+        "resume",
+        "session",
+        "inspect",
+        "delete",
+        "gc",
+    }:
+        return subprocess.call([str(deck_path()), "marbles", *args])
+    return _lifecycle_main("vc-marbles", args)
+
+
+def polarize_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-polarize", argv)
 
 
 def prune_main(argv: Sequence[str] | None = None) -> int:

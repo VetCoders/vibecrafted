@@ -51,11 +51,13 @@ it launches the first stage (`scaffold`) and writes lifecycle state under
 to the next one. `--start-stage <stage>` or `--checkpoint <stage>` can resume
 from a specific stage.
 
-Single-stage commands such as `vc-dou <agent>`, `vc-audit <agent>`,
-`vc-marbles <agent>`, `vc-polarize <agent>`, and `vc-hydrate <agent>` still
-launch through `vibecrafted_core.workflow`. Their launch payloads carry the
-same manifest metadata: phase, `can_modify_code`, tooling, runtime kind, and
-lifecycle order.
+Single-stage lifecycle commands such as `vc-dou <agent>`, `vc-audit <agent>`,
+`vc-marbles <agent>`, `vc-polarize <agent>`, and `vc-hydrate <agent>` launch
+through `vibecrafted_core.lifecycle_runner` as one-stage manifests. The runner
+loads Context Atlas once, writes lifecycle run state, prepares the stage prompt,
+then delegates the actual agent process to `vibecrafted_core.workflow`.
+`vibecrafted <skill> <agent>` remains the compatibility direct launcher for
+ordinary skill dispatch.
 
 ## READ and WRITE semantics
 

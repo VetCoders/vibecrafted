@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from vibecrafted_core import ship
+from vibecrafted_core import ship, wrappers
 from vibecrafted_core.lifecycle_runner import (
     LifecycleRunSpec,
     LifecycleRunner,
@@ -19,9 +19,12 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
         lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
     )
     calls: list[str] = []
+    loop_options: list[tuple[int | None, int | None]] = []
 
     def fake_launcher(spec, _source_dir):
         calls.append(spec.skill)
+        if spec.skill == "marbles":
+            loop_options.append((spec.count, spec.depth))
         report = tmp_path / f"{spec.skill}.md"
         report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
         return {
@@ -48,11 +51,14 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
                 prompt="close the gaps",
                 root=str(tmp_path),
                 await_stages=True,
+                count=2,
+                depth=4,
             )
         )
     )
 
     assert calls == ["marbles", "audit"]
+    assert loop_options == [(2, 4)]
     assert state["status"] == "completed"
     assert [stage["phase"] for stage in state["stages"]] == ["write", "read"]
     assert Path(state["state_path"]).is_file()
@@ -124,3 +130,65 @@ def test_vc_ship_routes_to_lifecycle_runner(
     assert captured[0].workflow_id == "vc-ship"
     assert captured[0].start_stage == "scaffold"
     assert "VC-SHIP LIFECYCLE RECEIPT" in capsys.readouterr().out
+
+
+def test_vc_dou_wrapper_routes_to_lifecycle_runner(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    captured: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec):
+        captured.append(spec)
+        return {
+            "run_id": "life-dou-test",
+            "workflow": spec.workflow_id,
+            "status": "launching",
+            "state_path": str(tmp_path / "state.json"),
+            "report_path": str(tmp_path / "report.md"),
+        }
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.run_lifecycle", fake_run_lifecycle
+    )
+    rc = wrappers.dou_main(["codex", "--prompt", "audit readiness"])
+
+    assert rc == 0
+    assert captured[0].workflow_id == "vc-dou"
+    assert captured[0].agent == "codex"
+    assert captured[0].prompt == "audit readiness"
+    assert "VC-DOU LIFECYCLE RECEIPT" in capsys.readouterr().out
+
+
+def test_vc_marbles_wrapper_uses_lifecycle_runner_with_loop_options(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec):
+        captured.append(spec)
+        return {
+            "run_id": "life-marbles-test",
+            "workflow": spec.workflow_id,
+            "status": "launching",
+            "state_path": str(tmp_path / "state.json"),
+            "report_path": str(tmp_path / "report.md"),
+        }
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.run_lifecycle", fake_run_lifecycle
+    )
+    rc = wrappers.marbles_main(["codex", "--count", "5", "--depth", "7"])
+
+    assert rc == 0
+    assert captured[0].workflow_id == "vc-marbles"
+    assert captured[0].count == 5
+    assert captured[0].depth == 7
+
+
+def test_lifecycle_console_scripts_are_packaged() -> None:
+    pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+
+    for name in ("vc-audit", "vc-dou", "vc-hydrate", "vc-polarize", "vc-marbles"):
+        assert f"{name} = " in pyproject

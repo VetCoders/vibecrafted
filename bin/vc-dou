@@ -7,6 +7,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "vibecrafted-core"))
 
-from vibecrafted_core.wrappers import marbles_main
+from vibecrafted_core.wrappers import dou_main
 
-raise SystemExit(marbles_main())
+raise SystemExit(dou_main())

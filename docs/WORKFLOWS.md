@@ -16,6 +16,9 @@ contracts in `skills/`.
 - `vc-ship <agent> --prompt|--file` starts the lifecycle manifest runner for
   Scaffold -> Implement -> Review -> Workflow -> Follow-up -> Marbles -> Audit
   -> Polarize -> DoU -> Hydrate -> Release.
+- `vc-dou`, `vc-audit`, `vc-marbles`, `vc-polarize`, and `vc-hydrate` are
+  lifecycle wrappers over the same manifest runner for one-stage or paired
+  lifecycle passes.
 - `vibecrafted dispatch <file.toml>` is the deterministic supervisor lane for
   dispatch manifests and async lifecycle runs.
 - `vibecrafted gui`, `tui`, and `dashboard` are operator surfaces for a second
@@ -71,7 +74,7 @@ flowchart TD
 ## Route families
 
 | Surface                      | Start here                                               | Usually chains into                                                          |
-| ---------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------ |
+| ---------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | New idea or vague scope      | `vibecrafted scaffold <agent>`                           | `workflow`, `partner`, `implement`                                           |
 | First repo contact           | `vibecrafted init <agent>`                               | `workflow`, `implement`, `partner`, `review`, `intents`                      |
 | Autonomous delivery          | `vibecrafted implement <agent>`                          | `followup`, `marbles`, optionally `dou` / `decorate` / `hydrate` / `release` |
@@ -81,7 +84,7 @@ flowchart TD
 | Truth audit vs original plan | `vibecrafted intents <agent>`                            | `review`, `marbles`, `ownership`                                             |
 | Launch-readiness gap finding | `vibecrafted dou <agent>`                                | `hydrate`, `decorate`, `release`                                             |
 | Explicit ship path           | `vibecrafted decorate <agent>` or `hydrate` or `release` | `release`                                                                    |
-| Full lifecycle               | `vc-ship <agent> --prompt                                | --file`                                                                      | Manifest-driven stage baton, optional `--await-stages` |
+| Full lifecycle               | `vc-ship <agent> --prompt/--file`                        | Manifest-driven stage baton, optional `--await-stages`                       |
 | Deterministic dispatch       | `vibecrafted dispatch <file.toml>`                       | `doctor`, `dry-run`, `resume`, async lifecycle runs                          |
 
 ## Runtime contract

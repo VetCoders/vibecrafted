@@ -104,6 +104,24 @@ def test_manifest_payload_is_json_ready() -> None:
     assert stages[1]["phase"] == "read"
 
 
+def test_required_lifecycle_manifests_are_single_source() -> None:
+    expected = {
+        "vc-ship": ("scaffold", "read"),
+        "vc-dou": ("dou", "read"),
+        "vc-audit": ("audit", "read"),
+        "vc-marbles": ("marbles", "write"),
+        "vc-polarize": ("polarize", "write"),
+        "vc-hydrate": ("hydrate", "write"),
+    }
+
+    for workflow_id, (entry_stage, phase) in expected.items():
+        payload = registry.workflow_manifest_payload(workflow_id)
+        stages = payload["stages"]
+        assert payload["entry_stage"] == entry_stage
+        assert stages[0]["id"] == entry_stage
+        assert stages[0]["phase"] == phase
+
+
 def test_prune_default_prompt_is_runtime_workflow_asset() -> None:
     assert importlib.util.find_spec("vibecrafted_core.package_resources") is not None
     package_resources = importlib.import_module("vibecrafted_core.package_resources")

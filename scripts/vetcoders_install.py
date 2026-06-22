@@ -1709,11 +1709,15 @@ LAUNCHER_WRAPPERS = [
 
 PYTHON_ENTRYPOINT_LAUNCHERS = [
     "vc-agents",
+    "vc-audit",
     "vc-cron",
+    "vc-dou",
     "vc-followup",
+    "vc-hydrate",
     "vc-implement",
     "vc-loop",
     "vc-marbles",
+    "vc-polarize",
     "vc-prune",
     "vc-research",
     "vc-research-await",

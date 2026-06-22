@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import json
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from .control_plane import control_plane_home, normalize_run_root
-from .workflow import WorkflowLaunchSpec, await_launch_truth, launch_workflow
+from .workflow import (
+    SUPPORTED_AGENTS,
+    WorkflowLaunchSpec,
+    await_launch_truth,
+    launch_workflow,
+)
 from .workflows.registry import workflow_manifest, workflow_manifest_payload
 from .workflows.model import WorkflowManifest, WorkflowStage
 
@@ -27,6 +34,8 @@ class LifecycleRunSpec:
     runtime: str = "headless"
     await_stages: bool = False
     start_stage: str = ""
+    count: int | None = None
+    depth: int | None = None
 
 
 def _lifecycle_run_id(workflow_id: str) -> str:
@@ -258,6 +267,8 @@ class LifecycleRunner:
             file="",
             runtime=spec.runtime,
             root=str(root),
+            count=spec.count if stage.workflow == "marbles" else None,
+            depth=spec.depth if stage.workflow == "marbles" else None,
         )
         git_before = _git_status(root)
         launch = await asyncio.to_thread(self.launcher, launch_spec, root)
@@ -364,3 +375,61 @@ Operator prompt:
 
 def run_lifecycle(spec: LifecycleRunSpec) -> dict[str, Any]:
     return asyncio.run(LifecycleRunner().run(spec))
+
+
+def _print_lifecycle_receipt(state: dict[str, Any]) -> None:
+    workflow = str(state.get("workflow") or "lifecycle")
+    title = f"{workflow.upper()} LIFECYCLE RECEIPT"
+    print(f"==================== {title} ====================")
+    print(f"run_id:     {state.get('run_id')}")
+    print(f"workflow:   {state.get('workflow')}")
+    print(f"status:     {state.get('status')}")
+    print(f"state:      {state.get('state_path')}")
+    print(f"report:     {state.get('report_path')}")
+    print("=" * (24 + len(title)))
+
+
+def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
+    manifest = workflow_manifest(workflow_id)
+    if manifest is None:
+        raise ValueError(f"Unsupported lifecycle workflow: {workflow_id}")
+    supports_loop_options = any(
+        stage.workflow == "marbles" for stage in manifest.stages
+    )
+
+    parser = argparse.ArgumentParser(prog=workflow_id)
+    parser.add_argument(
+        "agent", nargs="?", default="codex", choices=sorted(SUPPORTED_AGENTS)
+    )
+    parser.add_argument("-p", "--prompt", default="")
+    parser.add_argument("-f", "--file", default="")
+    parser.add_argument("--runtime", default="headless")
+    parser.add_argument("--root", default="")
+    parser.add_argument("--start-stage", default="")
+    parser.add_argument("--checkpoint", dest="start_stage", default="")
+    parser.add_argument("--await-stages", action="store_true")
+    if supports_loop_options:
+        parser.add_argument("--count", type=int)
+        parser.add_argument("--depth", type=int)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+
+    state = run_lifecycle(
+        LifecycleRunSpec(
+            workflow_id=manifest.id,
+            agent=args.agent,
+            prompt=args.prompt,
+            file=args.file,
+            root=args.root or str(Path.cwd()),
+            runtime=args.runtime or "headless",
+            await_stages=args.await_stages,
+            start_stage=args.start_stage,
+            count=getattr(args, "count", None),
+            depth=getattr(args, "depth", None),
+        )
+    )
+    if args.json:
+        print(json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        _print_lifecycle_receipt(state)
+    return 0 if state.get("status") in {"launching", "completed"} else 1

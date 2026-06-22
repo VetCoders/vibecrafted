@@ -9,9 +9,13 @@ dependencies = []
 [project.scripts]
 vibecrafted = "vibecrafted_core.cli:main"
 vc-agents = "vibecrafted_core.wrappers:agents_main"
+vc-audit = "vibecrafted_core.wrappers:audit_main"
+vc-dou = "vibecrafted_core.wrappers:dou_main"
 vc-followup = "vibecrafted_core.wrappers:followup_main"
+vc-hydrate = "vibecrafted_core.wrappers:hydrate_main"
 vc-implement = "vibecrafted_core.wrappers:implement_main"
 vc-marbles = "vibecrafted_core.wrappers:marbles_main"
+vc-polarize = "vibecrafted_core.wrappers:polarize_main"
 vc-prune = "vibecrafted_core.wrappers:prune_main"
 vc-research = "vibecrafted_core.wrappers:research_main"
 vc-research-await = "vibecrafted_core.wrappers:research_await_main"
