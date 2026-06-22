@@ -360,7 +360,13 @@ pub mod api {
       var ta = form.querySelector("textarea[name=content]");
       try {
         var body = new URLSearchParams(new FormData(form));
-        if (navigator.sendBeacon(form.getAttribute("action"), body)) {
+        // sendBeacon serializes a URLSearchParams body as text/plain, which the
+        // axum `Form` extractor rejects with 415 (the edit is silently lost).
+        // Send an explicitly typed blob so the content type round-trips.
+        var payload = new Blob([body.toString()], {
+          type: "application/x-www-form-urlencoded",
+        });
+        if (navigator.sendBeacon(form.getAttribute("action"), payload)) {
           form.dataset.dirty = "";
           if (ta) form.dataset.baseline = ta.value;
         }
