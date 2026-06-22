@@ -16,7 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh",
+            "timeout": 120
           }
         ]
       },
@@ -25,7 +26,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh",
+            "timeout": 120
           }
         ]
       }
@@ -36,7 +38,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh",
+            "timeout": 10
           }
         ]
       },
@@ -45,7 +48,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh",
+            "timeout": 10
           }
         ]
       }

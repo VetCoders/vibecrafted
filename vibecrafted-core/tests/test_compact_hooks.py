@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from vibecrafted_core import compact_hooks
@@ -106,6 +107,24 @@ def test_precompact_resolves_codex_session_from_sessions_dir(
     ]
 
 
+def test_aicx_extract_timeout_is_bounded(monkeypatch) -> None:
+    def fake_run(command, **kwargs):
+        assert kwargs["timeout"] == 0.25
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setenv("VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS", "0.25")
+    monkeypatch.setattr(compact_hooks.shutil, "which", lambda _: "/tmp/aicx")
+    monkeypatch.setattr(compact_hooks.subprocess, "run", fake_run)
+
+    assert compact_hooks.run_aicx_extract("codex", "sess-timeout") == "timeout"
+
+
+def test_aicx_extract_default_timeout_allows_precompact_work(monkeypatch) -> None:
+    monkeypatch.delenv("VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS", raising=False)
+
+    assert compact_hooks.aicx_extract_timeout_seconds() == 120.0
+
+
 def test_postcompact_emits_manifest_and_chunks_extract(
     tmp_path: Path,
     monkeypatch,
@@ -134,6 +153,36 @@ def test_postcompact_emits_manifest_and_chunks_extract(
     assert "verified outcome" in context
     assert (recall_dir / "claude" / "sess-2" / "chunk-000").is_file()
     assert (recall_dir / "claude" / "sess-2" / "chunk-001").is_file()
+
+
+def test_postcompact_reads_existing_extract_without_running_aicx(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    extract_dir = home / ".aicx" / "extracts" / "codex"
+    extract_dir.mkdir(parents=True)
+    (extract_dir / "sess-read_conversation.md").write_text(
+        "only existing extract\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_COMPACT_AGENT", "codex")
+    monkeypatch.setattr(compact_hooks.shutil, "which", lambda _: "/tmp/aicx")
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("postcompact must not run aicx extract")
+
+    monkeypatch.setattr(compact_hooks, "run_aicx_extract", fail_if_called)
+
+    assert compact_hooks.postcompact('{"session_id":"sess-read"}') == 0
+    context = json.loads(capsys.readouterr().out)["hookSpecificOutput"][
+        "additionalContext"
+    ]
+
+    assert "only existing extract" in context
 
 
 def test_postcompact_emits_only_delta_after_first_recall(

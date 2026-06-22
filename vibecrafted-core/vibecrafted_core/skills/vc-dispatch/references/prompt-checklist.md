@@ -65,6 +65,10 @@ Must cover (assembled FROM context, not copied from a template):
 - [ ] which cuts are [x], their commit SHAs, which files they touched
 - [ ] explicit "HEAD may advance while you work; operator tests the live
       app in parallel — re-read before editing"
+- [ ] pre-handoff baseline for the receiving worker: branch, HEAD SHA,
+      `git status --short`, changed files, gates already run, known failures,
+      unverified surfaces, current intent, scope fence, and exact next
+      instruction/report path
 - [ ] for recovery-dispatch: what the previous run did/did not leave behind
       ("you inherit nothing" or the exact WIP description), with evidence
 - [ ] what comes after this cut (so the worker fences its scope)
@@ -89,3 +93,10 @@ checkable against the tree, EXTRA contains the "verify-and-stop if done"
 clause, and BATON's inheritance statement stays true after a partial round
 (refire reads the tree, not your memory). If a prompt cannot be safely
 re-fired, it is not finished.
+
+## Evidence checkpoint rule
+
+Do not let worker prompts treat baseline capture, gates, reports, or handoff
+notes as ceremony. They are regression attribution boundaries. Skipping them is
+regression laundering: a later failure loses its owner, time, and lifecycle
+segment.

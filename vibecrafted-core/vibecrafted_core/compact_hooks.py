@@ -31,6 +31,15 @@ def hook_agent() -> str:
     )
 
 
+def aicx_extract_timeout_seconds() -> float:
+    raw = os.environ.get("VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS", "120")
+    try:
+        timeout = float(raw)
+    except ValueError:
+        timeout = 120.0
+    return max(timeout, 0.1)
+
+
 def codex_sessions_dir() -> Path:
     codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
     return Path(
@@ -251,9 +260,9 @@ def append_journal(
         return
 
 
-def run_aicx_extract(agent: str, session_id: str, *, user_only: bool = False) -> None:
+def run_aicx_extract(agent: str, session_id: str, *, user_only: bool = False) -> str:
     if not shutil.which("aicx"):
-        return
+        return "missing"
     command = [
         "aicx",
         "extract",
@@ -265,9 +274,17 @@ def run_aicx_extract(agent: str, session_id: str, *, user_only: bool = False) ->
     ]
     if user_only:
         command.append("--user-only")
-    subprocess.run(
-        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False
-    )
+    try:
+        result = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=aicx_extract_timeout_seconds(),
+        )
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    return "ok" if result.returncode == 0 else "failed"
 
 
 def precompact(stdin: str) -> int:
@@ -279,10 +296,19 @@ def precompact(stdin: str) -> int:
     if not shutil.which("aicx"):
         append_journal("precompact", agent, session_id, "skipped", "aicx not found")
         return 0
-    run_aicx_extract(agent, session_id)
-    run_aicx_extract(agent, session_id, user_only=True)
+    conversation_status = run_aicx_extract(agent, session_id)
+    user_only_status = run_aicx_extract(agent, session_id, user_only=True)
+    status = (
+        "extracted"
+        if conversation_status == "ok" and user_only_status == "ok"
+        else "degraded"
+    )
     append_journal(
-        "precompact", agent, session_id, "extracted", "conversation and user-only"
+        "precompact",
+        agent,
+        session_id,
+        status,
+        f"conversation={conversation_status}; user_only={user_only_status}",
     )
     return 0
 
@@ -367,14 +393,15 @@ def postcompact(stdin: str) -> int:
     if not session_id:
         print("{}")
         return 0
-    if shutil.which("aicx"):
-        run_aicx_extract(agent, session_id)
     candidates = extract_candidates(agent, session_id)
     extract = next((candidate for candidate in candidates if candidate.is_file()), None)
     if extract is None:
         print(
             fallback(
-                f"aicx extract not found for agent={agent}, session={session_id}",
+                (
+                    f"aicx extract not found for agent={agent}, session={session_id}; "
+                    "precompact should create it before postcompact recall"
+                ),
                 candidates[0],
             )
         )

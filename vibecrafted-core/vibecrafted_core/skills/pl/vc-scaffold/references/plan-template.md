@@ -85,6 +85,7 @@ marker `state` `[ ] [~] [?] [!] [x]` (zobacz references/measure-core.md); tylko 
 **Owner:** [Skill agenta lub rola człowieka]
 **Delivery-verifier:** [niefałszowalny test, który przerzuca [~]→[x]; bez niego task dowozi się jako [?]]
 **Acceptance:** [intent vs baseline — co dowodzi, że delivery ≈ claim, nie tylko „agent tak powiedział"]
+**Pre-handoff baseline:** [branch + HEAD + git status + zmienione pliki + bramki/znane awarie + dokładna następna instrukcja]
 
 Przykład:
 ```
@@ -96,6 +97,7 @@ Depends on: Infrastructure up, database schema
 Owner: Core backend agent
 Delivery-verifier: `pnpm test auth` green — rejects invalid tokens, passes valid; flips [~]→[x]
 Acceptance: intent (auth enforced on all routes) vs baseline (routes open); delivery proven by the verifier, not "agent said so"
+Pre-handoff baseline: branch, HEAD, git status, changed files, verifier output, known failures, next instruction
 
 ```
 
@@ -130,7 +132,8 @@ Udokumentuj rozumowanie. Przyszli inżynierowie ci podziękują.
 2. Dla każdego taska odpal agenta lub przypisz człowieka
 3. Każdy task produkuje artefakty (kod, testy, docy)
 4. Zwaliduj wobec kryteriów akceptacji
-5. Gdy wszystkie taski fazy 1 przechodzą bramki, przejdź do fazy 2
+5. Uchwyć pre-handoff baseline przed przypisaniem następnego właściciela
+6. Gdy wszystkie taski fazy 1 przechodzą bramki, przejdź do fazy 2
 
 Żadnego machania rękami. Jasna praca. Jasne kryteria. Tak dowożą founderzy.
 ```

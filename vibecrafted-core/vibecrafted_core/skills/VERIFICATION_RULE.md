@@ -25,6 +25,26 @@ stapled and installed to `/Applications` — and `SIGABRT`'d at launch (libgit2
 Team-ID, hardened runtime). Every strap visible from the cab was tight. Only
 launching the binary + `otool -L` + mounting the DMG caught the loose one.
 
+## Evidence checkpoints
+
+Verification is not a ceremony layer. It is attribution infrastructure.
+
+The minimum lifecycle checkpoints are:
+
+1. **Pre-work intake** — re-read repo state, branch, `HEAD`, dirty files, and
+   prior reports before acting.
+2. **Pre-change baseline** — record current checks or known failures before
+   claiming a regression was introduced later.
+3. **Implementation** — keep scope and ownership boundaries explicit.
+4. **Pre-handoff baseline** — before another agent takes over, record branch,
+   `HEAD`, `git status --short`, changed files, gates, known failures, and the
+   exact next instruction/report path.
+5. **Handoff intake** — the receiving agent compares the baseline with the live
+   tree before editing.
+
+Do not treat these as optional process. If you skip an evidence checkpoint, you
+are not saving time; you are destroying attribution.
+
 ## Loct is the instrument — literal vs semantic
 
 Pick the lens by where the answer lives:

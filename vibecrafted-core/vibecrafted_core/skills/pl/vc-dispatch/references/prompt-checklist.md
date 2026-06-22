@@ -64,6 +64,10 @@ Musi pokryć (złożone Z kontekstu, nie skopiowane z szablonu):
 - [ ] które cięcia są [x], ich SHA commitów, które pliki dotknęły
 - [ ] wprost „HEAD może iść do przodu, gdy pracujesz; operator testuje żywą
       aplikację równolegle — re-read przed edycją"
+- [ ] pre-handoff baseline dla workera przejmującego: branch, SHA HEAD,
+      `git status --short`, zmienione pliki, bramki już uruchomione, znane
+      awarie, niezweryfikowane powierzchnie, bieżąca intencja, ogrodzenie
+      scope'u i dokładna następna instrukcja/ścieżka raportu
 - [ ] dla recovery-dispatch: co poprzedni run zostawił / czego nie zostawił
       („nie dziedziczysz nic" albo dokładny opis WIP), z evidence
 - [ ] co przychodzi po tym cięciu (żeby worker ogrodził swój scope)
@@ -88,3 +92,10 @@ acceptance są sprawdzalne względem drzewa, EXTRA zawiera klauzulę
 „verify-and-stop if done", a deklaracja dziedziczenia z BATON zostaje prawdziwa
 po częściowej rundzie (refire czyta drzewo, nie twoją pamięć). Jeśli promptu nie
 da się bezpiecznie re-fire'ować, nie jest skończony.
+
+## Reguła evidence checkpointów
+
+Nie pozwalaj, żeby prompty workerów traktowały baseline, bramki, raporty albo
+handoff notes jak ceremonię. To granice atrybucji regresji. Pominięcie ich to
+regression laundering: późniejsza awaria traci właściciela, czas i segment
+lifecycle.
