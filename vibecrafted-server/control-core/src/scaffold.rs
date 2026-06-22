@@ -212,7 +212,7 @@ impl ScaffoldArtifactStore {
             .find(|artifact| artifact.id == patch.artifact_id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "artifact id not found"))?;
         let path = artifact_write_path(&operator_dir, artifact)?;
-        fs::write(&path, patch.content)?;
+        write_atomic(&path, patch.content.as_bytes())?;
         let refreshed = self
             .workspace(org, repo, day)?
             .artifacts
@@ -516,7 +516,29 @@ fn read_checkpoints(path: &Path) -> CheckpointStore {
 
 fn write_checkpoints(path: &Path, store: &CheckpointStore) -> io::Result<()> {
     let bytes = serde_json::to_vec_pretty(store).map_err(io::Error::other)?;
-    fs::write(path, bytes)
+    write_atomic(path, &bytes)
+}
+
+/// Atomic write: stage into a sibling temp file then rename over the target.
+/// A same-directory rename is atomic on POSIX, so a crash mid-write or a
+/// concurrent reader never observes a truncated artifact or checkpoint store —
+/// `read_checkpoints` silently degrades a corrupt file to `default()`, and a
+/// half-written artifact is lost operator work (the only editable surface).
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("scaffold");
+    let tmp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
+    fs::write(&tmp, bytes)?;
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = fs::remove_file(&tmp);
+            Err(err)
+        }
+    }
 }
 
 fn append_change(operator_dir: &Path, change: ScaffoldChange) -> io::Result<()> {
