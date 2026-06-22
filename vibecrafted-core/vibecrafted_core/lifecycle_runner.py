@@ -4,6 +4,7 @@ import asyncio
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -205,6 +206,46 @@ def _context_excerpt(context: dict[str, Any]) -> str:
     return f"Context Atlas unavailable: {error or 'unknown error'}"
 
 
+def _env_float(name: str, default: float | None) -> float | None:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _lifecycle_await_idle_seconds() -> float:
+    """Idle (zero-movement) window before a stage is treated as genuinely stalled.
+
+    This is NOT a wall-clock budget — :func:`await_run` resets it on every burst
+    of real activity. A single marble can legitimately run ~13 min; the default
+    here is the *silence* a run may show before we call it stalled, far below the
+    work time but well above normal token cadence. Override with
+    ``VIBECRAFTED_AWAIT_IDLE_S``.
+    """
+    return _env_float("VIBECRAFTED_AWAIT_IDLE_S", 600.0) or 600.0
+
+
+def _lifecycle_await_hard_cap_seconds() -> float | None:
+    """Absolute ceiling for a live-but-wedged stage, far above realistic work.
+
+    Liveness governs by default; this cap only fires when a worker stays alive
+    yet never finishes. Default 6h is far above any single-marble run. Override
+    with ``VIBECRAFTED_AWAIT_HARD_CAP_S`` (set to 0 to disable the cap entirely).
+    """
+    raw = str(os.environ.get("VIBECRAFTED_AWAIT_HARD_CAP_S") or "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            return 21600.0
+        return value if value > 0 else None
+    return 21600.0
+
+
 class LifecycleRunner:
     def __init__(
         self,
@@ -216,8 +257,9 @@ class LifecycleRunner:
         self.awaiter = awaiter or (
             lambda payload: await_launch_truth(
                 payload,
-                timeout_seconds=300,
+                timeout_seconds=_lifecycle_await_idle_seconds(),
                 interval_seconds=5,
+                hard_cap_seconds=_lifecycle_await_hard_cap_seconds(),
             )
         )
 

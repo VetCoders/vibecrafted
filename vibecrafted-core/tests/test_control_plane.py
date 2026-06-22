@@ -807,6 +807,99 @@ def test_await_run_times_out_when_metadata_missing(
     assert payload["timed_out"] is True
 
 
+def test_await_run_does_not_abandon_live_worker_past_idle_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A non-terminal run with a DEMONSTRABLY ALIVE worker must survive the base
+    idle deadline. On dragon the marbles agent did ~13 min of real work (exit 0,
+    full report) but the orchestrator abandoned the loop on a fixed wall clock.
+    Here the worker stays alive while the idle window (0.2s) lapses many times
+    over; the run is only stopped by the explicit hard cap, never the base idle
+    timeout. ``reason == "hard_cap"`` is the proof the liveness gate held."""
+    import subprocess
+    import sys
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        _write_meta(
+            home,
+            {
+                "run_id": "marb-live-worker",
+                "status": "running",
+                "agent": "codex",
+                "mode": "marbles",
+                "skill_code": "marb",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "worker_pid": worker.pid,
+                "worker_pgid": worker.pid,
+                "liveness": "pid_alive",
+            },
+        )
+
+        assert control_plane._worker_is_alive({"worker_pid": worker.pid}) is True
+
+        payload = control_plane.await_run(
+            "marb-live-worker",
+            timeout_seconds=0.2,
+            interval_seconds=0.05,
+            hard_cap_seconds=0.6,
+        )
+    finally:
+        worker.terminate()
+        worker.wait()
+
+    # Stopped only by the absolute ceiling — NOT abandoned by the idle window
+    # while the worker was alive and the work would have kept flowing.
+    assert payload["timed_out"] is True
+    assert payload["reason"] == "hard_cap"
+    assert payload["worker_alive"] is True
+    assert payload["completed"] is False
+    # Survived many idle-window lengths (0.6s cap / 0.05s poll): proof the base
+    # idle deadline kept resetting instead of firing at 0.2s.
+    assert payload["attempts"] >= 3
+
+
+def test_await_run_idle_stall_fires_when_worker_is_dead(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The flip side of the liveness gate: with no live worker and zero movement,
+    the idle deadline must still fire so genuinely dead runs are not waited on
+    forever."""
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "100000")
+    _write_meta(
+        home,
+        {
+            "run_id": "marb-dead-worker",
+            "status": "running",
+            "agent": "codex",
+            "mode": "marbles",
+            "skill_code": "marb",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "worker_pid": 999999999,
+            "worker_pgid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    payload = control_plane.await_run(
+        "marb-dead-worker",
+        timeout_seconds=0.1,
+        interval_seconds=0.05,
+        hard_cap_seconds=5,
+    )
+
+    assert payload["timed_out"] is True
+    assert payload["reason"] == "idle_stall"
+    assert payload["worker_alive"] is False
+
+
 def test_sync_state_projects_event_stream_lifecycle(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

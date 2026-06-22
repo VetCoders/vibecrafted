@@ -190,14 +190,18 @@ _vetcoders_marbles_probe_ttl() {
 _vetcoders_marbles_emit_probe() {
   local root="$1"
   local marbles_run_id="$2"
-  local status="${3:-launched}"
+  # NOTE: do NOT name this `status`. In zsh `status` is a read-only special
+  # parameter mirroring `$?`; `local status=...` crashes the probe with
+  # "read-only variable: status" the moment it runs under the operator's zsh.
+  # Same class of bug as 24478f9 (zsh special `module_path`). Keep it renamed.
+  local probe_status="${3:-launched}"
   local title body delay_s
 
   [[ "${VIBECRAFTED_MARBLES_PROBE_NOTIFY:-1}" == "1" ]] || return 0
 
   (cd "$root" >/dev/null 2>&1 || true)
   delay_s="$(_vetcoders_marbles_probe_ttl)"
-  case "$status" in
+  case "$probe_status" in
     launched)
       title="Marbles ${marbles_run_id}"
       body="Run launched · tab: marbles-${marbles_run_id}"
@@ -216,7 +220,7 @@ _vetcoders_marbles_emit_probe() {
       ;;
     *)
       title="Marbles ${marbles_run_id}"
-      body="Status: ${status}"
+      body="Status: ${probe_status}"
       ;;
   esac
 

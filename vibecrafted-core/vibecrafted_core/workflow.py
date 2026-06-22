@@ -507,7 +507,7 @@ def _launch_transport_command(
     if spec.runtime not in {"terminal", "visible"}:
         return dispatch_command, "headless", None
 
-    vc_frame = shutil.which("vc-frame")
+    vc_frame = shutil.which("vc-frame") or ""
     if not vc_frame:
         return dispatch_command, "headless", None
 
@@ -621,7 +621,7 @@ def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) 
        caller (``_launch_transport_command``) honestly degrades to headless —
        the correct fallback when there is nothing live to host a tab.
     """
-    vc_frame = shutil.which("vc-frame")
+    vc_frame = shutil.which("vc-frame") or ""
 
     def _live(name: str) -> bool:
         return (
@@ -734,6 +734,7 @@ def await_launch_truth(
     *,
     timeout_seconds: float = 300,
     interval_seconds: float = 5,
+    hard_cap_seconds: float | None = None,
     require_report: bool = True,
     require_transcript_output: bool = False,
 ) -> dict[str, Any]:
@@ -741,7 +742,10 @@ def await_launch_truth(
 
     This is intentionally separate from :func:`launch_workflow` so callers can
     keep launch acceptance asynchronous while dispatch engines can later prove
-    terminal run truth for returned run ids.
+    terminal run truth for returned run ids. ``timeout_seconds`` is forwarded as
+    :func:`await_run`'s liveness-aware idle deadline (resets on real activity);
+    ``hard_cap_seconds`` is the optional absolute ceiling for a live-but-wedged
+    worker.
     """
     launch_payload: dict[str, Any]
     if isinstance(launch, dict):
@@ -757,6 +761,7 @@ def await_launch_truth(
         run_id,
         timeout_seconds=timeout_seconds,
         interval_seconds=interval_seconds,
+        hard_cap_seconds=hard_cap_seconds,
     )
     run = dict(awaited.get("run") or {})
     report_path = str(launch_payload.get("report") or run.get("latest_report") or "")
@@ -1004,6 +1009,8 @@ def build_launch_command(
             "-m",
             "vibecrafted_core.workflow_runtime",
             "marbles",
+            "--workflow",
+            spec.skill,
             "--agent",
             spec.agent if spec.agent != "swarm" else "codex",
             "--root",
