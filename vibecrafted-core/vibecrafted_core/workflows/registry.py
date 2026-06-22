@@ -95,10 +95,14 @@ WORKFLOW_DEFINITIONS: dict[str, WorkflowDefinition] = {
         lifecycle_order=5,
         tooling=("vc-init", "vc-partner", "vc-scaffold"),
     ),
-    "polarize": _direct(
-        "polarize",
+    "polarize": WorkflowDefinition(
+        id="polarize",
         cadence="write",
         lifecycle_order=80,
+        input_policy="optional",
+        runtime_kind="supervised_marbles",
+        supports_count=True,
+        supports_depth=True,
         tooling=("vc-init", "vc-polarize"),
     ),
     "prune": WorkflowDefinition(

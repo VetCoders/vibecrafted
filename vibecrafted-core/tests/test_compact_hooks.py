@@ -26,6 +26,7 @@ def test_precompact_extracts_conversation_and_user_only(
     monkeypatch.setenv("PATH", f"{fake_bin}:/usr/bin:/bin")
     monkeypatch.setenv("AICX_CAPTURE", str(capture))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_COMPACT_AGENT", "claude")
 
     assert compact_hooks.precompact('{"session_id":"sess-1"}') == 0
 
@@ -121,6 +122,7 @@ def test_postcompact_emits_manifest_and_chunks_extract(
 
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("VIBECRAFTED_RECALL_DIR", str(recall_dir))
+    monkeypatch.setenv("VIBECRAFTED_COMPACT_AGENT", "claude")
     monkeypatch.setenv("AICX_RECALL_CHUNK_LINES", "2")
 
     assert compact_hooks.postcompact('{"session_id":"sess-2"}') == 0

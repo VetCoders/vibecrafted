@@ -29,6 +29,15 @@ def _runtime_env(monkeypatch, tmp_path: Path, run_id: str) -> Path:
     bin_dir.mkdir()
     for name in ("claude", "codex", "gemini", "agy", "junie", "grok"):
         _fake_agent(bin_dir, name)
+    for name in (
+        "VIBECRAFTED_ARTIFACT_SLUG",
+        "VIBECRAFTED_ARTIFACT_SUFFIX",
+        "VIBECRAFTED_ARTIFACT_TS",
+        "VIBECRAFTED_CANONICAL_REPORT_DIR",
+        "VIBECRAFTED_RESEARCH_AGENTS",
+        "VIBECRAFTED_TEE_OUTPUT",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
@@ -338,3 +347,47 @@ def test_marbles_runtime_supervises_loops(monkeypatch, tmp_path: Path) -> None:
     assert "intentionally blind to prior marbles runs" in l2_transcript
     assert "Previous loop report" not in l2_transcript
     assert "marbles-L1.md" not in l2_transcript
+
+
+def test_polarize_runtime_reuses_loop_with_polarize_identity(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "plrz-test")
+
+    rc = workflow_runtime.main(
+        [
+            "marbles",
+            "--workflow",
+            "polarize",
+            "--agent",
+            "codex",
+            "--root",
+            str(tmp_path),
+            "--prompt",
+            "cut excess",
+            "--count",
+            "1",
+            "--depth",
+            "4",
+        ]
+    )
+
+    assert rc == 0
+    report = (home / "parent.md").read_text(encoding="utf-8")
+    prompt = (home / "plrz-test-children" / "polarize-L1.prompt.md").read_text(
+        encoding="utf-8"
+    )
+    assert "vc-polarize supervised run" in report
+    assert "polarize-L1" in report
+    assert "- Skill: vc-polarize" in prompt
+    assert "Polarize loop: L1/1. Depth target: 4." in prompt
+    assert "Marbles loop" not in prompt
+    assert "agent_model: codex-model" in report
+    assert "codex resume codex-session" in report
+    assert (home / "plrz-test-children" / "polarize-L1.md").is_file()
+    transcript = (home / "plrz-test-children" / "polarize-L1.transcript.log").read_text(
+        encoding="utf-8"
+    )
+    assert "intentionally blind to prior marbles runs" not in transcript
+    assert "Previous loop report" not in transcript
+    assert "marbles-L1.md" not in transcript

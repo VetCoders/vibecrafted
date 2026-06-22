@@ -299,6 +299,7 @@ def _child_prompt(kind: str, label: str, root: str, prompt: str) -> str:
 
 Contract:
 - Work in repository root: {root}
+- Skill: vc-{kind}
 - Track: {label}
 - Do not launch external agent fleets.
 - Write your durable report to VIBECRAFTED_REPORT_PATH.
@@ -307,6 +308,22 @@ Contract:
 Operator prompt:
 {prompt}
 """
+
+
+def _loop_prompt(kind: str, prompt: str, index: int, count: int, depth: int) -> str:
+    if kind == "polarize":
+        instruction = (
+            f"Polarize loop: L{index}/{count}. Depth target: {depth}. "
+            "Start fresh against the current workspace state, strip back marbles "
+            "excess, reject competing axes, and choose one runtime truth."
+        )
+    else:
+        instruction = (
+            f"Marbles loop: L{index}/{count}. Depth target: {depth}. "
+            "Start fresh against the current workspace state, find what is still wrong, "
+            "over-correct deliberately, and report the next truth."
+        )
+    return f"{prompt}\n\n{instruction}"
 
 
 def _research_synthesis_prompt(
@@ -859,18 +876,20 @@ async def run_research_synthesis(root: str, prompt: str) -> int:
 
 
 async def run_marbles(
-    root: str, agent: str, prompt: str, count: int, depth: int
+    root: str,
+    agent: str,
+    prompt: str,
+    count: int,
+    depth: int,
+    workflow: str = "marbles",
 ) -> int:
+    kind = _safe_label(workflow) or "marbles"
     results: list[ChildResult] = []
     for index in range(1, max(count, 1) + 1):
-        loop_prompt = (
-            f"{prompt}\n\nMarbles loop: L{index}/{count}. Depth target: {depth}. "
-            "Start fresh against the current workspace state, find what is still wrong, "
-            "over-correct deliberately, and report the next truth."
-        )
+        loop_prompt = _loop_prompt(kind, prompt, index, count, depth)
         result = await _run_child(
-            kind="marbles",
-            label=f"marbles-L{index}",
+            kind=kind,
+            label=f"{kind}-L{index}",
             agent=agent,
             root=root,
             prompt=loop_prompt,
@@ -878,7 +897,7 @@ async def run_marbles(
         results.append(result)
         if result.exit_code != 0 or not result.artifact_ok:
             break
-    _write_parent_report("marbles", root, prompt, results)
+    _write_parent_report(kind, root, prompt, results)
     return (
         0
         if len(results) == count
@@ -906,6 +925,7 @@ def _parser() -> argparse.ArgumentParser:
     research_synthesis.add_argument("--prompt", default="")
     research_synthesis.add_argument("--prompt-file", default="")
     marbles = sub.add_parser("marbles")
+    marbles.add_argument("--workflow", default="marbles")
     marbles.add_argument("--agent", default="codex")
     marbles.add_argument("--root", required=True)
     marbles.add_argument("--prompt", default="")
@@ -928,7 +948,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(run_research_synthesis(ns.root, prompt))
     if ns.command == "marbles":
         prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
-        return asyncio.run(run_marbles(ns.root, ns.agent, prompt, ns.count, ns.depth))
+        return asyncio.run(
+            run_marbles(ns.root, ns.agent, prompt, ns.count, ns.depth, ns.workflow)
+        )
     return 2
 
 

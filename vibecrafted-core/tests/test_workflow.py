@@ -204,6 +204,7 @@ def test_build_launch_command_never_delegates_to_legacy_shell_runtime() -> None:
     """
     for skill, agent in (
         ("marbles", "codex"),
+        ("polarize", "codex"),
         ("research", "claude"),
         ("implement", "codex"),
     ):
@@ -930,6 +931,33 @@ def test_marbles_uses_supervised_core_runtime(tmp_path: Path) -> None:
 
     assert command[:3] == [sys.executable, "-m", "vibecrafted_core.workflow_runtime"]
     assert command[3] == "marbles"
+    assert command[command.index("--workflow") + 1] == "marbles"
+    assert "--prompt-file" in command
+    assert command[command.index("--count") + 1] == "2"
+    assert command[command.index("--depth") + 1] == "4"
+
+
+def test_polarize_uses_supervised_marbles_runtime_with_polarize_prompt(
+    tmp_path: Path,
+) -> None:
+    spec = workflow.normalize_launch_spec(
+        {
+            "skill": "polarize",
+            "agent": "codex",
+            "prompt": "cut excess",
+            "root": str(tmp_path),
+            "count": 2,
+            "depth": 4,
+        },
+        tmp_path,
+    )
+
+    command = workflow.build_launch_command(spec, tmp_path)
+
+    assert spec.prompt == "cut excess"
+    assert command[:3] == [sys.executable, "-m", "vibecrafted_core.workflow_runtime"]
+    assert command[3] == "marbles"
+    assert command[command.index("--workflow") + 1] == "polarize"
     assert "--prompt-file" in command
     assert command[command.index("--count") + 1] == "2"
     assert command[command.index("--depth") + 1] == "4"

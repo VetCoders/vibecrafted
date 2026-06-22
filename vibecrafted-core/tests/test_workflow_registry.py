@@ -19,6 +19,7 @@ def test_registry_classifies_workflow_runtime_kinds() -> None:
     assert registry.workflow_runtime_kind("prune") == "direct_agent"
     assert registry.workflow_runtime_kind("research") == "supervised_research"
     assert registry.workflow_runtime_kind("marbles") == "supervised_marbles"
+    assert registry.workflow_runtime_kind("polarize") == "supervised_marbles"
     assert registry.workflow_definition("research").terminal_layout == "research"
 
 
@@ -26,6 +27,7 @@ def test_registry_models_input_policy() -> None:
     implement = registry.workflow_definition("implement")
     prune = registry.workflow_definition("prune")
     marbles = registry.workflow_definition("marbles")
+    polarize = registry.workflow_definition("polarize")
 
     assert implement is not None
     assert implement.requires_input is True
@@ -35,6 +37,10 @@ def test_registry_models_input_policy() -> None:
     assert marbles.requires_input is False
     assert marbles.supports_count is True
     assert marbles.supports_depth is True
+    assert polarize is not None
+    assert polarize.requires_input is False
+    assert polarize.supports_count is True
+    assert polarize.supports_depth is True
 
 
 def test_registry_models_read_write_lifecycle() -> None:
