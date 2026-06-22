@@ -32,11 +32,11 @@ def hook_agent() -> str:
 
 
 def aicx_extract_timeout_seconds() -> float:
-    raw = os.environ.get("VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS", "120")
+    raw = os.environ.get("VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS", "300")
     try:
         timeout = float(raw)
     except ValueError:
-        timeout = 120.0
+        timeout = 300.0
     return max(timeout, 0.1)
 
 
@@ -217,7 +217,9 @@ def delta_lines(
     return delta, previous_count, len(raw_lines)
 
 
-def emit_postcompact_context(text: str) -> str:
+def emit_postcompact_context(text: str, output_format: str = "json") -> str:
+    if output_format == "plain":
+        return text
     return json.dumps(
         {
             "hookSpecificOutput": {
@@ -364,7 +366,11 @@ def clean_context(text: str) -> str:
     return "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 32)
 
 
-def fallback(reason: str, extract_path: Path | None = None) -> str:
+def fallback(
+    reason: str,
+    extract_path: Path | None = None,
+    output_format: str = "json",
+) -> str:
     extract = str(extract_path) if extract_path else "<none>"
     return emit_postcompact_context(
         "\n".join(
@@ -382,16 +388,29 @@ def fallback(reason: str, extract_path: Path | None = None) -> str:
                 "",
                 "Do not treat the lossy compact summary as full temporal truth.",
             ]
-        )
+        ),
+        output_format,
     )
 
 
-def postcompact(stdin: str) -> int:
+def emit_context(text: str, output_format: str) -> None:
+    print(emit_postcompact_context(clean_context(text), output_format))
+
+
+def postcompact(stdin: str, output_format: str | None = None) -> int:
+    output_format = output_format or os.environ.get(
+        "VIBECRAFTED_COMPACT_OUTPUT", "json"
+    )
+    if output_format == "empty-json":
+        print("{}")
+        return 0
+
     payload = load_hook_input(stdin)
     agent = hook_agent()
     session_id = resolve_session_id(payload, agent)
     if not session_id:
-        print("{}")
+        if output_format != "plain":
+            print("{}")
         return 0
     candidates = extract_candidates(agent, session_id)
     extract = next((candidate for candidate in candidates if candidate.is_file()), None)
@@ -403,6 +422,7 @@ def postcompact(stdin: str) -> int:
                     "precompact should create it before postcompact recall"
                 ),
                 candidates[0],
+                output_format,
             )
         )
         return 0
@@ -411,7 +431,7 @@ def postcompact(stdin: str) -> int:
         keepends=True
     )
     if not raw_lines:
-        print(fallback("extract is empty", extract))
+        print(fallback("extract is empty", extract, output_format))
         return 0
 
     project_dir = hook_project_dir(payload)
@@ -450,7 +470,7 @@ def postcompact(stdin: str) -> int:
                     f"- Cursor: raw lines {previous_count}..{current_count} for project {project_dir or '<unknown>'}.",
                 ]
             )
-            print(emit_postcompact_context(clean_context(context)))
+            emit_context(context, output_format)
             return 0
         for idx, chunk in enumerate(chunks):
             (chunk_dir / f"chunk-{idx:03d}").write_text(
@@ -458,7 +478,7 @@ def postcompact(stdin: str) -> int:
                 encoding="utf-8",
             )
     except OSError as exc:
-        print(fallback(f"could not build recall chunks: {exc}", extract))
+        print(fallback(f"could not build recall chunks: {exc}", extract, output_format))
         return 0
 
     reduction_pct = 0
@@ -484,17 +504,25 @@ def postcompact(stdin: str) -> int:
             "== END AICX DELTA ==",
         ]
     )
-    print(emit_postcompact_context(clean_context(context)))
+    emit_context(context, output_format)
     return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vibecrafted compact-hook")
-    parser.add_argument("event", choices=("precompact", "postcompact"))
+    parser.add_argument(
+        "event",
+        choices=("precompact", "postcompact", "postcompact-noop", "recall"),
+    )
     args = parser.parse_args(argv)
+    if args.event == "postcompact-noop":
+        print("{}")
+        return 0
     stdin = sys.stdin.read()
     if args.event == "precompact":
         return precompact(stdin)
+    if args.event == "recall":
+        return postcompact(stdin, output_format="plain")
     return postcompact(stdin)
 
 

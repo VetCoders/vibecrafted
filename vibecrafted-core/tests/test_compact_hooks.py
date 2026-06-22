@@ -122,7 +122,13 @@ def test_aicx_extract_timeout_is_bounded(monkeypatch) -> None:
 def test_aicx_extract_default_timeout_allows_precompact_work(monkeypatch) -> None:
     monkeypatch.delenv("VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS", raising=False)
 
-    assert compact_hooks.aicx_extract_timeout_seconds() == 120.0
+    assert compact_hooks.aicx_extract_timeout_seconds() == 300.0
+
+
+def test_postcompact_noop_is_schema_safe_json(capsys) -> None:
+    assert compact_hooks.main(["postcompact-noop"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {}
 
 
 def test_postcompact_emits_manifest_and_chunks_extract(
@@ -153,6 +159,42 @@ def test_postcompact_emits_manifest_and_chunks_extract(
     assert "verified outcome" in context
     assert (recall_dir / "claude" / "sess-2" / "chunk-000").is_file()
     assert (recall_dir / "claude" / "sess-2" / "chunk-001").is_file()
+
+
+def test_recall_mode_emits_plain_context_not_postcompact_json(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    home = tmp_path / "home"
+    extract_dir = home / ".aicx" / "extracts" / "codex"
+    extract_dir.mkdir(parents=True)
+    (extract_dir / "sess-plain_conversation.md").write_text(
+        "fresh operator ask\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_COMPACT_AGENT", "codex")
+    monkeypatch.setenv("VIBECRAFTED_COMPACT_STATE", str(tmp_path / "state.json"))
+
+    assert (
+        compact_hooks.postcompact(
+            '{"session_id":"sess-plain"}',
+            output_format="plain",
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+
+    assert "fresh operator ask" in output
+    assert "hookSpecificOutput" not in output
+    try:
+        json.loads(output)
+    except json.JSONDecodeError:
+        pass
+    else:  # pragma: no cover - guardrail clarity
+        raise AssertionError("recall mode must emit plain SessionStart context")
 
 
 def test_postcompact_reads_existing_extract_without_running_aicx(

@@ -423,6 +423,28 @@ Only translate into English delivery text once the shape and proof obligations
 are clear. Product intuition is not less professional because it arrived in
 Polish; it is discovery signal.
 
+## Operator Echo Packets
+
+The default conversation is the chat. Do not invent a permanent second channel.
+When the operator explicitly sends `!echo '<text>'`, however, treat the echoed
+text as operator input, not as shell-log noise.
+
+For Codex, an echo packet is the reliable realtime operator transport. If it
+appears, Codex can trust that the operator deliberately sent that packet now,
+even when the packet quotes or comments on earlier chat. Other Codex
+interactive channels can arrive late, be replayed after compaction, or be
+surfaced only when the agent returns from await/observe; they do not carry the
+same realtime certainty.
+
+Do not generalize this guarantee across the fleet. For Claude, Gemini, Agy,
+Junie, Grok, or any other agent runtime, treat echo realtime certainty as
+unproven unless that runtime's harness has been verified to preserve the same
+delivery semantics.
+
+Still read the content. An echo can be a command, correction, quote, delayed
+commentary on an earlier chat message, or confirmation. But the transport itself
+is not random send time: `echo` is the low-latency operator lane.
+
 ---
 
 ## Marbles Turns Noise Into Product
