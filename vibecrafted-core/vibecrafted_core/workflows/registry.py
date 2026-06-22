@@ -162,8 +162,16 @@ def _stage(
     fallback_stage: str = "",
     audit_after: str = "",
     transition: str = "success",
+    transition_conditions: tuple[str, ...] = (),
+    allowed_artifacts: tuple[str, ...] = (),
 ) -> WorkflowStage:
     definition = WORKFLOW_DEFINITIONS[workflow]
+    default_conditions = _transition_conditions(
+        phase=definition.cadence,
+        next_stage=next_stage,
+        fallback_stage=fallback_stage,
+        audit_after=audit_after,
+    )
     return WorkflowStage(
         id=id or workflow,
         workflow=workflow,
@@ -175,7 +183,37 @@ def _stage(
         fallback_stage=fallback_stage,
         audit_after=audit_after,
         transition=transition,
+        transition_conditions=transition_conditions or default_conditions,
+        allowed_artifacts=allowed_artifacts or _allowed_artifacts(definition.cadence),
     )
+
+
+def _allowed_artifacts(cadence: WorkflowCadence) -> tuple[str, ...]:
+    common = ("reports", "cache", "run_state", "transcripts")
+    if cadence == "write":
+        return ("code", "docs", "generated_files", *common)
+    return common
+
+
+def _transition_conditions(
+    *,
+    phase: WorkflowCadence,
+    next_stage: str = "",
+    fallback_stage: str = "",
+    audit_after: str = "",
+) -> tuple[str, ...]:
+    conditions = ["launch_accepted", "stage_completed"]
+    if phase == "read":
+        conditions.append("no_code_mutation")
+    if phase == "write":
+        conditions.append("changed_files_reported")
+    if next_stage:
+        conditions.append("next_stage_on_success")
+    if fallback_stage:
+        conditions.append("fallback_on_failed_artifact")
+    if audit_after:
+        conditions.append("audit_after_completed_stage")
+    return tuple(conditions)
 
 
 SHIP_STAGES: tuple[WorkflowStage, ...] = (
@@ -208,6 +246,13 @@ WORKFLOW_MANIFESTS: dict[str, WorkflowManifest] = {
         description="Full Vibecrafted lifecycle from scaffold through release.",
         stages=SHIP_STAGES,
         entry_stage="scaffold",
+        human_controls=(
+            "approve_transition",
+            "interrupt_workflow",
+            "force_audit",
+            "accept_dou",
+            "choose_fallback_stage",
+        ),
     ),
     "vc-dou": WorkflowManifest(
         id="vc-dou",
@@ -215,6 +260,7 @@ WORKFLOW_MANIFESTS: dict[str, WorkflowManifest] = {
         description="Definition of Undone read-only launch-readiness audit.",
         stages=(_stage("dou", 1, name="VC DoU"),),
         entry_stage="dou",
+        human_controls=("accept_dou", "force_audit", "interrupt_workflow"),
     ),
     "vc-audit": WorkflowManifest(
         id="vc-audit",
@@ -222,6 +268,7 @@ WORKFLOW_MANIFESTS: dict[str, WorkflowManifest] = {
         description="Read-only falsification of completed implementation claims.",
         stages=(_stage("audit", 1, name="VC Audit"),),
         entry_stage="audit",
+        human_controls=("approve_transition", "choose_fallback_stage"),
     ),
     "vc-marbles": WorkflowManifest(
         id="vc-marbles",
@@ -238,6 +285,7 @@ WORKFLOW_MANIFESTS: dict[str, WorkflowManifest] = {
             _stage("audit", 2, name="VC Audit"),
         ),
         entry_stage="marbles",
+        human_controls=("interrupt_workflow", "force_audit"),
     ),
     "vc-polarize": WorkflowManifest(
         id="vc-polarize",
@@ -245,6 +293,7 @@ WORKFLOW_MANIFESTS: dict[str, WorkflowManifest] = {
         description="Entropy-down write simplification after Marbles/Audit.",
         stages=(_stage("polarize", 1, name="VC Polarize"),),
         entry_stage="polarize",
+        human_controls=("approve_transition", "interrupt_workflow"),
     ),
     "vc-hydrate": WorkflowManifest(
         id="vc-hydrate",
@@ -252,6 +301,7 @@ WORKFLOW_MANIFESTS: dict[str, WorkflowManifest] = {
         description="Write preflight for product surface and release readiness.",
         stages=(_stage("hydrate", 1, name="VC Hydrate"),),
         entry_stage="hydrate",
+        human_controls=("approve_transition", "interrupt_workflow"),
     ),
 }
 WORKFLOW_MANIFEST_ALIASES = {
@@ -289,6 +339,7 @@ def workflow_manifest_payload(manifest_id: str) -> dict[str, object]:
         "name": manifest.name,
         "description": manifest.description,
         "entry_stage": manifest.entry_stage,
+        "human_controls": list(manifest.human_controls),
         "stages": [
             {
                 "id": stage.id,
@@ -302,6 +353,8 @@ def workflow_manifest_payload(manifest_id: str) -> dict[str, object]:
                 "fallback_stage": stage.fallback_stage,
                 "audit_after": stage.audit_after,
                 "transition": stage.transition,
+                "transition_conditions": list(stage.transition_conditions),
+                "allowed_artifacts": list(stage.allowed_artifacts),
             }
             for stage in manifest.stages
         ],

@@ -27,7 +27,7 @@ proof after pressure.
 | 1   | VC Scaffold  | READ    | `vc-init`, `vc-loctree`, `vc-research`                                                              |                                                                    |
 | 2   | VC Implement | WRITE   | `vc-init`, `vc-operator`, `vc-agents`                                                               |                                                                    |
 | 3   | VC Review    | READ    | `vc-init`, `vc-loctree`, `vc-review`, `vc-screenscribe`, `vc-prview`                                | Deviation from "tests always last" — Review is test-heavy          |
-| 4   | VC Workflow  | WRITE   | `vc-init`, `vc-research`, `vc-implement`                                                            |                                                                    |
+| 4   | VC Workflow  | WRITE   | `vc-init`, `vc-research`, `vc-justdo`                                                               |                                                                    |
 | 5   | Follow-up    | READ    | `vc-init`, `vc-intents` (main intention engine), `vc-loctree`, TDD                                  | Tests always at the end                                            |
 | 6   | VC Marbles   | WRITE   | `vc-init` + `vc-marbles` (unique runtime)                                                           | ⬆ entropy — we fill every crack                                    |
 | 7   | VC Audit     | READ    | `vc-init`, `vc-loctree`, `vc-aicx`, `vc-research`                                                   |                                                                    |
@@ -47,9 +47,10 @@ state: every workflow launchable the same way.
 `vc-ship <agent> --prompt ...` starts the umbrella lifecycle runner. By default
 it launches the first stage (`scaffold`) and writes lifecycle state under
 `$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/`. Passing
-`--await-stages` lets the MVP supervisor wait for each stage and hand the baton
-to the next one. `--start-stage <stage>` or `--checkpoint <stage>` can resume
-from a specific stage.
+`--await-stages` lets `LifecycleSupervisor` wait for each stage, observe exit
+truth through the existing workflow/control-plane runtime, record commits and
+changed files, and hand the baton to the next stage. `--start-stage <stage>` or
+`--checkpoint <stage>` can resume from a specific stage.
 
 Single-stage lifecycle commands such as `vc-dou <agent>`, `vc-audit <agent>`,
 `vc-marbles <agent>`, `vc-polarize <agent>`, and `vc-hydrate <agent>` launch
@@ -63,11 +64,26 @@ ordinary skill dispatch.
 
 READ phases may create reports, cache, transcripts, and run-state artifacts.
 They must not mutate project code unless the operator explicitly changes the
-stage contract.
+stage contract. In awaited lifecycle runs the runner fingerprints the dirty
+worktree before and after every stage; a READ stage that changes code paths is
+marked as a lifecycle failure.
 
 WRITE phases may modify code, remove legacy, refactor, integrate, and generate
 missing runtime pieces. The lifecycle runner records changed files after an
 awaited stage so the handoff shows what moved.
+
+Each manifest stage exports:
+
+- `phase`: `read` or `write`;
+- `can_modify_code`: derived from `phase`;
+- `allowed_artifacts`: artifact classes the stage may touch;
+- `transition_conditions`: conditions required for handoff;
+- `next_stage`, `fallback_stage`, and `audit_after`;
+- `tooling`: the VC tools expected by the stage.
+
+The manifest also exports `human_controls`, so approval, forced audit,
+interruption, DoU acceptance, and fallback selection are explicit runtime
+capabilities rather than side-channel custom.
 
 ## Human participation
 
@@ -118,6 +134,10 @@ Boundaries:
 - **Async supervisor (Python)** — dispatches consecutive runs; observes
   commits, process completion, reports, and changed files; automatically
   triggers Audit after Marble when running a supervised lifecycle.
+- **LifecycleSupervisor** — the MVP async facade in
+  `vibecrafted_core.lifecycle_runner`; exposes `start`, `read_state`, and
+  `status` for future server observability without moving lifecycle ownership
+  into the TUI, app, or shell.
 - **Audit agent** — has its own lifecycle and helper; connects to the next
   agent after the audit; fires the "baton" to the next agent.
 - **Umbrella mode** — processes can move backwards or forwards.
@@ -135,6 +155,8 @@ simplicity in UX, flexibility in the backend (code, servers, VM).
 - Workflow manifest: `vibecrafted_core.workflows.registry.WORKFLOW_MANIFESTS`.
 - Single-stage launcher: `vibecrafted_core.workflow.launch_workflow`.
 - Umbrella runner: `vibecrafted_core.lifecycle_runner.LifecycleRunner`.
+- Async supervisor facade:
+  `vibecrafted_core.lifecycle_runner.LifecycleSupervisor`.
 - Run state: `$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/state.json`.
 - Final lifecycle report:
   `$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/report.md`.

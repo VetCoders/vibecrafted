@@ -52,6 +52,8 @@ class WorkflowStage:
     fallback_stage: str = ""
     audit_after: str = ""
     transition: str = "success"
+    transition_conditions: tuple[str, ...] = ()
+    allowed_artifacts: tuple[str, ...] = ()
 
     @property
     def can_modify_code(self) -> bool:
@@ -65,6 +67,7 @@ class WorkflowManifest:
     description: str
     stages: tuple[WorkflowStage, ...]
     entry_stage: str = ""
+    human_controls: tuple[str, ...] = ()
 
     def stage(self, stage_id: str) -> WorkflowStage | None:
         for stage in self.stages:

@@ -8,6 +8,7 @@ from vibecrafted_core import ship, wrappers
 from vibecrafted_core.lifecycle_runner import (
     LifecycleRunSpec,
     LifecycleRunner,
+    LifecycleSupervisor,
 )
 
 
@@ -61,13 +62,21 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
     assert calls == ["marbles", "audit"]
     assert loop_options == [(2, 4)]
     assert state["status"] == "completed"
-    assert [stage["phase"] for stage in state["stages"]] == ["write", "read"]
-    assert Path(state["state_path"]).is_file()
     assert (
-        Path(state["report_path"])
-        .read_text(encoding="utf-8")
-        .startswith("# Lifecycle run")
+        state["supervisor"] == "vibecrafted_core.lifecycle_runner.LifecycleSupervisor"
     )
+    assert state["human_controls"] == ["interrupt_workflow", "force_audit"]
+    assert state["baton"]["from_stage"] == "audit"
+    assert state["baton"]["next_stage"] == ""
+    assert [stage["phase"] for stage in state["stages"]] == ["write", "read"]
+    assert "changed_files_reported" in state["stages"][0]["transition_conditions"]
+    assert "code" in state["stages"][0]["allowed_artifacts"]
+    assert "no_code_mutation" in state["stages"][1]["transition_conditions"]
+    assert Path(state["state_path"]).is_file()
+    report = Path(state["report_path"]).read_text(encoding="utf-8")
+    assert report.startswith("# Lifecycle run")
+    assert "## Baton" in report
+    assert "transition_conditions:" in report
     assert (
         len(Path(state["transcript_path"]).read_text(encoding="utf-8").splitlines())
         == 2
@@ -105,6 +114,7 @@ def test_lifecycle_runner_records_first_stage_without_await(
 
     assert state["status"] == "launching"
     assert state["next_stage"] == ""
+    assert state["baton"]["reason"] == "stage_launched_without_await"
     assert state["stages"][0]["workflow"] == "dou"
     assert state["stages"][0]["can_modify_code"] is False
 
@@ -145,6 +155,12 @@ def test_lifecycle_runner_injects_context_atlas_into_stage_prompt(
 
     assert state["context_atlas"]["ok"] is True
     assert "Context Atlas says: runtime owner" in prompts[0]
+    assert (
+        "Transition conditions: launch_accepted, stage_completed, no_code_mutation"
+        in prompts[0]
+    )
+    assert "Allowed artifacts: reports, cache, run_state, transcripts" in prompts[0]
+    assert "Human controls: accept_dou, force_audit, interrupt_workflow" in prompts[0]
 
 
 def test_read_stage_detects_mutation_to_preexisting_dirty_file(
@@ -285,6 +301,43 @@ def test_lifecycle_runner_records_commits_created_during_stage(
     assert stage["commit_before"] != stage["commit_after"]
     assert stage["changed_files"] == ["tracked.txt"]
     assert "exit_code: 0" in Path(state["report_path"]).read_text(encoding="utf-8")
+
+
+def test_lifecycle_supervisor_reports_status(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+
+    def fake_launcher(spec, _source_dir):
+        return {
+            "accepted": True,
+            "run_id": "dou-run",
+            "skill": spec.skill,
+            "report": str(tmp_path / "dou.md"),
+        }
+
+    supervisor = LifecycleSupervisor(runner=LifecycleRunner(launcher=fake_launcher))
+    state = asyncio.run(
+        supervisor.start(
+            LifecycleRunSpec(
+                workflow_id="vc-dou",
+                agent="codex",
+                prompt="audit readiness",
+                root=str(tmp_path),
+            )
+        )
+    )
+
+    loaded = supervisor.read_state(state["state_path"])
+    status = supervisor.status(loaded)
+
+    assert loaded["run_id"] == state["run_id"]
+    assert status["workflow"] == "vc-dou"
+    assert status["status"] == "launching"
+    assert status["current_stage"] == "dou"
+    assert status["next_stage"] == ""
 
 
 def test_vc_ship_routes_to_lifecycle_runner(

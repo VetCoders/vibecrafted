@@ -234,6 +234,7 @@ class LifecycleRunner:
         state_path = run_dir / "state.json"
         report_path = run_dir / "report.md"
         transcript_path = run_dir / "transcript.log"
+        current_stage = spec.start_stage or manifest.first_stage.id
 
         context = load_context_atlas(
             root,
@@ -246,6 +247,8 @@ class LifecycleRunner:
             "root": str(root),
             "status": "launching",
             "await_stages": spec.await_stages,
+            "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
+            "human_controls": list(manifest.human_controls),
             "state_path": str(state_path),
             "report_path": str(report_path),
             "transcript_path": str(transcript_path),
@@ -257,12 +260,18 @@ class LifecycleRunner:
                 "excerpt": _context_excerpt(context),
             },
             "manifest": workflow_manifest_payload(manifest.id),
+            "baton": {
+                "from_stage": "",
+                "next_stage": current_stage,
+                "reason": "initial",
+                "previous_reports": [],
+            },
             "stages": [],
         }
         self._write_state(state_path, state)
 
         previous_reports: list[str] = []
-        current = spec.start_stage or manifest.first_stage.id
+        current = current_stage
         while current:
             stage = manifest.stage(current)
             if stage is None:
@@ -287,6 +296,12 @@ class LifecycleRunner:
             if not spec.await_stages:
                 state["status"] = "launching"
                 state["next_stage"] = stage.next_stage
+                state["baton"] = self._baton(
+                    stage=stage,
+                    next_stage=stage.next_stage,
+                    previous_reports=previous_reports,
+                    reason="stage_launched_without_await",
+                )
                 break
 
             state["status"] = "running"
@@ -332,6 +347,19 @@ class LifecycleRunner:
             self._write_state(state_path, state)
 
             next_stage = self._next_stage(manifest, stage, await_result)
+            record["transition"] = {
+                "next_stage": next_stage,
+                "requested_next_stage": str(await_result.get("next_stage") or ""),
+                "conditions": list(stage.transition_conditions),
+                "fallback_stage": stage.fallback_stage,
+                "audit_after": stage.audit_after,
+            }
+            state["baton"] = self._baton(
+                stage=stage,
+                next_stage=next_stage,
+                previous_reports=previous_reports,
+                reason="awaited_stage_completed",
+            )
             if not next_stage:
                 state["status"] = "completed"
                 break
@@ -383,6 +411,8 @@ class LifecycleRunner:
             "phase": stage.phase,
             "can_modify_code": stage.can_modify_code,
             "tooling": list(stage.tooling),
+            "transition_conditions": list(stage.transition_conditions),
+            "allowed_artifacts": list(stage.allowed_artifacts),
             "next_stage": stage.next_stage,
             "fallback_stage": stage.fallback_stage,
             "audit_after": stage.audit_after,
@@ -405,6 +435,11 @@ class LifecycleRunner:
         previous = "\n".join(f"- {path}" for path in previous_reports) or "- none"
         mutation = "may modify code" if stage.can_modify_code else "must stay read-only"
         atlas = _context_excerpt(context)
+        transition_conditions = (
+            ", ".join(stage.transition_conditions) or "launch_accepted"
+        )
+        allowed_artifacts = ", ".join(stage.allowed_artifacts) or "none"
+        human_controls = ", ".join(manifest.human_controls) or "none"
         return f"""Vibecrafted Lifecycle Runtime
 
 Workflow: {manifest.id} ({manifest.name})
@@ -412,6 +447,9 @@ Stage: {stage.order}. {stage.name}
 Runtime workflow: vc-{stage.workflow}
 Phase: {stage.phase.upper()} ({mutation})
 Required tooling: {", ".join(stage.tooling) or "none"}
+Transition conditions: {transition_conditions}
+Allowed artifacts: {allowed_artifacts}
+Human controls: {human_controls}
 Next stage: {stage.next_stage or "complete"}
 Fallback/audit stage: {stage.fallback_stage or stage.audit_after or "none"}
 
@@ -447,6 +485,24 @@ Operator prompt:
             return stage.audit_after
         return stage.next_stage
 
+    def _baton(
+        self,
+        *,
+        stage: WorkflowStage,
+        next_stage: str,
+        previous_reports: list[str],
+        reason: str,
+    ) -> dict[str, Any]:
+        return {
+            "from_stage": stage.id,
+            "from_phase": stage.phase,
+            "next_stage": next_stage,
+            "fallback_stage": stage.fallback_stage,
+            "audit_after": stage.audit_after,
+            "reason": reason,
+            "previous_reports": list(previous_reports),
+        }
+
     def _write_state(self, path: Path, state: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -464,6 +520,8 @@ Operator prompt:
             f"- agent: {state.get('agent')}",
             f"- root: {state.get('root')}",
             f"- context_atlas_ok: {state.get('context_atlas', {}).get('ok')}",
+            f"- supervisor: {state.get('supervisor')}",
+            "- human_controls: " + ", ".join(state.get("human_controls") or []),
             "",
             "## Stages",
         ]
@@ -478,18 +536,60 @@ Operator prompt:
                     f"  - commit_after: {stage.get('commit_after', '')}",
                     f"  - exit_code: {stage.get('await', {}).get('exit_code', '')}",
                     f"  - artifact_ok: {stage.get('await', {}).get('artifact_ok', '')}",
+                    "  - transition_conditions: "
+                    + ", ".join(stage.get("transition_conditions") or []),
+                    "  - allowed_artifacts: "
+                    + ", ".join(stage.get("allowed_artifacts") or []),
                     "  - new_commits: " + ", ".join(stage.get("new_commits") or []),
                     "  - changed_files: " + ", ".join(stage.get("changed_files") or []),
                 ]
             )
+        baton = state.get("baton") or {}
+        lines.extend(
+            [
+                "",
+                "## Baton",
+                f"- from_stage: {baton.get('from_stage', '')}",
+                f"- next_stage: {baton.get('next_stage', '')}",
+                f"- reason: {baton.get('reason', '')}",
+            ]
+        )
         if state.get("error"):
             lines.extend(["", "## Error", str(state["error"])])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
+class LifecycleSupervisor:
+    """Small async facade for lifecycle supervision and future server wiring."""
+
+    def __init__(self, runner: LifecycleRunner | None = None) -> None:
+        self.runner = runner or LifecycleRunner()
+
+    async def start(self, spec: LifecycleRunSpec) -> dict[str, Any]:
+        return await self.runner.run(spec)
+
+    def read_state(self, state_path: str | Path) -> dict[str, Any]:
+        path = Path(state_path).expanduser()
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def status(self, state: dict[str, Any]) -> dict[str, Any]:
+        stages = list(state.get("stages") or [])
+        last_stage = stages[-1] if stages else {}
+        return {
+            "run_id": state.get("run_id"),
+            "workflow": state.get("workflow"),
+            "status": state.get("status"),
+            "current_stage": last_stage.get("id", ""),
+            "next_stage": (state.get("baton") or {}).get("next_stage", ""),
+            "exit_code": (last_stage.get("await") or {}).get("exit_code", ""),
+            "state_path": state.get("state_path"),
+            "report_path": state.get("report_path"),
+        }
+
+
 def run_lifecycle(spec: LifecycleRunSpec) -> dict[str, Any]:
-    return asyncio.run(LifecycleRunner().run(spec))
+    return asyncio.run(LifecycleSupervisor().start(spec))
 
 
 def _print_lifecycle_receipt(state: dict[str, Any]) -> None:
