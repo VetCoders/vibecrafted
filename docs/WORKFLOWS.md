@@ -13,7 +13,7 @@ contracts in `skills/`.
 - `vibecrafted init <agent>` is the interactive first context handoff.
 - `vibecrafted research --prompt|--file` is the triple-agent swarm launcher.
 - `vibecrafted <skill> <agent>` covers the agent-scoped workflow surfaces.
-- `vc-ship <agent> --prompt|--file` starts the lifecycle manifest runner for
+- `vc-ship <agent> [--prompt|--file]` starts the lifecycle manifest runner for
   Scaffold -> Implement -> Review -> Workflow -> Follow-up -> Marbles -> Audit
   -> Polarize -> DoU -> Hydrate -> Release.
 - `vc-dou`, `vc-audit`, `vc-marbles`, `vc-polarize`, and `vc-hydrate` are
@@ -84,7 +84,7 @@ flowchart TD
 | Truth audit vs original plan | `vibecrafted intents <agent>`                            | `review`, `marbles`, `ownership`                                             |
 | Launch-readiness gap finding | `vibecrafted dou <agent>`                                | `hydrate`, `decorate`, `release`                                             |
 | Explicit ship path           | `vibecrafted decorate <agent>` or `hydrate` or `release` | `release`                                                                    |
-| Full lifecycle               | `vc-ship <agent> --prompt/--file`                        | Manifest-driven stage baton, optional `--await-stages`                       |
+| Full lifecycle               | `vc-ship <agent> [--prompt/--file]`                      | Manifest-driven stage baton, optional `--await-stages`                       |
 | Deterministic dispatch       | `vibecrafted dispatch <file.toml>`                       | `doctor`, `dry-run`, `resume`, async lifecycle runs                          |
 
 ## Runtime contract

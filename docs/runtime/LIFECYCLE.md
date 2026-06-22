@@ -44,8 +44,10 @@ wrappers remain installed shell shortcuts. The agent starts after the Context
 Atlas is loaded (`loct context`). Separate runtime, separate agent. Target
 state: every workflow launchable the same way.
 
-`vc-ship <agent> --prompt ...` starts the umbrella lifecycle runner. By default
-it launches the first stage (`scaffold`) and writes lifecycle state under
+`vc-ship <agent>` starts the umbrella lifecycle runner. `--prompt ...` or
+`--file ...` can narrow the task, but a bare `vc-ship codex` is valid and uses a
+default full-lifecycle repository prompt after Context Atlas loads. By default it
+launches the first stage (`scaffold`) and writes lifecycle state under
 `$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/`. Passing
 `--await-stages` lets `LifecycleSupervisor` wait for each stage, observe exit
 truth through the existing workflow/control-plane runtime, record commits and

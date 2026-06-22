@@ -364,6 +364,29 @@ def test_vc_ship_routes_to_lifecycle_runner(
     assert "VC-SHIP LIFECYCLE RECEIPT" in capsys.readouterr().out
 
 
+def test_vc_ship_can_start_with_default_lifecycle_prompt(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec):
+        captured.append(spec)
+        return {
+            "run_id": "life-ship-test",
+            "workflow": spec.workflow_id,
+            "status": "launching",
+            "state_path": str(tmp_path / "state.json"),
+            "report_path": str(tmp_path / "report.md"),
+        }
+
+    monkeypatch.setattr(ship, "run_lifecycle", fake_run_lifecycle)
+
+    assert ship.main(["codex"]) == 0
+    assert captured[0].workflow_id == "vc-ship"
+    assert captured[0].prompt
+    assert "full Vibecrafted lifecycle" in captured[0].prompt
+
+
 def test_vc_dou_wrapper_routes_to_lifecycle_runner(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:

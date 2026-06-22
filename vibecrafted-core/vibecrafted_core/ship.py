@@ -10,6 +10,12 @@ from .lifecycle_runner import LifecycleRunSpec, run_lifecycle
 
 SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
 
+DEFAULT_SHIP_PROMPT = (
+    "Run the full Vibecrafted lifecycle for this repository. Load Context Atlas, "
+    "start at the selected lifecycle checkpoint, preserve READ/WRITE phase "
+    "boundaries, and hand off through the manifest runner."
+)
+
 
 def build_ship_prompt(agent: str, checkpoint: str, prompt: str) -> str:
     return "\n".join(
@@ -51,12 +57,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             fix="use one of: claude · codex · gemini · agy · junie · grok",
         )
         return 1
-    if not args.file and not args.prompt:
-        ui.err("ship needs a prompt", fix='vibecrafted ship codex -p "<task>"')
-        return 1
-
     if args.loop_only:
-        prompt = args.prompt or ""
+        prompt = args.prompt or DEFAULT_SHIP_PROMPT
         if args.file:
             prompt = Path(args.file).expanduser().read_text(encoding="utf-8")
         loop_prompt = build_ship_prompt(
@@ -78,7 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         LifecycleRunSpec(
             workflow_id="vc-ship",
             agent=args.agent,
-            prompt=args.prompt,
+            prompt=args.prompt or DEFAULT_SHIP_PROMPT,
             file=args.file,
             root=args.root or str(Path.cwd()),
             runtime=args.runtime or "headless",
