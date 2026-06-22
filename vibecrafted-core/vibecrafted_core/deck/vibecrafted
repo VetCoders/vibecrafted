@@ -496,6 +496,7 @@ _print_skill_specific_flags() {
 }
 
 _print_ship_path() {
+  printf '  %bvc-ship codex --prompt "Run the full lifecycle"%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dou claude --prompt "Audit launch readiness"%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted decorate codex --prompt "Polish the release surface"%b\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted hydrate codex --prompt "Package the product"%b\n' "$_cyan" "$_reset"
@@ -1677,7 +1678,7 @@ cmd_help() {
   printf '  %bhelp%b [topic|--all]   This deck · full reference\n' "$_cyan" "$_reset"
   printf '\n'
   printf '%bShip cycle:%b\n' "$_bold" "$_reset"
-  printf '  workflow → implement → marbles → review → dou → release\n'
+  printf '  scaffold → implement → review → workflow → followup → marbles → audit → polarize → dou → hydrate → release\n'
   printf '  %b14 more skills: vibecrafted help --all%b\n' "$_dim" "$_reset"
   printf '\n'
   printf '%bAgents:%b  claude · codex · gemini · agy · junie · grok\n' "$_bold" "$_reset"
@@ -1885,8 +1886,8 @@ cmd_cron() {
 cmd_ship() {
   local core_dir
   if _is_help_flag "${1:-}"; then
-    printf 'Usage: vibecrafted ship <agent> [--checkpoint workflow] (--file <path>|--prompt <text>) [--loop-only]\n'
-    printf '       vc-ship <agent> [--checkpoint workflow] (--file <path>|--prompt <text>)\n'
+    printf 'Usage: vibecrafted ship <agent> [--start-stage scaffold] (--file <path>|--prompt <text>) [--await-stages]\n'
+    printf '       vc-ship <agent> [--checkpoint scaffold] (--file <path>|--prompt <text>)\n'
     return 0
   fi
   core_dir="$(_dispatcher_core_dir 2>/dev/null || true)"

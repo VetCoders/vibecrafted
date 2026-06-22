@@ -130,9 +130,43 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     assert ".vibecrafted/control_plane/runtime_runs/" in payload["transcript"]
     assert ".vibecrafted/control_plane/runtime_runs/" in payload["meta"]
     assert ".vibecrafted/control_plane/runtime_runs/" in payload["prompt_file"]
+    assert payload["workflow"] == {
+        "id": "workflow",
+        "phase": "write",
+        "can_modify_code": True,
+        "runtime_kind": "direct_agent",
+        "tooling": ["vc-init", "vc-research", "vc-justdo"],
+        "lifecycle_order": 40,
+    }
     assert "go" not in payload["worker_command"]
     log_lines = Path(payload["launch_log"]).read_text(encoding="utf-8").splitlines()
     assert any(json.loads(line).get("event") == "spawned" for line in log_lines)
+
+
+def test_launch_workflow_reports_read_phase_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    spec = workflow.normalize_launch_spec(
+        {"skill": "dou", "agent": "codex", "prompt": "audit launch readiness"},
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import os; "
+            "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
+        ],
+    )
+
+    payload = workflow.launch_workflow(spec, tmp_path)
+
+    assert payload["workflow"]["phase"] == "read"
+    assert payload["workflow"]["can_modify_code"] is False
+    assert payload["workflow"]["tooling"] == ["vc-init", "vc-intents", "vc-loctree"]
 
 
 def test_launch_workflow_keeps_dispatcher_launch_even_if_worker_command_is_bad(

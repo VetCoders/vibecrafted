@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ..package_resources import runtime_path
 from ..runtime_paths import vibecrafted_tools_home
-from .model import WorkflowCadence, WorkflowDefinition
+from .model import WorkflowCadence, WorkflowDefinition, WorkflowManifest, WorkflowStage
 
 
 def _direct(
@@ -152,6 +152,113 @@ WORKFLOW_ALIASES = {
 }
 
 
+def _stage(
+    workflow: str,
+    order: int,
+    *,
+    id: str = "",
+    name: str = "",
+    next_stage: str = "",
+    fallback_stage: str = "",
+    audit_after: str = "",
+    transition: str = "success",
+) -> WorkflowStage:
+    definition = WORKFLOW_DEFINITIONS[workflow]
+    return WorkflowStage(
+        id=id or workflow,
+        workflow=workflow,
+        phase=definition.cadence,
+        order=order,
+        name=name or f"VC {workflow.title()}",
+        tooling=definition.tooling,
+        next_stage=next_stage,
+        fallback_stage=fallback_stage,
+        audit_after=audit_after,
+        transition=transition,
+    )
+
+
+SHIP_STAGES: tuple[WorkflowStage, ...] = (
+    _stage("scaffold", 1, name="VC Scaffold", next_stage="implement"),
+    _stage("implement", 2, name="VC Implement", next_stage="review"),
+    _stage("review", 3, name="VC Review", next_stage="workflow"),
+    _stage("workflow", 4, name="VC Workflow", next_stage="followup"),
+    _stage("followup", 5, name="Follow-up", next_stage="marbles"),
+    _stage(
+        "marbles",
+        6,
+        name="VC Marbles",
+        next_stage="audit",
+        audit_after="audit",
+    ),
+    _stage(
+        "audit", 7, name="VC Audit", next_stage="polarize", fallback_stage="marbles"
+    ),
+    _stage("polarize", 8, name="VC Polarize", next_stage="dou"),
+    _stage("dou", 9, name="VC DoU", next_stage="hydrate", fallback_stage="polarize"),
+    _stage("hydrate", 10, name="VC Hydrate", next_stage="release"),
+    _stage("release", 11, name="VC Release"),
+)
+
+
+WORKFLOW_MANIFESTS: dict[str, WorkflowManifest] = {
+    "vc-ship": WorkflowManifest(
+        id="vc-ship",
+        name="VC Ship",
+        description="Full Vibecrafted lifecycle from scaffold through release.",
+        stages=SHIP_STAGES,
+        entry_stage="scaffold",
+    ),
+    "vc-dou": WorkflowManifest(
+        id="vc-dou",
+        name="VC DoU",
+        description="Definition of Undone read-only launch-readiness audit.",
+        stages=(_stage("dou", 1, name="VC DoU"),),
+        entry_stage="dou",
+    ),
+    "vc-audit": WorkflowManifest(
+        id="vc-audit",
+        name="VC Audit",
+        description="Read-only falsification of completed implementation claims.",
+        stages=(_stage("audit", 1, name="VC Audit"),),
+        entry_stage="audit",
+    ),
+    "vc-marbles": WorkflowManifest(
+        id="vc-marbles",
+        name="VC Marbles",
+        description="Entropy-up write convergence with automatic audit handoff.",
+        stages=(
+            _stage(
+                "marbles",
+                1,
+                name="VC Marbles",
+                next_stage="audit",
+                audit_after="audit",
+            ),
+            _stage("audit", 2, name="VC Audit"),
+        ),
+        entry_stage="marbles",
+    ),
+    "vc-polarize": WorkflowManifest(
+        id="vc-polarize",
+        name="VC Polarize",
+        description="Entropy-down write simplification after Marbles/Audit.",
+        stages=(_stage("polarize", 1, name="VC Polarize"),),
+        entry_stage="polarize",
+    ),
+    "vc-hydrate": WorkflowManifest(
+        id="vc-hydrate",
+        name="VC Hydrate",
+        description="Write preflight for product surface and release readiness.",
+        stages=(_stage("hydrate", 1, name="VC Hydrate"),),
+        entry_stage="hydrate",
+    ),
+}
+WORKFLOW_MANIFEST_ALIASES = {
+    key.removeprefix("vc-"): key for key in WORKFLOW_MANIFESTS if key.startswith("vc-")
+}
+
+
 def workflow_definition(workflow_id: str) -> WorkflowDefinition | None:
     resolved = WORKFLOW_ALIASES.get(workflow_id, workflow_id)
     return WORKFLOW_DEFINITIONS.get(resolved)
@@ -166,6 +273,39 @@ def workflow_lifecycle() -> tuple[WorkflowDefinition, ...]:
     return tuple(
         sorted(WORKFLOW_DEFINITIONS.values(), key=lambda item: item.lifecycle_order)
     )
+
+
+def workflow_manifest(manifest_id: str) -> WorkflowManifest | None:
+    key = WORKFLOW_MANIFEST_ALIASES.get(manifest_id, manifest_id)
+    return WORKFLOW_MANIFESTS.get(key)
+
+
+def workflow_manifest_payload(manifest_id: str) -> dict[str, object]:
+    manifest = workflow_manifest(manifest_id)
+    if manifest is None:
+        raise ValueError(f"Unsupported lifecycle workflow: {manifest_id}")
+    return {
+        "id": manifest.id,
+        "name": manifest.name,
+        "description": manifest.description,
+        "entry_stage": manifest.entry_stage,
+        "stages": [
+            {
+                "id": stage.id,
+                "workflow": stage.workflow,
+                "phase": stage.phase,
+                "order": stage.order,
+                "name": stage.name,
+                "tooling": list(stage.tooling),
+                "can_modify_code": stage.can_modify_code,
+                "next_stage": stage.next_stage,
+                "fallback_stage": stage.fallback_stage,
+                "audit_after": stage.audit_after,
+                "transition": stage.transition,
+            }
+            for stage in manifest.stages
+        ],
+    }
 
 
 def _workflow_dirs(workflow_id: str) -> list[Path]:

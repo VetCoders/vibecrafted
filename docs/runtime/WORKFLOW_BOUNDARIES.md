@@ -8,7 +8,11 @@ Vibecrafted has three related surfaces that must stay separate:
   prompts, runtime assets, and workflow-specific runner material.
 - `vibecrafted_core.workflows.registry` is the Python index over executable
   workflow truth. It gives launch code a stable way to ask for input policy,
-  default agent, runtime kind, lifecycle order, and read/write cadence.
+  default agent, runtime kind, lifecycle order, read/write cadence, and umbrella
+  lifecycle manifests such as `vc-ship`.
+- `vibecrafted_core.lifecycle_runner` is the umbrella runtime. It reads the
+  registry manifest, loads Context Atlas, launches each stage through
+  `vibecrafted_core.workflow`, records state, and writes a lifecycle report.
 
 `vibecrafted_core.workflow` remains a compatibility launcher facade. It should
 not become the place where workflow semantics accumulate.
@@ -31,6 +35,8 @@ The registry models the current read/write cadence:
 | `hydrate`   | write   | preflight product surface work      |
 | `release`   | write   | outward shipping work               |
 
-This is the runtime-side substrate for a future `vc-ship`/operator lifecycle:
-distinct workflow nodes, distinct agent runs, and an async supervisor that can
-move the baton forward or backward based on observed truth.
+This is the runtime-side substrate for `vc-ship`: distinct workflow nodes,
+distinct agent runs, and an async supervisor that can move the baton forward or
+backward based on observed truth. `vc-marbles` has an explicit `audit_after`
+edge to `audit`; READ stages carry `can_modify_code=false`, WRITE stages carry
+`can_modify_code=true`.

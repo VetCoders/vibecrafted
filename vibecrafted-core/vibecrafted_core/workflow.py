@@ -858,6 +858,20 @@ def _coerce_positive_int(value: Any, default: int | None = None) -> int | None:
     return result if result > 0 else default
 
 
+def _workflow_metadata(skill: str) -> dict[str, Any]:
+    definition = workflow_registry.workflow_definition(skill)
+    if definition is None:
+        return {}
+    return {
+        "id": definition.id,
+        "phase": definition.cadence,
+        "can_modify_code": definition.can_modify_code,
+        "runtime_kind": definition.runtime_kind,
+        "tooling": list(definition.tooling),
+        "lifecycle_order": definition.lifecycle_order,
+    }
+
+
 def normalize_launch_spec(
     payload: dict[str, Any], source_dir: str | Path
 ) -> WorkflowLaunchSpec:
@@ -1118,6 +1132,7 @@ def launch_workflow(
             "report": str(report_path),
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
+            "workflow": _workflow_metadata(spec.skill),
             "worker_command": worker_command,
             "dispatch_command": dispatch_command,
             "command": command,
@@ -1133,6 +1148,7 @@ def launch_workflow(
                     "ts": stamp,
                     "run_id": run_id,
                     "spec": safe_spec,
+                    "workflow": _workflow_metadata(spec.skill),
                     "worker_command": worker_command,
                     "dispatch_command": dispatch_command,
                     "command": command,
@@ -1203,6 +1219,7 @@ def launch_workflow(
                 "report": str(report_path),
                 "transcript": str(artifacts["transcript"]),
                 "meta": str(artifacts["meta"]),
+                "workflow": _workflow_metadata(spec.skill),
                 "worker_command": worker_command,
                 "dispatch_command": dispatch_command,
                 "command": command,
@@ -1243,6 +1260,7 @@ def launch_workflow(
             "session_id": session_id,
             "operator_session": operator_session,
         },
+        "workflow": _workflow_metadata(spec.skill),
         "retry_of": retry_of,
         "launch_log": str(launch_log),
         "spec": safe_spec,

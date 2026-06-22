@@ -8,9 +8,9 @@
 This document is the canonical description of the full 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. product
 lifecycle: the read/write cadence of the `vc-ship` pipeline, the component
 architecture it runs on, and the async supervision model that closes the loop.
-For the execution engine and spawn mechanics see
-[`CONTRACT.md`](./CONTRACT.md); for the parked implementation follow-ups see
-[`READ_WRITE_CADENCE_TODO.md`](./READ_WRITE_CADENCE_TODO.md).
+The executable truth lives in `vibecrafted_core.workflows.registry` and
+`vibecrafted_core.lifecycle_runner`. This document explains the operator
+contract; the Python manifest is the runtime source of truth.
 
 ---
 
@@ -44,6 +44,29 @@ wrappers remain installed shell shortcuts. The agent starts after the Context
 Atlas is loaded (`loct context`). Separate runtime, separate agent. Target
 state: every workflow launchable the same way.
 
+`vc-ship <agent> --prompt ...` starts the umbrella lifecycle runner. By default
+it launches the first stage (`scaffold`) and writes lifecycle state under
+`$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/`. Passing
+`--await-stages` lets the MVP supervisor wait for each stage and hand the baton
+to the next one. `--start-stage <stage>` or `--checkpoint <stage>` can resume
+from a specific stage.
+
+Single-stage commands such as `vc-dou <agent>`, `vc-audit <agent>`,
+`vc-marbles <agent>`, `vc-polarize <agent>`, and `vc-hydrate <agent>` still
+launch through `vibecrafted_core.workflow`. Their launch payloads carry the
+same manifest metadata: phase, `can_modify_code`, tooling, runtime kind, and
+lifecycle order.
+
+## READ and WRITE semantics
+
+READ phases may create reports, cache, transcripts, and run-state artifacts.
+They must not mutate project code unless the operator explicitly changes the
+stage contract.
+
+WRITE phases may modify code, remove legacy, refactor, integrate, and generate
+missing runtime pieces. The lifecycle runner records changed files after an
+awaited stage so the handoff shows what moved.
+
 ## Notes (operator)
 
 - It must be clearly defined what the human can and cannot do.
@@ -65,7 +88,8 @@ state: every workflow launchable the same way.
 
 - **Marble** — launched with or without a prompt.
 - **Async supervisor (Python)** — dispatches consecutive runs; observes
-  commits and completions; automatically triggers Audit after Marble.
+  commits, process completion, reports, and changed files; automatically
+  triggers Audit after Marble when running a supervised lifecycle.
 - **Audit agent** — has its own lifecycle and helper; connects to the next
   agent after the audit; fires the "baton" to the next agent.
 - **Umbrella mode** — processes can move backwards or forwards.
@@ -80,14 +104,12 @@ simplicity in UX, flexibility in the backend (code, servers, VM).
 
 ## Runtime truth hooks (where the cadence is enforced today)
 
-- Run state lifecycle: `launching → running → completed|failed|ghost`,
-  written by the run owner (spawner writes `launching`, the generated
-  launcher earns `running`, `spawn_finish_meta` / `spawn_reap_dead_run`
-  close it) — see `runtime/scripts/lib/meta.sh` and
-  `runtime/scripts/lib/launcher.sh`.
-- Artifact truth: the path announced at spawn stays valid after the
-  artifact-contract rename (compat symlinks in `spawn_finalize_artifacts`).
-- The async supervisor, MCP control surface, and umbrella mode described
-  above are ROADMAP from the canon — documented here, implemented
-  incrementally (see `READ_WRITE_CADENCE_TODO.md` and
-  `RUNTIME_INTEGRATION_ROADMAP.md`).
+- Workflow manifest: `vibecrafted_core.workflows.registry.WORKFLOW_MANIFESTS`.
+- Single-stage launcher: `vibecrafted_core.workflow.launch_workflow`.
+- Umbrella runner: `vibecrafted_core.lifecycle_runner.LifecycleRunner`.
+- Run state: `$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/state.json`.
+- Final lifecycle report:
+  `$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/report.md`.
+- Agent run truth still comes from the existing control plane runtime runs,
+  reports, transcripts, and metadata written by `launch_workflow` and the async
+  dispatcher.

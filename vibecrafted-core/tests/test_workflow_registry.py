@@ -57,6 +57,53 @@ def test_registry_models_read_write_lifecycle() -> None:
     )
 
 
+def test_vc_ship_manifest_is_single_source_for_lifecycle_order() -> None:
+    manifest = registry.workflow_manifest("vc-ship")
+
+    assert manifest is not None
+    assert manifest.first_stage.id == "scaffold"
+    assert [stage.id for stage in manifest.stages] == [
+        "scaffold",
+        "implement",
+        "review",
+        "workflow",
+        "followup",
+        "marbles",
+        "audit",
+        "polarize",
+        "dou",
+        "hydrate",
+        "release",
+    ]
+    assert [stage.phase for stage in manifest.stages] == [
+        "read",
+        "write",
+        "read",
+        "write",
+        "read",
+        "write",
+        "read",
+        "write",
+        "read",
+        "write",
+        "write",
+    ]
+    assert manifest.stage("marbles").audit_after == "audit"
+    assert manifest.stage("dou").can_modify_code is False
+    assert manifest.stage("hydrate").can_modify_code is True
+
+
+def test_manifest_payload_is_json_ready() -> None:
+    payload = registry.workflow_manifest_payload("vc-marbles")
+
+    assert payload["id"] == "vc-marbles"
+    assert payload["entry_stage"] == "marbles"
+    stages = payload["stages"]
+    assert stages[0]["workflow"] == "marbles"
+    assert stages[0]["audit_after"] == "audit"
+    assert stages[1]["phase"] == "read"
+
+
 def test_prune_default_prompt_is_runtime_workflow_asset() -> None:
     assert importlib.util.find_spec("vibecrafted_core.package_resources") is not None
     package_resources = importlib.import_module("vibecrafted_core.package_resources")

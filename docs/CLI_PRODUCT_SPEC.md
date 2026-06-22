@@ -59,8 +59,8 @@ Identity vs drift:
 | `vibecrafted help [topic]`    | Command deck · `help --all` for everything |
 
 Seven entries. Skills shown in the main help are only the ship cycle:
-`workflow → implement → marbles → review → dou → release`. The remaining 14 skills
-live in `help --all` and in `help <skill>`.
+`scaffold → implement → review → workflow → followup → marbles → audit → polarize → dou → hydrate → release`.
+The remaining 14 skills live in `help --all` and in `help <skill>`.
 
 ### Hidden behind `help --all` (still work, never advertised up front)
 
@@ -118,7 +118,7 @@ Commands:
   help [topic|--all]   This deck · full reference
 
 Ship cycle:
-  workflow → implement → marbles → review → dou → release
+  scaffold → implement → review → workflow → followup → marbles → audit → polarize → dou → hydrate → release
   14 more skills: vibecrafted help --all
 
 Agents:  claude · codex · gemini · agy · junie · grok
