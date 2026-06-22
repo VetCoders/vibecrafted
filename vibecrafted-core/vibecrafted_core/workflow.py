@@ -1189,6 +1189,27 @@ def launch_workflow(
                 )
                 + "\n"
             )
+            # The "launch accepted" event above already recorded state="created".
+            # Without a terminal event here, the run is stranded as "created"
+            # forever — sync_state() shows a phantom active run that never
+            # progressed. Record the failure so reconciliation marks it failed.
+            append_event(
+                kind="launch",
+                run_id=run_id,
+                message=f"dispatcher spawn failed: {type(exc).__name__}: {exc}",
+                payload={
+                    "state": "failed",
+                    "agent": spec.agent,
+                    "skill": spec.skill,
+                    "mode": spec.mode,
+                    "runtime": spec.runtime,
+                    "root": spec.root,
+                    "operator_session": operator_session,
+                    "session_id": session_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "retry_of": retry_of,
+                },
+            )
             return {
                 "accepted": False,
                 "message": f"Failed to launch {spec.skill}: {exc}",

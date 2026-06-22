@@ -143,6 +143,44 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     assert any(json.loads(line).get("event") == "spawned" for line in log_lines)
 
 
+def test_launch_workflow_records_failure_event_when_spawn_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    source = _source_dir(tmp_path)
+    spec = workflow.normalize_launch_spec(
+        {"skill": "workflow", "agent": "claude", "prompt": "go"},
+        source,
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: [sys.executable, "-c", "pass"],
+    )
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("no such dispatcher binary")
+
+    monkeypatch.setattr(workflow.subprocess, "Popen", _boom)
+
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow,
+        "append_event",
+        lambda **kwargs: events.append(kwargs),
+    )
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is False
+    assert "no such dispatcher binary" in payload["error"]
+    # A terminal "failed" event must be recorded — otherwise the earlier
+    # "launch accepted" (state="created") strands the run as a phantom active
+    # run that reconciliation never resolves.
+    states = [event["payload"].get("state") for event in events]
+    assert "failed" in states
+
+
 def test_launch_workflow_reports_read_phase_metadata(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
