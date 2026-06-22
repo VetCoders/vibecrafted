@@ -163,9 +163,17 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    data = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    # Atomic write (tmp + os.replace) so a crash mid-write or a concurrent
+    # reader never sees a half-written, unparseable snapshot — _read_json would
+    # silently degrade a truncated file to {} and lose the run's metadata.
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    try:
+        tmp.write_text(data, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def _read_lines(path: Path) -> list[str]:
