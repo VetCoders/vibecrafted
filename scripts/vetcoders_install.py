@@ -251,6 +251,9 @@ class Foundation:
         found = shutil.which(self.name)
         if found:
             return found
+        local_bin = Path.home() / ".local" / "bin" / self.name
+        if local_bin.is_file() and os.access(local_bin, os.X_OK):
+            return str(local_bin)
         return None
 
     def install_hint(self) -> str:
@@ -274,7 +277,100 @@ class Foundation:
         return " | ".join(hints)
 
 
+VENDORED_FOUNDATION_BINARIES = {
+    "aicx": "aicx",
+    "aicx-mcp": "aicx-mcp",
+    "loct": "loct",
+    "loctree-mcp": "loctree-mcp",
+    "vc-frame": "vc-frame",
+}
+
+
+def detect_vendor_platform() -> Optional[str]:
+    try:
+        uname = os.uname()
+    except AttributeError:
+        return None
+
+    os_name = {"Darwin": "darwin", "Linux": "linux"}.get(
+        uname.sysname, uname.sysname.lower()
+    )
+    arch = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64"}.get(
+        uname.machine, uname.machine
+    )
+    return f"{os_name}-{arch}"
+
+
+def vendored_foundation_dir(repo_root: Path) -> Optional[Path]:
+    platform = detect_vendor_platform()
+    if not platform:
+        return None
+    return repo_root / "bin" / "vendor" / platform
+
+
+def install_foundation_from_bundle(
+    foundation: Foundation,
+    repo_root: Path,
+    bin_dir: Optional[Path] = None,
+    dry_run: bool = False,
+) -> Optional[Path]:
+    vendor_name = VENDORED_FOUNDATION_BINARIES.get(foundation.name)
+    if not vendor_name:
+        return None
+
+    vendor_dir = vendored_foundation_dir(repo_root)
+    if vendor_dir is None:
+        return None
+
+    src = vendor_dir / vendor_name
+    if not src.is_file():
+        return None
+
+    target_dir = bin_dir or (Path.home() / ".local" / "bin")
+    dst = target_dir / vendor_name
+    if dry_run:
+        return dst
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    dst.chmod(0o755)
+
+    result = subprocess.run(
+        [str(dst), "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        print(f"  {WARN} {vendor_name} copied but version check failed{suffix}")
+    return dst
+
+
+def install_or_find_foundation(
+    foundation: Foundation, repo_root: Path, dry_run: bool = False
+) -> tuple[str, str]:
+    bundled = install_foundation_from_bundle(foundation, repo_root, dry_run=dry_run)
+    if bundled:
+        return str(bundled), "bundled"
+
+    found = foundation.is_installed()
+    if found:
+        return found, "pre-existing"
+    return "", "not-installed"
+
+
 FOUNDATIONS: List[Foundation] = [
+    Foundation(
+        name="aicx",
+        description="AICX CLI for session history and memory recovery",
+        channels=["canonical"],
+        packages={
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
+        },
+        verify_cmd="aicx --version",
+    ),
     Foundation(
         name="aicx-mcp",
         description="AICX MCP server for session history and memory recovery",
@@ -1610,9 +1706,9 @@ def _snapshot_launcher_entries() -> List[str]:
 def snapshot_product_tool_state() -> Dict[str, Dict[str, str]]:
     """Record product dependency commands exactly where PATH resolves them.
 
-    Loctree/AICX/vc-frame/etc. are dependencies, not Vibecrafted-owned payload.
-    Discovery must therefore observe the operator's PATH and persist the result;
-    it must not re-home binaries into the launcher bin or replace dev installs.
+    Loctree/AICX/vc-frame/etc. are foundation payload when the bundle vendors
+    them for this platform. Missing bundle payloads remain external dependencies,
+    so discovery still observes PATH and persists the fallback result.
     """
     product_tools: Dict[str, Dict[str, str]] = {}
     seen: set[str] = set()
@@ -4258,9 +4354,17 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                     print(bold("Runtime Foundations:"))
                     missing_foundations: List[Foundation] = []
                     for f in FOUNDATIONS:
-                        path = f.is_installed()
+                        path, channel = install_or_find_foundation(
+                            f, repo_root, dry_run=dry_run
+                        )
+                        installed_foundations[f.name] = {
+                            "channel": channel,
+                            "path": path,
+                        }
                         if path:
                             print(f"  {OK} {f.name} -> {dim(path)}")
+                            if channel == "bundled":
+                                print(f"       {dim('installed from bundled payload')}")
                             print(f"       {dim(f.description)}")
                         elif f.required:
                             print(f"  {MISS} {f.name} — {f.description}")
@@ -4317,10 +4421,12 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                 # Post-wizard setup
                 for f in FOUNDATIONS:
                     if f.name not in installed_foundations:
-                        path = f.is_installed()
+                        path, channel = install_or_find_foundation(
+                            f, repo_root, dry_run=dry_run
+                        )
                         installed_foundations[f.name] = {
-                            "channel": "pre-existing" if path else "not-installed",
-                            "path": path or "",
+                            "channel": channel,
+                            "path": path,
                         }
                 break
 
@@ -4776,13 +4882,13 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         # Log foundations
         print("Runtime Foundations:")
         for f in FOUNDATIONS:
-            path = f.is_installed()
+            path, channel = install_or_find_foundation(f, repo_root, dry_run=dry_run)
             installed_foundations[f.name] = {
-                "channel": "pre-existing" if path else "not-installed",
-                "path": path or "",
+                "channel": channel,
+                "path": path,
             }
             print(
-                f"  {f.name}: {path or 'not installed'} {'(required)' if f.required else '(optional)'}"
+                f"  {f.name}: {path or 'not installed'} [{channel}] {'(required)' if f.required else '(optional)'}"
             )
         print()
         detected_agents = [

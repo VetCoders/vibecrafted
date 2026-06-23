@@ -11,7 +11,7 @@ BRANCH   ?= main
 VERSION_FILE := VERSION
 RUNTIME ?= none
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server server-smoke
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server server-smoke
 
 help:
 	@printf "\n"
@@ -31,7 +31,7 @@ help-dev:
 	@printf "\n"
 	@printf "  \033[1m\033[38;5;173m⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. dev targets\033[0m\n"
 	@printf "\n"
-	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-python-tools · install-app-binaries · install-server · install-hammerspoon\n"
+	@printf "  \033[1minstall\033[0m   install · install-auto · install-all · install-python-tools · install-vendored-binaries · install-app-binaries · install-server · install-hammerspoon\n"
 	@printf "            skills · helpers · setup-dev · wizard · wizard-dev · gui-install · dry-run · restore\n"
 	@printf "            migrate · migrate-dry · foundations · foundations-check · bundle · bundle-check\n"
 	@printf "  \033[1mtests\033[0m     test · test-core · test-skills · test-install · test-parity · test-vc-frame · test-iterm2-migrate\n"
@@ -131,7 +131,7 @@ install:
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "frontier config" -- bash -c 'bash runtime/scripts/install-frontier-config.sh --source "$$1" || printf "[warn] Frontier config skipped (non-fatal)\n"' _ "$(SOURCE)"
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "skills and launchers" -- bash -e -c '$(PYTHON) $(INSTALLER) install --source "$$1" --compact --non-interactive --mirror; make --no-print-directory install-python-tools' _ "$(SOURCE)"
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "runtime tools" -- bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes
-	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app and server" -- bash -e -c 'make --no-print-directory install-app-binaries; make --no-print-directory install-server'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app and server" -- bash -e -c 'make --no-print-directory install-vendored-binaries; make --no-print-directory install-app-binaries; make --no-print-directory install-server'
 	@printf "\nVibecrafted is ready.\n\nStart here:\n  vc-start\n\nHealth:\n  vibecrafted doctor\n\nLog:\n  ~/.vibecrafted/install.log\n"
 
 # `make install` calls `install-python-tools`; it was an empty .PHONY name
@@ -176,6 +176,30 @@ install-tools:
 APP_DIR := vibecrafted-app
 APP_BINARIES := voc vc-admin
 BIN_DIR := $(HOME)/.local/bin
+VENDORED_FOUNDATION_BINARIES := vc-frame loctree-mcp loct aicx aicx-mcp
+HOST_UNAME_S := $(shell uname -s)
+HOST_UNAME_M := $(shell uname -m)
+HOST_VENDOR_OS := $(if $(filter Darwin,$(HOST_UNAME_S)),darwin,$(if $(filter Linux,$(HOST_UNAME_S)),linux,$(shell uname -s | tr '[:upper:]' '[:lower:]')))
+HOST_VENDOR_ARCH := $(if $(filter arm64 aarch64,$(HOST_UNAME_M)),arm64,$(if $(filter x86_64,$(HOST_UNAME_M)),x64,$(HOST_UNAME_M)))
+HOST_VENDOR_PLATFORM := $(HOST_VENDOR_OS)-$(HOST_VENDOR_ARCH)
+VENDORED_FOUNDATION_DIR := $(SOURCE)/bin/vendor/$(HOST_VENDOR_PLATFORM)
+
+install-vendored-binaries:
+	@mkdir -p "$(BIN_DIR)"
+	@if [ ! -d "$(VENDORED_FOUNDATION_DIR)" ]; then \
+		echo "[vendor] no vendored foundation binaries for $(HOST_VENDOR_PLATFORM) at $(VENDORED_FOUNDATION_DIR); keeping external fallback"; \
+		exit 0; \
+	fi
+	@for bin in $(VENDORED_FOUNDATION_BINARIES); do \
+		src="$(VENDORED_FOUNDATION_DIR)/$$bin"; \
+		if [ ! -f "$$src" ]; then \
+			echo "[vendor] $$bin not present in $(VENDORED_FOUNDATION_DIR); keeping external fallback"; \
+			continue; \
+		fi; \
+		install -m 0755 "$$src" "$(BIN_DIR)/$$bin"; \
+		chmod +x "$(BIN_DIR)/$$bin"; \
+		echo "[vendor] installed $$bin -> $(BIN_DIR)/$$bin"; \
+	done
 
 install-app-binaries:
 	@command -v cargo >/dev/null 2>&1 || { \
