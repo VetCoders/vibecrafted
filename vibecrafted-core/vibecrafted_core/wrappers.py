@@ -115,7 +115,10 @@ def supervised_skill_main(skill: str, argv: Sequence[str] | None = None) -> int:
         list(sys.argv[1:] if argv is None else argv)
     )
     if args and args[0] in {"-h", "--help", "help"}:
-        return subprocess.call([str(deck_path()), skill, "--help"])
+        # Direct python path (bypasses legacy deck) so --help and later --file are parsed by core argparse.
+        return subprocess.call(
+            [sys.executable, "-m", "vibecrafted_core.cli", skill, "--help"]
+        )
     if sandbox and args and args[0] not in AGENTS:
         skill_code = SKILL_PREFIX.get(skill, skill[:4])
         run_id = os.environ.get("VIBECRAFTED_RUN_ID") or _run_id(skill_code)
@@ -143,7 +146,10 @@ def supervised_skill_main(skill: str, argv: Sequence[str] | None = None) -> int:
     rest = args[1:]
     skill_code = SKILL_PREFIX.get(skill, skill[:4])
     run_id = os.environ.get("VIBECRAFTED_RUN_ID") or _run_id(skill_code)
-    command = [str(deck_path()), skill, agent, *rest]
+    # Use direct -m vibecrafted_core.cli (the python path that owns --file/--prompt via _add_launch_parser)
+    # instead of deck bash script. This retires the deck delegation for the launch surface (the siódemka
+    # + other supervised) so flags never land in legacy positional <mode> parser.
+    command = [sys.executable, "-m", "vibecrafted_core.cli", skill, agent, *rest]
     if not _has_flag(rest, "--runtime"):
         command.extend(["--runtime", "headless"])
 
@@ -179,8 +185,44 @@ def implement_main(argv: Sequence[str] | None = None) -> int:
     return supervised_skill_main("implement", argv)
 
 
+def _lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
+    from .lifecycle_runner import lifecycle_main
+
+    return lifecycle_main(workflow_id, argv)
+
+
+def audit_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-audit", argv)
+
+
+def dou_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-dou", argv)
+
+
+def hydrate_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-hydrate", argv)
+
+
 def marbles_main(argv: Sequence[str] | None = None) -> int:
-    return supervised_skill_main("marbles", argv)
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in {
+        "-h",
+        "--help",
+        "help",
+        "pause",
+        "stop",
+        "resume",
+        "session",
+        "inspect",
+        "delete",
+        "gc",
+    }:
+        return subprocess.call([str(deck_path()), "marbles", *args])
+    return _lifecycle_main("vc-marbles", args)
+
+
+def polarize_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-polarize", argv)
 
 
 def prune_main(argv: Sequence[str] | None = None) -> int:
@@ -193,6 +235,34 @@ def review_main(argv: Sequence[str] | None = None) -> int:
 
 def scaffold_main(argv: Sequence[str] | None = None) -> int:
     return supervised_skill_main("scaffold", argv)
+
+
+def decorate_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("decorate", argv)
+
+
+def delegate_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("delegate", argv)
+
+
+def intents_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("intents", argv)
+
+
+def ownership_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("ownership", argv)
+
+
+def partner_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("partner", argv)
+
+
+def release_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("release", argv)
+
+
+def workflow_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("workflow", argv)
 
 
 def _prepare_research(args: Sequence[str], run_id: str) -> tuple[int, str]:

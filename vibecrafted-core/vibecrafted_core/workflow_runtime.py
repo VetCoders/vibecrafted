@@ -299,6 +299,7 @@ def _child_prompt(kind: str, label: str, root: str, prompt: str) -> str:
 
 Contract:
 - Work in repository root: {root}
+- Skill: vc-{kind}
 - Track: {label}
 - Do not launch external agent fleets.
 - Write your durable report to VIBECRAFTED_REPORT_PATH.
@@ -307,6 +308,22 @@ Contract:
 Operator prompt:
 {prompt}
 """
+
+
+def _loop_prompt(kind: str, prompt: str, index: int, count: int, depth: int) -> str:
+    if kind == "polarize":
+        instruction = (
+            f"Polarize loop: L{index}/{count}. Depth target: {depth}. "
+            "Start fresh against the current workspace state, strip back marbles "
+            "excess, reject competing axes, and choose one runtime truth."
+        )
+    else:
+        instruction = (
+            f"Marbles loop: L{index}/{count}. Depth target: {depth}. "
+            "Start fresh against the current workspace state, find what is still wrong, "
+            "over-correct deliberately, and report the next truth."
+        )
+    return f"{prompt}\n\n{instruction}"
 
 
 def _research_synthesis_prompt(
@@ -536,16 +553,67 @@ def _lane_meta_path(agent: str) -> Path:
     )[2]
 
 
+def _research_quorum(total: int) -> int:
+    """Survivors needed for a research swarm to still count as a success.
+
+    Majority of the configured lanes (``floor(N/2) + 1``): 2-of-3, 3-of-5.
+    A 2-lane swarm needs both — there is no majority below the full set.
+    """
+
+    if total <= 0:
+        return 0
+    return total // 2 + 1
+
+
+def _research_survivors(results: Sequence[ChildResult]) -> list[ChildResult]:
+    return [r for r in results if r.exit_code == 0 and r.artifact_ok]
+
+
+def _research_run_status(
+    results: Sequence[ChildResult],
+    synthesis: ChildResult | None,
+    *,
+    kind: str,
+) -> str:
+    """Three-way outcome for a supervised swarm run.
+
+    Research degrades gracefully: a majority of surviving lanes plus a valid
+    synthesis is ``partial_success`` (a green run, not a failure) instead of
+    collapsing the whole swarm to ``failed`` on a single dead lane. Non-research
+    kinds (marbles/polarize) keep the strict all-or-nothing contract.
+    """
+
+    total = len(results)
+    if total == 0:
+        return "failed"
+    survivors = _research_survivors(results)
+    all_ok = len(survivors) == total
+    if kind != "research":
+        return "completed" if all_ok else "failed"
+    synthesis_ok = (
+        synthesis is not None and synthesis.exit_code == 0 and synthesis.artifact_ok
+    )
+    if not synthesis_ok:
+        return "failed"
+    if all_ok:
+        return "completed"
+    if len(survivors) >= _research_quorum(total):
+        return "partial_success"
+    return "failed"
+
+
 async def _wait_for_research_lanes(
     agents: Sequence[str],
     *,
     timeout_seconds: float = 86400,
     interval_seconds: float = 5,
 ) -> list[ChildResult]:
+    quorum = _research_quorum(len(agents))
     deadline = asyncio.get_running_loop().time() + timeout_seconds
     while True:
         results: list[ChildResult] = []
         pending: list[str] = []
+        failed = 0
         for agent in agents:
             result = _child_result_from_meta(
                 f"research-{agent}", _lane_meta_path(agent)
@@ -554,11 +622,26 @@ async def _wait_for_research_lanes(
                 pending.append(agent)
             elif result.agent:
                 results.append(result)
-                if result.exit_code != 0:
-                    return results
-        if not pending and len(results) == len(agents):
+                if result.exit_code != 0 or not result.artifact_ok:
+                    failed += 1
+        # Stop waiting only when the majority can no longer be reached, even if
+        # every still-pending lane were to succeed. A single dead lane no longer
+        # short-circuits the survivors — we keep waiting so synthesis can run on
+        # the quorum (the orchestration-robustness fix).
+        if failed > len(agents) - quorum:
+            return results
+        if not pending:
             return results
         if asyncio.get_running_loop().time() >= deadline:
+            if len(results) - failed >= quorum:
+                print(
+                    "research lanes timed out; proceeding with quorum "
+                    f"{len(results) - failed}/{len(agents)} (pending: "
+                    f"{', '.join(pending)})",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return results
             missing = ", ".join(pending)
             raise TimeoutError(f"timed out waiting for research lanes: {missing}")
         print(f"waiting for research lanes: {', '.join(pending)}", flush=True)
@@ -599,11 +682,10 @@ def _failed_synthesis_result(last: ChildResult, reason: str) -> ChildResult:
 async def _run_research_synthesis(
     root: str, prompt: str, results: Sequence[ChildResult]
 ) -> ChildResult | None:
-    if not results or not all(
-        result.exit_code == 0 and result.artifact_ok for result in results
-    ):
+    survivors = _research_survivors(results)
+    if not survivors or len(survivors) < _research_quorum(len(results)):
         return None
-    last = max(results, key=lambda item: item.completed_at or "")
+    last = max(survivors, key=lambda item: item.completed_at or "")
     if not last.agent_session_id:
         return _failed_synthesis_result(last, "missing_agent_session_id_for_resume")
     return await _run_child(
@@ -613,7 +695,7 @@ async def _run_research_synthesis(
         root=root,
         prompt=prompt,
         command=_resume_stdin_command(last.agent, last.agent_session_id),
-        prompt_body=_research_synthesis_prompt(root, prompt, results),
+        prompt_body=_research_synthesis_prompt(root, prompt, survivors),
     )
 
 
@@ -626,15 +708,12 @@ def _write_parent_report(
     synthesis: ChildResult | None = None,
     research_selection: ResearchAgentSelection | None = None,
 ) -> None:
-    all_results = [*results]
-    if synthesis is not None:
-        all_results.append(synthesis)
-    ok = all(result.exit_code == 0 and result.artifact_ok for result in all_results)
+    status = _research_run_status(results, synthesis, kind=kind)
     report = _parent_report_path()
     report.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "---",
-        f"status: {'completed' if ok else 'failed'}",
+        f"status: {status}",
         f"skill: vc-{kind}",
         f"run_id: {_parent_run_id()}",
         f"root: {root}",
@@ -706,7 +785,7 @@ def _write_parent_report(
         {
             "run_id": _parent_run_id(),
             "skill": kind,
-            "status": "completed" if ok else "failed",
+            "status": status,
             "report": str(report),
             "research_agent_source": research_selection.source
             if research_selection is not None
@@ -792,10 +871,8 @@ async def run_research(root: str, prompt: str) -> int:
     )
     return (
         0
-        if all(result.exit_code == 0 and result.artifact_ok for result in results)
-        and synthesis is not None
-        and synthesis.exit_code == 0
-        and synthesis.artifact_ok
+        if _research_run_status(results, synthesis, kind="research")
+        in {"completed", "partial_success"}
         else 1
     )
 
@@ -850,27 +927,27 @@ async def run_research_synthesis(root: str, prompt: str) -> int:
     )
     return (
         0
-        if all(result.exit_code == 0 and result.artifact_ok for result in results)
-        and synthesis is not None
-        and synthesis.exit_code == 0
-        and synthesis.artifact_ok
+        if _research_run_status(results, synthesis, kind="research")
+        in {"completed", "partial_success"}
         else 1
     )
 
 
 async def run_marbles(
-    root: str, agent: str, prompt: str, count: int, depth: int
+    root: str,
+    agent: str,
+    prompt: str,
+    count: int,
+    depth: int,
+    workflow: str = "marbles",
 ) -> int:
+    kind = _safe_label(workflow) or "marbles"
     results: list[ChildResult] = []
     for index in range(1, max(count, 1) + 1):
-        loop_prompt = (
-            f"{prompt}\n\nMarbles loop: L{index}/{count}. Depth target: {depth}. "
-            "Start fresh against the current workspace state, find what is still wrong, "
-            "over-correct deliberately, and report the next truth."
-        )
+        loop_prompt = _loop_prompt(kind, prompt, index, count, depth)
         result = await _run_child(
-            kind="marbles",
-            label=f"marbles-L{index}",
+            kind=kind,
+            label=f"{kind}-L{index}",
             agent=agent,
             root=root,
             prompt=loop_prompt,
@@ -878,7 +955,7 @@ async def run_marbles(
         results.append(result)
         if result.exit_code != 0 or not result.artifact_ok:
             break
-    _write_parent_report("marbles", root, prompt, results)
+    _write_parent_report(kind, root, prompt, results)
     return (
         0
         if len(results) == count
@@ -906,6 +983,7 @@ def _parser() -> argparse.ArgumentParser:
     research_synthesis.add_argument("--prompt", default="")
     research_synthesis.add_argument("--prompt-file", default="")
     marbles = sub.add_parser("marbles")
+    marbles.add_argument("--workflow", default="marbles")
     marbles.add_argument("--agent", default="codex")
     marbles.add_argument("--root", required=True)
     marbles.add_argument("--prompt", default="")
@@ -928,7 +1006,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return asyncio.run(run_research_synthesis(ns.root, prompt))
     if ns.command == "marbles":
         prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
-        return asyncio.run(run_marbles(ns.root, ns.agent, prompt, ns.count, ns.depth))
+        return asyncio.run(
+            run_marbles(ns.root, ns.agent, prompt, ns.count, ns.depth, ns.workflow)
+        )
     return 2
 
 

@@ -507,7 +507,7 @@ def _launch_transport_command(
     if spec.runtime not in {"terminal", "visible"}:
         return dispatch_command, "headless", None
 
-    vc_frame = shutil.which("vc-frame")
+    vc_frame = shutil.which("vc-frame") or ""
     if not vc_frame:
         return dispatch_command, "headless", None
 
@@ -621,7 +621,7 @@ def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) 
        caller (``_launch_transport_command``) honestly degrades to headless —
        the correct fallback when there is nothing live to host a tab.
     """
-    vc_frame = shutil.which("vc-frame")
+    vc_frame = shutil.which("vc-frame") or ""
 
     def _live(name: str) -> bool:
         return (
@@ -734,6 +734,7 @@ def await_launch_truth(
     *,
     timeout_seconds: float = 300,
     interval_seconds: float = 5,
+    hard_cap_seconds: float | None = None,
     require_report: bool = True,
     require_transcript_output: bool = False,
 ) -> dict[str, Any]:
@@ -741,7 +742,10 @@ def await_launch_truth(
 
     This is intentionally separate from :func:`launch_workflow` so callers can
     keep launch acceptance asynchronous while dispatch engines can later prove
-    terminal run truth for returned run ids.
+    terminal run truth for returned run ids. ``timeout_seconds`` is forwarded as
+    :func:`await_run`'s liveness-aware idle deadline (resets on real activity);
+    ``hard_cap_seconds`` is the optional absolute ceiling for a live-but-wedged
+    worker.
     """
     launch_payload: dict[str, Any]
     if isinstance(launch, dict):
@@ -757,6 +761,7 @@ def await_launch_truth(
         run_id,
         timeout_seconds=timeout_seconds,
         interval_seconds=interval_seconds,
+        hard_cap_seconds=hard_cap_seconds,
     )
     run = dict(awaited.get("run") or {})
     report_path = str(launch_payload.get("report") or run.get("latest_report") or "")
@@ -856,6 +861,20 @@ def _coerce_positive_int(value: Any, default: int | None = None) -> int | None:
     except ValueError:
         return default
     return result if result > 0 else default
+
+
+def _workflow_metadata(skill: str) -> dict[str, Any]:
+    definition = workflow_registry.workflow_definition(skill)
+    if definition is None:
+        return {}
+    return {
+        "id": definition.id,
+        "phase": definition.cadence,
+        "can_modify_code": definition.can_modify_code,
+        "runtime_kind": definition.runtime_kind,
+        "tooling": list(definition.tooling),
+        "lifecycle_order": definition.lifecycle_order,
+    }
 
 
 def normalize_launch_spec(
@@ -990,6 +1009,8 @@ def build_launch_command(
             "-m",
             "vibecrafted_core.workflow_runtime",
             "marbles",
+            "--workflow",
+            spec.skill,
             "--agent",
             spec.agent if spec.agent != "swarm" else "codex",
             "--root",
@@ -1118,6 +1139,7 @@ def launch_workflow(
             "report": str(report_path),
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
+            "workflow": _workflow_metadata(spec.skill),
             "worker_command": worker_command,
             "dispatch_command": dispatch_command,
             "command": command,
@@ -1133,6 +1155,7 @@ def launch_workflow(
                     "ts": stamp,
                     "run_id": run_id,
                     "spec": safe_spec,
+                    "workflow": _workflow_metadata(spec.skill),
                     "worker_command": worker_command,
                     "dispatch_command": dispatch_command,
                     "command": command,
@@ -1165,6 +1188,27 @@ def launch_workflow(
                     }
                 )
                 + "\n"
+            )
+            # The "launch accepted" event above already recorded state="created".
+            # Without a terminal event here, the run is stranded as "created"
+            # forever — sync_state() shows a phantom active run that never
+            # progressed. Record the failure so reconciliation marks it failed.
+            append_event(
+                kind="launch",
+                run_id=run_id,
+                message=f"dispatcher spawn failed: {type(exc).__name__}: {exc}",
+                payload={
+                    "state": "failed",
+                    "agent": spec.agent,
+                    "skill": spec.skill,
+                    "mode": spec.mode,
+                    "runtime": spec.runtime,
+                    "root": spec.root,
+                    "operator_session": operator_session,
+                    "session_id": session_id,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "retry_of": retry_of,
+                },
             )
             return {
                 "accepted": False,
@@ -1203,6 +1247,7 @@ def launch_workflow(
                 "report": str(report_path),
                 "transcript": str(artifacts["transcript"]),
                 "meta": str(artifacts["meta"]),
+                "workflow": _workflow_metadata(spec.skill),
                 "worker_command": worker_command,
                 "dispatch_command": dispatch_command,
                 "command": command,
@@ -1243,6 +1288,7 @@ def launch_workflow(
             "session_id": session_id,
             "operator_session": operator_session,
         },
+        "workflow": _workflow_metadata(spec.skill),
         "retry_of": retry_of,
         "launch_log": str(launch_log),
         "spec": safe_spec,

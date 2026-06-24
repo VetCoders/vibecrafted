@@ -121,6 +121,12 @@ Living Tree etiquette (NON-NEGOTIABLE):
 - Re-read every file in `Files to modify` IMMEDIATELY before editing it.
   Another agent in a sibling wave or this wave's prior step may have
   pushed between your dispatch start and your first edit.
+- Before handing off, capture a pre-handoff baseline: branch, HEAD SHA,
+  `git status --short`, changed files, gates run, known failures, unverified
+  surfaces, current intent, scope fence, and exact next instruction/report path.
+- If you are receiving from another worker, compare that baseline with the live
+  tree before editing. Drift is handled by re-reading and adapting, not by
+  pretending the old prompt is still the whole truth.
 - For files marked APPEND-ONLY, never delete or rename existing exports.
   Append new signals / methods at the end of the export block.
 - For shared CSS files, add new rules in a dedicated section with a
@@ -200,6 +206,8 @@ Report sections:
 - Gate results (paste the final relevant output lines of each gate command)
 - Files changed (paste `git diff --stat HEAD~1` when a commit was made)
 - Acceptance verification (paste the Section 5 checkbox state, flipped)
+- Pre-handoff baseline (branch, HEAD, `git status --short`, changed files,
+  verification result, known failures, unverified surfaces, next instruction)
 ```
 
 Call to Action: {{CALL_TO_ACTION}}

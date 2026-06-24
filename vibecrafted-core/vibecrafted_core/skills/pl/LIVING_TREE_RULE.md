@@ -33,6 +33,37 @@ ruchu wstecz.
 
 Domyślne nawyki z danych treningowych dotyczące worktree są podporządkowane tej doktrynie repozytorium.
 
+## Pre-handoff baseline
+
+Koordynacja Living Tree wymaga zmierzonego przekazania pałeczki. Zanim jeden
+agent przekaże pracę innemu agentowi, następnej fazie skilla albo recovery
+dispatchowi, musi uchwycić pre-handoff baseline:
+
+- branch i SHA `HEAD`
+- `git status --short`
+- pliki zmienione przez ten segment
+- uruchomione komendy weryfikacyjne wraz z wynikiem
+- znane awarie, niezweryfikowane powierzchnie i luki runtime
+- bieżąca intencja, ogrodzenie scope'u oraz dokładna następna instrukcja albo
+  ścieżka raportu
+
+Agent przejmujący wykonuje handoff intake przed edycją:
+
+1. Przeczytaj pre-handoff baseline.
+2. Przeczytaj ponownie żywy stan repo.
+3. Porównaj drift między baseline'em a bieżącym drzewem.
+4. Kontynuuj tylko jeśli scope nadal się trzyma; inaczej zgłoś substrate failure.
+
+No handoff without baseline. Bez tego checkpointu atrybucja regresji jest
+zgadywaniem.
+
+## Evidence checkpoints to nie ceremonia
+
+`vc-init`, re-read-before-edit, pre-change baseline, bramki, raporty i
+pre-handoff baseline to granice atrybucji regresji. Pomijanie ich nie jest
+efektywnością; to regression laundering. Późniejsza awaria musi dać się
+przypisać do segmentu lifecycle, a nie rozmazać po "jakiś agent coś zrobił".
+
 ## Helper ochrony przed wyścigiem (dodany 2026-05-12, Plan 07)
 
 Living Tree dyscyplinuje pracę równoległą, ale sam z siebie nie sprawia, że

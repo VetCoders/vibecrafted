@@ -31,6 +31,7 @@ LAUNCHERS = (
     "marbles",
     "ownership",
     "partner",
+    "paste",
     "polarize",
     "prune",
     "release",
@@ -61,6 +62,13 @@ TERMINAL_STATES = {
 def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
     run = sub.add_parser(name, help=f"launch vc-{name} through core runtime")
     run.add_argument("agent", nargs="?")
+    if name == "paste":
+        run.add_argument("--skill", default="workflow")
+        run.add_argument("--root", default="")
+        run.add_argument("--print-prompt", action="store_true")
+        run.add_argument("--dry-run", action="store_true")
+        run.add_argument("--json", action="store_true")
+        return
     run.add_argument("--prompt", default="")
     run.add_argument("--file", default="")
     run.add_argument("--runtime", default="")
@@ -488,7 +496,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"vibecrafted {__version__}")
         return 0
 
-    python_commands = {"dispatch", "doctor", "stop"} | set(LAUNCHERS)
+    python_commands = {"dispatch", "doctor", "paste", "stop"} | set(LAUNCHERS)
     agent_python_verbs = {"observe", "await", "stop"}
     is_lifecycle = False
     if raw_args:
@@ -551,6 +559,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{summary['failures']} failures"
             )
         return 0 if summary["failures"] == 0 else 1
+    if args.command == "paste":
+        from .paste import run_namespace
+
+        return run_namespace(args, source_dir=package_root())
 
     source_dir = args.source_dir or package_root()
     payload = {

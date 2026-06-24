@@ -33,7 +33,10 @@ def test_compact_help_uses_release_engine_contract(tmp_path: Path) -> None:
     assert "release engine for AI-developed software" in output
     assert "Commands:" in output
     assert "Ship cycle:" in output
-    assert "workflow → implement → marbles → review → dou → release" in output
+    assert (
+        "scaffold → implement → review → workflow → followup → marbles → "
+        "audit → polarize → dou → hydrate → release"
+    ) in output
     assert "14 more skills: vibecrafted help --all" in output
     assert 'vibecrafted implement codex -p "Ship dark mode"' in output
     assert "justdo" not in output

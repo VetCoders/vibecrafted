@@ -8,7 +8,14 @@ Vibecrafted has three related surfaces that must stay separate:
   prompts, runtime assets, and workflow-specific runner material.
 - `vibecrafted_core.workflows.registry` is the Python index over executable
   workflow truth. It gives launch code a stable way to ask for input policy,
-  default agent, runtime kind, lifecycle order, and read/write cadence.
+  default agent, runtime kind, lifecycle order, read/write cadence, and umbrella
+  lifecycle manifests such as `vc-ship`.
+- `vibecrafted_core.lifecycle_runner` is the umbrella runtime. It reads the
+  registry manifest, loads Context Atlas, launches each stage through
+  `vibecrafted_core.workflow`, records state, and writes a lifecycle report.
+- `vibecrafted_core.lifecycle_runner.LifecycleSupervisor` is the async MVP
+  facade for server/app observability. It starts the same runner, reads state,
+  and projects a compact status view; it is not a second lifecycle owner.
 
 `vibecrafted_core.workflow` remains a compatibility launcher facade. It should
 not become the place where workflow semantics accumulate.
@@ -31,6 +38,17 @@ The registry models the current read/write cadence:
 | `hydrate`   | write   | preflight product surface work      |
 | `release`   | write   | outward shipping work               |
 
-This is the runtime-side substrate for a future `vc-ship`/operator lifecycle:
-distinct workflow nodes, distinct agent runs, and an async supervisor that can
-move the baton forward or backward based on observed truth.
+This is the runtime-side substrate for `vc-ship`: distinct workflow nodes,
+distinct agent runs, and an async supervisor that can move the baton forward or
+backward based on observed truth. `vc-marbles` has an explicit `audit_after`
+edge to `audit`; READ stages carry `can_modify_code=false`, WRITE stages carry
+`can_modify_code=true`. Manifest payloads also expose `allowed_artifacts`,
+`transition_conditions`, and `human_controls` so READ/WRITE behavior and human
+intervention are explicit machine-readable contract, not prose-only doctrine.
+
+Each lifecycle stage also exposes explicit transition conditions and allowed
+artifact classes. READ stages allow reports, cache, transcripts, and run state;
+WRITE stages additionally allow code, docs, and generated files. Manifest-level
+`human_controls` model the operator actions the workflow understands: approving
+transitions, interrupting runs, forcing audits, accepting DoU findings, and
+choosing fallback stages.

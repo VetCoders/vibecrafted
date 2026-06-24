@@ -37,6 +37,36 @@ team into rebase drift, duplicate conflict repair, or backwards motion.
 Training-data defaults about worktrees are subordinate to this repository
 doctrine.
 
+## Pre-handoff baseline
+
+Living Tree coordination needs a measured baton pass. Before one agent hands
+work to another agent, another skill phase, or a recovery dispatch, it must
+capture a pre-handoff baseline:
+
+- branch and `HEAD` SHA
+- `git status --short`
+- files changed by the segment
+- verification commands run, with result
+- known failures, unverified surfaces, and runtime gaps
+- current intent, scope fence, and the exact next instruction/report path
+
+The receiving agent performs handoff intake before editing:
+
+1. Read the pre-handoff baseline.
+2. Re-read the live repo state.
+3. Compare drift between the baseline and current tree.
+4. Proceed only if the scope still holds; otherwise report substrate failure.
+
+No handoff without baseline. Without this checkpoint, regression attribution is
+guesswork.
+
+## Evidence checkpoints are not ceremony
+
+`vc-init`, re-read-before-edit, pre-change baseline, gates, reports, and
+pre-handoff baseline are regression attribution boundaries. Skipping them is not
+efficiency; it is regression laundering. A later failure must be attributable to
+a lifecycle segment, not smeared across "some agent did something".
+
 ## Race-protection helper (added 2026-05-12, Plan 07)
 
 Living Tree disciplines parallel work but does not by itself make

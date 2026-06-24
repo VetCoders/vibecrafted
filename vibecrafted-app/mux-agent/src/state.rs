@@ -44,6 +44,14 @@ pub enum StatusLevel {
 
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Upper bound on messages buffered for a single client whose handshake is not
+/// yet complete. A client that finishes `initialize` but withholds
+/// `notifications/initialized` stays pre-handshake; without this cap every
+/// id-bearing request it streams is pushed unbounded into `buffered_messages`
+/// (each up to `max_request_bytes`), so a single local socket can grow the heap
+/// to multi-GB inside the `HANDSHAKE_TIMEOUT` window. Mirrors `MAX_PENDING`.
+pub const MAX_BUFFERED_HANDSHAKE_MESSAGES: usize = 64;
+
 // `DaemonStatus` (wire status payload) lives in `runtime/status.rs`. An older
 // twin struct sat here under the same name with a different schema
 // (`Vec<StatusSnapshot>` vs the canonical `Vec<MultiServerStatus>`) and
@@ -243,10 +251,19 @@ impl MuxState {
             })
     }
 
-    pub fn buffer_message(&mut self, client_id: u64, msg: Value) {
-        if let Some(handshake) = self.client_handshakes.get_mut(&client_id) {
-            handshake.buffered_messages.push(msg);
+    /// Buffer a pre-handshake message. Returns `false` (dropping `msg`) once the
+    /// per-client buffer is at `MAX_BUFFERED_HANDSHAKE_MESSAGES`, so the caller
+    /// can reject instead of letting a stalled handshake grow memory without
+    /// bound. An untracked client returns `true` (prior silent-drop behavior).
+    pub fn buffer_message(&mut self, client_id: u64, msg: Value) -> bool {
+        let Some(handshake) = self.client_handshakes.get_mut(&client_id) else {
+            return true;
+        };
+        if handshake.buffered_messages.len() >= MAX_BUFFERED_HANDSHAKE_MESSAGES {
+            return false;
         }
+        handshake.buffered_messages.push(msg);
+        true
     }
 
     pub fn get_handshake_mut(&mut self, client_id: u64) -> Option<&mut ClientHandshake> {

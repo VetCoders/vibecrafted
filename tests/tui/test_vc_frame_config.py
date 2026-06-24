@@ -35,7 +35,8 @@ def test_vc_frame_config_has_vibecrafted_theme() -> None:
     payload = VC_FRAME_CONFIG.read_text(encoding="utf-8")
 
     assert "vibecrafted {" in payload
-    assert 'theme "vibecrafted"' in payload
+    assert 'theme "pastel"' in payload
+    assert '"vibecrafted" for the amber/gold brand palette' in payload
     # Brand accent colors present
     assert "amber gold" in payload.lower() or "214 175 54" in payload
 

@@ -14,7 +14,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::state::{
-    HANDSHAKE_TIMEOUT, MuxState, Pending, StatusSnapshot, error_response, publish_status, set_id,
+    HANDSHAKE_TIMEOUT, MAX_BUFFERED_HANDSHAKE_MESSAGES, MuxState, Pending, StatusSnapshot,
+    error_response, publish_status, set_id,
 };
 
 use super::types::MAX_PENDING;
@@ -306,7 +307,18 @@ pub async fn handle_client_message(
             method
         );
         let mut st = state.lock().await;
-        st.buffer_message(client_id, msg);
+        if !st.buffer_message(client_id, msg) {
+            warn!(
+                "client {client_id} exceeded pre-handshake buffer cap ({MAX_BUFFERED_HANDSHAKE_MESSAGES} msgs), rejecting {method}"
+            );
+            if let Some(tx) = st.clients.get(&client_id) {
+                tx.send(error_response(
+                    local_id.clone(),
+                    "mux overloaded (handshake buffer full)",
+                ))
+                .ok();
+            }
+        }
         return Ok(());
     }
 

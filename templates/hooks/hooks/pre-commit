@@ -94,9 +94,11 @@ if husky_strict_failed; then
 fi
 
 signature="$(husky_warns_archive "$HUSKY_HOOK_NAME" "$LOG_FILE")"
-# shellcheck disable=SC2012
-if husky_warns_signature_pending "$HUSKY_HOOK_NAME" "$signature" \
-   && [ "$(ls -1 "$(husky_warns_dir)"/"${HUSKY_HOOK_NAME}"-*.log 2>/dev/null | wc -l | tr -d ' ')" -gt 1 ]; then
+# Escalate only when THIS signature appears in more than one archived log,
+# i.e. the same failure has been seen before. The current failure was just
+# archived (so it always contributes 1) — a count > 1 means a genuine repeat.
+# Counting all *.log files instead would escalate on any unrelated warning.
+if [ "$(grep -l "^signature=${signature}$" "$(husky_warns_dir)"/"${HUSKY_HOOK_NAME}"-*.log 2>/dev/null | wc -l | tr -d ' ')" -gt 1 ]; then
   husky_err "Same failure signature already seen — escalating back to strict."
   husky_err "Signature: $signature"
   husky_err "Inspect: ls -1t .husky/warns/${HUSKY_HOOK_NAME}-*.log | head -2"

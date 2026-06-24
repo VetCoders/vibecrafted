@@ -229,9 +229,15 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
     manifest = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
 
     install_all_block = makefile.split("install-all:", 1)[1].split("\nskills:", 1)[0]
+    assert "install-vendored-binaries" in install_all_block
     assert "install-app-binaries" in install_all_block
     assert "install-server" in install_all_block
 
+    assert (
+        "VENDORED_FOUNDATION_BINARIES := vc-frame loctree-mcp loct aicx aicx-mcp"
+        in makefile
+    )
+    assert "bin/vendor/$(HOST_VENDOR_PLATFORM)" in makefile
     assert "APP_BINARIES := voc vc-admin" in makefile
     assert "SERVER_PACKAGE := vibecrafted-server-web" in makefile
     assert "SERVER_BIN  := vc-server" in makefile
@@ -245,6 +251,7 @@ def test_install_all_covers_app_binaries_as_real_files() -> None:
         app_block
     )
 
+    assert "make --no-print-directory install-vendored-binaries" in manifest
     assert "make --no-print-directory install-app-binaries" in manifest
     assert "make --no-print-directory install-server" in manifest
 
@@ -419,6 +426,11 @@ def test_installer_publishes_async_dispatch_wrapper() -> None:
     assert '"vc-cron"' in launcher_block
     assert '"vc-dispatch"' in launcher_block
     assert '"vc-dashboard"' in launcher_block
+    entrypoint_block = installer.split("PYTHON_ENTRYPOINT_LAUNCHERS = [", 1)[1].split(
+        "\n]", 1
+    )[0]
+    for name in ("vc-audit", "vc-dou", "vc-hydrate", "vc-polarize", "vc-marbles"):
+        assert f'"{name}"' in entrypoint_block
 
 
 def test_installer_paths_do_not_write_shell_rc_without_consent_flag() -> None:

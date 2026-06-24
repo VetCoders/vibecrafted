@@ -466,7 +466,10 @@ def test_vc_help_wrapper_symlink_renders_main_help(tmp_path: Path) -> None:
     assert "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍." in result.stdout
     assert "Commands:" in result.stdout
     assert "Ship cycle:" in result.stdout
-    assert "workflow → implement → marbles → review → dou → release" in result.stdout
+    assert (
+        "scaffold → implement → review → workflow → followup → marbles → "
+        "audit → polarize → dou → hydrate → release"
+    ) in result.stdout
     assert 'vibecrafted implement codex -p "Ship dark mode"' in result.stdout
 
 

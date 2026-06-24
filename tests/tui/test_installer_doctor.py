@@ -26,6 +26,82 @@ def _pin_canonical_runtime_roots(monkeypatch, home: Path, crafted_home: Path) ->
     monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
 
 
+def test_install_foundation_from_bundle_copies_platform_payload(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_root = tmp_path / "bundle"
+    bin_dir = tmp_path / "bin"
+    vendor_dir = repo_root / "bin" / "vendor" / "darwin-arm64"
+    vendor_dir.mkdir(parents=True)
+    monkeypatch.setattr(installer, "detect_vendor_platform", lambda: "darwin-arm64")
+
+    foundations = [
+        f
+        for f in installer.FOUNDATIONS
+        if f.name in installer.VENDORED_FOUNDATION_BINARIES
+    ]
+    assert {f.name for f in foundations} == {
+        "aicx",
+        "aicx-mcp",
+        "loct",
+        "loctree-mcp",
+        "vc-frame",
+    }
+
+    for foundation in foundations:
+        name = installer.VENDORED_FOUNDATION_BINARIES[foundation.name]
+        _write_executable(
+            vendor_dir / name,
+            f"#!/usr/bin/env bash\nprintf '{name} 0.0.0-test\\n'\n",
+        )
+
+    installed = [
+        installer.install_foundation_from_bundle(f, repo_root, bin_dir=bin_dir)
+        for f in foundations
+    ]
+
+    assert {path.name for path in installed if path is not None} == {
+        "aicx",
+        "aicx-mcp",
+        "loct",
+        "loctree-mcp",
+        "vc-frame",
+    }
+    for path in installed:
+        assert path is not None
+        assert path.is_file()
+        assert path.stat().st_mode & 0o111
+        assert subprocess.run([str(path), "--version"], check=False).returncode == 0
+
+
+def test_install_foundation_from_bundle_ignores_platform_mismatch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo_root = tmp_path / "bundle"
+    bin_dir = tmp_path / "bin"
+    linux_dir = repo_root / "bin" / "vendor" / "linux-x64"
+    linux_dir.mkdir(parents=True)
+    _write_executable(
+        linux_dir / "vc-frame",
+        "#!/usr/bin/env bash\nprintf 'wrong platform\\n'\n",
+    )
+    monkeypatch.setattr(installer, "detect_vendor_platform", lambda: "darwin-arm64")
+    monkeypatch.setattr(installer.shutil, "which", lambda _name: None)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    foundation = next(f for f in installer.FOUNDATIONS if f.name == "vc-frame")
+
+    assert (
+        installer.install_foundation_from_bundle(foundation, repo_root, bin_dir=bin_dir)
+        is None
+    )
+    assert not (bin_dir / "vc-frame").exists()
+    assert installer.install_or_find_foundation(foundation, repo_root) == (
+        "",
+        "not-installed",
+    )
+
+
 def test_run_doctor_smokes_helper_and_launcher_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -242,6 +242,7 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("VIBECRAFTED_AGENT", raising=False)
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
     meta = tmp_path / "dispatch.meta.json"
@@ -344,6 +345,7 @@ def test_async_supervisor_salvages_grok_report_from_streaming_json(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("VIBECRAFTED_AGENT", raising=False)
     report = tmp_path / "dispatch-report.md"
     transcript = tmp_path / "dispatch.log"
     meta = tmp_path / "dispatch.meta.json"

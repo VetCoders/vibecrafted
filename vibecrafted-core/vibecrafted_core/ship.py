@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import argparse
-import subprocess
 from pathlib import Path
 from typing import Sequence
 
 from . import loop, ui
+from .lifecycle_runner import LifecycleRunSpec, run_lifecycle
 
 
-SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "opencode"}
+SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
 
-
-def deck_command() -> str:
-    return loop.command_deck()
+DEFAULT_SHIP_PROMPT = (
+    "Run the full Vibecrafted lifecycle for this repository. Load Context Atlas, "
+    "start at the selected lifecycle checkpoint, preserve READ/WRITE phase "
+    "boundaries, and hand off through the manifest runner."
+)
 
 
 def build_ship_prompt(agent: str, checkpoint: str, prompt: str) -> str:
@@ -38,9 +40,13 @@ def build_ship_prompt(agent: str, checkpoint: str, prompt: str) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vc-ship")
     parser.add_argument("agent", nargs="?", default="codex")
-    parser.add_argument("--checkpoint", default="workflow")
+    parser.add_argument("--checkpoint", default="")
     parser.add_argument("-f", "--file", default="")
     parser.add_argument("-p", "--prompt", default="")
+    parser.add_argument("--runtime", default="")
+    parser.add_argument("--root", default="")
+    parser.add_argument("--start-stage", default="")
+    parser.add_argument("--await-stages", action="store_true")
     parser.add_argument("--max-iterations", type=int, default=0)
     parser.add_argument("--loop-only", action="store_true")
     args = parser.parse_args(argv)
@@ -48,50 +54,48 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.agent not in SUPPORTED_AGENTS:
         ui.err(
             f"unknown agent: {args.agent}",
-            fix="use one of: claude · codex · gemini · agy · junie · grok · opencode",
+            fix="use one of: claude · codex · gemini · agy · junie · grok",
         )
         return 1
-    prompt = args.prompt or ""
-    dispatch_args: list[str]
-    if args.file:
-        path = Path(args.file).expanduser()
-        prompt = path.read_text(encoding="utf-8")
-        dispatch_args = [
-            deck_command(),
-            args.checkpoint,
-            args.agent,
-            "--file",
-            str(path),
-        ]
-    elif args.prompt:
-        dispatch_args = [
-            deck_command(),
-            args.checkpoint,
-            args.agent,
-            "--prompt",
-            args.prompt,
-        ]
-    else:
-        ui.err("ship needs a prompt", fix='vibecrafted ship codex -p "<task>"')
-        return 1
-
-    loop_prompt = build_ship_prompt(args.agent, args.checkpoint, prompt)
-    loop_rc = loop.main(
-        [
-            "start",
-            "--prompt",
-            loop_prompt,
-            "--completion-promise",
-            "VC_SHIP_DONE",
-            "--max-iterations",
-            str(args.max_iterations),
-        ]
-    )
-    if loop_rc != 0:
-        return loop_rc
     if args.loop_only:
-        return 0
-    return subprocess.call(dispatch_args)
+        prompt = args.prompt or DEFAULT_SHIP_PROMPT
+        if args.file:
+            prompt = Path(args.file).expanduser().read_text(encoding="utf-8")
+        loop_prompt = build_ship_prompt(
+            args.agent, args.checkpoint or "scaffold", prompt
+        )
+        return loop.main(
+            [
+                "start",
+                "--prompt",
+                loop_prompt,
+                "--completion-promise",
+                "VC_SHIP_DONE",
+                "--max-iterations",
+                str(args.max_iterations),
+            ]
+        )
+
+    state = run_lifecycle(
+        LifecycleRunSpec(
+            workflow_id="vc-ship",
+            agent=args.agent,
+            prompt=args.prompt or DEFAULT_SHIP_PROMPT,
+            file=args.file,
+            root=args.root or str(Path.cwd()),
+            runtime=args.runtime or "headless",
+            await_stages=args.await_stages,
+            start_stage=args.start_stage or args.checkpoint or "scaffold",
+        )
+    )
+    print("==================== VC-SHIP LIFECYCLE RECEIPT ====================")
+    print(f"run_id:     {state.get('run_id')}")
+    print(f"workflow:   {state.get('workflow')}")
+    print(f"status:     {state.get('status')}")
+    print(f"state:      {state.get('state_path')}")
+    print(f"report:     {state.get('report_path')}")
+    print("===================================================================")
+    return 0 if state.get("status") in {"launching", "completed"} else 1
 
 
 if __name__ == "__main__":  # pragma: no cover

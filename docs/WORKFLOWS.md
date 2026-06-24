@@ -13,6 +13,12 @@ contracts in `skills/`.
 - `vibecrafted init <agent>` is the interactive first context handoff.
 - `vibecrafted research --prompt|--file` is the triple-agent swarm launcher.
 - `vibecrafted <skill> <agent>` covers the agent-scoped workflow surfaces.
+- `vc-ship <agent> [--prompt|--file]` starts the lifecycle manifest runner for
+  Scaffold -> Implement -> Review -> Workflow -> Follow-up -> Marbles -> Audit
+  -> Polarize -> DoU -> Hydrate -> Release.
+- `vc-dou`, `vc-audit`, `vc-marbles`, `vc-polarize`, and `vc-hydrate` are
+  lifecycle wrappers over the same manifest runner for one-stage or paired
+  lifecycle passes.
 - `vibecrafted dispatch <file.toml>` is the deterministic supervisor lane for
   dispatch manifests and async lifecycle runs.
 - `vibecrafted gui`, `tui`, and `dashboard` are operator surfaces for a second
@@ -78,6 +84,7 @@ flowchart TD
 | Truth audit vs original plan | `vibecrafted intents <agent>`                            | `review`, `marbles`, `ownership`                                             |
 | Launch-readiness gap finding | `vibecrafted dou <agent>`                                | `hydrate`, `decorate`, `release`                                             |
 | Explicit ship path           | `vibecrafted decorate <agent>` or `hydrate` or `release` | `release`                                                                    |
+| Full lifecycle               | `vc-ship <agent> [--prompt/--file]`                      | Manifest-driven stage baton, optional `--await-stages`                       |
 | Deterministic dispatch       | `vibecrafted dispatch <file.toml>`                       | `doctor`, `dry-run`, `resume`, async lifecycle runs                          |
 
 ## Runtime contract
@@ -88,6 +95,9 @@ flowchart TD
   and `.transcript.log` sidecars for each report basename.
 - `vc-marbles` keeps its ancestor, loop, and watcher outputs under
   `$artifact_root/marbles/`.
+- `vc-ship` writes umbrella lifecycle state and a final lifecycle report under
+  `$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/`; each stage still
+  launches through the same core runtime as `vibecrafted <skill> <agent>`.
 - `make install` and `make wizard` are installer entry points, not skill
   execution paths; they exist to get the command deck and wrappers onto the machine.
 - `vibecrafted implement` is the canonical autonomous delivery command. The

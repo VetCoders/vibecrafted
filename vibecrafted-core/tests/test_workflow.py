@@ -130,9 +130,81 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     assert ".vibecrafted/control_plane/runtime_runs/" in payload["transcript"]
     assert ".vibecrafted/control_plane/runtime_runs/" in payload["meta"]
     assert ".vibecrafted/control_plane/runtime_runs/" in payload["prompt_file"]
+    assert payload["workflow"] == {
+        "id": "workflow",
+        "phase": "write",
+        "can_modify_code": True,
+        "runtime_kind": "direct_agent",
+        "tooling": ["vc-init", "vc-research", "vc-justdo"],
+        "lifecycle_order": 40,
+    }
     assert "go" not in payload["worker_command"]
     log_lines = Path(payload["launch_log"]).read_text(encoding="utf-8").splitlines()
     assert any(json.loads(line).get("event") == "spawned" for line in log_lines)
+
+
+def test_launch_workflow_records_failure_event_when_spawn_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    source = _source_dir(tmp_path)
+    spec = workflow.normalize_launch_spec(
+        {"skill": "workflow", "agent": "claude", "prompt": "go"},
+        source,
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: [sys.executable, "-c", "pass"],
+    )
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("no such dispatcher binary")
+
+    monkeypatch.setattr(workflow.subprocess, "Popen", _boom)
+
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow,
+        "append_event",
+        lambda **kwargs: events.append(kwargs),
+    )
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is False
+    assert "no such dispatcher binary" in payload["error"]
+    # A terminal "failed" event must be recorded — otherwise the earlier
+    # "launch accepted" (state="created") strands the run as a phantom active
+    # run that reconciliation never resolves.
+    states = [event["payload"].get("state") for event in events]
+    assert "failed" in states
+
+
+def test_launch_workflow_reports_read_phase_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    spec = workflow.normalize_launch_spec(
+        {"skill": "dou", "agent": "codex", "prompt": "audit launch readiness"},
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import os; "
+            "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
+        ],
+    )
+
+    payload = workflow.launch_workflow(spec, tmp_path)
+
+    assert payload["workflow"]["phase"] == "read"
+    assert payload["workflow"]["can_modify_code"] is False
+    assert payload["workflow"]["tooling"] == ["vc-init", "vc-intents", "vc-loctree"]
 
 
 def test_launch_workflow_keeps_dispatcher_launch_even_if_worker_command_is_bad(
@@ -170,6 +242,7 @@ def test_build_launch_command_never_delegates_to_legacy_shell_runtime() -> None:
     """
     for skill, agent in (
         ("marbles", "codex"),
+        ("polarize", "codex"),
         ("research", "claude"),
         ("implement", "codex"),
     ):
@@ -896,6 +969,33 @@ def test_marbles_uses_supervised_core_runtime(tmp_path: Path) -> None:
 
     assert command[:3] == [sys.executable, "-m", "vibecrafted_core.workflow_runtime"]
     assert command[3] == "marbles"
+    assert command[command.index("--workflow") + 1] == "marbles"
+    assert "--prompt-file" in command
+    assert command[command.index("--count") + 1] == "2"
+    assert command[command.index("--depth") + 1] == "4"
+
+
+def test_polarize_uses_supervised_marbles_runtime_with_polarize_prompt(
+    tmp_path: Path,
+) -> None:
+    spec = workflow.normalize_launch_spec(
+        {
+            "skill": "polarize",
+            "agent": "codex",
+            "prompt": "cut excess",
+            "root": str(tmp_path),
+            "count": 2,
+            "depth": 4,
+        },
+        tmp_path,
+    )
+
+    command = workflow.build_launch_command(spec, tmp_path)
+
+    assert spec.prompt == "cut excess"
+    assert command[:3] == [sys.executable, "-m", "vibecrafted_core.workflow_runtime"]
+    assert command[3] == "marbles"
+    assert command[command.index("--workflow") + 1] == "polarize"
     assert "--prompt-file" in command
     assert command[command.index("--count") + 1] == "2"
     assert command[command.index("--depth") + 1] == "4"

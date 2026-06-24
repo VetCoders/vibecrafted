@@ -163,9 +163,17 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    data = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    # Atomic write (tmp + os.replace) so a crash mid-write or a concurrent
+    # reader never sees a half-written, unparseable snapshot — _read_json would
+    # silently degrade a truncated file to {} and lose the run's metadata.
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    try:
+        tmp.write_text(data, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def _read_lines(path: Path) -> list[str]:
@@ -1456,20 +1464,78 @@ def resolve_run(run_id: str) -> ResolvedRun:
     raise RunNotResolved(target)
 
 
+def _await_progress_fingerprint(run: dict[str, Any] | None) -> tuple[Any, ...]:
+    """Cheap movement signal for liveness-aware waits.
+
+    Any change between two polls is proof the worker is doing real work:
+    transcript bytes grew (session-file growth), the lifecycle state advanced,
+    a fresh heartbeat landed, or new tokens/commits were recorded. Used by
+    :func:`await_run` to RESET its idle deadline instead of abandoning a run on
+    a blind wall clock while the agent is demonstrably alive.
+    """
+    if not run:
+        return ()
+    return (
+        str(run.get("state") or ""),
+        str(run.get("liveness") or ""),
+        _coerce_int(run.get("transcript_bytes")),
+        str(run.get("heartbeat_at") or run.get("updated_at") or ""),
+        _coerce_int(run.get("tokens_output")),
+        str(run.get("commit") or run.get("commit_sha") or run.get("head_sha") or ""),
+    )
+
+
+def _resolve_await_hard_cap(hard_cap_seconds: float | None) -> float | None:
+    """Optional absolute ceiling for :func:`await_run`.
+
+    Liveness governs by default (``None`` → no wall-clock kill of a live run).
+    A hard cap, when set, is the only thing that stops a worker that stays alive
+    but never finishes; the operator keeps it far above realistic single-marble
+    work. Explicit argument wins; otherwise ``VIBECRAFTED_AWAIT_HARD_CAP_S``.
+    """
+    if hard_cap_seconds is not None:
+        cap = float(hard_cap_seconds)
+        return cap if cap > 0 else None
+    raw = str(os.environ.get("VIBECRAFTED_AWAIT_HARD_CAP_S") or "").strip()
+    if not raw:
+        return None
+    try:
+        cap = float(raw)
+    except ValueError:
+        return None
+    return cap if cap > 0 else None
+
+
 def await_run(
     run_id: str,
     *,
     timeout_seconds: float = 300,
     interval_seconds: float = 5,
+    hard_cap_seconds: float | None = None,
 ) -> dict[str, Any]:
-    """Bounded wait for a run using metadata/control-plane state only."""
+    """Liveness-aware bounded wait for a run using control-plane state only.
+
+    ``timeout_seconds`` is an IDLE deadline, not a blind wall clock: it RESETS
+    whenever the run shows movement (transcript growth, state/heartbeat/token
+    advance) or the worker process is demonstrably alive (``_worker_is_alive``).
+    A run is only abandoned (``timed_out``) on a genuine stall — the idle window
+    elapsing with zero movement AND no live worker — or, when configured, the
+    optional ``hard_cap_seconds`` absolute ceiling. This stops the orchestrator
+    from killing a marbles loop that is still doing real work (~13 min single
+    marble) just because a fixed wall-clock budget expired.
+    """
     target = str(run_id or "").strip()
     if not target:
         raise ValueError("run_id is required")
 
-    timeout_seconds = max(float(timeout_seconds), 0.0)
+    idle_window = max(float(timeout_seconds), 0.0)
     interval_seconds = max(float(interval_seconds), 0.1)
-    deadline = time.monotonic() + timeout_seconds
+    hard_cap = _resolve_await_hard_cap(hard_cap_seconds)
+
+    start = time.monotonic()
+    idle_deadline = start + idle_window
+    hard_deadline = start + hard_cap if hard_cap is not None else None
+    previous_fingerprint: tuple[Any, ...] | None = None
     attempts = 0
     last_run: dict[str, Any] | None = None
 
@@ -1483,20 +1549,51 @@ def await_run(
                 "found": True,
                 "completed": True,
                 "timed_out": False,
+                "reason": "terminal",
+                "worker_alive": _worker_is_alive(last_run),
                 "attempts": attempts,
                 "run": last_run,
             }
+
         now = time.monotonic()
-        if now >= deadline:
+        worker_alive = _worker_is_alive(last_run) if last_run else False
+        fingerprint = _await_progress_fingerprint(last_run)
+        moved = fingerprint != previous_fingerprint
+        previous_fingerprint = fingerprint
+        # Real activity or a live worker keeps the idle window open: never
+        # abandon a run that is demonstrably making progress or alive.
+        if moved or worker_alive:
+            idle_deadline = now + idle_window
+
+        if hard_deadline is not None and now >= hard_deadline:
             return {
                 "run_id": target,
                 "found": last_run is not None,
                 "completed": False,
                 "timed_out": True,
+                "reason": "hard_cap",
+                "worker_alive": worker_alive,
                 "attempts": attempts,
                 "run": last_run,
             }
-        time.sleep(min(interval_seconds, max(deadline - now, 0.0)))
+        if now >= idle_deadline and not worker_alive:
+            return {
+                "run_id": target,
+                "found": last_run is not None,
+                "completed": False,
+                "timed_out": True,
+                "reason": "idle_stall",
+                "worker_alive": worker_alive,
+                "attempts": attempts,
+                "run": last_run,
+            }
+
+        sleep_for = interval_seconds
+        if hard_deadline is not None:
+            sleep_for = min(sleep_for, max(hard_deadline - now, 0.0))
+        if not worker_alive:
+            sleep_for = min(sleep_for, max(idle_deadline - now, 0.0))
+        time.sleep(max(sleep_for, 0.0))
 
 
 def cli(argv: list[str] | None = None) -> int:

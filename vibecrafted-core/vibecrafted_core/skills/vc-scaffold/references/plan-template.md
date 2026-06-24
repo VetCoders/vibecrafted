@@ -85,6 +85,7 @@ Each task is agent-ready. Agents execute in parallel when dependencies allow. Ea
 **Owner:** [Agent skill or human role]
 **Delivery-verifier:** [the non-fakeable test that flips [~]→[x]; without it the task ships as [?]]
 **Acceptance:** [intent vs baseline — what proves delivery ≈ claim, not just "agent said so"]
+**Pre-handoff baseline:** [branch + HEAD + git status + changed files + gates/known failures + exact next instruction]
 
 Example:
 ```
@@ -96,6 +97,7 @@ Depends on: Infrastructure up, database schema
 Owner: Core backend agent
 Delivery-verifier: `pnpm test auth` green — rejects invalid tokens, passes valid; flips [~]→[x]
 Acceptance: intent (auth enforced on all routes) vs baseline (routes open); delivery proven by the verifier, not "agent said so"
+Pre-handoff baseline: branch, HEAD, git status, changed files, verifier output, known failures, next instruction
 
 ```
 
@@ -130,7 +132,8 @@ Document the reasoning. Future engineers will thank you.
 2. For each task, spin up an agent or assign to a human
 3. Each task produces artifacts (code, tests, docs)
 4. Validate against acceptance criteria
-5. When all phase 1 tasks pass gates, move to phase 2
+5. Capture the pre-handoff baseline before assigning the next owner
+6. When all phase 1 tasks pass gates, move to phase 2
 
 No handwaving. Clear work. Clear criteria. That's how founders ship.
 ```

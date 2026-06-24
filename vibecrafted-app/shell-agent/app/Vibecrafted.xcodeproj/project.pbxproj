@@ -15,6 +15,7 @@
 		A60320E009ED2630B2CD138A /* SidebarViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018846F7BFF32DDA55BEB6B3 /* SidebarViewController.swift */; };
 		AD8EDDBFCA0E035A3127FE9D /* vibecrafted_shell_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 670FB28076F3623946392EE2 /* vibecrafted_shell_ffi.swift */; };
 		AED4BA44792B0934E269B0C9 /* InspectorViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DC7FC1EB764722753755233 /* InspectorViewController.swift */; };
+		BB181341D18DE41C4E187A2A /* icon1.icns in Resources */ = {isa = PBXBuildFile; fileRef = F84596CE1BE813FDE741DAE8 /* icon1.icns */; };
 		D3552D0D169AC41B576D5826 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD135782CD6D34B7A4639DF0 /* AppDelegate.swift */; };
 		F1F6DE9CF09A4B0E5BBAF04C /* CanvasViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB08FBAC6D3A32EA7AA68548 /* CanvasViewController.swift */; };
 		FA200B41B03563783AE94B11 /* libvibecrafted_shell_ffi.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 66F000337318E7E1E774D5AD /* libvibecrafted_shell_ffi.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -47,6 +48,7 @@
 		AD9D34C38918A44FDA163417 /* MainWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainWindowController.swift; sourceTree = "<group>"; };
 		B6F03047FF22E0433924BDD7 /* MissionControlViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MissionControlViewController.swift; sourceTree = "<group>"; };
 		CB08FBAC6D3A32EA7AA68548 /* CanvasViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasViewController.swift; sourceTree = "<group>"; };
+		F84596CE1BE813FDE741DAE8 /* icon1.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = icon1.icns; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -66,6 +68,7 @@
 			children = (
 				0AE9F2A66C4AB43ADF27641A /* .gitkeep */,
 				AD135782CD6D34B7A4639DF0 /* AppDelegate.swift */,
+				F84596CE1BE813FDE741DAE8 /* icon1.icns */,
 				9DC22CD11479B2C9FC62F7A0 /* main.swift */,
 				A2D426BFC3DA1DF414A5E096 /* Bridge */,
 				9FFF832B23463AAAFCA9150D /* Views */,
@@ -128,6 +131,7 @@
 			buildPhases = (
 				80F542BE7AAC1F9A358F5919 /* Build Rust FFI */,
 				3FAD01166F3AB65C7E6A005F /* Sources */,
+				5C09F58E39B5124D10F145E3 /* Resources */,
 				015CE8C17BD0DD3E250BC1B0 /* Frameworks */,
 				B5CE407F90D607E9182E30A6 /* Embed Frameworks */,
 				B1AC2505E58398D692EF0A46 /* Build Rust binaries */,
@@ -175,6 +179,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5C09F58E39B5124D10F145E3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BB181341D18DE41C4E187A2A /* icon1.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		80F542BE7AAC1F9A358F5919 /* Build Rust FFI */ = {

@@ -2,6 +2,16 @@
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-recall.sh",
+            "timeout": 90
+          }
+        ]
+      },
+      {
         "hooks": [
           {
             "type": "command",
@@ -16,7 +26,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh",
+            "timeout": 90
           }
         ]
       },
@@ -25,7 +36,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-precompact.sh",
+            "timeout": 90
           }
         ]
       }
@@ -36,7 +48,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh",
+            "timeout": 90
           }
         ]
       },
@@ -45,7 +58,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh"
+            "command": "bash ${VIBECRAFTED_ROOT:-$HOME/.local/share/vibecrafted/tools/vibecrafted-current}/runtime/scripts/vibecrafted-postcompact.sh",
+            "timeout": 90
           }
         ]
       }

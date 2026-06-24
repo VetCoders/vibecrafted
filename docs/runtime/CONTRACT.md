@@ -140,6 +140,13 @@ needs it:
 - Plans may explicitly instruct the agent to finish and harden one seam, spawn
   another `vc-agents` worker for the next plan, commit locally for
   preservation, and continue.
+- Before any handoff to another agent, phase, or recovery dispatch, capture a
+  pre-handoff baseline: branch, `HEAD`, `git status --short`, changed files,
+  gates run, known failures, unverified surfaces, current intent, scope fence,
+  and exact next instruction/report path. The receiving agent must compare that
+  baseline with the live tree before editing.
+- Evidence checkpoints are not ceremony. They are regression attribution
+  boundaries; skipping them launders failures into "some agent did something".
 
 ---
 
@@ -216,6 +223,9 @@ Living tree note:
 - Coordination mode: <solo on this stage / parallel with other agents on this stage>
 - You do not need to inspect other agents' plans unless this plan explicitly tells you to.
 - Commit is an obligation, not a checkpoint option: ONE commit per round (marbles — one round = one commit), well-formed per the commit-msg hook, on the current branch. Do NOT leave delivered work uncommitted. Do NOT push — push is the operator's button. When the mission spans multiple rounds/units, multi-commit per dispatch is expected.
+- Pre-handoff baseline is mandatory before handing this plan to another agent:
+  branch, HEAD, git status, changed files, verification result, known failures,
+  unverified surfaces, and exact next instruction/report path.
 ```
 
 ---

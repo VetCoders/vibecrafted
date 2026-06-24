@@ -177,6 +177,47 @@ If verification cannot be run:
 
 ---
 
+## Evidence Checkpoints Are Not Ceremony
+
+Procedures that capture state are attribution infrastructure. Do not treat
+`vc-init`, pre-change baselines, verification gates, reports, or handoff notes
+as decorative process.
+
+Every handoff across agents or workflow phases must preserve enough evidence to
+answer:
+
+- what was the repo state before ownership changed?
+- what changed during this ownership segment?
+- what was verified, and what was not?
+- what should the next agent re-read before acting?
+
+Skipping a checkpoint is not efficiency. It is regression laundering: once the
+baseline is gone, a later failure can no longer be attributed to a lifecycle
+segment.
+
+---
+
+## Pre-Handoff Baseline
+
+Before handing work to another agent, capture a pre-handoff baseline:
+
+- branch and `HEAD` SHA
+- `git status --short`
+- files changed by this segment
+- tests, lint, or runtime checks run, with result
+- known failures and unverified surfaces
+- current intent and scope boundary
+- exact next instruction or report path for the receiving agent
+
+The receiving agent performs handoff intake before editing: re-read the
+baseline, re-read the live repo state, compare drift, then proceed or report
+substrate failure.
+
+No handoff without baseline. If there is no pre-handoff baseline, regression
+attribution is guesswork.
+
+---
+
 ## Do Not Create Parallel Systems Casually
 
 Before introducing:
@@ -363,6 +404,46 @@ Human taste sets direction.
 Agentic force expands the search space.
 
 Reality decides what survives.
+
+---
+
+## Native Discovery Before Delivery Language
+
+The operator's fastest discovery language is the language in which the thought
+arrives. For this team, Polish is often the shortest path from intuition to
+shape. Do not force premature English polish while the idea is still forming.
+
+The preferred pipeline is:
+
+```text
+native-language thought -> thesis -> evidence obligations -> delivery prompt/spec
+```
+
+Only translate into English delivery text once the shape and proof obligations
+are clear. Product intuition is not less professional because it arrived in
+Polish; it is discovery signal.
+
+## Operator Echo Packets
+
+The default conversation is the chat. Do not invent a permanent second channel.
+When the operator explicitly sends `!echo '<text>'`, however, treat the echoed
+text as operator input, not as shell-log noise.
+
+For Codex, an echo packet is the reliable realtime operator transport. If it
+appears, Codex can trust that the operator deliberately sent that packet now,
+even when the packet quotes or comments on earlier chat. Other Codex
+interactive channels can arrive late, be replayed after compaction, or be
+surfaced only when the agent returns from await/observe; they do not carry the
+same realtime certainty.
+
+Do not generalize this guarantee across the fleet. For Claude, Gemini, Agy,
+Junie, Grok, or any other agent runtime, treat echo realtime certainty as
+unproven unless that runtime's harness has been verified to preserve the same
+delivery semantics.
+
+Still read the content. An echo can be a command, correction, quote, delayed
+commentary on an earlier chat message, or confirmation. But the transport itself
+is not random send time: `echo` is the low-latency operator lane.
 
 ---
 

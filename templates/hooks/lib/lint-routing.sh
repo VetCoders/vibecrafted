@@ -190,7 +190,8 @@ husky_lint_rustfmt_staged() {
     return 0
   fi
   printf '%s\n' "$files" | while IFS= read -r f; do
-    [ -n "$f" ] && rustfmt --edition 2024 "$f" || rustfmt "$f" || return 1
+    [ -z "$f" ] && continue
+    rustfmt --edition 2024 "$f" || rustfmt "$f" || return 1
   done
   printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 git add
 }
@@ -236,10 +237,10 @@ husky_lint_py_ruff_staged() {
   else husky_warn "ruff/uvx not installed — skipping."; return 0
   fi
   # shellcheck disable=SC2086  # $ruff intentionally splits "uvx ruff"
-  printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 $ruffcheck --fix \
+  printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 $ruff check --fix \
     || { husky_err "ruff check failed."; return 1; }
   # shellcheck disable=SC2086  # $ruff intentionally splits "uvx ruff"
-  printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 $ruffformat \
+  printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 $ruff format \
     || { husky_err "ruff format failed."; return 1; }
   printf '%s\n' "$files" | tr '\n' '\0' | xargs -0 git add
 }
@@ -257,7 +258,8 @@ husky_lint_sh_shellcheck_staged() {
     return 0
   fi
   printf '%s\n' "$files" | while IFS= read -r f; do
-    [ -n "$f" ] && shellcheck "$f" || return 1
+    [ -z "$f" ] && continue
+    shellcheck "$f" || return 1
   done
 }
 

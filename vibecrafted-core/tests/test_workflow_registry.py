@@ -19,6 +19,7 @@ def test_registry_classifies_workflow_runtime_kinds() -> None:
     assert registry.workflow_runtime_kind("prune") == "direct_agent"
     assert registry.workflow_runtime_kind("research") == "supervised_research"
     assert registry.workflow_runtime_kind("marbles") == "supervised_marbles"
+    assert registry.workflow_runtime_kind("polarize") == "supervised_marbles"
     assert registry.workflow_definition("research").terminal_layout == "research"
 
 
@@ -26,6 +27,7 @@ def test_registry_models_input_policy() -> None:
     implement = registry.workflow_definition("implement")
     prune = registry.workflow_definition("prune")
     marbles = registry.workflow_definition("marbles")
+    polarize = registry.workflow_definition("polarize")
 
     assert implement is not None
     assert implement.requires_input is True
@@ -35,6 +37,10 @@ def test_registry_models_input_policy() -> None:
     assert marbles.requires_input is False
     assert marbles.supports_count is True
     assert marbles.supports_depth is True
+    assert polarize is not None
+    assert polarize.requires_input is False
+    assert polarize.supports_count is True
+    assert polarize.supports_depth is True
 
 
 def test_registry_models_read_write_lifecycle() -> None:
@@ -55,6 +61,101 @@ def test_registry_models_read_write_lifecycle() -> None:
         "vc-research",
         "vc-justdo",
     )
+
+
+def test_vc_ship_manifest_is_single_source_for_lifecycle_order() -> None:
+    manifest = registry.workflow_manifest("vc-ship")
+
+    assert manifest is not None
+    assert manifest.first_stage.id == "scaffold"
+    assert "approve_transition" in manifest.human_controls
+    assert "force_audit" in manifest.human_controls
+    assert [stage.id for stage in manifest.stages] == [
+        "scaffold",
+        "implement",
+        "review",
+        "workflow",
+        "followup",
+        "marbles",
+        "audit",
+        "polarize",
+        "dou",
+        "hydrate",
+        "release",
+    ]
+    assert [stage.phase for stage in manifest.stages] == [
+        "read",
+        "write",
+        "read",
+        "write",
+        "read",
+        "write",
+        "read",
+        "write",
+        "read",
+        "write",
+        "write",
+    ]
+    assert manifest.stage("marbles").audit_after == "audit"
+    assert (
+        "audit_after_completed_stage" in manifest.stage("marbles").transition_conditions
+    )
+    assert manifest.stage("dou").can_modify_code is False
+    assert manifest.stage("dou").allowed_artifacts == (
+        "reports",
+        "cache",
+        "run_state",
+        "transcripts",
+    )
+    assert manifest.stage("hydrate").can_modify_code is True
+    assert "code" in manifest.stage("hydrate").allowed_artifacts
+
+
+def test_manifest_payload_is_json_ready() -> None:
+    payload = registry.workflow_manifest_payload("vc-marbles")
+
+    assert payload["id"] == "vc-marbles"
+    assert payload["entry_stage"] == "marbles"
+    stages = payload["stages"]
+    assert payload["human_controls"] == ["interrupt_workflow", "force_audit"]
+    assert stages[0]["workflow"] == "marbles"
+    assert stages[0]["audit_after"] == "audit"
+    assert stages[0]["transition_conditions"] == [
+        "launch_accepted",
+        "stage_completed",
+        "changed_files_reported",
+        "next_stage_on_success",
+        "audit_after_completed_stage",
+    ]
+    assert stages[0]["allowed_artifacts"] == [
+        "code",
+        "docs",
+        "generated_files",
+        "reports",
+        "cache",
+        "run_state",
+        "transcripts",
+    ]
+    assert stages[1]["phase"] == "read"
+    assert "no_code_mutation" in stages[1]["transition_conditions"]
+
+
+def test_required_lifecycle_manifests_are_single_source() -> None:
+    expected = {
+        "vc-ship": ("scaffold", "read"),
+        "vc-dou": ("dou", "read"),
+        "vc-audit": ("audit", "read"),
+        "vc-marbles": ("marbles", "write"),
+        "vc-polarize": ("polarize", "write"),
+        "vc-hydrate": ("hydrate", "write"),
+    }
+
+    for workflow_id, (entry_stage, phase) in expected.items():
+        payload = registry.workflow_manifest_payload(workflow_id)
+        stages = payload["stages"]
+        assert payload["entry_stage"] == entry_stage
+        assert stages[0]["id"] == entry_stage
+        assert stages[0]["phase"] == phase
 
 
 def test_prune_default_prompt_is_runtime_workflow_asset() -> None:
