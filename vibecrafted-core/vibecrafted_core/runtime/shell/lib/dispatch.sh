@@ -226,13 +226,13 @@ _vetcoders_skill_dispatch() {
 
 vc-agents() { _vetcoders_skill_dispatch agents "$@"; }
 vc-audit() { _vetcoders_skill_dispatch audit "$@"; }
-vc-decorate() { _vetcoders_skill_dispatch decorate "$@"; }
-vc-delegate() { _vetcoders_skill_dispatch delegate "$@"; }
+vc-decorate() { command vibecrafted decorate "$@"; }
+vc-delegate() { command vibecrafted delegate "$@"; }
 vc-dou() { _vetcoders_skill_dispatch dou "$@"; }
 vc-followup() { _vetcoders_skill_dispatch followup "$@"; }
 vc-hydrate() { _vetcoders_skill_dispatch hydrate "$@"; }
 vc-init() { _vetcoders_skill_dispatch init "$@"; }
-vc-intents() { _vetcoders_skill_dispatch intents "$@"; }
+vc-intents() { command vibecrafted intents "$@"; }
 vc-justdo() { _vetcoders_skill_dispatch justdo "$@"; }
 vc-implement() { _vetcoders_skill_dispatch justdo "$@"; }
 vc-loop() { _vetcoders_loop "$@"; }
@@ -240,14 +240,14 @@ vc-cron() { command vibecrafted cron "$@"; }
 vc-ship() { command vibecrafted ship "$@"; }
 vc-marbles() { _vetcoders_skill_dispatch marbles "$@"; }
 vc-operator() { _vetcoders_skill_dispatch operator "$@"; }
-vc-ownership() { _vetcoders_skill_dispatch ownership "$@"; }
-vc-partner() { _vetcoders_skill_dispatch partner "$@"; }
+vc-ownership() { command vibecrafted ownership "$@"; }
+vc-partner() { command vibecrafted partner "$@"; }
 vc-polarize() { _vetcoders_skill_dispatch polarize "$@"; }
 vc-prune() { _vetcoders_skill_dispatch prune "$@"; }
-vc-release() { _vetcoders_skill_dispatch release "$@"; }
+vc-release() { command vibecrafted release "$@"; }
 vc-review() { _vetcoders_skill_dispatch review "$@"; }
 vc-scaffold() { _vetcoders_skill_dispatch scaffold "$@"; }
-vc-workflow() { _vetcoders_skill_dispatch workflow "$@"; }
+vc-workflow() { command vibecrafted workflow "$@"; }
 
 vc-help() {
   local crafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"

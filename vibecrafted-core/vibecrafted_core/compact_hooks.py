@@ -12,6 +12,8 @@ from typing import Any, Sequence
 
 from .runtime_paths import vibecrafted_home
 
+AICX_EXTRACT_TIMEOUT_SECONDS = 90.0
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -32,11 +34,14 @@ def hook_agent() -> str:
 
 
 def aicx_extract_timeout_seconds() -> float:
-    raw = os.environ.get("VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS", "300")
+    raw = os.environ.get(
+        "VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS",
+        str(AICX_EXTRACT_TIMEOUT_SECONDS),
+    )
     try:
         timeout = float(raw)
     except ValueError:
-        timeout = 300.0
+        timeout = AICX_EXTRACT_TIMEOUT_SECONDS
     return max(timeout, 0.1)
 
 

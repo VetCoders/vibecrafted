@@ -122,7 +122,7 @@ def test_aicx_extract_timeout_is_bounded(monkeypatch) -> None:
 def test_aicx_extract_default_timeout_allows_precompact_work(monkeypatch) -> None:
     monkeypatch.delenv("VIBECRAFTED_AICX_EXTRACT_TIMEOUT_SECONDS", raising=False)
 
-    assert compact_hooks.aicx_extract_timeout_seconds() == 300.0
+    assert compact_hooks.aicx_extract_timeout_seconds() == 90.0
 
 
 def test_postcompact_noop_is_schema_safe_json(capsys) -> None:

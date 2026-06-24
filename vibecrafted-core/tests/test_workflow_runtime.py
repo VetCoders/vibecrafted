@@ -293,6 +293,81 @@ def test_research_synthesis_closes_when_lane_failed(
     assert "artifact_errors: worker_failed" in report
 
 
+def test_research_synthesis_degrades_to_partial_success_on_quorum(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # Emil's first swarm: Codex + Grok dowiozły, Gemini padł. Większość (2/3)
+    # ⇒ synteza z ocalałych i status partial_success, nie zawalenie całego runu.
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-partial")
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["grok", "codex", "gemini"]\n',
+        encoding="utf-8",
+    )
+    child_dir = home / "rsch-partial-children"
+    child_dir.mkdir(parents=True)
+
+    for agent, completed_at in (
+        ("grok", "2026-06-23T10:00:00+00:00"),
+        ("codex", "2026-06-23T10:01:00+00:00"),
+    ):
+        report = child_dir / f"research-{agent}.md"
+        transcript = child_dir / f"research-{agent}.transcript.log"
+        report.write_text("---\nstatus: completed\n---\n", encoding="utf-8")
+        transcript.write_text("done\n", encoding="utf-8")
+        (child_dir / f"research-{agent}.meta.json").write_text(
+            json.dumps(
+                {
+                    "run_id": f"rsch-partial-research-{agent}",
+                    "agent": agent,
+                    "agent_session_id": f"{agent}-session",
+                    "agent_model": f"{agent}-model",
+                    "report": str(report),
+                    "transcript": str(transcript),
+                    "exit_code": 0,
+                    "artifact_errors": [],
+                    "resume_command": f"cd {tmp_path} && {agent} resume {agent}-session",
+                    "completed_at": completed_at,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    failed_report = child_dir / "research-gemini.md"
+    failed_report.write_text("---\nstatus: failed\n---\n", encoding="utf-8")
+    (child_dir / "research-gemini.transcript.log").write_text(
+        "boom\n", encoding="utf-8"
+    )
+    (child_dir / "research-gemini.meta.json").write_text(
+        json.dumps(
+            {
+                "run_id": "rsch-partial-research-gemini",
+                "agent": "gemini",
+                "report": str(failed_report),
+                "transcript": str(child_dir / "research-gemini.transcript.log"),
+                "exit_code": 1,
+                "artifact_errors": ["worker_failed"],
+                "completed_at": "2026-06-23T10:02:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    rc = workflow_runtime.main(
+        ["research-synthesis", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 0
+    report = (home / "parent.md").read_text(encoding="utf-8")
+    assert "status: partial_success" in report
+    # synteza odpaliła z ostatniego ocalałego (codex), gemini odnotowany jako fail
+    assert "research-synthesis (codex)" in report
+    assert "research-gemini" in report
+    assert "artifact_errors: worker_failed" in report
+    assert (child_dir / "research-synthesis.md").is_file()
+
+
 def test_research_runtime_tees_child_output(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
