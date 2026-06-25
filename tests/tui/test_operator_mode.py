@@ -58,11 +58,19 @@ def _write_stateful_vc_frame(
                 "    session = args[-1]",
                 'with capture.open("a", encoding="utf-8") as fh:',
                 '    fh.write("VC_FRAME " + " ".join(args) + "\\n")',
-                'if args[:1] == ["ls"] or args[:1] == ["list-sessions"]:',
+                'if args[:1] == ["ls"]:',
                 '    if state == "live":',
                 '        print(f"{session} [Created 1m ago]")',
                 '    elif state == "dead":',
                 '        print(f"{session} [Created 1m ago] (EXITED - attach to resurrect)")',
+                "    sys.exit(0)",
+                # list-sessions feeds spawn_session_is_live (awk drops EXITED), so it
+                # only needs to report a LIVE session. Emitting an EXITED line here
+                # regresses the dead-session recreate tests, which rely on the
+                # ls-based recovery path; keep list-sessions live-only.
+                'if args[:1] == ["list-sessions"]:',
+                '    if state == "live":',
+                '        print(f"{session} [Created 1m ago]")',
                 "    sys.exit(0)",
                 'if args[:1] == ["attach"]:',
                 '    if "--force-run-commands" in args:',
