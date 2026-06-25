@@ -242,7 +242,7 @@ def test_spawn_launch_headless_detaches_into_new_session(tmp_path: Path) -> None
             "-c",
             (
                 "spawn_die(){ echo die >&2; exit 1; }; "
-                f'source <(sed -n "/^spawn_launch_headless()/,/^}}/p" "{launcher_sh}"); '
+                f'eval "$(sed -n "/^spawn_launch_headless()/,/^}}/p" "{launcher_sh}")"; '
                 f'spawn_launch_headless "{launcher}" >/dev/null; '
                 "python3 -c 'import os; print(os.getsid(0))'"
             ),
