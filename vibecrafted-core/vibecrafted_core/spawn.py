@@ -38,11 +38,18 @@ TOKEN_PATTERN = re.compile(
 # per-event `tokens: N in / N out` lines, which only some provider
 # formatters render and which would otherwise sum partial streaming usage.
 FOOTER_TOKEN_PATTERNS = {
-    "input": re.compile(r"^tokens_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE),
+    # Anchor on the INDENTED run-closure footer (`  tokens_input: N`, written
+    # under `run_closure:`), not a column-0 line. The launcher frontmatter seed
+    # writes an unindented `tokens_input: 0`; matching it short-circuited token
+    # extraction to always-zero. Requiring leading whitespace targets the real
+    # footer and lets the inline `tokens:` parse run when no footer is present.
+    "input": re.compile(r"^\s+tokens_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE),
     "cached_input": re.compile(
-        r"^tokens_cached_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
+        r"^\s+tokens_cached_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
     ),
-    "output": re.compile(r"^tokens_output:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE),
+    "output": re.compile(
+        r"^\s+tokens_output:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
+    ),
 }
 COST_PATTERNS = (
     re.compile(r"cost(?:_usd)?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
