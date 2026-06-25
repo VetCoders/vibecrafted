@@ -73,7 +73,7 @@ def test_makefile_vibecrafted_aliases_install_front_door() -> None:
 
 def test_makefile_install_bootstrap_is_single_shell_stanza() -> None:
     text = MAKEFILE.read_text(encoding="utf-8")
-    body = _extract_recipe_body(text, "install")
+    body = _extract_recipe_body(text, "tui-installer")
 
     assert "fi; \\" in body, (
         "install recipe must continue the shell past the `fi` so the "
@@ -94,7 +94,7 @@ def test_makefile_install_bootstrap_is_single_shell_stanza() -> None:
 
 def test_makefile_install_auto_bootstrap_is_single_shell_stanza() -> None:
     text = MAKEFILE.read_text(encoding="utf-8")
-    body = _extract_recipe_body(text, "install-auto")
+    body = _extract_recipe_body(text, "install-all")
 
     assert "fi; \\" in body, (
         "install-auto recipe must continue the shell past the `fi` so the "
@@ -186,7 +186,7 @@ def test_makefile_vibecrafted_dry_run_keeps_path_before_uv_run(
     proving the recipe survives the no-uv bootstrap path.
     """
     env = _build_no_uv_env(tmp_path, fake_uv=False)
-    out = _make_dry_run("vibecrafted", env)
+    out = _make_dry_run("tui-installer", env)
 
     # `make -n` emits the recipe text with continuations collapsed via
     # trailing `\`. Find the recipe block and confirm PATH export and
@@ -211,7 +211,7 @@ def test_makefile_install_dry_run_keeps_path_before_uv_run(
     tmp_path: Path,
 ) -> None:
     env = _build_no_uv_env(tmp_path, fake_uv=False)
-    out = _make_dry_run("install", env)
+    out = _make_dry_run("tui-installer", env)
 
     assert "export PATH=" in out, out
     assert "uv run --project" in out, out

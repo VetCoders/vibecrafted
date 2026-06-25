@@ -63,7 +63,9 @@ def test_dashboard_layouts_resolve_helpers_from_home_store_first() -> None:
     )
     expected_repo_root = "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}"
 
-    for layout_name in ("dashboard.kdl", "marbles.kdl", "operator.kdl"):
+    # operator.kdl is the stock strider layout (file browser + shell); it carries
+    # no mission-control helper panes, so it has no home-store resolution payload.
+    for layout_name in ("dashboard.kdl", "marbles.kdl"):
         payload = (
             REPO_ROOT / "config" / "vc-frame" / "layouts" / layout_name
         ).read_text(encoding="utf-8")

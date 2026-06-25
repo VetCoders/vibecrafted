@@ -174,7 +174,9 @@ def test_install_launcher_leaves_shell_rc_untouched_without_consent(
     vetcoders_install._install_launcher(repo_root, dry_run=False)
 
     assert zshrc.read_text(encoding="utf-8") == original
-    assert (home / ".local" / "bin" / "vibecrafted").is_file()
+    canonical = home / ".local" / "bin" / "vibecrafted"
+    assert canonical.is_symlink()
+    assert canonical.readlink() == vetcoders_install._uv_tool_shim()
 
 
 def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
@@ -207,14 +209,16 @@ def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
     assert "$HOME/.local/bin" in zshrc_content
     assert ".vibecrafted/bin" not in zshrc_content
     launcher_bin = home / ".local" / "bin"
-    assert (launcher_bin / "vibecrafted").is_file()
+    canonical = launcher_bin / "vibecrafted"
+    assert canonical.is_symlink()
+    assert canonical.readlink() == vetcoders_install._uv_tool_shim()
     assert not (home / ".vibecrafted" / "bin" / "vibecrafted").exists()
     for wrapper_name in (
         "vc-help",
         "vc-start",
         "vc-dashboard",
-        "vc-intents",
-        "vc-ownership",
+        "vc-init",
+        "vc-dispatch",
         "vc-resume",
         "telemetry",
     ):

@@ -1845,7 +1845,13 @@ def test_resume_subcommand_forwards_session_and_prompt_to_agent(
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert payload == ["resume", "resume-session-123", "Continue the fix"]
+    assert payload == [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "resume",
+        "resume-session-123",
+        "Continue the fix",
+    ]
 
 
 def test_resume_subcommand_wraps_terminal_runtime_in_vc_frame_operator_session(
@@ -1938,7 +1944,13 @@ def test_resume_wrapper_symlink_forwards_session_and_prompt_to_agent(
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert payload == ["resume", "resume-session-456", "Continue from wrapper"]
+    assert payload == [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "resume",
+        "resume-session-456",
+        "Continue from wrapper",
+    ]
 
 
 def test_vc_dashboard_wrapper_dispatches_to_dashboard(tmp_path: Path) -> None:

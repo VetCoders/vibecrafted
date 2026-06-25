@@ -1728,7 +1728,7 @@ def test_vc_resume_can_infer_agent_from_session_meta(tmp_path: Path) -> None:
         '''
     )
 
-    assert "codex resume sess-abc-123 hello" in result.stdout
+    assert "resume sess-abc-123 hello" in result.stdout
 
 
 def test_generated_launcher_marks_meta_failed_before_failure_hook(
@@ -1937,6 +1937,10 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{operator_session}"',
+                "  exit 0",
+                "fi",
                 'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
             ]
         )
@@ -1988,6 +1992,10 @@ def test_spawn_in_operator_session_suppresses_vc_frame_tab_number_output(
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{operator_session}"',
+                "  exit 0",
+                "fi",
                 'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
                 'printf "7\\n"',
             ]
@@ -2040,6 +2048,10 @@ def test_spawn_in_vc_frame_pane_marbles_tab_suppresses_tab_number_output(
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{operator_session}"',
+                "  exit 0",
+                "fi",
                 "{",
                 '  printf -- "--CALL--\\n"',
                 '  printf "%s\\n" "$@"',
@@ -2119,6 +2131,10 @@ def test_spawn_in_vc_frame_pane_marbles_tab_can_keep_agent_panes_for_forensics(
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{operator_session}"',
+                "  exit 0",
+                "fi",
                 "{",
                 '  printf -- "--CALL--\\n"',
                 '  printf "%s\\n" "$@"',
@@ -2502,6 +2518,10 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{operator_session}"',
+                "  exit 0",
+                "fi",
                 "{",
                 '  printf -- "--CALL--\\n"',
                 '  printf "%s\\n" "$@"',
@@ -2574,6 +2594,10 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{operator_session}"',
+                "  exit 0",
+                "fi",
                 "{",
                 '  printf -- "--CALL--\\n"',
                 '  printf "%s\\n" "$@"',

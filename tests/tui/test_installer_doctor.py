@@ -512,15 +512,13 @@ def test_cmd_doctor_fix_launchers_repairs_missing_wrappers(
     exit_code = installer.cmd_doctor(Namespace(fix_rc=False, fix_launchers=True))
 
     assert exit_code == 0
-    assert (launcher_bin / "vc-intents").is_symlink()
-    assert (launcher_bin / "vc-ownership").is_symlink()
-    assert not (crafted_home / "bin" / "vc-intents").exists()
-    assert not (crafted_home / "bin" / "vc-ownership").exists()
+    assert (launcher_bin / "vc-init").is_symlink()
+    assert (launcher_bin / "vc-start").is_symlink()
+    assert not (crafted_home / "bin" / "vc-init").exists()
+    assert not (crafted_home / "bin" / "vc-start").exists()
 
     refreshed_state = installer.InstallState.load(current_link / "skills")
-    assert any(
-        entry.endswith("/vc-intents") for entry in refreshed_state.launcher_entries
-    )
+    assert any(entry.endswith("/vc-init") for entry in refreshed_state.launcher_entries)
     findings = installer.run_doctor(store_path, refreshed_state)
     indexed = {finding.component: finding for finding in findings}
     assert indexed["launcher-wrappers"].level == "ok"

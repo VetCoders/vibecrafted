@@ -58,7 +58,7 @@ def _write_stateful_vc_frame(
                 "    session = args[-1]",
                 'with capture.open("a", encoding="utf-8") as fh:',
                 '    fh.write("VC_FRAME " + " ".join(args) + "\\n")',
-                'if args[:1] == ["ls"]:',
+                'if args[:1] == ["ls"] or args[:1] == ["list-sessions"]:',
                 '    if state == "live":',
                 '        print(f"{session} [Created 1m ago]")',
                 '    elif state == "dead":',

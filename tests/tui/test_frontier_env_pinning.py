@@ -104,7 +104,12 @@ def test_sourcing_helper_respects_existing_user_config(
 
     user_starship = str(tmp_path / "user-starship.toml")
     user_atuin = str(tmp_path / "user-atuin.toml")
-    user_vc_frame = str(tmp_path / "user-vc-frame")
+    # The user's pinned VC_FRAME_CONFIG_DIR must resolve to a real config.kdl;
+    # vetcoders.sh only self-heals a stale/dangling pin, never a live one.
+    user_vc_frame_dir = tmp_path / "user-vc-frame"
+    user_vc_frame_dir.mkdir()
+    (user_vc_frame_dir / "config.kdl").write_text("// user\n", encoding="utf-8")
+    user_vc_frame = str(user_vc_frame_dir)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
