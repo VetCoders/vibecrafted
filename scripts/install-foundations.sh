@@ -136,6 +136,14 @@ LAUNCHER_PREFIX="${VIBECRAFTED_LAUNCHER_BIN:-$HOME/.local/bin}"
 CHECK_ONLY=0
 INSTALL_ALL=0
 AGENTS_REQUIRED=0
+# Product foundations (loctree/aicx/vc-frame) are externally managed: this
+# script deliberately refuses to guess crates/npm/checkout paths and points at
+# the canonical installer instead. Their absence is therefore an ADVISORY, not
+# an install failure — consistent with `make install-vendored-binaries`, which
+# already keeps the "external fallback" path non-fatal when vendored binaries
+# are absent. Set REQUIRE_FOUNDATIONS=1 (e.g. release validation) to make a
+# missing product foundation fail the run instead.
+REQUIRE_FOUNDATIONS="${REQUIRE_FOUNDATIONS:-0}"
 TARGETS=()
 
 # ---------------------------------------------------------------------------
@@ -756,12 +764,23 @@ printf '  ─────────────────────\n'
 printf '  Runtime bin:  %s\n' "$PREFIX"
 printf '  Launcher bin: %s\n\n' "$LAUNCHER_PREFIX"
 
+# Product foundations are externally managed; a missing binary is advisory
+# unless the caller opted into strict validation via REQUIRE_FOUNDATIONS=1.
+foundation_optional_fail() {
+  local name="$1"
+  if [[ "$REQUIRE_FOUNDATIONS" == "1" ]]; then
+    exit_code=1
+  else
+    warn "$name unavailable — deferring to external/canonical install (non-fatal). Set REQUIRE_FOUNDATIONS=1 to enforce."
+  fi
+}
+
 exit_code=0
 for target in "${TARGETS[@]}"; do
   case "$target" in
-    loctree) install_loctree || exit_code=1 ;;
-    aicx)    install_aicx    || exit_code=1 ;;
-    vc-frame) install_vcframe || exit_code=1 ;;
+    loctree)  install_loctree  || foundation_optional_fail loctree ;;
+    aicx)     install_aicx     || foundation_optional_fail aicx ;;
+    vc-frame) install_vcframe  || foundation_optional_fail vc-frame ;;
     agents)
       if ! install_agents; then
         if (( AGENTS_REQUIRED )); then
