@@ -86,5 +86,7 @@ jobs:
           vibecrafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
           test -L "$vibecrafted_home/tools/vibecrafted-current"
           test -f "$vibecrafted_home/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
-          test -f "$HOME/.config/vetcoders/vc-skills.sh"
+          # Runtime contract: the default install lane does not wire legacy shell
+          # helpers (vc-skills.sh) — that is an explicit --with-shell opt-in — so
+          # the bootstrap verify no longer asserts the helper file here.
           echo "Bootstrap OK"

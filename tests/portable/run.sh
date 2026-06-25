@@ -138,9 +138,11 @@ fi
 require_symlink "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current"
 require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/Makefile"
 require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
-# Helper file lives at canonical location; compat symlink also exists
-require_file "$bootstrap_config_dir/vetcoders/vc-skills.sh"
-require_file "$bootstrap_config_dir/zsh/vc-skills.zsh"
+# Runtime contract (test_install_all_paths_do_not_install_shell_helpers_by_default):
+# the default install lane (install.sh -> make install-auto -> make install) installs
+# tools and views but does NOT wire the legacy shell helpers or touch shell rc files.
+# Shell-helper generation is an explicit opt-in, exercised by the `--with-shell`
+# install smoke below, so the bootstrap does not assert vc-skills.sh here.
 
 log "install smoke into clean HOME"
 HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
