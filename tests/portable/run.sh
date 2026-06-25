@@ -149,7 +149,18 @@ HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
   bash "$repo_root/runtime/scripts/install.sh" \
   --source "$repo_root" \
   --tool codex --tool claude --tool gemini \
-  --with-shell
+  --with-shell --write-shell-rc
+
+# Stage the uv-tool launcher shim. The granular installer wires
+# ~/.local/bin/vibecrafted as a symlink onto the uv-tool shim (the live launcher
+# contract — see test_keys), but only `make install-python-tools` actually
+# materializes that shim via `uv tool install`. The bootstrap above runs the
+# full `make install` (which includes it); this clean-HOME smoke uses the
+# granular installer, so create the shim here too — otherwise the launcher
+# symlink dangles and the resume smoke below cannot exec it.
+log "stage python launcher tools (uv-tool shim)"
+HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+  make --no-print-directory -C "$repo_root" install-python-tools
 
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
@@ -157,9 +168,12 @@ require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runti
 require_file "$home_dir/.local/bin/vibecrafted"
 require_symlink "$home_dir/.local/bin/vc-help"
 require_symlink "$home_dir/.local/bin/vc-marbles"
+# Skill-symlink fan-out follows SYMLINK_TARGETS (agents, claude, codex). Gemini
+# is a first-class spawn runtime (gemini_spawn.sh above) but an opt-in skill
+# target (SYMLINK_TARGET_CHOICES), so the default install does not wire
+# .gemini/skills/vc-agents — only codex and claude are asserted here.
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
-require_symlink "$home_dir/.gemini/skills/vc-agents"
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/gemini_spawn.sh"
@@ -237,7 +251,7 @@ cat > "$fake_bin/claude" <<'EOF_CLAUDE'
 set -euo pipefail
 echo '{"type":"system","subtype":"init","session_id":"fake-claude-001"}'
 echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read"},{"type":"text","text":"fake claude stream"}]}}'
-echo '{"type":"result","result":"done"}'
+echo '{"type":"result","result":"Fake Claude final handoff"}'
 EOF_CLAUDE
 
 cat > "$fake_bin/gemini" <<'EOF_GEMINI'
@@ -328,7 +342,11 @@ require_file "$gemini_transcript"
 assert_contains "$codex_report" 'Fake Codex Report'
 assert_matches "$codex_report" 'run_id: plan-[0-9]{6}'
 assert_contains "$codex_report" 'prompt_id: test_'
-assert_contains "$claude_report" 'Claude completed without writing a standalone report file.'
+# claude_spawn.sh now salvages the captured final message into the report when
+# the agent writes no standalone report file (salvage_success_report), instead
+# of the old "completed without writing a standalone report file" placeholder.
+# The fake claude emits that final handoff above, so assert it was salvaged.
+assert_contains "$claude_report" 'Fake Claude final handoff'
 assert_contains "$gemini_report" 'fake gemini'
 assert_matches "$codex_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} \$ ls\]'
 assert_matches "$codex_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] tokens: 100 in / 10 out'
@@ -368,7 +386,12 @@ skill_output="$(
 )"
 skill_report="$(printf '%s\n' "$skill_output" | sed -n 's/^Agent launched\. Report will land at: //p' | tail -n 1)"
 [[ -n "$skill_report" ]] || die "skill helper did not report output path"
-skill_meta="${skill_report%.md}.meta.json"
+# The "Report will land at:" line is a pre-run preview path; the materialized
+# report/meta carry the marbles run-id infix (..._marb-<id>-001_...), so derive
+# the meta by locating the actual file (same glob pattern the spawn smokes above
+# use) rather than from the announced path.
+skill_meta="$(find "$work_repo/.vibecrafted/marbles/reports" -maxdepth 1 -type f -name '*_marbles-ancestor_L1_codex.meta.json' | sort | tail -n 1)"
+[[ -n "$skill_meta" ]] || die "skill helper marbles meta not found"
 require_file "$skill_meta"
 [[ "$(wait_for_meta "$skill_meta")" == "completed" ]] || die "skill helper spawn did not complete"
 jq -e '.skill_code == "marb"' "$skill_meta" >/dev/null || die "skill helper did not wire skill_code"
