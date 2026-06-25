@@ -63,26 +63,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         dispatch = _resume_dispatch(dispatch)
 
     if args.dry_run:
-        result = _dry_run(source, dispatch, run_id=args.resume)
+        dry_result = _dry_run(source, dispatch, run_id=args.resume)
         if args.json:
-            print(json.dumps(result, ensure_ascii=False, indent=2))
+            print(json.dumps(dry_result, ensure_ascii=False, indent=2))
         else:
             print(f"dispatch dry-run: rendered {len(dispatch.cuts)} prompt(s)")
-            print(f"dry_run_dir: {result['artifacts']['dry_run_dir']}")
+            print(f"dry_run_dir: {dry_result['artifacts']['dry_run_dir']}")
         return 0
 
     artifacts_dir = _artifacts_dir(dispatch)
     _copy_validated_source(source, artifacts_dir)
-    result = run_dispatch(dispatch, artifacts_dir=artifacts_dir)
+    dispatch_result = run_dispatch(dispatch, artifacts_dir=artifacts_dir)
     if args.json:
-        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        print(json.dumps(dispatch_result.to_dict(), ensure_ascii=False, indent=2))
     else:
         print(f"dispatch run: {dispatch.meta.name or source.stem}")
-        print(f"tracker: {result.artifacts.get('tracker', '')}")
-        print(f"journal: {result.artifacts.get('journal', '')}")
-        print(f"result: {result.artifacts.get('result', '')}")
-        print(f"dou_index: {result.baton.verified}/{result.baton.total}")
-    return 0 if _result_ok(result) else 1
+        print(f"tracker: {dispatch_result.artifacts.get('tracker', '')}")
+        print(f"journal: {dispatch_result.artifacts.get('journal', '')}")
+        print(f"result: {dispatch_result.artifacts.get('result', '')}")
+        print(
+            f"dou_index: {dispatch_result.baton.verified}/{dispatch_result.baton.total}"
+        )
+    return 0 if _result_ok(dispatch_result) else 1
 
 
 def _print_doctor(report: Any, *, json_output: bool) -> int:

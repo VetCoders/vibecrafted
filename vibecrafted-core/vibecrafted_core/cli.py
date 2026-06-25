@@ -278,6 +278,8 @@ def _print_launch_input_error(*, command: str, agent: str | None, message: str) 
 
 
 def _pid_alive(pid: object) -> bool:
+    if not isinstance(pid, (str, int)):
+        return False
     try:
         os.kill(int(pid), 0)
     except (ProcessLookupError, ValueError, TypeError):

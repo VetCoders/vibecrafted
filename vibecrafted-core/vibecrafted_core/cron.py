@@ -280,13 +280,19 @@ def tick(args: argparse.Namespace) -> int:
             if command_result.get("status") == "refused":
                 ui.warn(f"then-cmd refused — {command_result.get('reason')}")
             else:
-                code = int(command_result.get("exit_code") or 0)
+                exit_code = command_result.get("exit_code")
+                code = (
+                    exit_code
+                    if isinstance(exit_code, int)
+                    else int(str(exit_code or 0))
+                )
                 if code == 0:
                     ui.ok(f"then-cmd ok · {args.then_cmd}")
                 else:
                     ui.err(f"then-cmd exited {code}", log=str(journal))
     if command_result and command_result.get("status") == "ran":
-        return int(command_result.get("exit_code") or 0)
+        exit_code = command_result.get("exit_code")
+        return exit_code if isinstance(exit_code, int) else int(str(exit_code or 0))
     return 0
 
 

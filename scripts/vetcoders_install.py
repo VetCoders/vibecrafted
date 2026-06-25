@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import re
@@ -32,45 +33,26 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 try:
-    from installer_brand import (
-        FOOTER_BRANDING,
-        FRAMEWORK_STAMP,
-        PRODUCT_LINE,
-        TAGLINE,
-        VAPOR_HEADER,
-        separator as brand_separator,
-        version_line as brand_version_line,
-    )
-    from runtime_paths import (
-        read_version_file,
-        vibecrafted_launcher_bin,
-        vibecrafted_runtime_home,
-        vibecrafted_runtime_bin,
-        vibecrafted_tools_home,
-        vibecrafted_home,
-        xdg_config_home,
-    )
-except (
-    ModuleNotFoundError
-):  # pragma: no cover - module import path depends on entrypoint
-    from scripts.installer_brand import (
-        FOOTER_BRANDING,
-        FRAMEWORK_STAMP,
-        PRODUCT_LINE,
-        TAGLINE,
-        VAPOR_HEADER,
-        separator as brand_separator,
-        version_line as brand_version_line,
-    )
-    from scripts.runtime_paths import (
-        read_version_file,
-        vibecrafted_launcher_bin,
-        vibecrafted_runtime_home,
-        vibecrafted_runtime_bin,
-        vibecrafted_tools_home,
-        vibecrafted_home,
-        xdg_config_home,
-    )
+    _installer_brand = importlib.import_module("installer_brand")
+    _runtime_paths = importlib.import_module("runtime_paths")
+except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypoint
+    _installer_brand = importlib.import_module("scripts.installer_brand")
+    _runtime_paths = importlib.import_module("scripts.runtime_paths")
+
+FOOTER_BRANDING = getattr(_installer_brand, "FOOTER_BRANDING")
+FRAMEWORK_STAMP = getattr(_installer_brand, "FRAMEWORK_STAMP")
+PRODUCT_LINE = getattr(_installer_brand, "PRODUCT_LINE")
+TAGLINE = getattr(_installer_brand, "TAGLINE")
+VAPOR_HEADER = getattr(_installer_brand, "VAPOR_HEADER")
+brand_separator = getattr(_installer_brand, "separator")
+brand_version_line = getattr(_installer_brand, "version_line")
+read_version_file = getattr(_runtime_paths, "read_version_file")
+vibecrafted_launcher_bin = getattr(_runtime_paths, "vibecrafted_launcher_bin")
+vibecrafted_runtime_home = getattr(_runtime_paths, "vibecrafted_runtime_home")
+vibecrafted_runtime_bin = getattr(_runtime_paths, "vibecrafted_runtime_bin")
+vibecrafted_tools_home = getattr(_runtime_paths, "vibecrafted_tools_home")
+vibecrafted_home = getattr(_runtime_paths, "vibecrafted_home")
+xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
 
 # ---------------------------------------------------------------------------
 # ANSI helpers

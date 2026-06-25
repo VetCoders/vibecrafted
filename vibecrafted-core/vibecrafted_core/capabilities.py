@@ -233,10 +233,9 @@ def probe_tool(
     """
     checked_at = _now_iso()
     executable = _resolve_executable(name)
-    present = executable is not None
     provenance = _classify_provenance(executable)
 
-    if not present:
+    if executable is None:
         return ToolCapability(
             tool=name,
             present=False,

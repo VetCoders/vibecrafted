@@ -103,7 +103,7 @@ class Manifest:
     persist: bool
     phases: list[Phase]
     path: Path
-    branding: dict[str, str] = field(default_factory=dict)
+    branding: dict[str, Any] = field(default_factory=dict)
     intro_screens: list[str] = field(default_factory=list)
     textual_screens: list[str] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
@@ -816,10 +816,15 @@ def _print_summary(
 
     # Next-step block. We only suggest commands that actually assume the
     # install happened on paths where the install actually happened.
-    next_steps = manifest.branding.get("next_steps", []) if manifest.branding else []
+    raw_next_steps = (
+        manifest.branding.get("next_steps", []) if manifest.branding else []
+    )
+    next_steps: list[dict[str, Any]] = [
+        step for step in raw_next_steps if isinstance(step, dict)
+    ]
 
     installer_cmd = (
-        manifest.branding.get("installer_cmd", "make install")
+        str(manifest.branding.get("installer_cmd", "make install"))
         if manifest.branding
         else "make install"
     )
@@ -1175,11 +1180,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    try:
-        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-        sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(line_buffering=True)
 
     parser = _build_parser()
     args = parser.parse_args()

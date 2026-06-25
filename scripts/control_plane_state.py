@@ -17,14 +17,18 @@ def _sync_overrides() -> None:
     _control_plane.vibecrafted_home = vibecrafted_home
 
 
-def sync_state() -> dict[str, object]:
+def _sync_state() -> dict[str, object]:
     _sync_overrides()
     return _control_plane.sync_state()
 
 
-def cli(argv: list[str] | None = None) -> int:
+def _cli(argv: list[str] | None = None) -> int:
     _sync_overrides()
     return _control_plane.cli(argv)
+
+
+globals()["sync_state"] = _sync_state
+globals()["cli"] = _cli
 
 
 if __name__ == "__main__":  # pragma: no cover - shim CLI entrypoint

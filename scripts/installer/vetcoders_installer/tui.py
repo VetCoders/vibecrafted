@@ -80,9 +80,9 @@ def run_manifest_diagnostics(manifest: Any) -> dict[str, dict[str, dict[str, Any
 def summarize_diagnostics(
     diags: dict[str, dict[str, dict[str, Any]]], manifest: Any
 ) -> tuple[list[str], list[str], dict[str, list[str]]]:
-    found_items = []
-    missing_items = []
-    needs_install = {}
+    found_items: list[str] = []
+    missing_items: list[str] = []
+    needs_install: dict[str, list[str]] = {}
 
     if not manifest or not manifest.diagnostics:
         return found_items, missing_items, needs_install

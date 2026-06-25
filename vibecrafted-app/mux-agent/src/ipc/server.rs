@@ -91,6 +91,8 @@ async fn handle_connection(
     let peer_cred = stream
         .peer_cred()
         .map_err(|e| format!("Failed to get peer credentials: {}", e))?;
+    // SAFETY: `geteuid` reads the effective UID for the current process and
+    // does not dereference pointers or require additional invariants.
     let my_uid = unsafe { libc::geteuid() };
     if peer_cred.uid() != my_uid {
         return Err(format!(

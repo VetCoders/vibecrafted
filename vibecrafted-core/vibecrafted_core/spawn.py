@@ -404,13 +404,14 @@ def write_meta(
     meta = Path(meta_path)
     meta.parent.mkdir(parents=True, exist_ok=True)
 
+    loop_nr_value: str | int
     try:
         loop_nr_value = int(loop_nr)
     except (ValueError, TypeError):
         loop_nr_value = loop_nr
 
     now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
-    payload = {
+    payload: dict[str, Any] = {
         "created_at": now_iso,
         "updated_at": now_iso,
         "status": status,
@@ -648,7 +649,8 @@ def _normalize_markdown_artifact(
     if not text:
         return
     fm, body = _parse_frontmatter(text)
-    fm.update(
+    frontmatter: dict[str, object] = dict(fm)
+    frontmatter.update(
         {
             "run_id": payload.get("run_id", "unknown"),
             "prompt_id": payload.get("prompt_id", "unknown"),
@@ -670,7 +672,7 @@ def _normalize_markdown_artifact(
         }
     )
     marker = str(payload.get("run_id") or "unknown")
-    new_text = _render_frontmatter(fm) + body.rstrip() + "\n"
+    new_text = _render_frontmatter(frontmatter) + body.rstrip() + "\n"
     if f"vibecrafted-artifact-footer:{marker}" not in new_text:
         new_text += _footer(marker, payload)
     _write_text(path, new_text)
@@ -839,7 +841,7 @@ class Supervisor:
         sandbox_policy: str | os.PathLike[str] | None = None,
         sandbox_config: dict[str, Any] | None = None,
     ) -> SpawnHandle:
-        root_path = Path(normalize_run_root(root))
+        root_path = Path(normalize_run_root(os.fspath(root)))
         command_list = (
             list(command) if command is not None else _default_command(agent, prompt)
         )
@@ -869,14 +871,14 @@ class Supervisor:
         if sandbox:
             if not sandbox_supported(agent):
                 raise ValueError(f"agent does not support sandbox dispatch: {agent}")
-            process = _SandboxProcess()
+            sandbox_process = _SandboxProcess()
             handle = SpawnHandle(
                 run_id=effective_run_id,
                 agent=agent,
                 skill=skill,
                 mode=mode,
                 root=root_path,
-                process=process,
+                process=sandbox_process,
                 pgid=None,
                 started_at=_now_iso(),
                 command=command_list,
@@ -888,7 +890,7 @@ class Supervisor:
                 "spawn-started",
                 handle,
                 "supervisor spawned sandbox child",
-                {"pid": process.pid, "pgid": None, "command": command_list},
+                {"pid": sandbox_process.pid, "pgid": None, "command": command_list},
                 on_event,
             )
             thread = threading.Thread(

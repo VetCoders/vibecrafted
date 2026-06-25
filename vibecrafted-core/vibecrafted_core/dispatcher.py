@@ -81,6 +81,7 @@ async def _run(args: argparse.Namespace) -> int:
         tee_output=args.tee_output,
     )
     validation = handle.artifact_validation
+    artifact_errors = list(validation.errors if validation is not None else ())
     summary = {
         "run_id": handle.run_id,
         "state": handle.state.value,
@@ -90,7 +91,7 @@ async def _run(args: argparse.Namespace) -> int:
         "report": str(handle.report_path or ""),
         "transcript": str(handle.transcript_path or ""),
         "artifact_ok": bool(validation.ok if validation is not None else False),
-        "artifact_errors": list(validation.errors if validation is not None else ()),
+        "artifact_errors": artifact_errors,
     }
 
     if args.quiet:
@@ -102,11 +103,12 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"state: {summary['state']}")
         print(f"exit_code: {summary['exit_code']}")
         print(f"artifact_ok: {str(summary['artifact_ok']).lower()}")
-        if summary["artifact_errors"]:
-            print("artifact_errors: " + ",".join(summary["artifact_errors"]))
+        if artifact_errors:
+            print("artifact_errors: " + ",".join(artifact_errors))
 
-    if handle.exit_code not in (0, None):
-        return int(handle.exit_code)
+    exit_code = handle.exit_code
+    if isinstance(exit_code, int) and exit_code != 0:
+        return exit_code
     return 0 if summary["artifact_ok"] else 2
 
 

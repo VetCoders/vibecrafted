@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import re
 import zipfile
@@ -10,9 +11,11 @@ from io import BytesIO
 from pathlib import Path
 
 try:
-    from vetcoders_install import discover_skills
+    _vetcoders_install = importlib.import_module("vetcoders_install")
 except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypoint
-    from scripts.vetcoders_install import discover_skills
+    _vetcoders_install = importlib.import_module("scripts.vetcoders_install")
+
+discover_skills = getattr(_vetcoders_install, "discover_skills")
 
 OUTPUT_FILENAME = "vibecrafted-framework.plugin"
 PLUGIN_NAME = "vibecrafted-framework"

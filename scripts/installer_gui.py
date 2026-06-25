@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import platform
@@ -20,27 +21,27 @@ from typing import Any
 from urllib.parse import urlparse
 
 try:
-    from control_plane_launch import launch_workflow, normalize_launch_spec
-    from control_plane_state import sync_state
-    from installer_brand import PRODUCT_LINE, TAGLINE, VAPOR_HEADER
-    from runtime_paths import (
-        read_version_file,
-        vibecrafted_runtime_bin,
-        vibecrafted_tools_home,
-        vibecrafted_home,
-        xdg_config_home,
-    )
+    _control_plane_launch = importlib.import_module("control_plane_launch")
+    _control_plane_state = importlib.import_module("control_plane_state")
+    _installer_brand = importlib.import_module("installer_brand")
+    _runtime_paths = importlib.import_module("runtime_paths")
 except ModuleNotFoundError:  # pragma: no cover - depends on entrypoint
-    from scripts.control_plane_launch import launch_workflow, normalize_launch_spec
-    from scripts.control_plane_state import sync_state
-    from scripts.installer_brand import PRODUCT_LINE, TAGLINE, VAPOR_HEADER
-    from scripts.runtime_paths import (
-        read_version_file,
-        vibecrafted_runtime_bin,
-        vibecrafted_tools_home,
-        vibecrafted_home,
-        xdg_config_home,
-    )
+    _control_plane_launch = importlib.import_module("scripts.control_plane_launch")
+    _control_plane_state = importlib.import_module("scripts.control_plane_state")
+    _installer_brand = importlib.import_module("scripts.installer_brand")
+    _runtime_paths = importlib.import_module("scripts.runtime_paths")
+
+launch_workflow = getattr(_control_plane_launch, "launch_workflow")
+normalize_launch_spec = getattr(_control_plane_launch, "normalize_launch_spec")
+sync_state = getattr(_control_plane_state, "sync_state")
+PRODUCT_LINE = getattr(_installer_brand, "PRODUCT_LINE")
+TAGLINE = getattr(_installer_brand, "TAGLINE")
+VAPOR_HEADER = getattr(_installer_brand, "VAPOR_HEADER")
+read_version_file = getattr(_runtime_paths, "read_version_file")
+vibecrafted_runtime_bin = getattr(_runtime_paths, "vibecrafted_runtime_bin")
+vibecrafted_tools_home = getattr(_runtime_paths, "vibecrafted_tools_home")
+vibecrafted_home = getattr(_runtime_paths, "vibecrafted_home")
+xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
 
 
 OUTPUT_TAIL_LIMIT = 120
@@ -2688,6 +2689,7 @@ def main(argv: list[str] | None = None) -> int:
     controller = InstallController(args.source, bundle_dir=args.bundle_dir)
     server = InstallerHTTPServer((args.host, args.port), controller)
     host, port = server.server_address[:2]
+    host = host.decode() if isinstance(host, bytes) else str(host)
     url = f"http://{host}:{port}/"
 
     print(f"Vibecrafted control plane ready at {url}")
