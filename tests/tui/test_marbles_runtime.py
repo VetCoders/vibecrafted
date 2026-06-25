@@ -1553,7 +1553,12 @@ def test_marbles_verification_poll_survives_watcher_exit_without_job_noise(
     assert len(state_dirs) == 1
     state_path = state_dirs[0] / "state.json"
 
-    deadline = time.monotonic() + 5
+    # The detached watcher reaches "timed_out" after timeout(1)+poll(1)+grace(1)
+    # ~= 3s of logical work, plus process-scheduling and FS-flush latency. A
+    # tight deadline flakes on contended CI runners (observed: macOS reading
+    # "pending"), so give the slow detached process generous wall-clock room.
+    # Fast machines still exit the loop the moment the status flips.
+    deadline = time.monotonic() + 30
     verification_status = ""
     while time.monotonic() < deadline:
         state = json.loads(state_path.read_text(encoding="utf-8"))
