@@ -5120,10 +5120,16 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     agent_str = " ".join(agent_names) if agent_names else "none"
     missing_fnd = [f for f in FOUNDATIONS if f.required and not f.is_installed()]
 
-    print()
-    print(
-        f"  {green('\u2713')} {bold(f'\U0001d685\U0001d692\U0001d68b\U0001d68e\U0001d68c\U0001d69b\U0001d68a\U0001d68f\U0001d69d\U0001d68e\U0001d68d. {fw_ver_display} installed')}"
+    # NB: keep the unicode escapes OUT of f-string expression parts \u2014 a
+    # backslash inside `{...}` is a SyntaxError on Python < 3.12, and this
+    # project supports >=3.11. Build the pieces first, then interpolate.
+    check_mark = green("\u2713")
+    product_banner = bold(
+        f"\U0001d685\U0001d692\U0001d68b\U0001d68e\U0001d68c\U0001d69b\U0001d68a"
+        f"\U0001d68f\U0001d69d\U0001d68e\U0001d68d. {fw_ver_display} installed"
     )
+    print()
+    print(f"  {check_mark} {product_banner}")
     print()
     print(
         f"    skills {len(selected_skills)} \u00b7 agents {agent_str} \u00b7 store {store_display}"
