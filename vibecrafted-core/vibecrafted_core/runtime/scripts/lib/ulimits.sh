@@ -45,7 +45,12 @@ vc_ulimit_raise_nofile() {
 
   # Never DECREASE an existing numeric soft limit — only raise toward the hard
   # ceiling. This is the invariant that the old fixed-65536 fallback violated.
+  # Guard the numeric comparison on a positive-int target: an explicit but
+  # invalid override (e.g. VC_ULIMIT_NOFILE=not-a-number) must fall through to
+  # the `ulimit` attempt below and warn — not crash `[[ -le ]]` on Linux, where
+  # a numeric soft cap turns the non-numeric compare into a fatal arith error.
   if [[ "$target" != "unlimited" ]] \
+     && vc_ulimit_is_positive_int "$target" \
      && vc_ulimit_is_positive_int "$soft" \
      && [[ "$target" -le "$soft" ]]; then
     return 0
