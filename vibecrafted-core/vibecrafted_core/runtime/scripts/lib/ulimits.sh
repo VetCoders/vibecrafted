@@ -22,10 +22,12 @@ vc_ulimit_raise_nofile() {
   soft="$(ulimit -Sn 2>/dev/null || true)"
   hard="$(ulimit -Hn 2>/dev/null || true)"
 
-  # Soft cap already unlimited: raising it can only LOWER the headroom the
-  # fleet relies on. A clamp to a fixed number here (the old 65536) starves
-  # high-FD agents into EMFILE crashes. Leave an unlimited soft cap alone.
-  [[ "$soft" == "unlimited" ]] && return 0
+  # Soft cap already unlimited: an automatic raise can only LOWER the headroom
+  # the fleet relies on (the old fixed-65536 clamp starved high-FD agents into
+  # EMFILE crashes), so leave it alone. But an EXPLICIT VC_ULIMIT_NOFILE override
+  # is a deliberate operator act and must still be honored — and warn if invalid
+  # — so only short-circuit here when no override was requested.
+  [[ -z "$requested" && "$soft" == "unlimited" ]] && return 0
 
   if [[ -n "$requested" ]]; then
     target="$requested"
