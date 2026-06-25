@@ -1,12 +1,10 @@
 name: Install (Linux Matrix)
 
 # Plan 03 (META_22) cross-platform install gate. Exercises the install.sh
-# Linux path against Ubuntu (runner-native) and Debian (container). The
-# gating steps are `make install`, `make test-install`, and `make test-skills`.
-# `vibecrafted doctor` is run for visibility but is NOT a gate: in headless CI
-# the externally-managed product foundations (loctree/aicx/vc-frame) are absent
-# and doctor reports them as failures — known env noise, mirroring the
-# non-gating doctor invocation in the docker-build-smoke job below.
+# Linux path against Ubuntu (runner-native) and Debian (container) and
+# verifies `vibecrafted doctor` reports green afterwards. Doctor stays green in
+# headless CI because absent externally-managed product foundations
+# (loctree/aicx/vc-frame) are reported as warnings, not failures.
 #
 # The Ubuntu job uses the GitHub-hosted runner directly so we exercise the
 # real /etc/os-release detection and the apt-family hint path. The Debian
@@ -63,6 +61,15 @@ jobs:
           # in scripts/check_shell.py — match that policy here.
           shellcheck -e SC1090,SC1091,SC2155,SC2034,SC2154,SC2015 install.sh
 
+      # ubuntu-22.04 ships system Python 3.10, below the project floor
+      # (requires-python >=3.11; vibecrafted_core imports tomllib, 3.11+ stdlib).
+      # Pin a supported interpreter so `make install` runs on a version the code
+      # actually targets, while the matrix still covers 22.04 vs 24.04 os-release.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
@@ -100,14 +107,12 @@ jobs:
           # PATH adjustments mirror what the install.sh interactive path does
           # — make sure the staged CLI is visible to this step.
           export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-          # Non-gating: doctor fails on absent externally-managed foundations in
-          # headless CI (known noise). Capture for review; gate on the smokes.
           if command -v vibecrafted >/dev/null 2>&1; then
-            vibecrafted doctor || echo "[ci] doctor non-zero (foundation provenance noise) — captured for review"
+            vibecrafted doctor
           else
             # Fallback to the in-repo Makefile target if the staged CLI
             # isn't on PATH yet (smoke uses the repo source tree).
-            make doctor || echo "[ci] doctor non-zero (foundation provenance noise) — captured for review"
+            make doctor
           fi
 
       - name: Run install.sh / install.ps1 host smoke
@@ -193,6 +198,16 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
+      # debian:bookworm-slim ships no Rust toolchain. `make install` builds the
+      # voc/vc-admin/vc-server binaries from source, so install cargo here. The
+      # GitHub-hosted ubuntu runners have Rust preinstalled; only the container
+      # needs this.
+      - name: Install Rust toolchain
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Run make install (non-interactive)
         run: |
           set -euo pipefail
@@ -203,11 +218,10 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-          # Non-gating: see the ubuntu-native doctor step for rationale.
           if command -v vibecrafted >/dev/null 2>&1; then
-            vibecrafted doctor || echo "[ci] doctor non-zero (foundation provenance noise) — captured for review"
+            vibecrafted doctor
           else
-            make doctor || echo "[ci] doctor non-zero (foundation provenance noise) — captured for review"
+            make doctor
           fi
 
       - name: Run install.sh / install.ps1 host smoke
