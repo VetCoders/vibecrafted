@@ -70,11 +70,18 @@ jobs:
           # out to `protoc` at build time. Without it the install fails with
           # "Could not find `protoc`". apt-get update already ran in the
           # lint step above for this job.
+          # libgtk-3-dev + libxdo-dev + appindicator: `make install` builds the
+          # `voc` app binary, whose dependency graph pulls tray-icon/muda ->
+          # gtk-sys/glib-sys on Linux. libgtk-3-dev transitively provides the
+          # glib-2.0/gdk/pango/cairo/atk pkg-config files the build needs.
           sudo apt-get install -y \
             build-essential \
             cmake \
             libclang-dev \
             libprotobuf-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
             make \
             protobuf-compiler \
             python3 \
@@ -134,6 +141,9 @@ jobs:
           # protobuf-compiler is required by `cargo install aicx` because the
           # transitive `lance-encoding` crate uses `prost-build`, which shells
           # out to `protoc` at build time.
+          # libgtk-3-dev + libxdo-dev + appindicator: `make install` builds the
+          # `voc` app binary (tray-icon/muda -> gtk-sys/glib-sys on Linux).
+          # libgtk-3-dev transitively provides glib-2.0/gdk/pango/cairo/atk.
           apt-get install -y --no-install-recommends \
             bash \
             ca-certificates \
@@ -143,6 +153,9 @@ jobs:
             git \
             libclang-dev \
             libprotobuf-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
             make \
             protobuf-compiler \
             python3 \
