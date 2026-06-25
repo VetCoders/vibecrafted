@@ -12,5 +12,13 @@ dev = [
 [tool.mypy]
 python_version = "3.11"
 files = ["vibecrafted-core/vibecrafted_core", "vibecrafted-mcp/vibecrafted_mcp"]
+exclude = [
+    "^skills/",
+    "^runtime/",
+    "^tests/",
+    "^vibecrafted-core/tests/",
+    "^vibecrafted-mcp/tests/",
+    "^plugins/iterm2/tests/",
+]
 ignore_missing_imports = true
 follow_imports = "skip"
