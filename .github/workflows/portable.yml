@@ -18,6 +18,19 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - name: Pin Rust toolchain for sandboxed bootstrap
+        shell: bash
+        run: |
+          # tests/portable/run.sh sandboxes HOME to a temp dir for isolation,
+          # which hides the runner's ~/.rustup/settings.toml from rustup and
+          # makes `cargo` fail with "no default toolchain configured" during
+          # install-app-binaries. Pin RUSTUP_HOME/CARGO_HOME to the real
+          # (absolute) toolchain so the sandboxed-HOME bootstrap still resolves
+          # a default toolchain. A real user keeps their own HOME, so this is a
+          # harness-only concern, not an install.sh bug.
+          rustup default stable
+          echo "RUSTUP_HOME=$HOME/.rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
       - name: Install shellcheck on Linux
         if: matrix.os == 'Linux'
         run: |
