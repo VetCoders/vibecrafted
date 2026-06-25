@@ -28,6 +28,15 @@ fail() {
   local status="$1"
   printf '  ✗ %s\n\n' "$step_name" >&2
   printf 'Install failed during: %s\n\n' "$step_name" >&2
+  # Surface the real error: install-step.sh redirects step output into the log,
+  # so a bare "✗ <step>" is undebuggable in non-interactive/CI runs where the
+  # log file is never inspected. Echo the tail to stderr so the failing command
+  # output lands in the captured CI transcript.
+  if [[ -f "$log_path" ]]; then
+    printf '%s (last %d lines):\n' "$log_path" "${INSTALL_STEP_LOG_TAIL:-50}" >&2
+    tail -n "${INSTALL_STEP_LOG_TAIL:-50}" "$log_path" >&2 || true
+    printf '\n' >&2
+  fi
   printf 'Log:\n  %s\n\n' "$log_path" >&2
   printf 'Next:\n  vibecrafted doctor\n' >&2
   return "$status"
