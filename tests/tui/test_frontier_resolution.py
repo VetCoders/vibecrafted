@@ -278,7 +278,10 @@ def test_zsh_skill_wrappers_do_not_depend_on_external_has_agent(
                 f'source "{HELPER_SCRIPT}"; '
                 "unfunction _has_agent >/dev/null 2>&1 || true; "
                 '_vetcoders_skill_entry() { printf "%s\\n" "$@" > "$CAPTURE_FILE"; }; '
-                'vc-intents codex --prompt "hello"'
+                # vc-intents is now a command-backed skill (command vibecrafted
+                # intents); use vc-review, which still routes through the shell
+                # skill-wrapper, to exercise the wrapper machinery under zsh.
+                'vc-review codex --prompt "hello"'
             ),
         ],
         check=True,
@@ -288,7 +291,7 @@ def test_zsh_skill_wrappers_do_not_depend_on_external_has_agent(
 
     assert capture_file.read_text(encoding="utf-8").splitlines() == [
         "codex",
-        "intents",
+        "review",
         "--prompt",
         "hello",
     ]
@@ -349,7 +352,7 @@ def test_operator_session_name_supports_folder_scope(
     assert result.stdout.strip() == "feature-lab"
 
 
-def test_zsh_vc_intents_accepts_runtime_without_bad_substitution(
+def test_zsh_skill_wrapper_accepts_runtime_without_bad_substitution(
     tmp_path: Path,
 ) -> None:
     if shutil.which("zsh") is None:
@@ -376,7 +379,9 @@ def test_zsh_vc_intents_accepts_runtime_without_bad_substitution(
                 "_vetcoders_ensure_run_context() { :; }; "
                 '_vetcoders_prepare_operator_runtime() { printf "%s\\n" "$1" > "$CAPTURE_FILE"; }; '
                 '_vetcoders_spawn_script() { printf "%s" "$FAKE_SPAWN"; }; '
-                'vc-intents codex --runtime visible --prompt "hello"'
+                # vc-intents is command-backed now; vc-review still routes through
+                # the shell skill-wrapper that parses --runtime under zsh.
+                'vc-review codex --runtime visible --prompt "hello"'
             ),
         ],
         check=True,
