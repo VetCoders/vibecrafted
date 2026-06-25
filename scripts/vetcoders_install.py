@@ -635,10 +635,9 @@ def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
         return ["start here: `vibecrafted init claude`"]
 
     actions: List[str] = []
-    if any(
-        finding.level == "fail" and finding.component.startswith("foundation:")
-        for finding in issues
-    ):
+    if any(finding.component.startswith("foundation:") for finding in issues):
+        # Foundation findings are now warn-level (externally managed), so key off
+        # the component, not the level — the repair guidance must still surface.
         actions.append(
             "repair Loctree/AICX from their own release surface, then "
             "`bash scripts/install-foundations.sh --check`"
@@ -3500,9 +3499,18 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             findings.append(DoctorFinding("ok", f"foundation:{f.name}", f"-> {path}"))
             findings.extend(_foundation_provenance_findings(f.name, Path(path)))
         elif f.required:
+            # Required product foundations (loctree/aicx/vc-frame) are externally
+            # managed — installed via their own canonical installer, not by this
+            # framework. Their absence is an advisory (warn), not a broken
+            # install (fail): the framework is functional without them and the
+            # message points at the fix. Consistent with install-foundations.sh,
+            # which likewise treats them as non-fatal. Keeps `make doctor` green
+            # in headless/CI contexts where the product binaries are not present.
             findings.append(
                 DoctorFinding(
-                    "fail", f"foundation:{f.name}", f"missing — {f.install_hint()}"
+                    "warn",
+                    f"foundation:{f.name}",
+                    f"missing (externally managed) — {f.install_hint()}",
                 )
             )
         else:
