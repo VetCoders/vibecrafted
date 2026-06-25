@@ -509,6 +509,8 @@ mod tests {
     {
         let prev_home = env::var_os("HOME");
         let prev_paths = env::var_os("VIBECRAFTED_MUX_STATUS_PATHS");
+        // SAFETY: Test-only environment mutation is serialized by `env_guard`,
+        // so no other test in this module observes a partially-updated env.
         unsafe {
             match home {
                 Some(p) => env::set_var("HOME", p),
@@ -520,6 +522,8 @@ mod tests {
             }
         }
         let result = f();
+        // SAFETY: `env_guard` is still held while restoring the previous values,
+        // keeping the process-wide environment mutation local to this test scope.
         unsafe {
             match prev_home {
                 Some(value) => env::set_var("HOME", value),
