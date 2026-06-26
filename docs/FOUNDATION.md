@@ -29,8 +29,10 @@ With it, they see the dependency graph before touching anything.
 `repo-view` as its first action. `vc-workflow` runs `slice` before editing.
 `vc-followup` runs `impact` before deleting.
 
-**Install**: `make foundations` (auto-downloads v0.8.17 binary) or
-[Loctree/Loctree releases](https://github.com/Loctree/Loctree/releases)
+**Install**: `make foundations` or the current
+[Loctree/Loctree release](https://github.com/Loctree/Loctree/releases). Do not
+copy a pinned version from this page; `make doctor` and the installer are the
+runtime truth.
 
 ## AICX — intentions
 
@@ -78,7 +80,8 @@ converts narrated demos into actionable input for agent workflows.
 **Used by**: `vc-decorate` (visual verification), `vc-followup` (UI audit),
 `vc-dou` (product surface check).
 
-**Install**: `pip install screenscribe` (not yet on PyPI — install from source)
+**Install**: use the current ScreenScribe release or source install path checked
+by `make doctor`. Treat this document as role guidance, not a package registry.
 
 ## Foundation in the Installer
 

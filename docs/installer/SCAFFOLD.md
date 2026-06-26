@@ -4,7 +4,7 @@ Current truth as of 2026-04-10:
 
 - Public front door: browser-guided installer in `scripts/installer_gui.py`
 - Public CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui`
-- Local terminal-native entrypoint: `make vibecrafted`
+- Local terminal-native entrypoint: `make install`
 - Local browser GUI entrypoint: `make wizard` (alias: `make gui-install`)
 - Automation entrypoint: `curl -fsSL https://vibecrafted.io/install.sh | bash`
 - Mutation engine: `scripts/vetcoders_install.py`
@@ -18,7 +18,7 @@ shape.
 
 The public install story follows the TwinSweep-style GUI line, not the
 `rmcp-memex`-style TUI line. Inside a local checkout, we still keep the
-shell-first `make vibecrafted` entrypoint so repo-native operators can stay in
+shell-first `make install` entrypoint so repo-native operators can stay in
 terminal flow.
 
 Why this won:

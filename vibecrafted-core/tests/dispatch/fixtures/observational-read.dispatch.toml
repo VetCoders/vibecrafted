@@ -1,0 +1,21 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "observational-read"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+
+[policy]
+concurrency = 1
+
+[[phases]]
+title = "Audit"
+
+[[cuts]]
+id = "read-audit"
+phase = "Audit"
+agent = "codex"
+workflow = "review"
+mode = "read"
+mutation = "forbid"
+observational = true
+prompt = "Observe previous baton state and report."

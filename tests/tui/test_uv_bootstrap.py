@@ -1,6 +1,6 @@
 """Smoke tests for the uv-bootstrap path in the Makefile and install.sh.
 
-P1-01 regression: `make vibecrafted` and `make install` used to split the
+P1-01 regression: installer Makefile targets used to split the
 `uv` bootstrap `if` block and the `uv run ...` invocation across two
 separate `@`-prefixed recipe lines. Make spawns a fresh shell per line,
 so `export PATH="$HOME/.local/bin:$PATH"` never reached the `uv run` leg
@@ -13,7 +13,7 @@ the post-install banner fell back to `basename archive_url .tar.gz`
 in the `VERSION` file at the root.
 
 This module verifies:
-1. Makefile's `vibecrafted` and `install` recipes keep bootstrap + PATH
+1. Makefile's installer recipes keep bootstrap + PATH
    export + `uv run` in one continuous shell (single recipe line with
    backslash continuations).
 2. Simulated no-uv PATH + `make -n vibecrafted` / `make -n install`
@@ -65,37 +65,15 @@ def _extract_recipe_body(text: str, target: str) -> str:
     return m.group(1)
 
 
-def test_makefile_vibecrafted_bootstrap_is_single_shell_stanza() -> None:
-    """The bootstrap `if` and the `uv run` must live in ONE shell.
-
-    In make, every line of a recipe not joined by a trailing backslash
-    runs in its own shell. Environment changes (like an `export PATH`)
-    performed in one line do NOT carry to the next.
-    """
+def test_makefile_vibecrafted_aliases_install_front_door() -> None:
     text = MAKEFILE.read_text(encoding="utf-8")
-    body = _extract_recipe_body(text, "vibecrafted")
 
-    # The `if ! command -v uv` block should be followed by `fi; \`
-    # (continuation), NOT by `fi\n` (shell boundary).
-    assert "fi; \\" in body, (
-        "vibecrafted recipe must continue the shell past the `fi` so the "
-        "PATH export reaches `uv run`"
-    )
-    # PATH export must be present and happen AFTER the bootstrap but
-    # BEFORE `uv run`, all within the same continued line.
-    assert 'export PATH="$$HOME/.local/bin:$$PATH"' in body
-    assert "uv run --project $(INSTALLER_DIR)" in body
-    # Sanity: make sure we did NOT regress to two @-prefixed recipe lines.
-    recipe_lines = [ln for ln in body.splitlines() if ln.startswith("\t@")]
-    assert len(recipe_lines) <= 1, (
-        "vibecrafted recipe regressed to multiple @-prefixed lines; each "
-        "is a separate shell so PATH export will not survive."
-    )
+    assert "vibecrafted: install" in text
 
 
 def test_makefile_install_bootstrap_is_single_shell_stanza() -> None:
     text = MAKEFILE.read_text(encoding="utf-8")
-    body = _extract_recipe_body(text, "install")
+    body = _extract_recipe_body(text, "tui-installer")
 
     assert "fi; \\" in body, (
         "install recipe must continue the shell past the `fi` so the "
@@ -104,11 +82,32 @@ def test_makefile_install_bootstrap_is_single_shell_stanza() -> None:
     assert 'export PATH="$$HOME/.local/bin:$$PATH"' in body
     assert (
         "uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer "
-        "$(MANIFEST) --yes"
+        "$(MANIFEST) --quiet"
     ) in body
+    assert "--yes" not in body
     recipe_lines = [ln for ln in body.splitlines() if ln.startswith("\t@")]
     assert len(recipe_lines) <= 1, (
         "install recipe regressed to multiple @-prefixed lines; each "
+        "is a separate shell so PATH export will not survive."
+    )
+
+
+def test_makefile_install_auto_bootstrap_is_single_shell_stanza() -> None:
+    text = MAKEFILE.read_text(encoding="utf-8")
+    body = _extract_recipe_body(text, "install-all")
+
+    assert "fi; \\" in body, (
+        "install-auto recipe must continue the shell past the `fi` so the "
+        "PATH export reaches `uv run`"
+    )
+    assert 'export PATH="$$HOME/.local/bin:$$PATH"' in body
+    assert (
+        "uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer "
+        "$(MANIFEST) --yes --quiet"
+    ) in body
+    recipe_lines = [ln for ln in body.splitlines() if ln.startswith("\t@")]
+    assert len(recipe_lines) <= 1, (
+        "install-auto recipe regressed to multiple @-prefixed lines; each "
         "is a separate shell so PATH export will not survive."
     )
 
@@ -187,7 +186,7 @@ def test_makefile_vibecrafted_dry_run_keeps_path_before_uv_run(
     proving the recipe survives the no-uv bootstrap path.
     """
     env = _build_no_uv_env(tmp_path, fake_uv=False)
-    out = _make_dry_run("vibecrafted", env)
+    out = _make_dry_run("tui-installer", env)
 
     # `make -n` emits the recipe text with continuations collapsed via
     # trailing `\`. Find the recipe block and confirm PATH export and
@@ -212,11 +211,15 @@ def test_makefile_install_dry_run_keeps_path_before_uv_run(
     tmp_path: Path,
 ) -> None:
     env = _build_no_uv_env(tmp_path, fake_uv=False)
-    out = _make_dry_run("install", env)
+    out = _make_dry_run("tui-installer", env)
 
     assert "export PATH=" in out, out
     assert "uv run --project" in out, out
-    assert "--yes" in out, out
+    assert "--quiet" in out, out
+    installer_line = next(
+        line for line in out.splitlines() if "vetcoders-installer install.toml" in line
+    )
+    assert "--yes" not in installer_line, out
 
     idx_export = out.find("export PATH=")
     idx_uv = out.find("uv run --project")
@@ -408,15 +411,15 @@ def test_repo_version_file_exists_and_is_non_empty() -> None:
 @pytest.mark.skipif(
     os.environ.get("VIBECRAFTED_RUN_NO_UV_E2E") != "1",
     reason=(
-        "End-to-end `make vibecrafted` without uv downloads the uv "
+        "End-to-end `make install` without uv downloads the uv "
         "installer from astral.sh and mutates HOME. Set "
         "VIBECRAFTED_RUN_NO_UV_E2E=1 to opt in."
     ),
 )
-def test_make_vibecrafted_no_uv_e2e(tmp_path: Path) -> None:  # pragma: no cover
+def test_make_install_no_uv_e2e(tmp_path: Path) -> None:  # pragma: no cover
     env = _build_no_uv_env(tmp_path, fake_uv=False)
     result = subprocess.run(
-        ["make", "vibecrafted"],
+        ["make", "install"],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,

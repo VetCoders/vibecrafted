@@ -1,0 +1,260 @@
+name: Install (Linux Matrix)
+
+# Plan 03 (META_22) cross-platform install gate. Exercises the install.sh
+# Linux path against Ubuntu (runner-native) and Debian (container) and
+# verifies `vibecrafted doctor` reports green afterwards. Doctor stays green in
+# headless CI because absent externally-managed product foundations
+# (loctree/aicx/vc-frame) are reported as warnings, not failures.
+#
+# The Ubuntu job uses the GitHub-hosted runner directly so we exercise the
+# real /etc/os-release detection and the apt-family hint path. The Debian
+# job runs inside a debian:bookworm-slim container so we exercise the
+# bare-minimum prereq install (no pre-baked tooling) — this is the most
+# likely failure mode for a real Debian user.
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "release/*"
+  pull_request:
+    branches:
+      - main
+      - develop
+      - "release/*"
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Ubuntu 22.04 / 24.04 — runner-native. Tests the happy path.
+  # ---------------------------------------------------------------------------
+  ubuntu-native:
+    name: install.sh (ubuntu-${{ matrix.runner-version }})
+    env:
+      # `cargo install aicx` is memory-heavy; keep CI runners from OOM-killing rustc.
+      CARGO_BUILD_JOBS: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        runner-version: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.runner-version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show platform fingerprint
+        run: |
+          set -euo pipefail
+          uname -a
+          cat /etc/os-release
+          bash --version | head -1
+
+      - name: Lint install.sh with shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          bash -n install.sh
+          # The project excludes SC1091 (sourced env files we don't follow)
+          # in scripts/check_shell.py — match that policy here.
+          shellcheck -e SC1090,SC1091,SC2155,SC2034,SC2154,SC2015 install.sh
+
+      # ubuntu-22.04 ships system Python 3.10, below the project floor
+      # (requires-python >=3.11; vibecrafted_core imports tomllib, 3.11+ stdlib).
+      # Pin a supported interpreter so `make install` runs on a version the code
+      # actually targets, while the matrix still covers 22.04 vs 24.04 os-release.
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install make + python3 (already present, but be explicit)
+        run: |
+          set -euo pipefail
+          # protobuf-compiler is required by `cargo install aicx` because the
+          # transitive `lance-encoding` crate uses `prost-build`, which shells
+          # out to `protoc` at build time. Without it the install fails with
+          # "Could not find `protoc`". apt-get update already ran in the
+          # lint step above for this job.
+          # libgtk-3-dev + libxdo-dev + appindicator: `make install` builds the
+          # `voc` app binary, whose dependency graph pulls tray-icon/muda ->
+          # gtk-sys/glib-sys on Linux. libgtk-3-dev transitively provides the
+          # glib-2.0/gdk/pango/cairo/atk pkg-config files the build needs.
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libclang-dev \
+            libprotobuf-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            make \
+            protobuf-compiler \
+            python3 \
+            python3-venv
+
+      - name: Run make install (non-interactive)
+        run: make install
+
+      - name: Run vibecrafted doctor
+        run: |
+          set -euo pipefail
+          # PATH adjustments mirror what the install.sh interactive path does
+          # — make sure the staged CLI is visible to this step.
+          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          if command -v vibecrafted >/dev/null 2>&1; then
+            vibecrafted doctor
+          else
+            # Fallback to the in-repo Makefile target if the staged CLI
+            # isn't on PATH yet (smoke uses the repo source tree).
+            make doctor
+          fi
+
+      - name: Run install.sh / install.ps1 host smoke
+        run: make test-install
+
+      - name: Run skill-loader smoke
+        run: make test-skills
+
+  # ---------------------------------------------------------------------------
+  # Debian 12 (Bookworm) — bare container. Tests the prereq pre-flight + hints.
+  # ---------------------------------------------------------------------------
+  debian-bookworm-container:
+    name: install.sh (debian-12 container)
+    runs-on: ubuntu-latest
+    env:
+      # debian:bookworm-slim runs with limited memory inside the job container.
+      CARGO_BUILD_JOBS: "1"
+    container:
+      image: debian:bookworm-slim
+    # bare debian:bookworm-slim ships dash as /bin/sh and no bash. The first
+    # step installs bash; every subsequent step then runs under bash so the
+    # existing `set -euo pipefail` boilerplate works as written.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install bare-minimum container deps
+        # This step runs before bash is installed; pin it to sh and drop
+        # `pipefail` (dash does not support it). Once apt-get pulls bash,
+        # the job default kicks in for every later step.
+        shell: sh
+        run: |
+          set -eu
+          apt-get update
+          # Match the pre-flight: tar + make + python3 + curl + git + ca-certs.
+          # bash + coreutils are already present in debian-slim.
+          # protobuf-compiler is required by `cargo install aicx` because the
+          # transitive `lance-encoding` crate uses `prost-build`, which shells
+          # out to `protoc` at build time.
+          # libgtk-3-dev + libxdo-dev + appindicator: `make install` builds the
+          # `voc` app binary (tray-icon/muda -> gtk-sys/glib-sys on Linux).
+          # libgtk-3-dev transitively provides glib-2.0/gdk/pango/cairo/atk.
+          apt-get install -y --no-install-recommends \
+            bash \
+            ca-certificates \
+            build-essential \
+            cmake \
+            curl \
+            git \
+            libclang-dev \
+            libprotobuf-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            make \
+            protobuf-compiler \
+            python3 \
+            python3-venv \
+            shellcheck \
+            sudo \
+            tar
+
+      - uses: actions/checkout@v4
+
+      - name: Show platform fingerprint
+        run: |
+          set -euo pipefail
+          uname -a
+          cat /etc/os-release
+          bash --version | head -1
+
+      - name: Lint install.sh with shellcheck
+        run: |
+          set -euo pipefail
+          bash -n install.sh
+          shellcheck -e SC1090,SC1091,SC2155,SC2034,SC2154,SC2015 install.sh
+
+      - name: Install uv
+        run: |
+          set -euo pipefail
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          # Persist for downstream steps in this job
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      # debian:bookworm-slim ships no Rust toolchain. `make install` builds the
+      # voc/vc-admin/vc-server binaries from source, so install cargo here. The
+      # GitHub-hosted ubuntu runners have Rust preinstalled; only the container
+      # needs this.
+      - name: Install Rust toolchain
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Run make install (non-interactive)
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+          make install
+
+      - name: Run vibecrafted doctor
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          if command -v vibecrafted >/dev/null 2>&1; then
+            vibecrafted doctor
+          else
+            make doctor
+          fi
+
+      - name: Run install.sh / install.ps1 host smoke
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          make test-install
+
+      - name: Run skill-loader smoke
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+          make test-skills
+
+  # ---------------------------------------------------------------------------
+  # Docker build smoke — verifies the shipped Dockerfile still builds and
+  # that `vibecrafted doctor` runs at build time. Separate job to keep
+  # signal isolated from the host-native install paths above.
+  # ---------------------------------------------------------------------------
+  docker-build-smoke:
+    name: docker build + doctor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build vibecrafted:ci-smoke
+        run: docker build -t vibecrafted:ci-smoke .
+
+      - name: Verify CLI inside container
+        run: |
+          set -euo pipefail
+          docker run --rm vibecrafted:ci-smoke version
+          # Run doctor; allow non-zero so we get the report in CI logs,
+          # but require the image build itself to have succeeded above.
+          docker run --rm vibecrafted:ci-smoke doctor || \
+            echo "[ci] container doctor non-zero — captured for review"

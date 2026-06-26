@@ -1,7 +1,20 @@
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+#
+# v1.x Linux base — Debian Bookworm via the official node:22 slim image.
+# We start from node:22-bookworm-slim (not bare debian) because every agent
+# CLI we ship (claude, codex, gemini) is an npm package; bundling node here
+# saves a multi-stage build for the INSTALL_AGENT_CLIS=true path.
+#
+# Plan 03 (META_22) hardens this image as the CI Linux smoke target.
+# See docs/INSTALL.md for the per-platform install matrix.
+
 FROM node:22-bookworm-slim
 
 ARG INSTALL_AGENT_CLIS=false
 ARG INSTALL_FOUNDATIONS=false
+# INSTALL_RUST=true pulls rustup + stable toolchain. Off by default so the
+# image stays slim; turn it on when foundations are being built from source.
+ARG INSTALL_RUST=false
 
 ENV DEBIAN_FRONTEND=noninteractive \
     NODE_ENV=production \
@@ -46,6 +59,13 @@ RUN chmod +x \
   && ln -sf /opt/vibecrafted/docker/entrypoint.sh /usr/local/bin/vibecrafted-docker-entrypoint \
   && (uv sync --project /opt/vibecrafted/scripts/installer --locked || uv sync --project /opt/vibecrafted/scripts/installer)
 
+RUN if [ "$INSTALL_RUST" = "true" ]; then \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path \
+      && ln -sf /root/.cargo/bin/cargo /usr/local/bin/cargo \
+      && ln -sf /root/.cargo/bin/rustc /usr/local/bin/rustc; \
+  fi
+
 RUN if [ "$INSTALL_AGENT_CLIS" = "true" ]; then \
     npm install -g \
       @anthropic-ai/claude-code \
@@ -63,7 +83,8 @@ RUN groupadd --system vibecrafted \
 RUN mkdir -p /workspace /workspace/.vibecrafted \
   && chown -R vibecrafted:vibecrafted /workspace \
   && git config --system --add safe.directory /workspace \
-  && vibecrafted version
+  && vibecrafted version \
+  && vibecrafted doctor || echo "[docker] doctor build-time check non-fatal; runtime entrypoint will re-seed skills"
 
 WORKDIR /workspace
 

@@ -1,8 +1,0 @@
-{
-  "name": "VC JustDo",
-  "description": "Same autonomous end-to-end implementation flow as /vc-implement. Use whichever invocation is already natural in your agent loop.",
-  "author": {
-    "name": "VetCoders",
-    "email": "hello@vetcoders.io"
-  }
-}

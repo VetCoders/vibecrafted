@@ -16,17 +16,17 @@ The core premise is simple:
 - Version target: `1.5.0`
 - Scope: runtime, spawn, state, operator, observability, and marbles
 - Non-scope: full rewrite, mandatory Rust core, mandatory Ghostty migration,
-  Zellij fork, or replacing working shell launchers for its own sake
+  vc-frame fork, or replacing working shell launchers for its own sake
 
 ## Starting Point
 
 The current system already has real mechanisms:
 
 - `scripts/vibecrafted` is the command deck.
-- `skills/vc-agents/shell/vetcoders.sh` exposes interactive shell wrappers.
-- `skills/vc-agents/scripts/*_spawn.sh` perform agent-specific launches.
-- `skills/vc-agents/scripts/lib/*.sh` provide shared spawn, meta, lock, prompt,
-  session, zellij, and terminal helpers.
+- `../../runtime/shell/vetcoders.sh` exposes interactive shell wrappers.
+- `runtime/scripts/*_spawn.sh` perform agent-specific launches.
+- `runtime/scripts/lib/*.sh` provide shared spawn, meta, lock, prompt,
+  session, vc_frame, and terminal helpers.
 - `*.meta.json`, reports, transcripts, and locks are already produced.
 - `scripts/control_plane_state.py` already normalizes artifacts into a
   control-plane read model.
@@ -37,7 +37,7 @@ The current system already has real mechanisms:
 
 The v1.5.0 task is not to invent a ledger. The ledger exists.
 
-The task is to make the existing ledgers canonical, reduce overlap, and define
+The task is to make the existing ledgers default, reduce overlap, and define
 which layer writes which truth.
 
 ## What To Start With
@@ -51,7 +51,7 @@ with a prompt, cwd, environment, transcript, and report path.
 The first v1.5.0 work should:
 
 1. Name the runtime planes and their ownership.
-2. Define the canonical state fields and status transitions.
+2. Define the default state fields and status transitions.
 3. Make `control_plane` the official read model for humans and agents.
 4. Normalize failure kinds.
 5. Add smoke tests proving that meta, locks, control-plane, and operator
@@ -79,7 +79,7 @@ write truth: meta + lock + report + transcript + events
 normalized read model: control_plane/runs + events.jsonl
     |
     v
-operator surfaces: CLI JSON, await, observe, TUI, Zellij, Ghostty/board
+operator surfaces: CLI JSON, await, observe, TUI, vc-frame, Ghostty/board
 ```
 
 Any operator, human or agent, must be able to answer:
@@ -180,7 +180,7 @@ $VIBECRAFTED_HOME/control_plane/
   events.jsonl
 ```
 
-`scripts/control_plane_state.py sync` is the v1.5.0 canonical normalizer unless
+`scripts/control_plane_state.py sync` is the v1.5.0 default normalizer unless
 and until it is replaced by an explicitly equivalent implementation.
 
 Required normalized run fields:
@@ -220,7 +220,7 @@ Human surfaces:
 - `vibecrafted dashboard`
 - `vc-start`
 - `vibecrafted tui`
-- Zellij layouts
+- vc-frame layouts
 - future Ghostty/`vc-board`
 
 Agent surfaces:
@@ -263,7 +263,7 @@ spawn_failed
 agent_missing
 prompt_missing
 startup_timeout
-zellij_route_failed
+vc_frame_route_failed
 terminal_route_failed
 no_pid
 dead_pid
@@ -282,17 +282,17 @@ marbles_state_invalid
 
 Failure policy:
 
-| Failure kind           | Default state                     | Resume?         | Operator action                 |
-| ---------------------- | --------------------------------- | --------------- | ------------------------------- |
-| `agent_missing`        | `failed`                          | no              | install/configure agent binary  |
-| `spawn_failed`         | `failed`                          | maybe           | inspect launcher and transcript |
-| `startup_timeout`      | `stalled`                         | maybe           | inspect transcript and routing  |
-| `zellij_route_failed`  | `failed` or `headless_fallback`   | maybe           | reroute or run headless         |
-| `nonzero_exit`         | `failed`                          | agent-dependent | inspect transcript/report       |
-| `no_report`            | `completed_no_report` or `failed` | maybe           | inspect transcript              |
-| `dead_pid`             | `ghost`                           | no              | reap, then decide manually      |
-| `orphan_lock`          | `orphaned`                        | no              | reap after grace period         |
-| `marbles_child_failed` | `marbles_failed`                  | maybe           | stop loop or resume child       |
+| Failure kind            | Default state                     | Resume?         | Operator action                 |
+| ----------------------- | --------------------------------- | --------------- | ------------------------------- |
+| `agent_missing`         | `failed`                          | no              | install/configure agent binary  |
+| `spawn_failed`          | `failed`                          | maybe           | inspect launcher and transcript |
+| `startup_timeout`       | `stalled`                         | maybe           | inspect transcript and routing  |
+| `vc_frame_route_failed` | `failed` or `headless_fallback`   | maybe           | reroute or run headless         |
+| `nonzero_exit`          | `failed`                          | agent-dependent | inspect transcript/report       |
+| `no_report`             | `completed_no_report` or `failed` | maybe           | inspect transcript              |
+| `dead_pid`              | `ghost`                           | no              | reap, then decide manually      |
+| `orphan_lock`           | `orphaned`                        | no              | reap after grace period         |
+| `marbles_child_failed`  | `marbles_failed`                  | maybe           | stop loop or resume child       |
 
 Every failure visible in a launcher, watcher, control-plane sync, or operator UI
 should map to one of these names.
@@ -361,7 +361,7 @@ Use shell where shell is the shortest honest path:
 - invoking agent binaries
 - composing small command wrappers
 - integrating with user shells
-- routing into Zellij or terminal sessions
+- routing into vc-frame or terminal sessions
 
 Use Python where it is already ergonomic:
 
@@ -408,7 +408,7 @@ Own:
 - lock creation
 - meta writes
 - transcript/report capture
-- terminal/zellij routing helpers
+- terminal/vc_frame routing helpers
 
 Do not own:
 
@@ -419,7 +419,7 @@ Do not own:
 
 Own:
 
-- canonical read model
+- default read model
 - health classification
 - stale/ghost detection
 - event stream synthesis
@@ -554,7 +554,7 @@ vibecrafted await <run_id> --json
 ```
 
 The smoke may use fake agent binaries in tests. It must not require real Codex,
-Claude, Gemini, Zellij, or Ghostty.
+Claude, Gemini, vc-frame, or Ghostty.
 
 ## Acceptance Criteria
 
@@ -574,7 +574,7 @@ v1.5.0 is acceptable when:
 
 - No mandatory full rewrite into Rust.
 - No mandatory full rewrite into Python.
-- No mandatory replacement of Zellij.
+- No mandatory replacement of vc-frame.
 - No mandatory Ghostty dependency.
 - No hard dependency on a TUI for agent operation.
 - No hidden state only visible to human dashboards.

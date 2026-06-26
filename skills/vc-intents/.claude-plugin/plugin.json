@@ -1,8 +1,0 @@
-{
-  "name": "VC Intents",
-  "description": "Operator-side intention-to-runtime truth audit. Use /vc-intents to compare planned intentions (extracted via aicx) against the live repo and surface which items landed, which are partial, which never materialized, and what the highest remaining truth is.",
-  "author": {
-    "name": "VetCoders",
-    "email": "hello@vetcoders.io"
-  }
-}

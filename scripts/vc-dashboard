@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. live dashboard — terminal-side wow surface.
+#
+# Pokazuje mesh state + aicx corpus + vibecrafted release status razem z
+# klikalnymi akcjami przez hammerspoon:// URL handlers + iTerm2 OSC primitives.
+# Zero deps w runtime — pure printf escape codes + git/loct/aicx CLI.
+#
+# Wymagania:
+#   - iTerm2 (OSC 8 hyperlink + OSC 1337 + OSC 9 progress)
+#   - Hammerspoon z vc-* URL handlers (~/.hammerspoon/init.lua)
+#   - loct / aicx / git CLI w PATH
+#
+# Usage:
+#   scripts/vc-dashboard            # full dashboard
+#   scripts/vc-dashboard --no-aicx  # skip aicx queries (faster)
+#   scripts/vc-dashboard --html     # plus opens HTML dashboard w browserze
+
+set -euo pipefail
+
+# ───────────────────────────────────────────── OSC primitives (raw printf)
+
+esc() { printf '%s' "$1"; }
+
+# OSC 1337
+osc_badge() { printf '\e]1337;SetBadgeFormat=%s\a' "$(printf '%s' "$1" | base64)"; }
+osc_set_user_var() { printf '\e]1337;SetUserVar=%s=%s\a' "$1" "$(printf '%s' "$2" | base64)"; }
+osc_set_colors() { printf '\e]1337;SetColors=%s=%s\a' "$1" "$2"; }
+osc_steal_focus() { printf '\e]1337;StealFocus\a'; }
+osc_attention_once() { printf '\e]1337;RequestAttention=once\a'; }
+
+# OSC 9 progress
+osc_progress_clear() { printf '\e]9;4;0\a'; }
+osc_progress_indeterminate() { printf '\e]9;4;3\a'; }
+osc_progress_pct() { printf '\e]9;4;1;%d\a' "$1"; }
+
+# OSC 8 hyperlink: $1=url $2=text [$3=id]
+# Format strings carry the literal terminator `\e\\` per the OSC 8 protocol
+# (ESC `\`). shellcheck SC1003 reads `\\` as a missed single-quote escape;
+# in this context it is intentional protocol bytes, not escaped quoting.
+osc_link() {
+    local url="$1" text="$2" id="${3:-}"
+    if [[ -n "$id" ]]; then
+        # shellcheck disable=SC1003
+        printf '\e]8;id=%s;%s\e\\%s\e]8;;\e\\' "$id" "$url" "$text"
+    else
+        # shellcheck disable=SC1003
+        printf '\e]8;;%s\e\\%s\e]8;;\e\\' "$url" "$text"
+    fi
+}
+
+# ───────────────────────────────────────────── ANSI 256 colors
+
+c_dim='\033[2m'
+c_bold='\033[1m'
+c_reset='\033[0m'
+c_amber='\033[38;5;214m'      # vibecrafted brand
+c_dragon='\033[38;5;203m'     # red mesh
+c_sztudio='\033[38;5;141m'    # purple mesh
+c_silver='\033[38;5;87m'      # cyan mesh
+c_div0='\033[38;5;120m'       # green mesh
+c_steel='\033[38;5;247m'
+c_ok='\033[38;5;82m'
+c_warn='\033[38;5;220m'
+
+# ───────────────────────────────────────────── URL helpers
+
+urlencode() {
+    python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$1"
+}
+
+REPO="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+ENC_REPO="$(urlencode "$REPO")"
+REPO_NAME="$(basename "$REPO")"
+
+vc_loct_url() { printf 'hammerspoon://vc-loct?cmd=%s&repo=%s' "$(urlencode "$1")" "$ENC_REPO"; }
+vc_aicx_url() {
+    local query="$1" project="${2:-}"
+    if [[ -n "$project" ]]; then
+        printf 'hammerspoon://vc-aicx?query=%s&project=%s' "$(urlencode "$query")" "$(urlencode "$project")"
+    else
+        printf 'hammerspoon://vc-aicx?query=%s' "$(urlencode "$query")"
+    fi
+}
+vc_open_url() { printf 'hammerspoon://vc-open-file?path=%s' "$(urlencode "$1")"; }
+
+# ───────────────────────────────────────────── Sections
+
+print_header() {
+    printf '\n  %b%b𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍%b%b.%b  %blive dashboard · %s%b\n' \
+        "$c_amber" "$c_bold" "$c_reset" "$c_amber" "$c_reset" "$c_dim" "$(date +%H:%M)" "$c_reset"
+    printf '  %b─────────────────────────────────────────────────────────%b\n\n' "$c_dim" "$c_reset"
+}
+
+print_mesh() {
+    printf '  %bMESH%b    %b🐉 dragon%b  %b🟣 sztudio%b  %b💿 silver%b  %b🌱 div0%b\n' \
+        "$c_bold" "$c_reset" \
+        "$c_dragon" "$c_reset" \
+        "$c_sztudio" "$c_reset" \
+        "$c_silver" "$c_reset" \
+        "$c_div0" "$c_reset"
+}
+
+print_repo_status() {
+    local branch sha ahead behind
+    branch="$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    sha="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
+    local upstream
+    upstream="$(git -C "$REPO" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo '')"
+    if [[ -n "$upstream" ]]; then
+        read -r ahead behind <<<"$(git -C "$REPO" rev-list --left-right --count "HEAD...$upstream" 2>/dev/null || echo '? ?')"
+    else
+        ahead='?'; behind='?'
+    fi
+    printf '  %bREPO%b    %b%s%b %b@%b %b%s%b %b(branch %s · ↑%s ↓%s)%b\n' \
+        "$c_bold" "$c_reset" \
+        "$c_amber" "$REPO_NAME" "$c_reset" \
+        "$c_steel" "$c_reset" \
+        "$c_steel" "$sha" "$c_reset" \
+        "$c_dim" "$branch" "$ahead" "$behind" "$c_reset"
+}
+
+print_aicx_status() {
+    if ! command -v aicx >/dev/null 2>&1; then
+        printf '  %bAICX%b    %bcli not found%b\n' "$c_bold" "$c_reset" "$c_warn" "$c_reset"
+        return
+    fi
+    local ver canonical
+    ver="$(aicx --version 2>/dev/null | awk '{print $2}' || echo '?')"
+    # `aicx index status` outputuje wszystko na stderr; potrzebujemy 2>&1 żeby
+    # awk widział text. Plus || true bulletproof na set -e.
+    canonical="$(aicx index status 2>&1 | awk '/canonical_chunks:/ {print $2; exit}' 2>/dev/null || true)"
+    canonical="${canonical:-?}"
+    # nice-formatted thousand separator (LC_NUMERIC=en_US.UTF-8 needed dla %'d)
+    if [[ "$canonical" =~ ^[0-9]+$ ]]; then
+        canonical="$(LC_NUMERIC=en_US.UTF-8 printf "%'d" "$canonical" 2>/dev/null || echo "$canonical")"
+    fi
+    printf '  %bAICX%b    %bv%s%b %b·%b %b%s%b %bchunks · embedder qwen3-embedding:8b @ mesh%b\n' \
+        "$c_bold" "$c_reset" \
+        "$c_steel" "$ver" "$c_reset" \
+        "$c_dim" "$c_reset" \
+        "$c_ok" "$canonical" "$c_reset" \
+        "$c_dim" "$c_reset"
+}
+
+print_actions() {
+    printf '\n  %bAKCJE%b %b(Cmd+Click w iTerm2)%b\n' "$c_bold" "$c_reset" "$c_dim" "$c_reset"
+
+    # Wiersz 1
+    printf '  '
+    osc_link "$(vc_loct_url 'health')" "$(printf '%b🩺 loct health%b' "$c_amber" "$c_reset")"
+    printf '    '
+    osc_link "$(vc_loct_url 'follow hotspots')" "$(printf '%b🔥 hotspots%b' "$c_dragon" "$c_reset")"
+    printf '    '
+    osc_link "$(vc_loct_url 'follow dead')" "$(printf '%b💀 dead code%b' "$c_sztudio" "$c_reset")"
+    printf '\n'
+
+    # Wiersz 2
+    printf '  '
+    osc_link "$(vc_loct_url 'follow cycles')" "$(printf '%b♻️  cycles%b' "$c_silver" "$c_reset")"
+    printf '    '
+    osc_link "$(vc_loct_url 'follow twins')" "$(printf '%b👯 twins%b' "$c_div0" "$c_reset")"
+    printf '    '
+    osc_link "$(vc_loct_url 'doctor')" "$(printf '%b🩻 doctor%b' "$c_amber" "$c_reset")"
+    printf '\n'
+
+    # Wiersz 3
+    printf '  '
+    osc_link "$(vc_aicx_url "$REPO_NAME" "$REPO_NAME")" "$(printf '%b🔎 aicx: %s corpus%b' "$c_silver" "$REPO_NAME" "$c_reset")"
+    printf '    '
+    osc_link "$(vc_open_url "$REPO/Makefile")" "$(printf '%b📄 Makefile%b' "$c_steel" "$c_reset")"
+    printf '    '
+    osc_link "$(vc_open_url "$REPO/README.md")" "$(printf '%b📄 README%b' "$c_steel" "$c_reset")"
+    printf '\n'
+}
+
+print_recent_aicx() {
+    if [[ "${VC_DASHBOARD_NO_AICX:-0}" == "1" ]]; then return; fi
+    if ! command -v aicx >/dev/null 2>&1; then return; fi
+
+    printf '\n  %bRECENT%b %b(top 3 hits z aicx, klikalne)%b\n' \
+        "$c_bold" "$c_reset" "$c_dim" "$c_reset"
+
+    local results
+    results="$(aicx search "iterm2" --project "$REPO_NAME" --no-semantic --limit 3 2>/dev/null \
+                 | grep -E '^\[[0-9]+/100' \
+                 | head -3)"
+    if [[ -z "$results" ]]; then
+        printf '  %b(no results — try różny query)%b\n' "$c_dim" "$c_reset"
+        return
+    fi
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local score date_agent
+        score="$(echo "$line" | grep -oE '\[[0-9]+/100 [A-Z]+\]' | head -1)"
+        date_agent="$(echo "$line" | grep -oE '\| [a-z]+ \| [0-9-]+' | head -1 | sed 's/| //')"
+        printf '  %s %b%s%b ' \
+            "${score:-—}" "$c_steel" "$date_agent" "$c_reset"
+        osc_link "$(vc_aicx_url "iterm2 osc primitives" "$REPO_NAME")" "$(printf '%b↗ open in new tab%b' "$c_dim" "$c_reset")"
+        printf '\n'
+    done <<<"$results"
+}
+
+print_footer() {
+    printf '\n  %b─────────────────────────────────────────────────────────%b\n' "$c_dim" "$c_reset"
+    printf '  %bstack:%b OSC primitives · Hammerspoon vc-* URL handlers · mesh embedder · %bvibecrafted-core%b v0.1\n' \
+        "$c_steel" "$c_reset" "$c_amber" "$c_reset"
+    printf '  %bkażdy link wyżej idzie przez hammerspoon:// → AppleScript → iTerm2 tab z komendą.%b\n' \
+        "$c_dim" "$c_reset"
+    printf '  %bHTML dashboard: %b' "$c_dim" "$c_reset"
+    osc_link "http://127.0.0.1:9478" "$(printf '%baicx dashboard --serve%b' "$c_amber" "$c_reset")"
+    printf ' %b(odpala browser-side surface)%b\n\n' "$c_dim" "$c_reset"
+}
+
+# ───────────────────────────────────────────── Main choreography
+
+main() {
+    local html_mode=0
+    for arg in "$@"; do
+        case "$arg" in
+            --no-aicx) export VC_DASHBOARD_NO_AICX=1 ;;
+            --html) html_mode=1 ;;
+        esac
+    done
+
+    # Setup OSC state — badge, tab color, progress indeterminate
+    osc_badge "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 Live"
+    osc_set_user_var "vetcoders.repo" "$REPO_NAME"
+    osc_set_colors "tab" "fbbf24"            # vibecrafted amber
+    osc_progress_indeterminate
+
+    # Render
+    print_header
+    print_mesh
+    print_repo_status
+    print_aicx_status
+    print_actions
+    print_recent_aicx
+    print_footer
+
+    # Final state — progress 100% success, badge update, drobny attention
+    osc_progress_pct 100
+    osc_badge "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍 · ready"
+    sleep 0.6
+    osc_progress_clear
+
+    if [[ $html_mode -eq 1 ]]; then
+        if command -v aicx >/dev/null 2>&1; then
+            printf '\n  %sstartuje HTML dashboard w tle...%s\n' "$c_dim" "$c_reset"
+            aicx dashboard --serve --bg --port 9478 >/dev/null 2>&1 &
+            sleep 1
+            open http://127.0.0.1:9478 2>/dev/null || true
+        fi
+    fi
+}
+
+main "$@"

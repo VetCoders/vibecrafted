@@ -1,0 +1,7 @@
+# Prettier ignore list.
+#
+# skills/_template/ is the default source for tools/vc-skill-new.sh.
+# It contains literal `{{SKILL_NAME}}` etc. placeholders. Prettier treats the
+# YAML frontmatter as YAML and rewrites `{{X}}` as flow-mapping `{ { X } }`,
+# breaking the placeholder substitution. Keep the template byte-stable.
+skills/_template/

@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import re
@@ -29,40 +30,29 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 try:
-    from installer_brand import (
-        FOOTER_BRANDING,
-        FRAMEWORK_STAMP,
-        PRODUCT_LINE,
-        TAGLINE,
-        VAPOR_HEADER,
-        separator as brand_separator,
-        version_line as brand_version_line,
-    )
-    from runtime_paths import (
-        read_version_file,
-        xdg_config_home,
-        vibecrafted_home,
-    )
-except (
-    ModuleNotFoundError
-):  # pragma: no cover - module import path depends on entrypoint
-    from scripts.installer_brand import (
-        FOOTER_BRANDING,
-        FRAMEWORK_STAMP,
-        PRODUCT_LINE,
-        TAGLINE,
-        VAPOR_HEADER,
-        separator as brand_separator,
-        version_line as brand_version_line,
-    )
-    from scripts.runtime_paths import (
-        read_version_file,
-        xdg_config_home,
-        vibecrafted_home,
-    )
+    _installer_brand = importlib.import_module("installer_brand")
+    _runtime_paths = importlib.import_module("runtime_paths")
+except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypoint
+    _installer_brand = importlib.import_module("scripts.installer_brand")
+    _runtime_paths = importlib.import_module("scripts.runtime_paths")
+
+FOOTER_BRANDING = getattr(_installer_brand, "FOOTER_BRANDING")
+FRAMEWORK_STAMP = getattr(_installer_brand, "FRAMEWORK_STAMP")
+PRODUCT_LINE = getattr(_installer_brand, "PRODUCT_LINE")
+TAGLINE = getattr(_installer_brand, "TAGLINE")
+VAPOR_HEADER = getattr(_installer_brand, "VAPOR_HEADER")
+brand_separator = getattr(_installer_brand, "separator")
+brand_version_line = getattr(_installer_brand, "version_line")
+read_version_file = getattr(_runtime_paths, "read_version_file")
+vibecrafted_launcher_bin = getattr(_runtime_paths, "vibecrafted_launcher_bin")
+vibecrafted_runtime_home = getattr(_runtime_paths, "vibecrafted_runtime_home")
+vibecrafted_runtime_bin = getattr(_runtime_paths, "vibecrafted_runtime_bin")
+vibecrafted_tools_home = getattr(_runtime_paths, "vibecrafted_tools_home")
+vibecrafted_home = getattr(_runtime_paths, "vibecrafted_home")
+xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -99,11 +89,26 @@ def cyan(t: str) -> str:
     return _c("36", t)
 
 
-OK = green("[ok]")
-MISS = red("[missing]")
-WARN = yellow("[warn]")
-OPT = dim("[optional]")
-SKIP = dim("[skip]")
+# Glyph language (docs/CLI_PRODUCT_SPEC.md §3.1): the glyph is the prefix —
+# bracket tags ([ok], [missing], …) are retired everywhere.
+OK = green("✓")
+MISS = red("✗")
+WARN = yellow("!")
+OPT = dim("·")
+SKIP = dim("·")
+
+SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def err_line(what_failed: str, fix: str = "", log: str = "") -> None:
+    """Error shape (CLI_PRODUCT_SPEC §3.4): what failed · one fix · log path.
+
+    Always stderr — the compact installer redirects stdout into the log."""
+    print(f"{red('✗')} {what_failed}", file=sys.stderr)
+    if fix:
+        print(f"  {dim('→ fix:')} {fix}", file=sys.stderr)
+    if log:
+        print(f"  {dim('log: ' + log)}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -115,9 +120,9 @@ class TeeLogger:
     """Captures print output to a log file while optionally suppressing stdout."""
 
     def __init__(self, log_path: Path, quiet: bool = False):
-        self.log = open(log_path, "w")
+        self.log = open(log_path, "w", encoding="utf-8")
         self.quiet = quiet
-        self._real_stdout = sys.__stdout__
+        self._real_stdout = sys.__stdout__ if sys.__stdout__ is not None else sys.stdout
 
     def write(self, text: str) -> int:
         self.log.write(text)
@@ -149,15 +154,46 @@ def compact_logging(log_path: Path, quiet: bool = True):
 
 
 def _compact_line(out, icon: str, label: str, value: str) -> None:
-    """Print one compact status line to the real stdout."""
-    out.write(f"  {icon} {label:13s} {value}\n")
+    """Render one compact status update on stdout."""
+    line = f"  {icon} {label:13s} {value}"
+    if _compact_status_is_live(out):
+        out.write(f"\r\033[K{line}")
+        out.flush()
+        return
+    out.write(f"{line}\n")
+
+
+def _compact_status_is_live(out) -> bool:
+    isatty = getattr(out, "isatty", None)
+    return bool(callable(isatty) and isatty())
+
+
+def _clear_compact_status(out) -> None:
+    """Erase the live compact status row before printing a stable block."""
+    if _compact_status_is_live(out):
+        out.write("\r\033[K")
+        out.flush()
+
+
+def _compact_checkpoint(
+    out,
+    step: int,
+    title: str,
+    details: Sequence[str] = (),
+) -> None:
+    """Print a stable compact checkpoint: step, title, bounded detail lines."""
+    _clear_compact_status(out)
+    out.write(f"\n  [{step}/4] {bold(title)}\n")
+    for detail in details:
+        out.write(f"      {detail}\n")
+    out.flush()
 
 
 # ---------------------------------------------------------------------------
 # Component manifest
 # ---------------------------------------------------------------------------
 
-SKILL_CATEGORIES = {
+SKILL_CATEGORIES: Dict[str, Dict[str, Any]] = {
     "pipeline": {
         "label": "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Pipeline",
         "description": "Core workflow skills: init, workflow, followup, marbles, dou, hydrate, release",
@@ -189,19 +225,26 @@ class Foundation:
 
     def is_installed(self) -> Optional[str]:
         """Return path if installed, None otherwise."""
+        if self.name == "vc-frame":
+            for candidate in ("vc-frame",):
+                found = shutil.which(candidate)
+                if found:
+                    return found
         found = shutil.which(self.name)
         if found:
             return found
-        bundled = vibecrafted_home() / "bin" / self.name
-        if bundled.is_file() and os.access(bundled, os.X_OK):
-            return str(bundled)
+        local_bin = Path.home() / ".local" / "bin" / self.name
+        if local_bin.is_file() and os.access(local_bin, os.X_OK):
+            return str(local_bin)
         return None
 
     def install_hint(self) -> str:
         hints = []
         for ch in self.channels:
             pkg = self.packages.get(ch, self.name)
-            if ch == "crates":
+            if ch == "canonical":
+                hints.append(f"Use canonical installer: {pkg}")
+            elif ch == "crates":
                 hints.append(f"cargo install {pkg}")
             elif ch == "brew":
                 hints.append(f"brew install {pkg}")
@@ -216,25 +259,133 @@ class Foundation:
         return " | ".join(hints)
 
 
+VENDORED_FOUNDATION_BINARIES = {
+    "aicx": "aicx",
+    "aicx-mcp": "aicx-mcp",
+    "loct": "loct",
+    "loctree-mcp": "loctree-mcp",
+    "vc-frame": "vc-frame",
+}
+
+
+def detect_vendor_platform() -> Optional[str]:
+    try:
+        uname = os.uname()
+    except AttributeError:
+        return None
+
+    os_name = {"Darwin": "darwin", "Linux": "linux"}.get(
+        uname.sysname, uname.sysname.lower()
+    )
+    arch = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64"}.get(
+        uname.machine, uname.machine
+    )
+    return f"{os_name}-{arch}"
+
+
+def vendored_foundation_dir(repo_root: Path) -> Optional[Path]:
+    platform = detect_vendor_platform()
+    if not platform:
+        return None
+    return repo_root / "bin" / "vendor" / platform
+
+
+def install_foundation_from_bundle(
+    foundation: Foundation,
+    repo_root: Path,
+    bin_dir: Optional[Path] = None,
+    dry_run: bool = False,
+) -> Optional[Path]:
+    vendor_name = VENDORED_FOUNDATION_BINARIES.get(foundation.name)
+    if not vendor_name:
+        return None
+
+    vendor_dir = vendored_foundation_dir(repo_root)
+    if vendor_dir is None:
+        return None
+
+    src = vendor_dir / vendor_name
+    if not src.is_file():
+        return None
+
+    target_dir = bin_dir or (Path.home() / ".local" / "bin")
+    dst = target_dir / vendor_name
+    if dry_run:
+        return dst
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    dst.chmod(0o755)
+
+    result = subprocess.run(
+        [str(dst), "--version"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        print(f"  {WARN} {vendor_name} copied but version check failed{suffix}")
+    return dst
+
+
+def install_or_find_foundation(
+    foundation: Foundation, repo_root: Path, dry_run: bool = False
+) -> tuple[str, str]:
+    bundled = install_foundation_from_bundle(foundation, repo_root, dry_run=dry_run)
+    if bundled:
+        return str(bundled), "bundled"
+
+    found = foundation.is_installed()
+    if found:
+        return found, "pre-existing"
+    return "", "not-installed"
+
+
 FOUNDATIONS: List[Foundation] = [
+    Foundation(
+        name="aicx",
+        description="AICX CLI for session history and memory recovery",
+        channels=["canonical"],
+        packages={
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
+        },
+        verify_cmd="aicx --version",
+    ),
     Foundation(
         name="aicx-mcp",
         description="AICX MCP server for session history and memory recovery",
-        channels=["crates", "github"],
+        channels=["canonical"],
         packages={
-            "crates": "aicx",
-            "github": "https://github.com/Loctree/aicx/releases",
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
         },
         verify_cmd="aicx-mcp --version",
     ),
     Foundation(
+        name="loct",
+        description="Loctree operator CLI short command",
+        channels=["canonical"],
+        packages={
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
+        },
+        verify_cmd="loct --version",
+    ),
+    Foundation(
+        name="loctree",
+        description="Loctree structural code mapping CLI",
+        channels=["canonical"],
+        packages={
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
+        },
+        verify_cmd="loctree --version",
+    ),
+    Foundation(
         name="loctree-mcp",
         description="Structural code mapping MCP server",
-        channels=["crates", "npm", "github"],
+        channels=["canonical"],
         packages={
-            "crates": "loctree-mcp",
-            "npm": "loctree-mcp",
-            "github": "https://github.com/Loctree/Loctree/releases",
+            "canonical": "curl -fsSL https://loct.io/install.sh | sh",
         },
         verify_cmd="loctree-mcp --version",
     ),
@@ -317,18 +468,79 @@ FOUNDATIONS: List[Foundation] = [
         required=False,
     ),
     Foundation(
-        name="zellij",
-        description="Visible multi-agent terminal workspace surface",
-        channels=["brew", "cargo", "github"],
+        name="vc-frame",
+        description="VC Frame multi-agent terminal workspace surface",
+        channels=["canonical"],
         packages={
-            "brew": "zellij",
-            "cargo": "zellij",
-            "github": "https://github.com/zellij-org/zellij/releases",
+            "canonical": "curl -fsSL https://vibecrafted.io/install.sh | bash",
         },
-        verify_cmd="zellij --version",
+        verify_cmd="vc-frame --version",
         required=True,
     ),
 ]
+
+RUNTIME_COMMANDS = {
+    "wezterm": "wezterm",
+    "vc-apprt": "vc_",
+    "locterm": None,
+    "microsandbox": "msb",
+}
+
+
+def runtime_status_path() -> Path:
+    return vibecrafted_home() / "runtime" / "runtime.json"
+
+
+def read_runtime_status() -> Dict:
+    status_file = runtime_status_path()
+    if not status_file.is_file():
+        return {}
+    try:
+        data = json.loads(status_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "runtime": "unknown",
+            "status": "failed",
+            "message": f"cannot read runtime status: {status_file}",
+        }
+    return data if isinstance(data, dict) else {}
+
+
+def doctor_runtime_finding() -> "DoctorFinding":
+    status = read_runtime_status()
+    runtime = str(status.get("runtime") or "none")
+    if runtime == "none":
+        return DoctorFinding("ok", "runtime:none", "no runtime horse selected")
+
+    component = f"runtime:{runtime}"
+    state = str(status.get("status") or "unknown")
+    message = str(status.get("message") or "")
+    path_value = str(status.get("path") or "")
+
+    if state != "ok":
+        return DoctorFinding(
+            "fail",
+            component,
+            message or f"runtime installer reported status={state}",
+        )
+
+    if path_value and Path(path_value).exists():
+        return DoctorFinding("ok", component, f"-> {path_value}")
+
+    command = RUNTIME_COMMANDS.get(runtime)
+    if command:
+        found = shutil.which(command)
+        if found:
+            return DoctorFinding("ok", component, f"-> {found}")
+
+    if path_value:
+        return DoctorFinding(
+            "warn",
+            component,
+            f"recorded path is missing: {path_value}; {message}".strip(),
+        )
+    return DoctorFinding("warn", component, message or "runtime status lacks path")
+
 
 RUNTIME_DEPS = ["python3", "git"]
 RECOMMENDED_DEPS = ["rsync"]
@@ -352,9 +564,9 @@ def _is_writable(path: Path) -> bool:
         return False
 
 
-AGENT_RUNTIMES = ["codex", "claude", "gemini"]
+AGENT_RUNTIMES = ["codex", "claude", "gemini", "agy", "junie", "grok"]
 SYMLINK_TARGETS = ["agents", "claude", "codex"]
-SYMLINK_TARGET_CHOICES = [*SYMLINK_TARGETS, "gemini"]
+SYMLINK_TARGET_CHOICES = [*SYMLINK_TARGETS, "gemini", "agy", "junie", "grok"]
 
 # ---------------------------------------------------------------------------
 # Install state
@@ -379,6 +591,8 @@ class InstallState:
     launcher_entries: List[str] = field(default_factory=list)
     helper_files: List[str] = field(default_factory=list)
     foundations: Dict[str, Dict] = field(default_factory=dict)
+    product_tools: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    layout_transfers: List[Dict[str, str]] = field(default_factory=list)
     shell_helpers: bool = False
     install_path: str = ""
 
@@ -415,63 +629,43 @@ def _doctor_totals(findings: Sequence["DoctorFinding"]) -> Tuple[int, int, int]:
 
 
 def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
+    """One bounded, copy-pasteable fix per issue class (CLI_PRODUCT_SPEC §3.4)."""
     issues = [finding for finding in findings if finding.level != "ok"]
     if not issues:
-        return [
-            "Nothing is blocking the framework right now. Start with `vibecrafted init claude` and re-run `vibecrafted doctor` after major install changes."
-        ]
+        return ["start here: `vibecrafted init claude`"]
 
     actions: List[str] = []
-    if any(
-        finding.level == "fail" and finding.component.startswith("foundation:")
-        for finding in issues
-    ):
+    if any(finding.component.startswith("foundation:") for finding in issues):
+        # Foundation findings are now warn-level (externally managed), so key off
+        # the component, not the level — the repair guidance must still surface.
         actions.append(
-            "Required foundations are missing. Run `vibecrafted update` to "
-            "re-fetch the toolchain (or "
-            "`bash ~/.vibecrafted/tools/vibecrafted-current/scripts/install-foundations.sh` "
-            "directly), then re-run `vibecrafted doctor`. "
-            "If you cloned the repo, `make foundations` works too."
+            "repair Loctree/AICX from their own release surface, then "
+            "`bash scripts/install-foundations.sh --check`"
         )
     if any(
         finding.component.startswith(("runtime:", "symlink:", "stale-copy:"))
         for finding in issues
     ):
-        actions.append(
-            "Runtime links need repair. Re-run `vibecrafted update` (or "
-            "`make install` from a repo checkout) to rebuild the shared "
-            "skill views and remove stale copies."
-        )
+        actions.append("rebuild skill views: `vibecrafted update`")
     if any(
         finding.component in ("launcher-wrappers", "launcher-runtime")
         for finding in issues
     ):
-        actions.append(
-            "Launcher commands need repair. Run "
-            "`vibecrafted doctor --fix-launchers` for an in-place repair, "
-            "or `vibecrafted update` (or `make install` from a repo "
-            "checkout) to rebuild the full launcher surface."
-        )
+        actions.append("repair launchers: `vibecrafted doctor --fix-launchers`")
+    if any(finding.component.startswith("commands:") for finding in issues):
+        actions.append("restore agent slash commands: `vibecrafted update`")
     if any(
         finding.component.startswith("shell-helper")
         or finding.component == "shell-helpers"
         for finding in issues
     ):
-        actions.append(
-            "Shell helper shortcuts need cleanup. Core `vibecrafted ...` commands still work; re-run install when you want the `vc-*` shortcuts back."
-        )
+        actions.append("restore `vc-*` shortcuts: re-run `make install`")
     if any(finding.component == "manifest" for finding in issues):
-        actions.append(
-            "No install manifest was found. Run the Smart Installer once to enable cleaner tracking, restore, and uninstall."
-        )
+        actions.append("enable tracking and restore: run the installer once")
     if any(finding.component.startswith("orphan:") for finding in issues):
-        actions.append(
-            "Older bundle leftovers are still present. Re-run the installer before release so the product surface stays clean."
-        )
+        actions.append("clean bundle leftovers: re-run the installer")
     if not actions:
-        actions.append(
-            "The install is usable but has warnings. Review the report, clean the highlighted items, then re-run `vibecrafted doctor`."
-        )
+        actions.append("review the warnings above, then re-run `vibecrafted doctor`")
     return actions
 
 
@@ -590,6 +784,10 @@ def runtime_skills_dir(runtime: str) -> Path:
     return Path.home() / f".{runtime}" / "skills"
 
 
+def runtime_commands_dir(runtime: str) -> Path:
+    return Path.home() / f".{runtime}" / "commands"
+
+
 def detect_osascript() -> Optional[str]:
     return shutil.which("osascript")
 
@@ -630,9 +828,11 @@ def get_repo_url(repo_root: Path) -> str:
 
 
 def discover_skills(repo_root: Path) -> List[Path]:
-    """Find all canonical 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skill directories."""
-    skills = []
+    """Find all default 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skill directories."""
+    skills: List[Path] = []
     skills_dir = repo_root / "skills"
+    if not skills_dir.is_dir():
+        skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
     if not skills_dir.exists() or not skills_dir.is_dir():
         return skills
 
@@ -1124,7 +1324,7 @@ def _helper_surface_label(*, zsh_available: Optional[bool] = None) -> str:
 
 
 def _launcher_path_line() -> str:
-    return 'case ":$PATH:" in *":${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/bin:"*) ;; *) export PATH="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/bin:$PATH" ;; esac; case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+    return 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
 
 
 def _legacy_launcher_path_lines() -> List[str]:
@@ -1185,9 +1385,7 @@ def _doctor_fix_rc_files() -> List[DoctorFinding]:
             content, ensure_helper=ensure_helper, ensure_path=ensure_path
         )
         if repaired == content:
-            findings.append(
-                DoctorFinding("ok", f"rc-fix:{rcname}", "already canonical")
-            )
+            findings.append(DoctorFinding("ok", f"rc-fix:{rcname}", "already default"))
             continue
 
         rcfile.write_text(repaired, encoding="utf-8")
@@ -1195,7 +1393,7 @@ def _doctor_fix_rc_files() -> List[DoctorFinding]:
             DoctorFinding(
                 "ok",
                 f"rc-fix:{rcname}",
-                "repaired compat rc entries and restored canonical launcher/helper hints",
+                "repaired compat rc entries and restored default launcher/helper hints",
             )
         )
 
@@ -1211,8 +1409,7 @@ def _doctor_fix_rc_files() -> List[DoctorFinding]:
 
 
 def _doctor_launcher_source_root(store_path: Path) -> Optional[Path]:
-    tools_home = store_path.parent
-    current_link = tools_home / "tools" / "vibecrafted-current"
+    current_link = vibecrafted_tools_home() / "vibecrafted-current"
     candidates: List[Path] = [Path(__file__).resolve().parent.parent]
 
     if current_link.exists():
@@ -1237,12 +1434,12 @@ def _doctor_fix_launchers(store_path: Path, state: InstallState) -> List[DoctorF
             DoctorFinding(
                 "warn",
                 "doctor-fix-launchers",
-                "could not locate a canonical source root with scripts/vibecrafted",
+                "could not locate a default source root with scripts/vibecrafted",
             )
         ]
 
     try:
-        _install_launcher(source_root, dry_run=False)
+        _install_launcher(source_root, dry_run=False, update_rc=False)
         state.launcher_entries = _snapshot_launcher_entries()
         state.save(store_path)
     except Exception as exc:  # pragma: no cover - repair failures surface here
@@ -1424,6 +1621,7 @@ def _installer_managed_launcher_names() -> List[str]:
         "vibecrafted",
         "vibecraft",
         *LAUNCHER_WRAPPERS,
+        *PYTHON_ENTRYPOINT_LAUNCHERS,
         *LEGACY_LAUNCHER_NAMES,
     ]
 
@@ -1484,6 +1682,35 @@ def _snapshot_launcher_entries() -> List[str]:
                     launcher_entries.append(f"{key}/{name}")
                     seen.add((key, name))
     return launcher_entries
+
+
+def snapshot_product_tool_state() -> Dict[str, Dict[str, str]]:
+    """Record product dependency commands exactly where PATH resolves them.
+
+    Loctree/AICX/vc-frame/etc. are foundation payload when the bundle vendors
+    them for this platform. Missing bundle payloads remain external dependencies,
+    so discovery still observes PATH and persists the fallback result.
+    """
+    product_tools: Dict[str, Dict[str, str]] = {}
+    seen: set[str] = set()
+    for foundation in FOUNDATIONS:
+        if foundation.name in seen:
+            continue
+        seen.add(foundation.name)
+        found = foundation.is_installed()
+        if found:
+            product_tools[foundation.name] = {
+                "path": found,
+                "managed_by": "external-path",
+                "required": str(bool(foundation.required)).lower(),
+            }
+        else:
+            product_tools[foundation.name] = {
+                "path": "",
+                "managed_by": "missing",
+                "required": str(bool(foundation.required)).lower(),
+            }
+    return product_tools
 
 
 def _parse_manifest_launchers(
@@ -1547,10 +1774,48 @@ LAUNCHER_WRAPPERS = [
     "vc-init",
     "vc-start",
     "vc-dashboard",
+    "vc-cron",
+    "vc-loop",
+    "vc-paste",
+    "vc-ship",
+    "vc-dispatch",
     "vc-resume",
     "vc-agents",
     "telemetry",
     *[f"vc-{name}" for name in SKILL_WRAPPER_NAMES],
+]
+
+PYTHON_ENTRYPOINT_LAUNCHERS = [
+    "vc-agents",
+    "vc-audit",
+    "vc-cron",
+    "vc-decorate",
+    "vc-delegate",
+    "vc-dou",
+    "vc-followup",
+    "vc-hydrate",
+    "vc-implement",
+    "vc-intents",
+    "vc-loop",
+    "vc-marbles",
+    "vc-ownership",
+    "vc-partner",
+    "vc-paste",
+    "vc-polarize",
+    "vc-prune",
+    "vc-release",
+    "vc-research",
+    "vc-research-await",
+    "vc-research-synthesize",
+    "vc-review",
+    "vc-sandbox",
+    "vc-scaffold",
+    "vc-ship",
+    "vc-workflow",
+    "vibecrafted",
+    "vibecrafted-compact-hook",
+    "vibecrafted-mcp",
+    "vibecrafted-resume",
 ]
 
 LEGACY_LAUNCHER_NAMES = [
@@ -1568,20 +1833,13 @@ FRAMEWORK_LAUNCHER_MARKERS = (
 
 
 def _launcher_bin_dirs() -> List[Path]:
-    dirs: List[Path] = []
-    for candidate in (
-        vibecrafted_home() / "bin",
-        Path.home() / ".local" / "bin",
-    ):
-        if candidate not in dirs:
-            dirs.append(candidate)
-    return dirs
+    return [vibecrafted_launcher_bin()]
 
 
 def _find_launcher_wrapper(name: str) -> Optional[Path]:
     for launcher_bin_dir in _launcher_bin_dirs():
         candidate = launcher_bin_dir / name
-        if candidate.exists():
+        if candidate.exists() or candidate.is_symlink():
             return candidate
     return None
 
@@ -1615,9 +1873,9 @@ def _rc_has_framework_install_hints(rcfile: Path) -> bool:
 
 
 def _launcher_dir_key(launcher_bin_dir: Path) -> str:
-    if launcher_bin_dir == vibecrafted_home() / "bin":
-        return "portable-bin"
     if launcher_bin_dir == Path.home() / ".local" / "bin":
+        return "local-bin"
+    if launcher_bin_dir == vibecrafted_launcher_bin():
         return "local-bin"
     return (
         re.sub(r"[^a-z0-9]+", "-", str(launcher_bin_dir).lower()).strip("-")
@@ -1627,8 +1885,7 @@ def _launcher_dir_key(launcher_bin_dir: Path) -> str:
 
 def _launcher_dir_from_key(key: str) -> Optional[Path]:
     mapping = {
-        "portable-bin": vibecrafted_home() / "bin",
-        "local-bin": Path.home() / ".local" / "bin",
+        "local-bin": vibecrafted_launcher_bin(),
     }
     return mapping.get(key)
 
@@ -1649,6 +1906,7 @@ def _is_framework_managed_launcher(entry: Path) -> bool:
         "vibecrafted",
         "vibecraft",
         *[wrapper.lower() for wrapper in LAUNCHER_WRAPPERS],
+        *[wrapper.lower() for wrapper in PYTHON_ENTRYPOINT_LAUNCHERS],
         *[legacy.lower() for legacy in LEGACY_LAUNCHER_NAMES],
     }
     if name in explicit_names:
@@ -1678,6 +1936,25 @@ def _is_framework_managed_launcher(entry: Path) -> bool:
         return True
 
     return False
+
+
+def _is_replaceable_framework_launcher(entry: Path) -> bool:
+    if not (entry.exists() or entry.is_symlink()):
+        return True
+    if entry.is_symlink():
+        try:
+            target = Path(os.readlink(entry))
+        except OSError:
+            target = Path("")
+        if target.name.lower() in {"vibecrafted", "vibecraft"}:
+            return True
+        try:
+            resolved = entry.resolve(strict=False)
+        except OSError:
+            resolved = None
+        if resolved is not None and _launcher_file_contains_framework_markers(resolved):
+            return True
+    return _launcher_file_contains_framework_markers(entry)
 
 
 def collect_installed_launchers() -> List[Tuple[Path, Path]]:
@@ -1716,6 +1993,18 @@ KNOWN_HELPER_FUNCTIONS = [
     "gemini-research",
     "gemini-prompt",
     "gemini-observe",
+    "agy-implement",
+    "agy-plan",
+    "agy-review",
+    "agy-research",
+    "agy-prompt",
+    "agy-observe",
+    "junie-implement",
+    "junie-plan",
+    "junie-review",
+    "junie-research",
+    "junie-prompt",
+    "junie-observe",
     "skills-sync",
     "gemini-keychain-set",
     "gemini-keychain-get",
@@ -1732,7 +2021,7 @@ class HelperConflict:
 
 def scan_helper_conflicts() -> Dict[Path, List[HelperConflict]]:
     """Scan shell config files for existing helper function definitions."""
-    canonical = _helper_target_path()
+    default = _helper_target_path()
     conflicts: Dict[Path, List[HelperConflict]] = {}
 
     search_dirs = []
@@ -1752,7 +2041,7 @@ def scan_helper_conflicts() -> Dict[Path, List[HelperConflict]]:
             files_to_scan.append(rc)
 
     for fpath in files_to_scan:
-        if fpath.resolve() == canonical.resolve():
+        if fpath.resolve() == default.resolve():
             continue  # Skip our own file
         try:
             lines = fpath.read_text().splitlines()
@@ -1801,7 +2090,7 @@ def report_helper_conflicts(
     if not interactive:
         print(
             yellow(
-                "  Non-interactive mode: installing the canonical helper file alongside."
+                "  Non-interactive mode: installing the default helper file alongside."
             )
         )
         print(yellow("  Clean up duplicates in the files above manually."))
@@ -1811,7 +2100,7 @@ def report_helper_conflicts(
         "  How should we handle it?",
         [
             "Skip helper install and keep the current setup",
-            "Install the canonical helper file alongside and clean up duplicates later",
+            "Install the default helper file alongside and clean up duplicates later",
         ],
         default=1,
     )
@@ -1834,13 +2123,29 @@ def report_helper_conflicts(
 # ---------------------------------------------------------------------------
 
 
-_RSYNC_EXCLUDES = {".DS_Store", ".loctree"}
+_RSYNC_EXCLUDES = {".DS_Store", ".backup", ".loctree"}
 _CONTROL_PLANE_EXCLUDES = {
     ".DS_Store",
     ".git",
+    ".legacy-state-agency",
     ".loctree",
     ".pytest_cache",
+    ".venv",
     "__pycache__",
+    # Regenerable build artifacts — never belong in the staged control-plane
+    # mirror. Without these the mirror balloons (a Swift-app DerivedData/build
+    # tree took vibecrafted-local to 47G and filled the disk, which surfaced as
+    # rsync "No space left on device" during install).
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "DerivedData",
+    ".build",
+    ".next",
+    ".air",
+    ".mypy_cache",
+    ".ruff_cache",
 }
 
 
@@ -1867,12 +2172,29 @@ def rsync_skill(
         return
     dst.mkdir(parents=True, exist_ok=True)
     if shutil.which("rsync"):
-        cmd = ["rsync", "-az", "--exclude", ".DS_Store", "--exclude", ".loctree"]
+        cmd = [
+            "rsync",
+            "-az",
+            "--exclude",
+            ".DS_Store",
+            "--exclude",
+            ".backup",
+            "--exclude",
+            ".loctree",
+        ]
         if mirror:
             cmd.append("--delete")
         cmd += [str(src) + "/", str(dst) + "/"]
+        # Capture rsync stderr — do NOT discard it. When this sync fails the
+        # operator needs the real reason (exit 23 "could not make way", exit
+        # 11/12 "No space left on device", a dangling symlink, a permission
+        # error), not an opaque "could not refresh staged tools".
         subprocess.run(
-            cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            cmd,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
     else:
         _copytree_skill(src, dst, mirror=mirror)
@@ -1926,33 +2248,70 @@ def sync_control_plane_tree(
         return
     dst.mkdir(parents=True, exist_ok=True)
     if shutil.which("rsync"):
-        cmd = ["rsync", "-a"]
+        # --copy-dirlinks: materialise dir-symlinks (the dev compat-shims at
+        # top-level runtime/ and skills/ that point into the packaged tree) as
+        # real directories in the staged mirror. Without it, rsync tries to
+        # replace the destination's existing real dirs with symlinks and fails
+        # with exit 23 ("could not make way for new symlink: runtime/skills").
+        cmd = ["rsync", "-a", "--copy-dirlinks"]
         for name in sorted(_CONTROL_PLANE_EXCLUDES):
             cmd += ["--exclude", name]
         if mirror:
             cmd.append("--delete")
         cmd += [str(src) + "/", str(dst) + "/"]
+        # Capture rsync stderr — do NOT discard it. When this sync fails the
+        # operator needs the real reason (exit 23 "could not make way", exit
+        # 11/12 "No space left on device", a dangling symlink, a permission
+        # error), not an opaque "could not refresh staged tools".
         subprocess.run(
-            cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            cmd,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
     else:
         _copy_control_plane_contents(src, dst, mirror=mirror)
 
 
+def _staged_sync_failure_detail(exc: Exception) -> str:
+    """Detail for a staged-tools sync failure, with the rsync stderr tail folded
+    in (it is captured but otherwise unsurfaced) so the operator sees WHY the
+    sync failed instead of a bare 'returned non-zero exit status'."""
+    detail = str(exc)
+    stderr = getattr(exc, "stderr", None)
+    if stderr:
+        tail = " | ".join(
+            line.strip() for line in str(stderr).strip().splitlines() if line.strip()
+        )
+        if tail:
+            detail = f"{detail}: {tail}"
+    return detail
+
+
 def _is_framework_source_root(repo_root: Path) -> bool:
+    skills_dir = repo_root / "skills"
+    packaged_skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
+    runtime_dir = repo_root / "runtime"
+    packaged_runtime_dir = (
+        repo_root / "vibecrafted-core" / "vibecrafted_core" / "runtime"
+    )
     return (
         (repo_root / "VERSION").is_file()
         and (repo_root / "scripts" / "vibecrafted").is_file()
-        and (repo_root / "skills").is_dir()
+        and (skills_dir.is_dir() or packaged_skills_dir.is_dir())
+        and (runtime_dir.is_dir() or packaged_runtime_dir.is_dir())
     )
 
 
 def _current_tools_link(shared_home: Path) -> Path:
-    return shared_home / "tools" / "vibecrafted-current"
+    _ = shared_home
+    return vibecrafted_tools_home() / "vibecrafted-current"
 
 
 def _ensure_current_tools_target(shared_home: Path) -> Path:
-    tools_dir = shared_home / "tools"
+    _ = shared_home
+    tools_dir = vibecrafted_tools_home()
     current_link = _current_tools_link(shared_home)
     tools_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1973,7 +2332,7 @@ def _ensure_current_tools_target(shared_home: Path) -> Path:
 def refresh_current_tools(
     repo_root: Path, shared_home: Path, dry_run: bool = False, mirror: bool = False
 ) -> Optional[Path]:
-    """Refresh ~/.vibecrafted/tools/vibecrafted-current from the install source."""
+    """Refresh the runtime tools current-link from the install source."""
     if not _is_framework_source_root(repo_root):
         return None
 
@@ -1994,6 +2353,185 @@ def refresh_current_tools(
 
     sync_control_plane_tree(repo_root, target, dry_run=dry_run, mirror=mirror)
     return current_link
+
+
+def _legacy_agents_layout_root(store_path: Path) -> Path:
+    return store_path / "vc-agents"
+
+
+def _current_agents_layout_root(store_path: Path, *, create: bool = False) -> Path:
+    current_link = _current_tools_link(store_path)
+    if create:
+        _ensure_current_tools_target(store_path)
+    return current_link / "agents"
+
+
+def _transfer_relative_files(root: Path) -> List[Path]:
+    if not root.exists():
+        return []
+    files: List[Path] = []
+    for item in sorted(root.rglob("*")):
+        if any(
+            part in _CONTROL_PLANE_EXCLUDES for part in item.relative_to(root).parts
+        ):
+            continue
+        if item.is_file() or item.is_symlink():
+            files.append(item.relative_to(root))
+    return files
+
+
+def _same_file_payload(src: Path, dst: Path) -> bool:
+    if src.is_symlink() or dst.is_symlink():
+        try:
+            return os.readlink(src) == os.readlink(dst)
+        except OSError:
+            return False
+    try:
+        return src.read_bytes() == dst.read_bytes()
+    except OSError:
+        return False
+
+
+def _layout_transfer_conflicts(src: Path, dst: Path) -> List[Path]:
+    conflicts: List[Path] = []
+    for rel in _transfer_relative_files(src):
+        target = dst / rel
+        source = src / rel
+        if not (target.exists() or target.is_symlink()):
+            continue
+        if not _same_file_payload(source, target):
+            conflicts.append(rel)
+    return conflicts
+
+
+def _copy_layout_payload(src: Path, dst: Path) -> List[str]:
+    copied: List[str] = []
+    dst.mkdir(parents=True, exist_ok=True)
+    for rel in _transfer_relative_files(src):
+        source = src / rel
+        target = dst / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            _remove_path(target)
+        if source.is_symlink():
+            target.symlink_to(os.readlink(source))
+        else:
+            shutil.copy2(source, target)
+        copied.append(str(rel))
+    return copied
+
+
+def _append_layout_transfer(
+    state: InstallState,
+    *,
+    direction: str,
+    status: str,
+    source: Path,
+    target: Path,
+    copied: Sequence[str] = (),
+    conflicts: Sequence[Path] = (),
+) -> None:
+    state.layout_transfers.append(
+        {
+            "direction": direction,
+            "status": status,
+            "source": str(source),
+            "target": str(target),
+            "copied": str(len(copied)),
+            "conflicts": ",".join(str(path) for path in conflicts),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+
+
+def transfer_agents_layout(
+    store_path: Path,
+    *,
+    direction: str,
+    dry_run: bool = False,
+    force: bool = False,
+) -> Tuple[int, Dict[str, Any]]:
+    """Move the agent script layout between legacy store and current tools.
+
+    This is intentionally conservative: existing target payload with different
+    bytes blocks the transfer unless the operator passes ``--force``. Product
+    tools discovered on PATH are never copied or re-homed here; this only moves
+    Vibecrafted's framework payload between the old and new install layouts.
+    """
+    state = InstallState.load(store_path)
+    if direction == "legacy-to-new":
+        source = _legacy_agents_layout_root(store_path)
+        target = _current_agents_layout_root(store_path, create=not dry_run)
+    elif direction == "new-to-legacy":
+        source = _current_agents_layout_root(store_path, create=False)
+        target = _legacy_agents_layout_root(store_path)
+    else:
+        raise ValueError(f"unsupported layout transfer direction: {direction}")
+
+    if not source.exists():
+        _append_layout_transfer(
+            state,
+            direction=direction,
+            status="blocked",
+            source=source,
+            target=target,
+            conflicts=[Path("source-missing")],
+        )
+        if not dry_run:
+            state.save(store_path)
+        return 1, {
+            "source": source,
+            "target": target,
+            "conflicts": [Path("source-missing")],
+        }
+
+    conflicts = _layout_transfer_conflicts(source, target)
+    if conflicts and not force:
+        _append_layout_transfer(
+            state,
+            direction=direction,
+            status="blocked",
+            source=source,
+            target=target,
+            conflicts=conflicts,
+        )
+        if not dry_run:
+            state.save(store_path)
+        return 1, {"source": source, "target": target, "conflicts": conflicts}
+
+    copied = _transfer_relative_files(source)
+    if not dry_run:
+        copied_names = _copy_layout_payload(source, target)
+        _append_layout_transfer(
+            state,
+            direction=direction,
+            status="completed",
+            source=source,
+            target=target,
+            copied=copied_names,
+            conflicts=conflicts,
+        )
+        state.updated_at = datetime.now(timezone.utc).isoformat()
+        state.save(store_path)
+    return 0, {
+        "source": source,
+        "target": target,
+        "copied": copied,
+        "conflicts": conflicts,
+    }
+
+
+def layout_status(store_path: Path) -> Dict[str, Any]:
+    legacy = _legacy_agents_layout_root(store_path)
+    current = _current_agents_layout_root(store_path, create=False)
+    state = InstallState.load(store_path)
+    return {
+        "legacy": legacy,
+        "legacy_exists": legacy.exists(),
+        "current": current,
+        "current_exists": current.exists(),
+        "last_transfer": state.layout_transfers[-1] if state.layout_transfers else {},
+    }
 
 
 def prune_orphaned_skills(
@@ -2125,7 +2663,7 @@ def prune_legacy_skills(
 
 
 def create_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
-    """Create a symlink, removing any existing entry."""
+    """Create a framework symlink without clobbering unmanaged entries."""
     if target == link:
         if dry_run:
             print(f"  {dim('same-path')} {target}")
@@ -2134,6 +2672,9 @@ def create_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
         print(f"  {dim('ln -s')} {target} -> {link}")
         return
     if link.exists() or link.is_symlink():
+        if not _is_replaceable_framework_launcher(link):
+            print(f"  {WARN} Keeping existing unmanaged launcher: {link}")
+            return
         if link.is_symlink():
             link.unlink()
         elif link.is_dir():
@@ -2141,6 +2682,382 @@ def create_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
         else:
             link.unlink()
     link.symlink_to(target)
+
+
+def create_skill_view_symlink(target: Path, link: Path, dry_run: bool = False) -> None:
+    """Create an agent skill view, replacing stale legacy store views."""
+    if target == link:
+        if dry_run:
+            print(f"  {dim('same-path')} {target}")
+        return
+    if dry_run:
+        print(f"  {dim('ln -s')} {target} -> {link}")
+        return
+    if link.exists() or link.is_symlink():
+        if link.is_symlink() or link.is_file():
+            link.unlink()
+        elif link.is_dir():
+            shutil.rmtree(link)
+    link.symlink_to(target)
+
+
+def _copy_managed_launcher(src: Path, dst: Path) -> bool:
+    if dst.exists() or dst.is_symlink():
+        if not _is_replaceable_framework_launcher(dst):
+            print(f"  {WARN} Keeping existing unmanaged launcher: {dst}")
+            return False
+        if dst.is_symlink():
+            dst.unlink()
+        elif dst.is_dir():
+            shutil.rmtree(dst)
+        else:
+            dst.unlink()
+    shutil.copy2(src, dst)
+    dst.chmod(0o755)
+    return True
+
+
+def _canonical_store_path(shared_home: Path, *, create: bool = False) -> Path:
+    """Return the canonical skill store under staged tools, not state home."""
+    current_link = _current_tools_link(shared_home)
+    if current_link.exists() or current_link.is_symlink():
+        return current_link / "skills"
+    if create:
+        return _ensure_current_tools_target(shared_home) / "skills"
+    return shared_home / "skills"
+
+
+def _load_install_state(store_path: Path) -> InstallState:
+    state = InstallState.load(store_path)
+    if (store_path / STATE_FILE).exists():
+        return state
+
+    legacy_store = vibecrafted_home() / "skills"
+    if legacy_store != store_path and (legacy_store / STATE_FILE).exists():
+        return InstallState.load(legacy_store)
+    return state
+
+
+def _runtime_venv_dir(current_tools: Path) -> Path:
+    return current_tools / ".venv"
+
+
+def _runtime_venv_python(current_tools: Path) -> Path:
+    return _runtime_venv_dir(current_tools) / "bin" / "python3"
+
+
+def _ensure_runtime_pip(python_bin: Path) -> None:
+    pip_check = subprocess.run(
+        [str(python_bin), "-m", "pip", "--version"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if pip_check.returncode == 0:
+        return
+    subprocess.run(
+        [str(python_bin), "-m", "ensurepip", "--upgrade"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+
+def _ensure_runtime_venv(current_tools: Path, dry_run: bool = False) -> Optional[Path]:
+    """Create/update the installed runtime venv and editable core packages."""
+    python_bin = _runtime_venv_python(current_tools)
+    if dry_run:
+        print(f"  {dim('venv')} {python_bin}")
+        return python_bin
+
+    if not python_bin.exists():
+        subprocess.run(
+            [sys.executable, "-m", "venv", str(_runtime_venv_dir(current_tools))],
+            check=True,
+        )
+
+    _ensure_runtime_pip(python_bin)
+
+    packages = [
+        current_tools / "vibecrafted-core",
+        current_tools / "plugins" / "iterm2",
+        current_tools / "vibecrafted-mcp",
+    ]
+    for package in packages:
+        if not (package / "pyproject.toml").is_file():
+            continue
+        subprocess.run(
+            [
+                str(python_bin),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-deps",
+                "-e",
+                str(package),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+
+    subprocess.run(
+        [str(python_bin), "-c", "import vibecrafted_core"],
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    return python_bin
+
+
+def _install_python_entrypoint_launchers(
+    current_tools: Path, dry_run: bool = False
+) -> List[Path]:
+    """Expose Python console scripts from the installed runtime venv."""
+    installed: List[Path] = []
+    console_bin = _runtime_venv_dir(current_tools) / "bin"
+    launcher_bin_dir = vibecrafted_launcher_bin()
+    if not dry_run:
+        launcher_bin_dir.mkdir(parents=True, exist_ok=True)
+
+    for name in PYTHON_ENTRYPOINT_LAUNCHERS:
+        src = console_bin / name
+        dst = launcher_bin_dir / name
+        if not dry_run and not src.exists():
+            print(f"  {WARN} Runtime entrypoint missing: {src}")
+            continue
+        create_symlink(src, dst, dry_run=dry_run)
+        installed.append(dst)
+    return installed
+
+
+def _state_agency_quarantine(current_tools: Path) -> Path:
+    return current_tools / ".legacy-state-agency"
+
+
+def _clear_immutable_flags(path: Path) -> None:
+    if sys.platform != "darwin":
+        return
+    subprocess.run(
+        ["chflags", "-R", "nouchg", str(path)],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _available_quarantine_path(dst: Path) -> Path:
+    if not (dst.exists() or dst.is_symlink()):
+        return dst
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    candidate = dst.with_name(f"{dst.name}-{stamp}-{os.getpid()}")
+    counter = 1
+    while candidate.exists() or candidate.is_symlink():
+        candidate = dst.with_name(f"{dst.name}-{stamp}-{os.getpid()}-{counter}")
+        counter += 1
+    return candidate
+
+
+def _move_state_agency_path(src: Path, dst: Path, dry_run: bool = False) -> bool:
+    if not (src.exists() or src.is_symlink()):
+        return False
+    if dry_run:
+        print(f"  {dim('move')} {src} -> {dst}")
+        return True
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst = _available_quarantine_path(dst)
+    if src.is_symlink() or src.is_file():
+        _clear_immutable_flags(src)
+        shutil.move(str(src), str(dst))
+        return True
+    if src.is_dir():
+        shutil.move(str(src), str(dst))
+        return True
+    return False
+
+
+def cleanse_state_home_agency(current_tools: Path, dry_run: bool = False) -> int:
+    """Move executable agency out of ~/.vibecrafted and into staged tools."""
+    state_home = vibecrafted_home()
+    quarantine = _state_agency_quarantine(current_tools)
+    moved = 0
+    for name in ("skills", "helpers", "config", "bin", "scripts"):
+        if _move_state_agency_path(state_home / name, quarantine / name, dry_run):
+            moved += 1
+
+    tmp_dir = state_home / "tmp"
+    if tmp_dir.is_dir():
+        for script in sorted(tmp_dir.glob("*.sh")):
+            if _move_state_agency_path(
+                script, quarantine / "tmp" / script.name, dry_run
+            ):
+                moved += 1
+    return moved
+
+
+AGENT_COMMAND_MARKER = "<!-- vibecrafted-managed-agent-command -->"
+MARBLES_COMMANDS_BY_RUNTIME: Dict[str, Tuple[str, ...]] = {
+    "claude": ("marbles.md", "cancel-marbles.md"),
+    "codex": ("marbles.md", "codex-marbles-loop.md", "cancel-codex-marbles.md"),
+}
+
+
+def _managed_agent_command(path: Path) -> bool:
+    if not path.exists() or not path.is_file():
+        return False
+    try:
+        return AGENT_COMMAND_MARKER in path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+
+
+def _write_managed_agent_command(
+    path: Path, content: str, dry_run: bool = False
+) -> bool:
+    if dry_run:
+        print(f"  {dim('write')} {path}")
+        return True
+    if path.exists() and not _managed_agent_command(path):
+        print(f"  {WARN} Keeping existing unmanaged command: {path}")
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    return True
+
+
+def _marbles_orchestrator_expr() -> str:
+    return (
+        '"${VIBECRAFTED_MARBLES_ORCHESTRATOR:-'
+        "${VIBECRAFTED_TOOLS_HOME:-$HOME/.local/share/vibecrafted/tools}"
+        '/vibecrafted-current/runtime/vc-marbles/orchestrator}"'
+    )
+
+
+def _codex_marbles_command(alias: str) -> str:
+    orchestrator = _marbles_orchestrator_expr()
+    return f"""---
+description: "Start Codex interactive Marbles loop"
+argument-hint: "PROMPT [--max-iterations N] [--completion-promise TEXT]"
+---
+{AGENT_COMMAND_MARKER}
+
+# Codex Marbles
+
+Run:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/setup-codex-loop.sh" $ARGUMENTS
+```
+
+Then obey the in-session loop protocol before finalizing:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/codex-loop-step.sh" next
+```
+
+If it prints `PROMPT`, continue with that prompt in this same Codex session.
+Only finish after a real completion, then run:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/codex-loop-step.sh" complete --promise "<text>"
+```
+
+Command alias installed as `{alias}`.
+"""
+
+
+def _cancel_codex_marbles_command() -> str:
+    orchestrator = _marbles_orchestrator_expr()
+    return f"""---
+description: "Cancel active Codex Marbles loop"
+---
+{AGENT_COMMAND_MARKER}
+
+# Cancel Codex Marbles
+
+Run:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/codex-loop-step.sh" cancel
+```
+"""
+
+
+def _claude_marbles_command() -> str:
+    orchestrator = _marbles_orchestrator_expr()
+    return f"""---
+description: "Start Marbles in current Claude session"
+argument-hint: "PROMPT [--max-iterations N] [--completion-promise TEXT]"
+---
+{AGENT_COMMAND_MARKER}
+
+# Claude Marbles
+
+Run:
+
+```bash
+orchestrator={orchestrator}
+bash "$orchestrator/scripts/setup-marbles-loop.sh" $ARGUMENTS
+```
+
+This command initializes `.claude/marbles.local.md`. The Claude Stop hook lives
+at:
+
+```text
+$orchestrator/hooks/stop-hook.sh
+```
+"""
+
+
+def _cancel_claude_marbles_command() -> str:
+    return f"""---
+description: "Cancel active Claude Marbles loop"
+---
+{AGENT_COMMAND_MARKER}
+
+# Cancel Claude Marbles
+
+Run:
+
+```bash
+if [[ -f .claude/marbles.local.md ]]; then
+  rm .claude/marbles.local.md
+  echo "Cancelled Claude Marbles."
+else
+  echo "No active Claude Marbles found."
+fi
+```
+"""
+
+
+def _agent_command_payloads(runtime: str) -> Dict[str, str]:
+    if runtime == "codex":
+        return {
+            "marbles.md": _codex_marbles_command("/marbles"),
+            "codex-marbles-loop.md": _codex_marbles_command("/codex-marbles-loop"),
+            "cancel-codex-marbles.md": _cancel_codex_marbles_command(),
+        }
+    if runtime == "claude":
+        return {
+            "marbles.md": _claude_marbles_command(),
+            "cancel-marbles.md": _cancel_claude_marbles_command(),
+        }
+    return {}
+
+
+def install_agent_commands(runtimes: Sequence[str], dry_run: bool = False) -> None:
+    for runtime in runtimes:
+        payloads = _agent_command_payloads(runtime)
+        if not payloads:
+            continue
+        commands_dir = runtime_commands_dir(runtime)
+        if not dry_run:
+            commands_dir.mkdir(parents=True, exist_ok=True)
+        print(f"  {cyan(runtime)} commands -> {commands_dir}")
+        for filename, content in payloads.items():
+            _write_managed_agent_command(commands_dir / filename, content, dry_run)
 
 
 def _configure_gemini_plans(dry_run: bool = False) -> None:
@@ -2179,20 +3096,6 @@ def _configure_gemini_plans(dry_run: bool = False) -> None:
 
     gemini_settings.write_text(json.dumps(data, indent=2) + "\n")
     print(f"  {OK} Gemini plan.directory reset (was {plan_dir!r} -> default)")
-
-
-def install_foundation_cargo(foundation: Foundation, dry_run: bool = False) -> bool:
-    """Install a foundation via cargo install. Returns True on success."""
-    pkg = foundation.packages.get("crates", foundation.name)
-    if dry_run:
-        print(f"  {dim('cargo install')} {pkg}")
-        return True
-    print(f"  Installing {bold(pkg)} via cargo...")
-    result = subprocess.run(
-        ["cargo", "install", pkg],
-        capture_output=False,
-    )
-    return result.returncode == 0
 
 
 # ---------------------------------------------------------------------------
@@ -2261,6 +3164,158 @@ def describe_dumb_terminal_noise(stdout: str, stderr: str) -> str:
     )
 
 
+def _canonical_store_root() -> Path:
+    return (Path.home() / ".vibecrafted").expanduser()
+
+
+def _canonical_runtime_root() -> Path:
+    return (Path.home() / ".local" / "share" / "vibecrafted").expanduser()
+
+
+def _canonical_launcher_root() -> Path:
+    return (Path.home() / ".local" / "bin").expanduser()
+
+
+def _path_with_tilde(path: Path) -> str:
+    path_text = str(path.expanduser())
+    home_text = str(Path.home())
+    if path_text == home_text:
+        return "~"
+    if path_text.startswith(home_text + os.sep):
+        return "~" + path_text[len(home_text) :]
+    return path_text
+
+
+def _is_subpath(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _runtime_root_contract_findings() -> List[DoctorFinding]:
+    checks = [
+        (
+            "launcher-bin",
+            vibecrafted_launcher_bin().expanduser(),
+            _canonical_launcher_root(),
+            "VIBECRAFTED_LAUNCHER_BIN",
+        ),
+        (
+            "runtime",
+            vibecrafted_runtime_home().expanduser(),
+            _canonical_runtime_root(),
+            "VIBECRAFTED_RUNTIME_HOME",
+        ),
+        (
+            "store",
+            vibecrafted_home().expanduser(),
+            _canonical_store_root(),
+            "VIBECRAFTED_HOME",
+        ),
+    ]
+
+    findings: List[DoctorFinding] = []
+    for component, resolved_path, canonical_path, env_var in checks:
+        if resolved_path == canonical_path:
+            findings.append(
+                DoctorFinding(
+                    "ok",
+                    f"root:{component}",
+                    f"{_path_with_tilde(resolved_path)} (canonical)",
+                )
+            )
+            continue
+
+        override_value = os.environ.get(env_var)
+        override_prefix = f"{env_var}={override_value!r}; " if override_value else ""
+        findings.append(
+            DoctorFinding(
+                "fail",
+                f"root:{component}",
+                f"{override_prefix}resolved to {_path_with_tilde(resolved_path)} but contract requires "
+                f"{_path_with_tilde(canonical_path)}; manual cleanup: restore canonical root, remove stale wrappers "
+                "from ~/.cargo/bin and /usr/local/bin, then rerun installer/doctor.",
+            )
+        )
+    return findings
+
+
+def _foundation_provenance_findings(
+    foundation_name: str, executable_path: Path
+) -> List[DoctorFinding]:
+    findings: List[DoctorFinding] = []
+    canonical_launcher = _canonical_launcher_root()
+    executable = executable_path.expanduser()
+
+    if executable.parent != canonical_launcher:
+        findings.append(
+            DoctorFinding(
+                "ok",
+                f"foundation-provenance:{foundation_name}",
+                f"external developer provider accepted: {_path_with_tilde(executable)} "
+                f"(canonical launcher root is {_path_with_tilde(canonical_launcher)})",
+            )
+        )
+        return findings
+
+    try:
+        resolved = executable.resolve(strict=False)
+    except OSError:
+        resolved = executable
+
+    for legacy_root in (Path.home() / ".cargo" / "bin", Path("/usr/local/bin")):
+        legacy_root = legacy_root.expanduser()
+        if _is_subpath(resolved, legacy_root):
+            findings.append(
+                DoctorFinding(
+                    "ok",
+                    f"foundation-provenance:{foundation_name}",
+                    f"launcher {_path_with_tilde(executable)} delegates to developer provider "
+                    f"{_path_with_tilde(resolved)}",
+                )
+            )
+            break
+
+    return findings
+
+
+def _has_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> bool:
+    return any(
+        finding.level == "fail" and finding.component.startswith("root:")
+        for finding in findings
+    )
+
+
+def _pause_for_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> None:
+    if not _has_runtime_contract_failures(findings):
+        return
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return
+
+    out = sys.stdout if hasattr(sys.stdout, "write") else sys.__stdout__
+    print(file=out)
+    print(f"  {yellow('Runtime contract failed fast.')}\n", file=out)
+    print("  Canonical roots:", file=out)
+    print("    - launcher bin: ~/.local/bin", file=out)
+    print("    - runtime payload: ~/.local/share/vibecrafted", file=out)
+    print("    - store/control: ~/.vibecrafted", file=out)
+    print(file=out)
+    print("  Manual cleanup (no automatic dotfile edits were performed):", file=out)
+    print("    1) restore canonical VIBECRAFTED_* root overrides", file=out)
+    print(
+        "    2) remove stale runtime/store launcher wrappers if they shadow these roots",
+        file=out,
+    )
+    print("    3) rerun 'vibecrafted doctor' or the installer", file=out)
+    print(file=out)
+    try:
+        input("  Press Enter after reviewing cleanup steps, or Ctrl-C to abort: ")
+    except EOFError:
+        print(file=out)
+
+
 def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     """Run full installation health check."""
     findings: List[DoctorFinding] = []
@@ -2270,8 +3325,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     findings.append(DoctorFinding("ok", "version", fw_ver))
 
     # 0b. Distribution channel + upgrade path
-    tools_dir = store_path.parent  # e.g. ~/.vibecrafted/tools/../ -> ~/.vibecrafted
-    current_link = tools_dir / "tools" / "vibecrafted-current"
+    current_link = vibecrafted_tools_home() / "vibecrafted-current"
     is_git = False
     if current_link.exists():
         resolved = current_link.resolve()
@@ -2310,6 +3364,8 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         findings.append(
             DoctorFinding("warn", "state", "No install manifest — was installer used?")
         )
+
+    findings.extend(_runtime_root_contract_findings())
 
     # 3. Expected skills present
     for skill_name in state.skills:
@@ -2376,10 +3432,10 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             continue
         for skill_name in state.skills:
             link = rt_skills / skill_name
-            canonical = store_path / skill_name
+            default = store_path / skill_name
             if link.is_symlink():
                 target = link.resolve()
-                if target == canonical.resolve():
+                if target == default.resolve():
                     findings.append(
                         DoctorFinding(
                             "ok", f"symlink:{runtime}/{skill_name}", "correct"
@@ -2390,7 +3446,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                         DoctorFinding(
                             "warn",
                             f"symlink:{runtime}/{skill_name}",
-                            f"points to {target}, expected {canonical}",
+                            f"points to {target}, expected {default}",
                         )
                     )
             elif link.is_dir():
@@ -2406,21 +3462,64 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                     DoctorFinding("fail", f"symlink:{runtime}/{skill_name}", "missing")
                 )
 
+    # 4b. Agent slash-command views. These are separate from skills and used by
+    # provider-native command palettes such as ~/.codex/commands and
+    # ~/.claude/commands.
+    for runtime in state.runtimes:
+        expected_commands = MARBLES_COMMANDS_BY_RUNTIME.get(runtime, ())
+        if not expected_commands:
+            continue
+        rt_commands = runtime_commands_dir(runtime)
+        missing = [
+            name
+            for name in expected_commands
+            if not _managed_agent_command(rt_commands / name)
+        ]
+        if missing:
+            findings.append(
+                DoctorFinding(
+                    "fail",
+                    f"commands:{runtime}",
+                    f"missing managed command(s): {', '.join(missing)} in {rt_commands}",
+                )
+            )
+        else:
+            findings.append(
+                DoctorFinding(
+                    "ok",
+                    f"commands:{runtime}",
+                    f"Marbles commands installed in {rt_commands}",
+                )
+            )
+
     # 5. Foundations
     for f in FOUNDATIONS:
         path = f.is_installed()
         if path:
             findings.append(DoctorFinding("ok", f"foundation:{f.name}", f"-> {path}"))
+            findings.extend(_foundation_provenance_findings(f.name, Path(path)))
         elif f.required:
+            # Required product foundations (loctree/aicx/vc-frame) are externally
+            # managed — installed via their own canonical installer, not by this
+            # framework. Their absence is an advisory (warn), not a broken
+            # install (fail): the framework is functional without them and the
+            # message points at the fix. Consistent with install-foundations.sh,
+            # which likewise treats them as non-fatal. Keeps `make doctor` green
+            # in headless/CI contexts where the product binaries are not present.
             findings.append(
                 DoctorFinding(
-                    "fail", f"foundation:{f.name}", f"missing — {f.install_hint()}"
+                    "warn",
+                    f"foundation:{f.name}",
+                    f"missing (externally managed) — {f.install_hint()}",
                 )
             )
         else:
             findings.append(
                 DoctorFinding("warn", f"foundation:{f.name}", "optional, not installed")
             )
+
+    # 5b. Runtime horse selected by install.sh --runtime / make install RUNTIME=...
+    findings.append(doctor_runtime_finding())
 
     # 6. Shell helpers
     helper_file = _helper_target_path()
@@ -2465,7 +3564,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             [
                 "bash",
                 "-c",
-                'source "$1"; command -v vc-help >/dev/null && command -v vc-agents >/dev/null && command -v vc-init >/dev/null && command -v vc-intents >/dev/null && command -v vc-ownership >/dev/null && command -v vc-marbles >/dev/null && command -v codex-implement >/dev/null && command -v codex-marbles >/dev/null && command -v skills-sync >/dev/null && printf "helper-ok\\n"',
+                'source "$1"; command -v vc-help >/dev/null && command -v vc-agents >/dev/null && command -v vc-init >/dev/null && command -v vc-intents >/dev/null && command -v vc-ownership >/dev/null && command -v vc-loop >/dev/null && command -v vc-ship >/dev/null && command -v vc-cron >/dev/null && command -v vc-marbles >/dev/null && command -v codex-implement >/dev/null && command -v codex-marbles >/dev/null && command -v skills-sync >/dev/null && printf "helper-ok\\n"',
                 "_",
                 str(helper_file),
             ],
@@ -2487,7 +3586,10 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         for name in ["vibecrafted", *LAUNCHER_WRAPPERS]
     }
     missing_wrappers = [
-        name for name in LAUNCHER_WRAPPERS if wrapper_locations.get(name) is None
+        name
+        for name in LAUNCHER_WRAPPERS
+        if name not in PYTHON_ENTRYPOINT_LAUNCHERS
+        and wrapper_locations.get(name) is None
     ]
     if missing_wrappers:
         findings.append(
@@ -2504,7 +3606,9 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             {
                 str(path.parent)
                 for name, path in wrapper_locations.items()
-                if name in LAUNCHER_WRAPPERS and path is not None
+                if name in LAUNCHER_WRAPPERS
+                and name not in PYTHON_ENTRYPOINT_LAUNCHERS
+                and path is not None
             }
         )
         findings.append(
@@ -2515,18 +3619,54 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
         )
 
+    python_entrypoint_issues: List[str] = []
+    python_entrypoint_owners: Set[str] = set()
+    for name in PYTHON_ENTRYPOINT_LAUNCHERS:
+        launcher_path = _find_launcher_wrapper(name)
+        if launcher_path is None:
+            python_entrypoint_issues.append(f"{name}:missing")
+            continue
+        try:
+            resolved = launcher_path.resolve(strict=False)
+        except OSError:
+            resolved = launcher_path
+        if ".venv" in resolved.parts:
+            python_entrypoint_owners.add("runtime venv")
+            continue
+        if "uv" in resolved.parts and "tools" in resolved.parts:
+            python_entrypoint_owners.add("uv tool")
+            continue
+        python_entrypoint_issues.append(f"{name}:not-uv-tool")
+    if python_entrypoint_issues:
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "python-entrypoints",
+                "Python launcher ownership issue(s): "
+                + ", ".join(python_entrypoint_issues[:6])
+                + (" ..." if len(python_entrypoint_issues) > 6 else ""),
+            )
+        )
+    else:
+        findings.append(
+            DoctorFinding(
+                "ok",
+                "python-entrypoints",
+                "all Python entrypoints resolve through "
+                + (" + ".join(sorted(python_entrypoint_owners)) or "managed tools"),
+            )
+        )
+
     launcher = wrapper_locations.get("vibecrafted")
     wrapper = wrapper_locations.get("vc-help")
     if launcher is not None and wrapper is not None:
         launcher_ok, launcher_detail = _run_smoke_command(
-            ["bash", str(launcher), "help"],
+            [str(launcher), "--help"],
             env=os.environ.copy(),
-            expected_text="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.",
         )
         wrapper_ok, wrapper_detail = _run_smoke_command(
-            ["bash", str(wrapper)],
+            [str(wrapper)],
             env=os.environ.copy(),
-            expected_text="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.",
         )
         findings.append(
             DoctorFinding(
@@ -2542,14 +3682,14 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     dashboard_wrapper = wrapper_locations.get("vc-dashboard")
     if dashboard_wrapper is not None:
         dash_ok, dash_detail = _run_smoke_command(
-            ["bash", str(dashboard_wrapper), "--help"],
+            [str(dashboard_wrapper), "--help"],
             env=os.environ.copy(),
             expected_text="dashboard",
         )
         if not dash_ok:
             # Fallback: just check it runs without error
             dash_ok2, _ = _run_smoke_command(
-                ["bash", str(dashboard_wrapper), "--help"],
+                [str(dashboard_wrapper), "--help"],
                 env=os.environ.copy(),
                 expected_text="",
             )
@@ -2580,6 +3720,12 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
     # 7. Spawn pipeline smoke: validate common.sh sources cleanly and key functions exist
     common_sh = None
     for cand in [
+        current_link.resolve() / "runtime" / "scripts" / "common.sh"
+        if current_link.exists()
+        else None,
+        current_link.resolve() / "agents" / "scripts" / "common.sh"
+        if current_link.exists()
+        else None,
         current_link.resolve() / "skills" / "vc-agents" / "scripts" / "common.sh"
         if current_link.exists()
         else None,
@@ -2639,7 +3785,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 "_",
                 str(common_sh),
             ],
-            env={k: v for k, v in os.environ.items() if not k.startswith("ZELLIJ")},
+            env={k: v for k, v in os.environ.items() if not k.startswith("VC_FRAME")},
             expected_text="spawn-e2e-ok",
         )
         findings.append(
@@ -2744,40 +3890,47 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 )
             )
 
-    # 7e. Zellij availability and version
-    zellij_bin = shutil.which("zellij")
-    if not zellij_bin:
-        bundled_zellij = vibecrafted_home() / "bin" / "zellij"
-        if bundled_zellij.is_file() and os.access(bundled_zellij, os.X_OK):
-            zellij_bin = str(bundled_zellij)
-    if zellij_bin:
+    # 7e. VC Frame availability and version. VC_FRAME_* env/socket names
+    # remain engine-room canonical, but the product binary is vc-frame.
+    vc_frame_bin = shutil.which("vc-frame")
+    if not vc_frame_bin:
+        for bundled_name in ("vc-frame",):
+            bundled_vc_frame = vibecrafted_runtime_bin() / bundled_name
+            if bundled_vc_frame.is_file() and os.access(bundled_vc_frame, os.X_OK):
+                vc_frame_bin = str(bundled_vc_frame)
+                break
+    if vc_frame_bin:
         try:
-            zellij_ver = subprocess.run(
-                [zellij_bin, "--version"],
+            vc_frame_ver = subprocess.run(
+                [vc_frame_bin, "--version"],
                 capture_output=True,
                 text=True,
                 timeout=5,
             )
             ver_str = (
-                zellij_ver.stdout.strip() if zellij_ver.returncode == 0 else "unknown"
+                vc_frame_ver.stdout.strip()
+                if vc_frame_ver.returncode == 0
+                else "unknown"
             )
-            findings.append(DoctorFinding("ok", "zellij", f"{ver_str} -> {zellij_bin}"))
+            findings.append(
+                DoctorFinding("ok", "vc-frame", f"{ver_str} -> {vc_frame_bin}")
+            )
         except (OSError, subprocess.TimeoutExpired):
-            findings.append(DoctorFinding("ok", "zellij", f"-> {zellij_bin}"))
+            findings.append(DoctorFinding("ok", "vc-frame", f"-> {vc_frame_bin}"))
     else:
         findings.append(
             DoctorFinding(
                 "warn",
-                "zellij",
+                "vc-frame",
                 "not found in PATH — dashboard/session commands unavailable",
             )
         )
 
-    # 7f. Zellij session health: detect dead/EXITED sessions that waste operator attention
-    if zellij_bin:
+    # 7f. vc-frame session health: detect dead/EXITED sessions that waste operator attention
+    if vc_frame_bin:
         try:
             ls_result = subprocess.run(
-                [zellij_bin, "list-sessions"],
+                [vc_frame_bin, "list-sessions"],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -2798,23 +3951,28 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                     findings.append(
                         DoctorFinding(
                             "warn",
-                            "zellij:dead-sessions",
+                            "vc_frame:dead-sessions",
                             f"{len(dead_sessions)} dead session(s): {names}{suffix}"
                             " — run 'vibecrafted dashboard gc --apply' to clean up safely",
                         )
                     )
                 else:
                     findings.append(
-                        DoctorFinding("ok", "zellij:dead-sessions", "no dead sessions")
+                        DoctorFinding(
+                            "ok", "vc_frame:dead-sessions", "no dead sessions"
+                        )
                     )
         except (OSError, subprocess.TimeoutExpired):
-            pass  # zellij not responsive — skip
+            pass  # vc_frame not responsive — skip
 
     # 7g. Agent CLI stream contract: verify expected flags are recognized
     _agent_flag_checks = {
         "claude": [["--version"]],
         "codex": [["--version"]],
         "gemini": [["--version"], ["-v"], ["--help"]],
+        "agy": [["--version"], ["--help"]],
+        "junie": [["--version"], ["--help"]],
+        "grok": [["--version"], ["--help"]],
     }
     for agent_name, flag_options in _agent_flag_checks.items():
         agent_bin = shutil.which(agent_name)
@@ -2906,78 +4064,74 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
 
 
 def print_doctor(
-    findings: List[DoctorFinding], guide_path: Optional[Path] = None
+    findings: List[DoctorFinding],
+    guide_path: Optional[Path] = None,
+    verbose: bool = False,
 ) -> int:
-    """Print doctor findings. Returns exit code (0 if no failures)."""
-    _doctor_title = (
-        "\U0001d54d\U0001d55a\U0001d553\U0001d556\U0001d554\U0001d563\U0001d552\U0001d557\U0001d565 Doctor"
-        if _IS_TTY
-        else "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Doctor"
-    )
-    print(f"\n{bold(_doctor_title)}\n")
+    """Summary-first doctor report (CLI_PRODUCT_SPEC §6.4).
 
-    fails = 0
-    warns = 0
-    oks = 0
+    Verdict in two lines; only failures and warnings are listed by default.
+    Passing checks are a count — the full list lives under --verbose.
+    Returns exit code (0 if no failures)."""
+    fails = [f for f in findings if f.level == "fail"]
+    warns = [f for f in findings if f.level == "warn"]
+    oks = len(findings) - len(fails) - len(warns)
 
-    for f in findings:
-        if f.level == "ok":
-            icon = OK
-            oks += 1
-        elif f.level == "warn":
-            icon = WARN
-            warns += 1
-        else:
-            icon = MISS
-            fails += 1
-        print(f"  {icon} {f.component}: {f.message}")
-
+    print(f"\n{bold('⚒ doctor')} {dim(f'— {len(findings)} checks')}")
     print(
-        f"\n  {green(str(oks))} ok  {yellow(str(warns))} warnings  {red(str(fails))} failures\n"
+        f"{green(f'✓ {oks} ok')}   "
+        f"{yellow(f'! {len(warns)} warnings')}   "
+        f"{red(f'✗ {len(fails)} failures')}\n"
     )
+
+    shown = findings if verbose else fails + warns
+    for f in shown:
+        icon = OK if f.level == "ok" else WARN if f.level == "warn" else MISS
+        print(f"{icon} {f.component}: {f.message}")
+    if shown:
+        print()
 
     if fails:
         print(
-            f"  {red('Installation has issues.')} Run {bold('vibecrafted doctor --fix-rc --fix-launchers')} or {bold('make install')} to fix.\n"
+            f"  {dim('→ fix:')} {cyan('vibecrafted doctor --fix-rc --fix-launchers')}\n"
         )
-        exit_code = 1
-    elif warns:
-        print(f"  {yellow('Installation healthy with minor warnings.')}\n")
-        exit_code = 0
-    else:
-        _healthy = "\u2713 Installation healthy."
-        print(f"  {green(_healthy)}\n")
-        exit_code = 0
-
-    print(f"  {bold('Simple path:')}")
-    print(f"    {cyan('vibecrafted init claude')}")
-    print(
-        "    "
-        + cyan("vibecrafted workflow claude --prompt 'Plan and implement <task>'")
-    )
-    print("    " + cyan("vibecrafted implement codex --prompt 'Ship <task>'"))
-    print()
-    print(f"  {bold('Ship-ready path:')}")
-    print("    " + cyan("vibecrafted dou claude --prompt 'Audit launch readiness'"))
-    print(
-        "    "
-        + cyan("vibecrafted decorate codex --prompt 'Polish the release surface'")
-    )
-    print("    " + cyan("vibecrafted hydrate codex --prompt 'Package the product'"))
-    print("    " + cyan("vibecrafted release codex --prompt 'Prepare release steps'"))
-    print()
 
     actions = _doctor_action_items(findings)
     if actions:
-        print(f"  {bold('Next steps:')}")
-        for action in actions:
-            print(f"    - {action}")
+        for action in actions[:5]:
+            print(f"  {dim('→')} {action}")
+        if len(actions) > 5:
+            print(f"  {dim(f'… and {len(actions) - 5} more (--verbose)')}")
+        print()
+
+    if verbose:
+        print(f"  {bold('Simple path:')}")
+        print(f"    {cyan('vibecrafted init claude')}")
+        print(
+            "    "
+            + cyan("vibecrafted workflow claude --prompt 'Plan and implement <task>'")
+        )
+        print("    " + cyan("vibecrafted implement codex --prompt 'Ship <task>'"))
+        print()
+        print(f"  {bold('Ship-ready path:')}")
+        print("    " + cyan("vibecrafted dou claude --prompt 'Audit launch readiness'"))
+        print(
+            "    "
+            + cyan("vibecrafted decorate codex --prompt 'Polish the release surface'")
+        )
+        print("    " + cyan("vibecrafted hydrate codex --prompt 'Package the product'"))
+        print(
+            "    " + cyan("vibecrafted release codex --prompt 'Prepare release steps'")
+        )
         print()
 
     if guide_path is not None:
-        print(f"  {bold('Guide:')} {guide_path}\n")
+        print(f"  {dim(f'guide: {guide_path}')}")
+    if not verbose:
+        print(f"  {dim('details: vibecrafted doctor --verbose')}")
+    print()
 
-    return exit_code
+    return 1 if fails else 0
 
 
 # ---------------------------------------------------------------------------
@@ -3048,6 +4202,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     selected_skills = list(skill_names)
     all_runtimes = list(SYMLINK_TARGETS)
     install_shell = cli_with_shell
+    write_shell_rc = getattr(args, "write_shell_rc", False)
     installed_foundations: Dict[str, Dict] = {}
 
     while True:
@@ -3086,9 +4241,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                         if path:
                             print(f"  {OK} {cmd} -> {dim(path)}")
                         elif cmd in RECOMMENDED_DEPS:
-                            print(
-                                f"  {WARN} {cmd} {dim('(recommended; Python fallback available)')}"
-                            )
+                            print(f"  {WARN} {cmd}")
                         else:
                             print(f"  {MISS} {cmd}")
 
@@ -3096,9 +4249,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                     if osascript:
                         print(f"  {OK} osascript -> {dim(osascript)}")
                     else:
-                        print(
-                            f"  {OPT} osascript {dim('(visible Terminal automation unavailable; non-visible fallback exists)')}"
-                        )
+                        print(f"  {OPT} osascript")
                     print()
 
                     missing_critical = [
@@ -3113,9 +4264,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                         print("Install them before continuing.")
                         return 1
                     if not sys_deps.get("zsh"):
-                        print(
-                            f"  {OPT} zsh {dim('(not found — helpers will use bash only)')}"
-                        )
+                        print(f"  {OPT} zsh")
                     args._sys_checked = True
                 step += 1
 
@@ -3195,9 +4344,17 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                     print(bold("Runtime Foundations:"))
                     missing_foundations: List[Foundation] = []
                     for f in FOUNDATIONS:
-                        path = f.is_installed()
+                        path, channel = install_or_find_foundation(
+                            f, repo_root, dry_run=dry_run
+                        )
+                        installed_foundations[f.name] = {
+                            "channel": channel,
+                            "path": path,
+                        }
                         if path:
                             print(f"  {OK} {f.name} -> {dim(path)}")
+                            if channel == "bundled":
+                                print(f"       {dim('installed from bundled payload')}")
                             print(f"       {dim(f.description)}")
                         elif f.required:
                             print(f"  {MISS} {f.name} — {f.description}")
@@ -3211,37 +4368,19 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                     args._fnd_checked = True
 
                 missing_foundations = args._missing_foundations
-                has_cargo = detect_cargo()
-
-                if missing_foundations and has_cargo and interactive:
-                    for f in missing_foundations:
-                        if "crates" in f.channels:
-                            label = "required" if f.required else "optional"
-                            if ask_yn(
-                                f"Install {f.name} with cargo? ({label})",
-                                default=f.required,
-                            ):
-                                success = install_foundation_cargo(f, dry_run=dry_run)
-                                installed_foundations[f.name] = {
-                                    "channel": "crates",
-                                    "success": success,
-                                }
-                                if success:
-                                    print(f"  {OK} {f.name} installed")
-                                else:
-                                    print(f"  {MISS} {f.name} installation failed")
+                if (
+                    missing_foundations
+                    and interactive
+                    and not getattr(args, "_fnd_warn_done", False)
+                ):
+                    print(yellow("Missing foundations are not auto-installed here."))
+                    print(
+                        dim(
+                            "Use the owning product or support-tool installer, then rerun diagnostics."
+                        )
+                    )
+                    args._fnd_warn_done = True
                     print()
-                elif missing_foundations and not has_cargo and interactive:
-                    if not getattr(args, "_fnd_warn_done", False):
-                        print(
-                            yellow("cargo not found — cannot auto-install foundations.")
-                        )
-                        print(
-                            dim(
-                                "Install cargo (rustup) first, or install foundations manually."
-                            )
-                        )
-                        args._fnd_warn_done = True
 
                 step += 1
 
@@ -3260,16 +4399,24 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                         should_proceed = report_helper_conflicts(conflicts, interactive)
                         if not should_proceed:
                             install_shell = False
+                if install_shell and interactive and not write_shell_rc:
+                    write_shell_rc = ask_yn(
+                        "Add helper/PATH lines to shell rc files now?",
+                        default=False,
+                    )
+                    print()
                 step += 1
 
             elif step == 5:
                 # Post-wizard setup
                 for f in FOUNDATIONS:
                     if f.name not in installed_foundations:
-                        path = f.is_installed()
+                        path, channel = install_or_find_foundation(
+                            f, repo_root, dry_run=dry_run
+                        )
                         installed_foundations[f.name] = {
-                            "channel": "pre-existing" if path else "not-installed",
-                            "path": path or "",
+                            "channel": channel,
+                            "path": path,
                         }
                 break
 
@@ -3277,7 +4424,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             # Re-evaluate previous interactive steps to find the closest one
             if step == 4:
                 # Going back from shell helpers
-                if missing_foundations and has_cargo and interactive:
+                if missing_foundations and interactive:
                     step = 3
                 else:
                     step = 2
@@ -3298,12 +4445,15 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
 
     # --- Confirm ---
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
+    store_path = _canonical_store_path(shared_home, create=not dry_run)
 
     print(bold("Plan:"))
     print(f"  Skills:    {len(selected_skills)} -> {cyan(str(store_path))}")
     print(f"  Runtimes:  {', '.join(all_runtimes)} {dim('(skill views)')}")
     print(f"  Shell:     {'enabled' if install_shell else 'skipped'}")
+    if install_shell:
+        shell_rc_status = "opt-in write" if write_shell_rc else "manual line only"
+        print(f"  Shell rc:  {shell_rc_status}")
     if dry_run:
         print(f"  Mode:      {yellow('DRY RUN')}")
     print()
@@ -3356,11 +4506,8 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             repo_root, shared_home, dry_run=dry_run, mirror=mirror
         )
     except (OSError, subprocess.CalledProcessError) as exc:
-        print(f"  {MISS} Could not refresh staged tools: {exc}")
-        print(
-            "  Stopping install so stale ~/.vibecrafted/tools/vibecrafted-current "
-            "cannot shadow fresh skills."
-        )
+        print(f"  {dim(_staged_sync_failure_detail(exc))}")
+        err_line("could not refresh staged tools", "rerun `vibecrafted update`")
         return 1
     if current_tools is None:
         print(f"  {WARN} Source is not a full framework checkout; staged tools skipped")
@@ -3378,9 +4525,14 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             rt_skills.mkdir(parents=True, exist_ok=True)
         print(f"  {cyan(rt)} -> {rt_skills}")
         for name in selected_skills:
-            canonical = store_path / name
+            default = store_path / name
             link = rt_skills / name
-            create_symlink(canonical, link, dry_run=dry_run)
+            create_skill_view_symlink(default, link, dry_run=dry_run)
+    print()
+
+    # --- Execute: agent command surfaces ---
+    print(bold("Installing agent commands..."))
+    install_agent_commands(all_runtimes, dry_run=dry_run)
     print()
 
     # --- Prune orphaned vc-* skills no longer in bundle ---
@@ -3399,37 +4551,47 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     )
 
     # --- Execute: clean compat and duplicate RC entries ---
-    for rcname in (".bashrc", ".zshrc"):
-        rcfile = Path.home() / rcname
-        if rcfile.exists():
-            rc_content = rcfile.read_text()
-            if not _is_writable(rcfile):
-                print(f"  {WARN} {rcfile} is locked — cannot clean old entries")
-                continue
-            cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
-            if removed_rc > 0 and not dry_run:
-                rcfile.write_text(cleaned_rc)
-                print(f"  {OK} Cleaned {removed_rc} old entries from {rcname}")
-            elif removed_rc > 0:
-                print(f"  {dim('would clean')} {removed_rc} old entries from {rcname}")
+    if write_shell_rc:
+        for rcname in (".bashrc", ".zshrc"):
+            rcfile = Path.home() / rcname
+            if rcfile.exists():
+                rc_content = rcfile.read_text()
+                if not _is_writable(rcfile):
+                    print(f"  {WARN} {rcfile} is locked — cannot clean old entries")
+                    continue
+                cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
+                if removed_rc > 0 and not dry_run:
+                    rcfile.write_text(cleaned_rc)
+                    print(f"  {OK} Cleaned {removed_rc} old entries from {rcname}")
+                elif removed_rc > 0:
+                    print(
+                        f"  {dim('would clean')} {removed_rc} old entries from {rcname}"
+                    )
 
     # --- Execute: shell helpers ---
     if install_shell:
         print(bold("Installing shell helper..."))
-        shell_script = (
-            repo_root / "skills" / "vc-agents" / "scripts" / "install-shell.sh"
-        )
+        shell_script = repo_root / "runtime" / "scripts" / "install-shell.sh"
         if shell_script.exists():
-            cmd = ["bash", str(shell_script), "--source", str(repo_root)]
+            shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
+            if write_shell_rc:
+                shell_cmd.append("--write-rc")
             if dry_run:
-                cmd.append("--dry-run")
-            subprocess.run(cmd, check=False)
+                shell_cmd.append("--dry-run")
+            subprocess.run(shell_cmd, check=False)
         else:
             print(f"  {WARN} Shell installer not found: {shell_script}")
         print()
 
     # --- Execute: vibecrafted launcher ---
-    _install_launcher(repo_root, dry_run)
+    _install_launcher(repo_root, dry_run, update_rc=write_shell_rc)
+    if current_tools is not None:
+        moved_agency = cleanse_state_home_agency(current_tools, dry_run=dry_run)
+        if moved_agency:
+            print(f"  {OK} Moved {moved_agency} state-home agency payload(s)")
+        else:
+            print(f"  {OK} State home has no agency payloads to move")
+        print()
 
     # --- Fix Gemini plan.directory if it points into .vibecrafted ---
     _configure_gemini_plans(dry_run)
@@ -3447,6 +4609,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         launcher_entries=_snapshot_launcher_entries(),
         helper_files=_snapshot_helper_files() if install_shell else [],
         foundations=installed_foundations,
+        product_tools=snapshot_product_tool_state(),
         shell_helpers=install_shell,
         install_path=str(store_path),
     )
@@ -3463,13 +4626,14 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         print(f"  {SKIP} Skipped in dry-run mode")
     else:
         findings = run_doctor(store_path, state)
+        _pause_for_runtime_contract_failures(findings)
         guide_path = write_start_here_guide(store_path, state, findings)
         # Print only failures and warnings
-        issues = [f for f in findings if f.level != "ok"]
+        issues = [finding for finding in findings if finding.level != "ok"]
         if issues:
-            for f in issues:
-                icon = WARN if f.level == "warn" else MISS
-                print(f"  {icon} {f.component}: {f.message}")
+            for finding in issues:
+                icon = WARN if finding.level == "warn" else MISS
+                print(f"  {icon} {finding.component}: {finding.message}")
         else:
             print(f"  {OK} All checks passed")
         print(f"  {OK} Start-here guide saved to {guide_path}")
@@ -3480,22 +4644,43 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     return 0
 
 
-def _install_launcher(repo_root: Path, dry_run: bool) -> None:
+def _uv_tool_shim() -> Path:
+    data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    return Path(data_home) / "uv" / "tools" / "vibecrafted" / "bin" / "vibecrafted"
+
+
+def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -> None:
     """Install vibecrafted launcher to portable and compat bin surfaces."""
     launcher_src = repo_root / "scripts" / "vibecrafted"
     if launcher_src.exists():
         if not dry_run:
             legacy_redirect_src = repo_root / "scripts" / "vibecraft"
-            canonical_bin_dir = vibecrafted_home() / "bin"
+            canonical_bin_dir = vibecrafted_launcher_bin()
             canonical_bin_dir.mkdir(parents=True, exist_ok=True)
             canonical_launcher = canonical_bin_dir / "vibecrafted"
-            shutil.copy2(launcher_src, canonical_launcher)
-            canonical_launcher.chmod(0o755)
+
+            # Target 1: The installer must leave the uv-tool shim winning ~/.local/bin/vibecrafted.
+            # Do NOT copy the bash deck over that name. The deck stays reachable under its own path
+            # as a delegation target.
+            shim = _uv_tool_shim()
+            if canonical_launcher.exists() or canonical_launcher.is_symlink():
+                if canonical_launcher.is_symlink():
+                    try:
+                        link_target = Path(os.readlink(canonical_launcher))
+                    except OSError:
+                        link_target = Path("")
+                    if link_target != shim:
+                        canonical_launcher.unlink()
+                        create_symlink(shim, canonical_launcher)
+                else:
+                    canonical_launcher.unlink()
+                    create_symlink(shim, canonical_launcher)
+            else:
+                create_symlink(shim, canonical_launcher)
 
             canonical_legacy = canonical_bin_dir / "vibecraft"
             if legacy_redirect_src.exists():
-                shutil.copy2(legacy_redirect_src, canonical_legacy)
-                canonical_legacy.chmod(0o755)
+                _copy_managed_launcher(legacy_redirect_src, canonical_legacy)
 
             for launcher_bin_dir in _launcher_bin_dirs():
                 launcher_bin_dir.mkdir(parents=True, exist_ok=True)
@@ -3503,6 +4688,8 @@ def _install_launcher(repo_root: Path, dry_run: bool) -> None:
                 if launcher_dst != canonical_launcher:
                     create_symlink(canonical_launcher, launcher_dst)
                 for wrapper in LAUNCHER_WRAPPERS:
+                    if wrapper in PYTHON_ENTRYPOINT_LAUNCHERS:
+                        continue
                     create_symlink(Path("vibecrafted"), launcher_bin_dir / wrapper)
                 # Replace old vibecraft binary with a thin redirect
                 legacy_dst = launcher_bin_dir / "vibecraft"
@@ -3511,34 +4698,43 @@ def _install_launcher(repo_root: Path, dry_run: bool) -> None:
                         create_symlink(canonical_legacy, legacy_dst)
         else:
             for launcher_bin_dir in _launcher_bin_dirs():
+                shim = _uv_tool_shim()
+                create_symlink(shim, launcher_bin_dir / "vibecrafted", dry_run=True)
                 for wrapper in LAUNCHER_WRAPPERS:
+                    if wrapper in PYTHON_ENTRYPOINT_LAUNCHERS:
+                        continue
                     create_symlink(
                         Path("vibecrafted"), launcher_bin_dir / wrapper, dry_run=True
                     )
-        # Ensure $HOME/.local/bin is in PATH via shell rc files
+        # Ensure $HOME/.local/bin is in PATH via shell rc files only when the
+        # caller has explicit consent. Otherwise leave a copyable instruction.
         canonical_path_line = _launcher_path_line()
         path_lines = [canonical_path_line, *_legacy_launcher_path_lines()]
         path_comment = "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher"
-        for rcname in (".bashrc", ".zshrc"):
-            rcfile = Path.home() / rcname
-            if rcfile.exists():
-                content = rcfile.read_text()
-                cleaned = content
-                removed = 0
-                for path_line in path_lines:
-                    cleaned, removed_now = _strip_rc_entry(
-                        cleaned, path_line, path_comment
-                    )
-                    removed += removed_now
-                has_path = _rc_has_vibecrafted_bin_path(cleaned)
-                changed = removed > 0
-                if not has_path:
-                    if cleaned and not cleaned.endswith("\n"):
-                        cleaned += "\n"
-                    cleaned += f"\n# {path_comment}\n{canonical_path_line}\n"
-                    changed = True
-                if changed and not dry_run:
-                    rcfile.write_text(cleaned)
+        if update_rc:
+            for rcname in (".bashrc", ".zshrc"):
+                rcfile = Path.home() / rcname
+                if rcfile.exists():
+                    content = rcfile.read_text()
+                    cleaned = content
+                    removed = 0
+                    for path_line in path_lines:
+                        cleaned, removed_now = _strip_rc_entry(
+                            cleaned, path_line, path_comment
+                        )
+                        removed += removed_now
+                    has_path = _rc_has_vibecrafted_bin_path(cleaned)
+                    changed = removed > 0
+                    if not has_path:
+                        if cleaned and not cleaned.endswith("\n"):
+                            cleaned += "\n"
+                        cleaned += f"\n# {path_comment}\n{canonical_path_line}\n"
+                        changed = True
+                    if changed and not dry_run:
+                        rcfile.write_text(cleaned)
+        else:
+            print("  Shell rc files unchanged. To expose launchers, add:")
+            print(f"    {canonical_path_line}")
         print()
 
 
@@ -3549,10 +4745,17 @@ def _print_unicode_summary(
     _out = out or sys.stdout
     fw_ver_display = get_framework_version(repo_root)
     skill_count = len(skills)
+    current_runtime = _current_tools_link(store_path) / "runtime"
+
+    def _agent_spawn_present(agent: str) -> bool:
+        # Spawn scripts live in the staged control-plane runtime; the legacy
+        # vc-agents store layout is kept only as a back-compat fallback.
+        return (current_runtime / "scripts" / f"{agent}_spawn.sh").exists() or (
+            store_path / "vc-agents" / "scripts" / f"{agent}_spawn.sh"
+        ).exists()
+
     agent_list = " \u00b7 ".join(
-        a
-        for a in ("claude", "codex", "gemini")
-        if (store_path / "vc-agents" / "scripts" / f"{a}_spawn.sh").exists()
+        a for a in ("claude", "codex", "gemini") if _agent_spawn_present(a)
     )
     shell_str = _helper_surface_label()
     fnd_ok = [f.name for f in FOUNDATIONS if f.is_installed()]
@@ -3610,7 +4813,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     fw_ver = get_framework_version(repo_root)
 
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
+    store_path = _canonical_store_path(shared_home, create=not dry_run)
     log_path = shared_home / "install.log"
 
     # --- Discover skills (before redirecting stdout) ---
@@ -3623,6 +4826,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     selected_skills = list(skill_names)
     all_runtimes = list(SYMLINK_TARGETS)
     install_shell = cli_with_shell
+    write_shell_rc = getattr(args, "write_shell_rc", False)
     installed_foundations: Dict[str, Dict] = {}
 
     # --- System check (critical deps — must fail visibly) ---
@@ -3633,13 +4837,24 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         print("  Install them before continuing.")
         return 1
 
-    # --- All verbose output goes to log; compact lines go to real stdout ---
-    with compact_logging(log_path, quiet=True) as out:
+    # --- All verbose output goes to log; compact lines go to real stdout.
+    # --debug tees the full transaction log onto stdout as well. ---
+    debug = getattr(args, "debug", False)
+    with compact_logging(log_path, quiet=not debug) as out:
         # Log header
         print(f"𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer v{fw_ver} — compact mode")
         print(f"Source: {repo_root}")
         print(f"Timestamp: {datetime.now(timezone.utc).isoformat()}")
         print()
+        _compact_checkpoint(
+            out,
+            1,
+            "Introduction",
+            (
+                f"Source  {repo_root}",
+                f"Log     {log_path}",
+            ),
+        )
 
         # Log system deps
         print("System check:")
@@ -3657,18 +4872,31 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         # Log foundations
         print("Runtime Foundations:")
         for f in FOUNDATIONS:
-            path = f.is_installed()
+            path, channel = install_or_find_foundation(f, repo_root, dry_run=dry_run)
             installed_foundations[f.name] = {
-                "channel": "pre-existing" if path else "not-installed",
-                "path": path or "",
+                "channel": channel,
+                "path": path,
             }
             print(
-                f"  {f.name}: {path or 'not installed'} {'(required)' if f.required else '(optional)'}"
+                f"  {f.name}: {path or 'not installed'} [{channel}] {'(required)' if f.required else '(optional)'}"
             )
         print()
+        detected_agents = [
+            rt for rt in ("claude", "codex", "gemini") if available_runtimes.get(rt)
+        ]
+        _compact_checkpoint(
+            out,
+            2,
+            "Diagnostics and Plan",
+            (
+                f"Plan   {len(selected_skills)} skills · agents {', '.join(detected_agents) or 'none'} · shell {'on' if install_shell else 'off'}",
+                f"Into   {store_path}",
+            ),
+        )
 
         # Backup
         print("Backup:")
+        _compact_checkpoint(out, 3, "Installation")
         orphaned_entries = collect_orphaned_skills(
             store_path, all_runtimes, set(selected_skills)
         )
@@ -3696,10 +4924,17 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         skills_dir = (
             repo_root / "skills" if (repo_root / "skills").is_dir() else repo_root
         )
-        for name in selected_skills:
+        # One live counter line (§6.6), per-skill detail stays in the log.
+        total_skills = len(selected_skills)
+        for idx, name in enumerate(selected_skills, 1):
             src = skills_dir / name
             dst = store_path / name
             print(f"  -> {name}")
+            if _compact_status_is_live(out):
+                frame = SPINNER_FRAMES[idx % len(SPINNER_FRAMES)]
+                _compact_line(
+                    out, dim(frame), "Skills", f"installing {idx}/{total_skills}"
+                )
             rsync_skill(src, dst, dry_run=dry_run, mirror=mirror)
         print()
 
@@ -3709,14 +4944,12 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 repo_root, shared_home, dry_run=dry_run, mirror=mirror
             )
         except (OSError, subprocess.CalledProcessError) as exc:
-            print(f"  FAILED: {exc}")
-            out.write(
-                "\n  "
-                + red("Install stopped")
-                + " — could not refresh ~/.vibecrafted/tools/vibecrafted-current\n"
-            )
-            out.write(
-                "  Stale staged tools would shadow fresh skills; check the install log.\n"
+            print(f"  FAILED: {_staged_sync_failure_detail(exc)}")
+            _clear_compact_status(out)
+            err_line(
+                "could not refresh staged tools",
+                "rerun `vibecrafted update`",
+                str(log_path),
             )
             return 1
         if current_tools is None:
@@ -3743,9 +4976,13 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 rt_skills.mkdir(parents=True, exist_ok=True)
             print(f"  {rt} -> {rt_skills}")
             for name in selected_skills:
-                canonical = store_path / name
+                default = store_path / name
                 link = rt_skills / name
-                create_symlink(canonical, link, dry_run=dry_run)
+                create_skill_view_symlink(default, link, dry_run=dry_run)
+        print()
+
+        print("Installing agent commands:")
+        install_agent_commands(all_runtimes, dry_run=dry_run)
         print()
 
         # Compact line: agents
@@ -3772,28 +5009,29 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             store_path, all_runtimes, dry_run=dry_run, interactive=False
         )
 
-        # Clean compat RC entries
-        for rcname in (".bashrc", ".zshrc"):
-            rcfile = Path.home() / rcname
-            if rcfile.exists():
-                rc_content = rcfile.read_text()
-                if not _is_writable(rcfile):
-                    continue
-                cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
-                if removed_rc > 0 and not dry_run:
-                    rcfile.write_text(cleaned_rc)
+        # Clean compat RC entries only after explicit rc-write consent.
+        if write_shell_rc:
+            for rcname in (".bashrc", ".zshrc"):
+                rcfile = Path.home() / rcname
+                if rcfile.exists():
+                    rc_content = rcfile.read_text()
+                    if not _is_writable(rcfile):
+                        continue
+                    cleaned_rc, removed_rc = _clean_legacy_rc_entries(rc_content)
+                    if removed_rc > 0 and not dry_run:
+                        rcfile.write_text(cleaned_rc)
 
         # Shell helpers
         if install_shell:
             print("Installing shell helper:")
-            shell_script = (
-                repo_root / "skills" / "vc-agents" / "scripts" / "install-shell.sh"
-            )
+            shell_script = repo_root / "runtime" / "scripts" / "install-shell.sh"
             if shell_script.exists():
-                cmd = ["bash", str(shell_script), "--source", str(repo_root)]
+                shell_cmd = ["bash", str(shell_script), "--source", str(repo_root)]
+                if write_shell_rc:
+                    shell_cmd.append("--write-rc")
                 if dry_run:
-                    cmd.append("--dry-run")
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                    shell_cmd.append("--dry-run")
+                result = subprocess.run(shell_cmd, capture_output=True, text=True)
                 # Log the shell installer output
                 if result.stdout:
                     print(result.stdout)
@@ -3822,7 +5060,16 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         _compact_line(out, green("\u2713"), "Store", store_display)
 
         # Launcher
-        _install_launcher(repo_root, dry_run)
+        _install_launcher(repo_root, dry_run, update_rc=write_shell_rc)
+        if current_tools is not None:
+            moved_agency = cleanse_state_home_agency(current_tools, dry_run=dry_run)
+            print(f"  state agency moved: {moved_agency}")
+            _compact_line(
+                out,
+                green("\u2713"),
+                "State home",
+                "agency-free" if not moved_agency else f"moved {moved_agency}",
+            )
 
         # Fix Gemini plan.directory if it points into .vibecrafted
         _configure_gemini_plans(dry_run)
@@ -3840,6 +5087,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             launcher_entries=_snapshot_launcher_entries(),
             helper_files=_snapshot_helper_files() if install_shell else [],
             foundations=installed_foundations,
+            product_tools=snapshot_product_tool_state(),
             shell_helpers=install_shell,
             install_path=str(store_path),
         )
@@ -3852,46 +5100,54 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         if not dry_run:
             print("Verification:")
             findings = run_doctor(store_path, state)
+            _pause_for_runtime_contract_failures(findings)
             guide_path = write_start_here_guide(store_path, state, findings)
-            issues = [f for f in findings if f.level != "ok"]
+            issues = [finding for finding in findings if finding.level != "ok"]
             if issues:
-                for f in issues:
-                    print(f"  [{f.level}] {f.component}: {f.message}")
+                for finding in issues:
+                    print(f"  [{finding.level}] {finding.component}: {finding.message}")
                 # Surface critical issues on compact output too
-                critical = [f for f in issues if f.level == "fail"]
+                critical = [finding for finding in issues if finding.level == "fail"]
                 if critical:
-                    out.write(f"\n  {red('Issues found')} — check {log_path}\n")
+                    _clear_compact_status(out)
+                    err_line(
+                        "install verification found failures",
+                        "vibecrafted doctor",
+                        str(log_path),
+                    )
             else:
                 print("  All checks passed")
             print(f"  Start-here guide: {guide_path}")
         print()
 
-    # --- Compact footer: header + commands (no repeated status lines) ---
+    # --- Finish card (CLI_PRODUCT_SPEC §6.1): result, key facts, one next step. ---
+    _clear_compact_status(sys.stdout)
+    _compact_checkpoint(sys.stdout, 4, "Onboarding")
     fw_ver_display = get_framework_version(repo_root)
-    sep = brand_separator(37)
-    log_display = str(log_path).replace(str(Path.home()), "~")
+    store_display = str(vibecrafted_home()).replace(str(Path.home()), "~")
+    agent_str = " ".join(agent_names) if agent_names else "none"
     missing_fnd = [f for f in FOUNDATIONS if f.required and not f.is_installed()]
 
+    # NB: keep the unicode escapes OUT of f-string expression parts \u2014 a
+    # backslash inside `{...}` is a SyntaxError on Python < 3.12, and this
+    # project supports >=3.11. Build the pieces first, then interpolate.
+    check_mark = green("\u2713")
+    product_banner = bold(
+        f"\U0001d685\U0001d692\U0001d68b\U0001d68e\U0001d68c\U0001d69b\U0001d68a"
+        f"\U0001d68f\U0001d69d\U0001d68e\U0001d68d. {fw_ver_display} installed"
+    )
     print()
-    print(f"  \u2692 {VAPOR_HEADER} \u2692")
+    print(f"  {check_mark} {product_banner}")
     print()
-    print(f"  {brand_version_line(fw_ver_display)}")
-    print(f"  {TAGLINE}")
-    print(f"  {PRODUCT_LINE}")
-    print(f"  {sep}")
-    print("    Start        vibecrafted help")
-    print("    Verify       vibecrafted doctor")
-    print("    Reverse      vibecrafted uninstall")
-    print(f"    Guide        {start_here_path()}")
-    print(f"    Log          {log_display}")
+    print(
+        f"    skills {len(selected_skills)} \u00b7 agents {agent_str} \u00b7 store {store_display}"
+    )
     if missing_fnd:
-        print()
-        print("    Foundations  still missing")
-        for f in missing_fnd:
-            print(f"      - {f.name}: {f.install_hint()}")
+        names = " · ".join(f.name for f in missing_fnd)
+        print(f"    {WARN} foundations missing: {names} — vibecrafted doctor")
     print()
-    print(f"    {FOOTER_BRANDING}")
-    print(f"    {FRAMEWORK_STAMP}")
+    print(f"    → {cyan('vibecrafted init claude')}       {dim('start here')}")
+    print(f"    → {cyan('vibecrafted doctor')}            {dim('verify')}")
     print()
 
     return 0
@@ -3900,15 +5156,19 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 def cmd_install(args: argparse.Namespace) -> int:
     repo_root = Path(args.source).resolve()
     if not repo_root.is_dir():
-        print(red(f"Error: repo root not found: {repo_root}"))
+        err_line(f"repo root not found: {repo_root}")
         return 1
 
-    compact = getattr(args, "compact", False)
+    # Strict modes (CLI_PRODUCT_SPEC §3.5): compact is the default; --verbose
+    # restores the per-step narration; --compact is retired (silent no-op).
+    # An attended TTY without --non-interactive keeps the consent wizard,
+    # which lives in the verbose flow.
+    verbose = getattr(args, "verbose", False) or getattr(args, "advanced", False)
+    interactive = _IS_TTY and not args.non_interactive
 
-    if compact:
-        return _cmd_install_compact(args, repo_root)
-    else:
+    if verbose or interactive:
         return _cmd_install_verbose(args, repo_root)
+    return _cmd_install_compact(args, repo_root)
 
 
 # ---------------------------------------------------------------------------
@@ -3928,8 +5188,8 @@ def _known_bundle_names() -> List[str]:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
-    state = InstallState.load(store_path)
+    store_path = _canonical_store_path(shared_home)
+    state = _load_install_state(store_path)
     has_manifest = bool(state.skills)
 
     if getattr(args, "fix_rc", False):
@@ -4038,7 +5298,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                     )
 
     guide_path = write_start_here_guide(store_path, state, findings)
-    return print_doctor(findings, guide_path=guide_path)
+    exit_code = print_doctor(
+        findings, guide_path=guide_path, verbose=getattr(args, "verbose", False)
+    )
+    _pause_for_runtime_contract_failures(findings)
+    return exit_code
 
 
 # ---------------------------------------------------------------------------
@@ -4083,14 +5347,82 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Subcommand: layout
+# ---------------------------------------------------------------------------
+
+
+def cmd_layout(args: argparse.Namespace) -> int:
+    store_path = vibecrafted_home() / "skills"
+    action = getattr(args, "action", "status")
+    dry_run = getattr(args, "dry_run", False)
+    force = getattr(args, "force", False)
+
+    if action == "status":
+        status = layout_status(store_path)
+        print(f"\n{bold('Vibecrafted layout transfer status')}\n")
+        print(
+            f"  legacy:  {status['legacy']} ({'exists' if status['legacy_exists'] else 'missing'})"
+        )
+        print(
+            f"  current: {status['current']} ({'exists' if status['current_exists'] else 'missing'})"
+        )
+        if status["last_transfer"]:
+            last = status["last_transfer"]
+            print(
+                "  last:    "
+                f"{last.get('direction', 'unknown')} "
+                f"{last.get('status', 'unknown')} "
+                f"{last.get('updated_at', '')}"
+            )
+        else:
+            print("  last:    none")
+        print()
+        return 0
+
+    direction = {
+        "migrate": "legacy-to-new",
+        "rollback": "new-to-legacy",
+    }.get(action)
+    if direction is None:
+        print(red(f"Unknown layout action: {action}"))
+        return 1
+
+    exit_code, result = transfer_agents_layout(
+        store_path,
+        direction=direction,
+        dry_run=dry_run,
+        force=force,
+    )
+    source = result["source"]
+    target = result["target"]
+    conflicts = result.get("conflicts") or []
+    if exit_code == 0:
+        copied = result.get("copied") or []
+        verb = "would transfer" if dry_run else "transferred"
+        print(f"{OK} layout {verb} {len(copied)} files")
+        print(f"  from: {source}")
+        print(f"  to:   {target}")
+        return 0
+
+    print(f"{WARN} layout transfer blocked")
+    print(f"  from: {source}")
+    print(f"  to:   {target}")
+    for conflict in conflicts:
+        print(f"  conflict: {conflict}")
+    if conflicts and not force:
+        print(dim("  Re-run with --force only if this target is Vibecrafted-managed."))
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # Subcommand: uninstall
 # ---------------------------------------------------------------------------
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
-    state = InstallState.load(store_path)
+    store_path = _canonical_store_path(shared_home)
+    state = _load_install_state(store_path)
     state_file = store_path / STATE_FILE
     dry_run = args.dry_run
     bundle = set(_known_bundle_names())
@@ -4250,7 +5582,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     artifacts_to_remove = [
         shared_home / "install.log",
         start_here_path(),
-        shared_home / "tools" / "vibecrafted-current",
+        vibecrafted_tools_home() / "vibecrafted-current",
     ]
     removed_artifacts = False
     for art in artifacts_to_remove:
@@ -4335,7 +5667,7 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
 
 def cmd_restore(args: argparse.Namespace) -> int:
     shared_home = vibecrafted_home()
-    store_path = shared_home / "skills"
+    store_path = _canonical_store_path(shared_home)
     dry_run = args.dry_run
     backup_root = _backup_root(store_path)
 
@@ -4509,6 +5841,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--with-shell", action="store_true", help="Install the shell helper layer"
     )
     p_install.add_argument(
+        "--write-shell-rc",
+        action="store_true",
+        help="Opt in to writing helper/PATH lines to shell rc files",
+    )
+    p_install.add_argument(
         "--tool",
         dest="tools",
         action="append",
@@ -4532,15 +5869,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     p_install.add_argument(
         "--compact",
         action="store_true",
-        help="Compact output — one screen, details to log",
+        help=argparse.SUPPRESS,  # retired: compact is the default (kept as no-op)
+    )
+    p_install.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Per-step narration on stdout instead of the compact view",
+    )
+    p_install.add_argument(
+        "--debug",
+        action="store_true",
+        help="Raw subprocess output on stdout (everything the log gets)",
     )
 
     # doctor
     p_doctor = sub.add_parser("doctor", help="Verify installation health")
     p_doctor.add_argument(
+        "--verbose",
+        action="store_true",
+        help="List every check, including passing ones",
+    )
+    p_doctor.add_argument(
         "--fix-rc",
         action="store_true",
-        help="Repair old shell startup lines and restore canonical helper/PATH hints before verifying",
+        help="Repair old shell startup lines and restore default helper/PATH hints before verifying",
     )
     p_doctor.add_argument(
         "--fix-launchers",
@@ -4555,6 +5907,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     p_list.add_argument(
         "--source", default=default_source, help="Repo root (default: auto-detect)"
+    )
+
+    # layout transfer
+    p_layout = sub.add_parser(
+        "layout",
+        help="Transfer agent runtime payload between legacy and current install layouts",
+    )
+    p_layout.add_argument(
+        "action",
+        choices=("status", "migrate", "rollback"),
+        nargs="?",
+        default="status",
+        help="status, migrate legacy->current, or rollback current->legacy",
+    )
+    p_layout.add_argument(
+        "--dry-run", "-n", action="store_true", help="Show what would be done"
+    )
+    p_layout.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite conflicting target files; only use for Vibecrafted-managed payload",
     )
 
     # uninstall
@@ -4582,6 +5955,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return cmd_doctor(args)
     elif args.command == "list":
         return cmd_list(args)
+    elif args.command == "layout":
+        return cmd_layout(args)
     elif args.command == "uninstall":
         return cmd_uninstall(args)
     elif args.command == "restore":

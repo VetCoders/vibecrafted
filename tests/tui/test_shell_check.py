@@ -10,6 +10,7 @@ def test_tracked_shell_files_cover_repo_level_shell_surfaces() -> None:
     }
 
     assert "install.sh" in tracked
+    assert "scripts/hooks/commit-msg" in tracked
     assert "scripts/hooks/pre-commit" in tracked
     assert "scripts/hooks/pre-push" in tracked
     assert "scripts/vibecrafted" in tracked

@@ -1,0 +1,14 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "invalid-no-verify"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+
+[policy]
+repair_rounds = 0
+
+[[cuts]]
+id = "missing-verify"
+agent = "codex"
+workflow = "implement"
+prompt = "This write cut must be rejected because it has no verifier."

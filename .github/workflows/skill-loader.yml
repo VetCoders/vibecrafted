@@ -1,0 +1,78 @@
+name: Skill Loader Smoke
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "release/*"
+  pull_request:
+    branches:
+      - main
+      - develop
+      - "release/*"
+
+jobs:
+  skill-loader:
+    name: skill-loader (${{ matrix.os }})
+    env:
+      # Foundation install may compile aicx from cargo; serial builds avoid runner OOM.
+      CARGO_BUILD_JOBS: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck + protobuf on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # protobuf-compiler is required by `cargo install aicx` because the
+          # transitive `lance-encoding` crate uses `prost-build`, which shells
+          # out to `protoc` at build time.
+          # libgtk-3-dev + libxdo-dev + appindicator are required because
+          # `make install` builds the `voc` app binary, whose dependency graph
+          # pulls tray-icon/muda -> gtk-sys/glib-sys on Linux. libgtk-3-dev
+          # transitively provides the glib-2.0/gdk/pango/cairo/atk pkg-config
+          # files the build needs.
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libclang-dev \
+            libprotobuf-dev \
+            protobuf-compiler \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            shellcheck
+
+      - name: Install shellcheck + protobuf on macOS
+        if: runner.os == 'macOS'
+        run: |
+          # protobuf is required by `cargo install aicx` (lance-encoding ->
+          # prost-build -> protoc). brew install is idempotent.
+          brew install shellcheck protobuf
+
+      - name: Lint smoke script
+        run: shellcheck tests/skill_loader_smoke.sh
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install vibecrafted (non-interactive)
+        run: make install
+
+      - name: Run skill-loader smoke
+        run: make test-skills
+
+      - name: Verify negative fixture is caught
+        run: |
+          if bash tests/skill_loader_smoke.sh --negative-fixture-only; then
+            echo "Negative fixture correctly rejected by smoke."
+          else
+            echo "Negative-fixture-only mode failed unexpectedly." >&2
+            exit 1
+          fi

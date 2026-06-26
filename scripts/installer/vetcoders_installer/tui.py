@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 from typing import Any
 
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-import shutil
 from textual.containers import VerticalScroll, Vertical
 from textual.widgets import Static, Checkbox
 
 DEFAULT_RENDER_WIDTH = 57
 MAX_RENDER_WIDTH = 180
 INSTALL_OUTPUT_TAIL = 96
+INSTALL_STATUS_TAIL = 8
 INSTALL_BOX_MIN_ROWS = 12
 INSTALL_BOX_FIXED_CHROME_ROWS = 14
+BOX_DRAWING_RE = re.compile(r"[╔╗╚╝╠╣║═─┌┐└┘├┤│┃━┏┓┗┛┠┨┼┬┴╭╮╰╯]+")
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
 def _trim_home(path: str) -> str:
@@ -76,9 +80,9 @@ def run_manifest_diagnostics(manifest: Any) -> dict[str, dict[str, dict[str, Any
 def summarize_diagnostics(
     diags: dict[str, dict[str, dict[str, Any]]], manifest: Any
 ) -> tuple[list[str], list[str], dict[str, list[str]]]:
-    found_items = []
-    missing_items = []
-    needs_install = {}
+    found_items: list[str] = []
+    missing_items: list[str] = []
+    needs_install: dict[str, list[str]] = {}
 
     if not manifest or not manifest.diagnostics:
         return found_items, missing_items, needs_install
@@ -179,7 +183,13 @@ class InstallerIntroApp(App):
         self.install_done = False
         self.install_exit_code: int | None = None
         self.install_log: list[str] = []
+        self.install_status_log: list[str] = []
         self.install_error: str | None = None
+        self.install_phase_label = "Preparing"
+        self.install_phase_reason = "Preparing the local installer runtime."
+        self.install_phase_index = 0
+        self.install_phase_total = 0
+        self.install_phase_names: list[str] = []
 
         self._diag_msg = "Starting..."
 
@@ -259,9 +269,86 @@ class InstallerIntroApp(App):
         lines.append(f"  ╠{'═' * inner_width}╣")
         for raw_line in display_lines:
             line = str(raw_line)
-            lines.append(f"  ║{line[:inner_width]:<{inner_width}}║")
+            lines.append(f"  ║{line[-inner_width:]:<{inner_width}}║")
         lines.append(f"  ╚{'═' * inner_width}╝")
         return "\n".join(lines)
+
+    def _wrap_panel_line(self, label: str, value: str, width: int) -> list[str]:
+        label_text = f"  {label:<11} "
+        body_width = max(24, width - len(label_text))
+        wrapped = textwrap.wrap(value, width=body_width) or [""]
+        lines = [label_text + wrapped[0]]
+        indent = " " * len(label_text)
+        lines.extend(indent + part for part in wrapped[1:])
+        return lines
+
+    def _render_install_panel(self, title: str, status_lines: list[str]) -> str:
+        width = self._render_width()
+        visible = [line for line in status_lines if line.strip()]
+        if not visible:
+            visible = ["Starting..."]
+
+        lines = [
+            "  [bold]𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. install[/bold]",
+            f"  [dim]{self._render_phase_rail(width)}[/dim]",
+            "",
+            f"  [bold]{title}[/bold]",
+            "",
+        ]
+        lines.extend(
+            self._wrap_panel_line(
+                "Checkpoint",
+                f"{self.install_phase_index}/{self.install_phase_total}",
+                width,
+            )
+        )
+        lines.extend(self._wrap_panel_line("Phase", self.install_phase_label, width))
+        lines.extend(self._wrap_panel_line("Reason", self.install_phase_reason, width))
+        lines.extend(self._wrap_panel_line("Status", visible[-1], width))
+
+        if self.install_running:
+            lines.append(
+                "  [dim]Full command output is kept in the install log, not in this preview.[/dim]"
+            )
+        elif self.install_done and self.install_exit_code == 0:
+            lines.append(
+                "  [green]Done.[/green] [dim]Detailed output stayed out of the preview.[/dim]"
+            )
+        elif self.install_error:
+            lines.extend(self._wrap_panel_line("Error", self.install_error, width))
+
+        return "\n".join(lines)
+
+    def _render_phase_rail(self, width: int) -> str:
+        names = self.install_phase_names or [self.install_phase_label]
+        parts = []
+        for index, name in enumerate(names, start=1):
+            if self.install_done and self.install_exit_code == 0:
+                marker = "●"
+            elif index < self.install_phase_index:
+                marker = "●"
+            elif index == self.install_phase_index:
+                marker = "◆"
+            else:
+                marker = "○"
+            parts.append(f"{marker} {name}")
+
+        rail = "  ┄  ".join(parts)
+        if len(rail) > width:
+            return rail[: max(0, width - 1)] + "…"
+        return rail
+
+    def _summarize_phase_reason(self, reason: str) -> str:
+        lines = [
+            line.strip().lstrip("-").strip()
+            for line in reason.splitlines()
+            if line.strip()
+        ]
+        if not lines:
+            return "Run this checkpoint with a quiet, inspectable output surface."
+        if lines[0].endswith(":") and len(lines) > 1:
+            return f"{lines[0]} {lines[1]}"
+        return lines[0]
 
     async def _render_content(self) -> None:
         container = self.query_one("#content-container", Vertical)
@@ -416,7 +503,9 @@ class InstallerIntroApp(App):
             header = "Install status"
 
         tail = [
-            line for line in self.install_log[-INSTALL_OUTPUT_TAIL:] if line.strip()
+            line
+            for line in self.install_status_log[-INSTALL_STATUS_TAIL:]
+            if line.strip()
         ]
         if not tail:
             if self.install_done:
@@ -427,7 +516,7 @@ class InstallerIntroApp(App):
             else:
                 tail = ["Starting..."]
 
-        lines.append(self._render_box(header, tail, self._install_box_rows()))
+        lines.append(self._render_install_panel(header, tail))
         lines.append("")
 
         for item in self.missing_items:
@@ -454,15 +543,24 @@ class InstallerIntroApp(App):
 
         exit_code = 0
         err = None
-        for phase in self.manifest.phases:
+        runnable_phases = [
+            phase
+            for phase in self.manifest.phases
+            if phase.key not in {"diagnostics", "introduction"}
+        ]
+        self.app.call_from_thread(
+            self._set_install_phases,
+            [phase.label for phase in runnable_phases],
+        )
+        for index, phase in enumerate(runnable_phases, start=1):
             # We skip "diagnostics" phase in the install loop, because
             # this TUI handles diagnostics via step 3 natively
-            if phase.key == "diagnostics":
-                continue
-
             cmd = phase.cmd
             cwd = phase.cwd
-            self.app.call_from_thread(self._add_install_log, f"Running: {phase.label}")
+            reason = self._summarize_phase_reason(phase.reason)
+            self.app.call_from_thread(
+                self._set_install_phase, index, phase.label, reason
+            )
 
             try:
                 process = subprocess.Popen(
@@ -490,10 +588,53 @@ class InstallerIntroApp(App):
 
         self.app.call_from_thread(self._finish_install, exit_code, err)
 
+    def _set_install_phases(self, names: list[str]) -> None:
+        self.install_phase_names = names
+        self.install_phase_total = len(names)
+        if self._current == 5:
+            self._update_static_content(self._build_step_5())
+
+    def _set_install_phase(self, index: int, label: str, reason: str) -> None:
+        self.install_phase_index = index
+        self.install_phase_label = label
+        self.install_phase_reason = reason
+        self._add_install_log(f"{label} started.")
+
+    def _status_from_install_line(self, line: str) -> str | None:
+        clean = ANSI_RE.sub("", line)
+        clean = BOX_DRAWING_RE.sub(" ", clean)
+        clean = re.sub(r"\s+", " ", clean).strip()
+        if not clean:
+            return None
+
+        low_value = {
+            "already linked",
+            "ok",
+            "done",
+            "complete",
+        }
+        if clean.lower() in low_value:
+            return None
+
+        if len(clean) > 100:
+            clean = _trim_home(clean)
+        if "/" in clean and (" " not in clean or len(clean) > 72):
+            name = Path(clean.strip("'\"")).name
+            if name:
+                return f"Checking {name}"
+        return clean
+
     def _add_install_log(self, line: str) -> None:
         self.install_log.append(line)
         if len(self.install_log) > INSTALL_OUTPUT_TAIL:
             self.install_log = self.install_log[-INSTALL_OUTPUT_TAIL:]
+        status = self._status_from_install_line(line)
+        if status and (
+            not self.install_status_log or self.install_status_log[-1] != status
+        ):
+            self.install_status_log.append(status)
+            if len(self.install_status_log) > INSTALL_STATUS_TAIL:
+                self.install_status_log = self.install_status_log[-INSTALL_STATUS_TAIL:]
         if self._current == 5:
             self._update_static_content(self._build_step_5())
 

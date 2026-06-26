@@ -1,4 +1,4 @@
-# Frontier Config — Starship, Atuin, Optional Zellij
+# Frontier Config — Starship, Atuin, Optional vc-frame
 
 ## What This Is
 
@@ -7,11 +7,11 @@ the current framework surface:
 
 - `starship` for prompt context
 - `atuin` for searchable history
-- optional `zellij` config and dashboards for people who want a repo-owned session surface
+- optional `vc_frame` config and dashboards for people who want a repo-owned session surface
 
-The key constraint is non-invasive ownership: the repo can ship Zellij assets
+The key constraint is non-invasive ownership: the repo can ship vc-frame assets
 without bulldozing the user's terminal setup. Frontier files resolve per asset,
-so an external companion config can override only the Zellij bits while the repo
+so an external companion config can override only the vc-frame bits while the repo
 still provides the prompt and history defaults.
 
 None of this is required. `vibecrafted` works without any of it.
@@ -30,9 +30,9 @@ That gives you:
 
 - a prompt with repo/runtime context
 - searchable shell history tuned for project recall
-- optional Zellij dashboards that stay dormant until you launch them
+- optional vc-frame dashboards that stay dormant until you launch them
 
-If you already run your shell inside a `zellij` session, spawned agents still
+If you already run your shell inside a `vc_frame` session, spawned agents still
 reuse panes automatically. If you want the repo-owned dashboards too, install
 the frontier presets and launch them explicitly with `vibecrafted dashboard`.
 
@@ -74,11 +74,11 @@ Install or refresh the sidecars with:
 vc-frontier-install
 ```
 
-If `zellij` is on your machine, the same command also stages the repo-owned
+If `vc_frame` is on your machine, the same command also stages the repo-owned
 `config.kdl` and dashboard layouts. Nothing gets forced on until you run a
 dashboard command or point your shell at those files. The installer places all
 three assets under `$HOME/.config/vetcoders/frontier/`, not into your global
-`$HOME/.config/zellij` or `$HOME/.config/starship.toml`.
+`$HOME/.config/vc-frame` or `$HOME/.config/starship.toml`.
 
 ---
 
@@ -92,7 +92,7 @@ The helper layer resolves each artifact independently:
 4. `<current vibecrafted repo>/config/`
 
 That means repo-owned `starship` / `atuin` presets can stay local to the core
-framework while a companion repo can provide only `zellij/config.kdl` or only a
+framework while a companion repo can provide only `vc-frame/config.kdl` or only a
 single layout without being shadowed by the checkout you are currently in.
 
 Inspect the active paths with:
@@ -107,17 +107,17 @@ vc-frontier-paths
 
 The core repo now ships:
 
-- repo-owned `zellij` layouts
-- repo-owned `zellij` config
+- repo-owned `vc_frame` layouts
+- repo-owned `vc_frame` config
 - repo-owned `starship` and `atuin` presets
 
 What stays outside the core repo:
 
 - terminal-emulator presets such as Alacritty
 
-If you prefer `zellij`, keep using it. The spawn runtime still detects an
+If you prefer `vc_frame`, keep using it. The spawn runtime still detects an
 active session and opens panes there when possible. If a companion repo stages
-`zellij/config.kdl` under `$HOME/.config/vetcoders/frontier/`, the helper layer can
+`vc-frame/config.kdl` under `$HOME/.config/vetcoders/frontier/`, the helper layer can
 pick it up without changing the core repo contract. The difference is simple:
 the framework owns an optional dashboard surface, not your whole terminal
 identity.

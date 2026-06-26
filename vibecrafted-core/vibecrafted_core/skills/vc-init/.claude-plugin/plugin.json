@@ -1,0 +1,8 @@
+{
+  "name": "vc-init",
+  "description": "Session bootstrap with history and structure. Use /vc-init to invoke.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

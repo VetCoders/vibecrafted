@@ -3,7 +3,7 @@
 > Status note (2026-04-10): the public shipping front door is now the
 > browser-guided installer at `scripts/installer_gui.py`, not a full-screen TUI.
 > Keep this file as a reference for compact output rhythm and installer trust
-> surfaces, not as the canonical public onboarding contract.
+> surfaces, not as the default public onboarding contract.
 
 ## Goal
 
@@ -14,7 +14,7 @@ not the log of the process.
 
 ## Current Problem
 
-`make vibecrafted` currently outputs ~80 lines across:
+`make install` used to output ~80 lines across:
 
 -𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Framework Setup header + plan (8 lines)
 
@@ -123,9 +123,9 @@ Select runtimes for symlink views:
     [ ] 4. gemini
 
 Runtime Foundations:
-  [ok] aicx-mcp -> ~/.cargo/bin/aicx-mcp
+  [ok] aicx-mcp -> <product-managed path>/aicx-mcp
        AICX MCP server for session history and intentions recovery
-  [ok] loctree-mcp -> ~/.cargo/bin/loctree-mcp
+  [ok] loctree-mcp -> <product-managed path>/loctree-mcp
        Structural code mapping MCP server
   [ok] prview -> ~/.cargo/bin/prview
        PR review artifact generator
@@ -187,7 +187,7 @@ Remove orphaned skills? [Y/n] y
 
 Installing shell helper...
 Installing VetCoders shell helpers
-  source: ~/hosted/VetCoders/vetcoders-skills/skills/vc-agents/shell/vetcoders.sh
+  source: ~/hosted/VetCoders/vetcoders-skills/runtime/shell/vetcoders.sh
   target: ~/.config/vetcoders/vc-skills.sh
   ~/.zshrc: already sourced
 
@@ -217,7 +217,7 @@ Verification:
     🅵·🅁·🄰·🄼·🄴·🅆·🅞·🅡·🅺
 ```
 
-## Target flow for interactive mode (`make vibecrafted`):
+## Target flow for interactive mode (`make install`):
 
 - I. Upper portion - Hero
 
@@ -362,7 +362,7 @@ III. Action prompt or progress bar
     - Agents
       claude-code · codex · gemini-cli
     - Additional tools
-      zellij · mise · starship · atuin · zoxide
+      vc_frame · mise · starship · atuin · zoxide
   2. Installation
   We will install:
     - Missing dependencies
@@ -370,7 +370,7 @@ III. Action prompt or progress bar
     - Helpers and binaries (executables and functions)
   3. Post-installation setup
     - Workspace directories (in $VIBECRAFTED_ROOT/.vibecrafted/)
-    - Symlinks for AI coding agents (in $HOME/.agents/)
+    - Symlinks for AI coding agents (in $HOME/.runtime/)
   4. Verification and quick tour
 
                                 ⏎ proceed ⌫ Back ⎋ quit
@@ -386,7 +386,7 @@ III. Action prompt or progress bar
 
 ---
 
-# Target for non-interactive mode (`make install`):
+# Target for non-interactive mode (`make install-auto`):
 
 Same output but without Y/n prompts — just runs and prints the final state.
 
@@ -511,8 +511,8 @@ The installer runs without additional prompts when called with --compact.
 
 ## Test
 
-- `make vibecrafted` fits on one screen (~25 lines)
-- `make install` still works (verbose by default)
+- `make install` fits on one screen (~25 lines)
+- `make install-auto` still works without prompts
 - `$VIBECRAFTED_ROOT/.vibecrafted/install.log` contains full verbose output
 - `bash scripts/check-portable.sh` passes
 - All 16 skills installed correctly

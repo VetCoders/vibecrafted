@@ -1,4 +1,0 @@
-interface:
-  display_name: "VC Research"
-  short_description: "Triple-agent research swarm"
-  default_prompt: "Use $vc-research to co-define the problem, write a research plan, spawn claude+codex+gemini on the same questions, and synthesize."

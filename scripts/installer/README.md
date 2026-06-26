@@ -1,7 +1,7 @@
 # Vibecrafted built-in installer runner
 
 Sequential trust-building installer runner, vendored into Vibecrafted so that
-`make vibecrafted`, `make wizard`, and `install.sh` have **zero external runtime
+`make install`, `make wizard`, and `install.sh` have **zero external runtime
 dependencies** — the terminal-native default path bootstraps `uv` once,
 `uv sync`s this directory into an isolated local `.venv/`, and drives the
 install from `install.toml` at the repo root. The browser-guided path launches
@@ -9,15 +9,15 @@ directly from the repo-owned Python script.
 
 ## Why vendored?
 
-The canonical source lives in the
+The default source lives in the
 [`vetcoders-tools`](https://github.com/VetCoders/vetcoders-tools) repo
 (`installer/` sub-tree) and targets universal use (any repo,
 Python/Rust/anything). This directory is a vendored copy kept in sync —
 Vibecrafted must remain self-contained so that a fresh clone +
-`make vibecrafted` or `make wizard` _just works_, without requiring the user
+`make install` or `make wizard` _just works_, without requiring the user
 to `uv tool install vetcoders-installer` globally first.
 
-When the canonical source changes, copy the module over (paths relative to
+When the default source changes, copy the module over (paths relative to
 your two local checkouts of `vetcoders-tools` and `vibecrafted`):
 
 ```bash
@@ -27,13 +27,15 @@ cp <vetcoders-tools>/installer/vetcoders_installer/__init__.py \
 
 ## How it's wired
 
-- **`Makefile` target `vibecrafted`** → `uv run --project scripts/installer vetcoders-installer install.toml` (terminal-native default)
+- **`Makefile` target `install`** → `uv run --project scripts/installer vetcoders-installer install.toml --quiet` (terminal-native default)
+- **`Makefile` target `setup-dev`** → same meta-installer with `--advanced --quiet`
+- **`Makefile` target `install-auto`** → same meta-installer with `--yes --quiet`
 - **`Makefile` target `wizard`** → `python3 scripts/installer_gui.py --source "$PWD"` (browser-guided surface)
 - **`Makefile` target `gui-install`** → alias for `wizard`
-- **`install.sh`** default path → compact CLI installer on the staged snapshot (also used by `make vibecrafted`-style bootstrap)
+- **`install.sh`** default path → compact CLI installer on the staged snapshot (also used by `make install`-style bootstrap)
 - **`install.sh --gui`** → `python3 scripts/installer_gui.py --source <staged snapshot>`
-- **`install.toml`** at repo root declares the three phases (Foundations /
-  Skills & Helpers / Doctor) with `persist = true`
+- **`install.toml`** at repo root declares four checkpoints (Introduction /
+  Diagnostics and plan / Installation / Onboarding) with `persist = true`
 - **`.venv/`** lives in this directory (git-ignored); first `uv sync` creates
   it, subsequent runs reuse it
 

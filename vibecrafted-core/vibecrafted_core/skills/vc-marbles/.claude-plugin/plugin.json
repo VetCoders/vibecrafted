@@ -1,0 +1,8 @@
+{
+  "name": "vc-marbles",
+  "description": "Iterative convergence loops. Use /vc-marbles to run adaptive denoising loops until P0=P1=P2=0. Each loop: measure, target gaps, fix, denoise, score.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

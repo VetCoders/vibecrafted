@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS_DIR = REPO_ROOT / "skills" / "vc-agents" / "scripts"
+SCRIPTS_DIR = REPO_ROOT / "runtime" / "scripts"
 
 
 def _prepare_scripts(tmp_path: Path, capture_file: Path) -> Path:
@@ -89,9 +89,9 @@ def _base_env(tmp_path: Path) -> dict[str, str]:
     env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
     env["VETCODERS_SPAWN_RUNTIME"] = "headless"
     for k in (
-        "ZELLIJ",
-        "ZELLIJ_PANE_ID",
-        "ZELLIJ_SESSION_NAME",
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
         "VIBECRAFTED_OPERATOR_SESSION",
         "VIBECRAFTED_RUN_ID",
         "VIBECRAFTED_SKILL_CODE",

@@ -103,7 +103,7 @@ class Manifest:
     persist: bool
     phases: list[Phase]
     path: Path
-    branding: dict[str, str] = field(default_factory=dict)
+    branding: dict[str, Any] = field(default_factory=dict)
     intro_screens: list[str] = field(default_factory=list)
     textual_screens: list[str] = field(default_factory=list)
     diagnostics: dict[str, Any] = field(default_factory=dict)
@@ -500,7 +500,7 @@ def _load_mock_screen(
     navigation bar and FRAMEWORK tag authored by the designer are preserved
     exactly as written. The nav bar advertises keys (⇅ Nav, ␣ Sel, ⇥ View)
     that belong to the advanced interactive flow reached via
-    ``make setup-dev`` (``vetcoders_install.py install --advanced``); it
+    ``make setup-dev`` (``vetcoders-installer install.toml --advanced``); it
     is a consistent reference across all screens, not a per-screen promise.
 
     ``{version}`` placeholders inside the mockup body are interpolated with
@@ -729,6 +729,8 @@ def _print_summary(
     manifest: Manifest,
     results: list[tuple[str, str, int]],
     log_path: Optional[Path],
+    *,
+    compact: bool = False,
 ) -> None:
     if not results:
         return
@@ -752,6 +754,27 @@ def _print_summary(
         if manifest.branding
         else f"⚒ {product}"
     )
+
+    if compact:
+        if all_ok:
+            console.print(f"[green]✓[/] {header_ready} ready")
+        elif has_fail:
+            failed = next(
+                (
+                    (label, state)
+                    for label, state, _rc in results
+                    if state.startswith(("failed", "error"))
+                ),
+                ("Install", "failed"),
+            )
+            console.print(f"[red]✗[/] {failed[0]} {failed[1]}")
+        elif pure_cancel:
+            console.print("[yellow]·[/] Install cancelled — nothing changed")
+        else:
+            console.print(f"[yellow]![/] {header_ready} finished with warnings")
+        if log_path:
+            console.print(f"Log: {log_path}")
+        return
 
     console.print()
     if HAS_RICH:
@@ -793,12 +816,17 @@ def _print_summary(
 
     # Next-step block. We only suggest commands that actually assume the
     # install happened on paths where the install actually happened.
-    next_steps = manifest.branding.get("next_steps", []) if manifest.branding else []
+    raw_next_steps = (
+        manifest.branding.get("next_steps", []) if manifest.branding else []
+    )
+    next_steps: list[dict[str, Any]] = [
+        step for step in raw_next_steps if isinstance(step, dict)
+    ]
 
     installer_cmd = (
-        manifest.branding.get("installer_cmd", "make vibecrafted")
+        str(manifest.branding.get("installer_cmd", "make install"))
         if manifest.branding
-        else "make vibecrafted"
+        else "make install"
     )
 
     if all_ok:
@@ -908,6 +936,7 @@ def run(
     skip: list[str],
 ) -> int:
     console = _make_console()
+    compact_stdout = quiet and auto_yes and not dry_run
 
     phases = _filter_phases(manifest.phases, only, skip)
     if not phases:
@@ -926,7 +955,7 @@ def run(
             return 0
         elif tui_status == "completed":
             return 0
-    else:
+    elif not compact_stdout:
         _print_title(console, manifest)
 
     if dry_run:
@@ -964,7 +993,7 @@ def run(
     exit_code = 0
 
     try:
-        if HAS_RICH:
+        if HAS_RICH and not compact_stdout:
             # Cargo-style sticky bar: no cur column (truncates on narrow
             # terminals, fights with console.input). Subprocess lines scroll
             # above the bar and carry the real progress narrative.
@@ -986,51 +1015,60 @@ def run(
 
         # Progress is started manually around working phases so the consent
         # prompt owns the screen without fighting Rich's Live renderer.
-        if HAS_RICH:
+        if HAS_RICH and not compact_stdout:
             task_id = progress.add_task("pending", total=len(phases))
 
         for idx, phase in enumerate(phases):
-            _print_reason_block(console, phase)
+            if log_handle is not None:
+                log_handle.write(f"\n===== {phase.label} =====\n")
+                log_handle.flush()
+            if not compact_stdout:
+                _print_reason_block(console, phase)
 
             # Consent is gathered WITHOUT the sticky bar — a spinning bar
             # next to a still prompt reads as "working", not "waiting for you".
             verdict = consent(console, phase.label, phase.optional, auto_yes)
             if verdict == "quit":
-                console.print("\n  [yellow]Cancelled — no further changes.[/]\n")
+                if not compact_stdout:
+                    console.print("\n  [yellow]Cancelled — no further changes.[/]\n")
                 results.append((phase.label, "cancelled", 0))
                 break
             if verdict == "skip":
-                console.print("  [yellow]· skipped[/]\n")
+                if not compact_stdout:
+                    console.print("  [yellow]· skipped[/]\n")
                 results.append((phase.label, "skipped", 0))
-                if HAS_RICH:
+                if HAS_RICH and not compact_stdout:
                     progress.update(task_id, advance=1, description=phase.label)
                 continue
 
             # User said yes — start the sticky bar so subprocess output
             # scrolls cleanly above it during the working phase.
-            if HAS_RICH:
+            if HAS_RICH and not compact_stdout:
                 progress.update(task_id, description=phase.label)
                 progress.start()
 
             rc = run_phase(console, phase, progress, task_id, log_handle, quiet)
 
-            if HAS_RICH:
+            if HAS_RICH and not compact_stdout:
                 progress.update(task_id, advance=1)
                 progress.stop()
 
             if rc == 0:
                 results.append((phase.label, "ok", 0))
-                console.print(f"  [green]✓[/] {phase.label}\n")
+                if not compact_stdout:
+                    console.print(f"  [green]✓[/] {phase.label}\n")
             elif phase.optional:
                 # Non-fatal step: flag the warning and keep moving.
                 results.append((phase.label, f"warn (exit {rc})", rc))
-                console.print(
-                    f"  [yellow]![/] {phase.label} [yellow]finished with exit {rc} — continuing[/]\n"
-                )
+                if not compact_stdout:
+                    console.print(
+                        f"  [yellow]![/] {phase.label} [yellow]finished with exit {rc} — continuing[/]\n"
+                    )
             else:
                 results.append((phase.label, f"failed (exit {rc})", rc))
-                console.print(f"  [red]✗ {phase.label} failed (exit {rc})[/]")
-                if log_path:
+                if not compact_stdout:
+                    console.print(f"  [red]✗ {phase.label} failed (exit {rc})[/]")
+                if log_path and not compact_stdout:
                     console.print(f"  [dim]See log: {log_path}[/]")
                 exit_code = rc
                 break
@@ -1038,7 +1076,7 @@ def run(
         if log_handle is not None:
             log_handle.close()
 
-    _print_summary(console, manifest, results, log_path)
+    _print_summary(console, manifest, results, log_path, compact=compact_stdout)
     return exit_code
 
 
@@ -1142,11 +1180,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    try:
-        sys.stdout.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-        sys.stderr.reconfigure(line_buffering=True)  # type: ignore[attr-defined]
-    except AttributeError:
-        pass
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(line_buffering=True)
 
     parser = _build_parser()
     args = parser.parse_args()
@@ -1185,7 +1222,7 @@ def main() -> int:
         _self_uninstall_and_exit(rc)
 
     # Otherwise print cleanup guidance (if applicable).
-    if rc == 0 and not args.dry_run:
+    if rc == 0 and not args.dry_run and not args.quiet:
         console = _make_console()
         _print_cleanup_notice(console, manifest, args.cleanup)
 

@@ -1,0 +1,7 @@
+{
+    "mcpServers": {
+        "vibecrafted-mcp": {
+            "command": "/Users/maciejgad/.local/share/vibecrafted/tools/vibecrafted-local/.venv/bin/vibecrafted-mcp"
+        }
+    }
+}

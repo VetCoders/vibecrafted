@@ -22,8 +22,9 @@ def test_build_install_command_respects_shell_toggle(tmp_path: Path) -> None:
 
 
 def test_build_install_steps_include_foundations_before_installer(
-    tmp_path: Path,
+    monkeypatch, tmp_path: Path
 ) -> None:
+    monkeypatch.delenv("VIBECRAFTED_RUNTIME", raising=False)
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir(parents=True)
     (scripts_dir / "vetcoders_install.py").write_text(
@@ -42,6 +43,34 @@ def test_build_install_steps_include_foundations_before_installer(
     assert steps[0].command == ["bash", str(scripts_dir / "install-foundations.sh")]
     assert steps[1].command[-1] == "--with-shell"
     assert "--mirror" in steps[1].command
+
+
+def test_build_install_steps_include_selected_runtime(
+    monkeypatch, tmp_path: Path
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "vetcoders_install.py").write_text(
+        "#!/usr/bin/env python3\n", encoding="utf-8"
+    )
+    (scripts_dir / "install-runtime.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("VIBECRAFTED_RUNTIME", "wezterm")
+
+    steps = installer_gui.build_install_steps(str(tmp_path), with_shell=True)
+
+    assert [step.label for step in steps] == [
+        "Install Vibecrafted",
+        "Install runtime: wezterm",
+    ]
+    assert steps[1].command == [
+        "bash",
+        str(scripts_dir / "install-runtime.sh"),
+        "--runtime",
+        "wezterm",
+        "--yes",
+    ]
 
 
 def test_preflight_payload_summarizes_diagnostics(monkeypatch, tmp_path: Path) -> None:
@@ -138,19 +167,30 @@ def test_install_runtime_env_prepends_repo_owned_bins(
     monkeypatch, tmp_path: Path
 ) -> None:
     crafted_home = tmp_path / ".vibecrafted"
+    runtime_home = tmp_path / ".local" / "share" / "vibecrafted"
     cargo_bin = tmp_path / ".cargo" / "bin"
-    node_bin = crafted_home / "tools" / "node" / "bin"
-    crafted_bin = crafted_home / "bin"
-    for path in (cargo_bin, node_bin, crafted_bin):
+    local_bin = tmp_path / ".local" / "bin"
+    node_bin = runtime_home / "tools" / "node" / "bin"
+    runtime_bin = runtime_home / "bin"
+    for path in (cargo_bin, local_bin, node_bin, runtime_bin):
         path.mkdir(parents=True)
 
     monkeypatch.setattr(installer_gui, "vibecrafted_home", lambda: crafted_home)
+    monkeypatch.setattr(installer_gui, "vibecrafted_runtime_bin", lambda: runtime_bin)
+    monkeypatch.setattr(
+        installer_gui, "vibecrafted_tools_home", lambda: runtime_home / "tools"
+    )
     monkeypatch.setattr(installer_gui.Path, "home", lambda: tmp_path)
 
     env = installer_gui.install_runtime_env({"PATH": "/usr/bin"})
     pieces = env["PATH"].split(":")
 
-    assert pieces[:3] == [str(cargo_bin), str(node_bin), str(crafted_bin)]
+    assert pieces[:4] == [
+        str(local_bin),
+        str(cargo_bin),
+        str(node_bin),
+        str(runtime_bin),
+    ]
 
 
 def test_build_html_renders_wizard_shell() -> None:
@@ -185,7 +225,7 @@ def test_build_html_renders_wizard_shell() -> None:
             },
             "launcher_defaults": {
                 "workflows": ["workflow", "research", "review", "marbles"],
-                "agents": ["claude", "codex", "gemini"],
+                "agents": ["claude", "codex", "gemini", "agy", "junie", "grok"],
                 "runtimes": ["headless", "terminal", "visible"],
             },
             "categories": [],
@@ -198,7 +238,7 @@ def test_build_html_renders_wizard_shell() -> None:
     assert "Launch guided install" in html
     assert "Finish state" in html
     assert "make wizard" in html
-    assert "make vibecrafted" in html
+    assert "make install" in html
     assert "Local checkout GUI" in html
     assert "Terminal-native fallback" not in html
     assert "height: calc(100dvh - 36px);" in html

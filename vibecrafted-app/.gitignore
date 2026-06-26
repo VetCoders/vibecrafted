@@ -1,0 +1,26 @@
+.DS_Store
+**/.DS_Store
+
+/target/
+**/target/
+/*/Cargo.lock
+
+**/*.rs.bk
+*.pdb
+
+/.loctree/
+
+# Local agent/runtime scratch. Per-repo guidance now lives in /AGENTS.md at
+# root (since 2026-05-14, agent-tool discoverable). The .vibecrafted/ folder
+# still hosts daily artifact symlinks and generated prompts; both stay local.
+**/.vibecrafted/*
+!/.vibecrafted/
+
+# Build products.
+/shell-agent/build/
+/shell-agent/app/build/
+
+# Nested source-repo baggage from extracted crates. The vc-operator root owns CI.
+/mux-agent/.github/
+/.junie
+*.txt

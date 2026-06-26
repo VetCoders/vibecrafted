@@ -1,0 +1,239 @@
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+import pytest
+
+from vibecrafted_core import control_plane
+from vibecrafted_core.agent_dispatch import extract_session_id
+from vibecrafted_core.events import append_event
+from vibecrafted_core.spawn import Supervisor, finalize_artifacts, finish_meta
+
+
+def test_supervisor_spawn_lifecycle_extracts_session_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    transcript = tmp_path / "agent.transcript.log"
+    meta = tmp_path / "agent.meta.json"
+    meta.write_text(json.dumps({"transcript": str(transcript)}), encoding="utf-8")
+
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "from pathlib import Path; "
+            f"Path({str(transcript)!r}).write_text('[12:00:00] session: codex-test-123\\n', encoding='utf-8')"
+        ),
+    ]
+
+    handle = Supervisor().spawn(
+        "codex",
+        "fixture",
+        skill="test",
+        mode="unit",
+        root=tmp_path,
+        command=command,
+        run_id="test-001",
+        meta_path=meta,
+        transcript_path=transcript,
+    )
+
+    assert handle.wait(timeout=5) == 0
+    assert handle.exit_code == 0
+    assert handle.session_id == "codex-test-123"
+    assert (
+        json.loads(meta.read_text(encoding="utf-8"))["session_id"] == "codex-test-123"
+    )
+    kinds = [event["kind"] for event in control_plane.read_event_tail(10)]
+    assert "spawn-completed" in kinds
+    assert "spawn-started" in kinds
+
+
+def test_supervisor_propagates_exit_code(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+
+    handle = Supervisor().spawn(
+        "codex",
+        "fixture",
+        skill="test",
+        mode="unit",
+        root=tmp_path,
+        command=[sys.executable, "-c", "raise SystemExit(7)"],
+        run_id="test-002",
+    )
+
+    assert handle.wait(timeout=5) == 7
+    assert handle.exit_code == 7
+    kinds = [event["kind"] for event in control_plane.read_event_tail(10)]
+    assert "spawn-failed" in kinds
+
+
+def test_session_id_extractors_use_shared_pattern() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    fixtures = repo / "tests" / "fixtures" / "transcripts"
+
+    assert (
+        extract_session_id("claude", (fixtures / "claude_session.log").read_text())
+        == "claude-session-123"
+    )
+    assert (
+        extract_session_id("codex", (fixtures / "codex_session.log").read_text())
+        == "codex-session-456"
+    )
+    assert (
+        extract_session_id("gemini", (fixtures / "gemini_session.log").read_text())
+        == "gemini-session-789"
+    )
+
+
+def test_finalize_artifacts_python_owns_launcher_artifact_contract(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CODEX_MODEL", "gpt-5.3-codex")
+    reports = tmp_path / "VetCoders" / "vibecrafted" / "2026_0610" / "reports"
+    reports.mkdir(parents=True)
+    report = reports / "announced.md"
+    transcript = reports / "announced.transcript.log"
+    meta = reports / "announced.meta.json"
+
+    report.write_text("# Report\n\nDone.\n", encoding="utf-8")
+    transcript.write_text(
+        "[12:40:43] session: codex-finalize-001\n"
+        "tokens: 12 in (3 cached) / 7 out\n"
+        "cost_usd: $0.045\n",
+        encoding="utf-8",
+    )
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "finalize-test-001",
+                "prompt_id": "prompt-finalize",
+                "agent": "codex",
+                "skill": "implement",
+                "model": "unknown",
+                "status": "completed",
+                "root": str(tmp_path),
+                "report": str(report),
+                "transcript": str(transcript),
+                "meta": str(meta),
+                "created_at": "2026-06-10T08:00:00+00:00",
+                "completed_at": "2026-06-10T08:00:05+00:00",
+                "duration_s": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    final_meta = finalize_artifacts(meta, report, transcript)
+
+    assert final_meta is not None
+    payload = json.loads(final_meta.read_text(encoding="utf-8"))
+    assert payload["session_id"] == "codex-finalize-001"
+    assert payload["model"] == "gpt-5.3-codex"
+    assert payload["duration_s"] == 5.0
+    assert payload["tokens_input"] == 12
+    assert payload["tokens_cached_input"] == 3
+    assert payload["tokens_output"] == 7
+    assert payload["tokens_total"] == 19
+    assert payload["cost_usd"] == 0.045
+    assert payload["artifact_contract"] == "vibecrafted.agent-artifact.v1"
+
+    final_report = Path(payload["report"])
+    final_transcript = Path(payload["transcript"])
+    assert final_report.name.endswith("-report.md")
+    assert final_report.is_file()
+    assert final_transcript.is_file()
+    assert report.exists()
+    assert transcript.exists()
+    assert meta.exists()
+    assert report.resolve() == final_report.resolve()
+    assert transcript.resolve() == final_transcript.resolve()
+    assert meta.resolve() == final_meta.resolve()
+
+
+def test_finish_meta_python_owns_terminal_state(tmp_path: Path) -> None:
+    transcript = tmp_path / "agent.transcript.log"
+    meta = tmp_path / "agent.meta.json"
+    transcript.write_text(
+        "\x1b[31m[12:00:00] session: codex-finish-001\x1b[0m\n",
+        encoding="utf-8",
+    )
+    meta.write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "agent": "codex",
+                "created_at": "2026-06-10T08:00:00+00:00",
+                "updated_at": "2026-06-10T08:00:01+00:00",
+                "transcript": str(transcript),
+                "exit_code": None,
+                "liveness": "pid_alive",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = finish_meta(meta, "failed", "7")
+
+    assert result == meta
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["exit_code"] == 7
+    assert payload["liveness"] == "terminal"
+    assert payload["session_id"] == "codex-finish-001"
+    assert isinstance(payload["duration_s"], (int, float))
+    assert payload["completed_at"] == payload["updated_at"]
+
+
+def test_subscribe_events_reads_appended_events(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+
+    append_event("unit", "run-1", "hello", {"ok": True})
+    events = list(control_plane.subscribe_events(kinds={"unit"}))
+
+    assert len(events) == 1
+    assert events[0].kind == "unit"
+    assert events[0].payload == {"ok": True}
+
+
+def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
+    """The footer totals are written for every agent; the regex extractor must
+    read them so research-swarm meta never lands at 0 for gemini/junie/grok
+    (only codex/claude formatters render the per-event token line)."""
+    from vibecrafted_core.spawn import _extract_tokens
+
+    # gemini-style: only the closure footer carries usage, no per-event line.
+    gemini_transcript = (
+        "[04:09] gemini body text\n"
+        "\x1b[32m[04:49] done\x1b[0m\n"
+        "---\n"
+        "runner: vibecrafted\n"
+        "model: gemini-3.1-pro-preview\n"
+        "tokens_input: 648618\n"
+        "tokens_cached_input: 0\n"
+        "tokens_output: 1680\n"
+        "tokens_total: 650298\n"
+    )
+    assert _extract_tokens(gemini_transcript)["total"] == 650298
+
+    # junie-style footer, no per-event render line either.
+    junie_transcript = "tokens_input: 5000\ntokens_output: 200\ntokens_total: 5200\n"
+    assert _extract_tokens(junie_transcript)["output"] == 200
+
+    # Footer present alongside a per-event line must NOT double count.
+    both = "tokens: 12 in / 7 out\ntokens_input: 12\ntokens_output: 7\n"
+    assert _extract_tokens(both)["total"] == 19
+
+    # No footer: fall back to the per-event line (backward compatible).
+    legacy = "[12:00] tokens: 12 in / 7 out\n"
+    assert _extract_tokens(legacy)["total"] == 19

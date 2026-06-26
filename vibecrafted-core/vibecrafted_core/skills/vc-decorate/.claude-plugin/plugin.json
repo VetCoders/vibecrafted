@@ -1,0 +1,8 @@
+{
+  "name": "vc-decorate",
+  "description": "Visual polish and micro-interactions. Use /vc-decorate to invoke.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

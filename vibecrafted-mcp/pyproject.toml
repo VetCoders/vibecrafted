@@ -3,10 +3,10 @@ name = "vibecrafted-mcp"
 version = "0.1.0"
 description = "MCP server for the Vibecrafted operator framework — synthesis brain for the VetCoders ecosystem."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=2.0,<3",
-    "vibecrafted-core>=0.1.0",
+    "vibecrafted>=3.2.0rc0",
 ]
 
 [project.scripts]
@@ -20,4 +20,4 @@ build-backend = "hatchling.build"
 packages = ["vibecrafted_mcp"]
 
 [tool.uv.sources]
-vibecrafted-core = { workspace = true }
+vibecrafted = { workspace = true }

@@ -1,0 +1,517 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any, Sequence
+
+from . import control_plane
+from .events import append_event
+from .package_resources import deck_path as package_deck_path
+from .package_resources import package_root, runtime_path
+from .spawn import Supervisor
+
+AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
+SKILL_PREFIX = {
+    "agents": "agnt",
+    "followup": "fwup",
+    "implement": "just",
+    "marbles": "marb",
+    "prune": "prun",
+    "review": "rvew",
+    "scaffold": "scaf",
+}
+
+
+def repo_root() -> Path:
+    return Path.cwd()
+
+
+def runtime_root() -> Path:
+    return runtime_path()
+
+
+def deck_path() -> Path:
+    return package_deck_path()
+
+
+def _has_flag(args: Sequence[str], name: str) -> bool:
+    return name in args or any(arg.startswith(f"{name}=") for arg in args)
+
+
+def _consume_sandbox_flags(args: Sequence[str]) -> tuple[list[str], bool, str | None]:
+    cleaned: list[str] = []
+    sandbox = False
+    policy: str | None = None
+    iterator = iter(args)
+    for arg in iterator:
+        if arg == "--sandbox":
+            sandbox = True
+            continue
+        if arg == "--sandbox-policy":
+            policy = next(iterator, None)
+            continue
+        if arg.startswith("--sandbox-policy="):
+            policy = arg.split("=", 1)[1]
+            continue
+        cleaned.append(arg)
+    return cleaned, sandbox, policy
+
+
+def _run_id(prefix: str) -> str:
+    return f"{prefix}-{time.strftime('%H%M%S')}-{os.getpid()}"
+
+
+def _env_for_run(run_id: str, skill_code: str) -> dict[str, str]:
+    env = os.environ.copy()
+    env["VIBECRAFTED_RUN_ID"] = run_id
+    env["VIBECRAFTED_SKILL_CODE"] = skill_code
+    env.setdefault("VIBECRAFTED_ROOT", str(runtime_root()))
+    env.setdefault("VIBECRAFTED_PYTHON", sys.executable)
+    env.setdefault("VETCODERS_SPAWN_RUNTIME", "headless")
+    core_path = str(package_root().parent)
+    env["PYTHONPATH"] = f"{core_path}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(
+        os.pathsep
+    )
+    return env
+
+
+def _print_completed(run_id: str, payload: dict[str, Any]) -> int:
+    run = payload.get("run") or {}
+    if run:
+        print(
+            f"run_id={run_id} status={run.get('state')} exit_code={run.get('exit_code')}"
+        )
+        if run.get("latest_report"):
+            print(f"report={run['latest_report']}")
+        if run.get("latest_transcript"):
+            print(f"transcript={run['latest_transcript']}")
+        if run.get("session_id"):
+            print(f"session_id={run['session_id']}")
+        return int(run.get("exit_code") or 0)
+    print(f"run_id={run_id} completed without control-plane payload")
+    return 0
+
+
+def _await_run_forever(run_id: str, interval: float = 5.0) -> dict[str, Any]:
+    while True:
+        payload = control_plane.await_run(
+            run_id,
+            timeout_seconds=interval,
+            interval_seconds=max(min(interval, 1.0), 0.1),
+        )
+        if payload.get("completed"):
+            return payload
+        print(f"waiting run_id={run_id}", flush=True)
+
+
+def supervised_skill_main(skill: str, argv: Sequence[str] | None = None) -> int:
+    args, sandbox, sandbox_policy = _consume_sandbox_flags(
+        list(sys.argv[1:] if argv is None else argv)
+    )
+    if args and args[0] in {"-h", "--help", "help"}:
+        # Direct python path (bypasses legacy deck) so --help and later --file are parsed by core argparse.
+        return subprocess.call(
+            [sys.executable, "-m", "vibecrafted_core.cli", skill, "--help"]
+        )
+    if sandbox and args and args[0] not in AGENTS:
+        skill_code = SKILL_PREFIX.get(skill, skill[:4])
+        run_id = os.environ.get("VIBECRAFTED_RUN_ID") or _run_id(skill_code)
+        handle = Supervisor().spawn(
+            "command",
+            " ".join(args),
+            skill=skill,
+            mode="raw",
+            root=repo_root(),
+            command=args,
+            env=_env_for_run(run_id, skill_code),
+            run_id=run_id,
+            sandbox=True,
+            sandbox_policy=sandbox_policy,
+        )
+        return handle.wait()
+    if not args or args[0] not in AGENTS:
+        print(
+            f"Usage: vc-{skill} <claude|codex|gemini|agy|junie|grok> [--prompt <text>|--file <path>]",
+            file=sys.stderr,
+        )
+        return 2
+
+    agent = args[0]
+    rest = args[1:]
+    skill_code = SKILL_PREFIX.get(skill, skill[:4])
+    run_id = os.environ.get("VIBECRAFTED_RUN_ID") or _run_id(skill_code)
+    # Use direct -m vibecrafted_core.cli (the python path that owns --file/--prompt via _add_launch_parser)
+    # instead of deck bash script. This retires the deck delegation for the launch surface (the siódemka
+    # + other supervised) so flags never land in legacy positional <mode> parser.
+    command = [sys.executable, "-m", "vibecrafted_core.cli", skill, agent, *rest]
+    if not _has_flag(rest, "--runtime"):
+        command.extend(["--runtime", "headless"])
+
+    supervisor = Supervisor()
+    handle = supervisor.spawn(
+        agent,
+        " ".join(rest),
+        skill=skill,
+        mode="launch",
+        root=repo_root(),
+        command=command,
+        env=_env_for_run(run_id, skill_code),
+        run_id=run_id,
+        sandbox=sandbox,
+        sandbox_policy=sandbox_policy,
+    )
+    launch_code = handle.wait()
+    if launch_code != 0:
+        return launch_code
+    payload = _await_run_forever(run_id)
+    return _print_completed(run_id, payload)
+
+
+def agents_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("agents", argv)
+
+
+def followup_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("followup", argv)
+
+
+def implement_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("implement", argv)
+
+
+def _lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
+    from .lifecycle_runner import lifecycle_main
+
+    return lifecycle_main(workflow_id, argv)
+
+
+def audit_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-audit", argv)
+
+
+def dou_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-dou", argv)
+
+
+def hydrate_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-hydrate", argv)
+
+
+def marbles_main(argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] in {
+        "-h",
+        "--help",
+        "help",
+        "pause",
+        "stop",
+        "resume",
+        "session",
+        "inspect",
+        "delete",
+        "gc",
+    }:
+        return subprocess.call([str(deck_path()), "marbles", *args])
+    return _lifecycle_main("vc-marbles", args)
+
+
+def polarize_main(argv: Sequence[str] | None = None) -> int:
+    return _lifecycle_main("vc-polarize", argv)
+
+
+def prune_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("prune", argv)
+
+
+def review_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("review", argv)
+
+
+def scaffold_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("scaffold", argv)
+
+
+def decorate_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("decorate", argv)
+
+
+def delegate_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("delegate", argv)
+
+
+def intents_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("intents", argv)
+
+
+def ownership_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("ownership", argv)
+
+
+def partner_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("partner", argv)
+
+
+def release_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("release", argv)
+
+
+def workflow_main(argv: Sequence[str] | None = None) -> int:
+    return supervised_skill_main("workflow", argv)
+
+
+def _prepare_research(args: Sequence[str], run_id: str) -> tuple[int, str]:
+    command = [str(deck_path()), "research", *args]
+    if not _has_flag(args, "--runtime"):
+        command.extend(["--runtime", "headless"])
+    proc = subprocess.run(
+        command,
+        cwd=str(repo_root()),
+        env=_env_for_run(run_id, "rsch"),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    print(proc.stdout, end="")
+    return proc.returncode, proc.stdout
+
+
+def _launcher_paths(output: str) -> dict[str, Path]:
+    # Must recognise every supported agent: the default swarm is configurable
+    # (claude+codex+junie today) and uno mode can pick any single agent.
+    launchers: dict[str, Path] = {}
+    agent_alternation = "|".join(sorted(AGENTS))
+    pattern = re.compile(rf"\s*({agent_alternation}):\s+(.+\.sh)\s*$")
+    for line in output.splitlines():
+        match = pattern.match(line)
+        if match:
+            launchers[match.group(1)] = Path(match.group(2)).expanduser()
+    return launchers
+
+
+def research_main(argv: Sequence[str] | None = None) -> int:
+    args, sandbox, sandbox_policy = _consume_sandbox_flags(
+        list(sys.argv[1:] if argv is None else argv)
+    )
+    if any(arg in {"-h", "--help", "help"} for arg in args):
+        return subprocess.call([str(deck_path()), "research", "--help"])
+    run_id = os.environ.get("VIBECRAFTED_RUN_ID") or _run_id("rsch")
+    code, output = _prepare_research(args, run_id)
+    if code != 0:
+        return code
+    launchers = _launcher_paths(output)
+    if not launchers:
+        # The old check demanded launchers for ALL six agents while the swarm
+        # prepares only the configured ones (three by default) — vc-research
+        # could never start. The honest contract: at least one prepared
+        # launcher, spawn exactly what was prepared.
+        print(
+            "vc-research: research preparation announced no launcher paths; "
+            "cannot spawn the swarm.",
+            file=sys.stderr,
+        )
+        return 1
+
+    supervisor = Supervisor()
+    handles = [
+        supervisor.spawn(
+            agent,
+            str(path),
+            skill="research",
+            mode="agent",
+            root=repo_root(),
+            command=["bash", str(path)],
+            env=_env_for_run(run_id, "rsch"),
+            run_id=run_id,
+            sandbox=sandbox,
+            sandbox_policy=sandbox_policy,
+        )
+        for agent, path in sorted(launchers.items())
+    ]
+    exit_codes = [handle.wait() for handle in handles]
+    append_event(
+        "research-finished",
+        run_id,
+        "research swarm finished",
+        {"exit_codes": dict(zip(sorted(launchers), exit_codes))},
+    )
+    return 0 if all(code == 0 for code in exit_codes) else 1
+
+
+def research_await_main(argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    script = runtime_root() / "scripts" / "await.sh"
+    return subprocess.call(
+        ["bash", str(script), "--research", *args], cwd=str(Path.cwd())
+    )
+
+
+def _load_meta_files(run_id: str) -> list[dict[str, Any]]:
+    home = control_plane.vibecrafted_home()
+    metas: list[dict[str, Any]] = []
+    for path in home.glob(f"artifacts/**/research/{run_id}/**/*.meta.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        payload["_meta_path"] = str(path)
+        metas.append(payload)
+    return metas
+
+
+def research_synthesize_main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Spawn last-finisher synthesis for a research run."
+    )
+    parser.add_argument("--run-id", required=True)
+    ns = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+    metas = _load_meta_files(ns.run_id)
+    if len(metas) < 3:
+        append_event(
+            "synthesize-skipped",
+            ns.run_id,
+            "not enough research metas for synthesis",
+            {"count": len(metas)},
+        )
+        return 1
+    last = max(
+        metas,
+        key=lambda item: str(item.get("completed_at") or item.get("updated_at") or ""),
+    )
+    agent = str(last.get("agent") or "codex")
+    reports = [str(item.get("report") or "") for item in metas if item.get("report")]
+    prompt = "Synthesize the completed research swarm.\n\nReports:\n" + "\n".join(
+        f"- {p}" for p in reports
+    )
+    append_event(
+        "synthesize-trigger",
+        ns.run_id,
+        "last-finisher synthesis triggered",
+        {"agent": agent, "reports": reports},
+    )
+    return supervised_skill_main("implement", [agent, "--prompt", prompt])
+
+
+def resume_main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Resume an agent from captured Vibecrafted session_id."
+    )
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--agent", required=True, choices=sorted(AGENTS))
+    ns, extra = parser.parse_known_args(list(sys.argv[1:] if argv is None else argv))
+    run = control_plane.lookup_run(ns.run_id) or {}
+    session_id = str(run.get("session_id") or "")
+    if not session_id:
+        for item in _load_meta_files(ns.run_id):
+            if item.get("agent") == ns.agent and item.get("session_id"):
+                session_id = str(item["session_id"])
+                break
+    if not session_id:
+        print(
+            f"vibecrafted-resume: no session_id captured for {ns.run_id}/{ns.agent}",
+            file=sys.stderr,
+        )
+        return 1
+    command = [str(deck_path()), "resume", ns.agent, "--session", session_id, *extra]
+    print(" ".join(command))
+    return subprocess.call(command)
+
+
+def stop_main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Stop a Vibecrafted run by terminating its launcher process group."
+    )
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--agent", choices=sorted(AGENTS))
+    parser.add_argument("--reason", default="operator stop request")
+    parser.add_argument("--grace-seconds", type=float, default=2.0)
+    ns = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+
+    from .workflow import stop_run
+
+    result = stop_run(
+        ns.run_id,
+        reason=ns.reason,
+        grace_seconds=ns.grace_seconds,
+    )
+    run = dict(result.get("run") or {})
+    reason = str(result.get("reason") or "")
+    if result.get("accepted"):
+        target = result.get("target") or "unknown"
+        target_pid = result.get("target_pid") or ""
+        group = result.get("target_pgid")
+        group_suffix = f" pgid={group}" if group else ""
+        note = (
+            "already dead; recorded stopped"
+            if result.get("already_dead")
+            else "TERM sent"
+        )
+        print(
+            f"run_id={ns.run_id} state={run.get('state', 'stopped')} "
+            f"target={target}:{target_pid}{group_suffix} {note}"
+        )
+        return 0
+
+    if reason == "run_terminal":
+        print(
+            f"run_id={ns.run_id} already terminal "
+            f"state={run.get('state', 'unknown')}; no-op"
+        )
+        return 0
+
+    print(f"run_id={ns.run_id} stop failed reason={reason}", file=sys.stderr)
+    if result.get("error"):
+        print(str(result["error"]), file=sys.stderr)
+    return 1
+
+
+def sandbox_main(argv: Sequence[str] | None = None) -> int:
+    from vibecrafted_core.sandbox import MsbserverLifecycle, SandboxPolicy
+    from vibecrafted_core.sandbox.policy import default_policy_path
+
+    parser = argparse.ArgumentParser(description="Manage Vibecrafted microsandbox.")
+    parser.add_argument("command", choices=("status", "start", "stop", "policy"))
+    parser.add_argument("--policy", dest="policy_path")
+    args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+
+    lifecycle = MsbserverLifecycle()
+    if args.command == "status":
+        state = "running" if lifecycle.is_running() else "not running"
+        print(f"msbserver: {state}")
+        if lifecycle.pid_file.exists():
+            print(f"pid_file: {lifecycle.pid_file}")
+        return 0
+    if args.command == "start":
+        ok = lifecycle.ensure_running()
+        print(f"msbserver: {'running' if ok else 'not running'}")
+        if not ok:
+            print("hint: install microsandbox or set MSBSERVER_EXE", file=sys.stderr)
+        return 0 if ok else 1
+    if args.command == "stop":
+        lifecycle.stop()
+        print("msbserver: stopped")
+        return 0
+
+    policy = SandboxPolicy.load(args.policy_path, root=Path.cwd())
+    path = (
+        Path(args.policy_path).expanduser()
+        if args.policy_path
+        else default_policy_path()
+    )
+    print(f"policy_file: {path}")
+    print(f"cpu: {policy.cpu}")
+    print(f"memory_mb: {policy.memory_mb}")
+    print(f"network: {policy.network}")
+    print(f"filesystem_root_readonly: {policy.filesystem_root_readonly}")
+    print(f"tmp_writable: {policy.tmp_writable}")
+    print("allow_hosts: " + ", ".join(policy.allow_hosts))
+    print("mounts:")
+    for mount in policy.mounts:
+        print(f"  - {mount}")
+    return 0

@@ -1,0 +1,299 @@
+/* landing/styles/tokens.css
+ * Loctree design tokens — VibeCrafted family-aligned, własna sub-tożsamość.
+ * Source: HANDOFF.md (export-loct/) + research synthesis.
+ */
+
+:root {
+  /* Backgrounds (warm dark print surfaces) */
+  --ink:   #0e0e0e;       /* page background — neutral ink, not pure black */
+  --ink2:  #161616;       /* alternating/editorial section tone */
+  --ink3:  #1e1e1e;       /* elevated editorial surface */
+
+  /* Foreground (cream-on-ink, editorial print feel).
+   * Bone bumped 2026-05-03 from #ece7dc → #f5f1e7 — slightly brighter, less yellow.
+   * Body/subtle alphas raised so the text reads as "warm white" not "cream". */
+  --bone:        #f5f1e7;
+  --bone-dim:    rgba(245, 241, 231, 0.86);  /* body text */
+  --bone-mute:   rgba(245, 241, 231, 0.64);  /* subtle text */
+  --bone-faint:  rgba(245, 241, 231, 0.20);  /* borders — decorative, exempted from WCAG contrast */
+
+  /* Nav-specific themable surfaces (sticky nav has slight transparency for blur).
+   * Light theme override below flips ink → white. */
+  --nav-bg:        rgba(14, 14, 14, 0.88);       /* sticky topnav background */
+  --nav-bg-mobile: rgba(14, 14, 14, 0.94);       /* mobile drawer expansion */
+  --nav-bg-strip:  rgba(14, 14, 14, 0.96);       /* install strip overlay */
+  --btn-border:    rgba(255, 255, 255, 0.42);    /* install pill outline */
+  --btn-bg-hover:  rgba(255, 255, 255, 0.045);   /* install pill hover wash */
+  --modal-backdrop: rgba(14, 14, 14, 0.78);      /* pricing modal backdrop blur */
+
+  /* Accents — two-color editorial system (post-2026-05-05 consolidation).
+   * --amber is the narrative accent (hero emphasis, CTA, active stats, warm
+   *   markers, italic <em> in headings, tag-cycles, mistake markers).
+   * --teal is the interaction accent (hover, focus, state). */
+  --amber:       #c99a3b;  /* narrative accent + warning/waiting */
+  --teal:        #3d7a72;  /* state, success, highlight, focus glow */
+
+  /* ─── Semantic layer ────────────────────────────────────────────────────
+   * UI components consume these role names, not the brand primitives above.
+   * This is what survives a brand repaint. */
+
+  /* Surface roles */
+  --surface-page:    var(--ink);
+  --surface-section: var(--ink2);
+  --surface-card:    var(--ink-card);
+  --surface-elevated: var(--ink3);
+
+  /* Text roles */
+  --text-primary:   var(--bone);
+  --text-secondary: var(--bone-dim);
+  --text-muted:     var(--bone-mute);
+  --text-faint:     var(--bone-faint);
+
+  /* Accent roles — two-color editorial system */
+  --accent-narrative:   var(--amber);   /* hero "see", evidence stats, mistake markers, narrative beats */
+  --accent-interaction: var(--teal);    /* hover, focus, success, demo glow */
+  --focus-ring:         var(--teal);
+
+  /* Status tokens — semantic, not decorative.
+   * Without these, agents will reach for amber for warning/active/featured/error/CTA all at once. */
+  --status-success: var(--teal);
+  --status-warning: var(--amber);
+  --status-info:    var(--bone-dim);
+  --status-danger:  #b86a5c;            /* status-only — NOT a brand accent. Keep dim and never reuse for branding. */
+
+  /* Elevation scale — sections rest, cards lift on interaction, modals own the highest layer.
+   * Do not invent ad-hoc box-shadows; pick from this scale. */
+  --shadow-rest:   none;
+  --shadow-hover:  0 8px 24px rgba(0, 0, 0, 0.30);
+  --shadow-modal:  0 24px 80px rgba(0, 0, 0, 0.55);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-active: rgba(61, 122, 114, 0.25);
+
+  /* Motion tokens — duration + easing dictionary.
+   * Motion reveals structure; it is not decoration. */
+  --motion-fast: 160ms;
+  --motion-base: 220ms;
+  --motion-slow: 420ms;
+  --ease-ui:        ease;
+  --ease-editorial: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Typography roles */
+  --font-display: 'Instrument Serif', 'Instrument Serif Fallback', ui-serif, Georgia, serif;
+  --font-body:    'Inter', 'Inter Fallback', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Consolas, monospace;
+
+  /* Spacing scale (4px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+
+  /* Layout rhythm */
+  --space-section: 80px;
+  --space-section-compact: 52px;
+  --space-section-mobile: 48px;
+  --space-heading-content: 26px;
+  --space-card-gap: 22px;
+  --space-hero-content-tight: 18px;
+  --space-hero-cta-gap: 30px;
+  --pad-card: 24px;
+  --pad-card-lg: 32px;
+  --section-padding-current: var(--space-section);
+
+  /* Card system */
+  --ink-card: var(--ink2);
+  --ink-card-code: var(--ink3);
+  --card-radius: 14px;
+  --card-border-color: rgba(255, 255, 255, 0.06);
+  --card-border-hover: rgba(255, 255, 255, 0.16);
+  --card-border: 1px solid var(--card-border-color);
+  --card-transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+  --card-feature-icon-bg: rgba(61, 122, 114, 0.10);
+  --card-feature-icon-border: rgba(61, 122, 114, 0.20);
+
+  /* Layout width scale */
+  --max-w-page: 1180px;
+  --max-w-content: 1080px;
+  --max-w-docs: 820px;
+  --max-w-terminal: 720px;
+  --max-w-hero-terminal: 820px;
+  --max-w-card: 520px;
+  --max-w-section-header: 640px;
+  --container-gutter-fluid: clamp(var(--space-4), 2.6vw, var(--space-12));
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* Type scale */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+  --text-5xl: 3rem;
+  --text-6xl: 3.75rem;
+  --text-7xl: 4.5rem;
+
+  /* Typography role scale */
+  --type-h1: clamp(var(--text-4xl), 6vw, var(--text-7xl));
+  --type-h2: clamp(var(--text-3xl), 4vw, var(--text-5xl));
+  --type-h3: clamp(var(--text-xl), 1.6vw, var(--text-2xl));
+  --type-body: clamp(var(--text-base), 0.35vw + 0.94rem, var(--text-lg));
+  --type-meta: var(--text-sm);
+  --type-mono: var(--text-sm);
+  --type-mono-cap: var(--text-xs);
+
+  /* Letter spacing */
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0em;
+  --tracking-wide: 0.04em;
+  --tracking-wider: 0.08em;
+  --tracking-widest: 0.16em;
+
+  /* Line heights */
+  --leading-none: 1;
+  --leading-tight: 1.15;
+  --leading-snug: 1.3;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.7;
+  --lh-tight: 1.12;
+  --lh-default: 1.55;
+  --lh-loose: 1.7;
+
+  /* Icon system — Lucide outline + Simple Icons brand glyphs.
+   * Sizes are pixel-fixed per spec (Round 3A) — chip and inline UI must not
+   * scale with type size or the editorial baseline drifts. */
+  --icon-default: 20px;
+  --icon-sm: 14px;
+  --icon-chip: 16px;
+  --icon-card: 24px;
+  --icon-lg: 32px;
+  --icon-stroke: 1.5;
+
+  /* Icon ink: default is dim-warm; card icons take the copper accent;
+   * stack logos sit at a quieter neutral so the chip cluster reads as a
+   * field rather than a parade. */
+  --icon-color-default: rgba(243, 238, 232, 0.68);
+  --icon-color-card: var(--amber);            /* feature card icons — narrative warm */
+  --icon-color-active: var(--amber);          /* active interaction — consolidated into amber family */
+  --icon-color-success: var(--teal);          /* success state — consolidated into teal (state) family */
+  --icon-color-stack: rgba(243, 238, 232, 0.74);
+
+  /* Rounded square containers (NOT circles — circles read as buttons,
+   * which would mislead users). Default state is monochrome; teal enters
+   * on hover/focus as a state/highlight accent. */
+  --icon-box: 40px;
+  --icon-box-radius: 10px;
+  --icon-box-bg: rgba(255, 255, 255, 0.035);
+  --icon-box-border: rgba(255, 255, 255, 0.08);
+  --icon-box-bg-hover: rgba(61, 122, 114, 0.12);
+  --icon-box-border-hover: rgba(61, 122, 114, 0.30);
+
+  /* Stack chips */
+  --chip-stack-height: 34px;
+  --chip-stack-gap: var(--space-2);
+  --chip-stack-pad-x: 10px;
+  --chip-stack-radius: 10px;
+}
+
+@media (max-width: 768px) {
+  :root {
+    --section-padding-current: var(--space-section-mobile);
+  }
+}
+
+/* Mono-cap labels (eyebrow, section-label, meta) — used everywhere */
+.mono-cap {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wider);
+  font-size: var(--type-mono-cap);
+  line-height: var(--lh-tight);
+  color: var(--bone-mute);
+  font-weight: 500;
+}
+
+/* Italic emphasis pattern (drugie słowo/fraza w sekcji)
+ * Used as: Statement before <em class="warm">emphasis</em>
+ * warm = identity/hot, cool = solution/done */
+em.warm  { font-style: italic; color: var(--bone); font-family: var(--font-display); }
+em.cool  { font-style: italic; color: var(--bone); font-family: var(--font-display); }
+
+/* Light theme override — opt-in via <html data-theme="light"> attribute set
+ * by ThemeContext in app.rs. Inverts ink/bone palette; accent micro-colors
+ * (rust/teal/amber/accent-red) zostają — działają na obu tłach. */
+:root[data-theme="light"] {
+  --ink:   #fbfbf8;                       /* page background — warm off-white */
+  --ink2:  rgba(5, 5, 4, 0.04);           /* glass surfaces */
+  --ink3:  rgba(5, 5, 4, 0.07);           /* elevated glass */
+
+  --bone:        #050504;                 /* primary text */
+  --bone-dim:    rgba(5, 5, 4, 0.86);     /* body text — bumped for parity with dark */
+  --bone-mute:   rgba(5, 5, 4, 0.64);     /* subtle text — bumped for parity with dark */
+  --bone-faint:  rgba(5, 5, 4, 0.20);     /* borders */
+
+  /* Nav surfaces flipped: light backdrop with subtle alpha for blur. */
+  --nav-bg:        rgba(251, 251, 248, 0.88);
+  --nav-bg-mobile: rgba(251, 251, 248, 0.94);
+  --nav-bg-strip:  rgba(251, 251, 248, 0.96);
+  --btn-border:    rgba(5, 5, 4, 0.42);
+  --btn-bg-hover:  rgba(5, 5, 4, 0.045);
+  --modal-backdrop: rgba(251, 251, 248, 0.78);
+  --card-border-color: rgba(5, 5, 4, 0.08);
+  --card-border-hover: rgba(5, 5, 4, 0.18);
+  --icon-box-bg: rgba(5, 5, 4, 0.035);
+  --icon-box-border: rgba(5, 5, 4, 0.08);
+  --icon-color-stack: rgba(5, 5, 4, 0.68);
+
+  /* Surface + text role re-points for light mode */
+  --surface-page:     var(--ink);
+  --surface-section:  var(--ink2);
+  --surface-card:     var(--ink-card);
+  --surface-elevated: var(--ink3);
+  --text-primary:     var(--bone);
+  --text-secondary:   var(--bone-dim);
+  --text-muted:       var(--bone-mute);
+  --text-faint:       var(--bone-faint);
+}
+
+/* Smooth transition between themes (prefers-reduced-motion respected). */
+:root {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+@media (prefers-reduced-motion: no-preference) {
+  body {
+    transition: background-color 220ms ease, color 220ms ease;
+  }
+}
+
+/* Visually-hidden helper — used by TypeWriter (a11y: full text exposed to AT
+ * while the animated visual content remains aria-hidden) and by aria-live
+ * regions that should not occupy layout space. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -1,0 +1,13 @@
+# vc-workspace build context filters
+.git
+.gitignore
+.dockerignore
+.env
+*.md
+LICENSE
+docker-compose.yml
+node_modules
+target
+.DS_Store
+*.swp
+*.swo

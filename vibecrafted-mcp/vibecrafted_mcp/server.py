@@ -19,14 +19,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
 from vibecrafted_core import (
+    capabilities as _capabilities,
     control_plane as _control_plane,
     doctor as _doctor,
     git as _git,
+    workflow as _workflow,
 )
 
 from . import synthesis as _synthesis
@@ -35,6 +38,9 @@ from . import synthesis as _synthesis
 SLIM_MAX_COMMITS = 5
 SLIM_MAX_DOCTOR_FINDINGS = 8
 SLIM_BUDGET_BYTES = 5 * 1024
+OBSERVE_MAX_BYTES = 64 * 1024
+OBSERVE_MAX_EVENTS = 100
+OBSERVE_MAX_WAIT_SECONDS = 30.0
 
 
 @contextmanager
@@ -138,6 +144,285 @@ def _read_run_event_tail(
     return _filter_events_by_run(list(reversed(events)), run_id, limit)
 
 
+def _clamp_int(value: int | None, default: int, ceiling: int) -> int:
+    try:
+        parsed = int(default if value is None else value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, 0), ceiling)
+
+
+def _clamp_float(value: float | None, default: float, ceiling: float) -> float:
+    try:
+        parsed = float(default if value is None else value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, 0.0), ceiling)
+
+
+def _bounded_text_read(
+    path_value: str,
+    *,
+    offset: int = 0,
+    max_bytes: int = OBSERVE_MAX_BYTES,
+) -> dict[str, Any]:
+    """Read at most ``max_bytes`` from ``path_value`` starting at byte offset."""
+    start = _clamp_int(offset, 0, 2**63 - 1)
+    limit = _clamp_int(max_bytes, OBSERVE_MAX_BYTES, OBSERVE_MAX_BYTES)
+    payload: dict[str, Any] = {
+        "path": path_value,
+        "offset": start,
+        "next_offset": start,
+        "bytes": 0,
+        "truncated": False,
+        "text": "",
+    }
+    if not path_value:
+        return payload
+
+    path = Path(path_value)
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return payload
+
+    start = min(start, size)
+    payload["offset"] = start
+    payload["next_offset"] = start
+    if limit == 0 or start >= size:
+        payload["truncated"] = start < size
+        return payload
+
+    to_read = min(limit, size - start)
+    try:
+        with path.open("rb") as handle:
+            handle.seek(start)
+            chunk = handle.read(to_read)
+    except OSError:
+        return payload
+
+    next_offset = start + len(chunk)
+    payload.update(
+        {
+            "next_offset": next_offset,
+            "bytes": len(chunk),
+            "truncated": next_offset < size,
+            "text": chunk.decode("utf-8", errors="replace"),
+        }
+    )
+    return payload
+
+
+def _event_to_payload(event: Any) -> dict[str, Any]:
+    return {
+        "cursor": int(getattr(event, "cursor", 0) or 0),
+        "ts": str(getattr(event, "ts", "") or ""),
+        "run_id": str(getattr(event, "run_id", "") or ""),
+        "kind": str(getattr(event, "kind", "") or ""),
+        "message": str(getattr(event, "message", "") or ""),
+        "payload": dict(getattr(event, "payload", {}) or {}),
+    }
+
+
+def _read_run_events_delta(
+    run_id: str, *, event_offset: int = 0, max_events: int = OBSERVE_MAX_EVENTS
+) -> tuple[list[dict[str, Any]], int]:
+    target = str(run_id or "").strip()
+    limit = _clamp_int(max_events, OBSERVE_MAX_EVENTS, OBSERVE_MAX_EVENTS)
+    cursor = _clamp_int(event_offset, 0, 2**63 - 1)
+    stream = _control_plane.event_stream_path()
+    try:
+        stream_size = stream.stat().st_size
+    except OSError:
+        return [], cursor
+
+    events: list[dict[str, Any]] = []
+    next_cursor = cursor
+    for event in _control_plane.subscribe_events(since_cursor=cursor):
+        payload = _event_to_payload(event)
+        next_cursor = max(next_cursor, int(payload["cursor"]))
+        if limit > 0 and payload["run_id"] == target and len(events) < limit:
+            events.append(payload)
+        if (limit > 0 and len(events) >= limit) or next_cursor >= stream_size:
+            break
+    return events, next_cursor
+
+
+def _run_terminal(run: dict[str, Any] | None) -> bool:
+    if not run:
+        return False
+    operator_state = str(run.get("operator_state") or "")
+    return (
+        operator_state in {"completed", "blocked", "failed", "stopped"}
+        or str(run.get("health") or "") == "final"
+        or str(run.get("liveness") or "") == "terminal"
+    )
+
+
+def _report_ready(run: dict[str, Any] | None) -> bool:
+    if not run:
+        return False
+    report = str(run.get("latest_report") or run.get("report") or "")
+    if not report:
+        return False
+    try:
+        return Path(report).exists() and Path(report).stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _resolve_run_location(run_id: str) -> Any | None:
+    """Read-follows-write fallback to where the runtime actually wrote a run.
+
+    ``lookup_run`` reads the merged ``runs/<id>.json`` snapshots, which lag a
+    still-launching run. ``control_plane.resolve_run`` probes ``runtime_runs/``
+    (where the core runtime writes) first, then legacy ``artifacts/``. Returns
+    the resolved :class:`control_plane.ResolvedRun`, or ``None`` when the run is
+    not on disk yet (``RunNotResolved`` — the "still launching → await" case) so
+    observe surfaces that loudly instead of a silent transcript miss. This is
+    the MCP eye reading the same contract as observe/await/CLI (Niezmiennik 3).
+    """
+    target = str(run_id or "").strip()
+    if not target:
+        return None
+    try:
+        return _control_plane.resolve_run(target)
+    except _control_plane.RunNotResolved:
+        return None
+
+
+def _observe_run_once(
+    run_id: str,
+    *,
+    home: str | None = None,
+    cursor: dict[str, Any] | None = None,
+    max_bytes: int = OBSERVE_MAX_BYTES,
+    max_events: int = OBSERVE_MAX_EVENTS,
+) -> dict[str, Any]:
+    target = str(run_id or "").strip()
+    cursor_payload = dict(cursor or {})
+    event_offset = _clamp_int(cursor_payload.get("event_offset"), 0, 2**63 - 1)
+    transcript_offset = _clamp_int(
+        cursor_payload.get("transcript_offset"), 0, 2**63 - 1
+    )
+    with _override_vibecrafted_home(home):
+        run = _control_plane.lookup_run(target)
+        events, next_event_offset = _read_run_events_delta(
+            target,
+            event_offset=event_offset,
+            max_events=max_events,
+        )
+        transcript_path = str(
+            (run or {}).get("latest_transcript") or (run or {}).get("transcript") or ""
+        )
+        resolved = None
+        if not transcript_path:
+            # Snapshot has no transcript yet — read-follows-write: probe where
+            # the runtime wrote (runtime_runs/), then legacy artifacts/. Closes
+            # the observe split-brain so a fresh run is not a silent miss.
+            resolved = _resolve_run_location(target)
+            if resolved is not None and resolved.transcript is not None:
+                transcript_path = str(resolved.transcript)
+        transcript = _bounded_text_read(
+            transcript_path,
+            offset=transcript_offset,
+            max_bytes=max_bytes,
+        )
+
+    if run is not None:
+        state = (run or {}).get("health") or (run or {}).get("state") or "missing"
+    elif resolved is not None:
+        # Run dir exists where the runtime writes, but the snapshot sync has not
+        # merged it yet — report it as launching, never a silent "missing".
+        state = "launching"
+    else:
+        state = "missing"
+
+    return {
+        "run_id": target,
+        "found": run is not None or resolved is not None,
+        "state": state,
+        "operator_state": (run or {}).get("operator_state", "") if run else "",
+        "cursor": {
+            "event_offset": next_event_offset,
+            "transcript_offset": int(transcript["next_offset"]),
+        },
+        "events": events,
+        "transcript": transcript,
+        "terminal": _run_terminal(run),
+        "report_ready": _report_ready(run),
+        "report_uri": f"vibecrafted://runs/{target}/report",
+    }
+
+
+def _observe_run(
+    run_id: str,
+    *,
+    home: str | None = None,
+    cursor: dict[str, Any] | None = None,
+    max_bytes: int = OBSERVE_MAX_BYTES,
+    max_events: int = OBSERVE_MAX_EVENTS,
+    wait_seconds: float = 0.0,
+) -> dict[str, Any]:
+    wait = _clamp_float(wait_seconds, 0.0, OBSERVE_MAX_WAIT_SECONDS)
+    start_event_offset = _clamp_int(
+        dict(cursor or {}).get("event_offset"), 0, 2**63 - 1
+    )
+    deadline = time.monotonic() + wait
+    while True:
+        payload = _observe_run_once(
+            run_id,
+            home=home,
+            cursor=cursor,
+            max_bytes=max_bytes,
+            max_events=max_events,
+        )
+        if (
+            wait <= 0
+            or payload["events"]
+            or int(payload["cursor"]["event_offset"]) > start_event_offset
+            or int(payload["transcript"]["bytes"]) > 0
+            or payload["terminal"]
+            or time.monotonic() >= deadline
+        ):
+            return payload
+        time.sleep(min(0.25, max(deadline - time.monotonic(), 0.0)))
+
+
+def _run_status_resource_payload(run_id: str) -> dict[str, Any]:
+    run = _control_plane.lookup_run(run_id)
+    resolved = _resolve_run_location(run_id) if run is None else None
+    return {
+        "run_id": run_id,
+        "found": run is not None or resolved is not None,
+        "run": run,
+        "state": "launching" if (run is None and resolved is not None) else "",
+        "operator_state": (run or {}).get("operator_state", "") if run else "",
+        "artifact_gate": (run or {}).get("artifact_gate", "") if run else "",
+        "terminal": _run_terminal(run),
+        "report_ready": _report_ready(run),
+    }
+
+
+def _run_report_resource_payload(run_id: str) -> dict[str, Any]:
+    run = _control_plane.lookup_run(run_id)
+    report_path = str(
+        (run or {}).get("latest_report") or (run or {}).get("report") or ""
+    )
+    resolved = None
+    if not report_path:
+        # Read-follows-write: a run not yet in the snapshots may already have a
+        # report under runtime_runs/ (resolve_run reads it from meta.json there).
+        resolved = _resolve_run_location(run_id)
+        if resolved is not None and resolved.report is not None:
+            report_path = str(resolved.report)
+    return {
+        "run_id": run_id,
+        "found": run is not None or resolved is not None,
+        "report": _bounded_text_read(report_path, max_bytes=OBSERVE_MAX_BYTES),
+    }
+
+
 def build_server() -> Any:
     """Construct and return the FastMCP server instance.
 
@@ -148,7 +433,7 @@ def build_server() -> Any:
 
     mcp = FastMCP("vibecrafted")
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_repo_full(project: str = ".") -> dict[str, Any]:
         """Git ground truth for ``project``.
 
@@ -161,7 +446,7 @@ def build_server() -> Any:
         """
         return _git.repo_full(project)
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_doctor(project: str | None = None) -> dict[str, Any]:
         """Runtime health summary from the vibecrafted installer doctor.
 
@@ -175,7 +460,7 @@ def build_server() -> Any:
         del project  # v0.1 ignores; preserved for forward compatibility
         return _doctor_payload(slim=False)
 
-    @mcp.tool
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_board_status(home: str | None = None) -> dict[str, Any]:
         """Operator control-plane snapshot: active runs, recent runs, events.
 
@@ -189,7 +474,233 @@ def build_server() -> Any:
         with _override_vibecrafted_home(home):
             return _control_plane.sync_state()
 
-    @mcp.tool
+    def _launch_workflow(
+        skill: str = "workflow",
+        agent: str | None = None,
+        prompt: str = "",
+        file: str = "",
+        runtime: str = "headless",
+        root: str | None = None,
+        source_dir: str = ".",
+        mode: str | None = None,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Launch a workflow through the Vibecrafted core runtime.
+
+        This is intentionally a thin remote button: launch validation and
+        process creation stay in ``vibecrafted_core.workflow``.
+        """
+        payload: dict[str, Any] = {
+            "skill": skill,
+            "prompt": prompt,
+            "file": file,
+            "runtime": runtime,
+        }
+        if agent is not None:
+            payload["agent"] = agent
+        if root is not None:
+            payload["root"] = root
+        if mode is not None:
+            payload["mode"] = mode
+        with _override_vibecrafted_home(home):
+            spec = _workflow.normalize_launch_spec(payload, source_dir)
+            return _workflow.launch_workflow(spec, source_dir, env=dict(os.environ))
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
+    def vc_launch(
+        skill: str = "workflow",
+        agent: str | None = None,
+        prompt: str = "",
+        file: str = "",
+        runtime: str = "headless",
+        root: str | None = None,
+        source_dir: str = ".",
+        mode: str | None = None,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating: launch a workflow through the Vibecrafted core runtime.
+
+        This spawns an agent process and writes control-plane artifacts.
+        Launch validation and process creation stay in
+        ``vibecrafted_core.workflow``.
+        """
+        return _launch_workflow(
+            skill=skill,
+            agent=agent,
+            prompt=prompt,
+            file=file,
+            runtime=runtime,
+            root=root,
+            source_dir=source_dir,
+            mode=mode,
+            home=home,
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
+    def vc_run_launch(
+        skill: str = "workflow",
+        agent: str | None = None,
+        prompt: str = "",
+        file: str = "",
+        runtime: str = "headless",
+        root: str | None = None,
+        source_dir: str = ".",
+        mode: str | None = None,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating alias of ``vc_launch`` for run-lifecycle naming symmetry.
+
+        This spawns an agent process and writes control-plane artifacts.
+        """
+        return _launch_workflow(
+            skill=skill,
+            agent=agent,
+            prompt=prompt,
+            file=file,
+            runtime=runtime,
+            root=root,
+            source_dir=source_dir,
+            mode=mode,
+            home=home,
+        )
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def vc_run_status(run_id: str, home: str | None = None) -> dict[str, Any]:
+        """Lookup one run by id from synced control-plane state."""
+        with _override_vibecrafted_home(home):
+            run = _control_plane.lookup_run(run_id)
+        return {
+            "run_id": run_id,
+            "found": run is not None,
+            "run": run,
+            "operator_state": (run or {}).get("operator_state", "") if run else "",
+            "artifact_gate": (run or {}).get("artifact_gate", "") if run else "",
+            "failure_card": (run or {}).get("failure_card") if run else None,
+        }
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def vc_await_run(
+        run_id: str,
+        timeout_seconds: float = 300,
+        interval_seconds: float = 5,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Bounded await for one run using control-plane metadata only."""
+        with _override_vibecrafted_home(home):
+            return _control_plane.await_run(
+                run_id,
+                timeout_seconds=timeout_seconds,
+                interval_seconds=interval_seconds,
+            )
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def vc_run_observe(
+        run_id: str,
+        home: str | None = None,
+        cursor: dict[str, Any] | None = None,
+        max_bytes: int = OBSERVE_MAX_BYTES,
+        max_events: int = OBSERVE_MAX_EVENTS,
+        wait_seconds: float = 0.0,
+    ) -> dict[str, Any]:
+        """Bounded cursor pull for run events and transcript deltas.
+
+        This delegates event cursors and run projection to the control plane,
+        reads transcript bytes from the projected artifact path, and never
+        returns more than ``max_bytes`` (capped at 64 KiB) in one tool result.
+        """
+        return _observe_run(
+            run_id,
+            home=home,
+            cursor=cursor,
+            max_bytes=max_bytes,
+            max_events=max_events,
+            wait_seconds=wait_seconds,
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "openWorldHint": True,
+        }
+    )
+    def vc_run_stop(
+        run_id: str,
+        reason: str = "mcp operator stop",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating: request graceful stop of an active run with an audit event."""
+        with _override_vibecrafted_home(home):
+            return _workflow.stop_run(run_id, reason=reason)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
+    def vc_run_retry(
+        run_id: str,
+        source_dir: str = ".",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating: retry a run using stored launch metadata and preconditions.
+
+        This may spawn a replacement agent process and writes control-plane
+        artifacts for the retry.
+        """
+        with _override_vibecrafted_home(home):
+            return _workflow.retry_run(
+                run_id,
+                source_dir=source_dir,
+                env=dict(os.environ),
+            )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "openWorldHint": True,
+        }
+    )
+    def vc_run_blocked(
+        run_id: str,
+        reason: str = "mcp operator block",
+        note: str = "",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating: mark an active run as blocked with an audit trail."""
+        with _override_vibecrafted_home(home):
+            return _workflow.block_run(run_id, reason=reason, note=note)
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def vc_loct_capabilities(timeout: float = 5.0) -> dict[str, Any]:
+        """Discover live capabilities of the loctree/aicx product foundations.
+
+        Returns the ``vibecrafted.capabilities.v1`` schema: per-tool presence,
+        real-execution ``runnable`` status (distinguishing ``product_missing``
+        from ``product_broken``), install provenance (canonical ``~/.local/bin``
+        vs. ghost roots), the live ``--version`` string, and the subcommands the
+        currently installed binary exposes. Re-running after a foundation
+        upgrade reflects the new capability surface — the runtime never owns or
+        mutates these external binaries.
+        """
+        return _capabilities.foundation_capabilities(timeout=timeout)
+
+    @mcp.tool(annotations={"readOnlyHint": True})
     def vc_init(project: str = ".", slim: bool = True) -> dict[str, Any]:
         """Cold-start synthesis: 3 senses + v0.1 insight stubs.
 
@@ -255,6 +766,45 @@ def build_server() -> Any:
     def event_stream(run_id: str) -> list[dict[str, Any]]:
         """Last 50 events for a specific run from the operator stream."""
         return _read_run_event_tail(run_id, home=None, limit=50)
+
+    @mcp.resource("vibecrafted://runs/{run_id}/transcript")
+    def run_transcript(run_id: str) -> dict[str, Any]:
+        """Bounded transcript read for one run from the current control plane."""
+        return _observe_run_once(
+            run_id,
+            cursor={"event_offset": 0, "transcript_offset": 0},
+            max_bytes=OBSERVE_MAX_BYTES,
+            max_events=0,
+        )["transcript"]
+
+    @mcp.resource("vibecrafted://runs/{run_id}/events")
+    def run_events(run_id: str) -> dict[str, Any]:
+        """Bounded event read for one run from the current control plane."""
+        events, next_offset = _read_run_events_delta(
+            run_id,
+            event_offset=0,
+            max_events=OBSERVE_MAX_EVENTS,
+        )
+        return {
+            "run_id": run_id,
+            "cursor": {"event_offset": next_offset},
+            "events": events,
+        }
+
+    @mcp.resource("vibecrafted://runs/{run_id}/status")
+    def run_status(run_id: str) -> dict[str, Any]:
+        """Current control-plane projection for one run."""
+        return _run_status_resource_payload(run_id)
+
+    @mcp.resource("vibecrafted://runs/{run_id}/report")
+    def run_report(run_id: str) -> dict[str, Any]:
+        """Bounded report read for one run from the current control plane."""
+        return _run_report_resource_payload(run_id)
+
+    @mcp.resource("vibecrafted://capabilities/foundations")
+    def foundation_capabilities_resource() -> dict[str, Any]:
+        """Live ``vibecrafted.capabilities.v1`` discovery for product foundations."""
+        return _capabilities.foundation_capabilities()
 
     return mcp
 

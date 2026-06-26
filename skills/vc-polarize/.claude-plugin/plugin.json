@@ -1,8 +1,0 @@
-{
-  "name": "VC Polarize",
-  "description": "Post-marbles concept and product truth polarization. Use /vc-polarize when a concept's runtime, tests, docs, and operator memory are smeared across multiple truths. Gated on `loct prism` band evidence: 0..4 abort, 5..8 memo, 9..12 pass (run polarize), 13..15 doctrine.",
-  "author": {
-    "name": "VetCoders",
-    "email": "hello@vetcoders.io"
-  }
-}

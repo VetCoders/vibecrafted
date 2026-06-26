@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# vibecrafted-husky-template :: post-commit
+#
+# Warns if AI-agent artifact filenames landed in the commit. These usually
+# come from in-session scratch files (RAPORT_*, _SESSION_*, _GUIDE_*, etc.)
+# that should live outside git (operator memory, separate archive, ...).
+#
+# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+
+set -euo pipefail
+
+HUSKY_LIB="${BASH_SOURCE[0]%/*}/lib"
+# shellcheck disable=SC1090,SC1091
+. "$HUSKY_LIB/core.sh"
+husky_init
+
+[ "$HUSKY_POSTCOMMIT_CLAUDE_ARTIFACT_WARN" = "1" ] || exit 0
+
+COMMIT_HASH="$(git rev-parse HEAD)"
+CLAUDE_FILES="$(git diff-tree --no-commit-id --name-only -r HEAD \
+  | grep -E '(RAPORT_|_SESJI_|_SESSION_|SESJA_|_INSTRUCTIONS\.md|_READY\.md|_GUIDE\.md|_HANDOFF|_PROPOSAL|PROPOSAL_|TEAM_|CLAUDE_|WORKFLOW_|TEST_|TODO_|SUMMARY_|_UPDATE_|_NOTIFICATION_|UPDATE_|NOTIFICATION_|_ANALYSIS\.md|_AUDIT_|AUDIT_|_REVIEW_|_202[0-9][-_][0-9][0-9][-_][0-9][0-9]\.md)' \
+  | grep -v '^docs/sessions/' \
+  || true)"
+
+[ -z "$CLAUDE_FILES" ] && exit 0
+
+husky_warn "Agent artifacts landed in commit $COMMIT_HASH:"
+printf '%s\n' "$CLAUDE_FILES" | sed 's/^/    📄 /' >&2
+husky_log
+husky_log "To rewind and clean up:"
+husky_log "  git reset HEAD~1"
+husky_log "  # then either delete the files or move them to docs/sessions/"
+husky_log
+husky_log "To strip them but keep your commit message:"
+husky_log "  git reset HEAD~1"
+husky_log "  git rm --cached $(printf '%s' "$CLAUDE_FILES" | tr '\n' ' ')"
+husky_log "  git commit -c HEAD@{1}"
+
+# Track in repo-local log for later sweep.
+mkdir -p .git
+{
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Agent artifacts committed in $COMMIT_HASH"
+  printf '%s\n' "$CLAUDE_FILES" | sed 's/^/  - /'
+  echo
+} >> .git/husky-artifact-warnings.log
+
+exit 0

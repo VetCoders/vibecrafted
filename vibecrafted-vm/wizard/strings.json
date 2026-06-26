@@ -1,0 +1,240 @@
+{
+  "welcome": {
+    "title": {
+      "pl": "Witaj w vc-workspace",
+      "en": "Welcome to vc-workspace"
+    },
+    "body": {
+      "pl": "Zbudujemy dla Ciebie bezpieczną odizolowaną przestrzeń do pracy nad Twoimi projektami, superboostowaną naszymi narzędziami i metodologią pracy.\n\nW kolejnych krokach:\n  • wybierzesz host (lokalny, tailnet, lub custom)\n  • skonfigurujesz połączenie\n  • wybierzesz profil narzędziowy (minimal / standard / SoTA)\n  • przejrzysz mapowanie woluminów (workspace, klucze, sesje agentów)\n  • opcjonalnie dołączysz container do mesh sieci Tailnet\n\nNa końcu zobaczysz podsumowanie i odpalisz całość jednym przyciskiem.",
+      "en": "We'll build you a secure, isolated workspace for your projects, supercharged with our tooling and methodology.\n\nNext steps:\n  • pick a host (local, tailnet, or custom)\n  • configure connection\n  • choose toolchain profile (minimal / standard / SoTA)\n  • review volume mappings (workspace, keys, agent sessions)\n  • optionally join container to Tailnet mesh\n\nAt the end you'll see a summary and launch the whole thing with one button."
+    },
+    "continue_prompt": {
+      "pl": "Naciśnij Enter aby kontynuować...",
+      "en": "Press Enter to continue..."
+    }
+  },
+  "language": {
+    "prompt": {
+      "pl": "Język wizard'a",
+      "en": "Wizard language"
+    },
+    "options": {
+      "pl": ["Polski", "English"],
+      "en": ["Polish", "English"]
+    }
+  },
+  "host": {
+    "title": {
+      "pl": "Wybór hosta",
+      "en": "Host selection"
+    },
+    "prompt": {
+      "pl": "Gdzie ma działać container?",
+      "en": "Where should the container run?"
+    },
+    "options": {
+      "pl": [
+        "127.0.0.1 — lokalny Docker daemon",
+        "Tailnet mesh — zdalny host w sieci tailnet",
+        "Custom IP — własny adres przez SSH"
+      ],
+      "en": [
+        "127.0.0.1 — local Docker daemon",
+        "Tailnet mesh — remote host on tailnet",
+        "Custom IP — arbitrary address via SSH"
+      ]
+    }
+  },
+  "connection": {
+    "title": {
+      "pl": "Konfiguracja połączenia",
+      "en": "Connection setup"
+    },
+    "local_note": {
+      "pl": "Hosta lokalnego nie trzeba konfigurować — Docker daemon dostępny przez gniazdo Unix.",
+      "en": "Local host needs no setup — Docker daemon available via Unix socket."
+    },
+    "tailnet_prompt_hostname": {
+      "pl": "Nazwa hosta w tailnet (np. dragon, ops-linux, silver)",
+      "en": "Tailnet hostname (e.g. dragon, ops-linux, silver)"
+    },
+    "tailnet_test_msg": {
+      "pl": "Testowanie połączenia z mesh hostem...",
+      "en": "Testing connection to mesh host..."
+    },
+    "custom_prompt_host": {
+      "pl": "Adres hosta (IP lub hostname)",
+      "en": "Host address (IP or hostname)"
+    },
+    "custom_prompt_user": {
+      "pl": "Użytkownik SSH",
+      "en": "SSH user"
+    },
+    "custom_prompt_port": {
+      "pl": "Port SSH",
+      "en": "SSH port"
+    },
+    "custom_prompt_key": {
+      "pl": "Ścieżka do klucza SSH (Enter = ~/.ssh/id_ed25519)",
+      "en": "SSH key path (Enter = ~/.ssh/id_ed25519)"
+    },
+    "test_success": {
+      "pl": "Połączenie OK",
+      "en": "Connection OK"
+    },
+    "test_failed": {
+      "pl": "Połączenie nieudane",
+      "en": "Connection failed"
+    }
+  },
+  "profile": {
+    "title": {
+      "pl": "Profil narzędziowy",
+      "en": "Toolchain profile"
+    },
+    "prompt": {
+      "pl": "Wybierz profil — co ma być zainstalowane w containerze",
+      "en": "Pick a profile — what gets installed in the container"
+    },
+    "options": {
+      "pl": [
+        "Minimal — Rust + Claude Code (~3 min build, ~600 MB)",
+        "Standard — Pełen framework VetCoders + 3 agent CLIs + tailnet (~15 min build, ~2.5 GB)",
+        "SoTA — Standard + Metal/GPU passthrough + Lance steer index (~25 min build, ~4 GB)"
+      ],
+      "en": [
+        "Minimal — Rust + Claude Code (~3 min build, ~600 MB)",
+        "Standard — Full VetCoders framework + 3 agent CLIs + tailnet (~15 min build, ~2.5 GB)",
+        "SoTA — Standard + Metal/GPU passthrough + Lance steer index (~25 min build, ~4 GB)"
+      ]
+    }
+  },
+  "mounts": {
+    "title": {
+      "pl": "Mapowanie woluminów",
+      "en": "Volume mappings"
+    },
+    "intro": {
+      "pl": "Container będzie miał dostęp do następujących katalogów hosta. Możesz odznaczyć te, które chcesz zostawić poza isolation boundary:",
+      "en": "Container will mount the following host paths. Untick the ones you want kept outside the isolation boundary:"
+    },
+    "items": {
+      "workspace": {
+        "pl": "vc-runtime (multiroot) → /workspace — Twoje repozytoria (read-write)",
+        "en": "vc-runtime (multiroot) → /workspace — your repos (read-write)"
+      },
+      "aicx_store": {
+        "pl": "~/.aicx/ — canonical corpus aicx (persistent)",
+        "en": "~/.aicx/ — aicx canonical corpus (persistent)"
+      },
+      "keys": {
+        "pl": "~/.keys/ — GPG passphrase, notary creds (READ-ONLY)",
+        "en": "~/.keys/ — GPG passphrase, notary creds (READ-ONLY)"
+      },
+      "gnupg": {
+        "pl": "~/.gnupg/ — keyring GPG dla podpisywania tagów release (READ-ONLY)",
+        "en": "~/.gnupg/ — GPG keyring for release-tag signing (READ-ONLY)"
+      },
+      "claude_sessions": {
+        "pl": "~/.claude/ — sesje Claude Code (persistent)",
+        "en": "~/.claude/ — Claude Code sessions (persistent)"
+      },
+      "codex_sessions": {
+        "pl": "~/.codex/ — sesje Codex (persistent)",
+        "en": "~/.codex/ — Codex sessions (persistent)"
+      },
+      "gemini_sessions": {
+        "pl": "~/.gemini/ — sesje Gemini (persistent)",
+        "en": "~/.gemini/ — Gemini sessions (persistent)"
+      },
+      "vibecrafted_artifacts": {
+        "pl": "~/.vibecrafted/ — artefakty vibecrafted (plany, raporty)",
+        "en": "~/.vibecrafted/ — vibecrafted artifacts (plans, reports)"
+      },
+      "vetcoders_config": {
+        "pl": "~/.config/vetcoders/ — konfiguracja frontier (starship, atuin, vc_frame)",
+        "en": "~/.config/vetcoders/ — frontier config (starship, atuin, vc_frame)"
+      }
+    }
+  },
+  "tailscale": {
+    "title": {
+      "pl": "Tailnet mesh",
+      "en": "Tailnet mesh"
+    },
+    "intro": {
+      "pl": "Container może dołączyć do Twojej tailnet sieci jako pełnoprawny node. Wymaga to klucza auth z panelu Tailscale.",
+      "en": "Container can join your tailnet mesh as a regular node. Requires an auth key from the Tailscale admin panel."
+    },
+    "skip_or_provide": {
+      "pl": "Pomiń tailnet (możesz dołączyć później ręcznie), czy podać klucz teraz?",
+      "en": "Skip tailnet (you can join manually later) or provide a key now?"
+    },
+    "options": {
+      "pl": ["Pomiń — skonfiguruję później", "Podam klucz teraz"],
+      "en": ["Skip — I'll set it up later", "Provide key now"]
+    },
+    "auth_key_prompt": {
+      "pl": "Wklej tailscale auth key (tskey-auth-...)",
+      "en": "Paste tailscale auth key (tskey-auth-...)"
+    },
+    "hostname_prompt": {
+      "pl": "Nazwa hosta w tailnet (np. devbox-maciej)",
+      "en": "Tailnet hostname (e.g. devbox-myname)"
+    },
+    "tags_prompt": {
+      "pl": "Tagi ACL (Enter = tag:devbox)",
+      "en": "ACL tags (Enter = tag:devbox)"
+    }
+  },
+  "review": {
+    "title": {
+      "pl": "Podsumowanie",
+      "en": "Summary"
+    },
+    "prompt": {
+      "pl": "Wszystko gotowe. Odpalić container?",
+      "en": "Everything ready. Launch the container?"
+    },
+    "options": {
+      "pl": ["Tak — buduj + uruchom", "Tylko zapisz konfigurację", "Anuluj"],
+      "en": ["Yes — build + run", "Save config only", "Cancel"]
+    }
+  },
+  "actions": {
+    "building": {
+      "pl": "Buduję container...",
+      "en": "Building container..."
+    },
+    "starting": {
+      "pl": "Uruchamiam container...",
+      "en": "Starting container..."
+    },
+    "ready": {
+      "pl": "Container gotowy. Dropuję do shell'a.",
+      "en": "Container ready. Dropping into shell."
+    },
+    "config_saved": {
+      "pl": "Konfiguracja zapisana do .env",
+      "en": "Config saved to .env"
+    },
+    "cancelled": {
+      "pl": "Anulowane przez użytkownika",
+      "en": "Cancelled by user"
+    }
+  },
+  "errors": {
+    "docker_missing": {
+      "pl": "Docker nie jest zainstalowany lub daemon nie działa. Sprawdź `docker --version`.",
+      "en": "Docker not installed or daemon down. Check `docker --version`."
+    },
+    "ssh_failed": {
+      "pl": "SSH connection failed. Sprawdź klucz, host i port.",
+      "en": "SSH connection failed. Check key, host, and port."
+    },
+    "tailscale_authkey_invalid": {
+      "pl": "Klucz auth wygląda nieprawidłowo (oczekiwany prefix `tskey-auth-`).",
+      "en": "Auth key looks malformed (expected `tskey-auth-` prefix)."
+    }
+  }
+}

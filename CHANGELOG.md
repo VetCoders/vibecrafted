@@ -3,11 +3,120 @@
 All notable changes to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased
+## 2.0.0 — 2026-05-20
+
+> Quality-layer reform. The pipeline epistemic rhythm
+> (READ-ONLY perception ↔ WRITE action) is now first-class in the
+> manifest and across every skill. `vc-audit` is added as a new
+> READ-ONLY falsification step. `vc-marbles` is reframed from
+> "truth convergence" to "deliberate over-write whose excess is the
+> point of polarize stripping it back". All edited skills land under
+> the 12k marketplace cap with companion files for detail.
+
+### vc-operator 2.0.0 reform (2026-05-21)
+
+- **Operator mode shipped as a coherent reform batch**: `skills/vc-operator/RUNNER.md`,
+  `skills/vc-operator/WHY_MATRIX_TABLE.md`,
+  `skills/vc-operator/DISPATCH_TEMPLATE.md`,
+  `skills/vc-operator/FEEDBACK_2026-05-20_claude.md`, and
+  `skills/vc-operator/FEEDBACK_2026-05-20_claude_runtime.md` are the
+  durable operator references instead of transcript-only doctrine.
+- **Wave 5 await/watch rail landed**: `runtime/scripts/vibecrafted-await-watch.sh`
+  plus the `spawn_await_watch_pane` hook in
+  `runtime/scripts/lib/vc_frame.sh` give long-running dispatches a
+  visible watch surface.
+- **`skills/vc-operator/SKILL.md` patched from 0.1.0 to 2.0.0** with the
+  runner contract, why-matrix dispatch discipline, feedback intake, and
+  operator-facing closure rails.
+- **Sharp-move recommendations absorbed**: REC-1/2/3/4/6/7/8/9/10/11 are
+  now represented across the operator contract, modes table mandate, dispatch
+  template, runner loop, and feedback files.
+- **17 live runtime pains recorded** in
+  `skills/vc-operator/FEEDBACK_2026-05-20_claude.md` and
+  `skills/vc-operator/FEEDBACK_2026-05-20_claude_runtime.md`, including the
+  REC-10 modes-table requirement and dispatcher/runtime pain catalog that made
+  the reform necessary.
 
 ### Added
 
-- **Prism → Polarize gate (Plan 01)**: `vc-polarize` runner (`skills/vc-agents/shell/vetcoders.sh:1168-1186`) now parses `loct prism --json` output, reads `total_score`, and routes to the canonical action band: `0..4` abort (no polarize, no memo), `5..8` memo (capture local Loctree tag / context-corpus entry, do not dispatch), `9..12` pass (run full `vc-polarize` agent dispatch), `13..15` doctrine (write canonical decision into context corpus). The runner also emits a prism preflight that injects the band/score into the polarize prompt so the dispatched agent can cite structural evidence rather than re-deriving it. The same threshold mapping is consumed independently by `vc-operator` (`src/polarize.rs:18-23 PolarizeBand::from_score`) — single source of truth at the boundaries `5 / 9 / 13`.
+- **`docs/runtime/MANIFESTO_PL.md` + `MANIFESTO_EN.md`**: new
+  **Pipeline (Sculpting Pattern)** section with the explicit
+  WRITE → READ → WRITE → READ rhythm diagram and the **carve-from-
+  marble** pattern at the centre of the quality cycle. Tooling
+  ontology table grows a **Mode** column (READ / READ-ONLY / WRITE /
+  meta / infra) and splits the **Quality** layer into perception
+  (`vc-followup` + `vc-review`, READ) and falsification (`vc-audit`,
+  READ-ONLY).
+- **`skills/vc-audit/`** (NEW): READ-ONLY plan-vs-code falsification
+  skill. Default verdict UNVERIFIED, PASS earned via code + test +
+  negative check. Eight-phase procedure (Context Receipt → Task
+  Ingestion → Atomic Requirements → Positive + Negative Verification →
+  Adversarial Pass → Stage-Aware Verdict → Per-Task Table → Self-
+  Attack + Model Check). Output contract: `audit_report.md`,
+  `audit_requirements_matrix.jsonl`, `audit_trace.log`. Companions:
+  `PHASES.md`, `DISPATCH.md`. Plugin manifest registered.
+- **Pipeline-position section** added to every reformed skill
+  (`vc-review`, `vc-marbles`, `vc-polarize`, `vc-audit`,
+  `vc-followup`, `vc-dou`) so READ-ONLY vs WRITE membership is
+  explicit at the top of each skill.
+
+### Changed
+
+- **`skills/vc-review/SKILL.md` → version 2.0.0**. Explicit READ-ONLY
+  framing. Default-stance section: every spec-claim defaults to
+  UNVERIFIED until proven by code/tests. Hard non-trust rules: PR
+  descriptions, commit messages, `// done` comments, AICX entries,
+  and `fixes #N` annotations are claims, not evidence. New evidence
+  taxonomy (STRONG / MEDIUM / WEAK / NONE) on every finding. New
+  adversarial pass between pattern scans and output. Stage-aware
+  finding tags (`[STAGE-OK-DEFERRED]`, `[STAGE-PARTIAL]`,
+  `[STAGE-DRIFT]`) prevent mid-stage PRs from being mis-blocked. New
+  self-attack + model check section in output. Heavy detail moved to
+  companion files `PRVIEW.md` (Phase 1 artifact generation) and
+  `FINDINGS.md` (Phase 2 reading order, pattern scans, output
+  template). SKILL.md trimmed from 12.4k to 10.7k.
+- **`skills/vc-marbles/SKILL.md` → version 7.0.0**. Epistemic reframe
+  from "Truth Convergence Rounds" to **"Deliberate Excess (Worker-
+  Blind, Swarm-Wide)"**. Individual worker discipline preserved (one
+  round, one commit, up to 3 targets) — but the swarm-level intent is
+  now explicit: marbles in every crack, deliberate over-application,
+  `vc-polarize` strips back. Pipeline-position diagram added. Worker
+  blindness + reception remembers section condensed. Detail kept in
+  existing `FLOW.md` and `RECEPTION.md` companions. SKILL.md trimmed
+  to 11.8k.
+- **`skills/vc-polarize/SKILL.md` → version 2.0.0**. Explicit
+  framing as the **decisive cut** WRITE step that strips back the
+  marbles excess. Pipeline-position diagram added. Heavy detail
+  (full lifecycle, prism axis scoring criteria, context-corpus
+  retention contract, minimum-gates list, failure-mode playbook)
+  moved to new companion `PROCEDURE.md`. SKILL.md trimmed from 12.8k
+  to 10.0k. Closing rail + suchar + canonical signature added.
+- **`skills/vc-followup/SKILL.md` → version 2.2.0**. Explicit READ-
+  ONLY framing in description and body. New "Pipeline Position"
+  section locates it in the trajectory-perception slot.
+- **`skills/vc-dou/SKILL.md` → version 2.0.0**. Explicit READ-ONLY
+  framing in description and body. New "Pipeline Position" section
+  locates it in the shipping-readiness slot between polarize and
+  hydrate / decorate / release.
+- **Marketplace cap discipline**: every reformed SKILL.md is now
+  under the 12 000-character marketplace cap. Heavy detail lives in
+  companion files at the same level as SKILL.md (no `references/`
+  subdir), matching the `vc-operator` reference pattern.
+
+### Removed
+
+- Earlier "Unreleased" entries from 1.x cycle (Prism → Polarize gate,
+  release-report contract, marketplace plugin stubs) are kept inline
+  below for historical continuity; the 2.0.0 reform is the first
+  named cycle.
+
+---
+
+## Unreleased (legacy 1.x — folded into 2.0.0 release scope)
+
+### Added
+
+- **Prism → Polarize gate (Plan 01)**: `vc-polarize` runner (`runtime/shell/vetcoders.sh:1168-1186`) now parses `loct prism --json` output, reads `total_score`, and routes to the default action band: `0..4` abort (no polarize, no memo), `5..8` memo (capture local Loctree tag / context-corpus entry, do not dispatch), `9..12` pass (run full `vc-polarize` agent dispatch), `13..15` doctrine (write default decision into context corpus). The runner also emits a prism preflight that injects the band/score into the polarize prompt so the dispatched agent can cite structural evidence rather than re-deriving it. The same threshold mapping is consumed independently by `vc-operator` (`src/polarize.rs:18-23 PolarizeBand::from_score`) — single source of truth at the boundaries `5 / 9 / 13`.
 - New `.claude-plugin/plugin.json` stub manifests for `skills/vc-polarize/`, `skills/vc-intents/`, and `skills/vc-ownership/` to bring them in line with the rest of the framework's marketplace surface (vc-marbles / vc-init / vc-implement / vc-followup / vc-decorate / vc-hydrate / vc-dou / vc-prune / vc-research / vc-review / vc-release / vc-scaffold / vc-workflow / vc-agents / vc-delegate / vc-partner all already shipped manifests).
 - `vc-release` Release Report Contract: every release report now requires
   four mandatory sections — security gate (Semgrep), exposed surface
@@ -27,7 +136,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 
 - `skills/vc-release/SKILL.md` Semgrep release gate now points at the
-  canonical `make semgrep` (mirrored by `scripts/hooks/pre-commit` and
+  default `make semgrep` (mirrored by `scripts/hooks/pre-commit` and
   `scripts/hooks/pre-push`), classifies findings by dataflow boundary
   (path / regex / merge / shell / auth / other), and treats silent
   unavailability as a release block.
@@ -36,7 +145,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   digest, or download URL) and forbids using the local checkout as the
   witness.
 - `docs/runtime/CONTRACT.md` quality gate section references the
-  canonical `make semgrep` invocation and links the Release Report
+  default `make semgrep` invocation and links the Release Report
   Contract.
 - `docs/RELEASE_KICKOFF.md` adds `make semgrep` to the kickoff gate
   block and links the release report template plus the deployment
@@ -59,7 +168,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
     pre-flight doctor
   - Documented resolution order and notarization expectations in
     `tools/bin/README.md`
-- `skills/vc-agents/scripts/marbles_verify_watch.sh` — standalone detached
+- `runtime/scripts/marbles_verify_watch.sh` — standalone detached
   verification poller that waits for `*_verified.md`, updates `state.json` under
   lock, and marks verification as `completed` or `timed_out`. Decouples
   verification from the main watcher process and eliminates watcher holding
@@ -75,9 +184,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Agent telemetry captured into loop `state.json` (dispatch time, completion
   time, exit code, session_id) so marbles state is the single source of truth
   for multi-loop runs.
-- New skill **`vc-implement`** becomes the canonical end-to-end implementation
+- New skill **`vc-implement`** becomes the default end-to-end implementation
   skill. The `vc-justdo` name stays in-tree as a **backward-compatible
-  alias** (frontmatter: `canonical: vc-implement`) so agents already wired to
+  alias** (frontmatter: `default: vc-implement`) so agents already wired to
   the old name keep working. Every public surface (START_HERE `Simplest path`,
   install banner, skill registry in `vetcoders_install.py`) now shows
   `vibecrafted implement ...`; the `justdo` command still executes but is no
@@ -105,20 +214,20 @@ operator v0.1.1`) and release cycle. `scripts/vibecrafted` launcher gracefully
   and polling inline, it marks loops as `pending` and hands off to
   `marbles_verify_watch.sh` via `nohup`. Summary logic simplified; configurable
   verification grace period added.
-- Zellij spawn uses **tab/pane IDs** (not just names) for targeting marbles
+- vc-frame spawn uses **tab/pane IDs** (not just names) for targeting marbles
   panes — non-disruptive spawn that doesn't steal focus from operator's
   active pane; tab index noise suppressed in marbles spawn output.
-- Zellij layouts renamed (`operator` / `vc-marbles` / `vc-workflow` / `vc-
+- vc-frame layouts renamed (`operator` / `vc-marbles` / `vc-workflow` / `vc-
 research` / `vc-dashboard`) with matching launcher and test updates.
 - Uninstall now removes **only manifest-tracked entries** + framework
   artifacts — no broad filesystem sweeps that could clobber user files.
-- Operator TUI launches **Ghostty** natively (via `zellij`) as the terminal
+- Operator TUI launches **Ghostty** natively (via `vc-frame`) as the terminal
   surface when running in `terminal` / `visible` runtime.
 - Marbles active-only run filter in operator-tui so Monitor tab stops showing
   cold runs from previous sessions.
 - System-wide docs refresh: README, FAQ, FAQ-ANSWERED, QUICK_START, SKILLS,
   WORKFLOWS, installer/DESIGN, workflows/MARBLES — copy brought in line with
-  the canonical command set (`vibecrafted implement`) and the current 1.4.1
+  the default command set (`vibecrafted implement`) and the current 1.4.1
   surface.
 - FLOW + SKILL polish across `vc-delegate`, `vc-init`, `vc-justdo` (alias),
   `vc-partner`, `vc-research`, `vc-scaffold`, `vc-workflow`.
@@ -132,10 +241,10 @@ research` / `vc-dashboard`) with matching launcher and test updates.
 - `doctor` rc repair path for launcher rc files.
 - Operator TUI control-plane wiring — pane names + control-plane state
   aligned, polish pass on tab surfaces.
-- Operator TUI terminal agnosticism — no longer hard-codes Zellij or any
+- Operator TUI terminal agnosticism — no longer hard-codes vc-frame or any
   single terminal assumption.
-- Operator TUI Zellij env isolation in tests (previously leaked
-  `ZELLIJ_CONFIG_DIR` between parallel test runs).
+- Operator TUI vc-frame env isolation in tests (previously leaked
+  `VC_FRAME_CONFIG_DIR` between parallel test runs).
 - Flaky CI expectations for marbles statuses and Makefile dry-run output.
 - `uv` bootstrap assertion messages now align with export `PATH` checks.
 
@@ -164,15 +273,15 @@ operator` crate — see **Changed** above).
   a "what's about to happen" pause by default; CI / automation pipelines get
   a clean non-interactive path.
 - Regression tests for installer manifest / branding + codex_stream_bridge.
-- `zellij` panes for marbles dispatch (in place of bare new-tab).
+- `vc-frame` panes for marbles dispatch (in place of bare new-tab).
 
 ### Changed
 
 - **Installer TUI-first swap**: terminal front-door defaults to the guided
   TUI wizard; the GUI stays available via `--gui`. Sticky-bottom streaming
   log, unified `make install` entrypoint.
-- Zellij orchestration hardened: tab isolation, spawn probe before every
-  dispatch, session GC for stale zellij daemons.
+- vc-frame orchestration hardened: tab isolation, spawn probe before every
+  dispatch, session GC for stale vc-frame daemons.
 - Framework bumped **1.3.0 → 1.4.0**; VERSION truth propagated across all
   installer surfaces (no more "1.3.0 in README, 1.4.0 in bundle"
   disagreements).
@@ -222,9 +331,9 @@ operator` crate — see **Changed** above).
 
 ### Added
 
-- `make foundations` — portable installer for loctree and ai-contexters binaries
-  - Downloads pre-built loctree v0.8.17 binaries (notarized/signed) for macOS, Linux, Windows
-  - Installs ai-contexters via GitHub release binary or `cargo install` fallback
+- `make foundations` — portable installer for historical loctree / ai-contexters binaries
+  - Superseded by the product foundation contract: do not use this entry as a current install source
+  - Current runtime foundations are validated on `$PATH`; missing AICX/Loctree should point at the canonical Loctree installer
   - `make foundations-check` for dry-run preview
   - `scripts/install-foundations.sh` works standalone or via Make
 - Python-native `shutil.copytree` fallback when `rsync` is not available
@@ -264,7 +373,7 @@ operator` crate — see **Changed** above).
   "removes zsh runtime dependency" which is true for spawn SCRIPTS (`eval "$SPAWN_CMD"`
   works in bash). However, operator-facing shell helpers (`codex-implement`,
   `claude-research`, etc.) are functions sourced from `.zshrc`/`.bashrc` and require
-  an interactive shell to load. The canonical agent-to-agent invocation remains
+  an interactive shell to load. The default agent-to-agent invocation remains
   `zsh -ic "codex-implement $PLAN"` (or `bash -ic` on zsh-less systems).
   Skill documentation (vc-agents SKILL.md) updated to reflect this.
 - Marbles board animation: sprite pre-rendering (was creating new canvas per marble per frame — Chrome hid the cost,
@@ -279,7 +388,7 @@ operator` crate — see **Changed** above).
 - 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework overview and README branding
 - Marbles orchestration skill and hook/runtime fixes
 - AICX extract skill documentation
-- Mission-control layout for Zellij
+- Mission-control layout for vc-frame
 - Compact install mode and enhanced logging
 - ScreenScribe foundation setup
 - GitHub Pages onboarding pages for Quick Start and answered FAQ
@@ -312,7 +421,7 @@ operator` crate — see **Changed** above).
 - Codex `--json` JSONL streaming with structured event parsing
 - Spawn telemetry: `framework_version`, `prompt_id`, `run_id`, `loop_nr`, `skill_code`, `duration_s`
 - Skill helpers: `<agent>-dou`, `<agent>-hydrate`, `<agent>-marbles`, `<agent>-scaffold`, etc.
-- `vc-dashboard` for Zellij Mission Control layout
+- `vc-dashboard` for vc-frame Mission Control layout
 - Active spawn scan before each launch
 - Material palette: copper/patina/timber/steel/stone
 

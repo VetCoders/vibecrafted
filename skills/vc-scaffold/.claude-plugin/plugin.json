@@ -1,8 +1,0 @@
-{
-  "name": "VC Scaffold",
-  "description": "Founder-first architecture planning. Takes a vague idea, maps the landscape, produces a scoped build plan. Use /vc-scaffold to invoke.",
-  "author": {
-    "name": "VetCoders",
-    "email": "hello@vetcoders.io"
-  }
-}

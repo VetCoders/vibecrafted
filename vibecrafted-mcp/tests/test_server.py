@@ -8,6 +8,7 @@ installed in the test environment, and skipped otherwise.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import os
 from pathlib import Path
@@ -210,9 +211,259 @@ def test_build_server_registers_tools_and_resources() -> None:
         return tool_names, resource_uris
 
     tool_names, resource_uris = _run(_inspect())
-    assert {"vc_repo_full", "vc_doctor", "vc_board_status", "vc_init"} <= tool_names
+    assert {
+        "vc_repo_full",
+        "vc_doctor",
+        "vc_board_status",
+        "vc_launch",
+        "vc_run_launch",
+        "vc_run_status",
+        "vc_await_run",
+        "vc_run_observe",
+        "vc_run_stop",
+        "vc_run_retry",
+        "vc_run_blocked",
+        "vc_loct_capabilities",
+        "vc_init",
+    } <= tool_names
     assert any("vibecrafted://board/runs" in uri for uri in resource_uris)
     assert any("vibecrafted://control-plane/events" in uri for uri in resource_uris)
+    assert any("vibecrafted://runs/{run_id}/transcript" in uri for uri in resource_uris)
+    assert any("vibecrafted://runs/{run_id}/events" in uri for uri in resource_uris)
+    assert any("vibecrafted://runs/{run_id}/status" in uri for uri in resource_uris)
+    assert any("vibecrafted://runs/{run_id}/report" in uri for uri in resource_uris)
+    assert any("vibecrafted://capabilities/foundations" in uri for uri in resource_uris)
+
+
+def _write_observe_fixture(
+    tmp_path: Path, run_id: str = "impl-061414-42"
+) -> dict[str, str]:
+    home = tmp_path / ".vibecrafted"
+    transcript = tmp_path / "transcript.log"
+    report = tmp_path / "report.md"
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    transcript.write_text("abcdefghij", encoding="utf-8")
+    report.write_text("# Report\nready\n", encoding="utf-8")
+    event_stream = home / "control_plane" / "events.jsonl"
+    event_stream.parent.mkdir(parents=True, exist_ok=True)
+    event_stream.write_text(
+        json.dumps(
+            {
+                "ts": now,
+                "run_id": run_id,
+                "kind": "launch",
+                "message": "launched",
+                "payload": {
+                    "state": "active",
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "session_id": "session-observe",
+                    "launcher_pid": os.getpid(),
+                    "heartbeat_at": now,
+                    "report": str(report),
+                    "transcript": str(transcript),
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "home": str(home),
+        "run_id": run_id,
+        "transcript": str(transcript),
+        "report": str(report),
+    }
+
+
+def test_observe_falls_back_to_runtime_runs_when_snapshot_lags(
+    tmp_path: Path,
+) -> None:
+    """A just-launched run lives in ``runtime_runs/`` before the snapshot sync
+    merges it. observe must read it there (Niezmiennik 3) — not a silent miss."""
+    home = tmp_path / ".vibecrafted"
+    run_id = "marb-launching-1"
+    run_dir = home / "control_plane" / "runtime_runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "transcript.log").write_text("launching-bytes", encoding="utf-8")
+
+    payload = server._observe_run_once(run_id, home=str(home))
+
+    assert payload["found"] is True
+    assert payload["state"] == "launching"
+    assert payload["transcript"]["bytes"] > 0
+    assert payload["transcript"]["text"].startswith("launching")
+
+
+def test_status_resource_resolves_launching_run_from_runtime_runs(
+    tmp_path: Path,
+) -> None:
+    """The status resource must also see a still-launching run (runtime_runs/),
+    not just observe — same contract, same eye (Niezmiennik 3)."""
+    home = tmp_path / ".vibecrafted"
+    run_id = "marb-status-launching-1"
+    run_dir = home / "control_plane" / "runtime_runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "transcript.log").write_text("launching", encoding="utf-8")
+
+    with server._override_vibecrafted_home(str(home)):
+        payload = server._run_status_resource_payload(run_id)
+
+    assert payload["found"] is True
+    assert payload["state"] == "launching"
+
+
+def test_observe_reports_missing_when_run_not_on_disk_yet(tmp_path: Path) -> None:
+    """A run id with nothing on disk (RunNotResolved) resolves to a benign
+    ``missing`` — loud-by-absence, never a crash."""
+    home = tmp_path / ".vibecrafted"
+    (home / "control_plane").mkdir(parents=True)
+
+    payload = server._observe_run_once("ghost-run", home=str(home))
+
+    assert payload["found"] is False
+    assert payload["state"] == "missing"
+    assert payload["transcript"]["bytes"] == 0
+
+
+def test_vc_loct_capabilities_routes_to_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def _caps(timeout: float = 5.0) -> dict[str, Any]:
+        captured["timeout"] = timeout
+        return {
+            "schema": "vibecrafted.capabilities.v1",
+            "healthy": True,
+            "summary": {"ok": 1, "product_missing": 0, "product_broken": 0},
+            "tools": [{"tool": "loct", "status": "ok"}],
+        }
+
+    monkeypatch.setattr(server._capabilities, "foundation_capabilities", _caps)
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool("vc_loct_capabilities", {"timeout": 2.0})
+
+    payload = _run(_call()).data
+    assert payload["schema"] == "vibecrafted.capabilities.v1"
+    assert captured["timeout"] == 2.0
+
+
+def test_vc_launch_delegates_to_core_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: dict[str, Any] = {}
+
+    def _normalize(payload: dict[str, Any], source_dir: str) -> Any:
+        calls["payload"] = payload
+        calls["source_dir"] = source_dir
+        return server._workflow.WorkflowLaunchSpec(
+            agent=payload["agent"],
+            mode=payload.get("mode") or payload["skill"],
+            skill=payload["skill"],
+            prompt=payload["prompt"],
+            file=payload["file"],
+            runtime=payload["runtime"],
+            root=payload["root"],
+        )
+
+    def _launch(
+        spec: Any, source_dir: str, *, env: dict[str, str] | None = None
+    ) -> Any:
+        calls["launch_spec"] = spec
+        calls["launch_source_dir"] = source_dir
+        calls["env_home"] = (env or {}).get("VIBECRAFTED_HOME")
+        return {"accepted": True, "spec": spec.to_payload()}
+
+    monkeypatch.setattr(server._workflow, "normalize_launch_spec", _normalize)
+    monkeypatch.setattr(server._workflow, "launch_workflow", _launch)
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_launch",
+                {
+                    "skill": "workflow",
+                    "agent": "codex",
+                    "prompt": "go",
+                    "root": str(tmp_path),
+                    "source_dir": str(tmp_path / "source"),
+                    "home": str(tmp_path / "home"),
+                },
+            )
+
+    result = _run(_call())
+    assert result.data["accepted"] is True
+    assert calls["payload"]["skill"] == "workflow"
+    assert calls["payload"]["agent"] == "codex"
+    assert calls["source_dir"] == str(tmp_path / "source")
+    assert calls["launch_source_dir"] == str(tmp_path / "source")
+
+
+def test_vc_run_launch_alias_delegates_to_core_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: dict[str, Any] = {}
+
+    def _normalize(payload: dict[str, Any], source_dir: str) -> Any:
+        calls["payload"] = payload
+        calls["source_dir"] = source_dir
+        return server._workflow.WorkflowLaunchSpec(
+            agent=payload["agent"],
+            mode=payload.get("mode") or payload["skill"],
+            skill=payload["skill"],
+            prompt=payload["prompt"],
+            file=payload["file"],
+            runtime=payload["runtime"],
+            root=payload["root"],
+        )
+
+    def _launch(
+        spec: Any, source_dir: str, *, env: dict[str, str] | None = None
+    ) -> Any:
+        calls["launch_spec"] = spec
+        calls["launch_source_dir"] = source_dir
+        calls["env_home"] = (env or {}).get("VIBECRAFTED_HOME")
+        return {"accepted": True, "spec": spec.to_payload()}
+
+    monkeypatch.setattr(server._workflow, "normalize_launch_spec", _normalize)
+    monkeypatch.setattr(server._workflow, "launch_workflow", _launch)
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_run_launch",
+                {
+                    "skill": "workflow",
+                    "agent": "codex",
+                    "prompt": "go",
+                    "root": str(tmp_path),
+                    "source_dir": str(tmp_path / "source"),
+                    "home": str(tmp_path / "home"),
+                },
+            )
+
+    result = _run(_call())
+    assert result.data["accepted"] is True
+    assert calls["payload"]["skill"] == "workflow"
+    assert calls["payload"]["agent"] == "codex"
+    assert calls["source_dir"] == str(tmp_path / "source")
+    assert calls["launch_source_dir"] == str(tmp_path / "source")
+    assert calls["env_home"] == str(tmp_path / "home")
 
 
 def test_vc_repo_full_returns_ground_truth(tmp_path: Path) -> None:
@@ -300,3 +551,271 @@ def test_board_runs_resource_returns_snapshot(
     payload = json.loads(result[0].text)
     assert "active_runs" in payload
     assert "recent_runs" in payload
+
+
+def test_vc_run_status_and_await_use_control_plane_meta(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    reports = home / "artifacts" / "VetCoders" / "vibecrafted" / "2026_0519" / "reports"
+    reports.mkdir(parents=True)
+    (reports / "impl.meta.json").write_text(
+        json.dumps(
+            {
+                "run_id": "impl-050505-42",
+                "status": "completed",
+                "agent": "codex",
+                "mode": "implement",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "skill_code": "impl",
+                "exit_code": 0,
+                "liveness": "terminal",
+                "launcher_pid": 4242,
+                "completed_at": "2026-05-19T00:00:01+00:00",
+                "session_id": "session-xyz",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call_status() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_run_status",
+                {"run_id": "impl-050505-42", "home": str(home)},
+            )
+
+    async def _call_await() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_await_run",
+                {
+                    "run_id": "impl-050505-42",
+                    "home": str(home),
+                    "timeout_seconds": 0,
+                    "interval_seconds": 0.1,
+                },
+            )
+
+    status_payload = _run(_call_status()).data
+    await_payload = _run(_call_await()).data
+
+    assert status_payload["found"] is True
+    assert status_payload["run"]["session_id"] == "session-xyz"
+    assert status_payload["run"]["launcher_pid"] == 4242
+    assert await_payload["completed"] is True
+    assert await_payload["run"]["exit_code"] == 0
+
+
+def test_vc_run_observe_returns_bounded_cursor_deltas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _write_observe_fixture(tmp_path)
+    monkeypatch.setenv("VIBECRAFTED_HOME", fixture["home"])
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call(payload: dict[str, Any]) -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool("vc_run_observe", payload)
+
+    first = _run(
+        _call(
+            {
+                "run_id": fixture["run_id"],
+                "home": fixture["home"],
+                "cursor": {"event_offset": 0, "transcript_offset": 0},
+                "max_bytes": 4,
+                "max_events": 100,
+            }
+        )
+    ).data
+
+    assert first["found"] is True
+    assert first["operator_state"] == "running"
+    launch_events = [event for event in first["events"] if event["kind"] == "launch"]
+    assert len(launch_events) == 1
+    assert all(event["cursor"] > 0 for event in first["events"])
+    assert first["cursor"]["event_offset"] == max(
+        event["cursor"] for event in first["events"]
+    )
+    assert first["transcript"]["offset"] == 0
+    assert first["transcript"]["next_offset"] == 4
+    assert first["transcript"]["bytes"] == 4
+    assert first["transcript"]["text"] == "abcd"
+    assert first["transcript"]["truncated"] is True
+    assert first["cursor"]["transcript_offset"] == 4
+    assert first["terminal"] is False
+    assert first["report_ready"] is True
+
+    second = _run(
+        _call(
+            {
+                "run_id": fixture["run_id"],
+                "home": fixture["home"],
+                "cursor": first["cursor"],
+                "max_bytes": 4,
+            }
+        )
+    ).data
+
+    assert second["events"] == []
+    assert second["transcript"]["offset"] == 4
+    assert second["transcript"]["next_offset"] == 8
+    assert second["transcript"]["text"] == "efgh"
+    assert second["transcript"]["truncated"] is True
+
+    at_end = _run(
+        _call(
+            {
+                "run_id": fixture["run_id"],
+                "home": fixture["home"],
+                "cursor": {
+                    "event_offset": first["cursor"]["event_offset"],
+                    "transcript_offset": 10,
+                },
+                "max_bytes": 4,
+            }
+        )
+    ).data
+
+    assert at_end["events"] == []
+    assert at_end["transcript"]["bytes"] == 0
+    assert at_end["transcript"]["text"] == ""
+    assert at_end["cursor"]["transcript_offset"] == 10
+
+
+def test_run_resource_templates_resolve_bounded_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _write_observe_fixture(tmp_path)
+    monkeypatch.setenv("VIBECRAFTED_HOME", fixture["home"])
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+    run_id = fixture["run_id"]
+
+    async def _read(uri: str) -> Any:
+        async with Client(mcp) as client:
+            return await client.read_resource(uri)
+
+    status = json.loads(_run(_read(f"vibecrafted://runs/{run_id}/status"))[0].text)
+    events = json.loads(_run(_read(f"vibecrafted://runs/{run_id}/events"))[0].text)
+    transcript = json.loads(
+        _run(_read(f"vibecrafted://runs/{run_id}/transcript"))[0].text
+    )
+    report = json.loads(_run(_read(f"vibecrafted://runs/{run_id}/report"))[0].text)
+
+    assert status["found"] is True
+    assert status["operator_state"] == "running"
+    assert any(event["kind"] == "launch" for event in events["events"])
+    assert transcript["bytes"] == 10
+    assert transcript["truncated"] is False
+    assert transcript["text"] == "abcdefghij"
+    assert report["found"] is True
+    assert report["report"]["text"].startswith("# Report")
+
+
+def test_vc_run_stop_and_retry_route_to_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def _stop(run_id: str, *, reason: str = "") -> dict[str, Any]:
+        captured["stop"] = {"run_id": run_id, "reason": reason}
+        return {"accepted": True, "run_id": run_id, "reason": reason}
+
+    def _retry(
+        run_id: str,
+        source_dir: str = ".",
+        *,
+        env: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        captured["retry"] = {
+            "run_id": run_id,
+            "source_dir": source_dir,
+            "home": (env or {}).get("VIBECRAFTED_HOME"),
+        }
+        return {
+            "accepted": True,
+            "run_id": run_id,
+            "retry_run_id": "wflw-010101-0001",
+        }
+
+    def _block(
+        run_id: str,
+        *,
+        reason: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        captured["block"] = {"run_id": run_id, "reason": reason, "note": note}
+        return {"accepted": True, "run_id": run_id, "reason": reason, "note": note}
+
+    monkeypatch.setattr(server._workflow, "stop_run", _stop)
+    monkeypatch.setattr(server._workflow, "retry_run", _retry)
+    monkeypatch.setattr(server._workflow, "block_run", _block)
+
+    home = tmp_path / ".vibecrafted"
+    home.mkdir(parents=True)
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call_stop() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_run_stop",
+                {
+                    "run_id": "wflw-000000-0000",
+                    "reason": "manual-stop",
+                    "home": str(home),
+                },
+            )
+
+    async def _call_retry() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_run_retry",
+                {
+                    "run_id": "wflw-000000-0000",
+                    "source_dir": str(tmp_path / "src"),
+                    "home": str(home),
+                },
+            )
+
+    async def _call_block() -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(
+                "vc_run_blocked",
+                {
+                    "run_id": "wflw-000000-0000",
+                    "reason": "needs-intervention",
+                    "note": "missing api key",
+                    "home": str(home),
+                },
+            )
+
+    stop_payload = _run(_call_stop()).data
+    retry_payload = _run(_call_retry()).data
+    block_payload = _run(_call_block()).data
+
+    assert stop_payload["accepted"] is True
+    assert stop_payload["run_id"] == "wflw-000000-0000"
+    assert retry_payload["accepted"] is True
+    assert retry_payload["retry_run_id"] == "wflw-010101-0001"
+    assert block_payload["accepted"] is True
+    assert captured["stop"]["reason"] == "manual-stop"
+    assert captured["retry"]["source_dir"] == str(tmp_path / "src")
+    assert captured["retry"]["home"] == str(home)
+    assert captured["block"]["reason"] == "needs-intervention"
+    assert captured["block"]["note"] == "missing api key"

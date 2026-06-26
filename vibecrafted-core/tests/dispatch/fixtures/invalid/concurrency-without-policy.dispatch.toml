@@ -1,0 +1,18 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "concurrency-without-policy"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+
+[policy]
+concurrency = 2
+
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+prompt = "Do it."
+
+  [[cuts.verify]]
+  run = "true"
+  expect = { exit_code = 0 }

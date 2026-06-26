@@ -22,7 +22,7 @@
       𐄂 screenscribe
       𐄂 rust
       𐄂 codex
-      𐄂 zellij
+      𐄂 vc_frame
       𐄂 mise
       𐄂 zoxide
 

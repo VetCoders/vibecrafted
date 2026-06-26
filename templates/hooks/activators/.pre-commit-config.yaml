@@ -1,0 +1,78 @@
+# vibecrafted-hooks-template :: pre-commit (Python framework) activator
+#
+# Drop this file at repo root as `.pre-commit-config.yaml`. The pre-commit
+# framework (https://pre-commit.com) is the de-facto standard for Python
+# projects, but works for any language. Each entry below delegates to the
+# matching template hook from `.husky/`.
+#
+# Install:
+#   pip install pre-commit         # or `brew install pre-commit`
+#   pre-commit install --hook-type pre-commit
+#   pre-commit install --hook-type pre-push
+#   pre-commit install --hook-type pre-merge-commit
+#   pre-commit install --hook-type prepare-commit-msg
+#   pre-commit install --hook-type post-commit
+#   pre-commit install --hook-type commit-msg
+#
+# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+
+default_install_hook_types:
+  - pre-commit
+  - pre-push
+  - pre-merge-commit
+  - prepare-commit-msg
+  - post-commit
+  - commit-msg
+
+default_stages: [manual] # template hooks opt into specific stages below
+
+repos:
+  - repo: local
+    hooks:
+      - id: vibecrafted-pre-commit
+        name: Vibecrafted pre-commit
+        language: system
+        entry: bash .husky/pre-commit
+        stages: [pre-commit]
+        pass_filenames: false
+        always_run: true
+
+      - id: vibecrafted-pre-push
+        name: Vibecrafted pre-push
+        language: system
+        entry: bash .husky/pre-push
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+
+      - id: vibecrafted-pre-merge-commit
+        name: Vibecrafted pre-merge-commit
+        language: system
+        entry: bash .husky/pre-merge-commit
+        stages: [pre-merge-commit]
+        pass_filenames: false
+        always_run: true
+
+      - id: vibecrafted-prepare-commit-msg
+        name: Vibecrafted prepare-commit-msg
+        language: system
+        entry: bash .husky/prepare-commit-msg
+        stages: [prepare-commit-msg]
+        pass_filenames: false
+        always_run: true
+
+      - id: vibecrafted-post-commit
+        name: Vibecrafted post-commit
+        language: system
+        entry: bash .husky/post-commit
+        stages: [post-commit]
+        pass_filenames: false
+        always_run: true
+
+      - id: vibecrafted-commit-msg
+        name: Vibecrafted commit-msg
+        language: system
+        entry: bash .husky/commit-msg
+        stages: [commit-msg]
+        pass_filenames: false
+        always_run: true

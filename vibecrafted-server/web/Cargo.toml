@@ -1,0 +1,97 @@
+[package]
+name = "vibecrafted-server-web"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+license = "BUSL-1.1"
+authors = ["VetCoders <agents@vetcoders.io>"]
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "vibecrafted-server-web"
+path = "src/main.rs"
+
+[dependencies]
+leptos = { version = "0.8" }
+leptos_router = { version = "0.8" }
+leptos_meta = { version = "0.8" }
+control-core = { path = "../control-core", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["clock"], optional = true }
+
+axum = { version = "0.8", optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+leptos_axum = { version = "0.8", optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+tower-http = { version = "0.6", features = ["fs", "trace"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+
+console_error_panic_hook = { version = "0.1", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Document",
+    "Element",
+    "HtmlElement",
+    "Storage",
+    "Window",
+] }
+
+[features]
+default = []
+hydrate = [
+    "leptos/hydrate",
+    "dep:console_error_panic_hook",
+    "dep:wasm-bindgen",
+    "dep:web-sys",
+]
+ssr = [
+    "dep:axum",
+    "dep:tokio",
+    "dep:leptos_axum",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:http-body-util",
+    "dep:control-core",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:chrono",
+    "leptos/ssr",
+    "leptos_router/ssr",
+    "leptos_meta/ssr",
+]
+
+[package.metadata.leptos]
+output-name = "vibecrafted-server-web"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+assets-dir = "public"
+site-addr = "127.0.0.1:3024"
+reload-port = 3025
+browserquery = "defaults"
+env = "DEV"
+
+bin-features = ["ssr"]
+lib-features = ["hydrate"]
+bin-default-features = false
+lib-default-features = false
+
+lib-profile-release = "wasm-release"
+hash-files = true
+watch-additional-files = ["public", "styles"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"

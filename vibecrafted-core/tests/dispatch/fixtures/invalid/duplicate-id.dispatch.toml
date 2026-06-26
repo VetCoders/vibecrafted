@@ -1,0 +1,25 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "duplicate-id"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+prompt = "Do it."
+
+  [[cuts.verify]]
+  run = "true"
+  expect = { exit_code = 0 }
+
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "review"
+prompt = "Review it."
+
+  [[cuts.verify]]
+  run = "true"
+  expect = { exit_code = 0 }

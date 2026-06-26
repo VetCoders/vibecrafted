@@ -1,0 +1,8 @@
+{
+  "name": "vc-partner",
+  "description": "Two modes: Partner (shared executive brain + agent swarms) and Ownership (agent takes the wheel, full delivery). Use /vc-partner to invoke.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

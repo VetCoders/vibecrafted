@@ -1,0 +1,82 @@
+# vibecrafted-hooks-template :: lefthook activator
+#
+# Drop this file at repo root as `lefthook.yml`. Lefthook is a Go binary
+# (single-binary, fast, parallel) that registers shim scripts in
+# `.git/hooks/` and delegates here. Each entry below runs the matching
+# template hook from `.husky/`.
+#
+# Install:
+#   # macOS:  brew install lefthook
+#   # Linux:  curl -sS https://api.github.com/repos/evilmartians/lefthook/releases/latest \
+#   #         | grep "browser_download_url.*Linux_x86_64" | cut -d '"' -f 4 \
+#   #         | xargs curl -L -o ~/.local/bin/lefthook && chmod +x ~/.local/bin/lefthook
+#   # Or:     go install github.com/evilmartians/lefthook@latest
+#   #
+#   # Then in repo root:
+#   lefthook install
+#
+# `lefthook install` registers shim scripts in .git/hooks/ that read this
+# file. Other contributors get the hooks automatically by running the same
+# command (no npm/python/cargo required — single binary install).
+#
+# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+
+# Skip the entire stack when LEFTHOOK=0 (parity with HUSKY_SKIP_PREPUSH=1).
+skip_output:
+  - meta
+  - summary
+
+# ---------------------------------------------------------------------------
+# pre-commit — stage-scoped gates
+# ---------------------------------------------------------------------------
+pre-commit:
+  parallel: false # template runs steps sequentially (lint-staged ordering)
+  commands:
+    template:
+      run: bash .husky/pre-commit
+
+# ---------------------------------------------------------------------------
+# pre-push — full-repo gates (slow but thorough)
+# ---------------------------------------------------------------------------
+pre-push:
+  parallel: false
+  commands:
+    template:
+      # Lefthook passes the same stdin (refs) that git provides for pre-push.
+      run: bash .husky/pre-push
+
+# ---------------------------------------------------------------------------
+# pre-merge-commit — codex-agent / vendored-path cleanup
+# ---------------------------------------------------------------------------
+pre-merge-commit:
+  commands:
+    template:
+      run: bash .husky/pre-merge-commit
+
+# ---------------------------------------------------------------------------
+# prepare-commit-msg — agent/runtime trailer normalization + warn signature
+# ---------------------------------------------------------------------------
+#   $1 = path to commit message file
+#   $2 = source (merge | squash | commit | message | template | "")
+#   $3 = SHA1 (when applicable)
+prepare-commit-msg:
+  commands:
+    template:
+      run: bash .husky/prepare-commit-msg {1} {2} {3}
+
+# ---------------------------------------------------------------------------
+# post-commit — agent-artifact warning
+# ---------------------------------------------------------------------------
+post-commit:
+  commands:
+    template:
+      run: bash .husky/post-commit
+
+# ---------------------------------------------------------------------------
+# commit-msg — Conventional Commits regex
+# ---------------------------------------------------------------------------
+#   $1 = path to commit message file (passed by git, forwarded by lefthook)
+commit-msg:
+  commands:
+    template:
+      run: bash .husky/commit-msg {1}

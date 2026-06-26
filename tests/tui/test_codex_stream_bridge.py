@@ -1,4 +1,4 @@
-"""Regression tests for skills/vc-agents/scripts/codex_stream_bridge.py.
+"""Regression tests for runtime/scripts/codex_stream_bridge.py.
 
 The bridge parses Codex JSONL events into a human-readable transcript. It must
 be tolerant: malformed lines, unknown event types, and an EOF mid-stream must
@@ -28,7 +28,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BRIDGE_PATH = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "codex_stream_bridge.py"
+BRIDGE_PATH = REPO_ROOT / "runtime" / "scripts" / "codex_stream_bridge.py"
 
 
 # ---------------------------------------------------------------------------

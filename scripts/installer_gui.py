@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import platform
@@ -20,19 +21,27 @@ from typing import Any
 from urllib.parse import urlparse
 
 try:
-    from control_plane_launch import launch_workflow, normalize_launch_spec
-    from control_plane_state import sync_state
-    from installer_brand import PRODUCT_LINE, TAGLINE, VAPOR_HEADER
-    from runtime_paths import read_version_file, vibecrafted_home, xdg_config_home
+    _control_plane_launch = importlib.import_module("control_plane_launch")
+    _control_plane_state = importlib.import_module("control_plane_state")
+    _installer_brand = importlib.import_module("installer_brand")
+    _runtime_paths = importlib.import_module("runtime_paths")
 except ModuleNotFoundError:  # pragma: no cover - depends on entrypoint
-    from scripts.control_plane_launch import launch_workflow, normalize_launch_spec
-    from scripts.control_plane_state import sync_state
-    from scripts.installer_brand import PRODUCT_LINE, TAGLINE, VAPOR_HEADER
-    from scripts.runtime_paths import (
-        read_version_file,
-        vibecrafted_home,
-        xdg_config_home,
-    )
+    _control_plane_launch = importlib.import_module("scripts.control_plane_launch")
+    _control_plane_state = importlib.import_module("scripts.control_plane_state")
+    _installer_brand = importlib.import_module("scripts.installer_brand")
+    _runtime_paths = importlib.import_module("scripts.runtime_paths")
+
+launch_workflow = getattr(_control_plane_launch, "launch_workflow")
+normalize_launch_spec = getattr(_control_plane_launch, "normalize_launch_spec")
+sync_state = getattr(_control_plane_state, "sync_state")
+PRODUCT_LINE = getattr(_installer_brand, "PRODUCT_LINE")
+TAGLINE = getattr(_installer_brand, "TAGLINE")
+VAPOR_HEADER = getattr(_installer_brand, "VAPOR_HEADER")
+read_version_file = getattr(_runtime_paths, "read_version_file")
+vibecrafted_runtime_bin = getattr(_runtime_paths, "vibecrafted_runtime_bin")
+vibecrafted_tools_home = getattr(_runtime_paths, "vibecrafted_tools_home")
+vibecrafted_home = getattr(_runtime_paths, "vibecrafted_home")
+xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
 
 
 OUTPUT_TAIL_LIMIT = 120
@@ -48,7 +57,7 @@ CATEGORY_ORDER = tuple(CATEGORY_LABELS)
 FOUNDATION_COMMANDS = ("loctree-mcp", "aicx-mcp", "prview", "screenscribe")
 BUNDLED_BIN_NAMES = ("aicx-mcp", "aicx", "loctree-mcp", "loctree", "loct", "prview")
 TOOLCHAIN_COMMANDS = ("python3", "node", "git", "rsync")
-AGENT_COMMANDS = ("claude", "codex", "gemini")
+AGENT_COMMANDS = ("claude", "codex", "gemini", "agy", "junie", "grok")
 ADDITIONAL_TOOL_COMMANDS = ("mise", "starship", "atuin", "zoxide")
 
 
@@ -83,6 +92,9 @@ def runtime_skill_views() -> dict[str, Path]:
         "claude": home / ".claude" / "skills",
         "codex": home / ".codex" / "skills",
         "gemini": home / ".gemini" / "skills",
+        "agy": home / ".agy" / "skills",
+        "junie": home / ".junie" / "skills",
+        "grok": home / ".grok" / "skills",
     }
 
 
@@ -92,6 +104,10 @@ def installer_script_path(source_dir: str) -> Path:
 
 def foundations_script_path(source_dir: str) -> Path:
     return Path(source_dir).resolve() / "scripts" / "install-foundations.sh"
+
+
+def runtime_script_path(source_dir: str) -> Path:
+    return Path(source_dir).resolve() / "scripts" / "install-runtime.sh"
 
 
 def build_install_command(source_dir: str, *, with_shell: bool) -> list[str]:
@@ -147,6 +163,15 @@ def build_install_steps(source_dir: str, *, with_shell: bool) -> list[InstallSte
             command=build_install_command(source_dir, with_shell=with_shell),
         )
     )
+    runtime = os.environ.get("VIBECRAFTED_RUNTIME", "none").strip() or "none"
+    runtime_path = runtime_script_path(source_dir)
+    if runtime != "none" and runtime_path.exists():
+        steps.append(
+            InstallStep(
+                label=f"Install runtime: {runtime}",
+                command=["bash", str(runtime_path), "--runtime", runtime, "--yes"],
+            )
+        )
     return steps
 
 
@@ -220,7 +245,7 @@ def _framework_checks() -> dict[str, dict[str, Any]]:
             "found": bool(active_views),
             "detail": ", ".join(active_views)
             if active_views
-            else "No runtime skill views detected in $HOME/.agents, $HOME/.claude, $HOME/.codex, or $HOME/.gemini",
+            else "No runtime skill views detected in $HOME/.agents, $HOME/.claude, $HOME/.codex, $HOME/.gemini, $HOME/.agy, $HOME/.junie, or $HOME/.grok",
             "kind": "path",
         },
     }
@@ -332,9 +357,10 @@ def install_runtime_env(base_env: dict[str, str] | None = None) -> dict[str, str
     path_entries = env.get("PATH", "").split(os.pathsep) if env.get("PATH") else []
 
     candidates = [
-        vibecrafted_home() / "bin",
-        vibecrafted_home() / "tools" / "node" / "bin",
+        vibecrafted_runtime_bin(),
+        vibecrafted_tools_home() / "node" / "bin",
         Path.home() / ".cargo" / "bin",
+        Path.home() / ".local" / "bin",
     ]
     for candidate in candidates:
         candidate_str = str(candidate)
@@ -508,7 +534,7 @@ class InstallController:
             "control_plane": control_plane,
             "launcher_defaults": {
                 "workflows": ["workflow", "research", "review", "marbles"],
-                "agents": ["claude", "codex", "gemini"],
+                "agents": ["claude", "codex", "gemini", "agy", "junie", "grok"],
                 "runtimes": ["headless", "terminal", "visible"],
             },
             "status": self.status_payload(),
@@ -1731,7 +1757,7 @@ def build_html(preflight: dict[str, Any]) -> str:
                   <p class="slide-note">%%PRODUCT_LINE%%</p>
                   <code class="fallback-code">make wizard</code>
                   <p class="slide-note">
-                    Local checkout GUI stays available for operators who want this browser-guided rhythm. For terminal-native flow, use <code>make vibecrafted</code>.
+                    Local checkout GUI stays available for operators who want this browser-guided rhythm. For terminal-native flow, use <code>make install</code>.
                   </p>
                 </section>
               </aside>
@@ -1920,7 +1946,7 @@ def build_html(preflight: dict[str, Any]) -> str:
                             <section class="summary-card">
                               <h3>Local install view</h3>
                               <p class="summary-copy">
-                                `make wizard` opens this same browser-guided surface from a local checkout. `make vibecrafted` stays the shell-first default.
+                                `make wizard` opens this same browser-guided surface from a local checkout. `make install` stays the shell-first default.
                               </p>
                             </section>
                           </div>
@@ -2663,6 +2689,7 @@ def main(argv: list[str] | None = None) -> int:
     controller = InstallController(args.source, bundle_dir=args.bundle_dir)
     server = InstallerHTTPServer((args.host, args.port), controller)
     host, port = server.server_address[:2]
+    host = host.decode() if isinstance(host, bytes) else str(host)
     url = f"http://{host}:{port}/"
 
     print(f"Vibecrafted control plane ready at {url}")

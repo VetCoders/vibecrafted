@@ -1,0 +1,8 @@
+{
+  "name": "vc-review",
+  "description": "Code and PR review pipeline with findings. Use /vc-review to invoke.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

@@ -4,35 +4,38 @@ set -euo pipefail
 # install-foundations.sh — portable installer for 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. foundation layer
 #
 # Handles:
-#   loctree / loctree-mcp  — binary from GitHub releases (Loctree/Loctree)
-#   aicx / aicx-mcp       — cargo install OR binary from GH releases
+#   loctree / loctree-mcp  — required Loctree product binaries via Loctree installer
+#   aicx / aicx-mcp       — required AICX product binaries via Loctree installer
+#   vc-frame               — required Vibecrafted frame binary via canonical installer
 #   prview                 — cargo install OR binary from GH releases
 #
 # Usage:
-#   bash scripts/install-foundations.sh                   # install all required
-#   bash scripts/install-foundations.sh --all             # install all (including optional)
-#   bash scripts/install-foundations.sh loctree           # install only loctree
-#   bash scripts/install-foundations.sh aicx              # install only aicx / aicx-mcp
+#   bash scripts/install-foundations.sh                   # validate required foundations
+#   bash scripts/install-foundations.sh --all             # validate/install all framework-owned foundations
+#   bash scripts/install-foundations.sh loctree           # validate Loctree product binaries
+#   bash scripts/install-foundations.sh aicx              # validate AICX product binaries
+#   bash scripts/install-foundations.sh vc-frame          # validate Vibecrafted frame binary
 #   bash scripts/install-foundations.sh --check           # dry-run: show what would install
 #   bash scripts/install-foundations.sh --prefix /usr/local  # custom install prefix
 # ---------------------------------------------------------------------------
 
-LOCTREE_VERSION="${LOCTREE_VERSION:-0.8.17}"
-LOCTREE_REPO="Loctree/Loctree"
-
-AICX_CRATE="aicx"
-AICX_REPO="Loctree/aicx"
-
 PRVIEW_CRATE="prview"
 PRVIEW_REPO="VetCoders/prview"
 
-ZELLIJ_REPO="zellij-org/zellij"
+LOCTREE_INSTALL_URL="${LOCTREE_INSTALL_URL:-https://loct.io/install.sh}"
+VCFRAME_INSTALL_URL="${VCFRAME_INSTALL_URL:-https://vibecrafted.io/install.sh}"
 
-# Agent CLIs — all npm packages
+# Agent CLIs — npm packages when the vendor publishes an official package.
 AGENT_PACKAGES=(
   "claude:@anthropic-ai/claude-code"
   "codex:@openai/codex"
   "gemini:@google/gemini-cli"
+  "junie:@jetbrains/junie"
+  "grok:@xai-official/grok"
+)
+
+AGENT_MANUAL_INSTALLS=(
+  "agy|Install Google Antigravity CLI from its vendor distribution, then run: agy install"
 )
 
 # Script/source resolution (used by the bundled-toolchain attempt).
@@ -53,10 +56,94 @@ default_vibecrafted_home() {
   printf '%s\n' "$HOME/.vibecrafted"
 }
 
+default_vibecrafted_runtime_home() {
+  if [[ -n "${VIBECRAFTED_RUNTIME_HOME:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_RUNTIME_HOME"
+    return
+  fi
+  if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+    printf '%s\n' "$XDG_DATA_HOME/vibecrafted"
+    return
+  fi
+  printf '%s\n' "$HOME/.local/share/vibecrafted"
+}
+
+canonical_vibecrafted_home() {
+  printf '%s\n' "$HOME/.vibecrafted"
+}
+
+canonical_vibecrafted_runtime_home() {
+  printf '%s\n' "$HOME/.local/share/vibecrafted"
+}
+
+canonical_vibecrafted_launcher_bin() {
+  printf '%s\n' "$HOME/.local/bin"
+}
+
+pause_runtime_contract_failure() {
+  if ! is_interactive; then
+    return
+  fi
+  printf '\nRuntime root contract failed fast.\n'
+  printf 'Manual cleanup required (no dotfiles were modified automatically):\n'
+  printf '  1) unset conflicting VIBECRAFTED_* root overrides\n'
+  printf '  2) remove stale wrappers from ~/.cargo/bin and /usr/local/bin\n'
+  printf '  3) keep launchers in ~/.local/bin and rerun foundations install\n\n'
+  printf 'Press Enter to continue after reviewing cleanup steps, or Ctrl-C to abort: '
+  read -r _ || true
+}
+
+enforce_runtime_root_contract() {
+  local expected_store expected_runtime expected_launcher
+  local resolved_store resolved_runtime resolved_launcher
+  local failed=0
+
+  expected_store="$(canonical_vibecrafted_home)"
+  expected_runtime="$(canonical_vibecrafted_runtime_home)"
+  expected_launcher="$(canonical_vibecrafted_launcher_bin)"
+
+  resolved_store="$(default_vibecrafted_home)"
+  resolved_runtime="$(default_vibecrafted_runtime_home)"
+  resolved_launcher="${VIBECRAFTED_LAUNCHER_BIN:-$expected_launcher}"
+
+  if [[ "$resolved_store" != "$expected_store" ]]; then
+    warn "Fail-fast: store root drift detected ($resolved_store, expected $expected_store)."
+    failed=1
+  fi
+
+  if [[ "$resolved_runtime" != "$expected_runtime" ]]; then
+    warn "Fail-fast: runtime root drift detected ($resolved_runtime, expected $expected_runtime)."
+    failed=1
+  fi
+
+  if [[ "$resolved_launcher" != "$expected_launcher" ]]; then
+    warn "Fail-fast: launcher root drift detected ($resolved_launcher, expected $expected_launcher)."
+    failed=1
+  fi
+
+  if [[ "$failed" == "1" ]]; then
+    pause_runtime_contract_failure
+    return 1
+  fi
+
+  return 0
+}
+
 VIBECRAFTED_HOME="$(default_vibecrafted_home)"
-PREFIX="${VIBECRAFTED_BIN:-$VIBECRAFTED_HOME/bin}"
+VIBECRAFTED_RUNTIME_HOME="$(default_vibecrafted_runtime_home)"
+PREFIX="${VIBECRAFTED_BIN:-$VIBECRAFTED_RUNTIME_HOME/bin}"
+LAUNCHER_PREFIX="${VIBECRAFTED_LAUNCHER_BIN:-$HOME/.local/bin}"
 CHECK_ONLY=0
 INSTALL_ALL=0
+AGENTS_REQUIRED=0
+# Product foundations (loctree/aicx/vc-frame) are externally managed: this
+# script deliberately refuses to guess crates/npm/checkout paths and points at
+# the canonical installer instead. Their absence is therefore an ADVISORY, not
+# an install failure — consistent with `make install-vendored-binaries`, which
+# already keeps the "external fallback" path non-fatal when vendored binaries
+# are absent. Set REQUIRE_FOUNDATIONS=1 (e.g. release validation) to make a
+# missing product foundation fail the run instead.
+REQUIRE_FOUNDATIONS="${REQUIRE_FOUNDATIONS:-0}"
 TARGETS=()
 
 # ---------------------------------------------------------------------------
@@ -120,6 +207,15 @@ bundled_bin_root() {
   printf '%s\n' "$SOURCE_DIR/tools/bin"
 }
 
+_realpath_quiet() {
+  local path="$1"
+  if [[ -d "$path" ]]; then
+    (cd "$path" && pwd -P)
+    return
+  fi
+  return 1
+}
+
 # Attempt 0 for every install_*: copy a drop-in binary from the bundled
 # tarball directory before reaching out to GitHub / cargo / npm.
 # Returns 0 only when the binary copied, chmod+x'd, and actually runs.
@@ -146,48 +242,6 @@ install_from_bundled() {
   fi
   ok "Installed $name from bundled tarball (notarized): $PREFIX/$name"
   return 0
-}
-
-# ---------------------------------------------------------------------------
-# Toolchain bootstrap — brew → node → npm (macOS only)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Toolchain bootstrap — userspace-first, no sudo required
-# ---------------------------------------------------------------------------
-
-ensure_rustup() {
-  has_cmd cargo && return 0
-  has_cmd curl || return 1
-
-  if is_interactive; then
-    printf '\n'
-    info "Rust toolchain not found."
-    info "Installing rustup (no sudo needed, installs to ~/.cargo)..."
-    printf '  Press Enter to proceed, or Ctrl-C to skip: '
-    read -r _
-  else
-    info "Installing rustup (non-interactive)..."
-  fi
-
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path 2>&1 | tail -5 || {
-    warn "rustup installation failed."
-    return 1
-  }
-
-  # Source cargo env for this session
-  # shellcheck disable=SC1091
-  [[ -f "$HOME/.cargo/env" ]] && . "$HOME/.cargo/env"
-
-  # Ensure a default toolchain is set. On some non-interactive installs (notably
-  # CI macOS runners with pre-existing rustup but no default), `cargo install`
-  # emits `warning: no default toolchain set` and downstream commands can
-  # silently use the wrong channel. Idempotent: no-op when already pinned.
-  if has_cmd rustup && ! rustup default 2>/dev/null | grep -q '.'; then
-    rustup default stable 2>&1 | tail -3 || true
-  fi
-
-  has_cmd cargo
 }
 
 ensure_node() {
@@ -221,7 +275,7 @@ ensure_node() {
 
   if is_interactive; then
     printf '\n'
-    info "Node.js is required for agent CLIs (claude, codex, gemini)."
+    info "Node.js is required for npm-installed agent CLIs."
     info "Installing to ${node_dir} (no sudo needed)."
     printf '  Press Enter to proceed, or Ctrl-C to skip: '
     read -r _
@@ -281,167 +335,51 @@ ensure_prefix() {
   esac
 }
 
-github_release_json() {
-  local repo="$1" endpoint="$2"
-  curl -fsSL -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/repos/$repo/releases/$endpoint"
-}
-
-github_release_asset_url() {
-  local repo="$1" endpoint="$2"
-  shift 2
-  local patterns=("$@")
-  local json
-
-  has_cmd curl || return 1
-  has_cmd python3 || return 1
-  json="$(github_release_json "$repo" "$endpoint")" || return 1
-
-  python3 - "$json" "${patterns[@]}" <<'PY'
-import json
-import re
-import sys
-
-payload = json.loads(sys.argv[1])
-assets = payload.get("assets") or []
-patterns = [re.compile(p) for p in sys.argv[2:]]
-
-for pattern in patterns:
-    for asset in assets:
-        name = asset.get("name") or ""
-        if pattern.fullmatch(name):
-            print(asset.get("browser_download_url") or "")
-            raise SystemExit(0)
-
-raise SystemExit(1)
-PY
-}
-
-# ---------------------------------------------------------------------------
-# Loctree installer — binary release from GitHub
-# ---------------------------------------------------------------------------
-
-loctree_asset_patterns() {
-  local os="$1" arch="$2"
-  case "$os" in
-    linux)
-      case "$arch" in
-        x86_64)  printf '%s\n' '^loctree-linux-x86_64\.tar\.gz$' ;;
-        aarch64) printf '%s\n' '^loctree-linux-aarch64\.tar\.gz$' ;;
-        *)       die "No loctree binary for linux/$arch" ;;
-      esac
-      ;;
-    macos)
-      case "$arch" in
-        x86_64)  printf '%s\n' '^loctree-darwin-x86_64\.tar\.gz$' ;;
-        aarch64)
-          printf '%s\n' '^loctree-darwin-aarch64\.tar\.gz$'
-          printf '%s\n' '^loctree-darwin-aarch64-notarized\.zip$'
-          ;;
-        *)       die "No loctree binary for macos/$arch" ;;
-      esac
-      ;;
-    windows)
-      printf '%s\n' '^loctree-windows-x86_64\.exe\.zip$'
-      ;;
-  esac
+install_vc_wrappers() {
+  local source_bin="$SOURCE_DIR/bin"
+  local name src
+  [[ -d "$source_bin" ]] || return 0
+  mkdir -p "$LAUNCHER_PREFIX"
+  for src in "$source_bin"/vc-* "$source_bin"/vibecrafted-resume; do
+    [[ -f "$src" ]] || continue
+    name="$(basename "$src")"
+    if (( CHECK_ONLY )); then
+      info "Would install $name -> $LAUNCHER_PREFIX/$name"
+      continue
+    fi
+    cp "$src" "$LAUNCHER_PREFIX/$name"
+    chmod +x "$LAUNCHER_PREFIX/$name"
+    ok "Installed $name -> $LAUNCHER_PREFIX/$name"
+  done
 }
 
 install_loctree() {
-  if binary_runs loctree-mcp; then
-    ok "loctree-mcp already installed: $(command -v loctree-mcp)"
-    return 0
-  fi
-
-  local os arch asset url tmpdir patterns_text
-  local patterns=()
-  os="$(detect_os)"
-  arch="$(detect_arch)"
-  patterns_text="$(loctree_asset_patterns "$os" "$arch")"
-  while IFS= read -r pattern; do
-    [[ -n "$pattern" ]] && patterns+=("$pattern")
-  done <<< "$patterns_text"
-
-  if (( CHECK_ONLY )); then
-    info "Would download loctree v${LOCTREE_VERSION} release asset for ${os}/${arch}"
-    info "  Install to: $PREFIX"
-    return 0
-  fi
-
-  has_cmd curl || die "curl is required to download loctree"
-  ensure_prefix
-
-  # --- Attempt 0: bundled tarball (notarized drop-in) ---
-  if install_from_bundled "loctree-mcp"; then
-    install_from_bundled "loctree" || true
-    install_from_bundled "loct" || true
-    return 0
-  fi
-
-  # --- Attempt 1: prebuilt binary from GH releases ---
-  local binary_ok=0
-  url="$(github_release_asset_url "$LOCTREE_REPO" "tags/v${LOCTREE_VERSION}" "${patterns[@]}")" && {
-    asset="${url##*/}"
-
-    info "Downloading loctree v${LOCTREE_VERSION} for ${os}/${arch}..."
-    tmpdir="$(mktemp -d)"
-    local archive="$tmpdir/$asset"
-    if curl -fsSL -o "$archive" "$url"; then
-      info "Extracting..."
-      if [[ "$asset" == *.zip ]]; then
-        has_cmd unzip || die "unzip required to extract archive"
-        unzip -qo "$archive" -d "$tmpdir/out"
-      else
-        mkdir -p "$tmpdir/out"
-        tar -xzf "$archive" -C "$tmpdir/out"
-      fi
-
-      # Find and install binaries (loctree, loctree-mcp, loct)
-      local found=0
-      while IFS= read -r -d '' bin; do
-        local name
-        name="$(basename "$bin")"
-        case "$name" in
-          loctree|loctree-mcp|loct|loctree.exe|loctree-mcp.exe)
-            cp "$bin" "$PREFIX/$name"
-            chmod +x "$PREFIX/$name"
-            ok "Installed $name -> $PREFIX/$name"
-            found=1
-            ;;
-        esac
-      done < <(find "$tmpdir/out" -type f \( -name 'loctree*' -o -name 'loct' \) -print0 2>/dev/null)
-      rm -rf "$tmpdir"
-
-      # Verify the installed binary actually loads (dyld check)
-      if (( found )) && binary_runs loctree; then
-        ok "Loctree v${LOCTREE_VERSION} installed to $PREFIX"
-        binary_ok=1
-      elif (( found )); then
-        warn "Loctree binary installed but fails to run (missing shared libraries)."
-        warn "Removing broken binaries..."
-        rm -f "$PREFIX/loctree" "$PREFIX/loct" "$PREFIX/loctree-mcp"
-      fi
-    else
-      rm -rf "$tmpdir"
-      warn "Failed to download loctree binary."
+  loctree_suite_ready() {
+    local missing=() bin
+    for bin in loct loctree loctree-mcp; do
+      binary_runs "$bin" || missing+=("$bin")
+    done
+    if (( ${#missing[@]} == 0 )); then
+      return 0
     fi
+    warn "Loctree incomplete; missing or broken: ${missing[*]}"
+    return 1
   }
 
-  # Binary path succeeded — done
-  (( binary_ok )) && return 0
-
-  # --- Attempt 2: cargo (will bootstrap rustup if needed) ---
-  info "Trying cargo install path for loctree-mcp..."
-  if ensure_rustup; then
-    install_from_cargo "loctree-mcp" "loctree-mcp" && return 0
+  if loctree_suite_ready; then
+    ok "loctree suite already installed: loct=$(command -v loct), loctree-mcp=$(command -v loctree-mcp)"
+    return 0
   fi
 
-  # --- Attempt 3: npm (will bootstrap node if needed) ---
-  info "Trying npm install path for loctree-mcp..."
-  install_from_npm "loctree-mcp" "loctree-mcp" && return 0
+  if (( CHECK_ONLY )); then
+    info "Would install Loctree foundations from canonical installer:"
+    info "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
+    return 0
+  fi
 
-  warn "All loctree install paths exhausted."
-  warn "Install manually: cargo install loctree-mcp | npm i -g loctree-mcp"
+  warn "Loctree foundations are required, but Vibecrafted will not guess crates, npm packages, or local checkout paths."
+  warn "Use the canonical installer, then rerun this check:"
+  warn "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
   return 1
 }
 
@@ -511,266 +449,56 @@ install_from_cargo() {
 # aicx installer
 # ---------------------------------------------------------------------------
 
-# aicx pulls llama-cpp-sys-2 which links against llama.cpp via bindgen+cmake.
-# Detect Linux toolchain prereqs early so we don't burn 5+ minutes of cargo
-# compile only to fail on missing libclang. Returns 0 if everything needed
-# for an aicx cargo build is present (or we're on macOS where Apple's
-# toolchain ships them), 1 otherwise.
-aicx_cargo_prereqs_ok() {
-  local os
-  os="$(detect_os)"
-  # macOS + xcode CLT ship clang/libclang/cmake — assume OK.
-  [[ "$os" != "linux" ]] && return 0
-
-  local missing=()
-
-  # libclang: bindgen needs libclang.so. Look in common locations + LIBCLANG_PATH.
-  local found_libclang=0
-  if [[ -n "${LIBCLANG_PATH:-}" && -d "$LIBCLANG_PATH" ]]; then
-    found_libclang=1
-  else
-    local candidate
-    for candidate in \
-      /usr/lib/llvm-*/lib/libclang.so* \
-      /usr/lib/x86_64-linux-gnu/libclang*.so* \
-      /usr/lib/aarch64-linux-gnu/libclang*.so* \
-      /usr/lib64/libclang*.so* \
-      /usr/lib/libclang*.so*; do
-      [[ -e "$candidate" ]] && { found_libclang=1; break; }
-    done
-  fi
-  (( found_libclang )) || missing+=("libclang (libclang-dev / clang-devel)")
-
-  # cmake: llama.cpp build script invokes cmake.
-  has_cmd cmake || missing+=("cmake")
-
-  # C++ compiler: g++ or clang++.
-  has_cmd g++ || has_cmd clang++ || missing+=("g++ or clang++")
-
-  if (( ${#missing[@]} > 0 )); then
-    warn "aicx requires native toolchain dependencies missing on this system:"
-    local item
-    for item in "${missing[@]}"; do
-      warn "    - $item"
-    done
-    warn ""
-    warn "Install them first:"
-    if has_cmd apt-get; then
-      warn "    sudo apt-get install -y libclang-dev cmake build-essential"
-    elif has_cmd dnf; then
-      warn "    sudo dnf install -y clang-devel cmake gcc-c++ make"
-    elif has_cmd pacman; then
-      warn "    sudo pacman -S --needed clang cmake base-devel"
-    elif has_cmd zypper; then
-      warn "    sudo zypper install -y libclang-devel cmake gcc-c++"
-    elif has_cmd apk; then
-      warn "    sudo apk add clang-dev cmake g++ make"
-    else
-      warn "    Use your distro package manager to install: libclang-dev cmake g++"
-    fi
-    warn "Or grab a prebuilt binary directly:"
-    warn "    https://github.com/$AICX_REPO/releases"
-    return 1
-  fi
-  return 0
-}
-
 install_aicx() {
   if has_cmd aicx-mcp; then
     ok "aicx-mcp already installed: $(command -v aicx-mcp)"
     return 0
   fi
 
-  # --- Attempt 0: bundled tarball (notarized drop-in) ---
-  if install_from_bundled "aicx-mcp"; then
-    install_from_bundled "aicx" || true
-    install_from_bundled "aicx-extract" || true
-    return 0
-  fi
-
-  # Try binary release first, fall back to cargo
-  local os arch
-  os="$(detect_os)"
-  arch="$(detect_arch)"
-
-  # aicx may publish platform binaries — try GitHub release
-  local asset_prefix="aicx"
-  local target
-  case "$os" in
-    linux)
-      case "$arch" in
-        x86_64)  target="x86_64-unknown-linux-gnu" ;;
-        aarch64) target="aarch64-unknown-linux-gnu" ;;
-        *)       target="" ;;
-      esac
-      ;;
-    macos)
-      case "$arch" in
-        x86_64)  target="x86_64-apple-darwin" ;;
-        aarch64) target="aarch64-apple-darwin" ;;
-        *)       target="" ;;
-      esac
-      ;;
-    *) target="" ;;
-  esac
-
-  if [[ -n "$target" ]] && has_cmd curl; then
-    local patterns=(
-      "^${asset_prefix}-v[0-9.]+-${target}\\.tar\\.gz$"
-    )
-
-    if (( CHECK_ONLY )); then
-      info "Would resolve latest aicx release asset for $target"
-      info "Fallback: cargo install $AICX_CRATE"
-      return 0
-    fi
-
-    local tmpdir url
-    tmpdir="$(mktemp -d)"
-
-    if url="$(github_release_asset_url "$AICX_REPO" "latest" "${patterns[@]}")" &&
-      curl -fsSL -o "$tmpdir/aicx.tar.gz" "$url" 2>/dev/null; then
-      ensure_prefix
-      mkdir -p "$tmpdir/out"
-      tar -xzf "$tmpdir/aicx.tar.gz" -C "$tmpdir/out"
-      local found=0
-      while IFS= read -r -d '' bin; do
-        local name
-        name="$(basename "$bin")"
-        case "$name" in
-          aicx|aicx-mcp|aicx-extract|aicx.exe|aicx-mcp.exe)
-            cp "$bin" "$PREFIX/$name"
-            chmod +x "$PREFIX/$name"
-            ok "Installed $name -> $PREFIX/$name"
-            found=1
-            ;;
-        esac
-      done < <(find "$tmpdir/out" -type f \( -name 'aicx*' \) -print0 2>/dev/null)
-      rm -rf "$tmpdir"
-      if (( found )); then
-        ok "aicx installed from release"
-        return 0
-      fi
-    fi
-    rm -rf "$tmpdir"
-    info "No matching binary release found, falling back to cargo..."
-  fi
-
-  # Cargo path: aicx pulls llama-cpp-sys-2 (libclang+cmake+C++ at build time).
-  # Bail early with an actionable message instead of compiling for 5 minutes
-  # only to fail at link time with a confusing libclang error.
-  if ! aicx_cargo_prereqs_ok; then
-    return 1
-  fi
-
-  install_from_cargo "$AICX_CRATE" "aicx-mcp"
-}
-
-# ---------------------------------------------------------------------------
-# Zellij installer — prebuilt binary from GitHub releases
-# ---------------------------------------------------------------------------
-
-zellij_asset_patterns() {
-  local os="$1" arch="$2"
-  case "$os" in
-    linux)
-      case "$arch" in
-        x86_64)  printf '%s\n' '^zellij-x86_64-unknown-linux-musl\.tar\.gz$' ;;
-        aarch64) printf '%s\n' '^zellij-aarch64-unknown-linux-musl\.tar\.gz$' ;;
-        *)       die "No zellij binary for linux/$arch" ;;
-      esac
-      ;;
-    macos)
-      case "$arch" in
-        x86_64)  printf '%s\n' '^zellij-x86_64-apple-darwin\.tar\.gz$' ;;
-        aarch64) printf '%s\n' '^zellij-aarch64-apple-darwin\.tar\.gz$' ;;
-        *)       die "No zellij binary for macos/$arch" ;;
-      esac
-      ;;
-    *) die "No zellij binary for $os" ;;
-  esac
-}
-
-install_zellij() {
-  if binary_runs zellij; then
-    ok "zellij already installed: $(command -v zellij)"
-    return 0
-  fi
-
-  local os arch patterns_text
-  local patterns=()
-  os="$(detect_os)"
-  arch="$(detect_arch)"
-  patterns_text="$(zellij_asset_patterns "$os" "$arch")"
-  while IFS= read -r pattern; do
-    [[ -n "$pattern" ]] && patterns+=("$pattern")
-  done <<< "$patterns_text"
-
   if (( CHECK_ONLY )); then
-    info "Would download zellij release asset for ${os}/${arch}"
-    info "  Install to: $PREFIX"
+    info "Would install AICX foundations from canonical Loctree installer:"
+    info "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
     return 0
   fi
 
-  has_cmd curl || die "curl is required to download zellij"
-  ensure_prefix
-
-  local url asset tmpdir
-  url="$(github_release_asset_url "$ZELLIJ_REPO" "latest" "${patterns[@]}")" || {
-    warn "Could not resolve a zellij release asset for ${os}/${arch}."
-    warn "Falling back to cargo install..."
-    if ensure_rustup; then
-      install_from_cargo "zellij" "zellij" && return 0
-    fi
-    return 1
-  }
-  asset="${url##*/}"
-
-  info "Downloading zellij for ${os}/${arch}..."
-  tmpdir="$(mktemp -d)"
-  local archive="$tmpdir/$asset"
-  if ! curl -fsSL -o "$archive" "$url"; then
-    rm -rf "$tmpdir"
-    warn "Failed to download zellij."
-    return 1
-  fi
-
-  info "Extracting..."
-  mkdir -p "$tmpdir/out"
-  tar -xzf "$archive" -C "$tmpdir/out"
-
-  local found=0
-  while IFS= read -r -d '' bin; do
-    local name
-    name="$(basename "$bin")"
-    if [[ "$name" == "zellij" ]]; then
-      cp "$bin" "$PREFIX/$name"
-      chmod +x "$PREFIX/$name"
-      ok "Installed $name -> $PREFIX/$name"
-      found=1
-    fi
-  done < <(find "$tmpdir/out" -type f -name 'zellij' -print0 2>/dev/null)
-
-  rm -rf "$tmpdir"
-
-  if (( found )) && binary_runs zellij; then
-    ok "Zellij installed to $PREFIX"
-    return 0
-  fi
-
-  warn "Zellij binary failed. Trying cargo..."
-  if ensure_rustup; then
-    install_from_cargo "zellij" "zellij" && return 0
-  fi
+  warn "AICX foundations are required, but Vibecrafted will not guess crates, npm packages, or local checkout paths."
+  warn "Use the canonical installer, then rerun this check:"
+  warn "  curl -fsSL $LOCTREE_INSTALL_URL | sh"
   return 1
 }
 
 # ---------------------------------------------------------------------------
-# Agent CLI installer — all via npm
+# vc-frame installer boundary — vc-frame validation only
+# ---------------------------------------------------------------------------
+
+install_vcframe() {
+  if binary_runs vc-frame; then
+    ok "vc-frame already installed: $(command -v vc-frame)"
+    if (( CHECK_ONLY )); then
+      info "Canonical vc-frame installer:"
+      info "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
+    fi
+    return 0
+  fi
+
+  if (( CHECK_ONLY )); then
+    info "Would install vc-frame from canonical Vibecrafted installer:"
+    info "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
+    return 0
+  fi
+
+  warn "vc-frame is required; stock vc_frame is not accepted as the Vibecrafted frame."
+  warn "Use the canonical installer, then rerun this check:"
+  warn "  curl -fsSL $VCFRAME_INSTALL_URL | sh"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Agent CLI installer
 # ---------------------------------------------------------------------------
 
 install_agents() {
-  local entry binary package installed=0 total=0
+  local entry binary package hint installed=0 total=0
 
   for entry in "${AGENT_PACKAGES[@]}"; do
     binary="${entry%%:*}"
@@ -791,10 +519,34 @@ install_agents() {
     install_from_npm "$package" "$binary" && installed=$((installed + 1))
   done
 
+  for entry in "${AGENT_MANUAL_INSTALLS[@]}"; do
+    binary="${entry%%|*}"
+    hint="${entry#*|}"
+    total=$((total + 1))
+
+    if has_cmd "$binary"; then
+      ok "$binary already installed: $(command -v "$binary")"
+      installed=$((installed + 1))
+      continue
+    fi
+
+    if (( CHECK_ONLY )); then
+      info "Would verify $binary; install manually: $hint"
+    else
+      warn "$binary not installed. $hint"
+    fi
+  done
+
   if (( installed == total )); then
     ok "All agent CLIs installed ($installed/$total)"
+    return 0
   else
     warn "Agent CLIs: $installed/$total installed"
+    if (( CHECK_ONLY )); then
+      info "Check-only mode: missing agent CLIs are reported but do not fail the run"
+      return 0
+    fi
+    return 1
   fi
 }
 
@@ -811,7 +563,141 @@ install_prview() {
   # --- Attempt 0: bundled tarball (notarized drop-in) ---
   install_from_bundled "prview" && return 0
 
+  info "Installing prview from crate metadata; release repo is $PRVIEW_REPO"
   install_from_cargo "$PRVIEW_CRATE" "prview"
+}
+
+# ---------------------------------------------------------------------------
+# Microsandbox installer hint
+# ---------------------------------------------------------------------------
+
+install_sandbox() {
+  if binary_runs msbserver; then
+    ok "msbserver already installed: $(command -v msbserver)"
+    return 0
+  fi
+
+  local os arch source_root microsandbox_dir answer
+  os="$(detect_os)"
+  arch="$(detect_arch)"
+  source_root="$(_realpath_quiet "$SOURCE_DIR/../experimental/microsandbox" 2>/dev/null || true)"
+  microsandbox_dir="${MICROSANDBOX_SOURCE:-$source_root}"
+
+  case "$os" in
+    linux|macos) ;;
+    *)
+      warn "microsandbox is not supported on $os"
+      return 1
+      ;;
+  esac
+
+  if [[ "$os" == "linux" && ! -e /dev/kvm ]]; then
+    warn "libkrun requires KVM on Linux; /dev/kvm is missing."
+    return 1
+  fi
+
+  if (( CHECK_ONLY )); then
+    info "Would install microsandbox runtime for ${os}/${arch}"
+    info "  Source: ${microsandbox_dir:-<set MICROSANDBOX_SOURCE>}"
+    return 0
+  fi
+
+  if is_interactive; then
+    printf '\n'
+    info "Detected libkrun-capable platform candidate (${os}/${arch})."
+    printf '  Install microsandbox runtime from %s? (y/N): ' "${microsandbox_dir:-MICROSANDBOX_SOURCE}"
+    read -r answer
+    [[ "$answer" == "y" || "$answer" == "Y" ]] || {
+      warn "Skipping optional microsandbox runtime."
+      return 0
+    }
+  else
+    warn "Skipping optional microsandbox runtime in non-interactive mode."
+    warn "Run: cd ${microsandbox_dir:-/path/to/microsandbox} && make build"
+    return 0
+  fi
+
+  [[ -n "$microsandbox_dir" && -f "$microsandbox_dir/Makefile" ]] || {
+    warn "microsandbox source not found. Set MICROSANDBOX_SOURCE and rerun."
+    return 1
+  }
+  make -C "$microsandbox_dir" build
+}
+
+# ---------------------------------------------------------------------------
+# iTerm2 / locterm AutoLaunch plugin (macOS, opt-in)
+# ---------------------------------------------------------------------------
+
+iterm2_app_present() {
+  [[ "$(detect_os)" == "macos" ]] || return 1
+  local candidate
+  for candidate in \
+    "/Applications/iTerm.app" \
+    "/Applications/locterm.app" \
+    "$HOME/Applications/iTerm.app" \
+    "$HOME/Applications/locterm.app"; do
+    [[ -d "$candidate" ]] && return 0
+  done
+  return 1
+}
+
+install_iterm2_integration() {
+  if ! iterm2_app_present; then
+    info "iTerm2 / locterm not detected — skipping vibecrafted plugin install"
+    return 0
+  fi
+
+  if (( CHECK_ONLY )); then
+    info "Would install vibecrafted iTerm2 / locterm AutoLaunch plugin"
+    return 0
+  fi
+
+  local answer
+  if is_interactive; then
+    printf '\n'
+    info "Detected iTerm2 (or locterm) — install vibecrafted plugin? (y/N): "
+    read -r answer
+    case "${answer:-}" in
+      [yY]|[yY][eE][sS]) ;;
+      *)
+        warn "Skipping vibecrafted iTerm2 plugin (run later: python -m vibecrafted_iterm2.install_autolaunch)"
+        return 0
+        ;;
+    esac
+  else
+    warn "Skipping iTerm2 plugin install in non-interactive mode."
+    warn "Run later: python -m vibecrafted_iterm2.install_autolaunch"
+    return 0
+  fi
+
+  # The iTerm2 plugin is OPT-IN and OPTIONAL — its failure must NEVER abort the
+  # whole install (it used to: a bare system python3 lacks vibecrafted_iterm2 and
+  # returning 1 killed `make install-all` with Error 1). Prefer the installed
+  # uv-tool entry point, then the uv-tool venv python, then PATH python; warn on
+  # failure but always return 0.
+  if command -v vibecrafted-iterm2-autolaunch >/dev/null 2>&1; then
+    vibecrafted-iterm2-autolaunch --force \
+      || warn "vibecrafted iTerm2 plugin install failed (non-fatal); rerun: vibecrafted-iterm2-autolaunch --force"
+    return 0
+  fi
+
+  local python_bin=""
+  local candidate
+  for candidate in \
+    "${VIBECRAFTED_PYTHON:-}" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-iterm2/bin/python3" \
+    "$(command -v python3 || true)" \
+    "$(command -v python || true)"; do
+    [[ -n "$candidate" && -x "$candidate" ]] && { python_bin="$candidate"; break; }
+  done
+  if [[ -z "$python_bin" ]]; then
+    warn "no python on PATH — skipping vibecrafted iTerm2 plugin (non-fatal)"
+    return 0
+  fi
+
+  "$python_bin" -m vibecrafted_iterm2.install_autolaunch --force \
+    || warn "vibecrafted iTerm2 plugin install failed (non-fatal); rerun: vibecrafted-iterm2-autolaunch --force"
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -823,15 +709,18 @@ usage() {
 Usage: install-foundations.sh [options] [targets...]
 
 Targets:
-  loctree      Install loctree + loctree-mcp (binary from GH releases)
-  aicx         Install aicx / aicx-mcp (binary or cargo)
-  prview       Install prview (cargo)
-  (no target)  Install required foundations (loctree + aicx)
+  loctree         Validate loctree + loctree-mcp product binaries
+  aicx            Validate aicx / aicx-mcp product binaries
+  vc-frame        Validate vc-frame product binary
+  prview          Install prview (cargo)
+  sandbox         Optional microsandbox/libkrun runtime
+  iterm2-plugin   vibecrafted iTerm2 / locterm AutoLaunch plugin (macOS, opt-in)
+  (no target)     Validate required foundations; install only framework-owned tools
 
 Options:
   --all        Install all foundations (including optional)
   --check      Dry-run: show what would be installed
-  --prefix DIR Install binaries to DIR (default: $PREFIX)
+  --prefix DIR Install framework-owned runtime binaries to DIR (default: $PREFIX)
   --help       Show this help
 EOF
 }
@@ -844,47 +733,83 @@ while [[ $# -gt 0 ]]; do
     --help|-h)   usage; exit 0 ;;
     loctree)     TARGETS+=("loctree") ;;
     aicx)        TARGETS+=("aicx") ;;
-    zellij)      TARGETS+=("zellij") ;;
-    agents)      TARGETS+=("agents") ;;
+    vc-frame)    TARGETS+=("vc-frame") ;;
+    agents)      TARGETS+=("agents"); AGENTS_REQUIRED=1 ;;
     prview)      TARGETS+=("prview") ;;
+    sandbox)     TARGETS+=("sandbox") ;;
+    iterm2-plugin) TARGETS+=("iterm2-plugin") ;;
     *)           die "Unknown argument: $1" ;;
   esac
   shift
 done
 
+enforce_runtime_root_contract || exit 1
+
 # Default: install required foundations
 if (( ${#TARGETS[@]} == 0 )); then
-  TARGETS=("loctree" "aicx" "zellij" "agents")
+  TARGETS=("loctree" "aicx" "vc-frame" "agents")
   if (( INSTALL_ALL )); then
-    TARGETS+=("prview")
+    TARGETS+=("prview" "sandbox")
+  fi
+  # macOS users always get the optional iTerm2 plugin prompt; the
+  # install function itself is a no-op on Linux/Windows and in
+  # non-interactive shells.
+  if [[ "$(detect_os)" == "macos" ]]; then
+    TARGETS+=("iterm2-plugin")
   fi
 fi
 
 printf '\n\033[1m  Foundation Installer\033[0m\n'
 printf '  ─────────────────────\n'
-printf '  Prefix: %s\n\n' "$PREFIX"
+printf '  Runtime bin:  %s\n' "$PREFIX"
+printf '  Launcher bin: %s\n\n' "$LAUNCHER_PREFIX"
+
+# Product foundations are externally managed; a missing binary is advisory
+# unless the caller opted into strict validation via REQUIRE_FOUNDATIONS=1.
+foundation_optional_fail() {
+  local name="$1"
+  if [[ "$REQUIRE_FOUNDATIONS" == "1" ]]; then
+    exit_code=1
+  else
+    warn "$name unavailable — deferring to external/canonical install (non-fatal). Set REQUIRE_FOUNDATIONS=1 to enforce."
+  fi
+}
 
 exit_code=0
 for target in "${TARGETS[@]}"; do
   case "$target" in
-    loctree) install_loctree || exit_code=1 ;;
-    aicx)    install_aicx    || exit_code=1 ;;
-    zellij)  install_zellij  || exit_code=1 ;;
-    agents)  install_agents  || exit_code=1 ;;
+    loctree)  install_loctree  || foundation_optional_fail loctree ;;
+    aicx)     install_aicx     || foundation_optional_fail aicx ;;
+    vc-frame) install_vcframe  || foundation_optional_fail vc-frame ;;
+    agents)
+      if ! install_agents; then
+        if (( AGENTS_REQUIRED )); then
+          exit_code=1
+        else
+          warn "agent CLIs incomplete — optional, install later: vibecrafted doctor"
+        fi
+      fi
+      ;;
     prview)  install_prview  || exit_code=1 ;;
+    sandbox) install_sandbox || exit_code=1 ;;
+    iterm2-plugin) install_iterm2_integration || exit_code=1 ;;
   esac
   echo
 done
 
 if (( exit_code == 0 )) && (( !CHECK_ONLY )); then
+  install_vc_wrappers || exit_code=1
+fi
+
+if (( exit_code == 0 )) && (( !CHECK_ONLY )); then
   printf '\033[1mFoundation install complete.\033[0m\n'
   # Remind about PATH
   case ":$PATH:" in
-    *":$PREFIX:"*) ;;
+    *":$LAUNCHER_PREFIX:"*) ;;
     *)
       printf '\n\033[33mAdd to your shell profile:\033[0m\n'
       # shellcheck disable=SC2016 # $PATH is literal output for the user
-      printf '  export PATH="%s:$PATH"\n\n' "$PREFIX"
+      printf '  export PATH="%s:$PATH"\n\n' "$LAUNCHER_PREFIX"
       ;;
   esac
 fi

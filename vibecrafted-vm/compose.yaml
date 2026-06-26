@@ -1,0 +1,61 @@
+# vc-workspace — static quick-launch compose (no wizard needed).
+# ============================================================================
+# One command:   cp .env.example .env  &&  $EDITOR .env  &&  docker compose up -d --build
+# Enter shell:   docker compose exec dev zsh
+# Tailnet SSH:   ssh root@${TAILSCALE_HOSTNAME}   (from any mesh peer)
+#
+# Naming: vc-workspace = this container. vc-runtime = the multiroot it mounts.
+#
+# Tailscale runs in USERSPACE networking (entry.sh: tailscaled
+# --tun=userspace-networking), so NO NET_ADMIN cap and NO /dev/net/tun device
+# are needed — this keeps the same surface on macOS Docker Desktop (dragon,
+# silver) and Linux (ops) hosts. Do NOT add `devices: /dev/net/tun` here; it
+# does not exist on macOS hosts and would break the run.
+#
+# The interactive wizard (wizard/vc-onboard.py) writes its own
+# docker-compose.yml instead — use that for per-mount opt-in. This file is the
+# committed, batteries-included default.
+# ============================================================================
+
+services:
+  dev:
+    image: vetcoders/vc-workspace:trixie
+    build:
+      context: .
+      dockerfile: Containerfile
+    container_name: vc-workspace
+    hostname: ${TAILSCALE_HOSTNAME:-vc-workspace}
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    environment:
+      - TAILSCALE_AUTHKEY=${TAILSCALE_AUTHKEY:-}
+      - TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME:-vc-workspace}
+      # Empty by default: tag:devbox is NOT defined in the vetcoders tailnet ACL,
+      # and tagging would break the `autogroup:self` SSH rule. Leave blank → the
+      # node is user-owned (your auth key) and the existing ssh rule matches.
+      - TAILSCALE_TAGS=${TAILSCALE_TAGS:-}
+      - LOCTREE_GPG_KEY_ID=${LOCTREE_GPG_KEY_ID:-}
+      - AICX_NO_MUTATION_WARN=${AICX_NO_MUTATION_WARN:-0}
+      - TERM=${TERM:-xterm-256color}
+      - COLORTERM=${COLORTERM:-truecolor}
+    volumes:
+      # The multiroot repo tree → /workspace (override path via VC_RUNTIME_DIR)
+      - ${VC_RUNTIME_DIR:-${HOME}/Libraxis/vc-runtime}:/workspace:rw
+      # Persistent VetCoders state
+      - ${HOME}/.aicx:/root/.aicx:rw
+      - ${HOME}/.claude:/root/.claude:rw
+      - ${HOME}/.codex:/root/.codex:rw
+      - ${HOME}/.gemini:/root/.gemini:rw
+      - ${HOME}/.vibecrafted:/root/.vibecrafted:rw
+      - ${HOME}/.config/vetcoders:/root/.config/vetcoders:rw
+      # Tailscale node state (so the box keeps its identity across restarts)
+      - tailscale-state:/var/lib/tailscale
+      # ── Sensitive — OFF by default. Uncomment only if you need GPG signing. ──
+      # - ${HOME}/.keys:/root/.keys:ro
+      # - ${HOME}/.gnupg:/root/.gnupg:ro
+
+volumes:
+  tailscale-state:
+    driver: local
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI

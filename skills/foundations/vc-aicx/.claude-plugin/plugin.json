@@ -1,8 +1,0 @@
-{
-  "name": "AICX Extract",
-  "description": "Recover and parse large or unreadable agent output from JSONL files into clean Markdown.",
-  "author": {
-    "name": "VetCoders",
-    "email": "hello@vetcoders.io"
-  }
-}

@@ -1,0 +1,86 @@
+# vc-workspace .zshrc — VetCoders dev container shell
+# ============================================================================
+# Sourced by zsh on shell start. Wires starship prompt, atuin history,
+# zoxide directory jump, and VetCoders framework helpers.
+# ============================================================================
+
+# History
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt SHARE_HISTORY HIST_IGNORE_DUPS HIST_REDUCE_BLANKS
+
+# Path additions. /usr/local/bin first so source-compiled foundations
+# (aicx, loct, *-mcp, prview) win over installer-provided ones; then the
+# vibecrafted runtime bin from the official installer.
+export PATH="/usr/local/bin:/opt/vibecrafted/bin:/opt/vibecrafted/tools/vibecrafted-current/bin:/root/.cargo/bin:/root/.local/bin:$PATH"
+
+# Source vibecrafted env if the installer dropped one (path may vary by version)
+for _vcenv in /opt/vibecrafted/env.sh /opt/vibecrafted/tools/vibecrafted-current/env.sh; do
+    [ -f "$_vcenv" ] && . "$_vcenv" && break
+done
+
+# VetCoders config
+export VETCODERS_CONFIG_DIR="${VETCODERS_CONFIG_DIR:-/root/.config/vetcoders}"
+export VIBECRAFTED_ROOT="${VIBECRAFTED_ROOT:-/opt/vibecrafted}"
+export VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-/root/.vibecrafted}"
+export AICX_HOME="${AICX_HOME:-/root/.aicx}"
+
+# Source vibecrafted shell helpers if available
+if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then
+    source "$VETCODERS_CONFIG_DIR/vc-skills.sh"
+fi
+
+# starship prompt
+if command -v starship >/dev/null 2>&1; then
+    eval "$(starship init zsh)"
+fi
+
+# atuin shell history (encrypted sync optional)
+if command -v atuin >/dev/null 2>&1; then
+    eval "$(atuin init zsh --disable-up-arrow)"
+fi
+
+# zoxide directory jump (alias 'cd' to 'z')
+if command -v zoxide >/dev/null 2>&1; then
+    eval "$(zoxide init zsh --cmd cd)"
+fi
+
+# mise toolchain manager
+if command -v mise >/dev/null 2>&1; then
+    eval "$(mise activate zsh)"
+fi
+
+# eza aliases (replace ls)
+if command -v eza >/dev/null 2>&1; then
+    alias ls='eza --group-directories-first'
+    alias ll='eza -lah --group-directories-first --git'
+    alias lt='eza -lah --tree --level=2'
+fi
+
+# bat as cat
+if command -v bat >/dev/null 2>&1; then
+    alias cat='bat --plain --paging=never'
+    alias cathl='bat'
+fi
+
+# vibecrafted helper aliases
+alias vc='vibecrafted'
+alias vc-init='vibecrafted init claude'
+alias vc-impl='vibecrafted implement codex'
+
+# Welcome message (printed once per shell)
+if [ -z "$VC_WORKSPACE_WELCOMED" ]; then
+    export VC_WORKSPACE_WELCOMED=1
+    cat <<'WELCOME'
+
+⚒  Vibecrafted dev container ready.
+   Workspace: /workspace
+   Tools: aicx · loct · loctree-mcp · claude · codex · gemini · uv · vc_frame
+   Helpers: vc · vc-init · vc-impl · ll · lt · cat
+   Tailnet: $(tailscale status 2>/dev/null | head -1 || echo "not connected")
+
+WELCOME
+fi
+
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI

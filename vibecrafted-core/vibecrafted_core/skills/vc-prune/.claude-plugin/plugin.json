@@ -1,0 +1,8 @@
+{
+  "name": "vc-prune",
+  "description": "Prune repos to runtime or publish cone. Use /vc-prune to invoke.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

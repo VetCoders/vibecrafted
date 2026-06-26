@@ -1,0 +1,14 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "missing-prompt-and-brief"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+
+  [[cuts.verify]]
+  run = "true"
+  expect = { exit_code = 0 }

@@ -27,10 +27,14 @@ Non-destructive. Interactive. Tells you what it does before it does it.
 Asks before touching your shell config. Everything reversible with
 `make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current uninstall`.
 
-Inside a local checkout, `make vibecrafted` runs the terminal-native installer
-wizard (default shell-first front door) and `make install` stays
-direct/non-interactive. If you prefer the browser-guided surface, run
+Inside a local checkout, `make install` runs the terminal-native installer
+wizard with checkpoints and REASON. Use `make setup-dev` for the same
+meta-installer with advanced options, or `make install-auto` for the
+auto-approved automation path. If you prefer the browser-guided surface, run
 `make wizard` or the alias `make gui-install`.
+
+Use `make help` for the six operator targets. Use `make help-dev` when you need
+the full maintainer inventory.
 
 After install, open a new terminal or:
 
@@ -41,10 +45,11 @@ source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"
 ## 2. Verify
 
 ```bash
-make -C $VIBECRAFTED_ROOT/.vibecrafted/tools/vibecrafted-current doctor
+vibecrafted doctor
 ```
 
-Green means ready. Yellow means the doctor tells you why.
+Green means ready. Yellow means the doctor tells you what is weak and what to
+check next.
 
 ## 3. Orient your agent
 
@@ -118,13 +123,30 @@ The agent enters a convergence loop — tools find what is wrong, agent fixes it
 tools check the new landscape, repeat. Stops when no tool can find a single
 remaining accusation.
 
+## 8. Operator surfaces
+
+The command deck stays small on purpose:
+
+```bash
+vibecrafted help
+vibecrafted help --all
+vibecrafted gui
+vibecrafted tui
+vibecrafted dispatch path/to/run.dispatch.toml --doctor
+```
+
+`gui`, `tui`, `dashboard`, `dispatch`, and telemetry commands are real runtime
+surfaces. They are second-visit tools, not the first thing a new operator needs
+to memorize.
+
 ## The tab trick
 
 Type `vibecrafted help` for the command deck. Once shell helpers are loaded,
 `vc-` wrappers stay available as shortcuts.
 
 For the full route inventory, see [SKILLS](./SKILLS.md). For the framework-wide
-flow map, see [WORKFLOWS](./WORKFLOWS.md).
+flow map, see [WORKFLOWS](./WORKFLOWS.md). For the documentation truth spine,
+see [DOCUMENTATION_MAP](./DOCUMENTATION_MAP.md).
 
 Preparing the public launch surface and directory submissions?
 Use [Release Kickoff](./RELEASE_KICKOFF.md) together with

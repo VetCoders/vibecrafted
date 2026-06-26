@@ -68,32 +68,57 @@ assert_not_contains() {
   fi
 }
 
+print_installer_logs() {
+  local home="$1"
+  local log_dir="$home/.vibecrafted/logs/installer"
+  local log_file
+
+  if [[ ! -d "$log_dir" ]]; then
+    printf '[portable] no installer logs found under %s\n' "$log_dir" >&2
+    return 0
+  fi
+
+  while IFS= read -r log_file; do
+    [[ -f "$log_file" ]] || continue
+    printf '\n[portable] installer log: %s\n' "$log_file" >&2
+    sed -n '1,220p' "$log_file" >&2 || true
+  done < <(find "$log_dir" -type f -name '*.log' -print | sort)
+}
+
 log "syntax checks"
 bash -n \
   "$repo_root/install.sh" \
-  "$repo_root/skills/vc-agents/scripts/install.sh" \
-  "$repo_root/skills/vc-agents/scripts/install-shell.sh" \
-  "$repo_root/skills/vc-agents/scripts/skills_sync.sh" \
-  "$repo_root/skills/vc-agents/scripts/observe.sh" \
-  "$repo_root/skills/vc-agents/scripts/common.sh" \
-  "$repo_root/skills/vc-agents/scripts/codex_spawn.sh" \
-  "$repo_root/skills/vc-agents/scripts/claude_spawn.sh" \
-  "$repo_root/skills/vc-agents/scripts/gemini_spawn.sh"
+  "$repo_root/runtime/scripts/install.sh" \
+  "$repo_root/runtime/scripts/install-shell.sh" \
+  "$repo_root/runtime/scripts/skills_sync.sh" \
+  "$repo_root/runtime/scripts/observe.sh" \
+  "$repo_root/runtime/scripts/common.sh" \
+  "$repo_root/runtime/scripts/codex_spawn.sh" \
+  "$repo_root/runtime/scripts/claude_spawn.sh" \
+  "$repo_root/runtime/scripts/gemini_spawn.sh"
 # Shell helpers are bash-compatible; verify with bash -n
-bash -n "$repo_root/skills/vc-agents/shell/vetcoders.sh"
+bash -n "$repo_root/runtime/shell/vetcoders.sh"
 # If zsh is available, also verify zsh syntax
 if command -v zsh >/dev/null 2>&1; then
-  zsh -n "$repo_root/skills/vc-agents/shell/vetcoders.sh"
+  zsh -n "$repo_root/runtime/shell/vetcoders.sh"
 fi
 
 workspace="$(mktemp -d)"
-trap 'rm -rf "$workspace"' EXIT
+cleanup_workspace() {
+  local status=$?
+  rm -rf "$workspace" 2>/dev/null || {
+    sleep 0.5
+    rm -rf "$workspace" 2>/dev/null || printf '[portable] warn: could not remove temp workspace: %s\n' "$workspace" >&2
+  }
+  exit "$status"
+}
+trap cleanup_workspace EXIT
 bootstrap_home="$workspace/bootstrap-home"
 bootstrap_config_dir="$bootstrap_home/.config"
 home_dir="$workspace/home"
 config_dir="$home_dir/.config"
 work_repo="$workspace/workrepo"
-fake_bin="$workspace/fake-bin"
+fake_bin="$home_dir/.local/bin"
 bootstrap_archive="$workspace/vibecrafted-bootstrap.tar.gz"
 mkdir -p "$bootstrap_home" "$bootstrap_config_dir" "$home_dir" "$config_dir" "$work_repo" "$fake_bin"
 
@@ -104,40 +129,59 @@ tar -czf "$bootstrap_archive" \
   --exclude='output' \
   --exclude='*.png' \
   -C "$repo_root" .
-HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_HOME="$bootstrap_home/.vibecrafted" \
-  bash "$repo_root/install.sh" --archive-file "$bootstrap_archive"
+if ! HOME="$bootstrap_home" XDG_CONFIG_HOME="$bootstrap_config_dir" VIBECRAFTED_HOME="$bootstrap_home/.vibecrafted" \
+  bash "$repo_root/install.sh" --archive-file "$bootstrap_archive"; then
+  print_installer_logs "$bootstrap_home"
+  die "root install.sh bootstrap failed"
+fi
 
-require_symlink "$bootstrap_home/.vibecrafted/tools/vibecrafted-current"
-require_file "$bootstrap_home/.vibecrafted/tools/vibecrafted-current/Makefile"
-require_file "$bootstrap_home/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh"
-# Helper file lives at canonical location; compat symlink also exists
-require_file "$bootstrap_config_dir/vetcoders/vc-skills.sh"
-require_file "$bootstrap_config_dir/zsh/vc-skills.zsh"
+require_symlink "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current"
+require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/Makefile"
+require_file "$bootstrap_home/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
+# Runtime contract (test_install_all_paths_do_not_install_shell_helpers_by_default):
+# the default install lane (install.sh -> make install-auto -> make install) installs
+# tools and views but does NOT wire the legacy shell helpers or touch shell rc files.
+# Shell-helper generation is an explicit opt-in, exercised by the `--with-shell`
+# install smoke below, so the bootstrap does not assert vc-skills.sh here.
 
 log "install smoke into clean HOME"
 HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
-  bash "$repo_root/skills/vc-agents/scripts/install.sh" \
+  bash "$repo_root/runtime/scripts/install.sh" \
   --source "$repo_root" \
   --tool codex --tool claude --tool gemini \
-  --with-shell
+  --with-shell --write-shell-rc
 
-require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/codex_spawn.sh"
-require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/claude_spawn.sh"
-require_file "$home_dir/.vibecrafted/skills/vc-agents/scripts/gemini_spawn.sh"
-require_file "$home_dir/.vibecrafted/bin/vibecrafted"
-require_symlink "$home_dir/.vibecrafted/bin/vc-help"
-require_symlink "$home_dir/.vibecrafted/bin/vc-marbles"
+# Stage the uv-tool launcher shim. The granular installer wires
+# ~/.local/bin/vibecrafted as a symlink onto the uv-tool shim (the live launcher
+# contract — see test_keys), but only `make install-python-tools` actually
+# materializes that shim via `uv tool install`. The bootstrap above runs the
+# full `make install` (which includes it); this clean-HOME smoke uses the
+# granular installer, so create the shim here too — otherwise the launcher
+# symlink dangles and the resume smoke below cannot exec it.
+log "stage python launcher tools (uv-tool shim)"
+HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
+  make --no-print-directory -C "$repo_root" install-python-tools
+
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/gemini_spawn.sh"
+require_file "$home_dir/.local/bin/vibecrafted"
+require_symlink "$home_dir/.local/bin/vc-help"
+require_symlink "$home_dir/.local/bin/vc-marbles"
+# Skill-symlink fan-out follows SYMLINK_TARGETS (agents, claude, codex). Gemini
+# is a first-class spawn runtime (gemini_spawn.sh above) but an opt-in skill
+# target (SYMLINK_TARGET_CHOICES), so the default install does not wire
+# .gemini/skills/vc-agents — only codex and claude are asserted here.
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
-require_symlink "$home_dir/.gemini/skills/vc-agents"
-require_file "$home_dir/.codex/skills/vc-agents/scripts/codex_spawn.sh"
-require_file "$home_dir/.claude/skills/vc-agents/scripts/claude_spawn.sh"
-require_file "$home_dir/.gemini/skills/vc-agents/scripts/gemini_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/gemini_spawn.sh"
 # Canonical + compat helper locations
 require_file "$config_dir/vetcoders/vc-skills.sh"
 require_file "$config_dir/zsh/vc-skills.zsh"
 assert_contains "$config_dir/vetcoders/vc-skills.sh" '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. helper shim'
-bad_helper_candidate="\${VIBECRAFTED_ROOT:-}/skills/vc-agents/shell/vetcoders.sh"
+bad_helper_candidate="\${VIBECRAFTED_ROOT:-}/runtime/shell/vetcoders.sh"
 assert_not_contains "$config_dir/vetcoders/vc-skills.sh" "$bad_helper_candidate"
 # At least one rcfile must have the source line (depends on SHELL/platform)
 rc_found=0
@@ -207,7 +251,7 @@ cat > "$fake_bin/claude" <<'EOF_CLAUDE'
 set -euo pipefail
 echo '{"type":"system","subtype":"init","session_id":"fake-claude-001"}'
 echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read"},{"type":"text","text":"fake claude stream"}]}}'
-echo '{"type":"result","result":"done"}'
+echo '{"type":"result","result":"Fake Claude final handoff"}'
 EOF_CLAUDE
 
 cat > "$fake_bin/gemini" <<'EOF_GEMINI'
@@ -236,9 +280,9 @@ chmod +x "$fake_bin/codex" "$fake_bin/claude" "$fake_bin/gemini"
 common_env=(HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH")
 
 log "headless spawn smoke"
-env "${common_env[@]}" bash "$home_dir/.codex/skills/vc-agents/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
-env "${common_env[@]}" bash "$home_dir/.claude/skills/vc-agents/scripts/claude_spawn.sh" --mode review --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
-env "${common_env[@]}" bash "$home_dir/.gemini/skills/vc-agents/scripts/gemini_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh" --mode review --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/gemini_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
 
 codex_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_codex.meta.json' | sort | tail -n 1)"
 claude_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_claude.meta.json' | sort | tail -n 1)"
@@ -298,7 +342,11 @@ require_file "$gemini_transcript"
 assert_contains "$codex_report" 'Fake Codex Report'
 assert_matches "$codex_report" 'run_id: plan-[0-9]{6}'
 assert_contains "$codex_report" 'prompt_id: test_'
-assert_contains "$claude_report" 'Claude completed without writing a standalone report file.'
+# claude_spawn.sh now salvages the captured final message into the report when
+# the agent writes no standalone report file (salvage_success_report), instead
+# of the old "completed without writing a standalone report file" placeholder.
+# The fake claude emits that final handoff above, so assert it was salvaged.
+assert_contains "$claude_report" 'Fake Claude final handoff'
 assert_contains "$gemini_report" 'fake gemini'
 assert_matches "$codex_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} \$ ls\]'
 assert_matches "$codex_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] tokens: 100 in / 10 out'
@@ -319,7 +367,7 @@ jq -e '.liveness == "terminal"' "$codex_meta" >/dev/null || die "codex meta miss
 log "launcher resume smoke"
 resume_capture="$workspace/resume-codex.txt"
 env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" FAKE_CODEX_CAPTURE="$resume_capture" \
-  "$home_dir/.vibecrafted/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
+  "$home_dir/.local/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
 require_file "$resume_capture"
 assert_contains "$resume_capture" 'resume'
 assert_contains "$resume_capture" 'fake-session-001'
@@ -327,7 +375,7 @@ assert_contains "$resume_capture" 'resume smoke'
 
 log "helper bash smoke"
 # shellcheck disable=SC2016
-env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.vibecrafted/bin:$fake_bin:$PATH" \
+env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.local/bin:$fake_bin:$PATH" \
   bash -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
   | grep -Fq 'helper-ok' || die 'bash helper layer not loaded'
 log "skill helper telemetry smoke"
@@ -338,7 +386,12 @@ skill_output="$(
 )"
 skill_report="$(printf '%s\n' "$skill_output" | sed -n 's/^Agent launched\. Report will land at: //p' | tail -n 1)"
 [[ -n "$skill_report" ]] || die "skill helper did not report output path"
-skill_meta="${skill_report%.md}.meta.json"
+# The "Report will land at:" line is a pre-run preview path; the materialized
+# report/meta carry the marbles run-id infix (..._marb-<id>-001_...), so derive
+# the meta by locating the actual file (same glob pattern the spawn smokes above
+# use) rather than from the announced path.
+skill_meta="$(find "$work_repo/.vibecrafted/marbles/reports" -maxdepth 1 -type f -name '*_marbles-ancestor_L1_codex.meta.json' | sort | tail -n 1)"
+[[ -n "$skill_meta" ]] || die "skill helper marbles meta not found"
 require_file "$skill_meta"
 [[ "$(wait_for_meta "$skill_meta")" == "completed" ]] || die "skill helper spawn did not complete"
 jq -e '.skill_code == "marb"' "$skill_meta" >/dev/null || die "skill helper did not wire skill_code"
@@ -349,7 +402,7 @@ jq -e '.liveness == "terminal"' "$skill_meta" >/dev/null || die "skill helper di
 if command -v zsh >/dev/null 2>&1; then
   log "helper zsh smoke (bonus)"
   # shellcheck disable=SC2016
-  env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.vibecrafted/bin:$fake_bin:$PATH" \
+  env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.local/bin:$fake_bin:$PATH" \
     zsh -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
     | grep -Fq 'helper-ok' || die 'zsh helper layer not loaded'
 fi
@@ -370,11 +423,13 @@ echo rsync "$@"
 EOF_RSYNC
 chmod +x "$fake_bin/rsync"
 
-sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/skills/vc-agents/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
-echo "$sync_output" | grep -q "Syncing skills from" || die "Sync dry-run failed to start"
-echo "$sync_output" | grep -q "rsync .* --dry-run" || die "Sync dry-run didn't pass dry-run to rsync"
+sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/runtime/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
+grep -q "Syncing skills from" <<<"$sync_output" || die "Sync dry-run failed to start"
+grep -q "rsync .* --dry-run" <<<"$sync_output" || die "Sync dry-run didn't pass dry-run to rsync"
 # shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
-echo "$sync_output" | grep -q '\$HOME/.vibecrafted/skills\|\$HOME/.agents/skills' || die "Sync dry-run didn't target the shared canonical skill store"
+grep -q '\$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills' <<<"$sync_output" || die "Sync dry-run didn't target the staged canonical skill store"
+# shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
+! grep -q '\$HOME/.vibecrafted/skills' <<<"$sync_output" || die "Sync dry-run still targets the legacy state-home skill store"
 
 log "docs truth checks"
 # shellcheck disable=SC2016 # backticks are literal content we're matching, not command substitution

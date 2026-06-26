@@ -18,11 +18,37 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - name: Pin Rust toolchain for sandboxed bootstrap
+        shell: bash
+        run: |
+          # tests/portable/run.sh sandboxes HOME to a temp dir for isolation,
+          # which hides the runner's ~/.rustup/settings.toml from rustup and
+          # makes `cargo` fail with "no default toolchain configured" during
+          # install-app-binaries. Pin RUSTUP_HOME/CARGO_HOME to the real
+          # (absolute) toolchain so the sandboxed-HOME bootstrap still resolves
+          # a default toolchain. A real user keeps their own HOME, so this is a
+          # harness-only concern, not an install.sh bug.
+          rustup default stable
+          echo "RUSTUP_HOME=$HOME/.rustup" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
       - name: Install shellcheck on Linux
         if: matrix.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck
+          # libgtk-3-dev + libxdo-dev + appindicator: the portable bootstrap's
+          # `make install-app-binaries` builds voc, whose arboard clipboard dep
+          # links gtk-sys/glib-sys on Linux. libgtk-3-dev transitively provides
+          # the glib-2.0/gdk/pango/cairo/atk pkg-config files the build needs.
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libclang-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            protobuf-compiler \
+            rsync \
+            shellcheck
       - name: Install shellcheck on macOS
         if: matrix.os == 'macOS'
         run: brew install shellcheck
@@ -50,6 +76,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # install.sh -> make install builds voc, whose arboard clipboard dep
+          # links gtk-sys/glib-sys on Linux. libgtk-3-dev transitively provides
+          # the glib-2.0 pkg-config files the build needs. (Rust is preinstalled
+          # on ubuntu-latest with a default toolchain, and this job uses the real
+          # HOME, so no rustup pin is needed here.)
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libclang-dev \
+            libgtk-3-dev \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            protobuf-compiler
       - name: Serve install.sh locally and bootstrap
         run: |
           archive="/tmp/vibecrafted-bootstrap.tar.gz"
@@ -57,8 +99,23 @@ jobs:
           bash install.sh --archive-file "$archive"
       - name: Verify bootstrap result
         run: |
-          vibecrafted_home="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
-          test -L "$vibecrafted_home/tools/vibecrafted-current"
-          test -f "$vibecrafted_home/tools/vibecrafted-current/skills/vc-agents/scripts/codex_spawn.sh"
-          test -f "$HOME/.config/vetcoders/vc-skills.sh"
+          # install.sh stages the source snapshot under the RUNTIME home
+          # ($XDG_DATA_HOME/vibecrafted, default ~/.local/share/vibecrafted),
+          # not the skills home (~/.vibecrafted). Mirror install.sh's own
+          # tools-dir resolution (default_vibecrafted_runtime_home +
+          # VIBECRAFTED_TOOLS_HOME override) so verify checks the path the
+          # installer actually wrote.
+          if [ -n "${VIBECRAFTED_RUNTIME_HOME:-}" ]; then
+            runtime_home="$VIBECRAFTED_RUNTIME_HOME"
+          elif [ -n "${XDG_DATA_HOME:-}" ]; then
+            runtime_home="$XDG_DATA_HOME/vibecrafted"
+          else
+            runtime_home="$HOME/.local/share/vibecrafted"
+          fi
+          tools_dir="${VIBECRAFTED_TOOLS_HOME:-$runtime_home/tools}"
+          test -L "$tools_dir/vibecrafted-current"
+          test -f "$tools_dir/vibecrafted-current/runtime/scripts/codex_spawn.sh"
+          # Runtime contract: the default install lane does not wire legacy shell
+          # helpers (vc-skills.sh) — that is an explicit --with-shell opt-in — so
+          # the bootstrap verify no longer asserts the helper file here.
           echo "Bootstrap OK"

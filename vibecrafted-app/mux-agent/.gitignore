@@ -1,0 +1,9 @@
+/.fastembed_cache
+/target
+Cargo.lock
+/.ai-agents
+*.txt
+/*.py
+
+# Local operator artifacts stay outside the source tree.
+/.vibecrafted/

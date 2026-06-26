@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 
 
 def _org_repo() -> str:

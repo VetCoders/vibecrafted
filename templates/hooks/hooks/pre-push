@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# vibecrafted-husky-template :: pre-push
+#
+# Full-repo gates. Slow but thorough. WARN-mode aware.
+# Reads <local-ref> <local-sha> <remote-ref> <remote-sha> from stdin to
+# compute the pushed-diff range for secret scanning.
+#
+# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+
+set -euo pipefail
+HUSKY_HOOK_NAME="pre-push"
+
+HUSKY_LIB="${BASH_SOURCE[0]%/*}/lib"
+# shellcheck disable=SC1090,SC1091
+. "$HUSKY_LIB/core.sh"
+# shellcheck disable=SC1090,SC1091
+. "$HUSKY_LIB/secrets.sh"
+# shellcheck disable=SC1090,SC1091
+. "$HUSKY_LIB/lint-routing.sh"
+
+husky_init
+
+if [ "${HUSKY_SKIP_PREPUSH:-0}" = "1" ]; then
+  husky_warn "HUSKY_SKIP_PREPUSH=1 — bypassing pre-push gates."
+  exit 0
+fi
+
+husky_warns_print_backlog "$HUSKY_HOOK_NAME"
+
+LOG_FILE="$(mktemp -t "husky-${HUSKY_HOOK_NAME}.XXXX.log")"
+PUSH_REFS_FILE="$(mktemp -t "husky-${HUSKY_HOOK_NAME}-refs.XXXX")"
+trap 'rm -f "$LOG_FILE" "$PUSH_REFS_FILE"' EXIT
+
+# Capture refs from stdin (git invokes hook with refs on stdin).
+cat > "$PUSH_REFS_FILE" || true
+
+set +e
+(
+  set -euo pipefail
+  # NOTE: see pre-commit — no global IFS tightening, set locally where needed.
+
+  husky_log "──────────────────────────────────────────────"
+  husky_log "  Vibecrafted Husky :: pre-push"
+  husky_log "  branch: $(husky_current_branch)"
+  if husky_warn_mode_active; then
+    husky_log "  mode  : WARN"
+  else
+    husky_log "  mode  : STRICT"
+  fi
+  husky_log "──────────────────────────────────────────────"
+
+  # ---- Secret scan on pushed diff (when refs available) ------------------
+  if [ "$HUSKY_PREPUSH_SECRETS" = "1" ] && [ -s "$PUSH_REFS_FILE" ]; then
+    EMPTY_TREE="$(git hash-object -t tree /dev/null)"
+    while read -r local_ref local_sha remote_ref remote_sha; do
+      [ -z "${local_sha:-}" ] && continue
+      base="$remote_sha"
+      if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]]; then
+        base="$EMPTY_TREE"
+      elif ! git cat-file -e "${base}^{commit}" >/dev/null 2>&1; then
+        base="$EMPTY_TREE"
+      fi
+      if ! git cat-file -e "${local_sha}^{commit}" >/dev/null 2>&1; then
+        husky_warn "Local commit $local_sha not present — skipping ref."
+        continue
+      fi
+      husky_run_step "Secret scan ($local_ref)" husky_secrets_scan_range "$base" "$local_sha"
+    done < "$PUSH_REFS_FILE"
+  fi
+
+  # ---- Full-repo gates (toggled via config.env) --------------------------
+  [ "$HUSKY_PREPUSH_PRETTIER_FULL" = "1" ] && husky_run_step "Prettier --check (full)" husky_lint_prettier_full
+  [ "$HUSKY_PREPUSH_SEMGREP_FULL"  = "1" ] && husky_run_step "Semgrep (full)"          husky_lint_semgrep_full
+  [ "$HUSKY_PREPUSH_TSC"           = "1" ] && husky_run_step "tsc --noEmit"            husky_lint_tsc_full
+  [ "$HUSKY_PREPUSH_LOCT_CYCLES"   = "1" ] && husky_run_step "Loctree cycles"          husky_lint_loct_cycles
+  [ "$HUSKY_PREPUSH_LOCT_COMMANDS" = "1" ] && husky_run_advisory "Loctree FE↔BE"        husky_lint_loct_commands
+  [ "$HUSKY_PREPUSH_CARGO_CLIPPY"  = "1" ] && husky_run_step "cargo clippy"            husky_lint_cargo_clippy
+  [ "$HUSKY_PREPUSH_CARGO_TEST"    = "1" ] && husky_run_step "cargo test"              husky_lint_cargo_test
+  [ "$HUSKY_PREPUSH_VITEST"        = "1" ] && husky_run_step "vitest"                  husky_lint_vitest
+
+  husky_run_local_extensions "$HUSKY_HOOK_NAME"
+
+  if [ "$STEP_FAILURE_COUNT" -eq 0 ]; then
+    husky_ok "pre-push gate passed"
+  else
+    husky_warn "pre-push completed with $STEP_FAILURE_COUNT warning(s) (WARN mode)"
+  fi
+) 2>&1 | husky_secrets_redact | tee "$LOG_FILE"
+status=${PIPESTATUS[0]}
+set -e
+
+if [ "$status" -eq 0 ]; then
+  husky_warns_clear_for_hook "$HUSKY_HOOK_NAME"
+  exit 0
+fi
+
+husky_warns_archive "$HUSKY_HOOK_NAME" "$LOG_FILE" >/dev/null
+if husky_warn_mode_active; then
+  husky_warn "WARN mode: push allowed, log archived under .husky/warns/."
+  exit 0
+fi
+exit "$status"

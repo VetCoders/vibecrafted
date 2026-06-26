@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# vibecrafted-husky-template :: pre-merge-commit
+#
+# Cleans agent-specific scratch directories (default: codex-agent/) when
+# merging from an agent branch into a non-agent branch. Extensible via
+# HUSKY_PREMERGE_CLEAN_PATHS.
+#
+# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+
+set -euo pipefail
+
+HUSKY_LIB="${BASH_SOURCE[0]%/*}/lib"
+# shellcheck disable=SC1090,SC1091
+. "$HUSKY_LIB/core.sh"
+husky_init
+
+CURRENT_BRANCH="$(husky_current_branch)"
+MERGE_MSG_FILE=".git/MERGE_MSG"
+
+SRC_BRANCH=""
+if [ -f "$MERGE_MSG_FILE" ]; then
+  SRC_BRANCH="$(sed -n "s/^Merge branch '\([^']*\)'.*/\1/p" "$MERGE_MSG_FILE" | head -n1)"
+fi
+
+clean_path() {
+  local path="$1"
+  if git diff --cached --name-only | grep -q "^${path}"; then
+    husky_info "Cleaning '$path' from merge into '$CURRENT_BRANCH' (src: '${SRC_BRANCH:-unknown}')"
+    git rm -r --cached --ignore-unmatch "$path" >/dev/null 2>&1 || true
+    if [ -f .gitignore ] && ! grep -qx "${path}/" .gitignore 2>/dev/null; then
+      echo "${path}/" >> .gitignore
+      git add .gitignore
+    fi
+  fi
+}
+
+if [ "$HUSKY_PREMERGE_CLEAN_CODEX_AGENT" = "1" ]; then
+  case "$CURRENT_BRANCH" in
+    codex/*) ;;  # keep codex-agent on codex/* branches
+    *)
+      # Always strip codex-agent from non-codex branches, regardless of source.
+      clean_path "codex-agent"
+      ;;
+  esac
+fi
+
+if [ -n "${HUSKY_PREMERGE_CLEAN_PATHS:-}" ]; then
+  printf '%s\n' "$HUSKY_PREMERGE_CLEAN_PATHS" | while IFS= read -r p; do
+    p="$(printf '%s' "$p" | sed 's/[[:space:]]*$//')"
+    [ -z "$p" ] && continue
+    clean_path "$p"
+  done
+fi
+
+exit 0

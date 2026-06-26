@@ -16,14 +16,14 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
   `${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh` manually when you want the helpers in your current session.
 
 - **Do you have a guided GUI install path?**
-  Yes. Run `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui` to stage the control plane and open the browser-based installer. It bootstraps foundations first, then runs the same compact installer truth used by automation. If you are already in the repo, use `make wizard` or its alias `make gui-install`. The default `make vibecrafted` target runs the terminal-native installer wizard.
+  Yes. Run `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui` to stage the control plane and open the browser-based installer. It bootstraps foundations first, then runs the same compact installer truth used by automation. If you are already in the repo, use `make wizard` or its alias `make gui-install`. The default `make install` target runs the terminal-native installer wizard.
 
 - **What does `make doctor` check?**
   The doctor verifies the central store, helper availability, symlink health, required foundations (`loctree-mcp` and
   `aicx-mcp`), evidence tools such as `prview` and ScreenScribe, and shell quietness.
 
 - **Which install path should I use in CI?**
-  Use `make install` for the direct non-interactive path, or
+  Use `make install-auto` for the direct non-interactive path, or
   `python3 scripts/vetcoders_install.py install --source "$PWD" --non-interactive` when you want full CLI control.
 
 ## Skills, Agents, Foundations
@@ -47,7 +47,7 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 ## Workflow and Operations
 
 - **When should I use `vc-implement` (alias `vc-justdo`)?**
-  Use it when the task is clear and you want the agent to take ownership end-to-end. `vc-implement` is the canonical
+  Use it when the task is clear and you want the agent to take ownership end-to-end. `vc-implement` is the default
   name; `vc-justdo` keeps working for agents already wired to it. Use the phase skills individually when you want more
   supervisory control.
 

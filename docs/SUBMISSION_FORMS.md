@@ -261,7 +261,7 @@ Every public surface should agree on:
 
 ## Proposed form presets
 
-Use the canonical packet above, then bias each marketplace form this way:
+Use the default packet above, then bias each marketplace form this way:
 
 - There’s An AI For That
   Lead with the guided installer as the human front door and category it under developer tools / coding / workflow automation.

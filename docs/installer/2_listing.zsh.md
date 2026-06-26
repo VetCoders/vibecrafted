@@ -9,7 +9,7 @@
      foundations · workflows · helpers · binaries
      node · python · rust
      claude-code · codex · gemini-cli
-     zellij · mise · starship · atuin · zoxide
+     vc_frame · mise · starship · atuin · zoxide
 
   2. Installation
      missing dependencies

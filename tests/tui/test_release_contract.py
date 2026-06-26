@@ -60,12 +60,12 @@ def test_installer_reference_keeps_public_gui_and_local_shell_contract() -> None
         assert expected in normalized
 
     for text in (reference, scaffold):
-        assert "Local terminal-native entrypoint: `make vibecrafted`" in text
+        assert "Local terminal-native entrypoint: `make install`" in text
         assert "Local browser GUI entrypoint: `make wizard`" in text
 
     assert f"Public compact path: `{SECONDARY_CTA}`" in reference
     assert (
-        "`make vibecrafted`\n  Runs the terminal-native installer wizard from a local checkout."
+        "`make install`\n  Runs the terminal-native installer wizard from a local checkout."
         in reference
     )
     assert (

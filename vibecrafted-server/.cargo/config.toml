@@ -1,0 +1,17 @@
+# Apple's default linker (ld-prime, Xcode 15+) asserts on the very long symbol
+# names Leptos macro-expansion generates:
+#
+#   ld: Assertion failed: (name.size() <= maxLength),
+#       function makeSymbolStringInPlace, file SymbolString.cpp
+#
+# The classic linker has no such symbol-name-length limit, so the SSR `web`
+# binary links cleanly through it. Scoped to the host target only — the wasm32
+# hydrate build (cargo-leptos lib-features) is linked by lld and is unaffected.
+#
+# `-ld_classic` is deprecated by Apple but still present in Xcode 26.x. When it
+# is finally removed, swap to a vendored lld (`-fuse-ld=lld`).
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-ld_classic"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-Wl,-ld_classic"]

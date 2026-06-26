@@ -1,0 +1,7 @@
+interface:
+  display_name: "VC Partner"
+  short_description: "Executive debug + agent swarms"
+  default_prompt: "Use $vc-partner to preserve the original shape, build the plan with vc-scaffold, choose the execution lane, and enforce review/followup/audit/DoU before done."
+
+policy:
+  allow_implicit_invocation: true

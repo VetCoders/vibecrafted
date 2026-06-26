@@ -154,7 +154,32 @@ def test_strip_rc_entry_removes_duplicate_launcher_blocks() -> None:
     assert "cargo/bin" in cleaned
 
 
-def test_install_launcher_dedupes_zshrc_path_entries(
+def test_install_launcher_leaves_shell_rc_untouched_without_consent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / "home"
+    repo_root = tmp_path / "repo"
+    launcher_src = repo_root / "scripts" / "vibecrafted"
+    zshrc = home / ".zshrc"
+
+    launcher_src.parent.mkdir(parents=True)
+    launcher_src.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    home.mkdir()
+
+    original = "# user config\n"
+    zshrc.write_text(original, encoding="utf-8")
+
+    monkeypatch.setenv("HOME", str(home))
+
+    vetcoders_install._install_launcher(repo_root, dry_run=False)
+
+    assert zshrc.read_text(encoding="utf-8") == original
+    canonical = home / ".local" / "bin" / "vibecrafted"
+    assert canonical.is_symlink()
+    assert canonical.readlink() == vetcoders_install._uv_tool_shim()
+
+
+def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / "home"
@@ -176,31 +201,30 @@ def test_install_launcher_dedupes_zshrc_path_entries(
 
     monkeypatch.setenv("HOME", str(home))
 
-    vetcoders_install._install_launcher(repo_root, dry_run=False)
+    vetcoders_install._install_launcher(repo_root, dry_run=False, update_rc=True)
 
     zshrc_content = zshrc.read_text(encoding="utf-8")
     assert zshrc_content.count(path_line) == 1
     assert zshrc_content.count("# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher") == 1
-    assert "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/bin" in zshrc_content
     assert "$HOME/.local/bin" in zshrc_content
-    assert (home / ".vibecrafted" / "bin" / "vibecrafted").is_file()
-    assert (home / ".local" / "bin" / "vibecrafted").is_symlink()
-    assert (home / ".local" / "bin" / "vibecrafted").readlink() == (
-        home / ".vibecrafted" / "bin" / "vibecrafted"
-    )
-    for launcher_bin in (home / ".local" / "bin", home / ".vibecrafted" / "bin"):
-        for wrapper_name in (
-            "vc-help",
-            "vc-start",
-            "vc-dashboard",
-            "vc-intents",
-            "vc-ownership",
-            "vc-resume",
-            "telemetry",
-        ):
-            wrapper_path = launcher_bin / wrapper_name
-            assert wrapper_path.is_symlink()
-            assert wrapper_path.readlink() == Path("vibecrafted")
+    assert ".vibecrafted/bin" not in zshrc_content
+    launcher_bin = home / ".local" / "bin"
+    canonical = launcher_bin / "vibecrafted"
+    assert canonical.is_symlink()
+    assert canonical.readlink() == vetcoders_install._uv_tool_shim()
+    assert not (home / ".vibecrafted" / "bin" / "vibecrafted").exists()
+    for wrapper_name in (
+        "vc-help",
+        "vc-start",
+        "vc-dashboard",
+        "vc-init",
+        "vc-dispatch",
+        "vc-resume",
+        "telemetry",
+    ):
+        wrapper_path = launcher_bin / wrapper_name
+        assert wrapper_path.is_symlink()
+        assert wrapper_path.readlink() == Path("vibecrafted")
 
 
 def test_install_launcher_replaces_old_blind_local_bin_path(
@@ -221,7 +245,7 @@ def test_install_launcher_replaces_old_blind_local_bin_path(
 
     monkeypatch.setenv("HOME", str(home))
 
-    vetcoders_install._install_launcher(repo_root, dry_run=False)
+    vetcoders_install._install_launcher(repo_root, dry_run=False, update_rc=True)
 
     zshrc_content = zshrc.read_text(encoding="utf-8")
     assert 'export PATH="$HOME/.local/bin:$PATH"' not in zshrc_content.splitlines()

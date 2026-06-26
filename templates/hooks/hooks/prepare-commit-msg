@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# vibecrafted-husky-template :: prepare-commit-msg
+#
+# Adds mechanical Vibecrafted agent/runtime trailers before commit-msg validates
+# them, then appends a Vibecrafted-Warn-Signature trailer if pre-commit ran in
+# WARN mode and demoted a failure. Allows reviewers (and grep) to spot warned
+# commits.
+#
+# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+
+set -euo pipefail
+
+HUSKY_LIB="${BASH_SOURCE[0]%/*}/lib"
+# shellcheck disable=SC1090,SC1091
+. "$HUSKY_LIB/core.sh"
+husky_init
+
+MSG_FILE="$1"
+COMMIT_SOURCE="${2:-}"
+
+first_line="$(head -n1 "$MSG_FILE" | tr -d '\r')"
+
+append_trailer() {
+  local key="$1"
+  local value="$2"
+  if grep -Eq "^${key}:" "$MSG_FILE"; then
+    return 0
+  fi
+  printf '\n%s: %s\n' "$key" "$value" >> "$MSG_FILE"
+}
+
+normalize_agent_runtime_trailers() {
+  [ "$HUSKY_COMMIT_MSG_REQUIRE_AGENT_RUNTIME" = "1" ] || return 0
+
+  case "$first_line" in
+    "Merge "*|"Revert "*|"fixup!"*|"squash!"*|"amend!"*) return 0 ;;
+  esac
+
+  agent_prefix='\[[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_-]*\] '
+  if ! printf '%s' "$first_line" | grep -Eq "^${agent_prefix}"; then
+    return 0
+  fi
+
+  agent="$(printf '%s' "$first_line" | sed -E 's/^\[([a-z0-9][a-z0-9_-]*)\/[^]]+\].*/\1/')"
+
+  session_id_raw="${CODEX_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-${ATUIN_SESSION:-}}}"
+  if printf '%s' "$session_id_raw" | grep -Eq '^[0-9a-fA-F]{32}$'; then
+    session_id="$(printf '%s' "$session_id_raw" | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12})$/\1-\2-\3-\4-\5/' | tr 'A-F' 'a-f')"
+  elif printf '%s' "$session_id_raw" | grep -Eq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'; then
+    session_id="$(printf '%s' "$session_id_raw" | tr 'A-F' 'a-f')"
+  elif command -v uuidgen >/dev/null 2>&1; then
+    session_id="$(uuidgen | tr 'A-F' 'a-f')"
+  else
+    session_id="00000000-0000-4000-8000-000000000000"
+  fi
+
+  timestamp="$(date +%Y-%m-%dT%H:%M:%S%z | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')"
+  runtime="${VIBECRAFTED_COMMIT_RUNTIME:-${VIBECRAFTED_RUNTIME:-}}"
+  if [ -z "$runtime" ]; then
+    case "${TERM_PROGRAM:-}" in
+      iTerm.app|iTerm2) runtime="iterm2" ;;
+      Apple_Terminal) runtime="terminal" ;;
+      *) runtime="interactive" ;;
+    esac
+  fi
+
+  append_trailer "Authored-By" "${agent} <agents@vetcoders.io>"
+  append_trailer "session_id" "$session_id"
+  append_trailer "time" "$timestamp"
+  append_trailer "runtime" "$runtime"
+}
+
+normalize_agent_runtime_trailers
+
+# Warn signatures are meaningful only for freshly composed messages, not Git's
+# generated merge/squash/template flows.
+case "$COMMIT_SOURCE" in
+  merge|squash|commit|template) exit 0 ;;
+esac
+
+latest_warn=""
+warns_dir="$(husky_warns_dir)"
+if [ -d "$warns_dir" ]; then
+  for candidate in "$warns_dir"/pre-commit-*.log; do
+    [ -e "$candidate" ] || continue
+    if [ -z "$latest_warn" ] || [ "$candidate" -nt "$latest_warn" ]; then
+      latest_warn="$candidate"
+    fi
+  done
+fi
+[ -z "$latest_warn" ] && exit 0
+
+sig="$(grep '^signature=' "$latest_warn" | head -1 | cut -d= -f2-)"
+when="$(grep '^captured_at=' "$latest_warn" | head -1 | cut -d= -f2-)"
+head_sha="$(grep '^git_head=' "$latest_warn" | head -1 | cut -d= -f2-)"
+
+[ -z "$sig" ] && exit 0
+
+# Don't duplicate if already present (amend / edit re-runs).
+if grep -q "^Vibecrafted-Warn-Signature: $sig$" "$MSG_FILE" 2>/dev/null; then
+  exit 0
+fi
+
+append_trailer "Vibecrafted-Warn-Signature" "$sig"
+append_trailer "Vibecrafted-Warn-Captured-At" "$when"
+append_trailer "Vibecrafted-Warn-Head" "$head_sha"
+exit 0

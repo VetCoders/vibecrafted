@@ -41,13 +41,15 @@ def _build_manifest(
     version: str = "1.2.3",
     branding: dict | None = None,
     persist: bool = False,
+    log_pattern: str | None = None,
+    phases: list[installer.Phase] | None = None,
 ) -> installer.Manifest:
     return installer.Manifest(
         title=title,
         version=version,
-        log_pattern=None,
+        log_pattern=log_pattern,
         persist=persist,
-        phases=[],
+        phases=list(phases or []),
         path=tmp_path / "install.toml",
         branding=dict(branding or {}),
         intro_screens=[],
@@ -177,6 +179,56 @@ def test_print_summary_happy_path_uses_branded_wordmark_and_next_steps(
     assert "https://example.test/docs" in out
 
 
+def test_run_yes_quiet_keeps_stdout_compact_and_moves_detail_to_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """Automation path should not dump phase essays into stdout."""
+    _plain_console_capture(monkeypatch, capsys)
+    monkeypatch.setattr(installer, "HAS_RICH", False)
+    phase = installer.Phase(
+        key="install",
+        label="Installation",
+        reason="This long reason belongs in the log-era trust surface, not stdout.",
+        cmd=[
+            sys.executable,
+            "-c",
+            "print('subprocess detail that should be logged only')",
+        ],
+        cwd=tmp_path,
+    )
+    manifest = _build_manifest(
+        tmp_path,
+        title="⚒ QuietCraft",
+        version="9.9.9",
+        branding={"unicode_wordmark": "⚒ QuietCraft"},
+        log_pattern=str(tmp_path / "install-{ts}.log"),
+        phases=[phase],
+        persist=True,
+    )
+
+    rc = installer.run(
+        manifest,
+        auto_yes=True,
+        dry_run=False,
+        quiet=True,
+        only=[],
+        skip=[],
+    )
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "⚒ QuietCraft ready" in out
+    assert "Log:" in out
+    assert "This long reason" not in out
+    assert "Installation" not in out
+    assert "subprocess detail" not in out
+
+    [log_file] = tmp_path.glob("install-*.log")
+    log_text = log_file.read_text(encoding="utf-8")
+    assert "===== Installation =====" in log_text
+    assert "subprocess detail that should be logged only" in log_text
+
+
 def test_print_summary_edge_failure_shows_recovery_block_with_installer_cmd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
@@ -233,7 +285,7 @@ def test_print_summary_pure_cancel_without_branding_uses_defaults(
 
     assert "cancelled" in out.lower()
     # Defaults from the code when branding is empty.
-    assert "make vibecrafted" in out
+    assert "make install" in out
     assert "https://vibecrafted.io" in out
 
 

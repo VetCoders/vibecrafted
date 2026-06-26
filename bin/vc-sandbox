@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "vibecrafted-core"))
+
+from vibecrafted_core.sandbox import MsbserverLifecycle, SandboxPolicy  # noqa: E402
+from vibecrafted_core.sandbox.policy import default_policy_path  # noqa: E402
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Manage Vibecrafted microsandbox.")
+    parser.add_argument("command", choices=("status", "start", "stop", "policy"))
+    parser.add_argument("--policy", dest="policy_path")
+    args = parser.parse_args()
+
+    lifecycle = MsbserverLifecycle()
+    if args.command == "status":
+        state = "running" if lifecycle.is_running() else "not running"
+        print(f"msbserver: {state}")
+        if lifecycle.pid_file.exists():
+            print(f"pid_file: {lifecycle.pid_file}")
+        return 0
+    if args.command == "start":
+        ok = lifecycle.ensure_running()
+        print(f"msbserver: {'running' if ok else 'not running'}")
+        if not ok:
+            print("hint: install microsandbox or set MSBSERVER_EXE", file=sys.stderr)
+        return 0 if ok else 1
+    if args.command == "stop":
+        lifecycle.stop()
+        print("msbserver: stopped")
+        return 0
+
+    policy = SandboxPolicy.load(args.policy_path, root=Path.cwd())
+    path = Path(args.policy_path).expanduser() if args.policy_path else default_policy_path()
+    print(f"policy_file: {path}")
+    print(f"cpu: {policy.cpu}")
+    print(f"memory_mb: {policy.memory_mb}")
+    print(f"network: {policy.network}")
+    print(f"filesystem_root_readonly: {policy.filesystem_root_readonly}")
+    print(f"tmp_writable: {policy.tmp_writable}")
+    print("allow_hosts: " + ", ".join(policy.allow_hosts))
+    print("mounts:")
+    for mount in policy.mounts:
+        print(f"  - {mount}")
+    return 0
+
+
+raise SystemExit(main())

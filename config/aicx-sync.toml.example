@@ -1,0 +1,73 @@
+# aicx-sync.toml — Plan 08 (META_22) operator config template.
+#
+# Copy to ~/.config/vetcoders/aicx-sync.toml and edit. The bash wrapper
+# (scripts/aicx-sync.sh) reads from this path by default; pass
+# --config <other-path> to override.
+#
+# All fields are optional. Missing fields fall back to safe defaults:
+#   local_store    -> $HOME/.aicx/store
+#   remote_host    -> (no remote — dry-run produces zero-delta output)
+#   namespace      -> (all namespaces under local_store)
+#   dry_run_default -> true (always preview before apply)
+#
+# Vibecrafted with AI Agents (c)2024-2026 LibraxisAI
+
+[default]
+
+# Local AICX corpus root. Override only if you keep AICX outside the
+# standard XDG layout.
+local_store = "~/.aicx/store"
+
+# Remote host name. The bash wrapper expects
+# ~/.scripts/sync-tool.py (operator-owned) to have already rsync'd the
+# remote corpus into ~/.frontier-vault/<remote_host>/staging before
+# aicx-sync.sh is invoked.
+#
+# Common values per kronika 2026-05-05 mesh topology:
+#   dragon, sztudio, silver, div0, mgbook16
+#
+# remote_host = "sztudio"
+
+# Optional: scope sync to a single AICX namespace
+# (e.g. <org>/<project>). When set, the engine narrows to
+# ~/.aicx/store/<namespace> on both sides. Leave commented to sync the
+# entire corpus.
+#
+# namespace = "VetCoders/vibecrafted"
+
+# Default safety posture: always dry-run unless the operator explicitly
+# passes `apply` as the first positional argument. The bash wrapper does
+# not act on this field directly — it is informational + carried forward
+# for the future GUI surface (Cloud Sync v2.1+).
+dry_run_default = true
+
+# When two sides have the same chunk_id at the same authority tier and
+# the content disagrees, the engine returns a ConflictTie sentinel. With
+# `prompt_on_tie = true` the wrapper exits non-zero and surfaces the tie
+# so the operator can record a decision via:
+#
+#   python -m vibecrafted_core.aicx_sync record-decision <chunk_id> <local|remote>
+#
+# Logged decisions land in ~/.frontier-vault/conflict-log.jsonl and are
+# honoured on subsequent runs.
+prompt_on_tie = true
+
+# Optional: auth token used by the remote staging layer
+# (~/.scripts/sync-tool.py). Read by the bash wrapper only for the
+# `--print-config` debug surface; the in-process engine never reads
+# credentials directly.
+#
+# auth_token = "${VETCODERS_AICX_TOKEN}"
+
+# -----------------------------------------------------------------------------
+# Authority tier table (informational — duplicated from docs/AICX-SYNC.md
+# so a single config-file glance gives the full conflict resolution story).
+#
+# Higher rank wins automatic conflict resolution:
+#
+#   repo_verified    > aicx_operator > loctree_derived > aicx_agent
+#   > aicx_failure   > semantic_guess > memex_derived  > stale_or_unknown
+#
+# Same-rank conflicts → ConflictTie sentinel → operator decides → logged
+# decision applied on future syncs.
+# -----------------------------------------------------------------------------

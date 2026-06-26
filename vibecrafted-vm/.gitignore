@@ -1,0 +1,23 @@
+# Secrets — never commit
+.env
+*.env
+*.key
+*.pem
+
+# Wizard-generated (operator-specific, not for repo)
+docker-compose.yml
+
+# Build artifacts
+target/
+node_modules/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+*.swp
+*.swo
+
+# Editor
+.idea/
+.vscode/

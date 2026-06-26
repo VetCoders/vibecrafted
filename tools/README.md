@@ -54,7 +54,7 @@ cp example-settings.json $HOME/.claude/settings.json
 
 ## MCP Servers
 
-Copy `mcp-servers.json` to `$HOME/.claude/` for canonical MCP configuration:
+Copy `mcp-servers.json` to `$HOME/.claude/` for default MCP configuration:
 
 | Server               | Type  | Purpose                                   |
 | -------------------- | ----- | ----------------------------------------- |

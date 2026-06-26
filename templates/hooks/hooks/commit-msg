@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# vibecrafted-husky-template :: commit-msg
+#
+# Conventional Commits with optional [<agent>/<workflow>] prefix and optional
+# Vibecrafted agent/runtime trailers.
+#
+#   <type>(<scope>): <subject>
+#   [<agent>/<workflow>] <type>(<scope>): <subject>
+#
+# Types: feat fix docs style refactor perf test build ci chore revert
+# Subject: 1..$HUSKY_COMMIT_MSG_SUBJECT_MAX chars after the colon
+#
+# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+
+set -euo pipefail
+
+HUSKY_LIB="${BASH_SOURCE[0]%/*}/lib"
+# shellcheck disable=SC1090,SC1091
+. "$HUSKY_LIB/core.sh"
+husky_init
+
+[ "$HUSKY_COMMIT_MSG_CONVENTIONAL" = "1" ] || exit 0
+
+MSG_FILE="$1"
+
+# Skip merge / fixup / squash commits — they have a fixed prefix.
+first_line="$(head -n1 "$MSG_FILE" | tr -d '\r')"
+case "$first_line" in
+  "Merge "*|"Revert "*|"fixup!"*|"squash!"*|"amend!"*) exit 0 ;;
+esac
+
+types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+agent_prefix='\[[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_-]*\] '
+
+if [ "$HUSKY_COMMIT_MSG_ALLOW_AGENT_PREFIX" = "1" ]; then
+  pattern="^(${agent_prefix})?(${types})(\\(.+\\))?: .{1,${HUSKY_COMMIT_MSG_SUBJECT_MAX}}$"
+else
+  pattern="^(${types})(\\(.+\\))?: .{1,${HUSKY_COMMIT_MSG_SUBJECT_MAX}}$"
+fi
+
+if ! printf '%s' "$first_line" | grep -Eq "$pattern"; then
+  husky_err "Invalid commit message subject."
+  husky_log
+  husky_log "Format:  <type>(<scope>): <subject>"
+  if [ "$HUSKY_COMMIT_MSG_ALLOW_AGENT_PREFIX" = "1" ]; then
+    husky_log "     or  [<agent>/<workflow>] <type>(<scope>): <subject>"
+  fi
+  husky_log
+  husky_log "Types:   ${types//|/, }"
+  husky_log "Subject: 1..${HUSKY_COMMIT_MSG_SUBJECT_MAX} chars after the colon"
+  husky_log
+  husky_log "Examples:"
+  husky_log "  feat: add Unicode search to Studio"
+  husky_log "  fix(api): handle empty query gracefully"
+  if [ "$HUSKY_COMMIT_MSG_ALLOW_AGENT_PREFIX" = "1" ]; then
+    husky_log "  [claude/vc-workflow] refactor(studio): stylizer reuses backend engine"
+  fi
+  exit 1
+fi
+
+if [ "$HUSKY_COMMIT_MSG_REQUIRE_AGENT_RUNTIME" != "1" ]; then
+  exit 0
+fi
+
+if ! printf '%s' "$first_line" | grep -Eq "^${agent_prefix}"; then
+  husky_err "Agent/runtime commit standard requires [<agent>/<workflow>] prefix."
+  exit 1
+fi
+
+agent="$(printf '%s' "$first_line" | sed -E 's/^\[([a-z0-9][a-z0-9_-]*)\/[^]]+\].*/\1/')"
+failures=()
+
+if grep -Eiq '(^Co-Authored-By:|noreply@|@anthropic\.com|@openai\.com)' "$MSG_FILE"; then
+  failures+=("vendor footers are forbidden; use Authored-By only")
+fi
+
+if ! grep -Eq "^Authored-By: ${agent} <agents@vetcoders\\.io>$" "$MSG_FILE"; then
+  failures+=("missing Authored-By: ${agent} <agents@vetcoders.io>")
+fi
+if ! grep -Eq '^session_id: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "$MSG_FILE"; then
+  failures+=("missing session_id: <uuid>")
+fi
+if ! grep -Eq '^time: [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+-][0-9]{2}:[0-9]{2}|Z)$' "$MSG_FILE"; then
+  failures+=("missing time: YYYY-MM-DDTHH:MM:SS±HH:MM")
+fi
+
+if grep -Eq '^timestamp:' "$MSG_FILE"; then
+  failures+=("timestamp: is legacy; use time: <ISO-8601 offset>")
+fi
+if ! grep -Eq '^runtime: .+' "$MSG_FILE"; then
+  failures+=("missing runtime: <runtime name>")
+fi
+
+has_body=0
+while IFS= read -r line || [ -n "$line" ]; do
+  line="${line%$'\r'}"
+  case "$line" in
+    "$first_line"|"") continue ;;
+  esac
+  if printf '%s\n' "$line" | grep -Eq '^(Authored-By|session_id|time|runtime|Signed-off-by|Vibecrafted-Warn-Signature):'; then
+    continue
+  fi
+  has_body=1
+  break
+done < "$MSG_FILE"
+if [ "$has_body" -ne 1 ]; then
+  failures+=("commit message needs an explanatory body before trailers")
+fi
+
+if [ "${#failures[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+husky_err "Invalid Vibecrafted commit message."
+for failure in "${failures[@]}"; do
+  husky_log "  - $failure"
+done
+exit 1

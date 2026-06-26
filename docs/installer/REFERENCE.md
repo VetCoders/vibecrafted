@@ -11,13 +11,13 @@ which installer is public, which one is expert-only, and what counts as
 - Public human front door: browser-guided installer in `scripts/installer_gui.py`
 - Public CTA: `curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui`
 - Public compact path: `curl -fsSL https://vibecrafted.io/install.sh | bash`
-- Local terminal-native entrypoint: `make vibecrafted`
+- Local terminal-native entrypoint: `make install`
 - Local browser GUI entrypoint: `make wizard` (alias: `make gui-install`)
 - Mutation engine: `scripts/vetcoders_install.py`
 
 The public GUI-first path won because it is the most effortless surface for
 founders and launch-day strangers. A local checkout still defaults to
-`make vibecrafted` so repo-native operators keep a terminal-first path, while
+`make install` so repo-native operators keep a terminal-first path, while
 `make wizard` stays the browser surface on demand.
 
 ## Reference sources
@@ -61,14 +61,14 @@ The browser installer is only shippable if all of these remain true:
 
 - `install.sh --gui`
   Chooses the browser-guided front door for human onboarding.
-- `make vibecrafted`
+- `make install`
   Runs the terminal-native installer wizard from a local checkout.
 - `make wizard` / `make gui-install`
   Open the browser-guided installer from a local checkout when you want the GUI surface.
 - `scripts/vetcoders_install.py`
   Owns filesystem mutations, doctor output, and the reusable install truth.
 - `scripts/installer/vetcoders_installer/`
-  Owns the local terminal-native wizard used by `make vibecrafted`.
+  Owns the local terminal-native wizard used by `make install`.
 - `scripts/installer_gui.py`
   Owns browser diagnostics, helper-path logic, and the public GUI surface.
 

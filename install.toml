@@ -1,14 +1,14 @@
 # Vibecrafted install manifest — consumed by the built-in vetcoders-installer
 # under scripts/installer/.
 #
-#   make vibecrafted                      (terminal wizard, the default)
+#   make install                          (terminal wizard, the default)
+#   make setup-dev                        (same meta-installer, advanced options)
 #   make wizard                           (browser-based GUI, optional)
 #   uv run --project scripts/installer vetcoders-installer install.toml --dry-run
 #
 # Copy is taken verbatim from the author's mocks in docs/installer/*.md.
-# The installer's intro flow renders 0_welcome, 1_Explain and 2_listing
-# before this phase loop starts, so these reason blocks stay tight — they
-# are the per-phase confirmation text, not the full overview.
+# The installer's intro flow renders richer TTY screens when available. These
+# four phases are the fallback and consent checkpoints for the shell path.
 
 title = "⚒ Vibecrafted."
 version_file = "VERSION"
@@ -20,18 +20,31 @@ persist = true
 
 
 [[phase]]
-key = "diagnostics"
-label = "Diagnostics"
+key = "introduction"
+label = "Introduction"
 reason = """
-We will check your environment for:
-  - Any existing framework installation
-    foundations · workflows · helpers · binaries
-  - Toolchains
-    node · python · rust
-  - Agents
-    claude-code · codex · gemini-cli
-  - Additional tools
-    zellij · mise · starship · atuin · zoxide
+We will install 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. as a local-first framework for agent-assisted
+development. This step is intentionally quiet: it names the product, the install
+surface, and the fact that every durable write below has a reason.
+"""
+cmd = ["python3", "-c", "pass"]
+
+
+[[phase]]
+key = "diagnostics"
+label = "Diagnostics and plan"
+reason = """
+We will inspect the current machine before changing files.
+
+Required decision:
+  Set your artifacts storage location.
+  REASON: 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. keeps the persistent artifacts on developer's hard disks
+  for past session context retrieval. We make this location explicit so reports,
+  transcripts, and run state can be inspected, moved, backed up, or deleted.
+  Default: ${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/artifacts
+
+Installer options live in one place:
+  runtime horse · skill views · Python tools · dry-run or automation mode
 """
 cmd = [
     "python3",
@@ -47,37 +60,38 @@ key = "installation"
 label = "Installation"
 reason = """
 We will install:
-  - Missing dependencies
-  - Workflows (9 basic, 7 advanced)
-  - Helpers and binaries (executables and functions)
-"""
-cmd = ["bash", "scripts/install-foundations.sh"]
-
-
-[[phase]]
-key = "post-install"
-label = "Post-installation setup"
-reason = """
-We will configure:
-  - Workspace directories (in $VIBECRAFTED_ROOT/.vibecrafted/)
-  - Symlinks for AI coding agents (in $HOME/.agents/)
+  - validate product foundations: loctree and aicx stay product-managed
+  - install or validate framework-owned support tools when needed
+  - frontier agent configuration
+  - shared skills, launchers, and mirrored agent views
+  - the selected runtime horse when RUNTIME=... is provided
+  - the Python CLI and MCP packages through uv tool install
+  - the vendored foundation binaries from bin/vendor/<platform> when the bundle carries them
+  - the Rust app/server binaries (voc, vc-admin, vc-server) as real files in ~/.local/bin
 """
 cmd = [
     "bash",
+    "-e",
     "-c",
     '''
-bash skills/vc-agents/scripts/install-frontier-config.sh --source "." || printf '[warn] Frontier config skipped (non-fatal)\n'
-python3 scripts/vetcoders_install.py install --source "." --with-shell --compact --non-interactive --mirror
+bash scripts/install-foundations.sh
+bash runtime/scripts/install-frontier-config.sh --source "." || printf '[warn] Frontier config skipped (non-fatal)\n'
+python3 scripts/vetcoders_install.py install --source "." --compact --non-interactive --mirror
+bash scripts/install-runtime.sh --runtime "${VIBECRAFTED_RUNTIME:-none}" --yes
+make --no-print-directory install-python-tools
+make --no-print-directory install-vendored-binaries
+make --no-print-directory install-app-binaries
+make --no-print-directory install-server
 ''',
 ]
 
 
 [[phase]]
-key = "verification"
-label = "Verification and quick tour"
+key = "onboarding"
+label = "Onboarding"
 reason = """
-We will run `vibecrafted doctor` and surface the quick tour of
-the framework's most useful commands.
+We will run a final health check and leave the next useful commands visible:
+doctor, update, uninstall, and the first project-level Vibecrafted entrypoint.
 """
 cmd = [
     "python3",
@@ -91,6 +105,7 @@ header = "⚒ V A P O R C R A F T ⚒"
 name = "Vibecrafted."
 tagline = "The framework for making real products with agent CLIs."
 footer_tagline = "You can Vibecraft your first project now!"
+installer_cmd = "make install"
 
 [intro]
 screens = [
@@ -120,11 +135,50 @@ additional_tools = "Additional tools"
 [diagnostics.commands]
 foundations = ["loctree-mcp", "aicx-mcp", "prview", "screenscribe"]
 toolchains = ["python3", "node", "git", "rsync"]
-agents = ["claude", "codex", "gemini"]
+agents = ["claude", "codex", "gemini", "agy", "junie", "grok"]
 additional_tools = ["mise", "starship", "atuin", "zoxide"]
 
 [diagnostics.paths]
 store_dir = "$VIBECRAFTED_ROOT/.vibecrafted/skills"
 helpers = "$XDG_CONFIG_HOME/vetcoders/vc-skills.sh"
 binaries = ["vibecraft", "vibecrafted"]
-symlinks = ["$HOME/.agents", "$HOME/.claude", "$HOME/.codex", "$HOME/.gemini"]
+symlinks = ["$HOME/.agents", "$HOME/.claude", "$HOME/.codex", "$HOME/.gemini", "$HOME/.agy", "$HOME/.junie", "$HOME/.grok"]
+
+[runtime]
+default = "none"
+available = ["wezterm", "vc-apprt", "locterm", "microsandbox"]
+
+[runtime.picking.research]
+default_agents = ["claude", "codex", "gemini"]
+fallback_agents = ["grok", "junie", "agy"]
+reason = "Research needs three reliable independent workers. Claude, Codex, and Gemini are the mainstream packaged defaults; per-user runtime picks can override this in ~/.config/vibecrafted/config.toml without reinstalling."
+
+[runtime.horses.wezterm]
+label = "WezTerm"
+source = "$HOME/Libraxis/vc-runtime/wezterm"
+lab = "$HOME/Libraxis/vc-runtime/labs/wezterm-spine"
+platforms = ["macos", "linux", "wsl"]
+artifacts = ["wezterm", "$XDG_CONFIG_HOME/wezterm/vibecrafted"]
+
+[runtime.horses.vc-apprt]
+label = "vc-apprt"
+source = "$HOME/Libraxis/vc-runtime/vc_"
+lab = "$HOME/Libraxis/vc-runtime/labs/vc-apprt-spine"
+platforms = ["macos", "linux"]
+artifacts = ["vc_"]
+requires = ["zig 0.16"]
+
+[runtime.horses.locterm]
+label = "locterm"
+source = "$HOME/Libraxis/vc-runtime/locterm"
+lab = "$HOME/Libraxis/vc-runtime/labs/locterm-spine"
+platforms = ["macos"]
+artifacts = ["locterm.app", "iTerm2 AutoLaunch vc_launcher.py"]
+
+[runtime.horses.microsandbox]
+label = "microsandbox"
+source = "$HOME/Libraxis/vc-runtime/experimental/microsandbox"
+lab = "$HOME/Libraxis/vc-runtime/labs/microsandbox-execution"
+platforms = ["macos", "linux"]
+artifacts = ["msb", "msbserver"]
+requires = ["krunvm", "libkrun"]

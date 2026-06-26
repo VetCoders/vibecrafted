@@ -1,0 +1,8 @@
+{
+  "name": "vc-research",
+  "description": "Triple-agent research swarm. Use /vc-research to invoke.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

@@ -1,0 +1,94 @@
+# `vc-operator` Runtime
+
+`vc-operator` as an interactive skill does not automatically launch runtime.
+
+Runtime begins only when the operator chooses a live supervisor or workflow
+lane:
+
+```bash
+vibecrafted dispatch plan.dispatch.toml --doctor
+vibecrafted dispatch plan.dispatch.toml --dry-run --json
+vibecrafted dispatch run --run-id <id> --root . --report report.md --transcript trace.log -- <worker>
+vibecrafted workflow claude --file /path/to/plan.md
+vibecrafted implement codex --prompt '<bounded slice>'
+```
+
+## Runtime Responsibilities
+
+The operator posture creates or consumes durable state for fleet orchestration:
+
+- run metadata
+- transcript
+- wave tracker
+- append-only journal
+- worker briefs
+- launch cards and run IDs
+- per-wave close-outs
+- final stop-point handoff
+- plan mutation and security guardrail entries in the operator journal
+
+## Artifact Layout
+
+```text
+$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/
+  plans/
+  reports/
+  tmp/
+  dispatch-result.json or run-specific result files
+  <timestamp>_<slug>.transcript.log
+  <timestamp>_<slug>.meta.json
+```
+
+An operator-mode session may also keep `tracker.md`, `journal.md`, and
+`briefs/` for a multi-wave plan, but those artifacts are posture discipline, not
+proof that a public `vibecrafted operator` command exists.
+
+## Runtime Lanes
+
+| Need                        | Runtime lane                       |
+| --------------------------- | ---------------------------------- |
+| Plan is fuzzy               | `vibecrafted scaffold <agent>`     |
+| One worker slice            | `vibecrafted implement <agent>`    |
+| Strict ERi slice            | `vibecrafted workflow <agent>`     |
+| Truth-drift convergence     | `vibecrafted marbles <agent>`      |
+| A to Z polish for one slice | `vibecrafted ownership <agent>`    |
+| Shared strategy pause       | `vibecrafted partner <agent>`      |
+| Independent verification    | `vibecrafted audit <agent>`        |
+| Deterministic supervisor    | `vibecrafted dispatch <file.toml>` |
+| Outward ship                | `vibecrafted release <agent>`      |
+
+## Terminal States
+
+```yaml
+terminal_state:
+  stopped_at_operator_button:
+    requires:
+      - wave tracker updated
+      - journal updated
+      - reports and SHAs named
+      - remaining unpermitted human action named
+  completed_with_plan_permission:
+    requires:
+      - permission source named
+      - tracker updated
+      - journal updated
+      - reports and SHAs named
+  blocked_with_evidence:
+    requires:
+      - blocker classification
+      - attempted recovery
+      - nearest safe next action
+  escalated:
+    requires:
+      - target skill
+      - reason
+      - handoff state
+```
+
+## Non-Goals
+
+- Do not use runtime to hide decisions from the operator.
+- Do not run unwatchable dispatch.
+- Do not bypass launch telemetry.
+- Do not turn stop-point handoff into push/merge/deploy unless the written
+  plan or current session explicitly permitted that action.

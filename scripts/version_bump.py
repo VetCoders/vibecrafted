@@ -25,19 +25,18 @@ def _parse_version(value: str) -> tuple[int, int, int]:
 
 def resolve_next_version(current: str, requested: str) -> str:
     major, minor, patch = _parse_version(current)
-    match requested:
-        case "patch":
-            patch += 1
-        case "minor":
-            minor += 1
-            patch = 0
-        case "major":
-            major += 1
-            minor = 0
-            patch = 0
-        case _:
-            _parse_version(requested)
-            return requested
+    if requested == "patch":
+        patch += 1
+    elif requested == "minor":
+        minor += 1
+        patch = 0
+    elif requested == "major":
+        major += 1
+        minor = 0
+        patch = 0
+    else:
+        _parse_version(requested)
+        return requested
     return f"{major}.{minor}.{patch}"
 
 

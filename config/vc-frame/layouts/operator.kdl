@@ -1,0 +1,34 @@
+// operator — operator entrypoint
+// Launch: vibecrafted start | vc-start | vibecrafted dashboard operator
+//
+// Operator layout = the original, working strider layout.
+// The previous bespoke operator layout shipped a broken strider `cwd`
+// (`${VIBECRAFTED_HOME:-...}` is not expanded in a bare vc-frame layout `cwd`,
+// so strider opened a garbage path and died). The stock strider layout just
+// works: a file browser beside a shell. Agents spawned via marbles/workflow/
+// research still open as ADDITIONAL TABS in this session.
+layout {
+    // Bars on every tab (incl. agent tabs spawned by marbles/workflow/research
+    // into this session) so monitoring chrome is consistent across the session.
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="tab-bar"
+        }
+        children
+        pane size=2 borderless=true {
+            plugin location="status-bar"
+        }
+    }
+    // Primary operator tab: file browser ("Files", via strider's pane_title
+    // config — no plugin rebuild needed) beside a shell.
+    tab name="Operator" focus=true {
+        pane split_direction="Vertical" {
+            pane size="20%" {
+                plugin location="strider" {
+                    pane_title "Files"
+                }
+            }
+            pane
+        }
+    }
+}

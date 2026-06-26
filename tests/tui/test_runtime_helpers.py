@@ -8,7 +8,7 @@ import textwrap
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
+HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 RUNTIME_HELPER = REPO_ROOT / "runtime" / "helpers" / "vetcoders-runtime-core.sh"
 
 
@@ -21,7 +21,7 @@ def _run_vetcoders_helper(
     if env:
         run_env.update(env)
     return subprocess.run(
-        ["bash", "-lc", f'source "{helper_script}"; {command}'],
+        ["bash", "--noprofile", "--norc", "-c", f'source "{helper_script}"; {command}'],
         cwd=str(REPO_ROOT),
         env=run_env,
         capture_output=True,
@@ -49,6 +49,22 @@ def _write_fake_loct(fake_bin: Path, score: int, args_file: Path | None = None) 
         encoding="utf-8",
     )
     fake_loct.chmod(0o755)
+
+
+def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    script = bin_dir / name
+    script.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+            printf "%s\\n" "$@" >> "$CAPTURE_FILE"
+            """
+        ),
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
 
 
 def _install_runtime_probe_helper(helper_root: Path, marker: str) -> None:
@@ -87,7 +103,10 @@ def test_vetcoders_shim_prefers_runtime_helper_from_repo_root(tmp_path: Path) ->
 def test_vetcoders_shim_prefers_staged_tools_runtime_helper(tmp_path: Path) -> None:
     marker = "runtime-helper-from-staged-tools"
     staged_home = tmp_path / "vibecrafted-home" / ".vibecrafted"
-    staged_root = staged_home / "tools" / "vibecrafted-current"
+    tools_home = (
+        tmp_path / "vibecrafted-home" / ".local" / "share" / "vibecrafted" / "tools"
+    )
+    staged_root = tools_home / "vibecrafted-current"
     _install_runtime_probe_helper(staged_root, marker)
 
     installed_script = (
@@ -99,7 +118,11 @@ def test_vetcoders_shim_prefers_staged_tools_runtime_helper(tmp_path: Path) -> N
     result = _run_vetcoders_helper(
         installed_script,
         'printf "%s\\n" "$(_vetcoders_spawn_home codex)"',
-        {"VIBECRAFTED_HOME": str(staged_home), "VIBECRAFTED_ROOT": ""},
+        {
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_TOOLS_HOME": str(tools_home),
+            "VIBECRAFTED_ROOT": "",
+        },
     )
 
     assert result.returncode == 0
@@ -119,6 +142,7 @@ def test_vetcoders_spawn_script_path_stays_command_compatible() -> None:
     assert result.returncode == 0
     spawn_script = Path(result.stdout.strip())
     assert spawn_script.name == "codex_spawn.sh"
+    assert spawn_script.parent == REPO_ROOT / "runtime" / "scripts"
     assert spawn_script.is_file()
 
 
@@ -135,6 +159,244 @@ def test_vetcoders_keeps_launcher_entrypoints_available() -> None:
     assert "vc-polarize" in result.stdout
     assert "codex-implement" in result.stdout
     assert "command not found" not in result.stderr
+
+
+def test_vetcoders_helper_source_does_not_prepend_bundled_bin_to_path(
+    tmp_path: Path,
+) -> None:
+    preferred_bin = tmp_path / "preferred" / "bin"
+    preferred_bin.mkdir(parents=True)
+    preferred_vibecrafted = preferred_bin / "vibecrafted"
+    preferred_vibecrafted.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    preferred_vibecrafted.chmod(0o755)
+
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
+    bundled_bin = runtime_home / "bin"
+    bundled_bin.mkdir(parents=True)
+    bundled_vibecrafted = bundled_bin / "vibecrafted"
+    bundled_vibecrafted.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    bundled_vibecrafted.chmod(0o755)
+
+    initial_path = f"{preferred_bin}{os.pathsep}{os.defpath}"
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        'printf "%s\\n" "$PATH"; command -v vibecrafted',
+        {
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+        },
+    )
+
+    assert result.returncode == 0
+    path_after_source, resolved_vibecrafted = result.stdout.strip().splitlines()
+    assert path_after_source == initial_path
+    assert resolved_vibecrafted == str(preferred_vibecrafted)
+
+
+def test_vetcoders_require_vc_frame_uses_bundled_vc_frame_priority_without_path_leak(
+    tmp_path: Path,
+) -> None:
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
+    bundled_bin = runtime_home / "bin"
+    bundled_bin.mkdir(parents=True)
+    bundled_vc_frame = bundled_bin / "vc-frame"
+    bundled_vc_frame.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    bundled_vc_frame.chmod(0o755)
+
+    initial_path = os.defpath
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        (
+            "_vetcoders_require_vc_frame; "
+            'printf "PATH=%s\\n" "$PATH"; '
+            "command -v vc-frame || true"
+        ),
+        {
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout == f"PATH={initial_path}\n"
+
+
+def test_vetcoders_vc_frame_bin_prefers_vc_frame_on_path(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    _write_capture_command(fake_bin, "vc-frame", tmp_path / "vc_frame-args.txt")
+    _write_capture_command(fake_bin, "vc-frame", tmp_path / "vc-frame-args.txt")
+
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        "_vetcoders_vc_frame_bin",
+        {
+            "PATH": f"{fake_bin}:{os.defpath}",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert result.stdout.strip() == str(fake_bin / "vc-frame")
+
+
+def test_dashboard_uses_bundled_vc_frame_priority_without_path_leak(
+    tmp_path: Path,
+) -> None:
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
+    capture_file = tmp_path / "vc-frame-args.txt"
+    _write_capture_command(runtime_home / "bin", "vc-frame", capture_file)
+
+    initial_path = os.defpath
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        '_vetcoders_launch_dashboard ls && printf "PATH=%s\\n" "$PATH"',
+        {
+            "CAPTURE_FILE": str(capture_file),
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert capture_file.read_text(encoding="utf-8").splitlines() == ["list-sessions"]
+    assert result.stdout == f"PATH={initial_path}\n"
+
+
+def test_await_pane_stays_silent_without_meta_helper(
+    tmp_path: Path,
+) -> None:
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
+    capture_file = tmp_path / "vc-frame-args.txt"
+    _write_capture_command(runtime_home / "bin", "vc-frame", capture_file)
+
+    initial_path = os.defpath
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        (
+            '_vetcoders_maybe_spawn_await_pane codex review run-424242 "$PWD"; '
+            "sleep 0.2; "
+            'printf "PATH=%s\\n" "$PATH"'
+        ),
+        {
+            "CAPTURE_FILE": str(capture_file),
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+            "VC_FRAME": "operator",
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert not capture_file.exists()
+    assert result.stdout == f"PATH={initial_path}\n"
+
+
+def test_await_pane_targets_operator_tab_with_bundled_vc_frame_without_path_leak(
+    tmp_path: Path,
+) -> None:
+    staged_home = tmp_path / "home" / ".vibecrafted"
+    runtime_home = tmp_path / "home" / ".local" / "share" / "vibecrafted"
+    capture_file = tmp_path / "vc-frame-args.txt"
+    artifacts_dir = staged_home / "artifacts" / "repo" / "2026_0611" / "reports"
+    artifacts_dir.mkdir(parents=True)
+    meta = artifacts_dir / "run.meta.json"
+    transcript = artifacts_dir / "run.transcript.log"
+    transcript.write_text("", encoding="utf-8")
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "run-424242",
+                "status": "running",
+                "agent": "codex",
+                "mode": "review",
+                "transcript": str(transcript),
+                "launcher_pid": os.getpid(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    helper_root = tmp_path / "frontier"
+    helper = (
+        helper_root / "config" / "agents" / "scripts" / "vibecrafted-await-watch.sh"
+    )
+    helper.parent.mkdir(parents=True)
+    helper.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    helper.chmod(0o755)
+    (helper_root / "config" / "starship.toml").write_text("", encoding="utf-8")
+
+    _write_capture_command(runtime_home / "bin", "vc-frame", capture_file)
+    jq = runtime_home / "bin" / "jq"
+    jq.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+            if [[ "${1:-}" == "-r" ]]; then
+              filter="${2:-}"
+              file="${3:-}"
+            else
+              filter="${1:-}"
+              file="${2:-}"
+            fi
+            python3 - "$filter" "$file" <<'PY'
+            import json
+            import sys
+
+            key = sys.argv[1].split()[0].lstrip(".")
+            with open(sys.argv[2], "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+            value = payload.get(key, "")
+            print("" if value is None else value)
+            PY
+            """
+        ),
+        encoding="utf-8",
+    )
+    jq.chmod(0o755)
+
+    initial_path = os.defpath
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        (
+            '_vetcoders_maybe_spawn_await_pane codex review run-424242 "$PWD" 7 3; '
+            "sleep 1.2; "
+            'printf "PATH=%s\\n" "$PATH"'
+        ),
+        {
+            "CAPTURE_FILE": str(capture_file),
+            "PATH": initial_path,
+            "VIBECRAFTED_HOME": str(staged_home),
+            "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
+            "VIBECRAFTED_ROOT": str(helper_root),
+            "VC_FRAME": "operator",
+        },
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert capture_file.exists()
+    payload = capture_file.read_text(encoding="utf-8")
+    assert "action\nnew-pane" in payload
+    assert "--tab-id\n7" in payload
+    assert "--floating" in payload
+    assert "--name\nawait:codex:424242" in payload
+    assert f"--meta\n{meta}" in payload
+    assert "--run-id" not in payload
+    assert "action\nfocus-pane-id\n3" in payload
+    assert result.stdout == f"PATH={initial_path}\n"
 
 
 def test_compact_session_name_is_zsh_compatible() -> None:
@@ -183,14 +445,63 @@ def test_vc_skill_wrapper_help_after_agent_does_not_launch_worker() -> None:
         HELPER_SCRIPT,
         (
             "_vetcoders_skill_entry() { printf 'launched\\n'; return 99; }; "
-            "vc-ownership codex --help"
+            "vc-review codex --help"
         ),
         {"VIBECRAFTED_ROOT": str(REPO_ROOT)},
     )
 
     assert result.returncode == 0
-    assert "Usage: vc-ownership <claude|codex|gemini>" in result.stderr
+    assert "Usage: vc-review <claude|codex|gemini|agy|junie|grok>" in result.stderr
     assert "launched" not in result.stdout
+
+
+def test_skill_dispatch_prints_launch_receipt(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    control_dir = home / ".vibecrafted" / "control_plane" / "runs"
+    report = tmp_path / "report.md"
+    transcript = tmp_path / "trace.log"
+    launcher = tmp_path / "launcher.sh"
+
+    result = _run_vetcoders_helper(
+        HELPER_SCRIPT,
+        (
+            "_vetcoders_generate_run_id() { printf 'prun-010203-44444\\n'; }; "
+            "_vetcoders_default_runtime() { printf 'headless\\n'; }; "
+            "_vetcoders_dispatch_skill_prompt() { "
+            '  mkdir -p "$CONTROL_DIR"; '
+            '  cat > "$CONTROL_DIR/$5.json" <<JSON\n'
+            "{"
+            f'"state":"launching",'
+            f'"latest_report":"{report}",'
+            f'"latest_transcript":"{transcript}",'
+            f'"launcher":"{launcher}"'
+            "}\n"
+            "JSON\n"
+            "  printf 'stub dispatch\\n'; "
+            "}; "
+            "vc-prune claude --prompt 'triage gems'"
+        ),
+        {
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "VIBECRAFTED_HOME": str(home / ".vibecrafted"),
+            "CONTROL_DIR": str(control_dir),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "stub dispatch" in result.stdout
+    assert "VIBECRAFTED LAUNCH RECEIPT" in result.stdout
+    assert "run_id:     prun-010203-44444" in result.stdout
+    assert "report:     " + str(report) in result.stdout
+    assert "transcript: " + str(transcript) in result.stdout
+    assert (
+        "observe:    vibecrafted claude observe --run-id prun-010203-44444"
+        in result.stdout
+    )
+    assert (
+        "await:      vibecrafted claude await --run-id prun-010203-44444"
+        in result.stdout
+    )
 
 
 def test_vc_polarize_task_injects_prism_payload(tmp_path: Path) -> None:
@@ -203,6 +514,7 @@ def test_vc_polarize_task_injects_prism_payload(tmp_path: Path) -> None:
         HELPER_SCRIPT,
         (
             f'export PATH="{fake_bin}:$PATH"; '
+            "_vetcoders_default_runtime() { printf 'headless\\n'; }; "
             '_vetcoders_prompt_text() { printf \'%s\' "$3" > "$CAPTURE_FILE"; }; '
             "vc-polarize codex --task 'marbles versus polarize skills: polarize them' --no-context-corpus"
         ),
@@ -294,6 +606,7 @@ def test_polarize_band_pass_high(tmp_path: Path) -> None:
         HELPER_SCRIPT,
         (
             f'export PATH="{fake_bin}:$PATH"; '
+            "_vetcoders_default_runtime() { printf 'headless\\n'; }; "
             '_vetcoders_prompt_text() { printf \'%s\' "$3" > "$CAPTURE_FILE"; printf "session: b63af6c1-dd0e-4d2c-ad31-a52df443f4ad\\n"; }; '
             "vc-polarize codex --task 'pass tier concept' --no-context-corpus"
         ),
@@ -319,6 +632,7 @@ def test_polarize_band_doctrine_max(tmp_path: Path) -> None:
         HELPER_SCRIPT,
         (
             f'export PATH="{fake_bin}:$PATH"; '
+            "_vetcoders_default_runtime() { printf 'headless\\n'; }; "
             '_vetcoders_prompt_text() { printf \'%s\' "$3" > "$CAPTURE_FILE"; printf "session: b63af6c1-dd0e-4d2c-ad31-a52df443f4ad\\n"; }; '
             "vc-polarize codex --task 'doctrine tier concept' --no-context-corpus"
         ),

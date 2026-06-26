@@ -3,21 +3,24 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF_USAGE'
-Usage: install.sh [--gui] [--yes] [--ref <branch>] [--archive-url <url> | --archive-file <path>] [--tools-dir <dir>] [make-target]
+Usage: install.sh [--gui] [--yes] [--runtime <horse>] [--ref <branch>] [--archive-url <url> | --archive-file <path>] [--tools-dir <dir>] [make-target]
 
-Bootstrap a local 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. source snapshot into $VIBECRAFTED_ROOT/.vibecrafted/tools and then
+Bootstrap a local 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. source snapshot into $HOME/.local/share/vibecrafted/tools and then
 run a local staged install path from that copy.
 
 Use `--gui` when you want the browser-based guided installer.
 Use `--yes` to skip the attended bootstrap confirmation prompt.
+Use `--runtime <horse>` to install and activate a lab runtime: wezterm, vc-apprt, locterm, microsandbox, or none.
 Non-interactive runs without `--gui` bypass the browser and call the compact installer directly.
 
 Examples:
   curl -fsSL https://vibecrafted.io/install.sh | bash
   curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --gui
   curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --yes
+  curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --runtime wezterm
   curl -fsSL https://vibecrafted.io/install.sh | bash -s -- --ref develop
   bash install.sh doctor
+  bash install.sh --runtime locterm
   bash install.sh --archive-file /tmp/vibecrafted.tar.gz vibecrafted
 EOF_USAGE
 }
@@ -29,6 +32,138 @@ die() {
 
 info() {
   printf '%s\n' "$*"
+}
+
+# Output discipline: the default view is calm storytelling (≤10 lines total,
+# ≤2 per install section). Detail lines are gated — VERBOSE=1 restores the
+# full bazaar, nothing is lost.
+vinfo() {
+  if [[ "${VERBOSE:-0}" == "1" ]]; then
+    printf '%s\n' "$*"
+  fi
+}
+
+# -----------------------------------------------------------------------------
+# Platform detection (Plan 03 — cross-platform install)
+#
+# detect_platform sets PLATFORM_OS to one of: macos, linux, wsl, unsupported.
+# detect_linux_distro sets LINUX_DISTRO_ID (e.g. debian, ubuntu, arch, fedora)
+# and LINUX_PKG_MGR (apt, dnf, pacman, "") based on /etc/os-release. Both are
+# safe to call multiple times. On macOS, the linux helpers are no-ops.
+#
+# The detection layer is informational only — it does NOT change the staged
+# install layout. macOS path (`$HOME/.vibecrafted`) and Linux/WSL path are
+# the same; only the pre-flight hints (which package manager to suggest)
+# differ. WSL is treated as Linux for runtime; the WSL banner only changes
+# the user-facing message.
+# -----------------------------------------------------------------------------
+
+PLATFORM_OS=""
+LINUX_DISTRO_ID=""
+LINUX_PKG_MGR=""
+
+detect_platform() {
+  case "$(uname -s)" in
+    Darwin*)
+      PLATFORM_OS="macos"
+      ;;
+    Linux*)
+      # WSL: kernel release contains 'microsoft' or '/proc/version' mentions it.
+      if grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease 2>/dev/null \
+         || grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
+        PLATFORM_OS="wsl"
+      else
+        PLATFORM_OS="linux"
+      fi
+      ;;
+    MINGW*|MSYS*|CYGWIN*)
+      PLATFORM_OS="unsupported"
+      ;;
+    *)
+      PLATFORM_OS="unsupported"
+      ;;
+  esac
+}
+
+detect_linux_distro() {
+  LINUX_DISTRO_ID=""
+  LINUX_PKG_MGR=""
+  [[ "$PLATFORM_OS" == "linux" || "$PLATFORM_OS" == "wsl" ]] || return 0
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    LINUX_DISTRO_ID="$(. /etc/os-release && printf '%s' "${ID:-}")"
+  fi
+  case "$LINUX_DISTRO_ID" in
+    debian|ubuntu|linuxmint|pop|raspbian)
+      LINUX_PKG_MGR="apt"
+      ;;
+    fedora|rhel|centos|rocky|almalinux)
+      LINUX_PKG_MGR="dnf"
+      ;;
+    arch|manjaro|endeavouros)
+      LINUX_PKG_MGR="pacman"
+      ;;
+    *)
+      LINUX_PKG_MGR=""
+      ;;
+  esac
+}
+
+# preflight_pkg_hint emits a copy-pasteable install command for the named
+# missing tool, scoped to the detected Linux package manager. macOS path
+# uses brew. On unknown distros, emit a generic message. Idempotent and
+# silent under non-Linux/macOS hosts.
+preflight_pkg_hint() {
+  local missing="$1"
+  case "$PLATFORM_OS" in
+    macos)
+      printf '  hint: brew install %s\n' "$missing" >&2
+      ;;
+    linux|wsl)
+      case "$LINUX_PKG_MGR" in
+        apt)
+          printf '  hint: sudo apt-get update && sudo apt-get install -y %s\n' "$missing" >&2
+          ;;
+        dnf)
+          printf '  hint: sudo dnf install -y %s\n' "$missing" >&2
+          ;;
+        pacman)
+          printf '  hint: sudo pacman -S --noconfirm %s\n' "$missing" >&2
+          ;;
+        *)
+          printf '  hint: install %s via your distro package manager\n' "$missing" >&2
+          ;;
+      esac
+      ;;
+    *)
+      printf '  hint: install %s for your platform\n' "$missing" >&2
+      ;;
+  esac
+}
+
+platform_banner() {
+  case "$PLATFORM_OS" in
+    macos)
+      info "Platform: macOS ($(uname -m))"
+      ;;
+    linux)
+      if [[ -n "$LINUX_DISTRO_ID" ]]; then
+        info "Platform: Linux / $LINUX_DISTRO_ID ($(uname -m))"
+      else
+        info "Platform: Linux / generic ($(uname -m))"
+      fi
+      ;;
+    wsl)
+      if [[ -n "$LINUX_DISTRO_ID" ]]; then
+        info "Platform: WSL / $LINUX_DISTRO_ID ($(uname -m))"
+      else
+        info "Platform: WSL / generic ($(uname -m))"
+      fi
+      ;;
+    *)
+      info "Platform: $(uname -s) (unsupported — best-effort only)"
+      ;;
+  esac
 }
 
 extract_tarball() {
@@ -65,6 +200,75 @@ default_vibecrafted_home() {
   printf '%s\n' "$HOME/.vibecrafted"
 }
 
+default_vibecrafted_runtime_home() {
+  if [[ -n "${VIBECRAFTED_RUNTIME_HOME:-}" ]]; then
+    printf '%s\n' "$VIBECRAFTED_RUNTIME_HOME"
+    return
+  fi
+  if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+    printf '%s\n' "$XDG_DATA_HOME/vibecrafted"
+    return
+  fi
+  printf '%s\n' "$HOME/.local/share/vibecrafted"
+}
+
+canonical_vibecrafted_home() {
+  printf '%s\n' "$HOME/.vibecrafted"
+}
+
+canonical_vibecrafted_runtime_home() {
+  printf '%s\n' "$HOME/.local/share/vibecrafted"
+}
+
+canonical_vibecrafted_launcher_bin() {
+  printf '%s\n' "$HOME/.local/bin"
+}
+
+pause_runtime_contract_failure() {
+  if ! is_interactive_session; then
+    return
+  fi
+  printf '  → fix: vibecrafted doctor --fix-launchers\n' >&2
+  printf 'Press Enter to continue, or Ctrl-C to abort: '
+  read -r _ || true
+}
+
+enforce_runtime_root_contract() {
+  local expected_store expected_runtime expected_launcher
+  local resolved_store resolved_runtime resolved_launcher
+  local failed=0
+
+  expected_store="$(canonical_vibecrafted_home)"
+  expected_runtime="$(canonical_vibecrafted_runtime_home)"
+  expected_launcher="$(canonical_vibecrafted_launcher_bin)"
+
+  resolved_store="$(default_vibecrafted_home)"
+  resolved_runtime="$(default_vibecrafted_runtime_home)"
+  resolved_launcher="${VIBECRAFTED_LAUNCHER_BIN:-$expected_launcher}"
+
+  if [[ "$resolved_store" != "$expected_store" ]]; then
+    printf '✗ store root drift: %s ≠ %s\n' "$resolved_store" "$expected_store" >&2
+    failed=1
+  fi
+
+  if [[ "$resolved_runtime" != "$expected_runtime" ]]; then
+    printf '✗ runtime root drift: %s ≠ %s\n' "$resolved_runtime" "$expected_runtime" >&2
+    failed=1
+  fi
+
+  if [[ "$resolved_launcher" != "$expected_launcher" ]]; then
+    printf '✗ launcher root drift: %s ≠ %s\n' "$resolved_launcher" "$expected_launcher" >&2
+    failed=1
+  fi
+
+  if [[ "$failed" == "1" ]]; then
+    pause_runtime_contract_failure
+    return 1
+  fi
+
+  return 0
+}
+
 sanitize_ref() {
   printf '%s' "$1" | tr '/:@ ' '----' | tr -cd '[:alnum:]._-' 
 }
@@ -95,27 +299,22 @@ prompt_attended_consent() {
   has_attended_tty || return 0
 
   if [[ -n "$archive_file" ]]; then
-    source_description="unpack local archive: $archive_file"
+    source_description="unpack"
   else
-    source_description="download snapshot: $archive_url"
+    source_description="download"
   fi
   next_step="$(bootstrap_next_step)"
 
   {
     printf '\n'
-    printf 'This bootstrap will:\n'
-    printf '  • %s\n' "$source_description"
-    printf '  • stage the control plane under %s\n' "$staged_dir"
-    printf '  • refresh the current symlink at %s\n' "$current_link"
-    printf '  • %s\n' "$next_step"
-    printf '\n'
-    printf 'Nothing will be staged or installed until you say yes.\n'
+    printf '⚒ 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. → %s\n' "$staged_dir"
+    printf '  %s · stage · %s\n' "$source_description" "$next_step"
   } > /dev/tty
 
   while true; do
     printf 'Proceed? [y/N] ' > /dev/tty
     if ! IFS= read -r response < /dev/tty; then
-      printf '\nBootstrap cancelled: no confirmation received.\n' > /dev/tty
+      printf '\nCancelled.\n' > /dev/tty
       exit 1
     fi
     case "$response" in
@@ -124,7 +323,7 @@ prompt_attended_consent() {
         return 0
         ;;
       ""|[nN]|[nN][oO])
-        printf '\nCancelled. Nothing was staged or installed.\n' > /dev/tty
+        printf '\nCancelled.\n' > /dev/tty
         exit 0
         ;;
       *)
@@ -136,7 +335,9 @@ prompt_attended_consent() {
 
 vibecrafted_home="$(default_vibecrafted_home)"
 export VIBECRAFTED_HOME="$vibecrafted_home"
-default_tools_dir="${VIBECRAFTED_TOOLS_HOME:-$vibecrafted_home/tools}"
+vibecrafted_runtime_home="$(default_vibecrafted_runtime_home)"
+export VIBECRAFTED_RUNTIME_HOME="$vibecrafted_runtime_home"
+default_tools_dir="${VIBECRAFTED_TOOLS_HOME:-$vibecrafted_runtime_home/tools}"
 default_ref="${VIBECRAFTED_REF:-main}"
 
 ref="$default_ref"
@@ -146,6 +347,7 @@ tools_dir="$default_tools_dir"
 target="vibecrafted"
 use_gui=0
 auto_yes=0
+runtime="none"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -154,6 +356,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --yes|-y)
       auto_yes=1
+      ;;
+    --runtime)
+      shift
+      [[ $# -gt 0 ]] || die "Missing value for --runtime"
+      runtime="$1"
       ;;
     --ref)
       shift
@@ -200,6 +407,19 @@ if [[ "$use_gui" == "1" && "$target" != "vibecrafted" ]]; then
   die "--gui can only be used with the default vibecrafted install target"
 fi
 
+case "$runtime" in
+  none|wezterm|vc-apprt|locterm|microsandbox)
+    ;;
+  vc_apprt|vc-)
+    runtime="vc-apprt"
+    ;;
+  *)
+    die "Unknown runtime horse: $runtime (expected wezterm, vc-apprt, locterm, microsandbox, none)"
+    ;;
+esac
+
+enforce_runtime_root_contract || exit 1
+
 if [[ -z "$archive_url" && -z "$archive_file" ]]; then
   # Resolve latest version from the channel manifest instead of hard-pinning.
   channel_url="https://vibecrafted.io/channel/${ref}.json"
@@ -210,19 +430,63 @@ if [[ -z "$archive_url" && -z "$archive_file" ]]; then
   fi
   if [[ -n "$resolved_url" ]]; then
     archive_url="$resolved_url"
-    info "Resolved from channel ($ref): $archive_url"
+    vinfo "Resolved from channel ($ref): $archive_url"
   else
     # Fallback: source snapshot for pre-channel / pre-deploy kickoffs.
     archive_url="https://github.com/VetCoders/vibecrafted/archive/refs/heads/${ref}.tar.gz"
-    info "[note] Channel manifest not available — using GitHub source snapshot for ${ref}"
+    vinfo "[note] Channel manifest not available — using GitHub source snapshot for ${ref}"
   fi
 fi
 
-command -v tar >/dev/null 2>&1 || die "tar is required"
-command -v make >/dev/null 2>&1 || die "make is required"
-command -v python3 >/dev/null 2>&1 || die "python3 is required"
+detect_platform
+detect_linux_distro
+platform_banner
+
+if [[ "$PLATFORM_OS" == "unsupported" ]]; then
+  info ""
+  info "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. v1.x ships native Linux + macOS + WSL paths."
+  info "On native Windows the installer must run inside WSL2:"
+  info "    wsl bash -c 'curl -fsSL https://vibecrafted.io/install.sh | bash'"
+  info "Or open: https://github.com/VetCoders/vibecrafted/issues to track v2.x"
+  info "native Windows support."
+  die "Unsupported platform: $(uname -s). Re-run inside WSL2."
+fi
+
+case "$runtime:$PLATFORM_OS" in
+  none:*|wezterm:macos|wezterm:linux|wezterm:wsl|vc-apprt:macos|vc-apprt:linux|locterm:macos|microsandbox:macos|microsandbox:linux)
+    ;;
+  locterm:*)
+    die "locterm is macOS-only, try --runtime wezterm or --runtime microsandbox"
+    ;;
+  vc-apprt:*)
+    die "vc-apprt supports macOS and Linux only, try --runtime wezterm"
+    ;;
+  microsandbox:*)
+    die "microsandbox requires macOS HVF or Linux KVM, try --runtime wezterm"
+    ;;
+  *)
+    die "Unsupported platform '$PLATFORM_OS' for runtime '$runtime'"
+    ;;
+esac
+
+# Pre-flight tool check — on missing tools, emit a copy-pasteable install
+# hint for the detected platform (Plan 03). Cross-platform tar/make/python3
+# are widely available; the hint only fires when they really are missing
+# (slim container, fresh VM, etc.). macOS path preserved exactly.
+preflight_require() {
+  local tool="$1"
+  command -v "$tool" >/dev/null 2>&1 && return 0
+  printf 'Error: %s is required\n' "$tool" >&2
+  preflight_pkg_hint "$tool"
+  exit 1
+}
+
+preflight_require tar
+preflight_require make
+preflight_require python3
+export VIBECRAFTED_TOOLS_HOME="$tools_dir"
 if [[ -z "$archive_file" ]]; then
-  command -v curl >/dev/null 2>&1 || die "curl is required"
+  preflight_require curl
 else
   [[ -f "$archive_file" ]] || die "Archive file not found: $archive_file"
 fi
@@ -267,11 +531,11 @@ verify_signature() {
   if [[ -n "$expected" && "$actual" != "$expected" ]]; then
     die "SHA256 mismatch for $(basename "$file"): expected $expected, got $actual"
   fi
-  [[ -n "$expected" ]] && info "  SHA256 ✓"
+  [[ -n "$expected" ]] && vinfo "  SHA256 ✓"
 
   if curl -fsSL "${base_url}/$(basename "$sig_file")" -o "$sig_file" 2>/dev/null; then
     if openssl dgst -sha256 -verify "$pub_file" -signature "$sig_file" "$file" >/dev/null 2>&1; then
-      info "  Signature ✓  (Maciej Gad / MW223P3NPX)"
+      vinfo "  Signature ✓  (Maciej Gad / MW223P3NPX)"
     else
       die "Signature verification FAILED for $(basename "$file")"
     fi
@@ -281,15 +545,16 @@ verify_signature() {
 }
 
 if [[ -n "$archive_file" ]]; then
-  info "Unpacking local archive: $archive_file"
+  info "Unpacking the local snapshot…"
+  vinfo "  archive: $archive_file"
   extract_tarball "$archive_file" "$extract_root"
 else
-  info "Downloading 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. snapshot: $archive_url"
+  info "Fetching vibecrafted ($ref)…"
+  vinfo "  source: $archive_url"
   local_archive="$tmpdir/$(basename "$archive_url")"
   curl -fsSL "$archive_url" -o "$local_archive"
 
   base_url="${archive_url%/*}"
-  info "Verifying integrity..."
   verify_signature "$local_archive" "$base_url"
 
   extract_tarball "$local_archive" "$extract_root"
@@ -314,11 +579,6 @@ rm -rf "$staged_dir"
 mv "$incoming_dir" "$staged_dir"
 ln -sfn "$staged_dir" "$current_link"
 
-info "Staged bootstrap source:"
-info "  $staged_dir"
-info "Current control plane:"
-info "  $current_link"
-
 # Read canonical VERSION file from the staged source tree for the post-install banner.
 # The repo ships VERSION at the root; fall back to 'unknown' if absent (e.g. custom tarballs).
 _installed_version=""
@@ -327,15 +587,17 @@ if [[ -f "$staged_dir/VERSION" ]]; then
 fi
 [[ -n "$_installed_version" ]] || _installed_version="unknown"
 
+# Section truth line: what just became true, in one calm line.
+info "✓ Staged vibecrafted $_installed_version → $current_link"
+
 post_install_banner() {
+  # The default view already told the staging truth in one line; the full
+  # banner is detail and lives behind VERBOSE=1.
+  [[ "${VERBOSE:-0}" == "1" ]] || return 0
   printf '\n'
   info "---------------------------------------------------------------"
   info " Staged: vibecrafted $_installed_version"
   info " Channel:   tarball"
-  info ""
-  info " The archive has been extracted and symlinked."
-  info " Shell integration runs next — if the step below fails,"
-  info " re-run the install command."
   info ""
   info " Update:  vibecrafted update"
   info " Health:  vibecrafted doctor"
@@ -346,38 +608,26 @@ if [[ "$target" == "vibecrafted" && "$use_gui" == "1" ]]; then
   gui_installer="$current_link/scripts/installer_gui.py"
   [[ -f "$gui_installer" ]] || die "Guided installer not found: $gui_installer"
   post_install_banner
-  info "Launching guided installer UI:"
-  info "  python3 $gui_installer --source $current_link"
-  printf '\n'
+  info "▸ Launching the guided installer (browser UI)…"
+  vinfo "  python3 $gui_installer --source $current_link"
+  export VIBECRAFTED_RUNTIME="$runtime"
   exec python3 "$gui_installer" --source "$current_link"
 fi
 
 if [[ "$target" == "vibecrafted" ]] && ! is_interactive_session; then
-  installer="$current_link/scripts/vetcoders_install.py"
-  [[ -f "$installer" ]] || die "Installer not found: $installer"
-  info "Non-interactive bootstrap detected:"
-  info "  bypassing the browser UI and running compact installer"
-
-  # Install foundations (loctree, aicx) from GH releases before the main installer.
-  foundations_script="$current_link/scripts/install-foundations.sh"
-  if [[ -x "$foundations_script" ]] || [[ -f "$foundations_script" ]]; then
-    info "Installing foundations..."
-    bash "$foundations_script" || info "  [warn] Foundation install had issues (non-fatal)"
-  fi
-
-  # Ensure foundations and tools installed by install-foundations.sh are visible.
-  for _p in "${vibecrafted_home}/bin" "${vibecrafted_home}/tools/node/bin" "$HOME/.cargo/bin"; do
+  # Non-TTY public installs use the same automation lane as local source
+  # installs. Keep the old bootstrap/staging work above, then hand off to the
+  # manifest-owned installer so stdout remains compact and the detail lands in
+  # the installer log.
+  for _p in "$HOME/.local/bin" "${tools_dir}/node/bin"; do
     case ":${PATH}:" in
       *":${_p}:"*) ;;
       *) [[ -d "$_p" ]] && export PATH="${_p}:${PATH}" ;;
     esac
   done
 
-  post_install_banner
-  info "Launching installer:"
-  info "  python3 $installer install --source $current_link --with-shell --compact --non-interactive"
-  printf '\n'
-  exec python3 "$installer" install --source "$current_link" --with-shell --compact --non-interactive
+  export VIBECRAFTED_RUNTIME="$runtime"
+  exec make --no-print-directory -C "$current_link" install-auto RUNTIME="$runtime"
 fi
 
 # Interactive terminal session: default target is the built-in
@@ -393,7 +643,7 @@ if [[ "$target" == "vibecrafted" ]]; then
 
   # Make sure user-local binaries (cargo, .local) are visible to the installer's
   # subprocesses — otherwise tools installed outside PATH won't be detected.
-  for _p in "${vibecrafted_home}/bin" "${vibecrafted_home}/tools/node/bin" "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+  for _p in "$HOME/.local/bin" "${tools_dir}/node/bin"; do
     case ":${PATH}:" in
       *":${_p}:"*) ;;
       *) [[ -d "$_p" ]] && export PATH="${_p}:${PATH}" ;;
@@ -405,20 +655,20 @@ if [[ "$target" == "vibecrafted" ]]; then
     curl -LsSf https://astral.sh/uv/install.sh | sh \
       || die "Failed to bootstrap uv"
     # shellcheck disable=SC1090
+    # shellcheck disable=SC1091
     [[ -f "$HOME/.local/bin/env" ]] && source "$HOME/.local/bin/env"
     export PATH="$HOME/.local/bin:$PATH"
   fi
 
   post_install_banner
-  info "Running built-in installer:"
-  info "  uv run --project $installer_dir vetcoders-installer $manifest"
-  printf '\n'
+  info "▸ Opening the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. installer…"
+  vinfo "  uv run --project $installer_dir vetcoders-installer $manifest"
+  export VIBECRAFTED_RUNTIME="$runtime"
   exec uv run --project "$installer_dir" --quiet vetcoders-installer "$manifest"
 fi
 
 post_install_banner
-info "Launching local make target:"
-info "  make --no-print-directory -C $current_link $target"
-printf '\n'
+info "▸ Running make ${target}…"
+vinfo "  make --no-print-directory -C $current_link $target"
 
 exec make --no-print-directory -C "$current_link" "$target"

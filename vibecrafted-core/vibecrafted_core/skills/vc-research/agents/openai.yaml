@@ -1,0 +1,10 @@
+interface:
+  display_name: "VC Research"
+  short_description: "Deep, triangulated, bias-free research"
+  default_prompt: "Use $vc-research for deep, triangulated, bias-free research on $TOPIC. TOPIC can be any phrase, statement, or question which might be too extensive to examine by single model"
+
+parameters:
+  - name: "TOPIC"
+    type: string
+    description: "The topic to research"
+    required: true

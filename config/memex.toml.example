@@ -1,0 +1,34 @@
+# config/memex.toml.example — Plan 09 (META_22)
+#
+# Memex cross-session retrieval client configuration template.
+# Copy to ~/.config/vetcoders/memex.toml and edit. Never commit a real
+# token to source control — the file path lives in the operator's
+# private $XDG_CONFIG_HOME (or ~/.config) by convention.
+#
+# This is OPT-IN. Without this file (or the matching env vars) the
+# memex client stays disabled and /vc-init Sense 1 fallthrough is a
+# no-op. Vibecrafted works without memex; memex enriches agent
+# perception when present.
+#
+# See docs/MEMEX.md for the operator guide.
+
+# Mesh-hosted memex endpoint. The kronika 2026-05-05 mesh topology
+# places the primary memex on `dragon` and serves silver/sztudio/div0
+# clients over the operator's tailnet. Adjust to your deployment.
+endpoint = "http://dragon.local:11211"
+
+# Bearer token issued by the memex namespace operator. Treat as a
+# secret — rotate on suspected compromise. The MCP bridge
+# `mcp__rust-memex__namespace_create_token` mints scoped tokens.
+token = ""
+
+# Default namespace used when search() is called without an explicit
+# `namespace=` argument. Typical pattern: per-project (e.g. "vibecrafted",
+# "vista-portal") or per-machine ("silver", "sztudio").
+default_namespace = "local"
+
+# HTTP request timeout. Memex lives on the tailnet so latency is low;
+# the default of 5s is generous. Lower it for tighter shells in CI.
+timeout_seconds = 5.0
+
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI

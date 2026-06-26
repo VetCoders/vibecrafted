@@ -9,36 +9,44 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HELPER_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "shell" / "vetcoders.sh"
-COMMON_SCRIPT = REPO_ROOT / "skills" / "vc-agents" / "scripts" / "common.sh"
+HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
+COMMON_SCRIPT = REPO_ROOT / "runtime" / "scripts" / "common.sh"
 INSTALL_FRONTIER_SCRIPT = (
-    REPO_ROOT / "skills" / "vc-agents" / "scripts" / "install-frontier-config.sh"
+    REPO_ROOT / "runtime" / "scripts" / "install-frontier-config.sh"
 )
 
 
 def _write_fake_binary(bin_dir: Path, name: str) -> None:
-    script = bin_dir / name
-    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    script.chmod(0o755)
+    script_names = [name]
+    if name == "vc-frame":
+        script_names.insert(0, "vc-frame")
+    for script_name in script_names:
+        script = bin_dir / script_name
+        script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
 
 
 def _write_capture_binary(bin_dir: Path, name: str, capture_file: Path) -> None:
-    script = bin_dir / name
-    script.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf "%s\\n" "$@"',
-                '  printf "ZELLIJ_CONFIG_DIR=%s\\n" "${ZELLIJ_CONFIG_DIR:-}"',
-                '} > "$CAPTURE_FILE"',
-            ]
+    script_names = [name]
+    if name == "vc-frame":
+        script_names.insert(0, "vc-frame")
+    for script_name in script_names:
+        script = bin_dir / script_name
+        script.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "set -euo pipefail",
+                    "{",
+                    '  printf "%s\\n" "$@"',
+                    '  printf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}"',
+                    '} > "$CAPTURE_FILE"',
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
         )
-        + "\n",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
+        script.chmod(0o755)
 
 
 def _expected_operator_session(run_id: str | None = None) -> str:
@@ -49,25 +57,27 @@ def _expected_operator_session(run_id: str | None = None) -> str:
 
 
 def test_dashboard_layouts_resolve_helpers_from_home_store_first() -> None:
-    expected_home_root = "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/skills/vc-agents"
+    expected_home_root = "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/runtime"
     expected_repo_store_root = (
-        "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/skills/vc-agents}"
+        "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/.vibecrafted/runtime}"
     )
-    expected_repo_root = "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/skills/vc-agents}"
+    expected_repo_root = "${VIBECRAFTED_ROOT:+$VIBECRAFTED_ROOT/runtime}"
 
-    for layout_name in ("dashboard.kdl", "marbles.kdl", "operator.kdl"):
-        payload = (REPO_ROOT / "config" / "zellij" / "layouts" / layout_name).read_text(
-            encoding="utf-8"
-        )
+    # operator.kdl is the stock strider layout (file browser + shell); it carries
+    # no mission-control helper panes, so it has no home-store resolution payload.
+    for layout_name in ("dashboard.kdl", "marbles.kdl"):
+        payload = (
+            REPO_ROOT / "config" / "vc-frame" / "layouts" / layout_name
+        ).read_text(encoding="utf-8")
         assert expected_home_root in payload
         assert expected_repo_store_root in payload
         assert expected_repo_root in payload
 
 
 def test_operator_layout_does_not_append_nested_vibecrafted_store() -> None:
-    payload = (REPO_ROOT / "config" / "zellij" / "layouts" / "operator.kdl").read_text(
-        encoding="utf-8"
-    )
+    payload = (
+        REPO_ROOT / "config" / "vc-frame" / "layouts" / "operator.kdl"
+    ).read_text(encoding="utf-8")
     assert (
         "${VIBECRAFTED_HOME:-$VIBECRAFTED_ROOT}/.vibecrafted/skills/vc-agents"
         not in payload
@@ -79,12 +89,22 @@ def test_shell_helper_prefers_current_control_plane_over_home_store(
 ) -> None:
     home = tmp_path / "home"
     current_store = (
-        home / ".vibecrafted" / "tools" / "vibecrafted-current" / "skills" / "vc-agents"
+        home
+        / ".local"
+        / "share"
+        / "vibecrafted"
+        / "tools"
+        / "vibecrafted-current"
+        / "skills"
+        / "vc-agents"
     )
     stale_store = home / ".vibecrafted" / "skills" / "vc-agents"
 
-    current_store.mkdir(parents=True)
-    stale_store.mkdir(parents=True)
+    # A real runtime store carries a scripts/ dir; the resolver only selects
+    # candidates that look like real stores. Both are realistic so the test
+    # exercises the installed>home preference, not the real-store filter.
+    (current_store / "scripts").mkdir(parents=True)
+    (stale_store / "scripts").mkdir(parents=True)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -106,14 +126,16 @@ def test_shell_helper_prefers_current_control_plane_over_home_store(
     assert result.stdout.strip() == str(current_store)
 
 
-def test_vc_frontier_paths_mix_repo_prompt_with_companion_zellij(
+def test_vc_frontier_paths_mix_repo_prompt_with_companion_vc_frame(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
-    zellij_config = xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
-    zellij_config.parent.mkdir(parents=True)
-    zellij_config.write_text("layout {}\n", encoding="utf-8")
+    vc_frame_config = (
+        xdg_config_home / "vetcoders" / "frontier" / "vc-frame" / "config.kdl"
+    )
+    vc_frame_config.parent.mkdir(parents=True)
+    vc_frame_config.write_text("layout {}\n", encoding="utf-8")
     home.mkdir()
 
     env = os.environ.copy()
@@ -121,7 +143,7 @@ def test_vc_frontier_paths_mix_repo_prompt_with_companion_zellij(
     env["XDG_CONFIG_HOME"] = str(xdg_config_home)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env.pop("STARSHIP_CONFIG", None)
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
 
     result = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-frontier-paths'],
@@ -137,23 +159,25 @@ def test_vc_frontier_paths_mix_repo_prompt_with_companion_zellij(
         f"ATUIN_CONFIG={REPO_ROOT / 'config' / 'atuin' / 'config.toml'}"
         in result.stdout
     )
-    assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in result.stdout
+    assert f"VC_FRAME_CONFIG_DIR={vc_frame_config.parent}" in result.stdout
 
 
-def test_vc_dashboard_mixes_companion_zellij_config_with_repo_layout(
+def test_vc_dashboard_mixes_companion_vc_frame_config_with_repo_layout(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
-    zellij_config = xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
+    capture_file = tmp_path / "vc_frame-args.txt"
+    vc_frame_config = (
+        xdg_config_home / "vetcoders" / "frontier" / "vc-frame" / "config.kdl"
+    )
 
     home.mkdir()
     fake_bin.mkdir()
-    zellij_config.parent.mkdir(parents=True)
-    zellij_config.write_text('default_layout "compact"\n', encoding="utf-8")
-    _write_capture_binary(fake_bin, "zellij", capture_file)
+    vc_frame_config.parent.mkdir(parents=True)
+    vc_frame_config.write_text('default_layout "compact"\n', encoding="utf-8")
+    _write_capture_binary(fake_bin, "vc-frame", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -161,10 +185,10 @@ def test_vc_dashboard_mixes_companion_zellij_config_with_repo_layout(
     env["XDG_CONFIG_HOME"] = str(xdg_config_home)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
-    env.pop("ZELLIJ_CONFIG_DIR", None)
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-dashboard vc-marbles'],
@@ -178,8 +202,8 @@ def test_vc_dashboard_mixes_companion_zellij_config_with_repo_layout(
     assert _expected_operator_session() in payload
     assert f"{_expected_operator_session()}-marbles" not in payload
     assert "--new-session-with-layout" in payload
-    assert str(REPO_ROOT / "config" / "zellij" / "layouts" / "marbles.kdl") in payload
-    assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in payload
+    assert str(REPO_ROOT / "config" / "vc-frame" / "layouts" / "marbles.kdl") in payload
+    assert f"VC_FRAME_CONFIG_DIR={vc_frame_config.parent}" in payload
 
 
 def test_vc_dashboard_uses_base_run_id_session_without_layout_suffix(
@@ -188,15 +212,17 @@ def test_vc_dashboard_uses_base_run_id_session_without_layout_suffix(
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "zellij-args.txt"
+    capture_file = tmp_path / "vc_frame-args.txt"
 
     home.mkdir()
     fake_bin.mkdir()
-    _write_capture_binary(fake_bin, "zellij", capture_file)
+    _write_capture_binary(fake_bin, "vc-frame", capture_file)
 
-    zellij_config = xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
-    zellij_config.parent.mkdir(parents=True)
-    zellij_config.write_text("layout {}\n", encoding="utf-8")
+    vc_frame_config = (
+        xdg_config_home / "vetcoders" / "frontier" / "vc-frame" / "config.kdl"
+    )
+    vc_frame_config.parent.mkdir(parents=True)
+    vc_frame_config.write_text("layout {}\n", encoding="utf-8")
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -205,10 +231,14 @@ def test_vc_dashboard_uses_base_run_id_session_without_layout_suffix(
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["CAPTURE_FILE"] = str(capture_file)
     env["VIBECRAFTED_RUN_ID"] = "marb-014520"
-    env.pop("ZELLIJ_CONFIG_DIR", None)
-    env.pop("ZELLIJ", None)
-    env.pop("ZELLIJ_PANE_ID", None)
-    env.pop("ZELLIJ_SESSION_NAME", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
+    # Scrub any operator-session context leaked from a running operator shell so
+    # the dashboard resolves the run-id session rather than the ambient one.
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+    env.pop("VIBECRAFTED_OPERATOR_MODE", None)
 
     subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-dashboard vc-marbles'],
@@ -248,7 +278,10 @@ def test_zsh_skill_wrappers_do_not_depend_on_external_has_agent(
                 f'source "{HELPER_SCRIPT}"; '
                 "unfunction _has_agent >/dev/null 2>&1 || true; "
                 '_vetcoders_skill_entry() { printf "%s\\n" "$@" > "$CAPTURE_FILE"; }; '
-                'vc-intents codex --prompt "hello"'
+                # vc-intents is now a command-backed skill (command vibecrafted
+                # intents); use vc-review, which still routes through the shell
+                # skill-wrapper, to exercise the wrapper machinery under zsh.
+                'vc-review codex --prompt "hello"'
             ),
         ],
         check=True,
@@ -258,13 +291,13 @@ def test_zsh_skill_wrappers_do_not_depend_on_external_has_agent(
 
     assert capture_file.read_text(encoding="utf-8").splitlines() == [
         "codex",
-        "intents",
+        "review",
         "--prompt",
         "hello",
     ]
 
 
-def test_operator_session_name_compacts_long_repo_scope_for_zellij_limit(
+def test_operator_session_name_compacts_long_repo_scope_for_vc_frame_limit(
     tmp_path: Path,
 ) -> None:
     long_repo = tmp_path / "mcp-server-semgrep"
@@ -306,7 +339,7 @@ def test_operator_session_name_supports_folder_scope(
             (
                 f'cd "{folder}" && '
                 f'source "{HELPER_SCRIPT}"; '
-                'export VIBECRAFTED_ZELLIJ_SESSION_SCOPE="folder"; '
+                'export VIBECRAFTED_VC_FRAME_SESSION_SCOPE="folder"; '
                 "_vetcoders_operator_session_name"
             ),
         ],
@@ -319,7 +352,7 @@ def test_operator_session_name_supports_folder_scope(
     assert result.stdout.strip() == "feature-lab"
 
 
-def test_zsh_vc_intents_accepts_runtime_without_bad_substitution(
+def test_zsh_skill_wrapper_accepts_runtime_without_bad_substitution(
     tmp_path: Path,
 ) -> None:
     if shutil.which("zsh") is None:
@@ -346,7 +379,9 @@ def test_zsh_vc_intents_accepts_runtime_without_bad_substitution(
                 "_vetcoders_ensure_run_context() { :; }; "
                 '_vetcoders_prepare_operator_runtime() { printf "%s\\n" "$1" > "$CAPTURE_FILE"; }; '
                 '_vetcoders_spawn_script() { printf "%s" "$FAKE_SPAWN"; }; '
-                'vc-intents codex --runtime visible --prompt "hello"'
+                # vc-intents is command-backed now; vc-review still routes through
+                # the shell skill-wrapper that parses --runtime under zsh.
+                'vc-review codex --runtime visible --prompt "hello"'
             ),
         ],
         check=True,
@@ -363,15 +398,17 @@ def test_sourcing_helper_exports_frontier_sidecars_per_asset(
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
     fake_bin = tmp_path / "bin"
-    zellij_config = xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
+    vc_frame_config = (
+        xdg_config_home / "vetcoders" / "frontier" / "vc-frame" / "config.kdl"
+    )
 
     home.mkdir()
     fake_bin.mkdir()
-    zellij_config.parent.mkdir(parents=True)
-    zellij_config.write_text("layout {}\n", encoding="utf-8")
+    vc_frame_config.parent.mkdir(parents=True)
+    vc_frame_config.write_text("layout {}\n", encoding="utf-8")
     _write_fake_binary(fake_bin, "starship")
     _write_fake_binary(fake_bin, "atuin")
-    _write_fake_binary(fake_bin, "zellij")
+    _write_fake_binary(fake_bin, "vc-frame")
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -380,7 +417,7 @@ def test_sourcing_helper_exports_frontier_sidecars_per_asset(
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env.pop("STARSHIP_CONFIG", None)
     env.pop("ATUIN_CONFIG", None)
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
 
     result = subprocess.run(
         [
@@ -390,7 +427,7 @@ def test_sourcing_helper_exports_frontier_sidecars_per_asset(
                 f'source "{HELPER_SCRIPT}"; '
                 'printf "STARSHIP_CONFIG=%s\\n" "$STARSHIP_CONFIG"; '
                 'printf "ATUIN_CONFIG=%s\\n" "$ATUIN_CONFIG"; '
-                'printf "ZELLIJ_CONFIG_DIR=%s\\n" "$ZELLIJ_CONFIG_DIR"'
+                'printf "VC_FRAME_CONFIG_DIR=%s\\n" "$VC_FRAME_CONFIG_DIR"'
             ),
         ],
         check=True,
@@ -405,7 +442,7 @@ def test_sourcing_helper_exports_frontier_sidecars_per_asset(
         f"ATUIN_CONFIG={REPO_ROOT / 'config' / 'atuin' / 'config.toml'}"
         in result.stdout
     )
-    assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in result.stdout
+    assert f"VC_FRAME_CONFIG_DIR={vc_frame_config.parent}" in result.stdout
 
 
 def test_frontier_install_dry_run_succeeds_without_repo_alacritty_preset(
@@ -430,11 +467,11 @@ def test_frontier_install_dry_run_succeeds_without_repo_alacritty_preset(
     )
 
     sidecar_root = xdg_config_home / "vetcoders" / "frontier"
-    assert "config/zellij/config.kdl" in result.stdout
-    assert str(sidecar_root / "zellij" / "config.kdl") in result.stdout
+    assert "config/vc-frame/config.kdl" in result.stdout
+    assert str(sidecar_root / "vc-frame" / "config.kdl") in result.stdout
     assert str(sidecar_root / "starship.toml") in result.stdout
     assert "config/alacritty" not in result.stdout
-    assert str(xdg_config_home / "zellij" / "config.kdl") not in result.stdout
+    assert str(xdg_config_home / "vc-frame" / "config.kdl") not in result.stdout
     assert "Done." in result.stdout
 
 
@@ -458,32 +495,34 @@ def test_frontier_install_uses_sidecar_root_without_touching_global_layout(
     )
 
     sidecar_root = xdg_config_home / "vetcoders" / "frontier"
-    installed_layout = sidecar_root / "zellij" / "layouts" / "dashboard.kdl"
+    installed_layout = sidecar_root / "vc-frame" / "layouts" / "dashboard.kdl"
     assert installed_layout.is_symlink()
     assert (
         installed_layout.resolve()
-        == REPO_ROOT / "config" / "zellij" / "layouts" / "dashboard.kdl"
+        == REPO_ROOT / "config" / "vc-frame" / "layouts" / "dashboard.kdl"
     )
     assert (sidecar_root / "starship.toml").is_symlink()
-    assert not (xdg_config_home / "zellij" / "config.kdl").exists()
+    assert not (xdg_config_home / "vc-frame" / "config.kdl").exists()
     assert not (xdg_config_home / "starship.toml").exists()
 
 
-def test_spawn_export_frontier_sidecars_mix_repo_prompt_with_companion_zellij(
+def test_spawn_export_frontier_sidecars_mix_repo_prompt_with_companion_vc_frame(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
     xdg_config_home = tmp_path / "xdg"
     fake_bin = tmp_path / "bin"
-    zellij_config = xdg_config_home / "vetcoders" / "frontier" / "zellij" / "config.kdl"
+    vc_frame_config = (
+        xdg_config_home / "vetcoders" / "frontier" / "vc-frame" / "config.kdl"
+    )
 
     home.mkdir()
     fake_bin.mkdir()
-    zellij_config.parent.mkdir(parents=True)
-    zellij_config.write_text("layout {}\n", encoding="utf-8")
+    vc_frame_config.parent.mkdir(parents=True)
+    vc_frame_config.write_text("layout {}\n", encoding="utf-8")
     _write_fake_binary(fake_bin, "starship")
     _write_fake_binary(fake_bin, "atuin")
-    _write_fake_binary(fake_bin, "zellij")
+    _write_fake_binary(fake_bin, "vc-frame")
 
     env = os.environ.copy()
     env["HOME"] = str(home)
@@ -493,7 +532,8 @@ def test_spawn_export_frontier_sidecars_mix_repo_prompt_with_companion_zellij(
     env["SPAWN_ROOT"] = str(REPO_ROOT)
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env.pop("STARSHIP_CONFIG", None)
-    env.pop("ZELLIJ_CONFIG_DIR", None)
+    env.pop("ATUIN_CONFIG", None)
+    env.pop("VC_FRAME_CONFIG_DIR", None)
 
     result = subprocess.run(
         [
@@ -504,7 +544,7 @@ def test_spawn_export_frontier_sidecars_mix_repo_prompt_with_companion_zellij(
                 "spawn_export_frontier_sidecars; "
                 'printf "STARSHIP_CONFIG=%s\\n" "$STARSHIP_CONFIG"; '
                 'printf "ATUIN_CONFIG=%s\\n" "$ATUIN_CONFIG"; '
-                'printf "ZELLIJ_CONFIG_DIR=%s\\n" "$ZELLIJ_CONFIG_DIR"'
+                'printf "VC_FRAME_CONFIG_DIR=%s\\n" "$VC_FRAME_CONFIG_DIR"'
             ),
         ],
         check=True,
@@ -519,4 +559,4 @@ def test_spawn_export_frontier_sidecars_mix_repo_prompt_with_companion_zellij(
         f"ATUIN_CONFIG={REPO_ROOT / 'config' / 'atuin' / 'config.toml'}"
         in result.stdout
     )
-    assert f"ZELLIJ_CONFIG_DIR={zellij_config.parent}" in result.stdout
+    assert f"VC_FRAME_CONFIG_DIR={vc_frame_config.parent}" in result.stdout

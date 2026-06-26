@@ -12,6 +12,7 @@
 <p align="center">
   <a href="https://vibecrafted.io/">Website</a> ·
   <a href="docs/QUICK_START.md">Quick Start</a> ·
+  <a href="docs/DOCUMENTATION_MAP.md">Docs Map</a> ·
   <a href="docs/DOCKER.md">Docker</a> ·
   <a href="docs/runtime/MANIFESTO_EN.md">Manifesto</a> ·
   <a href="docs/FAQ.md">FAQ</a>
@@ -61,7 +62,19 @@ The system finds the problems, fixes them, and repeats the loop until nothing im
 **1. The Draft:** You build an MVP using Cursor, Copilot, or Claude.
 **2. The Finding:** Quality gates and structural maps locate the exact failures.
 **3. The Fix:** The agent eliminates the counterexamples.
-**4. The Close:** We run the loop. We don't stop until P0 / P1 / P2 = 0.
+**4. The Close:** We run the loop. We do not call it done until the remaining
+risks are named, verified, or deliberately handed off.
+
+The public ship cycle today is:
+
+```text
+workflow -> implement -> marbles -> review -> dou -> release
+```
+
+The deeper lifecycle and read/write cadence live in
+[docs/runtime/LIFECYCLE.md](docs/runtime/LIFECYCLE.md). The map that keeps the
+docs aligned with the live command deck lives in
+[docs/DOCUMENTATION_MAP.md](docs/DOCUMENTATION_MAP.md).
 
 ---
 
@@ -70,12 +83,13 @@ The system finds the problems, fixes them, and repeats the loop until nothing im
 Behind this simple effect is an architecture built to orchestrate, map, and execute.
 _(No longer guessing the architecture, but seeing it)._
 
-| Layer               | How it works                                                                                                                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Seeing it All**   | The agent stops guessing architecture. It uses **Loctree** to see the entire project structure, dead code, and dependencies before it changes anything.                               |
-| **Convergence**     | `vc-marbles` runs the loop. It is not trying to "prove correctness." It only asks "what is still wrong?" and fixes it.                                                                |
-| **Multi-Agent**     | `vc-agents` lets you spin up Claude, Codex, and Gemini in parallel right in your terminal. Compare their results or have them tackle different architectural slices at the same time. |
-| **The Final Check** | `vc-dou` (Definition of Undone) asks if it's shippable: Can you install it? Can someone trust it? Is there an onboarding page?                                                        |
+| Layer               | How it works                                                                                                                                                                                        |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Seeing it All**   | The agent stops guessing architecture. It uses **Loctree** to see the entire project structure, dead code, and dependencies before it changes anything.                                             |
+| **Convergence**     | `vc-marbles` runs the loop. It is not trying to "prove correctness." It only asks "what is still wrong?" and fixes it.                                                                              |
+| **Multi-Agent**     | `vc-agents` lets you spin up Claude, Codex, and Gemini in parallel right in your terminal. Compare their results or have them tackle different architectural slices at the same time.               |
+| **Agent Surface**   | iTerm2 OSC primitives + dynamic profiles (GA since v1.8.0) — colored mesh-host profiles, clickable OSC 8 hyperlinks, tab progress bars driven from any agent. See [docs/ITERM2.md](docs/ITERM2.md). |
+| **The Final Check** | `vc-dou` (Definition of Undone) asks if it's shippable: Can you install it? Can someone trust it? Is there an onboarding page?                                                                      |
 
 ---
 
@@ -89,7 +103,7 @@ _(No longer guessing the architecture, but seeing it)._
 | `𝓥𝓲𝓫𝓮𝓬𝓻𝓪𝓯𝓽𝓮𝓭`             | **Designed with**  | Design, UI, visual identity, brand work  |
 | `//𝚟𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.`          | **Developed with** | Source code, engineering, infrastructure |
 
-The `` is not decoration. It is the mark.
+The `//` is not decoration. It is the mark.
 
 ---
 
@@ -117,9 +131,13 @@ curl -fsSL https://vibecrafted.io/install.sh | bash
 The bootstrap prints the snapshot source, staging location, and next installer
 step before it stages or installs anything on your machine.
 
-Inside a local checkout, `make vibecrafted` opens the terminal-native installer wizard — the built-in `vetcoders-installer` runner driven from `install.toml`, with reason + consent per phase and cargo-style sticky progress. `make install` routes through the same runner with auto-approve, so automation and humans share one engine.
+Inside a local checkout, `make install` opens the terminal-native installer
+wizard. `make setup-dev` opens the same meta-installer with advanced options,
+and `make install-auto` is the auto-approved automation path. `make help` shows
+the operator surface; `make help-dev` shows the full target inventory.
 
-Shell is our everyday workforce entry and all the tools are terminal-native. Nevertheless if you need GUI we also offer it! Run `make wizard` to keep the same trust-building cadence directly in the browser.
+Shell is the everyday operator entry. When a browser-guided install is the
+better human surface, run `make wizard` or `make gui-install`.
 
 Verify:
 
@@ -166,7 +184,7 @@ security gate (`make semgrep`), exposed surface inventory, deployment
 mode decision, and post-release install smoke from the **published**
 artifact. The doctrine lives in
 [`skills/vc-release/SKILL.md`](skills/vc-release/SKILL.md) and the
-canonical template lives in
+default template lives in
 [`skills/vc-release/references/release-report-template.md`](skills/vc-release/references/release-report-template.md).
 
 ---

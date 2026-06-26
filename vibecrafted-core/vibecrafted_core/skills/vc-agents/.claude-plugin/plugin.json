@@ -1,0 +1,8 @@
+{
+  "name": "vc-agents",
+  "description": "Spawn external agent fleet via portable scripts. Use /vc-agents to invoke.",
+  "author": {
+    "name": "VetCoders",
+    "email": "hello@vetcoders.io"
+  }
+}

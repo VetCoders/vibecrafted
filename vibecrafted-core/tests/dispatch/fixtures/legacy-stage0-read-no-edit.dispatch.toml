@@ -1,0 +1,16 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "legacy-stage0-read-no-edit"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+
+[[cuts]]
+id = "stage2-self-replay"
+agent = "gemini"
+workflow = "review"
+mode = "read"
+prompt = "Review the dispatch result. NIE commituj, NIE edytuj kodu. Write the report only."
+
+  [[cuts.verify]]
+  run = "true"
+  expect = { exit_code = 0 }
