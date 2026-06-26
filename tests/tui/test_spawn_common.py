@@ -1276,14 +1276,7 @@ def test_codex_spawn_preserves_standalone_report_when_last_message_is_handoff(
     assert "This is the durable report body." in report_text
     assert "Done. Report saved at" not in report_text
 
-    # The headless spawn writes the last-message file from a detached child; under
-    # load it can lag the assertions above, so poll for it before asserting. The
-    # spawn never removes a written last-message, so this only absorbs the
-    # write-visibility window — it cannot turn a genuinely-missing file into a pass.
     last_message_file = Path(meta_payload["transcript"]).with_suffix(".last-message.md")
-    deadline = time.time() + 5
-    while time.time() < deadline and not last_message_file.exists():
-        time.sleep(0.1)
     assert last_message_file.exists()
     assert "Done. Report saved at" in last_message_file.read_text(encoding="utf-8")
 
@@ -1383,14 +1376,7 @@ def test_codex_research_does_not_copy_pointer_last_message_as_report(
     assert "Codex failed before writing a standalone report file." in report_text
     assert "Done. Report saved at" not in report_text
 
-    # The headless spawn writes the last-message file from a detached child; under
-    # load it can lag the assertions above, so poll for it before asserting. The
-    # spawn never removes a written last-message, so this only absorbs the
-    # write-visibility window — it cannot turn a genuinely-missing file into a pass.
     last_message_file = Path(meta_payload["transcript"]).with_suffix(".last-message.md")
-    deadline = time.time() + 5
-    while time.time() < deadline and not last_message_file.exists():
-        time.sleep(0.1)
     assert last_message_file.exists()
     assert "Done. Report saved at" in last_message_file.read_text(encoding="utf-8")
 

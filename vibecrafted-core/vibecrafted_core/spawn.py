@@ -764,6 +764,20 @@ def finalize_artifacts(
         transcript = _move_artifact(transcript, final_transcript)
         _leave_compat_link(announced_report, report)
         _leave_compat_link(announced_transcript, transcript)
+        # The worker writes its final handoff next to the announced transcript as
+        # `<transcript>.last-message.md` (codex --output-last-message, claude/gemini
+        # salvage). Relocate it alongside the transcript so consumers that derive it
+        # from meta["transcript"] (resume, aicx, the spawn smokes) still find it;
+        # otherwise it is orphaned at the pre-finalize path.
+        announced_last_message = announced_transcript.with_suffix(".last-message.md")
+        final_last_message = transcript.with_suffix(".last-message.md")
+        if announced_last_message.is_file() and not _same_file(
+            announced_last_message, final_last_message
+        ):
+            final_last_message = _move_artifact(
+                announced_last_message, final_last_message
+            )
+            _leave_compat_link(announced_last_message, final_last_message)
         payload["report"] = str(report)
         payload["transcript"] = str(transcript)
         payload["meta"] = str(final_meta)
