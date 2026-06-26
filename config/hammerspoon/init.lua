@@ -64,8 +64,11 @@ local SHELL_METACHAR_BLOCKLIST = {
 }
 
 local function vc_param_valid(name, value)
-    if value == nil or value == "" then
-        vc_log(string.format("reject: param %q is empty/nil", name))
+    -- type-guard before the length/charset checks below: a non-string value
+    -- (boolean/number from a malformed URL handler) would crash `#value` /
+    -- `value:match()`, so reject anything that is not a non-empty string.
+    if type(value) ~= "string" or value == "" then
+        vc_log(string.format("reject: param %q is empty/nil/non-string", name))
         return false
     end
     if #value > MAX_PARAM_LEN then
