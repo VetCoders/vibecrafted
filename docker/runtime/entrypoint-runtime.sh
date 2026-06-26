@@ -27,7 +27,9 @@ fi
 
 # vibecrafted user needs an authorized_keys path that survives container restarts.
 # Compose mounts a host directory at /workspace/.vibecrafted/ssh/ — link it.
-mkdir -p /workspace/.vibecrafted/ssh
+# The logs dir must exist too: sshd is started below with `-E .../logs/sshd.log`
+# and refuses to start if it cannot open that log file on a fresh volume.
+mkdir -p /workspace/.vibecrafted/ssh /workspace/.vibecrafted/logs
 chmod 700 /workspace/.vibecrafted/ssh
 if [[ ! -L "$HOME/.ssh" ]]; then
   rm -rf "$HOME/.ssh"
