@@ -842,6 +842,56 @@ def finalize_artifacts(
     return meta
 
 
+def _ensure_failed_report_artifact(
+    handle: SpawnHandle, exit_code: int, completed_at: str
+) -> None:
+    if handle.meta_path is None or not handle.meta_path.is_file():
+        return
+    payload = _read_meta(handle.meta_path)
+    report_value = str(payload.get("report") or "")
+    if not report_value:
+        return
+
+    report = Path(report_value)
+    transcript = handle.transcript_path
+    if transcript is None and payload.get("transcript"):
+        transcript = Path(str(payload["transcript"]))
+
+    payload["status"] = "failed"
+    payload["exit_code"] = exit_code
+    payload["completed_at"] = completed_at
+    if transcript is not None:
+        payload["transcript"] = str(transcript)
+    payload["report"] = str(report)
+    _write_meta(handle.meta_path, payload)
+
+    if not report.exists():
+        report.parent.mkdir(parents=True, exist_ok=True)
+        transcript_ref = str(transcript or payload.get("transcript") or "")
+        report.write_text(
+            "\n".join(
+                [
+                    "---",
+                    f"run_id: {payload.get('run_id') or handle.run_id}",
+                    "status: failed",
+                    f"exit_code: {exit_code}",
+                    f"completed_at: {completed_at}",
+                    f"transcript: {transcript_ref}",
+                    "---",
+                    "",
+                    "# Agent run failed",
+                    "",
+                    "The supervised agent process exited before writing its final report.",
+                    "",
+                    f"Transcript: {transcript_ref or '-'}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    finalize_artifacts(handle.meta_path, report, transcript)
+
+
 def _maybe_extract_session_id(handle: SpawnHandle) -> str:
     meta = _read_meta(handle.meta_path)
     if meta.get("session_id"):
@@ -1059,6 +1109,8 @@ class Supervisor:
         extracted_session_id = _maybe_extract_session_id(handle)
         if extracted_session_id:
             handle.session_id = extracted_session_id
+        if exit_code != 0:
+            _ensure_failed_report_artifact(handle, exit_code, handle.completed_at)
         kind = "spawn-completed" if exit_code == 0 else "spawn-failed"
         self._emit(
             kind,

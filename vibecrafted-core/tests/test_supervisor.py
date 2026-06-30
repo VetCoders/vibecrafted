@@ -74,6 +74,62 @@ def test_supervisor_propagates_exit_code(
     assert "spawn-failed" in kinds
 
 
+def test_supervisor_failed_child_leaves_failed_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    transcript = tmp_path / "agent.transcript.log"
+    report = tmp_path / "agent.md"
+    meta = tmp_path / "agent.meta.json"
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "test-report-on-death",
+                "prompt_id": "prompt-report-on-death",
+                "agent": "codex",
+                "skill": "implement",
+                "model": "gpt-5.3-codex",
+                "status": "running",
+                "root": str(tmp_path),
+                "report": str(report),
+                "transcript": str(transcript),
+                "meta": str(meta),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    handle = Supervisor().spawn(
+        "codex",
+        "fixture",
+        skill="implement",
+        mode="unit",
+        root=tmp_path,
+        command=[
+            sys.executable,
+            "-c",
+            (
+                "from pathlib import Path; "
+                f"Path({str(transcript)!r}).write_text('partial transcript\\n', encoding='utf-8'); "
+                "raise SystemExit(9)"
+            ),
+        ],
+        run_id="test-report-on-death",
+        meta_path=meta,
+        transcript_path=transcript,
+    )
+
+    assert handle.wait(timeout=5) == 9
+    assert report.is_file()
+    report_text = report.read_text(encoding="utf-8")
+    assert "status: failed" in report_text
+    assert str(transcript) in report_text
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["exit_code"] == 9
+
+
 def test_session_id_extractors_use_shared_pattern() -> None:
     repo = Path(__file__).resolve().parents[2]
     fixtures = repo / "tests" / "fixtures" / "transcripts"

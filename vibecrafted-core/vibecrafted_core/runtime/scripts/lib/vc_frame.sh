@@ -32,7 +32,10 @@ spawn_session_is_live() {
   local bin=""
   bin="$(spawn_vc_frame_bin 2>/dev/null || true)"
   [[ -n "$bin" ]] || return 1
-  "$bin" list-sessions 2>/dev/null \
+  local sessions=""
+  sessions="$("$bin" list-sessions 2>/dev/null || true)"
+  [[ -n "$sessions" ]] || sessions="$("$bin" ls 2>/dev/null || true)"
+  printf '%s\n' "$sessions" \
     | sed 's/\x1b\[[0-9;]*m//g' \
     | awk -v s="$name" '$1 == s && $0 !~ /EXITED/ { hit = 1 } END { exit hit ? 0 : 1 }'
 }
@@ -40,44 +43,46 @@ spawn_session_is_live() {
 spawn_effective_operator_session() {
   spawn_normalize_ambient_context
 
-  # Honour an env-provided session ONLY when it names a LIVE vc-frame session.
-  # The dispatcher sets VIBECRAFTED_OPERATOR_SESSION to a per-run tracking id
-  # (operator_session_name = "<repo>-<run_id>") which is NOT a live session;
-  # spawning a tab into it lands nowhere and the run degrades to an invisible
-  # headless orphan. Inside vc-frame these env vars DO name the live session, so
-  # the live-check keeps the in-frame path intact.
-  local session_name="${VIBECRAFTED_OPERATOR_SESSION:-}"
-  if [[ -n "$session_name" ]] && spawn_session_is_live "$session_name"; then
-    printf '%s\n' "$session_name"
-    return 0
-  fi
-
-  session_name="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
-  if [[ -n "$session_name" ]] && spawn_session_is_live "$session_name"; then
-    printf '%s\n' "$session_name"
-    return 0
-  fi
+  local session_name=""
 
   local vc_frame_bin=""
   vc_frame_bin="$(spawn_vc_frame_bin)" || return 1
 
+  local repo_root_hint="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-}}"
+  if [[ -z "${VC_FRAME_SESSION_NAME:-}" && -n "$repo_root_hint" ]]; then
+    session_name="$(basename "$repo_root_hint")"
+    printf '%s\n' "$session_name"
+    return 0
+  fi
+
   # Attached-pane marker: vc-frame tags the session you are currently in.
+  local sessions=""
+  sessions="$("$vc_frame_bin" list-sessions 2>/dev/null || true)"
+  [[ -n "$sessions" ]] || sessions="$("$vc_frame_bin" ls 2>/dev/null || true)"
   session_name="$(
-    "$vc_frame_bin" list-sessions 2>/dev/null \
+    printf '%s\n' "$sessions" \
       | sed 's/\x1b\[[0-9;]*m//g' \
       | awk '/\(current\)/ {print $1; exit}'
   )"
 
   # No (current) marker → dispatched from OUTSIDE any vc-frame pane (plain
   # terminal, headless agent, nested dispatch). The operator session is repo-bound
-  # — named after `basename "$root"` (see dispatch.sh) — so resolve it from
-  # SPAWN_ROOT and accept it only if that session is live. This is what lets a
-  # command-line/headless dispatch land as a visible tab instead of headless.
+  # — named after `basename "$root"` (see dispatch.sh). Try that deterministic
+  # target first; if the action fails, the caller degrades to headless. This keeps
+  # stale ambient VIBECRAFTED_OPERATOR_SESSION values from stealing the visible tab.
   if [[ -z "$session_name" ]]; then
     local repo_session=""
     repo_session="$(basename "${SPAWN_ROOT:-$(pwd)}")"
-    if spawn_session_is_live "$repo_session"; then
-      session_name="$repo_session"
+    session_name="$repo_session"
+  fi
+
+  # Final fallback for explicitly supplied live operator sessions. This is last
+  # on purpose: it keeps external launches visible-by-default in the repo-bound
+  # frame and prevents stale ambient env from stealing the tab.
+  if [[ -z "$session_name" ]]; then
+    session_name="${VIBECRAFTED_OPERATOR_SESSION:-}"
+    if [[ -n "$session_name" ]] && ! spawn_session_is_live "$session_name"; then
+      session_name=""
     fi
   fi
 
@@ -327,6 +332,37 @@ spawn_current_tab_name() {
   printf '%s\n' "${VC_FRAME_TAB_NAME:-}"
 }
 
+spawn_write_visible_launch_script() {
+  local script_path="$1"
+  local launcher="$2"
+  local transcript_path="${SPAWN_TRANSCRIPT:-}"
+
+  mkdir -p "$(dirname "$script_path")"
+  cat > "$script_path" <<EOF_VISIBLE
+#!/usr/bin/env bash
+set -euo pipefail
+launcher=$(spawn_shell_quote "$launcher")
+transcript=$(spawn_shell_quote "$transcript_path")
+"\$launcher" &
+pid="\$!"
+if [[ -n "\$transcript" ]]; then
+  mkdir -p "\$(dirname "\$transcript")"
+  touch "\$transcript" 2>/dev/null || true
+  tail -n +1 -f "\$transcript" &
+  tail_pid="\$!"
+  set +e
+  wait "\$pid"
+  rc="\$?"
+  set -e
+  kill "\$tail_pid" >/dev/null 2>&1 || true
+  wait "\$tail_pid" >/dev/null 2>&1 || true
+  exit "\$rc"
+fi
+wait "\$pid"
+EOF_VISIBLE
+  chmod +x "$script_path"
+}
+
 spawn_in_marbles_tab() {
   vc_raise_launcher_limits
   # Route a pane into the dedicated marbles tab without stealing operator focus.
@@ -360,7 +396,7 @@ spawn_in_marbles_tab() {
   fi
 
   cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
-  spawn_write_command_script "$cmd_script" "$launch_cmd"
+  spawn_write_visible_launch_script "$cmd_script" "$launcher"
 
   marbles_tab_id="$(spawn_tab_id_by_name "$marbles_tab" 2>/dev/null || true)"
   if [[ -z "$marbles_tab_id" ]]; then
@@ -425,7 +461,7 @@ spawn_in_vc_frame_pane() {
     launch_lock="$(spawn_acquire_vc_frame_launch_slot "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-local}}" 2>/dev/null || true)"
 
     cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
-    spawn_write_command_script "$cmd_script" "$launch_cmd"
+    spawn_write_visible_launch_script "$cmd_script" "$launcher"
 
     local launch_status=0
     if [[ "$direction" == "new-tab" ]]; then
@@ -554,7 +590,7 @@ spawn_in_operator_session() {
   launch_lock="$(spawn_acquire_vc_frame_launch_slot "$session_name" 2>/dev/null || true)"
 
   cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
-  spawn_write_command_script "$cmd_script" "$launch_cmd"
+  spawn_write_visible_launch_script "$cmd_script" "$launcher"
 
   # External spawn into existing operator session — route as pane or new tab per grid policy.
   local launch_status=0
@@ -585,6 +621,9 @@ spawn_in_operator_session() {
   fi
   spawn_release_vc_frame_launch_slot "$launch_lock"
   [[ "$launch_status" == "0" ]] || return "$launch_status"
+  if [[ "$effective_direction" == "new-tab" ]]; then
+    spawn_await_watch_pane "${run_tab_id:-}" "${run_tab_name:-}" "$pane_name"
+  fi
 }
 
 spawn_probe() {
