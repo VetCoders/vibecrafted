@@ -1,7 +1,7 @@
 # Loctree/AICX Skill Doctrine Alignment — operator verification
 
 - timestamp: 2026-06-07T19:33:00 MDT
-- repo: /Users/maciejgad/vc-workspace/vetcoders/vibecrafted @ 216f180 (feat/runtime-integration)
+- repo: /Users/tester/vc-workspace/vetcoders/vibecrafted @ 216f180 (feat/runtime-integration)
 - authority: AGENTS.md (loctree-advise v1 — "Loctree gives sight / AICX gives insight"); ~/.claude/CLAUDE.md read-only (not patched)
 - execution: codex via the REAL framework fleet (vibecrafted implement codex), run_id just-172256-1571 — dogfooded loctree-mcp context/focus/slice + aicx intents + vc-init
 - smoke test: framework dispatch from headless agent bash PASSED (degrade-to-terminal worked)

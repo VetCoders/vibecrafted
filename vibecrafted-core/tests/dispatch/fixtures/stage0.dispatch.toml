@@ -3,10 +3,10 @@ schema = "vibecrafted.dispatch.v1"
 [meta]
 name = "d1-schema-parser"
 description = "Stage0 maximum fixture for dispatch schema parser."
-repo = "/Users/maciejgad/vc-workspace/VetCoders/vibecrafted"
+repo = "/Users/tester/vc-workspace/VetCoders/vibecrafted"
 baseline = { branch = "feat/runtime-integration", head = "9365d7c" }
-reports_dir = "/Users/maciejgad/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0610/reports"
-tracker = "/Users/maciejgad/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0610/plans/stage0-tracker.md"
+reports_dir = "/Users/tester/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0610/reports"
+tracker = "/Users/tester/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0610/plans/stage0-tracker.md"
 
 [policy]
 repair_rounds = 1

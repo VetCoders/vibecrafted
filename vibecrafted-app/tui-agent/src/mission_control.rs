@@ -2522,7 +2522,7 @@ mod tests {
     #[test]
     fn mcp_process_match_uses_executable_token_only() {
         assert!(process_line_mentions_server(
-            "/Users/operator/.local/bin/loctree-mcp --transport stdio",
+            "/Users/tester/.local/bin/loctree-mcp --transport stdio",
             "loctree-mcp"
         ));
         assert!(process_line_mentions_server(

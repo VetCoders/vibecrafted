@@ -23,7 +23,7 @@ To make the transition to `agy` and `junie` seamless for founders and operators 
 
 ### Component: Framework Bootstrapping
 
-#### [MODIFY] [scripts/install-foundations.sh](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/scripts/install-foundations.sh)
+#### [MODIFY] [scripts/install-foundations.sh](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/scripts/install-foundations.sh)
 
 - Update `AGENT_PACKAGES` to replace Gemini with `agy`:
   ```diff
@@ -36,7 +36,7 @@ To make the transition to `agy` and `junie` seamless for founders and operators 
   "junie:junie-cli"
   ```
 
-#### [MODIFY] [install.toml](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/install.toml)
+#### [MODIFY] [install.toml](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/install.toml)
 
 - Update intro/reason descriptions to cite `antigravity-cli (agy)` and `junie` instead of `gemini-cli`.
 - In `[diagnostics.commands]`, replace `gemini` with `agy` and add `junie`:
@@ -52,7 +52,7 @@ To make the transition to `agy` and `junie` seamless for founders and operators 
 
 ### Component: Diagnostics and Installer Scripts
 
-#### [MODIFY] [scripts/vetcoders_install.py](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/scripts/vetcoders_install.py)
+#### [MODIFY] [scripts/vetcoders_install.py](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/scripts/vetcoders_install.py)
 
 - Update core metadata list:
   ```python
@@ -70,12 +70,12 @@ To make the transition to `agy` and `junie` seamless for founders and operators 
 
 ### Component: `skills/vc-scaffold/`
 
-#### [MODIFY] [SKILL.md](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/SKILL.md)
+#### [MODIFY] [SKILL.md](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/SKILL.md)
 
 - Register `agy` and `junie` in the valid agent runtime targets for architecture planning.
 - Update model definitions to include JetBrains Junie and Antigravity Gemini configurations.
 
-#### [NEW] [agy.yaml](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/agents/agy.yaml)
+#### [NEW] [agy.yaml](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/agents/agy.yaml)
 
 Create the scaffold agent config mapping for `agy`:
 
@@ -86,7 +86,7 @@ agent:
   default_prompt: "Use /vc-scaffold to output robust structural plans while leveraging agy sandbox parameters."
 ```
 
-#### [NEW] [junie.yaml](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/agents/junie.yaml)
+#### [NEW] [junie.yaml](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/agents/junie.yaml)
 
 Create the scaffold agent config mapping for `junie`:
 
