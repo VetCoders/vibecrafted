@@ -40,8 +40,8 @@ config, bring-up). It is **not** Modal.com integration. Hosting target is
 - `loctree` snapshots reveal repo structure and intent — same constraint
 - agent CLIs (`claude`, `codex`, `gemini`, `junie`, `grok`, plus `agy` via manual
   install) carry operator auth tokens
-- vibecrafted is **VetCoders'** runtime; the runtime container belongs in
-  VetCoders' infrastructure boundary
+- vibecrafted is **Vetcoders'** runtime; the runtime container belongs in
+  Vetcoders' infrastructure boundary
 
 If you need a serverless variant later, that's a separate skill — this one is
 **self-hosted by design**.

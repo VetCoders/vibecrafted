@@ -34,7 +34,7 @@ The client is intentionally tiny: it has no third-party dependencies,
 type-checks under strict mypy, and degrades gracefully so the absence
 of memex is invisible to operators who haven't opted in.
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 """
 
 from __future__ import annotations

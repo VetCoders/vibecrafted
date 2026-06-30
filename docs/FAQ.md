@@ -20,7 +20,7 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 
 - **What does `make doctor` check?**
   The doctor verifies the central store, helper availability, symlink health, required foundations (`loctree-mcp` and
-  `aicx-mcp`), evidence tools such as `prview` and ScreenScribe, and shell quietness.
+  `aicx-mcp`), evidence tools such as `prview` and Screenscribe, and shell quietness.
 
 - **Which install path should I use in CI?**
   Use `make install-auto` for the direct non-interactive path, or
@@ -83,4 +83,4 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 
 ---
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. by VetCoders | https://vibecrafted.io/
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. by Vetcoders | https://vibecrafted.io/

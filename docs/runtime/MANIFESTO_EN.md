@@ -14,7 +14,7 @@ description: >
 
 ## Definition
 
-**Vibecrafted.** is a convergence framework for AI-assisted software development, engineered by VetCoders.
+**Vibecrafted.** is a convergence framework for AI-assisted software development, engineered by Vetcoders.
 It does not merely write code for you. It provides a **system** in which code produced by AI agents is systematically driven to production quality — through alternating steps of **perception** and **action**, structural analytical tooling, and multi-agent orchestration.
 
 ## Philosophical Core

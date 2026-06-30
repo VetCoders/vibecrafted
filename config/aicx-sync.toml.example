@@ -33,7 +33,7 @@ local_store = "~/.aicx/store"
 # ~/.aicx/store/<namespace> on both sides. Leave commented to sync the
 # entire corpus.
 #
-# namespace = "VetCoders/vibecrafted"
+# namespace = "vetcoders/vibecrafted"
 
 # Default safety posture: always dry-run unless the operator explicitly
 # passes `apply` as the first positional argument. The bash wrapper does

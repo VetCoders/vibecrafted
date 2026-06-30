@@ -5,7 +5,7 @@
 
 ## What memex is
 
-[`rust-memex`](https://github.com/VetCoders/rust-memex) is a small,
+[`rust-memex`](https://github.com/vetcoders/rust-memex) is a small,
 namespace-aware semantic memory substrate. It indexes prior agent
 sessions, kronika fragments, and operator notes into chunks that can
 be retrieved by free-text query across machines. The memex host
@@ -152,9 +152,9 @@ context that would otherwise require manual escalation ("look at
 the silver session from last Thursday"). The trade-off:
 weaker authority tier, opt-in cognitive load (token rotation,
 namespace hygiene), and dependence on a mesh service. Worth it for
-operators running multiple machines in the VetCoders mesh; safe to
+operators running multiple machines in the Vetcoders mesh; safe to
 ignore for everyone else.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

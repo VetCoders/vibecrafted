@@ -20,7 +20,7 @@ def _write_json_chunk(
     authority: str,
     content_hash: str,
     *,
-    namespace: str = "VetCoders/vibecrafted",
+    namespace: str = "vetcoders/vibecrafted",
     timestamp: str = "2026-05-12T10:00:00+00:00",
     relpath: str | None = None,
 ) -> Path:
@@ -55,7 +55,7 @@ def _write_md_chunk(
         f"chunk_id: {chunk_id}\n"
         f"authority: {authority}\n"
         f"content_hash: {content_hash}\n"
-        f"namespace: VetCoders/vibecrafted\n"
+        f"namespace: vetcoders/vibecrafted\n"
         "timestamp: 2026-05-12T10:00:00+00:00\n"
         "---\n"
         f"{body}\n"

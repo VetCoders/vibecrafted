@@ -30,4 +30,4 @@ default_namespace = "local"
 # the default of 5s is generous. Lower it for tighter shells in CI.
 timeout_seconds = 5.0
 
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI

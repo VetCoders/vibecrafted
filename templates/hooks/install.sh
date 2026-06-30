@@ -24,7 +24,7 @@
 #   --no-activate   Install template files but skip activator config write
 #   --dry-run       Show what would happen without writing anything
 #
-# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 set -euo pipefail
 

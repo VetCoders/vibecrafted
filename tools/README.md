@@ -1,12 +1,12 @@
-# VetCoders Hooks
+# Vetcoders Hooks
 
-Private collection of Claude Code hooks for the VetCoders/LibraxisAI team.
+Private collection of Claude Code hooks for the vetcoders/LibraxisAI team.
 
 ## Quick Install
 
 ```bash
 # Clone repo
-git clone git@github.com:VetCoders/vetcoders-hooks.git
+git clone git@github.com:vetcoders/vetcoders-hooks.git
 cd vetcoders-hooks
 
 # Copy all hooks
@@ -104,4 +104,4 @@ Key sections:
 
 ---
 
-Created by [Vibecrafted](https://vibecrafted.io) (c)2024-2026 [VetCoders](http://vetcoders.io)
+Created by [Vibecrafted](https://vibecrafted.io) (c)2024-2026 [Vetcoders](http://vetcoders.io)

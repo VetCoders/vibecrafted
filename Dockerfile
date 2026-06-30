@@ -1,4 +1,4 @@
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 #
 # v1.x Linux base — Debian Bookworm via the official node:22 slim image.
 # We start from node:22-bookworm-slim (not bare debian) because every agent

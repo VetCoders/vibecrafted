@@ -20,7 +20,7 @@ Generates interactive HTML forms and executes operations from JSON.
 chmod +x repo-transfer.py
 
 # Interactive form mode (starts HTTP server + opens browser)
-./repo-transfer.py Szowesgad LibraxisAI VetCoders
+./repo-transfer.py Szowesgad LibraxisAI Vetcoders
 
 # Open form in browser without server
 ./repo-transfer.py Szowesgad LibraxisAI --open
@@ -102,4 +102,4 @@ This breaks fork network and creates a completely independent copy.
 
 ---
 
-_Copyright © 2024–2026 VetCoders_
+_Copyright © 2024–2026 Vetcoders_

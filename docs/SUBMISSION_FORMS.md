@@ -11,7 +11,7 @@ Official submit/help surfaces below were re-checked on 2026-04-11 before this pa
 - Secondary tagline: Ship AI-built software without the vibe hangover.
 - Core promise: Take the repo your AI agents already produced and force it through structural mapping, convergence loops, install truth, packaging, and launch-readiness checks until it is fit to ship.
 - Website: https://vibecrafted.io/
-- Repository: https://github.com/VetCoders/vibecrafted
+- Repository: https://github.com/vetcoders/vibecrafted
 - Docs: https://vibecrafted.io/en/quickstart/
 - FAQ: https://vibecrafted.io/en/faq/
 - Contact: info@vibecrafted.io
@@ -129,7 +129,7 @@ Prepare these fields once, then reuse them across directories:
   https://vibecrafted.io/
 
 - Product URL
-  https://github.com/VetCoders/vibecrafted
+  https://github.com/vetcoders/vibecrafted
 
 - Primary CTA
   Guided install
@@ -289,19 +289,19 @@ Use the default packet above, then bias each marketplace form this way:
 Use these as the default copy/paste answers when a form asks for the common
 launch fields:
 
-| Field            | Paste-ready answer                                                                                                                                                                                                                                      |
+| Field | Paste-ready answer |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| Product name     | `𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.`                                                                                                                                                                                                                                          |
-| Tagline          | `Release engine for AI-built software.`                                                                                                                                                                                                                 |
-| Secondary line   | `Ship AI-built software without the vibe hangover.`                                                                                                                                                                                                     |
-| Website          | `https://vibecrafted.io/`                                                                                                                                                                                                                               |
-| Repository       | `https://github.com/VetCoders/vibecrafted`                                                                                                                                                                                                              |
-| Docs             | `https://vibecrafted.io/en/quickstart/`                                                                                                                                                                                                                 |
-| Category         | `Developer Tools`, `AI Agents`, `Release Engineering`                                                                                                                                                                                                   |
-| Pricing          | `Free for personal use and startups. Enterprise licensing available.`                                                                                                                                                                                   |
-| Primary CTA      | `curl -fsSL https://vibecrafted.io/install.sh                                                                                                                                                                                                           | bash -s -- --gui` |
-| Backup CTA       | `curl -fsSL https://vibecrafted.io/install.sh                                                                                                                                                                                                           | bash`             |
-| 160-char summary | `Vibecrafted hardens AI-generated repos through structural mapping, convergence loops, install audits, and launch-ready packaging.`                                                                                                                     |
+| Product name | `𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.` |
+| Tagline | `Release engine for AI-built software.` |
+| Secondary line | `Ship AI-built software without the vibe hangover.` |
+| Website | `https://vibecrafted.io/` |
+| Repository | `https://github.com/vetcoders/vibecrafted` |
+| Docs | `https://vibecrafted.io/en/quickstart/` |
+| Category | `Developer Tools`, `AI Agents`, `Release Engineering` |
+| Pricing | `Free for personal use and startups. Enterprise licensing available.` |
+| Primary CTA | `curl -fsSL https://vibecrafted.io/install.sh                                                                                                                                                                                                           | bash -s -- --gui` |
+| Backup CTA | `curl -fsSL https://vibecrafted.io/install.sh                                                                                                                                                                                                           | bash` |
+| 160-char summary | `Vibecrafted hardens AI-generated repos through structural mapping, convergence loops, install audits, and launch-ready packaging.` |
 | 300-char summary | `Vibecrafted is the release engine for AI-built software. It takes the repo your agents already produced and drives it through perception, verification, convergence loops, install truth, and launch-readiness work until the product is fit to ship.` |
 
 ## Form-specific fill hints

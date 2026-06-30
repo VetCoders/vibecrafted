@@ -7,5 +7,5 @@ contact_links:
     url: https://vibecrafted.io/en/faq/
     about: Read the common install, workflow, and architecture answers.
   - name: Security Policy
-    url: https://github.com/VetCoders/vibecrafted/blob/main/SECURITY.md
+    url: https://github.com/vetcoders/vibecrafted/blob/main/SECURITY.md
     about: Report vulnerabilities privately instead of opening a public issue.
