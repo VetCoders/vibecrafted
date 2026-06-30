@@ -464,8 +464,20 @@ class AgentStreamParser:
         usage = event.get("usage")
         if isinstance(usage, dict):
             self._record_usage(usage)
-        message = event.get("message") or event.get("text") or event.get("content")
-        return str(message) + ("\n" if message else "")
+        message = (
+            event.get("message")
+            or event.get("text")
+            or event.get("content")
+            or event.get("details")
+            or event.get("data")
+        )
+        text = _stringish(message)
+        if not text or text == "None":
+            return ""
+        name = _stringish(event.get("name"))
+        if name and event.get("type") == "step":
+            return f"{name}: {text}\n"
+        return text + "\n"
 
     def _format_grok_event(self, event: dict[str, Any]) -> str:
         self._record_model(event)
