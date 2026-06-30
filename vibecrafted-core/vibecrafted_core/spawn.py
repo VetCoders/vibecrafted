@@ -38,17 +38,12 @@ TOKEN_PATTERN = re.compile(
 # per-event `tokens: N in / N out` lines, which only some provider
 # formatters render and which would otherwise sum partial streaming usage.
 FOOTER_TOKEN_PATTERNS = {
-    # Anchor on the INDENTED run-closure footer (`  tokens_input: N`, written
-    # under `run_closure:`), not a column-0 line. The launcher frontmatter seed
-    # writes an unindented `tokens_input: 0`; matching it short-circuited token
-    # extraction to always-zero. Requiring leading whitespace targets the real
-    # footer and lets the inline `tokens:` parse run when no footer is present.
-    "input": re.compile(r"^\s+tokens_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE),
+    "input": re.compile(r"^\s*tokens_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE),
     "cached_input": re.compile(
-        r"^\s+tokens_cached_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
+        r"^\s*tokens_cached_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
     ),
     "output": re.compile(
-        r"^\s+tokens_output:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
+        r"^\s*tokens_output:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
     ),
 }
 COST_PATTERNS = (
@@ -272,6 +267,7 @@ def _extract_session(text: str) -> str:
 
 def _extract_tokens(text: str) -> dict[str, int]:
     clean = _clean_text(text)
+    found = TOKEN_PATTERN.findall(clean)
     # Prefer the authoritative run-closure footer totals when present: they are
     # written for every agent and carry the final per-run usage, so they work
     # uniformly across providers and never sum partial streaming deltas.
@@ -282,13 +278,14 @@ def _extract_tokens(text: str) -> dict[str, int]:
         input_tokens = int(footer_in[-1]) if footer_in else 0
         cached_tokens = int(footer_cached[-1]) if footer_cached else 0
         output_tokens = int(footer_out[-1]) if footer_out else 0
-        return {
-            "input": input_tokens,
-            "cached_input": cached_tokens,
-            "output": output_tokens,
-            "total": input_tokens + output_tokens,
-        }
-    found = TOKEN_PATTERN.findall(clean)
+        total_tokens = input_tokens + output_tokens
+        if total_tokens or not found:
+            return {
+                "input": input_tokens,
+                "cached_input": cached_tokens,
+                "output": output_tokens,
+                "total": total_tokens,
+            }
     if not found:
         return {"input": 0, "cached_input": 0, "output": 0, "total": 0}
     input_tokens = cached_tokens = output_tokens = 0
@@ -441,6 +438,29 @@ def write_meta(
     }
 
     _write_meta(meta, payload)
+    if run_id:
+        append_event(
+            "lifecycle:active",
+            run_id,
+            "legacy shell launcher metadata is live",
+            {
+                "state": "active",
+                "agent": agent,
+                "skill": skill_code,
+                "mode": mode,
+                "root": normalize_run_root(str(root), Path.cwd()),
+                "report": report,
+                "transcript": transcript,
+                "launcher": launcher,
+                "model": model,
+                "prompt_id": prompt_id,
+                "started_at": now_iso,
+                "liveness": "active",
+                "identity_required": True,
+                "meta": str(meta),
+                "runtime": "shell",
+            },
+        )
     return meta
 
 
