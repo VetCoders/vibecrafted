@@ -8,10 +8,8 @@
 [`rust-memex`](https://github.com/VetCoders/rust-memex) is a small,
 namespace-aware semantic memory substrate. It indexes prior agent
 sessions, kronika fragments, and operator notes into chunks that can
-be retrieved by free-text query across machines. Per kronika
-2026-05-05 mesh topology the primary memex runs on `dragon` and serves
-the mesh clients (`silver`, `sztudio`, `div0`, plus the `mgbook16`
-alias) over the operator's tailnet.
+be retrieved by free-text query across machines. The memex host
+serves its clients over your private network.
 
 Vibecrafted does **not** ship memex. Operators install the foundation
 separately (`vibecrafted doctor` reports its presence). Plan 09 wires
@@ -60,17 +58,17 @@ cp config/memex.toml.example ~/.config/vetcoders/memex.toml
 
 Fields:
 
-| Field               | Default                     | Notes                                                         |
-| ------------------- | --------------------------- | ------------------------------------------------------------- |
-| `endpoint`          | `http://dragon.local:11211` | Mesh-hosted memex; trailing slash is stripped.                |
-| `token`             | `""`                        | Bearer token; required to enable the client.                  |
-| `default_namespace` | `local`                     | Used when `search()` is called without an explicit namespace. |
-| `timeout_seconds`   | `5.0`                       | HTTP timeout. Lower for tight CI shells.                      |
+| Field               | Default                    | Notes                                                         |
+| ------------------- | -------------------------- | ------------------------------------------------------------- |
+| `endpoint`          | `http://memex.local:11211` | Mesh-hosted memex; trailing slash is stripped.                |
+| `token`             | `""`                       | Bearer token; required to enable the client.                  |
+| `default_namespace` | `local`                    | Used when `search()` is called without an explicit namespace. |
+| `timeout_seconds`   | `5.0`                      | HTTP timeout. Lower for tight CI shells.                      |
 
 ### Option B — environment variables (ephemeral / CI)
 
 ```bash
-export MEMEX_ENDPOINT=http://dragon.local:11211
+export MEMEX_ENDPOINT=http://memex.local:11211
 export MEMEX_TOKEN=<bearer-token>
 export MEMEX_NAMESPACE=vibecrafted
 export MEMEX_TIMEOUT_SECONDS=3

@@ -81,9 +81,9 @@ def test_load_config_invalid_timeout_falls_back(
 def test_load_config_toml_wins_over_env(tmp_path: Path) -> None:
     cfg_path = tmp_path / "memex.toml"
     cfg_path.write_text(
-        'endpoint = "http://dragon.local:11211"\n'
+        'endpoint = "http://memex.local:11211"\n'
         'token = "tok-from-toml"\n'
-        'default_namespace = "dragon-ns"\n'
+        'default_namespace = "team-ns"\n'
         "timeout_seconds = 7.5\n",
         encoding="utf-8",
     )
@@ -95,9 +95,9 @@ def test_load_config_toml_wins_over_env(tmp_path: Path) -> None:
     }
     cfg = mc.load_config(config_path=cfg_path, environ=env)
     # Config-file source: env should NOT override the explicit values.
-    assert cfg.endpoint == "http://dragon.local:11211"
+    assert cfg.endpoint == "http://memex.local:11211"
     assert cfg.token == "tok-from-toml"
-    assert cfg.default_namespace == "dragon-ns"
+    assert cfg.default_namespace == "team-ns"
     assert cfg.timeout_seconds == 7.5
     assert cfg.enabled is True
     assert "config:" in cfg.source
@@ -106,7 +106,7 @@ def test_load_config_toml_wins_over_env(tmp_path: Path) -> None:
 def test_load_config_toml_without_token_can_borrow_env(tmp_path: Path) -> None:
     cfg_path = tmp_path / "memex.toml"
     cfg_path.write_text(
-        'endpoint = "http://dragon.local:11211"\ndefault_namespace = "ops"\n',
+        'endpoint = "http://memex.local:11211"\ndefault_namespace = "ops"\n',
         encoding="utf-8",
     )
     env = {"MEMEX_TOKEN": "tok-borrowed"}
@@ -119,11 +119,11 @@ def test_load_config_toml_without_token_can_borrow_env(tmp_path: Path) -> None:
 def test_load_config_strips_trailing_slash(tmp_path: Path) -> None:
     cfg_path = tmp_path / "memex.toml"
     cfg_path.write_text(
-        'endpoint = "http://dragon.local:11211/"\ntoken = "t"\n',
+        'endpoint = "http://memex.local:11211/"\ntoken = "t"\n',
         encoding="utf-8",
     )
     cfg = mc.load_config(config_path=cfg_path, environ={})
-    assert cfg.endpoint == "http://dragon.local:11211"
+    assert cfg.endpoint == "http://memex.local:11211"
 
 
 # ----------------------------------------------------------- chunk parsing
@@ -240,23 +240,23 @@ def test_search_http_success(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mc, "_http_search", fake_http_search)
 
     cfg = mc.MemexConfig(
-        endpoint="http://dragon.local:11211",
+        endpoint="http://memex.local:11211",
         token="tok",
         default_namespace="local",
         timeout_seconds=3.0,
         enabled=True,
     )
-    out = mc.search("vc-init", namespace="dragon-ns", limit=5, config=cfg)
+    out = mc.search("vc-init", namespace="team-ns", limit=5, config=cfg)
     assert len(out) == 2
     assert out[0].text == "mesh topology silver"
     assert out[1].text == "fallback content field"
     assert out[1].score == pytest.approx(0.5)
     assert all(c.authority == mc.MEMEX_AUTHORITY_LABEL for c in out)
     # Request invariants reached the transport helper unchanged.
-    assert captured["endpoint"] == "http://dragon.local:11211"
+    assert captured["endpoint"] == "http://memex.local:11211"
     assert captured["timeout"] == 3.0
     assert captured["query"] == "vc-init"
-    assert captured["namespace"] == "dragon-ns"
+    assert captured["namespace"] == "team-ns"
     assert captured["limit"] == 5
 
 
@@ -272,7 +272,7 @@ def test_search_http_unreachable_returns_empty(
 
     monkeypatch.setattr(mc, "_http_search", fake_http_search)
     cfg = mc.MemexConfig(
-        endpoint="http://dragon.local:11211",
+        endpoint="http://memex.local:11211",
         token="t",
         default_namespace="local",
         timeout_seconds=1.0,
@@ -294,7 +294,7 @@ def test_search_http_os_error_returns_empty(
 
     monkeypatch.setattr(mc, "_http_search", fake_http_search)
     cfg = mc.MemexConfig(
-        endpoint="http://dragon.local:11211",
+        endpoint="http://memex.local:11211",
         token="t",
         default_namespace="local",
         timeout_seconds=1.0,
@@ -316,7 +316,7 @@ def test_search_http_client_error_returns_empty(
 
     monkeypatch.setattr(mc, "_http_search", fake_http_search)
     cfg = mc.MemexConfig(
-        endpoint="http://dragon.local:11211",
+        endpoint="http://memex.local:11211",
         token="t",
         default_namespace="local",
         timeout_seconds=1.0,

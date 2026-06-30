@@ -117,7 +117,7 @@ def fake_mcp(query, namespace, limit):
     }
 
 cfg = mc.MemexConfig(
-    endpoint="http://dragon.local:11211",
+    endpoint="http://memex.local:11211",
     token="test-token",
     default_namespace="local",
     timeout_seconds=2.0,
