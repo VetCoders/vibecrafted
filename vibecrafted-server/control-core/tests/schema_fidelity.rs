@@ -26,10 +26,10 @@ const GOLDEN_RUN_FINAL: &str = r#"{
   "agent": "codex",
   "skill": "marbles",
   "mode": "implement",
-  "root": "/Users/maciejgad/hosted/VetCoders/vista",
+  "root": "/Users/you/hosted/VetCoders/vista",
   "operator_session": "vista-marb-000",
-  "latest_report": "/Users/maciejgad/.vibecrafted/artifacts/VetCoders/Vista/2026_0329/reports/report.md",
-  "latest_transcript": "/Users/maciejgad/.vibecrafted/artifacts/VetCoders/Vista/2026_0329/reports/report.transcript.log",
+  "latest_report": "/Users/you/.vibecrafted/artifacts/VetCoders/Vista/2026_0329/reports/report.md",
+  "latest_transcript": "/Users/you/.vibecrafted/artifacts/VetCoders/Vista/2026_0329/reports/report.transcript.log",
   "last_error": "",
   "updated_at": "2026-03-29T09:21:15.681613+00:00",
   "started_at": "2026-03-29T09:21:15.681613+00:00",
@@ -53,10 +53,10 @@ const GOLDEN_RUN_ACTIVE: &str = r#"{
   "agent": "claude",
   "skill": "justdo",
   "mode": "implement",
-  "root": "/Users/maciejgad/vc-workspace/VetCoders/vibecrafted",
+  "root": "/Users/you/vc-workspace/VetCoders/vibecrafted",
   "operator_session": "vibecrafted-just-194457-58333",
-  "latest_report": "/Users/maciejgad/.vibecrafted/artifacts/report.md",
-  "latest_transcript": "/Users/maciejgad/.vibecrafted/artifacts/report.transcript.log",
+  "latest_report": "/Users/you/.vibecrafted/artifacts/report.md",
+  "latest_transcript": "/Users/you/.vibecrafted/artifacts/report.transcript.log",
   "last_error": "",
   "updated_at": "2026-06-01T01:45:09.807447+00:00",
   "started_at": "2026-06-01T01:45:09.807447+00:00",
@@ -79,10 +79,10 @@ const GOLDEN_META: &str = r#"{
   "status": "launching",
   "agent": "claude",
   "mode": "implement",
-  "root": "/Users/maciejgad/vc-workspace/VetCoders/vibecrafted",
+  "root": "/Users/you/vc-workspace/VetCoders/vibecrafted",
   "input": "/tmp/prompt.md",
-  "report": "/Users/maciejgad/.vibecrafted/artifacts/report.md",
-  "transcript": "/Users/maciejgad/.vibecrafted/artifacts/report.transcript.log",
+  "report": "/Users/you/.vibecrafted/artifacts/report.md",
+  "transcript": "/Users/you/.vibecrafted/artifacts/report.transcript.log",
   "launcher": "/tmp/launch.sh",
   "prompt_id": "20260531_1944_demo",
   "run_id": "just-194457-58333",
@@ -156,7 +156,7 @@ fn meta_normalizes_to_runstatus() {
     assert_eq!(fresh.state, "launching");
     assert_eq!(fresh.source, "agent-meta");
     assert_eq!(fresh.operator_session, "vibecrafted-just-194457-58333");
-    assert_eq!(fresh.latest_report, "/Users/maciejgad/.vibecrafted/artifacts/report.md");
+    assert_eq!(fresh.latest_report, "/Users/you/.vibecrafted/artifacts/report.md");
     assert_eq!(fresh.exit_code, None);
     assert_eq!(fresh.launcher_pid, Some(59321));
     assert!(!fresh.lock_present, "meta source never sets lock_present");

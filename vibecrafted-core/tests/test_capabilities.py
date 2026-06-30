@@ -73,12 +73,12 @@ def test_probe_tool_reports_product_broken(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(
         capabilities.shutil,
         "which",
-        lambda name: "/Users/op/.local/bin/loct",
+        lambda name: "/Users/you/.local/bin/loct",
     )
     monkeypatch.setattr(
         capabilities,
         "vibecrafted_launcher_bin",
-        lambda: __import__("pathlib").Path("/Users/op/.local/bin"),
+        lambda: __import__("pathlib").Path("/Users/you/.local/bin"),
     )
     runner = _runner_factory(
         {"--version": capabilities.ProbeResult(ok=False, returncode=127, stderr="boom")}
@@ -98,12 +98,12 @@ def test_probe_tool_ok_with_capability_discovery(
     monkeypatch.setattr(
         capabilities.shutil,
         "which",
-        lambda name: "/Users/op/.local/bin/loct",
+        lambda name: "/Users/you/.local/bin/loct",
     )
     monkeypatch.setattr(
         capabilities,
         "vibecrafted_launcher_bin",
-        lambda: __import__("pathlib").Path("/Users/op/.local/bin"),
+        lambda: __import__("pathlib").Path("/Users/you/.local/bin"),
     )
     help_text = (
         "Loctree operator CLI\n\n"
@@ -140,12 +140,12 @@ def test_probe_tool_flags_noncanonical_install(
     monkeypatch.setattr(
         capabilities.shutil,
         "which",
-        lambda name: "/Users/op/.cargo/bin/loct",
+        lambda name: "/Users/you/.cargo/bin/loct",
     )
     monkeypatch.setattr(
         capabilities,
         "vibecrafted_launcher_bin",
-        lambda: __import__("pathlib").Path("/Users/op/.local/bin"),
+        lambda: __import__("pathlib").Path("/Users/you/.local/bin"),
     )
     runner = _runner_factory(
         {
