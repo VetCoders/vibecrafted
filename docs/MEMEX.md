@@ -150,8 +150,8 @@ precedence layers, and malformed-response paths.
 This is opt-in tooling. The agent perception layer works without
 memex — vibecrafted's v1.7 surface is unchanged for operators who
 don't configure it. When configured, memex offers cross-session
-context that would otherwise require manual escalation ("Klaudiusz,
-look at the silver session from last Thursday"). The trade-off:
+context that would otherwise require manual escalation ("look at
+the silver session from last Thursday"). The trade-off:
 weaker authority tier, opt-in cognitive load (token rotation,
 namespace hygiene), and dependence on a mesh service. Worth it for
 operators running multiple machines in the VetCoders mesh; safe to
