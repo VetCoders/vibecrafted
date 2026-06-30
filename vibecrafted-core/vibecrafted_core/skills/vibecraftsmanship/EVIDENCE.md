@@ -20,7 +20,7 @@ not aspirational.
 | 10:06      | Wave B 3/4 reports in: B-1 + B-3 committed, B-4 substrate-failure on krunvm                                                         | rzeczywistość                 |
 | 10:11      | B-2 marbles archived in terminal state: 3 Phase commits landed, worker honestly marked FAILED on inherited substrate (not B-2 lane) | rzeczywistość                 |
 | 10:34      | Wave C close-out: CLOSE_OUT.md written, 4 operator decisions surfaced for operator's button                                         | trinity aligned               |
-| ~17:30     | Pensieve clone + vc-init: separate evidence point — Bear-class markdown editor delivered in 28 hours of prior VetCoders work        | rzeczywistość (cross-session) |
+| ~17:30     | Pensieve clone + vc-init: separate evidence point — Bear-class markdown editor delivered in 28 hours of prior Vetcoders work        | rzeczywistość (cross-session) |
 
 Total wall-clock: **2h 59m** session start → close-out.
 
@@ -72,7 +72,7 @@ reality 28 hours, compression ~80-150× — still 2 orders of magnitude.
 
 The Pensieve repo was initialized at `2026-05-22 20:52:07` with
 `[claude/vc-operator] feat(vcnotes): foundation skeleton for Swift/SwiftUI/TextKit2 rewrite`.
-Most recent VetCoders commit: `2026-05-24 01:11:05`.
+Most recent Vetcoders commit: `2026-05-24 01:11:05`.
 
 **Elapsed: 28 hours, 19 minutes.**
 
@@ -116,7 +116,7 @@ load-bearing, not optional. Without them, agent would have drifted:
    "primary spine vs parallel R&D vs premium" ranking. Equal intensity
    was the truth all along; agent's ranking was projection of
    conventional team-bandwidth thinking that doesn't apply at
-   VetCoders pace.
+   Vetcoders pace.
 3. **"Stop writing more briefs than commits land"** — agent had
    over-engineered Wave A briefs (~300 LOC each); operator flipped
    the ratio to "agents should win, dzięki tobie". Wave B briefs
@@ -125,7 +125,7 @@ load-bearing, not optional. Without them, agent would have drifted:
    in its own lab dir, not generic vc-runtime root. Living Tree
    discipline + clean per-lab reports.
 5. **"Fork-and-forget"** — for microsandbox: no upstream sync, no
-   rebase, treat as VetCoders codebase from clone. Operator's taste
+   rebase, treat as Vetcoders codebase from clone. Operator's taste
    call that agent could not have predicted (microsandbox is Apache
    2.0, technically syncable; operator chose not to).
 6. **Time-rescale skepticism** — operator pushed back on
@@ -153,7 +153,7 @@ respond to operator corrections produces wrong work at high speed.
 6. **Operator corrections are gust signals.** Read them as
    trajectory adjustments, not nitpicks.
 7. **Conventional estimates from cross-frontier reports are
-   conservative.** Cross-validate with empirical VetCoders pace.
+   conservative.** Cross-validate with empirical Vetcoders pace.
 8. **Per-lab cwd + per-repo branches = Living Tree clean.**
 9. **Marbles correctly stops on report-failed signal.** Don't burn
    iterations on irrelevant ground.
@@ -304,4 +304,4 @@ declared as HARD RULES in the Operational default section.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

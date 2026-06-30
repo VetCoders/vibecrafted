@@ -101,7 +101,7 @@ install_one() {
   printf '     installed\n'
 }
 
-printf 'Installing VetCoders frontier config\n'
+printf 'Installing Vetcoders frontier config\n'
 printf '  source repo: %s\n' "$repo_root"
 printf '  mode: %s\n' "$mode"
 printf '  frontier root: %s\n' "$frontier_root"

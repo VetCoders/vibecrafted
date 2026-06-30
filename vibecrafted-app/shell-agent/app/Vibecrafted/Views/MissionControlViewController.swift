@@ -1,5 +1,5 @@
 // Vibecrafted - Mission Control Snapshot
-// Created by VetCoders
+// Created by Vetcoders
 
 import AppKit
 

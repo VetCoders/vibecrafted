@@ -1,6 +1,6 @@
 -- vibecrafted/config/hammerspoon/init.lua — Plan 11 (META_22).
 --
--- Repo-tracked Hammerspoon configuration template that ships the VetCoders
+-- Repo-tracked Hammerspoon configuration template that ships the Vetcoders
 -- URL handler stack. Operators install with `make install-hammerspoon`
 -- (scripts/install-hammerspoon.sh copies this file to ~/.hammerspoon/init.lua,
 -- offers .bak overwrite on re-run, triggers Hammerspoon reload).
@@ -425,7 +425,7 @@ end)
 -- Boot banner
 -- ============================================================================
 
-print("=== VetCoders URL handlers załadowane ===")
+print("=== Vetcoders URL handlers załadowane ===")
 print("Plan A:   vc-ping, vc-open-file, vc-loct, vc-aicx")
 print("Plan 11:  vc-atlas, vc-prism, vc-marbles, vc-followup")
 print("Test:  open 'hammerspoon://vc-ping?msg=hello'")

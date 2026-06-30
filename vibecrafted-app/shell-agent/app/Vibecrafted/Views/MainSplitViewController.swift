@@ -1,5 +1,5 @@
 // Vibecrafted — Main Split View
-// Created by VetCoders
+// Created by Vetcoders
 
 import AppKit
 

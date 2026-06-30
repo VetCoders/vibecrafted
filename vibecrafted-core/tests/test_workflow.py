@@ -18,7 +18,7 @@ def _source_dir(tmp_path: Path) -> Path:
 
 
 def _write_run_meta(home: Path, payload: dict[str, object]) -> Path:
-    run_dir = home / "artifacts" / "VetCoders" / "vibecrafted" / "2026_0611" / "reports"
+    run_dir = home / "artifacts" / "Vetcoders" / "vibecrafted" / "2026_0611" / "reports"
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / f"{payload['run_id']}.meta.json"
     path.write_text(json.dumps(payload), encoding="utf-8")

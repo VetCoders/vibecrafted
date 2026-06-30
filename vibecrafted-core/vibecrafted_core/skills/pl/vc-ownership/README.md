@@ -1,4 +1,4 @@
-# VetCoders Ownership
+# Vetcoders Ownership
 
 Pełnospektralny tryb ownership do sesji, w których użytkownik chce, żeby Agent
 prowadził product slice od A do Z, zamiast czekać na instrukcje krok po kroku.

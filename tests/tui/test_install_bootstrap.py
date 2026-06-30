@@ -85,7 +85,7 @@ def test_install_sh_fallback_prefers_github_source_snapshot_when_channel_missing
 
     assert 'channel_url="https://vibecrafted.io/channel/${ref}.json"' in text
     assert (
-        'archive_url="https://github.com/VetCoders/vibecrafted/archive/refs/heads/${ref}.tar.gz"'
+        'archive_url="https://github.com/Vetcoders/vibecrafted/archive/refs/heads/${ref}.tar.gz"'
         in text
     )
     assert "using GitHub source snapshot for ${ref}" in text

@@ -129,12 +129,12 @@ Modes:
 - **Gate inconsistencies**: `MERGE_GATE.json` says "All checks passed" but WARN/findings exist → P2 [TOOLING]. Recommend: distinguish "All blocking checks passed" vs "Non-blocking issues present".
 - **Branch drift**: files changed outside PR scope (CI, infra, unrelated config) → P1 if >10 files. Recommend: rebase on base branch.
 
-## ScreenScribe integration
+## Screenscribe integration
 
-vc-review can analyze screencast recordings alongside code diffs when ScreenScribe is available as a foundation tool. Use for:
+vc-review can analyze screencast recordings alongside code diffs when Screenscribe is available as a foundation tool. Use for:
 
 - Runtime behavior review (visual confirmation of what the code does)
 - Bug demo analysis (narrated screen recordings → structured findings)
 - UX review passes (screencast of user flow → P-leveled UX issues)
 
-ScreenScribe is optional. If not installed, vc-review operates on code artifacts only.
+Screenscribe is optional. If not installed, vc-review operates on code artifacts only.

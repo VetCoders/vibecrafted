@@ -58,11 +58,11 @@ Total: ~80+ lines. User scrolls past everything to see the result.
 
   ⚒  𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Installer
   ─────────────────────────────────
-  Source: ~/hosted/VetCoders/vetcoders-skills
+  Source: ~/hosted/Vetcoders/vetcoders-skills
   Version: 1.0.4
 
 Bundle contents:
-  VetCoders Pipeline (16)
+  Vetcoders Pipeline (16)
     - vc-agents
     - vc-decorate
     - vc-delegate
@@ -186,8 +186,8 @@ Remove orphaned skills? [Y/n] y
   [ok] Removed 4 orphaned entries
 
 Installing shell helper...
-Installing VetCoders shell helpers
-  source: ~/hosted/VetCoders/vetcoders-skills/runtime/shell/vetcoders.sh
+Installing Vetcoders shell helpers
+  source: ~/hosted/Vetcoders/vetcoders-skills/runtime/shell/vetcoders.sh
   target: ~/.config/vetcoders/vc-skills.sh
   ~/.zshrc: already sourced
 
@@ -528,7 +528,7 @@ Look at how `uv` (https://github.com/astral-sh/uv) handles install output:
 - Errors break out of compact mode with full detail
 
 At the end of the task, write your final human-readable report to this exact path:
-~/.vibecrafted/artifacts/VetCoders/vibecrafted/2026_0328/reports/20260328_0458_0510_uv-style-installe
+~/.vibecrafted/artifacts/Vetcoders/vibecrafted/2026_0328/reports/20260328_0458_0510_uv-style-installe
 r_implement_claude.md
 
 Keep streaming useful progress to stdout while you work. If you cannot write a

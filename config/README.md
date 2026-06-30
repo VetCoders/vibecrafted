@@ -1,4 +1,4 @@
-# VetCoders Frontier Config
+# Vetcoders Frontier Config
 
 Repo-owned shell presets for the 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. operator surface.
 

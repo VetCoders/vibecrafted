@@ -1,8 +1,8 @@
 {
   "name": "vc-ownership",
-  "description": "Full-spectrum VetCoders ownership mode. Use /vc-ownership when the operator wants the agent to drive a product from A to Z: architecture, coding, runtime debugging, UI polish, packaging, docs, testing, local tooling, optional agent orchestration, and wow-effect finish.",
+  "description": "Full-spectrum Vetcoders ownership mode. Use /vc-ownership when the operator wants the agent to drive a product from A to Z: architecture, coding, runtime debugging, UI polish, packaging, docs, testing, local tooling, optional agent orchestration, and wow-effect finish.",
   "author": {
-    "name": "VetCoders",
+    "name": "Vetcoders",
     "email": "hello@vetcoders.io"
   }
 }

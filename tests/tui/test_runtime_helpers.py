@@ -779,7 +779,7 @@ def test_runtime_core_preserves_origin_org_repo_resolution(tmp_path: Path) -> No
             "remote",
             "add",
             "origin",
-            "https://github.com/VetCoders/vibecrafted.git",
+            "https://github.com/Vetcoders/vibecrafted.git",
         ],
         check=True,
         capture_output=True,
@@ -793,7 +793,7 @@ def test_runtime_core_preserves_origin_org_repo_resolution(tmp_path: Path) -> No
     )
 
     assert result.returncode == 0
-    assert result.stdout.strip() == "VetCoders/vibecrafted"
+    assert result.stdout.strip() == "Vetcoders/vibecrafted"
 
 
 def test_research_summary_does_not_execute_await_command(tmp_path: Path) -> None:

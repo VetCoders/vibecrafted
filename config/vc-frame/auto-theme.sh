@@ -7,7 +7,7 @@
 # in config/vc-frame/themes/vetcoders-mesh.kdl. Falls back to "vibecrafted"
 # (the neutral default in config.kdl) when the host is unknown.
 #
-# Mesh mapping (kronika 2026-05-05 — VetCoders mesh topology):
+# Mesh mapping (kronika 2026-05-05 — Vetcoders mesh topology):
 #   dragon   -> red    (LibraxisAI server, central hub)
 #   sztudio  -> purple (Monika's desktop)
 #   silver   -> cyan   (Monika's laptop)

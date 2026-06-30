@@ -1802,7 +1802,7 @@ fn mission_control_defaults_to_live_runs_across_roots_with_root_labels() {
     let control_plane_root = dir.path().join("control-plane");
     let artifact_root = dir.path().join("artifacts");
     let mission_root = dir.path().join("pensieve");
-    let foreign_root = dir.path().join("CodeScribe");
+    let foreign_root = dir.path().join("Codescribe");
     let legacy_root = "";
 
     let state = ControlPlaneState {
@@ -1852,7 +1852,7 @@ fn mission_control_defaults_to_live_runs_across_roots_with_root_labels() {
     let mission = MissionControlState::build_at(&state, &artifact_root, now);
     assert_eq!(mission.active_dispatches.len(), 2);
     assert!(mission.active_dispatches.iter().any(|dispatch| {
-        dispatch.run_id == "wflw-foreign-launching" && dispatch.root_label == "CodeScribe"
+        dispatch.run_id == "wflw-foreign-launching" && dispatch.root_label == "Codescribe"
     }));
     assert!(mission.active_dispatches.iter().any(|dispatch| {
         dispatch.run_id == "wflw-legacy-running" && dispatch.root_label == "root unknown"

@@ -189,7 +189,7 @@ Siły jeszcze nie zarabia na siebie.
   czerwona bramka = jeszcze nie przetrwała. Awaria podłoża to informacja; to
   NIE jest pass.
 - **Brak szacunku bez empirycznego odniesienia**: gdy źródło mówi „3-6
-  miesięcy", sprawdź, czy ich założenia pasują do wzorca pracy VetCoders.
+  miesięcy", sprawdź, czy ich założenia pasują do wzorca pracy Vetcoders.
   Pensieve sfalsyfikował 3-6 miesięcy gemini w 28 godzin realnej pracy.
 
 ### Konkretne kontakty z rzeczywistością z tej sesji
@@ -266,4 +266,4 @@ operatorowi do triage. Nie udawaj, że triada jest wyrównana, gdy nie jest.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

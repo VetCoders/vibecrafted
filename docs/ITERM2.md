@@ -41,7 +41,7 @@ from vibecrafted_iterm2 import iterm2_osc as osc
 
 print(
     osc.hyperlink(
-        "https://github.com/VetCoders/vibecrafted/blob/release/v1.7.1/docs/ITERM2.md",
+        "https://github.com/Vetcoders/vibecrafted/blob/release/v1.7.1/docs/ITERM2.md",
         "open iTerm2 guide",
     )
 )

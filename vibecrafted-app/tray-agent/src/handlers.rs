@@ -96,7 +96,7 @@ pub fn handle_menu_event(event_id: &MenuId, menu_ids: &MenuIds, socket_path: &Pa
         Some(MenuRoute::Help) => {
             send_menu_event(TrayMenuEvent::OpenHelp);
             let _ = Command::new("open")
-                .arg("https://github.com/VetCoders/vibecrafted#readme")
+                .arg("https://github.com/Vetcoders/vibecrafted#readme")
                 .spawn();
         }
         Some(MenuRoute::About) => {

@@ -142,7 +142,7 @@ args.contains("rmcp-mux")` was a copy/paste; the second clause now
 ### Changed
 
 - **Rebranded: `rmcp_mux` → `rmcp-mux`.** Crate name hyphenated on crates.io per convention; module path `rmcp_mux`. Binary `rmcp_mux_proxy` → `rmcp_mux_proxy`. All internal imports `use rmcp_mux::` → `use rmcp_mux::`. User-facing `RMCP_MUX_*` environment variables preserved for backward compatibility.
-- **Moved to Loctree org:** `https://github.com/VetCoders/rmcp-mux` → `https://github.com/Loctree/rmcp-mux`.
+- **Moved to Loctree org:** `https://github.com/Vetcoders/rmcp-mux` → `https://github.com/Loctree/rmcp-mux`.
 
 ### Added
 

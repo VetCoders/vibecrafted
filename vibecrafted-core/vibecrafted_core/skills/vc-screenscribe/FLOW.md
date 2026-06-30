@@ -4,13 +4,13 @@
 
 ```mermaid
 flowchart TD
-    A[Video or ScreenScribe repo task] --> B{Video analysis?}
+    A[Video or Screenscribe repo task] --> B{Video analysis?}
     B -->|yes| C[Pick review, preprocess, transcribe, or analyze]
     C --> D[Run screenscribe CLI on absolute input paths]
     D --> E[Report artifacts and blockers]
     B -->|repo work| F[Run or consume vc-init]
     F --> G[Use Loctree map plus repo gates]
-    G --> H[Implement or diagnose ScreenScribe code]
+    G --> H[Implement or diagnose Screenscribe code]
 ```
 
 ## Routes
@@ -24,5 +24,5 @@ flowchart TD
 ## Verification Rule
 
 Observed video evidence must become actionable engineering findings. Fixes are
-verified through the relevant ScreenScribe runtime or report gate, not only by
+verified through the relevant Screenscribe runtime or report gate, not only by
 editing docs.

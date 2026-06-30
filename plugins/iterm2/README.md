@@ -1,7 +1,7 @@
 # vibecrafted — iTerm2 / locterm plugin
 
 This package ships the vibecrafted cockpit for macOS users running
-**iTerm2** or VetCoders' **locterm** fork. It surfaces live spawn
+**iTerm2** or Vetcoders' **locterm** fork. It surfaces live spawn
 activity in the iTerm2 status bar, auto-tags panes per agent + skill via
 iTerm2 Triggers, and posts native notifications on terminal spawn
 lifecycle transitions.

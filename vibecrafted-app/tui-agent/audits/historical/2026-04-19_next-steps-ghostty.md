@@ -10,7 +10,7 @@ Ten plan skupia się wyłącznie na architekturze, refaktoringu i rozwoju narzę
 
 ### 1. Bezpieczna Iniekcja Zmiennych Środowiskowych
 
-W module `launch.rs` (w `LaunchCommand::spawn`) należy dodać jawną propagację zmiennych środowiskowych specyficznych dla VibeCrafted (np. `VC_FRAME_CONFIG_DIR`, `VIBECRAFT_ROOT`). Zapobiegnie to wyciekom i konfliktom z globalnym środowiskiem systemu.
+W module `launch.rs` (w `LaunchCommand::spawn`) należy dodać jawną propagację zmiennych środowiskowych specyficznych dla Vibecrafted (np. `VC_FRAME_CONFIG_DIR`, `VIBECRAFT_ROOT`). Zapobiegnie to wyciekom i konfliktom z globalnym środowiskiem systemu.
 
 ### 2. Rozszerzenie `LaunchCommand` pod Ghostty
 

@@ -1,4 +1,4 @@
-# VetCoders Ownership
+# Vetcoders Ownership
 
 Full-spectrum ownership mode for sessions where the user wants Agent to drive a
 product slice from A to Z instead of waiting for stepwise instructions.

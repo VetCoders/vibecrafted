@@ -19,7 +19,7 @@
 # file. Other contributors get the hooks automatically by running the same
 # command (no npm/python/cargo required — single binary install).
 #
-# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 # Skip the entire stack when LEFTHOOK=0 (parity with HUSKY_SKIP_PREPUSH=1).
 skip_output:

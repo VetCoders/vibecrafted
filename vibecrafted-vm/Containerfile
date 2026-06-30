@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # ============================================================================
-# vc-workspace — SoTA dev container for the VetCoders / vibecrafted / loctree
+# vc-workspace — SoTA dev container for the Vetcoders / vibecrafted / loctree
 # stack. Debian 13 trixie base, full framework + foundations + agent CLIs +
 # tailnet integration.
 #
@@ -18,14 +18,14 @@
 # First build ~15-20 min (Rust workspace compile incl. aicx native-embedder /
 # llama-cpp-sys). Subsequent builds cache layer-by-layer.
 #
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 # ============================================================================
 
 ARG DEBIAN_RELEASE=trixie
 ARG ZIG_VERSION=0.13.0
 
 # ──────────────────────────────────────────────────────────────────────────
-# Stage A — builder: compile VetCoders foundations from vendored source
+# Stage A — builder: compile Vetcoders foundations from vendored source
 # ──────────────────────────────────────────────────────────────────────────
 FROM debian:${DEBIAN_RELEASE} AS builder
 
@@ -143,7 +143,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
  && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
  && uv --version
 
-# VetCoders foundations — compiled binaries from builder
+# Vetcoders foundations — compiled binaries from builder
 COPY --from=builder /usr/local/bin/loct /usr/local/bin/loct
 COPY --from=builder /usr/local/bin/loctree /usr/local/bin/loctree
 COPY --from=builder /usr/local/bin/loctree-mcp /usr/local/bin/loctree-mcp
@@ -159,7 +159,7 @@ RUN for b in loct loctree loctree-mcp loctree-lsp aicx aicx-mcp; do \
 RUN pip3 install --break-system-packages --quiet semgrep \
  && semgrep --version >/dev/null 2>&1 && echo "semgrep ok"
 
-# screenscribe — NOT on PyPI (it's a VetCoders foundation distributed out-of-band,
+# screenscribe — NOT on PyPI (it's a Vetcoders foundation distributed out-of-band,
 # like loct/aicx). Best-effort: try pip in case a private index is configured,
 # otherwise skip — it is not load-bearing for the dev container.
 RUN pip3 install --break-system-packages --quiet screenscribe 2>/dev/null \
@@ -202,7 +202,7 @@ RUN ARCH="$(uname -m)"; \
 RUN curl -fsSL https://tailscale.com/install.sh | sh \
  && tailscale --version
 
-# VetCoders framework — official vibecrafted.io installer.
+# Vetcoders framework — official vibecrafted.io installer.
 # Piping to bash is already non-interactive (no-TTY → compact path); `--yes`
 # skips the consent prompt. VIBECRAFTED_HOME sets the location (no --prefix
 # flag exists); /opt/vibecrafted so it does not write into the mounted
@@ -236,8 +236,8 @@ ENTRYPOINT ["/usr/local/bin/entry.sh"]
 CMD ["zsh"]
 
 LABEL org.opencontainers.image.title="vc-workspace"
-LABEL org.opencontainers.image.description="SoTA dev container for VetCoders / vibecrafted / loctree / aicx stack with tailnet integration"
+LABEL org.opencontainers.image.description="SoTA dev container for Vetcoders / vibecrafted / loctree / aicx stack with tailnet integration"
 LABEL org.opencontainers.image.source="https://github.com/vetcoders/vc-workspace"
 LABEL org.opencontainers.image.licenses="MIT"
-LABEL org.opencontainers.image.authors="VetCoders <hello@vetcoders.io>"
+LABEL org.opencontainers.image.authors="Vetcoders <hello@vetcoders.io>"
 LABEL org.opencontainers.image.version="0.2.0"

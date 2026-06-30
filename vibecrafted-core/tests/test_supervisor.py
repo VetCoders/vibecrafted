@@ -96,7 +96,7 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("CODEX_MODEL", "gpt-5.3-codex")
-    reports = tmp_path / "VetCoders" / "vibecrafted" / "2026_0610" / "reports"
+    reports = tmp_path / "Vetcoders" / "vibecrafted" / "2026_0610" / "reports"
     reports.mkdir(parents=True)
     report = reports / "announced.md"
     transcript = reports / "announced.transcript.log"

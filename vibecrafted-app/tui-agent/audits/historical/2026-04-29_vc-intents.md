@@ -30,7 +30,7 @@ The TUI's self-tests pass for the launch-string contract, but the operator-facin
 
 ## Full report
 
-`/Users/tester/.vibecrafted/artifacts/VetCoders/vc-operator/2026_0429/reports/20260429_215131_20260429_2151_perform-the-vc-intents-skill-on-this-repositor_claude.md`
+`/Users/tester/.vibecrafted/artifacts/Vetcoders/vc-operator/2026_0429/reports/20260429_215131_20260429_2151_perform-the-vc-intents-skill-on-this-repositor_claude.md`
 
 (Also reachable via the local symlink: `.vibecrafted/reports/20260429_215131_…_claude.md`.)
 

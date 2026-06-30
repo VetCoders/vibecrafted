@@ -298,4 +298,4 @@ Items 4-6 are the Definition of Undone.
 _"The antidote is not more tools. It is not another framework._
 _It is a decision: choose what ships, and finish it. All of it. Not just the code."_
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

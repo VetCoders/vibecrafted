@@ -1,4 +1,4 @@
-# VetCoders Partner
+# Vetcoders Partner
 
 Proactive shared-steering posture for sessions where the operator and agent
 must preserve the original shape while still moving decisively.

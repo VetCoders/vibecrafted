@@ -10,7 +10,7 @@
 # Types: feat fix docs style refactor perf test build ci chore revert
 # Subject: 1..$HUSKY_COMMIT_MSG_SUBJECT_MAX chars after the colon
 #
-# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 set -euo pipefail
 

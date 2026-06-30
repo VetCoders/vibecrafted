@@ -11,7 +11,7 @@
 //   "expanded"   — operator + right sidebar with convergence + sessions
 //   "grid"       — 2x2 grid for when you want all agents visible at once
 //
-// VibeCrafted with AI Agents (c)2026 VetCoders
+// Vibecrafted with AI Agents (c)2026 Vetcoders
 layout {
     // new_tab_template removed: vc-frame 0.44 broke `children` inside it.
     // default_tab_template covers both existing and new tabs.

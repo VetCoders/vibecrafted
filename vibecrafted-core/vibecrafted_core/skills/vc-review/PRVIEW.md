@@ -6,23 +6,23 @@
 Read alongside [`SKILL.md`](SKILL.md) and [`FINDINGS.md`](FINDINGS.md).
 
 - Binary: `prview` (resolve via `command -v prview`; do not assume cargo path)
-- Source: `https://github.com/VetCoders/prview-rs`
-- Author: Monika (@m-szymanska) — VetCoders
+- Source: `https://github.com/Vetcoders/prview-rs`
+- Author: Monika (@m-szymanska) — Vetcoders
 
 ---
 
 ## Dispatch table
 
-| Mode                             | Command                                         | When to use                                |
+| Mode | Command | When to use |
 | -------------------------------- | ----------------------------------------------- | ------------------------------------------ | -------------------- |
-| Local branch vs develop/main     | `prview --pr <NUMBER>`                          | Default for active PRs on local checkout   |
-| Remote branch (no checkout)      | `prview -R --remote-only <branch> <base>`       | Reviewing a contributor branch on origin   |
-| GitHub PR by number              | `prview --pr <NUMBER> --with-tests --with-lint` | Default for thorough PR review             |
-| All gates                        | `prview --deep`                                 | Merge gate / high-risk PR                  |
-| Fast triage                      | `prview --quick`                                | Explicit fast triage only — NOT default    |
-| Refresh after amend / force-push | `prview --update`                               | Avoid duplicate artifact sets              |
-| Ambiguous origin                 | add `--gh-repo owner/repo`                      | When the working tree has multiple remotes |
-| JSON-only mode                   | `prview --json --quiet                          | jq ...`                                    | Pipeline integration |
+| Local branch vs develop/main | `prview --pr <NUMBER>` | Default for active PRs on local checkout |
+| Remote branch (no checkout) | `prview -R --remote-only <branch> <base>` | Reviewing a contributor branch on origin |
+| GitHub PR by number | `prview --pr <NUMBER> --with-tests --with-lint` | Default for thorough PR review |
+| All gates | `prview --deep` | Merge gate / high-risk PR |
+| Fast triage | `prview --quick` | Explicit fast triage only — NOT default |
+| Refresh after amend / force-push | `prview --update` | Avoid duplicate artifact sets |
+| Ambiguous origin | add `--gh-repo owner/repo` | When the working tree has multiple remotes |
+| JSON-only mode | `prview --json --quiet                          | jq ...` | Pipeline integration |
 
 Default for vc-review: **do not use `--quick`**. Use `--with-tests
 --with-lint` as the baseline. Save `--deep` for merge gate / high-risk.
@@ -94,4 +94,4 @@ assessment after review.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

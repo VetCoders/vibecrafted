@@ -9,7 +9,7 @@ They are not skills — they are the senses and memory of the agent layer.
  Skills (vc-workflow, vc-marbles, vc-followup, ...)
     |           |           |            |
     v           v           v            v
- Loctree     AICX      PRView     ScreenScribe
+ Loctree     AICX      PRView     Screenscribe
   (eyes)    (intentions)   (review)     (ears)
     |           |           |            |
     +--------- Foundation Layer ---------+
@@ -64,15 +64,15 @@ reports that feed into followup agents and convergence loops.
 **Used by**: `vc-review`, `vc-followup`, `vc-marbles` (as review gate).
 
 **Install**: Binary from
-[VetCoders/prview releases](https://github.com/VetCoders/prview/releases)
+[Vetcoders/prview releases](https://github.com/Vetcoders/prview/releases)
 
-## ScreenScribe — Ears
+## Screenscribe — Ears
 
 **What it does**: Turns screen recordings with narration into structured
 engineering findings. Bridges the gap between "it's broken" shown on
 screen and a formal bug report.
 
-**Why it matters**: Some bugs are easier to show than to type. ScreenScribe
+**Why it matters**: Some bugs are easier to show than to type. Screenscribe
 converts narrated demos into actionable input for agent workflows.
 
 **Tools**: `screenscribe` CLI
@@ -80,7 +80,7 @@ converts narrated demos into actionable input for agent workflows.
 **Used by**: `vc-decorate` (visual verification), `vc-followup` (UI audit),
 `vc-dou` (product surface check).
 
-**Install**: use the current ScreenScribe release or source install path checked
+**Install**: use the current Screenscribe release or source install path checked
 by `make doctor`. Treat this document as role guidance, not a package registry.
 
 ## Foundation in the Installer
@@ -90,7 +90,7 @@ by `make doctor`. Treat this document as role guidance, not a package registry.
 without them, but the framework is not operating in its intended mode: it has
 no structural perception and no durable intention recovery.
 
-`prview` and ScreenScribe are evidence layers. They are strongly recommended
+`prview` and Screenscribe are evidence layers. They are strongly recommended
 for review and runtime proof, but they do not replace the required foundation
 pair: `loctree-mcp` plus `aicx-mcp`.
 
@@ -100,7 +100,7 @@ The recommended install order:
 2. Foundation binaries (`make foundations` — installs loctree + aicx)
 3. Agent CLIs (claude, codex, gemini)
 4. PRView (recommended for review workflows)
-5. ScreenScribe (recommended for visual verification)
+5. Screenscribe (recommended for visual verification)
 
 ## Foundation vs Skills
 
@@ -114,4 +114,4 @@ The recommended install order:
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. by VetCoders_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. by Vetcoders_

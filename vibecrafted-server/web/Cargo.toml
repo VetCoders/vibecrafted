@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85.0"
 license = "BUSL-1.1"
-authors = ["VetCoders <agents@vetcoders.io>"]
+authors = ["Vetcoders <agents@vetcoders.io>"]
 publish = false
 
 [lib]

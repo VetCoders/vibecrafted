@@ -38,9 +38,9 @@ Preferuj `--prompt` dla świeżego audytu, a `--file` wtedy, gdy istniejący pla
 lub wyekstrahowany bundle intencji ma być porównany z drzewem.
 
 ```bash
-vibecrafted intents codex --prompt 'Check which planned implementations actually landed in CodeScribe'
+vibecrafted intents codex --prompt 'Check which planned implementations actually landed in Codescribe'
 vc-intents claude --prompt 'Build a 20-item checklist from intents and mark done/partial/missing'
-vibecrafted intents gemini --file ~/.vibecrafted/artifacts/VetCoders/CodeScribe/2026_0419/plans/research-plan.md
+vibecrafted intents gemini --file ~/.vibecrafted/artifacts/Vetcoders/Codescribe/2026_0419/plans/research-plan.md
 ```
 
 Zależności fundamentowe: `vc-aicx` (pozyskiwanie intencji, source chunks, pamięć
@@ -254,4 +254,4 @@ jasno i nazwij je najwyższą prawdą.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

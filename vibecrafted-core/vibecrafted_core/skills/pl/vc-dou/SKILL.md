@@ -282,4 +282,4 @@ Punkty 4-6 to Definition of Undone.
 _„Antidotum to nie więcej narzędzi. To nie kolejny framework._
 _To decyzja: wybierz, co się dowozi, i dokończ to. Całość. Nie tylko kod."_
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

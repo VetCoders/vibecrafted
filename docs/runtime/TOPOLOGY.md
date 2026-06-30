@@ -1,6 +1,6 @@
 # Operator Runtime Topology
 
-The VetCoders operator runtime orchestrates AI-built software delivery across multiple interfaces, establishing a clear product choice instead of overlapping experiments.
+The Vetcoders operator runtime orchestrates AI-built software delivery across multiple interfaces, establishing a clear product choice instead of overlapping experiments.
 
 ## Runtime Surfaces
 

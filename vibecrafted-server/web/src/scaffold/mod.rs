@@ -171,7 +171,7 @@ pub mod api {
         let org = query
             .org
             .or_else(|| fallback.as_ref().map(|workspace| workspace.org.clone()))
-            .unwrap_or_else(|| "VetCoders".to_string());
+            .unwrap_or_else(|| "Vetcoders".to_string());
         let repo = query
             .repo
             .or_else(|| fallback.as_ref().map(|workspace| workspace.repo.clone()))
@@ -462,7 +462,7 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
 
         fn fixture() -> ScaffoldWorkspace {
             ScaffoldWorkspace {
-                org: "VetCoders".into(),
+                org: "Vetcoders".into(),
                 repo: "vibecrafted".into(),
                 day: "2026_0615".into(),
                 operator_dir: "/tmp/op".into(),

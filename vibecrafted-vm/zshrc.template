@@ -1,7 +1,7 @@
-# vc-workspace .zshrc — VetCoders dev container shell
+# vc-workspace .zshrc — Vetcoders dev container shell
 # ============================================================================
 # Sourced by zsh on shell start. Wires starship prompt, atuin history,
-# zoxide directory jump, and VetCoders framework helpers.
+# zoxide directory jump, and Vetcoders framework helpers.
 # ============================================================================
 
 # History
@@ -20,7 +20,7 @@ for _vcenv in /opt/vibecrafted/env.sh /opt/vibecrafted/tools/vibecrafted-current
     [ -f "$_vcenv" ] && . "$_vcenv" && break
 done
 
-# VetCoders config
+# Vetcoders config
 export VETCODERS_CONFIG_DIR="${VETCODERS_CONFIG_DIR:-/root/.config/vetcoders}"
 export VIBECRAFTED_ROOT="${VIBECRAFTED_ROOT:-/opt/vibecrafted}"
 export VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-/root/.vibecrafted}"
@@ -83,4 +83,4 @@ if [ -z "$VC_WORKSPACE_WELCOMED" ]; then
 WELCOME
 fi
 
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI

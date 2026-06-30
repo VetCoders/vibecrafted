@@ -6,7 +6,7 @@
 # WARN mode and demoted a failure. Allows reviewers (and grep) to spot warned
 # commits.
 #
-# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 set -euo pipefail
 

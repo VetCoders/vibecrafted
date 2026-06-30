@@ -56,7 +56,7 @@ Prerequisites: Docker Engine + Docker Compose v2, Tailscale auth key.
 
 ```bash
 # 1. Clone vibecrafted on dragon (or use existing checkout)
-git clone https://github.com/VetCoders/vibecrafted.git
+git clone https://github.com/Vetcoders/vibecrafted.git
 cd vibecrafted
 git checkout release/v2.0.1   # or whatever's current
 

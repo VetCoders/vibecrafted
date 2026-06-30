@@ -55,7 +55,7 @@ curl -fsSL https://vibecrafted.io/install.sh | bash
 Or from a local checkout:
 
 ```bash
-git clone https://github.com/VetCoders/vibecrafted.git
+git clone https://github.com/Vetcoders/vibecrafted.git
 cd vibecrafted
 make install              # interactive wizard
 # or
@@ -155,7 +155,7 @@ to copy-paste, scoped to your detected package manager. Re-run after.
 ### Install (from source)
 
 ```bash
-git clone https://github.com/VetCoders/vibecrafted.git
+git clone https://github.com/Vetcoders/vibecrafted.git
 cd vibecrafted
 make install               # interactive wizard
 ```
@@ -363,4 +363,4 @@ make doctor       # health check
 
 _Plan source: [`docs/plans/META_22_SCAFFOLD_TO_RELEASE.md`](plans/META_22_SCAFFOLD_TO_RELEASE.md) — Plan 03._
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

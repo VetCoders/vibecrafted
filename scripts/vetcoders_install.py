@@ -395,7 +395,7 @@ FOUNDATIONS: List[Foundation] = [
         channels=["crates", "github"],
         packages={
             "crates": "prview",
-            "github": "https://github.com/VetCoders/prview/releases",
+            "github": "https://github.com/Vetcoders/prview/releases",
         },
         verify_cmd="prview --version",
         required=False,
@@ -406,7 +406,7 @@ FOUNDATIONS: List[Foundation] = [
         channels=["pip", "source"],
         packages={
             "pip": "screenscribe",
-            "source": "https://github.com/VetCoders/Screenscribe/releases",
+            "source": "https://github.com/Vetcoders/Screenscribe/releases",
         },
         verify_cmd="screenscribe --version",
         required=False,
@@ -1847,9 +1847,9 @@ def _find_launcher_wrapper(name: str) -> Optional[Path]:
 def _uninstall_rc_entries() -> List[Tuple[str, str]]:
     entries = [
         (_shell_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
-        (_shell_source_line(), "VetCoders shell helpers"),
+        (_shell_source_line(), "Vetcoders shell helpers"),
         (_old_zshrc_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
-        (_old_zshrc_source_line(), "VetCoders shell helpers"),
+        (_old_zshrc_source_line(), "Vetcoders shell helpers"),
         (_launcher_path_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. launcher"),
     ]
     entries.extend(

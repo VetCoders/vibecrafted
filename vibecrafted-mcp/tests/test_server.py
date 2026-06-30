@@ -558,7 +558,7 @@ def test_vc_run_status_and_await_use_control_plane_meta(
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
-    reports = home / "artifacts" / "VetCoders" / "vibecrafted" / "2026_0519" / "reports"
+    reports = home / "artifacts" / "Vetcoders" / "vibecrafted" / "2026_0519" / "reports"
     reports.mkdir(parents=True)
     (reports / "impl.meta.json").write_text(
         json.dumps(

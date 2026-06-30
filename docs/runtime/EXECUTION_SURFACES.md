@@ -9,7 +9,7 @@ Use this when a human operator is working in zsh, usually inside vc-frame.
 
 - Surface: `vc-*` shell functions sourced from `vc-skills.sh`.
 - Canonical helper source: `${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh`.
-- Developer override: `VIBECRAFTED_ROOT=/path/to/VibeCrafted`.
+- Developer override: `VIBECRAFTED_ROOT=/path/to/Vibecrafted`.
 - Installed fallback: `${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tools/vibecrafted-current`.
 
 Interactive shell helpers may resolve before binaries. This is expected for a

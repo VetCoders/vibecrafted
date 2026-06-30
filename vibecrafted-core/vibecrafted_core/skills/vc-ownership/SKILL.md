@@ -2,7 +2,7 @@
 name: vc-ownership
 version: 1.1.0
 description: >
-  Full-spectrum VetCoders ownership mode for moments when the user wants Agent
+  Full-spectrum Vetcoders ownership mode for moments when the user wants Agent
   to take the wheel and drive a product from A to Z: architecture, coding,
   runtime debugging, UI polish, packaging, docs, testing, local tooling,
   agent orchestration, and wow-effect finish. Use whenever the user says things

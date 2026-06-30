@@ -8,8 +8,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85.0"
 license = "BUSL-1.1"
-authors = ["VetCoders <agents@vetcoders.io>"]
-repository = "https://github.com/VetCoders/vibecrafted"
+authors = ["Vetcoders <agents@vetcoders.io>"]
+repository = "https://github.com/Vetcoders/vibecrafted"
 publish = false
 description = "Typed model of the Vibecrafted control plane (runs + events) plus scaffold artifact review surfaces."
 

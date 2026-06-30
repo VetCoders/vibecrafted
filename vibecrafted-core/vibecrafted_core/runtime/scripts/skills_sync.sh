@@ -227,7 +227,7 @@ if (( with_shell )); then
     printf 'Skipping remote $HOME/.zshrc update (--no-zshrc).\n'
   else
     remote_zshrc="\$HOME/.zshrc"
-    ssh -n "$host" "touch ${remote_zshrc} && if ! grep -Fqx '$source_line' ${remote_zshrc}; then printf '\n# VetCoders shell helpers\n%s\n' '$source_line' >> ${remote_zshrc}; fi" \
+    ssh -n "$host" "touch ${remote_zshrc} && if ! grep -Fqx '$source_line' ${remote_zshrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_zshrc}; fi" \
       || die "Could not update $HOME/.zshrc on $host"
   fi
 
@@ -236,7 +236,7 @@ if (( with_shell )); then
     printf 'Skipping remote $HOME/.bashrc update (--no-bashrc).\n'
   else
     remote_bashrc="\$HOME/.bashrc"
-    ssh -n "$host" "touch ${remote_bashrc} && if ! grep -Fqx '$source_line' ${remote_bashrc}; then printf '\n# VetCoders shell helpers\n%s\n' '$source_line' >> ${remote_bashrc}; fi" \
+    ssh -n "$host" "touch ${remote_bashrc} && if ! grep -Fqx '$source_line' ${remote_bashrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_bashrc}; fi" \
       || die "Could not update $HOME/.bashrc on $host"
   fi
 

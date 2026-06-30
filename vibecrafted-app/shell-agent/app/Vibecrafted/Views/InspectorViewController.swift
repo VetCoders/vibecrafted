@@ -1,5 +1,5 @@
 // Vibecrafted — Inspector
-// Created by VetCoders
+// Created by Vetcoders
 //
 // Two modes share the right pane:
 //   • Mux server-detail (Restart / Verify Clients / Open Config) — driven by

@@ -75,7 +75,7 @@ vibecrafted marbles codex --count 5 --prompt 'Stabilize until P0=0'
 vc-marbles claude --count 8 --prompt 'Refactor the 1500 LOC monoliths'
 
 # From a plan file:
-vibecrafted marbles codex --file ~/.vibecrafted/artifacts/VetCoders/vibecrafted/2026_0407/plans/marbles-plan.md
+vibecrafted marbles codex --file ~/.vibecrafted/artifacts/Vetcoders/vibecrafted/2026_0407/plans/marbles-plan.md
 vc-marbles gemini --count 5 --file /path/to/plan.md
 
 # Crawl back into the canonical store then read 'n' recently
@@ -253,7 +253,7 @@ One invocation = one bounded round.
 3. **Fortify.** Smallest set of changes that materially increases
    truth. Add missing scoping/auth, missing indexes, replace
    swallowed exceptions with actionable handling, add smoke tests,
-   collapse duplicated contracts, delete rotten wrappers. VetCoders
+   collapse duplicated contracts, delete rotten wrappers. Vetcoders
    axiom: **move on over backward compatibility** — cut cleanly if
    a local abstraction is rotten and blocks stabilization.
 4. **Gate.** Narrowest credible gates first; broader if warranted.
@@ -398,4 +398,4 @@ Because by then it's already left the locker room.  (._.)
 
 Before you report "done", walk around the truck — see [Verification Rule](../VERIFICATION_RULE.md): run the REAL artifact (launch the app/binary, not just `--version`), re-verify runtime, never trust upstream verification as proof, and check your own check. Gates green ≠ works.
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

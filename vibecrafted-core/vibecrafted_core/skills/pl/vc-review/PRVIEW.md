@@ -6,23 +6,23 @@
 Czytaj wraz z [`SKILL.md`](SKILL.md) i [`FINDINGS.md`](FINDINGS.md).
 
 - Binarka: `prview` (rozwiąż przez `command -v prview`; nie zakładaj ścieżki cargo)
-- Źródło: `https://github.com/VetCoders/prview-rs`
-- Autorka: Monika (@m-szymanska) — VetCoders
+- Źródło: `https://github.com/Vetcoders/prview-rs`
+- Autorka: Monika (@m-szymanska) — Vetcoders
 
 ---
 
 ## Tabela dispatchu
 
-| Tryb                             | Komenda                                         | Kiedy używać                                         |
+| Tryb | Komenda | Kiedy używać |
 | -------------------------------- | ----------------------------------------------- | ---------------------------------------------------- | --------------------- |
-| Local branch vs develop/main     | `prview --pr <NUMBER>`                          | Domyślnie dla aktywnych PR-ów na lokalnym checkoucie |
-| Remote branch (no checkout)      | `prview -R --remote-only <branch> <base>`       | Review gałęzi kontrybutora na origin                 |
-| GitHub PR by number              | `prview --pr <NUMBER> --with-tests --with-lint` | Domyślnie dla gruntownego review PR-a                |
-| All gates                        | `prview --deep`                                 | Merge gate / PR wysokiego ryzyka                     |
-| Fast triage                      | `prview --quick`                                | Tylko jawny szybki triage — NIE domyślnie            |
-| Refresh after amend / force-push | `prview --update`                               | Unikanie zduplikowanych zestawów artefaktów          |
-| Ambiguous origin                 | dodaj `--gh-repo owner/repo`                    | Gdy working tree ma wiele remote'ów                  |
-| JSON-only mode                   | `prview --json --quiet                          | jq ...`                                              | Integracja pipeline'u |
+| Local branch vs develop/main | `prview --pr <NUMBER>` | Domyślnie dla aktywnych PR-ów na lokalnym checkoucie |
+| Remote branch (no checkout) | `prview -R --remote-only <branch> <base>` | Review gałęzi kontrybutora na origin |
+| GitHub PR by number | `prview --pr <NUMBER> --with-tests --with-lint` | Domyślnie dla gruntownego review PR-a |
+| All gates | `prview --deep` | Merge gate / PR wysokiego ryzyka |
+| Fast triage | `prview --quick` | Tylko jawny szybki triage — NIE domyślnie |
+| Refresh after amend / force-push | `prview --update` | Unikanie zduplikowanych zestawów artefaktów |
+| Ambiguous origin | dodaj `--gh-repo owner/repo` | Gdy working tree ma wiele remote'ów |
+| JSON-only mode | `prview --json --quiet                          | jq ...` | Integracja pipeline'u |
 
 Domyślnie dla vc-review: **nie używaj `--quick`**. Używaj `--with-tests
 --with-lint` jako bazy. Zachowaj `--deep` na merge gate / wysokie ryzyko.
@@ -94,4 +94,4 @@ trajektorii po review.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

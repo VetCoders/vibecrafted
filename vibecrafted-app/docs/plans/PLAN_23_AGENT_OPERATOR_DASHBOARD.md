@@ -1,6 +1,6 @@
 # VC Operator 23: Agent-Operator Dashboard
 
-- Repo: `/Users/tester/vc-workspace/VetCoders/vc-operator`
+- Repo: `/Users/tester/vc-workspace/Vetcoders/vc-operator`
 - Branch: `main`
 - Baseline commit: `c8bb3d2`
 - Generated: `2026-05-16`
@@ -330,7 +330,7 @@ themes + PLAN_23 close-out`) — Insta snapshot suite in
 _Plan szyty z duchem Emila (`[ ]` → `[x]`, numbered, voiced, sealed (1:1)).
 Latarka po obu stronach świeci._
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_
 
 ---
 

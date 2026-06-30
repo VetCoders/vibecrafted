@@ -1,5 +1,5 @@
 // Vibecrafted — Main Window Controller
-// Created by VetCoders
+// Created by Vetcoders
 
 import AppKit
 

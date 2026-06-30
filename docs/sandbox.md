@@ -68,14 +68,14 @@ was requested.
 
 | Component         | Role                               | License Boundary                  |
 | ----------------- | ---------------------------------- | --------------------------------- |
-| Vibecrafted       | Supervisor, wrappers, event stream | VetCoders-owned                   |
+| Vibecrafted       | Supervisor, wrappers, event stream | Vetcoders-owned                   |
 | microsandbox fork | Execution substrate and SDK        | Apache-2.0                        |
 | libkrun           | MicroVM runtime                    | permissive open-source dependency |
 | Terminal spines   | Visualization only                 | independent                       |
 
 No GPL terminal code is linked into this substrate. microsandbox is treated as
 a fork-and-forget Apache-2.0 runtime dependency owned operationally by
-VetCoders for this lab.
+Vetcoders for this lab.
 
 ## ICP Fit
 

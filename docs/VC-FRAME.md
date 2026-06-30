@@ -2,7 +2,7 @@
 
 > Plan 12 (META_22) — Wave 4 agent-native runtime cut.
 
-VibeCrafted ships a vc-frame configuration tuned for the way VetCoders actually
+Vibecrafted ships a vc-frame configuration tuned for the way Vetcoders actually
 work: parallel agents, shared Living Tree, mesh of workstations, no babysitting.
 The shipped surface gives every layout host-aware identity colors so an
 operator instantly knows which machine they are looking at.
@@ -32,7 +32,7 @@ become reachable through the `vibecrafted dashboard <layout>` family of CLIs.
 
 ## Mesh-aware host theming
 
-Kronika 2026-05-05 fixed the VetCoders mesh topology and assigned a default
+Kronika 2026-05-05 fixed the Vetcoders mesh topology and assigned a default
 accent color to each workstation so an operator can instantly tell which
 machine they are looking at through screen-share or browser-mirrored vc-frame:
 
@@ -115,7 +115,7 @@ when the host doesn't have them.
 
 ## Related
 
-- Kronika 2026-05-05 — VetCoders mesh topology + per-host color assignments
+- Kronika 2026-05-05 — Vetcoders mesh topology + per-host color assignments
 - Kronika 2026-04-12 — first vc-frame landing
 - `docs/plans/META_22_SCAFFOLD_TO_RELEASE.md` Plan 12 — full contract
 - `skills/vc-agents/SKILL.md` — operator-facing dispatch surface

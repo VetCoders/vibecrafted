@@ -1,6 +1,6 @@
 # vc-workspace
 
-SoTA dev container for the **VetCoders / vibecrafted / loctree / aicx** stack.
+SoTA dev container for the **Vetcoders / vibecrafted / loctree / aicx** stack.
 Debian 13 trixie base, multi-arch (linux/amd64 + linux/arm64), full framework
 
 - 11 foundations + 21 vc-\* skills + 3 agent CLIs + tailnet integration.
@@ -24,7 +24,7 @@ everywhere.
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Base**                  | `debian:trixie-slim` (multi-arch)                                                                                                                                               |
 | **Toolchains**            | Rust (rustup stable) · Zig 0.13.0 · Node 22 LTS · Python 3 (uv)                                                                                                                 |
-| **VetCoders foundations** | `loct` · `loctree` · `loctree-mcp` · `loctree-lsp` · `aicx` · `aicx-mcp` (all via loct.io) · `screenscribe` · `semgrep` · `mise` · `starship` · `atuin` · `zoxide` · `vc_frame` |
+| **Vetcoders foundations** | `loct` · `loctree` · `loctree-mcp` · `loctree-lsp` · `aicx` · `aicx-mcp` (all via loct.io) · `screenscribe` · `semgrep` · `mise` · `starship` · `atuin` · `zoxide` · `vc_frame` |
 | **Agent CLIs**            | `claude` (`@anthropic-ai/claude-code`) · `codex` (`@openai/codex`) · `gemini` (`@google/gemini-cli`)                                                                            |
 | **Framework**             | vibecrafted 21 vc-\* skills + agent symlinks + frontier config                                                                                                                  |
 | **CLI niceties**          | `eza` · `bat` · `fd` · `rg` · `just` · `tokei`                                                                                                                                  |
@@ -117,7 +117,7 @@ Inbound: tailnet peers ssh into container via hostname or tailnet IP.
 
 Apple's `container` CLI (WWDC 2024) runs native macOS Mach-O binaries — would
 require separate `container` build per Mac host + split surface from
-Linux mesh nodes (ops-linux, etc.). For VetCoders Rust cross-platform
+Linux mesh nodes (ops-linux, etc.). For Vetcoders Rust cross-platform
 framework, single Linux image (this) preserves mesh-wide consistency.
 
 If/when Metal-accelerated MLX embeddings become hot-path (e.g.
@@ -130,7 +130,7 @@ specifically for M-series Mac dev. Until then, cloud embedder
 - Built atop the host-side `bootstrap-modal.sh` install pattern (Modal /
   Codespaces / bare-metal) — same 9-stage layout, here containerized +
   framework-aware.
-- VetCoders foundations (`loct`, `loctree`, `loctree-mcp`, `loctree-lsp`,
+- Vetcoders foundations (`loct`, `loctree`, `loctree-mcp`, `loctree-lsp`,
   `aicx`, `aicx-mcp`) installed **prebuilt** via the official loct.io installer
   — GPG-verified, signed bundles per target triple (arm64 + x86_64 linux):
   `curl -fsSL https://loct.io/install.sh | sh` (in the image: `INSTALL_DIR=/usr/local/bin`,
@@ -169,4 +169,4 @@ MIT — see [LICENSE](./LICENSE).
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

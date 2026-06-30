@@ -805,4 +805,4 @@ This operating guide is influenced by:
 - counterexample-guided refinement
 - practical product shipping
 
-SHACE, Marbles, Loctree Mapping, PSCD, and the Vibecrafted operating language are first-party concepts from Vibecrafted / VetCoders practice.
+SHACE, Marbles, Loctree Mapping, PSCD, and the Vibecrafted operating language are first-party concepts from Vibecrafted / Vetcoders practice.

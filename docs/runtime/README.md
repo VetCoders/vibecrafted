@@ -29,9 +29,9 @@ model — see [`LIFECYCLE.md`](./LIFECYCLE.md).
 ## Foundations
 
 - [loctree](https://loct.io) — Codebase mapping and architectural perception.
-- [aicx](https://github.com/VetCoders/aicx) — Context boundaries and intentions retrieval.
-- [prview](https://github.com/VetCoders/prview) — Continuous review pipelines.
-- [ScreenScribe](https://github.com/VetCoders/ScreenScribe) — Voice-to-text context ingestion.
+- [aicx](https://github.com/Vetcoders/aicx) — Context boundaries and intentions retrieval.
+- [prview](https://github.com/Vetcoders/prview) — Continuous review pipelines.
+- [Screenscribe](https://github.com/Vetcoders/Screenscribe) — Voice-to-text context ingestion.
 
 These are the senses and memory layer. They make agent work inspectable instead
 of theatrical.

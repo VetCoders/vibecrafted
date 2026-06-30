@@ -10,7 +10,7 @@
 
 **PL:**
 `vc-workspace` to bezpieczna, odizolowana przestrzeń pracy (Linux container) z pełnym
-frameworkiem VetCoders + 11 foundations + 3 agent CLIs (claude/codex/gemini) +
+frameworkiem Vetcoders + 11 foundations + 3 agent CLIs (claude/codex/gemini) +
 opcjonalnym dostępem przez tailnet do reszty Twojej infrastruktury.
 
 To **NIE** jest JetBrains-style remote IDE (z laggiem, czekaniem na sync, broken
@@ -19,7 +19,7 @@ containerze, accessed przez SSH lub `docker exec`, czuje się jak lokalna powło
 
 **EN:**
 `vc-workspace` is a secure, isolated dev workspace (Linux container) with the full
-VetCoders framework + 11 foundations + 3 agent CLIs (claude/codex/gemini) +
+Vetcoders framework + 11 foundations + 3 agent CLIs (claude/codex/gemini) +
 optional tailnet access to your rest-of-infra.
 
 This is **NOT** JetBrains-style remote IDE (laggy, sync-waiting, broken on network
@@ -335,4 +335,4 @@ EN: Your persistent volumes are host-side. If host dies, data lives on host disk
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

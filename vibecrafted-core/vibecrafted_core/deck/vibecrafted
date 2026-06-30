@@ -2392,7 +2392,7 @@ cmd_update() {
 
 cmd_agents() {
   printf '\n'
-  printf '%bVibeCrafted agent helpers%b\n' "$_bold" "$_reset"
+  printf '%bVibecrafted agent helpers%b\n' "$_bold" "$_reset"
   printf '  Use %bvibecrafted <agent> implement|research|review|plan%b for plan-based helper flows.\n' "$_cyan" "$_reset"
   printf '  Example: vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
   printf '\n'

@@ -20,7 +20,7 @@ a nie aspiracyjna.
 | 10:06      | Fala B 3/4 raporty są: B-1 + B-3 zacommitowane, B-4 awaria podłoża na krunvm                                                                       | rzeczywistość                 |
 | 10:11      | B-2 marbles zarchiwizowane w stanie terminalnym: 3 commity Faz wylądowały, worker uczciwie oznaczył FAILED na odziedziczonym podłożu (nie pas B-2) | rzeczywistość                 |
 | 10:34      | Domknięcie Fali C: napisano CLOSE_OUT.md, 4 decyzje operatora wyniesione pod operator button                                                       | triada wyrównana              |
-| ~17:30     | Klon Pensieve + vc-init: osobny punkt dowodowy — edytor markdown klasy Bear dowieziony w 28 godzin wcześniejszej pracy VetCoders                   | rzeczywistość (cross-session) |
+| ~17:30     | Klon Pensieve + vc-init: osobny punkt dowodowy — edytor markdown klasy Bear dowieziony w 28 godzin wcześniejszej pracy Vetcoders                   | rzeczywistość (cross-session) |
 
 Całkowity czas zegarowy: **2h 59m** od startu sesji do domknięcia.
 
@@ -72,7 +72,7 @@ rzeczywistość 28 godzin, kompresja ~80-150× — nadal 2 rzędy wielkości.
 
 Repo Pensieve zostało zainicjalizowane o `2026-05-22 20:52:07` z
 `[claude/vc-operator] feat(vcnotes): foundation skeleton for Swift/SwiftUI/TextKit2 rewrite`.
-Najnowszy commit VetCoders: `2026-05-24 01:11:05`.
+Najnowszy commit Vetcoders: `2026-05-24 01:11:05`.
 
 **Upłynęło: 28 godzin, 19 minut.**
 
@@ -116,7 +116,7 @@ nośne, a nie opcjonalne. Bez nich agent by zdryfował:
    agenta „główny kręgosłup vs równoległe R&D vs premium". Równa intensywność
    była prawdą od samego początku; rankowanie agenta było projekcją
    konwencjonalnego myślenia o przepustowości zespołu, które nie stosuje się
-   do tempa VetCoders.
+   do tempa Vetcoders.
 3. **„Przestań pisać więcej briefów, niż ląduje commitów"** — agent
    przeinżynierował briefy Fali A (~300 LOC każdy); operator odwrócił
    proporcję na „agenci powinni wygrywać, dzięki tobie". Briefy Fali B
@@ -125,7 +125,7 @@ nośne, a nie opcjonalne. Bez nich agent by zdryfował:
    agenta w jego własnym katalogu labu, nie w generycznym roocie vc-runtime.
    Dyscyplina Living Tree + czyste raporty per lab.
 5. **„Fork-and-forget"** — dla microsandbox: bez sync z upstream, bez
-   rebase, traktuj jako codebase VetCoders od klona. Decyzja gustu operatora,
+   rebase, traktuj jako codebase Vetcoders od klona. Decyzja gustu operatora,
    której agent nie mógł przewidzieć (microsandbox jest na licencji Apache
    2.0, technicznie syncowalny; operator wybrał, żeby tego nie robić).
 6. **Sceptycyzm wobec przeskalowania czasu** — operator naciskał na
@@ -153,7 +153,7 @@ reaguje na korekty operatora, produkuje błędną pracę z dużą prędkością.
 6. **Korekty operatora to sygnały gustu.** Czytaj je jako
    korekty trajektorii, nie czepialstwo.
 7. **Konwencjonalne szacunki z raportów cross-frontier są
-   konserwatywne.** Cross-waliduj z empirycznym tempem VetCoders.
+   konserwatywne.** Cross-waliduj z empirycznym tempem Vetcoders.
 8. **Cwd per lab + branche per repo = czysty Living Tree.**
 9. **Marbles poprawnie zatrzymuje się na sygnale report-failed.** Nie pal
    iteracji na nieistotnym gruncie.
@@ -305,4 +305,4 @@ zadeklarowane jako TWARDE ZASADY w sekcji Domyślny tryb operacyjny.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

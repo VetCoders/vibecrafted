@@ -850,7 +850,7 @@ def test_spawn_finalize_artifacts_canonicalizes_by_date_repo_session_and_kind(
         / "home"
         / ".vibecrafted"
         / "artifacts"
-        / "VetCoders"
+        / "Vetcoders"
         / "vibecrafted"
         / "2026_0604"
         / "reports"
@@ -882,7 +882,7 @@ def test_spawn_finalize_artifacts_canonicalizes_by_date_repo_session_and_kind(
 
     assert result.returncode == 0
     matches = sorted(
-        reports.glob(f"*_VetCoders_vibecrafted_{session_id}-report.meta.json")
+        reports.glob(f"*_Vetcoders_vibecrafted_{session_id}-report.meta.json")
     )
     assert len(matches) == 1
     payload = json.loads(matches[0].read_text(encoding="utf-8"))
@@ -1710,7 +1710,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
 def test_vc_resume_can_infer_agent_from_session_meta(tmp_path: Path) -> None:
     crafted_home = tmp_path / ".vibecrafted"
     meta_dir = (
-        crafted_home / "artifacts" / "VetCoders" / "repo" / "2026_0528" / "reports"
+        crafted_home / "artifacts" / "Vetcoders" / "repo" / "2026_0528" / "reports"
     )
     meta_dir.mkdir(parents=True)
     (meta_dir / "run.meta.json").write_text(

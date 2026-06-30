@@ -12,7 +12,7 @@ Answers from the trenches. This is the truth as of April 2026.
 
 - **What happens to my existing skills in `$HOME/.agents/skills/` after installation?**
   The installer is surgical. It detects old `vetcoders-*` skills and offers to prune them. If you have custom,
-  non-VetCoders skills there, it leaves them alone. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills are symlinked into `$HOME/.agents/skills/` (and
+  non-Vetcoders skills there, it leaves them alone. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skills are symlinked into `$HOME/.agents/skills/` (and
   others) so your agents "see" them, but the source of truth remains in `$VIBECRAFTED_ROOT/.vibecrafted/`.
 
 - **Why does `make install` run an interactive installer wizard instead of just installing silently?**
@@ -162,8 +162,8 @@ Answers from the trenches. This is the truth as of April 2026.
   So they can be consumed by _other_ agents. A terminal print is lost. A `report.json` or `findings.md` can be read by a
   followup agent to fix the issues discovered during review.
 
-- **What is ScreenScribe and when would I use it instead of a bug report?**
-  ScreenScribe turns screen recordings (narrated bug demos) into structured engineering findings. Use it when "it's
+- **What is Screenscribe and when would I use it instead of a bug report?**
+  Screenscribe turns screen recordings (narrated bug demos) into structured engineering findings. Use it when "it's
   broken" is easier to show than to type. It's the ultimate "bridge" from product to engineering.
 
 ## Workflow
@@ -237,4 +237,4 @@ Answers from the trenches. This is the truth as of April 2026.
 
 ---
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. by VetCoders | https://vibecrafted.io/
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. by Vetcoders | https://vibecrafted.io/

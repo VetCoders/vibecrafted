@@ -85,7 +85,7 @@ Warunki wyzwalające (zastąp wszystkie punkty):
 
 ## Pozycja w pipelinie
 
-Gdzie to się wpasowuje w łańcuch workflow VetCoders?
+Gdzie to się wpasowuje w łańcuch workflow Vetcoders?
 
 - Upstream: TODO (np. następuje po `vc-init`, działa po `vc-research`)
 - Downstream: TODO (np. emituje handoff dla `vc-release` lub `vc-dou`)
@@ -121,4 +121,4 @@ fraza-trigger + oczekiwane zachowanie.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_
