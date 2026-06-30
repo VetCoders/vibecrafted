@@ -2,7 +2,7 @@
 title: Integrate agy and junie into vc-scaffold
 description: Plan for adapting the installation manifests, diagnostic utilities, and founder-first scaffold planning configs to include agy and junie
 type: implementation_plan
-project: Vetcoders/vibecrafted
+project: vetcoders/vibecrafted
 created: 2026-05-23
 parent_branch: release/v2.0.0
 ---

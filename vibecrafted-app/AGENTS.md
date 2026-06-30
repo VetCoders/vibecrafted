@@ -50,7 +50,7 @@ lepszy blast radius, szybsze recovery i uczciwsze decyzje runtime.
 
 ## Identity
 
-- **Workspace:** standalone `Vetcoders/vc-operator` checkout.
+- **Workspace:** standalone `vetcoders/vc-operator` checkout.
 - **Role:** consolidated operator platform workspace for `mux-agent`,
   `tui-agent`, `tray-agent`, and `shell-agent`.
 - **Crate names:** keep existing distribution names stable. `mux-agent/`

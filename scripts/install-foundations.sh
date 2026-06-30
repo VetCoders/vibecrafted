@@ -20,7 +20,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 PRVIEW_CRATE="prview"
-PRVIEW_REPO="Vetcoders/prview"
+PRVIEW_REPO="vetcoders/prview"
 
 LOCTREE_INSTALL_URL="${LOCTREE_INSTALL_URL:-https://loct.io/install.sh}"
 VCFRAME_INSTALL_URL="${VCFRAME_INSTALL_URL:-https://vibecrafted.io/install.sh}"

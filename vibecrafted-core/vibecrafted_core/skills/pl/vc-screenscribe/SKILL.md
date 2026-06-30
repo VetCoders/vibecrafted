@@ -173,7 +173,7 @@ To najlepszy kształt handoffu, gdy:
 
 Kanoniczne repo upstream:
 
-- [Vetcoders/Screenscribe](https://github.com/vetcoders/Screenscribe)
+- [vetcoders/Screenscribe](https://github.com/vetcoders/Screenscribe)
 
 Gdy potrzebna jest praca z repo, preferuj bieżący checkout screenscribe, jeśli użytkownik
 już go otworzył. Nie zakładaj stałej lokalnej ścieżki. Jeśli żaden checkout nie jest
