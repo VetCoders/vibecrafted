@@ -42,7 +42,7 @@ jobs:
         runner-version: [ubuntu-22.04, ubuntu-24.04]
     runs-on: ${{ matrix.runner-version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Show platform fingerprint
         run: |
@@ -66,12 +66,12 @@ jobs:
       # Pin a supported interpreter so `make install` runs on a version the code
       # actually targets, while the matrix still covers 22.04 vs 24.04 os-release.
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 
       - name: Install make + python3 (already present, but be explicit)
         run: |
@@ -175,7 +175,7 @@ jobs:
             sudo \
             tar
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Show platform fingerprint
         run: |
@@ -193,7 +193,7 @@ jobs:
       - name: Install uv
         run: |
           set -euo pipefail
-          curl -LsSf https://astral.sh/uv/install.sh | sh
+          curl -LsSf https://astral.sh/uv/install.sh -o uv-install.sh && sh uv-install.sh
           # Persist for downstream steps in this job
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -205,7 +205,7 @@ jobs:
       - name: Install Rust toolchain
         run: |
           set -euo pipefail
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o rustup-init.sh && sh rustup-init.sh -y --default-toolchain stable --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Run make install (non-interactive)
@@ -245,7 +245,7 @@ jobs:
     name: docker build + doctor
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Build vibecrafted:ci-smoke
         run: docker build -t vibecrafted:ci-smoke .
