@@ -779,7 +779,7 @@ def test_runtime_core_preserves_origin_org_repo_resolution(tmp_path: Path) -> No
             "remote",
             "add",
             "origin",
-            "https://github.com/Vetcoders/vibecrafted.git",
+            "https://github.com/vetcoders/vibecrafted.git",
         ],
         check=True,
         capture_output=True,

@@ -242,7 +242,7 @@ Suchar: {{SUCHAR_PUNCHLINE}} {{SUCHAR_KAOMOJI}}
 ---
 
 Filled example reference:
-`$HOME/.vibecrafted/artifacts/Vetcoders/vibecrafted/2026_0521/operator-reform-2.0.0/briefs/W1-A_runner.md`
+`$HOME/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0521/operator-reform-2.0.0/briefs/W1-A_runner.md`
 
 ```text
 =======================

@@ -395,7 +395,7 @@ FOUNDATIONS: List[Foundation] = [
         channels=["crates", "github"],
         packages={
             "crates": "prview",
-            "github": "https://github.com/Vetcoders/prview/releases",
+            "github": "https://github.com/vetcoders/prview/releases",
         },
         verify_cmd="prview --version",
         required=False,
@@ -406,7 +406,7 @@ FOUNDATIONS: List[Foundation] = [
         channels=["pip", "source"],
         packages={
             "pip": "screenscribe",
-            "source": "https://github.com/Vetcoders/Screenscribe/releases",
+            "source": "https://github.com/vetcoders/Screenscribe/releases",
         },
         verify_cmd="screenscribe --version",
         required=False,

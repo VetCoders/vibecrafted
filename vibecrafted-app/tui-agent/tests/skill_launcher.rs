@@ -212,7 +212,7 @@ fn polarize_intent_ingests_prism_payload_and_renders_band_action() {
     let home = tempdir().unwrap();
     let prism = home
         .path()
-        .join("artifacts/Vetcoders/vc-tui/2026_0508/polarize/polr-123/prism.json");
+        .join("artifacts/vetcoders/vc-tui/2026_0508/polarize/polr-123/prism.json");
     fs::create_dir_all(prism.parent().unwrap()).unwrap();
     fs::write(
         &prism,
@@ -239,7 +239,7 @@ fn polarize_intent_prefers_canonical_band_action_over_score_fallback() {
     let home = tempdir().unwrap();
     let prism = home
         .path()
-        .join("artifacts/Vetcoders/vc-tui/2026_0508/polarize/polr-action/prism.json");
+        .join("artifacts/vetcoders/vc-tui/2026_0508/polarize/polr-action/prism.json");
     fs::create_dir_all(prism.parent().unwrap()).unwrap();
     fs::write(
         &prism,
@@ -258,10 +258,10 @@ fn polarize_intent_discovery_skips_malformed_prisms_without_hiding_valid_intents
     let home = tempdir().unwrap();
     let valid_prism = home
         .path()
-        .join("artifacts/Vetcoders/vc-tui/2026_0508/polarize/polr-valid/prism.json");
+        .join("artifacts/vetcoders/vc-tui/2026_0508/polarize/polr-valid/prism.json");
     let malformed_prism = home
         .path()
-        .join("artifacts/Vetcoders/vc-tui/2026_0508/polarize/polr-bad/prism.json");
+        .join("artifacts/vetcoders/vc-tui/2026_0508/polarize/polr-bad/prism.json");
     fs::create_dir_all(valid_prism.parent().unwrap()).unwrap();
     fs::create_dir_all(malformed_prism.parent().unwrap()).unwrap();
     fs::write(
@@ -290,7 +290,7 @@ fn polarize_intent_discovery_does_not_follow_symlinked_directories() {
     let escaped = tempdir().unwrap();
     let valid_prism = home
         .path()
-        .join("artifacts/Vetcoders/vc-tui/2026_0508/polarize/polr-valid/prism.json");
+        .join("artifacts/vetcoders/vc-tui/2026_0508/polarize/polr-valid/prism.json");
     let escaped_prism = escaped
         .path()
         .join("Vetcoders/vc-tui/2026_0508/polarize/polr-escaped/prism.json");

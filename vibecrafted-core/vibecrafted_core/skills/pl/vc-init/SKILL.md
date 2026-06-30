@@ -54,7 +54,7 @@ vibecrafted init gemini --prompt 'Bootstrap context for the payments module'
 Zależności fundamentowe (ładowane wraz z frameworkiem): `vc-loctree`, `vc-aicx`.
 
 > 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 to odpowiedź na porażkę vibe codingu uwięzionego w
-> pułapce 80/20 ↔ 20/80. Zobacz [MANIFESTO_EN.md](https://raw.githubusercontent.com/Vetcoders/vibecrafted/refs/heads/main/docs/runtime/MANIFESTO_EN.md).
+> pułapce 80/20 ↔ 20/80. Zobacz [MANIFESTO_EN.md](https://raw.githubusercontent.com/vetcoders/vibecrafted/refs/heads/main/docs/runtime/MANIFESTO_EN.md).
 > „Nie hejtuję vibe codingu. Doprowadził cię do launchu... ale founderzy, którzy zbudowali
 > w weekend na Cursorze, utknęli. Nie domkną dealów enterprise. Nie przejdą
 > security review. Ich integracja ze Stripe działa, dopóki nie przestanie."

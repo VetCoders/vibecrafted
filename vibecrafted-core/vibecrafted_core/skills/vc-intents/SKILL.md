@@ -40,7 +40,7 @@ or extracted intent bundle should be compared against the tree.
 ```bash
 vibecrafted intents codex --prompt 'Check which planned implementations actually landed in Codescribe'
 vc-intents claude --prompt 'Build a 20-item checklist from intents and mark done/partial/missing'
-vibecrafted intents gemini --file ~/.vibecrafted/artifacts/Vetcoders/Codescribe/2026_0419/plans/research-plan.md
+vibecrafted intents gemini --file ~/.vibecrafted/artifacts/vetcoders/Codescribe/2026_0419/plans/research-plan.md
 ```
 
 Foundation deps: `vc-aicx` (intention retrieval, source chunks, recent decision

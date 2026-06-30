@@ -8,7 +8,7 @@ description: >
   recordings, HTML Pro reports, transcript-first artifact extraction,
   extracting actionable findings from narrated videos, batch video analysis,
   or wants to debug/build/improve the Screenscribe project or the default
-  https://github.com/Vetcoders/Screenscribe repository. Prefer this skill even
+  https://github.com/vetcoders/Screenscribe repository. Prefer this skill even
   if the user does not explicitly ask for "Screenscribe" but clearly wants a
   spoken screen recording turned into structured engineering findings.
 loctree_value: "primary repo map for structural/literal repository work"
@@ -173,7 +173,7 @@ To najlepszy kształt handoffu, gdy:
 
 Kanoniczne repo upstream:
 
-- [Vetcoders/Screenscribe](https://github.com/Vetcoders/Screenscribe)
+- [Vetcoders/Screenscribe](https://github.com/vetcoders/Screenscribe)
 
 Gdy potrzebna jest praca z repo, preferuj bieżący checkout screenscribe, jeśli użytkownik
 już go otworzył. Nie zakładaj stałej lokalnej ścieżki. Jeśli żaden checkout nie jest
@@ -369,7 +369,7 @@ Wejście: „Mam video, ale chcę tylko transcript, timestampy i pack dla agenta
 Działanie: uruchom `screenscribe preprocess /absolute/path/to/video.mov`, zwróć katalog bundle'a i listę artefaktów.
 
 **Przykład 3**
-Wejście: „W repo https://github.com/Vetcoders/Screenscribe coś popsuliśmy w HTML Pro."
+Wejście: „W repo https://github.com/vetcoders/Screenscribe coś popsuliśmy w HTML Pro."
 Działanie: potraktuj to jako pracę z repo, użyj natywnych komend repo i bramek jakości, a nie zwykłego przebiegu review.
 
 ## Antywzorce

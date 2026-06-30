@@ -64,7 +64,7 @@ reports that feed into followup agents and convergence loops.
 **Used by**: `vc-review`, `vc-followup`, `vc-marbles` (as review gate).
 
 **Install**: Binary from
-[Vetcoders/prview releases](https://github.com/Vetcoders/prview/releases)
+[Vetcoders/prview releases](https://github.com/vetcoders/prview/releases)
 
 ## Screenscribe — Ears
 

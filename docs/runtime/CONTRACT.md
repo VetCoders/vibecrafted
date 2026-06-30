@@ -30,7 +30,7 @@ provides all the necessary tools to follow this pattern.
    - [loctree](https://loct.io) — Codebase mapping and architectural perception.
    - [aicx](https://github.com/Loctree/aicx) — Context boundaries and intentions retrieval.
    - [prview](https://github.com/Loctree/prview) — Continuous review pipelines.
-   - [Screenscribe](https://github.com/Vetcoders/Screenscribe) — Voice-to-text context ingestion.
+   - [Screenscribe](https://github.com/vetcoders/Screenscribe) — Voice-to-text context ingestion.
 
    The main Vetcoders native framework drivers, designed to make non-programmers
    capable of production-grade implementation of complex development tasks.

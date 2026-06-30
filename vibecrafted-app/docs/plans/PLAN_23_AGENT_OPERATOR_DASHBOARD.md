@@ -1,6 +1,6 @@
 # VC Operator 23: Agent-Operator Dashboard
 
-- Repo: `/Users/tester/vc-workspace/Vetcoders/vc-operator`
+- Repo: `/Users/tester/vc-workspace/vetcoders/vc-operator`
 - Branch: `main`
 - Baseline commit: `c8bb3d2`
 - Generated: `2026-05-16`

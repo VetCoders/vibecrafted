@@ -433,7 +433,7 @@ if [[ -z "$archive_url" && -z "$archive_file" ]]; then
     vinfo "Resolved from channel ($ref): $archive_url"
   else
     # Fallback: source snapshot for pre-channel / pre-deploy kickoffs.
-    archive_url="https://github.com/Vetcoders/vibecrafted/archive/refs/heads/${ref}.tar.gz"
+    archive_url="https://github.com/vetcoders/vibecrafted/archive/refs/heads/${ref}.tar.gz"
     vinfo "[note] Channel manifest not available — using GitHub source snapshot for ${ref}"
   fi
 fi
@@ -447,7 +447,7 @@ if [[ "$PLATFORM_OS" == "unsupported" ]]; then
   info "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. v1.x ships native Linux + macOS + WSL paths."
   info "On native Windows the installer must run inside WSL2:"
   info "    wsl bash -c 'curl -fsSL https://vibecrafted.io/install.sh | bash'"
-  info "Or open: https://github.com/Vetcoders/vibecrafted/issues to track v2.x"
+  info "Or open: https://github.com/vetcoders/vibecrafted/issues to track v2.x"
   info "native Windows support."
   die "Unsupported platform: $(uname -s). Re-run inside WSL2."
 fi

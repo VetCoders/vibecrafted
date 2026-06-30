@@ -6,7 +6,7 @@
 Czytaj wraz z [`SKILL.md`](SKILL.md) i [`FINDINGS.md`](FINDINGS.md).
 
 - Binarka: `prview` (rozwiąż przez `command -v prview`; nie zakładaj ścieżki cargo)
-- Źródło: `https://github.com/Vetcoders/prview-rs`
+- Źródło: `https://github.com/vetcoders/prview-rs`
 - Autorka: Monika (@m-szymanska) — Vetcoders
 
 ---

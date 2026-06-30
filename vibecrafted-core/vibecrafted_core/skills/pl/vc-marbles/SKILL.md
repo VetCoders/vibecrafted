@@ -75,7 +75,7 @@ vibecrafted marbles codex --count 5 --prompt 'Stabilize until P0=0'
 vc-marbles claude --count 8 --prompt 'Refactor the 1500 LOC monoliths'
 
 # From a plan file:
-vibecrafted marbles codex --file ~/.vibecrafted/artifacts/Vetcoders/vibecrafted/2026_0407/plans/marbles-plan.md
+vibecrafted marbles codex --file ~/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0407/plans/marbles-plan.md
 vc-marbles gemini --count 5 --file /path/to/plan.md
 
 # Crawl back into the canonical store then read 'n' recently

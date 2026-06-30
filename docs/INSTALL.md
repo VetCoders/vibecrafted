@@ -55,7 +55,7 @@ curl -fsSL https://vibecrafted.io/install.sh | bash
 Or from a local checkout:
 
 ```bash
-git clone https://github.com/Vetcoders/vibecrafted.git
+git clone https://github.com/vetcoders/vibecrafted.git
 cd vibecrafted
 make install              # interactive wizard
 # or
@@ -155,7 +155,7 @@ to copy-paste, scoped to your detected package manager. Re-run after.
 ### Install (from source)
 
 ```bash
-git clone https://github.com/Vetcoders/vibecrafted.git
+git clone https://github.com/vetcoders/vibecrafted.git
 cd vibecrafted
 make install               # interactive wizard
 ```
