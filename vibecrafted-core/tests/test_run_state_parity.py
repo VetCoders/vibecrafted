@@ -120,17 +120,19 @@ def _append_lifecycle_event(home: Path, payload: dict[str, Any]) -> None:
         fh.write(json.dumps(event, sort_keys=True) + "\n")
 
 
-def test_python_dispatcher_projection_reaches_active_with_session_id(
+def _launch_python_dispatcher_path(
     tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Async dispatcher is the control case: live events advance the projection."""
+    home: Path,
+    run_id: str,
+) -> dict[str, Any]:
+    """Path A — the async dispatcher launch entry (`dispatcher run`).
 
-    home = tmp_path / "home"
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
-    run_id = "parity-async"
+    Live lifecycle events advance the unified projection. Returns the captured
+    ACTIVE projection so callers can assert liveness and cross-path shape.
+    """
+
     worker = _write_async_worker(tmp_path)
-    transcript = tmp_path / "dispatcher.transcript.log"
+    transcript = tmp_path / f"{run_id}.dispatcher.transcript.log"
 
     proc = subprocess.Popen(
         [
@@ -167,29 +169,26 @@ def test_python_dispatcher_projection_reaches_active_with_session_id(
         "dispatcher control path should finish cleanly; "
         f"stdout={stdout!r}, stderr={stderr!r}"
     )
-    assert projection["state"] == "active"
-    assert projection["session_id"].lower() not in SESSION_PLACEHOLDERS
+    return projection
 
 
-def test_shell_meta_projection_reaches_active_with_session_id(
+def _launch_shell_meta_path(
     tmp_path: Path,
-    monkeypatch,
-) -> None:
-    """Legacy shell path must match async liveness.
+    home: Path,
+    run_id: str,
+) -> dict[str, Any]:
+    """Path B — the legacy shell `spawn_write_meta` launch frontend.
 
-    This drives the shell-owned `spawn_write_meta` writer directly instead of
-    launching a terminal or LLM. The RED bug is that the worker can be alive
-    while `control_plane/runs/<id>.json` remains launching/pid_pending with no
-    session identity because the shell path emits no live lifecycle events.
+    Drives the shell-owned writer directly (no terminal/LLM). Since W1-03 it
+    delegates to the unified control-plane writer, so the worker being alive
+    must project `state=active` with a real session identity instead of being
+    stuck at launching/pid_pending. Returns the captured ACTIVE projection.
     """
 
-    home = tmp_path / "home"
-    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
-    run_id = "parity-shell"
-    prompt = tmp_path / "prompt.md"
+    prompt = tmp_path / f"{run_id}.prompt.md"
     prompt.write_text("test prompt\n", encoding="utf-8")
     report = tmp_path / "reports" / f"{run_id}.md"
-    transcript = tmp_path / "shell.transcript.log"
+    transcript = tmp_path / f"{run_id}.shell.transcript.log"
     transcript.parent.mkdir(parents=True, exist_ok=True)
     meta = (
         home
@@ -239,9 +238,42 @@ def test_shell_meta_projection_reaches_active_with_session_id(
                 capture_output=True,
                 text=True,
             )
-            _wait_for_active_projection(home, run_id, "shell/legacy path")
+            projection = _wait_for_active_projection(home, run_id, "shell/legacy path")
         finally:
             _wait_process(worker)
+    return projection
+
+
+def test_python_dispatcher_projection_reaches_active_with_session_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Async dispatcher is the control case: live events advance the projection."""
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    projection = _launch_python_dispatcher_path(tmp_path, home, "parity-async")
+    assert projection["state"] == "active"
+    assert projection["session_id"].lower() not in SESSION_PLACEHOLDERS
+
+
+def test_shell_meta_projection_reaches_active_with_session_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Legacy shell path must match async liveness.
+
+    This drives the shell-owned `spawn_write_meta` writer directly instead of
+    launching a terminal or LLM. The RED bug is that the worker can be alive
+    while `control_plane/runs/<id>.json` remains launching/pid_pending with no
+    session identity because the shell path emits no live lifecycle events.
+    """
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    projection = _launch_shell_meta_path(tmp_path, home, "parity-shell")
+    assert projection["state"] == "active"
+    assert projection["session_id"].lower() not in SESSION_PLACEHOLDERS
 
 
 def test_active_projection_without_report_is_not_blocked_mid_delivery(
@@ -323,3 +355,110 @@ def test_report_validated_projection_clears_recovery_required(
         "report_validated drift: validated terminal reports must clear stale "
         "recovery_required instead of projecting a recovery lane"
     )
+
+
+# Keys that drive operator/liveness decisions. Both launch paths MUST project
+# these (the W1-03 split-brain was exactly a path that never reached active /
+# never grew a session identity). Asserting the contract floor — rather than
+# raw set equality — keeps the gate robust against incidental, non-decision
+# fields that one writer may legitimately carry.
+PARITY_CONTRACT_KEYS = frozenset(
+    {
+        "run_id",
+        "state",
+        "session_id",
+        "liveness",
+        "operator_state",
+        "artifact_gate",
+        "lifecycle",
+        "health",
+    }
+)
+LIVE_LIVENESS_PLACEHOLDERS = {"", "pid_gone", "terminal", "lock_present"}
+
+# Keys that are legitimately local to ONE writer and carry no operator/liveness
+# decision. The python dispatcher tracks the worker process directly; the legacy
+# shell frontend echoes its meta source and runtime tag. Schema parity tolerates
+# exactly these — anything else in the symmetric difference is real drift.
+PARITY_PATH_LOCAL_KEYS = frozenset(
+    {
+        "worker_pid",
+        "worker_pgid",
+        "meta",
+        "runtime",
+    }
+)
+# Operator-facing values that must be identical across both launch paths once
+# both reach the same live state (not just present — equal).
+PARITY_VALUE_KEYS = ("state", "operator_state", "artifact_gate")
+
+
+def test_execution_path_state_parity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """W1-05 positive gate: both launch paths project equivalent live state.
+
+    Path A = the python dispatcher launch entry (`dispatcher run`, live
+    lifecycle events). Path B = the legacy shell `spawn_write_meta` frontend.
+    After W1-03 unified the writer, both must project the same
+    `control_plane/runs/<id>.json` schema AND both must reach live `active`
+    state with a real session identity. This is the gate that prevents the
+    split-brain (one path active, the other stuck launching/pid_pending) from
+    silently returning.
+    """
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+
+    projection_a = _launch_python_dispatcher_path(tmp_path, home, "parity-path-a")
+    projection_b = _launch_shell_meta_path(tmp_path, home, "parity-path-b")
+
+    # --- Liveness parity: both reach active with a real, alive session. -------
+    for label, projection in (
+        ("python-dispatcher", projection_a),
+        ("shell-meta", projection_b),
+    ):
+        assert projection["state"] == "active", (
+            f"{label} path did not reach live state: state={projection.get('state')!r}"
+        )
+        session_id = str(projection.get("session_id", ""))
+        assert session_id.lower() not in SESSION_PLACEHOLDERS, (
+            f"{label} path reached active without a real session identity: "
+            f"session_id={session_id!r}"
+        )
+        liveness = str(projection.get("liveness", ""))
+        assert liveness not in LIVE_LIVENESS_PLACEHOLDERS, (
+            f"{label} path projects a non-live liveness while its worker is "
+            f"alive: liveness={liveness!r}"
+        )
+
+    # --- Shape parity: equivalent projection schema across both writers. ------
+    # The two paths may carry writer-local bookkeeping (worker pid/pgid vs meta/
+    # runtime tag), but every operator/liveness DECISION key must exist in both
+    # and the only permitted divergence is the documented path-local allowlist.
+    keys_a = set(projection_a)
+    keys_b = set(projection_b)
+    for label, keys in (("python-dispatcher", keys_a), ("shell-meta", keys_b)):
+        missing = PARITY_CONTRACT_KEYS - keys
+        assert not missing, (
+            f"{label} projection is missing operator/liveness contract keys: "
+            f"{sorted(missing)}"
+        )
+
+    unexpected = (keys_a ^ keys_b) - PARITY_PATH_LOCAL_KEYS
+    assert not unexpected, (
+        "execution-path schema drift: runs/<id>.json keys diverge between the "
+        "python-dispatcher and shell-meta launch paths outside the documented "
+        f"path-local allowlist; unexpected={sorted(unexpected)} "
+        f"(only in python-dispatcher={sorted(keys_a - keys_b)}, "
+        f"only in shell-meta={sorted(keys_b - keys_a)})"
+    )
+
+    # --- Value parity: operator-facing state must agree, not just co-exist. ---
+    for key in PARITY_VALUE_KEYS:
+        assert projection_a.get(key) == projection_b.get(key), (
+            f"execution-path value drift on {key!r}: "
+            f"python-dispatcher={projection_a.get(key)!r} != "
+            f"shell-meta={projection_b.get(key)!r}"
+        )
