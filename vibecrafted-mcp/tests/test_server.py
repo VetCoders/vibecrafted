@@ -693,6 +693,24 @@ def test_vc_run_observe_returns_bounded_cursor_deltas(
     assert at_end["cursor"]["transcript_offset"] == 10
 
 
+def test_vc_run_observe_defaults_to_recent_tail_for_long_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _write_observe_fixture(tmp_path)
+    monkeypatch.setenv("VIBECRAFTED_HOME", fixture["home"])
+    transcript = Path(fixture["transcript"])
+    transcript.write_text("old-head" + ("x" * 200) + "recent-tail", encoding="utf-8")
+
+    payload = server._observe_run_once(
+        fixture["run_id"], home=fixture["home"], max_bytes=32
+    )
+
+    assert payload["transcript"]["bytes"] <= 32
+    assert "recent-tail" in payload["transcript"]["text"]
+    assert "old-head" not in payload["transcript"]["text"]
+    assert payload["transcript"]["truncated"] is True
+
+
 def test_run_resource_templates_resolve_bounded_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

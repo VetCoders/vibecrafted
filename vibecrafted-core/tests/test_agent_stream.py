@@ -121,6 +121,27 @@ def test_agent_stream_parser_renders_grok_thought_text_and_session() -> None:
     assert parser.session_id == "019ec430-9888-78e3-8ca0-b29387444fdb"
 
 
+def test_agent_stream_parser_renders_junie_steps_without_none_noise() -> None:
+    parser = AgentStreamParser("junie")
+
+    rendered = [
+        parser.feed_line(
+            b'{"type":"session","timestamp":1,"sessionId":"session-junie-1"}\n'
+        ),
+        parser.feed_line(
+            b'{"type":"step","name":"Thinking","details":"reviewing the docs"}\n'
+        ),
+        parser.feed_line(b'{"type":"step","name":"Read skill","details":"vc-audit"}\n'),
+        parser.feed_line(b'{"type":"heartbeat","timestamp":2}\n'),
+    ]
+
+    text = "".join(rendered)
+    assert "reviewing the docs" in text
+    assert "Read skill: vc-audit" in text
+    assert "None" not in text
+    assert parser.session_id == "session-junie-1"
+
+
 def test_agent_stream_parser_treats_agy_as_claude_family_text_stream() -> None:
     parser = AgentStreamParser("agy")
 

@@ -149,6 +149,13 @@ contract:
 
 Do not delegate before the problem and success contract are explicit.
 
+When you do dispatch a lane while sitting with the operator, dispatch it
+**visibly**: with a live vc-frame session (`VC_FRAME_SESSION_NAME` set) the CLI
+`vibecrafted <skill> <agent> --file` opens the worker as a vc-frame tab you both
+watch. Never go headless into a live session — the MCP `vc_run_launch`/`vc_launch`
+default to `headless` and need an explicit `runtime="visible"`. Shared steering
+means the operator sees the work happen, not a status relay after the fact.
+
 ## Partner Journal
 
 For work that may span compaction, delegation, review, or multiple turns, keep

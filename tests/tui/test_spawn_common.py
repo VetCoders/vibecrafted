@@ -92,6 +92,31 @@ def test_spawn_require_command_adds_curated_agent_tool_paths(tmp_path: Path) -> 
     assert result.stdout.strip() == str(fake_claude)
 
 
+def test_visible_launch_wrapper_foregrounds_transcript_tail(tmp_path: Path) -> None:
+    launcher = tmp_path / "launcher.sh"
+    transcript = tmp_path / "transcript.log"
+    cmd_script = tmp_path / "visible.sh"
+    launcher.write_text(
+        "#!/usr/bin/env bash\nprintf 'live-line\\n' >> \"$1\"\n", encoding="utf-8"
+    )
+    launcher.chmod(0o755)
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export SPAWN_ROOT="{tmp_path}"
+        export SPAWN_TRANSCRIPT="{transcript}"
+        source "{COMMON_SH}"
+        spawn_write_visible_launch_script "{cmd_script}" "{launcher} {transcript}"
+        sed -n '1,80p' "{cmd_script}"
+        '''
+    )
+
+    assert str(transcript) in result.stdout
+    assert "tail -n +1 -f" in result.stdout
+    assert 'wait "$pid"' in result.stdout
+
+
 def test_spawn_tool_paths_follow_silver_runtime_contract(tmp_path: Path) -> None:
     home = tmp_path / "home"
     rogue_bin = tmp_path / "rogue" / "bin"

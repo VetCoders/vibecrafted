@@ -55,11 +55,9 @@ EOF
 }
 
 _vetcoders_in_vc_frame() {
-  # vc-frame dual-emits VC_FRAME* and legacy ZELLIJ* pane env during transition.
-  # VC_FRAME=0 / ZELLIJ=0 are valid pane indexes — do NOT treat them as false.
-  [[ -n "${VC_FRAME_PANE_ID:-${ZELLIJ_PANE_ID:-}}" ]] \
-    || [[ -n "${VC_FRAME+set}" ]] \
-    || [[ -n "${ZELLIJ+set}" ]]
+  # VC_FRAME_* is the trusted attached-context signal. Legacy ZELLIJ_* values
+  # can leak from a parent shell and must not hijack visible launch targeting.
+  [[ -n "${VC_FRAME_PANE_ID:-}" ]] && [[ -n "${VC_FRAME_SESSION_NAME:-}" ]]
 }
 
 _vetcoders_guess_active_vc_frame_session() {
@@ -369,7 +367,10 @@ _vetcoders_prepare_operator_runtime() {
   fi
 
   if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
-    return 0
+    if [[ -n "${VC_FRAME_SESSION_NAME:-}" ]]; then
+      return 0
+    fi
+    unset VIBECRAFTED_OPERATOR_SESSION
   fi
 
   # If spawned by a headless agent, attempt to naturally latch onto the user's active session.

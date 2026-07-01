@@ -26,6 +26,66 @@ def test_run_env_uses_current_interpreter_and_packaged_runtime() -> None:
     assert Path(env["VIBECRAFTED_ROOT"]).name == "runtime"
 
 
+def test_supervised_skill_main_routes_runtime_launch_through_dispatcher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setenv("VIBECRAFTED_RUN_ID", "impl-test")
+    monkeypatch.setattr(wrappers, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        wrappers,
+        "_await_run_forever",
+        lambda run_id: {
+            "completed": True,
+            "run": {"state": "completed", "exit_code": 0},
+        },
+    )
+
+    class FailingSupervisor:
+        def __init__(self) -> None:  # pragma: no cover - would fail before branch body
+            raise AssertionError("normal runtime launches must use dispatcher")
+
+    def fake_call(
+        command: list[str], *, cwd: str | None = None, env: dict[str, str] | None = None
+    ) -> int:
+        calls.append({"command": command, "cwd": cwd, "env": env})
+        return 0
+
+    monkeypatch.setattr(wrappers, "Supervisor", FailingSupervisor)
+    monkeypatch.setattr(subprocess, "call", fake_call)
+
+    assert wrappers.supervised_skill_main("implement", ["junie", "--prompt", "x"]) == 0
+
+    assert len(calls) == 1
+    assert calls[0]["cwd"] == str(tmp_path)
+    env = calls[0]["env"]
+    assert isinstance(env, dict)
+    assert env["VIBECRAFTED_AGENT"] == "junie"
+    assert env["VIBECRAFTED_RUN_ID"] == "impl-test"
+    assert calls[0]["command"] == [
+        sys.executable,
+        "-m",
+        "vibecrafted_core.dispatcher",
+        "run",
+        "--run-id",
+        "impl-test",
+        "--root",
+        str(tmp_path),
+        "--no-require-report",
+        "--quiet",
+        "--",
+        sys.executable,
+        "-m",
+        "vibecrafted_core.cli",
+        "implement",
+        "junie",
+        "--prompt",
+        "x",
+        "--runtime",
+        "headless",
+    ]
+
+
 def test_resume_main_routes_captured_session_through_vc_frame_aware_resume_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

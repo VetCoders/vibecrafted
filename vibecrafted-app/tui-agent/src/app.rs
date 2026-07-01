@@ -727,13 +727,13 @@ impl App {
                 run.kind.label(),
                 snapshot.display_state()
             ),
-            format!("agent: {}", snapshot.agent.as_deref().unwrap_or("unknown")),
-            format!("skill: {}", snapshot.skill.as_deref().unwrap_or("unknown")),
-            format!("mode: {}", snapshot.mode.as_deref().unwrap_or("unknown")),
+            format!("agent: {}", display_optional(snapshot.agent.as_deref())),
+            format!("skill: {}", display_optional(snapshot.skill.as_deref())),
+            format!("mode: {}", display_optional(snapshot.mode.as_deref())),
             format!("age: {}", run.age_label),
             format!(
                 "operator_session: {}",
-                snapshot.operator_session.as_deref().unwrap_or("none")
+                display_optional(snapshot.operator_session.as_deref())
             ),
         ];
         if let Some(session_id) = snapshot.session_id.as_deref() {
@@ -1259,6 +1259,13 @@ fn one_line_prompt(prompt: &str) -> String {
         short
     } else {
         collapsed
+    }
+}
+
+fn display_optional(value: Option<&str>) -> &str {
+    match value.map(str::trim) {
+        Some(value) if !value.is_empty() && value != "None" && value != "null" => value,
+        _ => "-",
     }
 }
 

@@ -81,6 +81,63 @@ def _env_for_run(run_id: str, skill_code: str) -> dict[str, str]:
     return env
 
 
+def _dispatcher_command(
+    run_id: str,
+    root: Path,
+    worker_command: Sequence[str],
+) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "vibecrafted_core.dispatcher",
+        "run",
+        "--run-id",
+        run_id,
+        "--root",
+        str(root),
+        "--no-require-report",
+        "--quiet",
+        "--",
+        *worker_command,
+    ]
+
+
+def _env_for_dispatcher(run_id: str, skill_code: str, agent: str) -> dict[str, str]:
+    env = _env_for_run(run_id, skill_code)
+    env["VIBECRAFTED_AGENT"] = agent
+    return env
+
+
+def _call_dispatcher(
+    *,
+    run_id: str,
+    skill_code: str,
+    agent: str,
+    root: Path,
+    worker_command: Sequence[str],
+) -> int:
+    return subprocess.call(
+        _dispatcher_command(run_id, root, worker_command),
+        cwd=str(root),
+        env=_env_for_dispatcher(run_id, skill_code, agent),
+    )
+
+
+def _popen_dispatcher(
+    *,
+    run_id: str,
+    skill_code: str,
+    agent: str,
+    root: Path,
+    worker_command: Sequence[str],
+) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        _dispatcher_command(run_id, root, worker_command),
+        cwd=str(root),
+        env=_env_for_dispatcher(run_id, skill_code, agent),
+    )
+
+
 def _print_completed(run_id: str, payload: dict[str, Any]) -> int:
     run = payload.get("run") or {}
     if run:
@@ -153,20 +210,29 @@ def supervised_skill_main(skill: str, argv: Sequence[str] | None = None) -> int:
     if not _has_flag(rest, "--runtime"):
         command.extend(["--runtime", "headless"])
 
-    supervisor = Supervisor()
-    handle = supervisor.spawn(
-        agent,
-        " ".join(rest),
-        skill=skill,
-        mode="launch",
-        root=repo_root(),
-        command=command,
-        env=_env_for_run(run_id, skill_code),
-        run_id=run_id,
-        sandbox=sandbox,
-        sandbox_policy=sandbox_policy,
-    )
-    launch_code = handle.wait()
+    root = repo_root()
+    if sandbox:
+        handle = Supervisor().spawn(
+            agent,
+            " ".join(rest),
+            skill=skill,
+            mode="microsandbox",
+            root=root,
+            command=command,
+            env=_env_for_dispatcher(run_id, skill_code, agent),
+            run_id=run_id,
+            sandbox=True,
+            sandbox_policy=sandbox_policy,
+        )
+        launch_code = handle.wait()
+    else:
+        launch_code = _call_dispatcher(
+            run_id=run_id,
+            skill_code=skill_code,
+            agent=agent,
+            root=root,
+            worker_command=command,
+        )
     if launch_code != 0:
         return launch_code
     payload = _await_run_forever(run_id)
@@ -318,23 +384,37 @@ def research_main(argv: Sequence[str] | None = None) -> int:
         )
         return 1
 
-    supervisor = Supervisor()
-    handles = [
-        supervisor.spawn(
-            agent,
-            str(path),
-            skill="research",
-            mode="agent",
-            root=repo_root(),
-            command=["bash", str(path)],
-            env=_env_for_run(run_id, "rsch"),
-            run_id=run_id,
-            sandbox=sandbox,
-            sandbox_policy=sandbox_policy,
-        )
-        for agent, path in sorted(launchers.items())
-    ]
-    exit_codes = [handle.wait() for handle in handles]
+    root = repo_root()
+    if sandbox:
+        supervisor = Supervisor()
+        handles = [
+            supervisor.spawn(
+                agent,
+                str(path),
+                skill="research",
+                mode="microsandbox",
+                root=root,
+                command=["bash", str(path)],
+                env=_env_for_dispatcher(run_id, "rsch", agent),
+                run_id=run_id,
+                sandbox=True,
+                sandbox_policy=sandbox_policy,
+            )
+            for agent, path in sorted(launchers.items())
+        ]
+        exit_codes = [handle.wait() for handle in handles]
+    else:
+        processes = [
+            _popen_dispatcher(
+                run_id=run_id,
+                skill_code="rsch",
+                agent=agent,
+                root=root,
+                worker_command=["bash", str(path)],
+            )
+            for agent, path in sorted(launchers.items())
+        ]
+        exit_codes = [process.wait() for process in processes]
     append_event(
         "research-finished",
         run_id,

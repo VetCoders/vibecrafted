@@ -51,3 +51,54 @@ W7-A.
 ## Third Move
 
 `write_meta` (initial meta writing) moved third because the map marked it as the final blocker for control-plane schema writing. The Python source of truth is now `vibecrafted_core.spawn.write_meta`; shell `spawn_write_meta` is a compatibility delegator that calls the Python writer and preserves control-plane sync. After this cut, both birth and death of a run's meta lifecycle speak Python.
+
+## Execution-Path Doctrine (W1-03 / W1-04 / W1-05)
+
+**One live-launch doctrine. There is no second competing launcher.**
+
+- **One launch entry.** Normal supervised wrapper launches route through
+  `python -m vibecrafted_core.dispatcher run` (W1-04, `84ac1ce`). The synchronous
+  `spawn.Supervisor` is retained ONLY as an explicit microsandbox / test / helper
+  compatibility surface — it is not a second live launcher. A regression test in
+  `vibecrafted-core/tests/test_wrappers.py` proves normal runtime launches do not
+  instantiate `Supervisor`.
+- **One control-plane writer.** Every run snapshot in
+  `control_plane/runs/<id>.json` is projected by `control_plane.sync_state` (W1-03,
+  `9105256`). Both inputs feed that single writer:
+  - the **async dispatcher path** emits live lifecycle events;
+  - the **legacy shell path** (`spawn_write_meta`) emits initial meta that the
+    Python writer reconciles — it does NOT own a second snapshot writer.
+- **Parity gate (W1-05).** `vibecrafted-core/tests/test_run_state_parity.py::
+test_execution_path_state_parity` locks the two paths together: both must reach
+  live `state=active` with a real session identity, project the same operator/
+  liveness contract schema, and agree on `state` / `operator_state` /
+  `artifact_gate`. The only tolerated schema divergence is documented writer-local
+  bookkeeping (`worker_pid` / `worker_pgid` on the dispatcher path; `meta` /
+  `runtime` on the shell path). This is the gate that prevents the split-brain
+  (one path active, the other stuck at launching/pid_pending) from silently
+  returning.
+
+### Legacy `*_spawn.sh` fate — USER GATE
+
+**Decision recorded: KEEP as compatibility / operator-terminal frontends. Do NOT
+retire. No deletion performed in this cut.**
+
+Rationale:
+
+- The `*_spawn.sh` agent wrappers are NOT yet thin frontends. Per the
+  Responsibility Map above, most responsibilities (CLI flag parsing, plan/runtime
+  validation, prompt build, per-agent command payload, report-fallback hooks,
+  visible/headless launch, operator launch display) are still `Moved? = No` and
+  remain shell-owned. Only `write_meta`, `finish_meta`, and `finalize_artifacts`
+  delegate to Python today.
+- Retirement is an explicit **human-user** sign-off gate (W1-05 §4). This cut was
+  produced by an agent and carries **no such sign-off**, so retirement is out of
+  scope and nothing was removed.
+
+Retirement remains blocked on BOTH:
+
+1. the remaining migration rows reaching `Moved? = Yes` with contract tests, and
+2. explicit human-user approval naming the replacement launch entry
+   (`python -m vibecrafted_core.dispatcher run`).
+
+Until then the wrappers stay live and the parity gate keeps the shell path honest.

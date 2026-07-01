@@ -163,7 +163,7 @@ def _clamp_float(value: float | None, default: float, ceiling: float) -> float:
 def _bounded_text_read(
     path_value: str,
     *,
-    offset: int = 0,
+    offset: int | None = 0,
     max_bytes: int = OBSERVE_MAX_BYTES,
 ) -> dict[str, Any]:
     """Read at most ``max_bytes`` from ``path_value`` starting at byte offset."""
@@ -186,6 +186,8 @@ def _bounded_text_read(
     except OSError:
         return payload
 
+    if offset is None:
+        start = max(size - limit, 0)
     start = min(start, size)
     payload["offset"] = start
     payload["next_offset"] = start
@@ -206,7 +208,7 @@ def _bounded_text_read(
         {
             "next_offset": next_offset,
             "bytes": len(chunk),
-            "truncated": next_offset < size,
+            "truncated": start > 0 or next_offset < size,
             "text": chunk.decode("utf-8", errors="replace"),
         }
     )
@@ -302,8 +304,10 @@ def _observe_run_once(
     target = str(run_id or "").strip()
     cursor_payload = dict(cursor or {})
     event_offset = _clamp_int(cursor_payload.get("event_offset"), 0, 2**63 - 1)
-    transcript_offset = _clamp_int(
-        cursor_payload.get("transcript_offset"), 0, 2**63 - 1
+    transcript_offset = (
+        None
+        if "transcript_offset" not in cursor_payload
+        else _clamp_int(cursor_payload.get("transcript_offset"), 0, 2**63 - 1)
     )
     with _override_vibecrafted_home(home):
         run = _control_plane.lookup_run(target)

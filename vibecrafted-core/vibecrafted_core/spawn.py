@@ -38,17 +38,12 @@ TOKEN_PATTERN = re.compile(
 # per-event `tokens: N in / N out` lines, which only some provider
 # formatters render and which would otherwise sum partial streaming usage.
 FOOTER_TOKEN_PATTERNS = {
-    # Anchor on the INDENTED run-closure footer (`  tokens_input: N`, written
-    # under `run_closure:`), not a column-0 line. The launcher frontmatter seed
-    # writes an unindented `tokens_input: 0`; matching it short-circuited token
-    # extraction to always-zero. Requiring leading whitespace targets the real
-    # footer and lets the inline `tokens:` parse run when no footer is present.
-    "input": re.compile(r"^\s+tokens_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE),
+    "input": re.compile(r"^\s*tokens_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE),
     "cached_input": re.compile(
-        r"^\s+tokens_cached_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
+        r"^\s*tokens_cached_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
     ),
     "output": re.compile(
-        r"^\s+tokens_output:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
+        r"^\s*tokens_output:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
     ),
 }
 COST_PATTERNS = (
@@ -272,6 +267,7 @@ def _extract_session(text: str) -> str:
 
 def _extract_tokens(text: str) -> dict[str, int]:
     clean = _clean_text(text)
+    found = TOKEN_PATTERN.findall(clean)
     # Prefer the authoritative run-closure footer totals when present: they are
     # written for every agent and carry the final per-run usage, so they work
     # uniformly across providers and never sum partial streaming deltas.
@@ -282,13 +278,14 @@ def _extract_tokens(text: str) -> dict[str, int]:
         input_tokens = int(footer_in[-1]) if footer_in else 0
         cached_tokens = int(footer_cached[-1]) if footer_cached else 0
         output_tokens = int(footer_out[-1]) if footer_out else 0
-        return {
-            "input": input_tokens,
-            "cached_input": cached_tokens,
-            "output": output_tokens,
-            "total": input_tokens + output_tokens,
-        }
-    found = TOKEN_PATTERN.findall(clean)
+        total_tokens = input_tokens + output_tokens
+        if total_tokens or not found:
+            return {
+                "input": input_tokens,
+                "cached_input": cached_tokens,
+                "output": output_tokens,
+                "total": total_tokens,
+            }
     if not found:
         return {"input": 0, "cached_input": 0, "output": 0, "total": 0}
     input_tokens = cached_tokens = output_tokens = 0
@@ -441,6 +438,29 @@ def write_meta(
     }
 
     _write_meta(meta, payload)
+    if run_id:
+        append_event(
+            "lifecycle:active",
+            run_id,
+            "legacy shell launcher metadata is live",
+            {
+                "state": "active",
+                "agent": agent,
+                "skill": skill_code,
+                "mode": mode,
+                "root": normalize_run_root(str(root), Path.cwd()),
+                "report": report,
+                "transcript": transcript,
+                "launcher": launcher,
+                "model": model,
+                "prompt_id": prompt_id,
+                "started_at": now_iso,
+                "liveness": "active",
+                "identity_required": True,
+                "meta": str(meta),
+                "runtime": "shell",
+            },
+        )
     return meta
 
 
@@ -822,6 +842,56 @@ def finalize_artifacts(
     return meta
 
 
+def _ensure_failed_report_artifact(
+    handle: SpawnHandle, exit_code: int, completed_at: str
+) -> None:
+    if handle.meta_path is None or not handle.meta_path.is_file():
+        return
+    payload = _read_meta(handle.meta_path)
+    report_value = str(payload.get("report") or "")
+    if not report_value:
+        return
+
+    report = Path(report_value)
+    transcript = handle.transcript_path
+    if transcript is None and payload.get("transcript"):
+        transcript = Path(str(payload["transcript"]))
+
+    payload["status"] = "failed"
+    payload["exit_code"] = exit_code
+    payload["completed_at"] = completed_at
+    if transcript is not None:
+        payload["transcript"] = str(transcript)
+    payload["report"] = str(report)
+    _write_meta(handle.meta_path, payload)
+
+    if not report.exists():
+        report.parent.mkdir(parents=True, exist_ok=True)
+        transcript_ref = str(transcript or payload.get("transcript") or "")
+        report.write_text(
+            "\n".join(
+                [
+                    "---",
+                    f"run_id: {payload.get('run_id') or handle.run_id}",
+                    "status: failed",
+                    f"exit_code: {exit_code}",
+                    f"completed_at: {completed_at}",
+                    f"transcript: {transcript_ref}",
+                    "---",
+                    "",
+                    "# Agent run failed",
+                    "",
+                    "The supervised agent process exited before writing its final report.",
+                    "",
+                    f"Transcript: {transcript_ref or '-'}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    finalize_artifacts(handle.meta_path, report, transcript)
+
+
 def _maybe_extract_session_id(handle: SpawnHandle) -> str:
     meta = _read_meta(handle.meta_path)
     if meta.get("session_id"):
@@ -1039,6 +1109,8 @@ class Supervisor:
         extracted_session_id = _maybe_extract_session_id(handle)
         if extracted_session_id:
             handle.session_id = extracted_session_id
+        if exit_code != 0:
+            _ensure_failed_report_artifact(handle, exit_code, handle.completed_at)
         kind = "spawn-completed" if exit_code == 0 else "spawn-failed"
         self._emit(
             kind,
