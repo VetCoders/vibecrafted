@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pipeline-init.sh — Initialize canonical ERi artifact paths
 # Usage: bash pipeline-init.sh <slug> [root-dir]
-# Created by M&K (c)2024-2026 Vetcoders
+# Created by Vetcoders (c)2024-2026 Vetcoders
 
 set -euo pipefail
 

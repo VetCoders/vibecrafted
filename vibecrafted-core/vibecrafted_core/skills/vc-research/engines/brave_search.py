@@ -4,7 +4,7 @@
 Usage:
     python3 brave_search.py "search query" [--count N] [--lang LANG]
 
-Created by M&K (c)2024-2026 Vetcoders
+Created by Vetcoders (c)2024-2026 Vetcoders
 """
 
 import http.client

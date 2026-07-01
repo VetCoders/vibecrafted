@@ -2950,7 +2950,7 @@ mylik / myliki
 - Bank sucharów (vc-operator/DISPATCH) — 7 dowcipów zostało EN (źródło: „port-ready EN dad-jokes"; etykieta „Suchar:"
   ujednolicona).
 - EMIL.md — nazwa pliku/dokumentu („Plan-shape Style Guide"), NIE persona; nazwa verbatim, treść PL.
-- Stopki niestandardowe — vc-prview / vc-research: „ _Created by M&K (c)2026 Vetcoders_" (verbatim); część plików
+- Stopki niestandardowe — vc-prview / vc-research: „ _Created by Vetcoders (c)2026_" (verbatim); część plików
   (operator/partner/ownership/screenscribe/skillaunch) bez stopki — 1:1.
 - Quirki źródła zachowane 1:1: „braad" (vc-marbles), „handsoff" (vc-scaffold), `jp` zamiast `jq`? (vc-skillaunch),
   „dziurawy" fence szablonu w vc-workflow/references/phase-research, podwójny ukośnik `agents//…spawn.sh` w

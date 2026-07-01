@@ -9,9 +9,9 @@
 #
 # Mesh mapping (kronika 2026-05-05 — Vetcoders mesh topology):
 #   dragon   -> red    (LibraxisAI server, central hub)
-#   sztudio  -> purple (Monika's desktop)
-#   silver   -> cyan   (Monika's laptop)
-#   div0     -> green  (Maciej's laptop, primary dev)
+#   sztudio  -> purple (desktop)
+#   silver   -> cyan   (laptop)
+#   div0     -> green  (laptop (primary dev))
 #   *        -> vibecrafted (neutral fallback)
 #
 # Host detection order:

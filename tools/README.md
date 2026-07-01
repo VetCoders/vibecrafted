@@ -1,6 +1,6 @@
 # Vetcoders Hooks
 
-Private collection of Claude Code hooks for the vetcoders/LibraxisAI team.
+Project tooling: Claude Code hooks for the vetcoders/LibraxisAI team.
 
 ## Quick Install
 
