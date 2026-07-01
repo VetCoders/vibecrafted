@@ -89,7 +89,7 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
         text=True,
     )
 
-    assert "Resume launched in operator session: operator-session" in result.stdout
+    assert "Resume launched in operator session: vibecrafted" in result.stdout
     assert not codex_capture.exists()
     vc_frame_lines = vc_frame_capture.read_text(encoding="utf-8").splitlines()
     calls: list[list[str]] = []
@@ -106,7 +106,7 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
     new_tab_call = next(call for call in calls if call[2:4] == ["action", "new-tab"])
     assert new_tab_call[:5] == [
         "--session",
-        "operator-session",
+        "vibecrafted",
         "action",
         "new-tab",
         "--name",
