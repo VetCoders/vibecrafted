@@ -83,6 +83,111 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
     )
 
 
+def test_lifecycle_runner_honours_worker_requested_next_stage(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    calls: list[str] = []
+
+    def fake_launcher(spec, _source_dir):
+        calls.append(spec.skill)
+        report = tmp_path / f"{spec.skill}-{len(calls)}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run-{len(calls)}",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    steering = iter(["marbles"])
+
+    def fake_awaiter(payload):
+        result = {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        }
+        if payload["run_id"].startswith("audit"):
+            result["next_stage"] = next(steering, "")
+        return result
+
+    runner = LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter)
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-marbles",
+                agent="codex",
+                prompt="steer back once",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert calls == ["marbles", "audit", "marbles", "audit"]
+    assert state["status"] == "completed"
+    steered = state["stages"][1]["transition"]
+    assert steered["requested_next_stage"] == "marbles"
+    assert steered["next_stage"] == "marbles"
+    assert state["stages"][3]["transition"]["next_stage"] == ""
+
+
+def test_lifecycle_runner_stage_cap_stops_runaway_steering(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_LIFECYCLE_MAX_STAGES", "5")
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    calls: list[str] = []
+
+    def fake_launcher(spec, _source_dir):
+        calls.append(spec.skill)
+        report = tmp_path / f"{spec.skill}-{len(calls)}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run-{len(calls)}",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    def fake_awaiter(payload):
+        return {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+            "next_stage": "marbles",
+        }
+
+    runner = LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter)
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-marbles",
+                agent="codex",
+                prompt="steer forever",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert state["status"] == "failed"
+    assert "stage cap reached" in state["error"]
+    assert len(state["stages"]) == 5
+    assert len(calls) == 5
+
+
 def test_lifecycle_runner_records_first_stage_without_await(
     monkeypatch, tmp_path: Path
 ) -> None:

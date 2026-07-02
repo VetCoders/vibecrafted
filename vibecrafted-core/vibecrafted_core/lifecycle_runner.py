@@ -246,6 +246,26 @@ def _lifecycle_await_hard_cap_seconds() -> float | None:
     return 21600.0
 
 
+def _lifecycle_max_stage_launches(manifest: WorkflowManifest) -> int:
+    """Ceiling on stage launches per lifecycle run.
+
+    Fallback edges (audit -> marbles) and worker-requested steering
+    (``next_stage`` in the report frontmatter) make the stage graph cyclic by
+    design — the umbrella may walk backwards. This cap turns a steering loop
+    that never converges into an explicit failure instead of an unbounded
+    dispatch spree. Override with ``VIBECRAFTED_LIFECYCLE_MAX_STAGES``.
+    """
+    raw = str(os.environ.get("VIBECRAFTED_LIFECYCLE_MAX_STAGES") or "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value > 0:
+            return value
+    return max(6, 3 * len(manifest.stages))
+
+
 class LifecycleRunner:
     def __init__(
         self,
@@ -313,8 +333,16 @@ class LifecycleRunner:
         self._write_state(state_path, state)
 
         previous_reports: list[str] = []
+        max_stage_launches = _lifecycle_max_stage_launches(manifest)
         current = current_stage
         while current:
+            if len(state["stages"]) >= max_stage_launches:
+                state["status"] = "failed"
+                state["error"] = (
+                    f"lifecycle stage cap reached ({max_stage_launches} launches); "
+                    f"steering loop suspected before stage: {current}"
+                )
+                break
             stage = manifest.stage(current)
             if stage is None:
                 state["status"] = "failed"

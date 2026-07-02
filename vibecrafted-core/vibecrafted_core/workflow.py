@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import validate_artifacts
+from .cron import parse_frontmatter
 from .control_plane import (
     await_run,
     control_plane_home,
@@ -661,6 +662,19 @@ def _path_exists(path: str) -> bool:
         return False
 
 
+def _report_requested_next_stage(report_path: str) -> str:
+    """Worker-requested lifecycle steering read from report frontmatter.
+
+    A stage worker may steer the lifecycle runner (umbrella forward/backward)
+    by writing ``next_stage: <stage-id>`` in its report frontmatter. Unknown
+    stage ids are ignored downstream by the runner's manifest validation.
+    """
+    if not _path_exists(report_path):
+        return ""
+    values = parse_frontmatter(Path(report_path))
+    return str(values.get("next_stage") or "").strip()
+
+
 def _read_json_object(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -813,6 +827,7 @@ def await_launch_truth(
         "artifact_errors": list(validation.errors) + path_errors,
         "artifact_warnings": list(validation.warnings),
         "meta_payload": meta_payload or validation.meta_payload,
+        "next_stage": _report_requested_next_stage(report_path),
     }
 
 
