@@ -43,6 +43,7 @@ tmp_home="$(mktemp -d "${TMPDIR:-/tmp}/vibecrafted-server-smoke.XXXXXX")"
 export VIBECRAFTED_HOME="$tmp_home"
 export VIBECRAFTED_RUNTIME_HOME="$tmp_home/share"
 mkdir -p "$VIBECRAFTED_HOME/control_plane/runs"
+mkdir -p "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life"
 
 # Ensure clean teardown on exit
 cleanup() {
@@ -117,6 +118,79 @@ cat > "$VIBECRAFTED_HOME/control_plane/runs/smoke-final.json" <<'EOF_RUN'
 EOF_RUN
 
 ok "seeded control-plane run snapshots"
+
+cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md" <<'EOF_LIFE_REPORT'
+---
+dou_index: 0
+---
+# smoke lifecycle report
+EOF_LIFE_REPORT
+
+cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/transcript.log" <<'EOF_LIFE_TRANSCRIPT'
+{"kind":"stage","id":"scaffold"}
+EOF_LIFE_TRANSCRIPT
+
+cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<EOF_LIFE
+{
+  "run_id": "smoke-life",
+  "workflow": "vc-ship",
+  "agent": "codex",
+  "root": "/tmp/vibecrafted-smoke",
+  "status": "launching",
+  "await_stages": false,
+  "parent_run_id": null,
+  "operator_actions": [
+    {"action": "approve_transition", "at": "2026-07-02T12:00:00-0700", "details": {"next_stage": "implement"}}
+  ],
+  "spec": {"workflow_id": "vc-ship", "agent": "codex"},
+  "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
+  "human_controls": ["approve_transition", "interrupt_workflow", "accept_dou"],
+  "state_path": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json",
+  "report_path": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md",
+  "transcript_path": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/transcript.log",
+  "context_atlas": {"ok": true},
+  "manifest": {"id": "vc-ship"},
+  "baton": {
+    "from_stage": "scaffold",
+    "from_phase": "read",
+    "next_stage": "implement",
+    "next_agent": "codex",
+    "reason": "stage_launched_without_await",
+    "previous_reports": ["$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md"],
+    "dou_index": null,
+    "audit_after": "",
+    "fallback_stage": ""
+  },
+  "stages": [{
+    "id": "scaffold",
+    "name": "VC Scaffold",
+    "workflow": "scaffold",
+    "phase": "read",
+    "agent": "codex",
+    "status": "completed",
+    "launch": {"report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md"},
+    "await": {},
+    "commit_before": "abc123",
+    "commit_after": "def456",
+    "changed_files": [],
+    "new_commits": [],
+    "transition": {
+      "next_stage": "implement",
+      "requested_next_stage": "",
+      "next_agent": "codex",
+      "requested_next_agent": "",
+      "conditions": ["stage_completed"],
+      "fallback_stage": "",
+      "audit_after": ""
+    }
+  }],
+  "dou_index": {"value": 0, "stage": "audit", "report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md"},
+  "accepted_dou": 1,
+  "accepted_dou_findings": [{"id": "accepted-1"}]
+}
+EOF_LIFE
+
+ok "seeded lifecycle run state"
 
 # 2. Identify installed binary and assets
 phase "preflight checks"
@@ -242,14 +316,84 @@ else
 fi
 
 if python3 -c '
+import urllib.request, json, sys
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/lifecycle", timeout=1.0)
+data = json.loads(resp.read().decode())
+assert data["count"] == 1, data
+run = data["lifecycle_runs"][0]
+assert run["run_id"] == "smoke-life", run
+assert run["workflow"] == "vc-ship", run
+assert run["current_stage"] == "scaffold", run
+assert run["next_stage"] == "implement", run
+assert run["next_agent"] == "codex", run
+assert run["dou_index"] == 0, run
+assert run["dou_readiness"] == "zero", run
+' >/dev/null 2>&1; then
+  ok "lifecycle list route returns seeded lifecycle summary with ZERO DoU readiness"
+else
+  fail "lifecycle list route did not return the seeded lifecycle summary"
+  cat "$LOG_FILE"
+  exit 1
+fi
+
+if python3 -c '
+import urllib.request, json, sys
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/lifecycle/smoke-life", timeout=1.0)
+data = json.loads(resp.read().decode())
+assert data["run_id"] == "smoke-life", data
+assert data["baton"]["next_stage"] == "implement", data
+assert data["stages"][0]["id"] == "scaffold", data
+' >/dev/null 2>&1; then
+  ok "lifecycle detail route returns full nested state"
+else
+  fail "lifecycle detail route did not return nested state"
+  cat "$LOG_FILE"
+  exit 1
+fi
+
+if python3 -c '
+import urllib.request, json, sys
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/state", timeout=1.0)
+data = json.loads(resp.read().decode())
+runs = data["active_runs"] + data["recent_runs"]
+matches = [run for run in runs if run["run_id"] == "smoke-life"]
+assert matches, data
+assert matches[0]["source"] == "lifecycle_runs", matches[0]
+' >/dev/null 2>&1; then
+  ok "state route surfaces lifecycle RunStatus projection"
+else
+  fail "state route did not surface lifecycle RunStatus projection"
+  cat "$LOG_FILE"
+  exit 1
+fi
+
+if python3 -c '
+import urllib.request, json, sys
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/runs/smoke-life", timeout=1.0)
+data = json.loads(resp.read().decode())
+assert data["run_id"] == "smoke-life", data
+assert data["source"] == "lifecycle_runs", data
+assert data["skill"] == "vc-ship", data
+' >/dev/null 2>&1; then
+  ok "run lookup route resolves lifecycle projection"
+else
+  fail "run lookup route did not resolve lifecycle projection"
+  cat "$LOG_FILE"
+  exit 1
+fi
+
+if python3 -c '
 import urllib.request, sys
 html = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/", timeout=1.0).read().decode()
 assert "smoke-active" in html, "dashboard missing active run"
 assert "smoke-final" in html, "dashboard missing final run"
+assert "smoke-life" in html, "dashboard missing lifecycle run"
+assert "vc-ship" in html, "dashboard missing lifecycle workflow"
+assert "ZERO DoU" in html, "dashboard missing lifecycle ZERO DoU signal"
 ' >/dev/null 2>&1; then
-  ok "dashboard HTML exposes the seeded whole-control-plane runs"
+  ok "dashboard HTML exposes snapshots and lifecycle ZERO DoU signal"
 else
-  fail "dashboard HTML does not expose seeded runs"
+  fail "dashboard HTML does not expose seeded runs and lifecycle signal"
   cat "$LOG_FILE"
   exit 1
 fi
