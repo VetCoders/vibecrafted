@@ -48,6 +48,19 @@ spawn_effective_operator_session() {
   local vc_frame_bin=""
   vc_frame_bin="$(spawn_vc_frame_bin)" || return 1
 
+  # Honour an explicitly-provided operator session FIRST when it names a LIVE
+  # vc-frame session (restores pre-W1-06 precedence so `vc-resume`/marbles land in
+  # the session the caller asked for). The liveness gate still keeps a STALE
+  # ambient VIBECRAFTED_OPERATOR_SESSION from stealing the visible tab.
+  local explicit=""
+  for explicit in "${VIBECRAFTED_OPERATOR_SESSION:-}" \
+    "${VC_FRAME_SESSION_NAME:-}" "${ZELLIJ_SESSION_NAME:-}"; do
+    if [[ -n "$explicit" ]] && spawn_session_is_live "$explicit"; then
+      printf '%s\n' "$explicit"
+      return 0
+    fi
+  done
+
   local repo_root_hint="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-}}"
   if [[ -z "${VC_FRAME_SESSION_NAME:-}" && -n "$repo_root_hint" ]]; then
     session_name="$(basename "$repo_root_hint")"

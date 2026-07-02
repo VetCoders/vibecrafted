@@ -367,10 +367,12 @@ _vetcoders_prepare_operator_runtime() {
   fi
 
   if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
-    if [[ -n "${VC_FRAME_SESSION_NAME:-}" ]]; then
-      return 0
-    fi
-    unset VIBECRAFTED_OPERATOR_SESSION
+    # Honour an explicitly-provided operator session as the visible target
+    # (vc-resume / CLI dispatch rely on this). Stale ambient leaks are already
+    # blocked by the tightened _vetcoders_in_vc_frame signal above, so dropping an
+    # explicit session here only breaks legitimate targeting.
+    export VC_FRAME_SESSION_NAME="${VC_FRAME_SESSION_NAME:-$VIBECRAFTED_OPERATOR_SESSION}"
+    return 0
   fi
 
   # If spawned by a headless agent, attempt to naturally latch onto the user's active session.
