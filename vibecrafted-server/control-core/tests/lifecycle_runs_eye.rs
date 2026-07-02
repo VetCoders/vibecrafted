@@ -175,3 +175,43 @@ fn lifecycle_summaries_surface_baton_and_report_dou_fallback() {
     assert_eq!(summary.dou_readiness, "zero");
     assert_eq!(summary.accepted_dou, 2, "explicit accepted_dou wins");
 }
+
+#[test]
+fn lifecycle_summary_falls_back_to_canonical_files_when_embedded_paths_are_stale() {
+    let home = temp_home("lifecycle-stale-paths");
+    let run_id = "life-ship-smoke-stale-paths";
+    write_lifecycle_run(&home, run_id, None);
+
+    let state_path = home
+        .join("control_plane")
+        .join("lifecycle_runs")
+        .join(run_id)
+        .join("state.json");
+    let mut state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&state_path).expect("state text"))
+            .expect("state json");
+    state["state_path"] = json!("/tmp/vibecrafted-missing-state.json");
+    state["report_path"] = json!("/tmp/vibecrafted-missing-report.md");
+    fs::write(
+        &state_path,
+        serde_json::to_string_pretty(&state).expect("serialise stale-path state"),
+    )
+    .expect("rewrite state");
+
+    let plane = ControlPlane::new(&home);
+    let summary = plane
+        .load_lifecycle_run_summaries()
+        .into_iter()
+        .find(|summary| summary.run_id == run_id)
+        .expect("summary present");
+
+    assert_eq!(
+        summary.dou_index,
+        Some(0),
+        "canonical report.md remains the DoU fallback when embedded report_path is stale"
+    );
+    assert!(
+        !summary.updated_at.is_empty(),
+        "canonical state.json mtime remains the summary timestamp when embedded state_path is stale"
+    );
+}

@@ -341,19 +341,17 @@ impl ControlPlane {
     }
 
     fn lifecycle_state_path(&self, run: &LifecycleRun) -> PathBuf {
-        if run.state_path.is_empty() {
-            self.lifecycle_run_dir(&run.run_id).join("state.json")
-        } else {
-            PathBuf::from(&run.state_path)
-        }
+        existing_or_canonical(
+            &run.state_path,
+            self.lifecycle_run_dir(&run.run_id).join("state.json"),
+        )
     }
 
     fn lifecycle_report_path(&self, run: &LifecycleRun) -> PathBuf {
-        if run.report_path.is_empty() {
-            self.lifecycle_run_dir(&run.run_id).join("report.md")
-        } else {
-            PathBuf::from(&run.report_path)
-        }
+        existing_or_canonical(
+            &run.report_path,
+            self.lifecycle_run_dir(&run.run_id).join("report.md"),
+        )
     }
 
     fn lifecycle_run_updated_at(&self, run: &LifecycleRun) -> String {
@@ -507,6 +505,18 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
 
 fn modified_at(path: &Path) -> Option<std::time::SystemTime> {
     fs::metadata(path).and_then(|meta| meta.modified()).ok()
+}
+
+fn existing_or_canonical(declared: &str, canonical: PathBuf) -> PathBuf {
+    if declared.is_empty() {
+        return canonical;
+    }
+    let declared = PathBuf::from(declared);
+    if declared.is_file() {
+        declared
+    } else {
+        canonical
+    }
 }
 
 fn report_dou_index(path: &Path) -> Option<i64> {
