@@ -18,6 +18,7 @@ from .workflow import (
     WorkflowLaunchSpec,
     await_launch_truth,
     launch_workflow,
+    report_dou_index,
 )
 from .workflows.registry import workflow_manifest, workflow_manifest_payload
 from .workflows.model import WorkflowManifest, WorkflowStage
@@ -251,6 +252,28 @@ def _lifecycle_await_hard_cap_seconds() -> float | None:
     return 21600.0
 
 
+def _surfaced_dou_index(payload: dict[str, Any]) -> int | None:
+    """Validated worker-reported DoU index from an await/launch payload.
+
+    ``bool`` is an ``int`` subclass in Python — reject it explicitly so a
+    stray ``dou_index: true`` never reads as 1.
+    """
+    value = payload.get("dou_index")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None
+
+
+def _state_dou_value(state: dict[str, Any]) -> int | None:
+    dou = state.get("dou_index")
+    if not isinstance(dou, dict):
+        return None
+    value = dou.get("value")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
 def _lifecycle_max_stage_launches(manifest: WorkflowManifest) -> int:
     """Ceiling on stage launches per lifecycle run.
 
@@ -351,6 +374,7 @@ class LifecycleRunner:
                 "next_agent": spec.agent,
                 "reason": "initial",
                 "previous_reports": list(previous_reports),
+                "dou_index": None,
             },
             "stages": [],
         }
@@ -401,6 +425,7 @@ class LifecycleRunner:
                     next_stage=stage.next_stage,
                     next_agent=current_agent,
                     previous_reports=previous_reports,
+                    dou_index=_state_dou_value(state),
                     reason="stage_launched_without_await",
                 )
                 break
@@ -412,6 +437,14 @@ class LifecycleRunner:
             record["status"] = (
                 "completed" if await_result.get("artifact_ok") else "failed"
             )
+            reported_dou = _surfaced_dou_index(await_result)
+            if reported_dou is not None:
+                record["dou_index"] = reported_dou
+                state["dou_index"] = {
+                    "value": reported_dou,
+                    "stage": stage.id,
+                    "report": str(record["launch"].get("report") or ""),
+                }
             record["commit_after"] = _git_head(root)
             record["git_after"] = _git_status(root)
             record["git_snapshot_after"] = _git_worktree_snapshot(
@@ -463,6 +496,7 @@ class LifecycleRunner:
                 next_stage=next_stage,
                 next_agent=current_agent,
                 previous_reports=previous_reports,
+                dou_index=_state_dou_value(state),
                 reason="awaited_stage_completed",
             )
             if not next_stage:
@@ -548,6 +582,14 @@ class LifecycleRunner:
         allowed_artifacts = ", ".join(stage.allowed_artifacts) or "none"
         human_controls = ", ".join(manifest.human_controls) or "none"
         known_agents = ", ".join(sorted(SUPPORTED_AGENTS))
+        dou_contract = ""
+        if stage.workflow == "dou":
+            dou_contract = (
+                "\n- dou_index: <int> — REQUIRED for DoU stages: the count of open"
+                "\n  Definition-of-Undone findings you measured (gaps the operator has"
+                "\n  consciously accepted via accept-dou do not count as open);"
+                "\n  0 = ZERO DoU index, the launch-ready target."
+            )
         return f"""Vibecrafted Lifecycle Runtime
 
 Workflow: {manifest.id} ({manifest.name})
@@ -572,7 +614,7 @@ Lifecycle steering (optional, via your report YAML frontmatter):
 - next_stage: <stage-id> — steer the lifecycle forward or backward; unknown
   stage ids are ignored (manifest-validated). No key = manifest order.
 - next_agent: <agent-id> — hand the baton to that agent for the following
-  stages ({known_agents}); unknown agents are ignored.
+  stages ({known_agents}); unknown agents are ignored.{dou_contract}
 
 Previous stage reports:
 {previous}
@@ -615,6 +657,7 @@ Operator prompt:
         next_stage: str,
         next_agent: str,
         previous_reports: list[str],
+        dou_index: int | None,
         reason: str,
     ) -> dict[str, Any]:
         return {
@@ -626,6 +669,7 @@ Operator prompt:
             "audit_after": stage.audit_after,
             "reason": reason,
             "previous_reports": list(previous_reports),
+            "dou_index": dou_index,
         }
 
     def _write_state(self, path: Path, state: dict[str, Any]) -> None:
@@ -658,6 +702,12 @@ def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
     ]
     if state.get("parent_run_id"):
         lines.append(f"- parent_run_id: {state.get('parent_run_id')}")
+    dou = state.get("dou_index")
+    if isinstance(dou, dict) and dou.get("value") is not None:
+        lines.append(f"- dou_index: {dou.get('value')} (stage: {dou.get('stage', '')})")
+    accepted_dou = state.get("accepted_dou_findings") or []
+    if accepted_dou:
+        lines.append(f"- accepted_dou_findings: {len(accepted_dou)}")
     lines.extend(["", "## Stages"])
     for stage in stages:
         lines.extend(
@@ -722,6 +772,13 @@ class LifecycleSupervisor:
     def status(self, state: dict[str, Any]) -> dict[str, Any]:
         stages = list(state.get("stages") or [])
         last_stage = stages[-1] if stages else {}
+        dou_value = _state_dou_value(state)
+        if dou_value is None:
+            # Primary no-await mode: the runner exits before the worker writes
+            # its report, so the DoU index only exists in the live frontmatter.
+            dou_value = report_dou_index(
+                str((last_stage.get("launch") or {}).get("report") or "")
+            )
         return {
             "run_id": state.get("run_id"),
             "workflow": state.get("workflow"),
@@ -730,6 +787,8 @@ class LifecycleSupervisor:
             "next_stage": (state.get("baton") or {}).get("next_stage", ""),
             "next_agent": (state.get("baton") or {}).get("next_agent", ""),
             "exit_code": (last_stage.get("await") or {}).get("exit_code", ""),
+            "dou_index": dou_value,
+            "accepted_dou": len(state.get("accepted_dou_findings") or []),
             "state_path": state.get("state_path"),
             "report_path": state.get("report_path"),
         }

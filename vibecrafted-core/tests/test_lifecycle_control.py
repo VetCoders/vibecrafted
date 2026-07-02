@@ -294,6 +294,19 @@ def test_accept_dou_records_finding(monkeypatch, tmp_path: Path, capsys) -> None
     ]
     report = Path(state["report_path"]).read_text(encoding="utf-8")
     assert "accept_dou" in report
+    assert "- accepted_dou_findings: 1" in report
+
+    # The accepted-gap counter pairs with the reported dou_index in status.
+    capsys.readouterr()  # drop the accept-dou print before parsing status JSON
+    assert (
+        lifecycle_control_main(
+            ["status", state["run_id"], "--json"], workflow_id="vc-dou"
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["accepted_dou"] == 1
+    assert payload["dou_index"] is None
 
 
 def test_ship_and_wrapper_clis_route_control_verbs(

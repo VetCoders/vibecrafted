@@ -689,6 +689,27 @@ def _report_requested_next_agent(report_path: str) -> str:
     return _report_frontmatter_value(report_path, "next_agent")
 
 
+def report_dou_index(report_path: str) -> int | None:
+    """Worker-reported DoU index read from report frontmatter.
+
+    A DoU stage worker measures the launch gap by writing
+    ``dou_index: <int>`` — the count of open Definition-of-Undone findings —
+    in its report frontmatter; 0 is the launch-ready target (ZERO DoU index).
+    Absent or invalid values read as ``None``, never as a fake zero.
+
+    Public (unlike the ``next_stage``/``next_agent`` readers) because the
+    lifecycle status surface also reads it live in no-await mode.
+    """
+    raw = _report_frontmatter_value(report_path, "dou_index")
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 0 else None
+
+
 def _read_json_object(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -843,6 +864,7 @@ def await_launch_truth(
         "meta_payload": meta_payload or validation.meta_payload,
         "next_stage": _report_requested_next_stage(report_path),
         "next_agent": _report_requested_next_agent(report_path),
+        "dou_index": report_dou_index(report_path),
     }
 
 

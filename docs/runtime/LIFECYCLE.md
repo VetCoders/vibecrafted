@@ -122,6 +122,25 @@ Observability verbs (the same surface the future server wires into):
 Omitting `run_id` targets the newest run of the invoking workflow. Steering
 verbs (`force-audit`, `fallback`) mutate the baton; `approve` fires it.
 
+## Worker steering and the DoU index
+
+Stage workers steer the lifecycle through their report YAML frontmatter
+(read by `await_launch_truth`, validated by the runner):
+
+- `next_stage: <stage-id>` — steer the umbrella forward or backward; unknown
+  stage ids are ignored (manifest-validated); no key = manifest order
+  (fallback / audit_after / next);
+- `next_agent: <agent-id>` — hand the baton: the named agent runs the
+  following stages until re-steered; unknown agents are ignored; per-stage
+  registry pins override the holder for their own stage only;
+- `dou_index: <int>` — DoU stages report the count of open
+  Definition-of-Undone findings; `0` is the launch-ready target
+  (**ZERO DoU index**). The runner records the latest value in `state.json`
+  (`dou_index: {value, stage, report}`), on the baton, and in the run
+  report; `status` surfaces it next to `accepted_dou` (the count of
+  operator-accepted gaps) and reads the live report frontmatter in no-await
+  mode. Absent or invalid values read as unknown, never as a fake zero.
+
 Boundaries:
 
 - do not edit `state.json` by hand without recording why in the report or

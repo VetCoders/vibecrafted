@@ -402,6 +402,8 @@ def test_lifecycle_runner_seeds_previous_reports_from_spec(
     )
 
     assert inherited in prompts[0]
+    # The dou_index contract is a DoU-stage concern; implement must not see it.
+    assert "dou_index: <int>" not in prompts[0]
     assert state["spec"]["previous_reports"] == [inherited]
     assert state["baton"]["previous_reports"] == [
         inherited,
@@ -453,6 +455,9 @@ def test_lifecycle_runner_injects_context_atlas_into_stage_prompt(
     assert "Human controls: accept_dou, force_audit, interrupt_workflow" in prompts[0]
     assert "next_stage: <stage-id>" in prompts[0]
     assert "next_agent: <agent-id>" in prompts[0]
+    # DoU stages carry the index contract; other stages must not (see below).
+    assert "dou_index: <int>" in prompts[0]
+    assert "ZERO DoU index" in prompts[0]
 
 
 def test_read_stage_detects_mutation_to_preexisting_dirty_file(
@@ -593,6 +598,101 @@ def test_lifecycle_runner_records_commits_created_during_stage(
     assert stage["commit_before"] != stage["commit_after"]
     assert stage["changed_files"] == ["tracked.txt"]
     assert "exit_code: 0" in Path(state["report_path"]).read_text(encoding="utf-8")
+
+
+def test_lifecycle_runner_records_worker_reported_dou_index(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+
+    def fake_launcher(spec, _source_dir):
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+        }
+
+    def fake_awaiter(payload):
+        return {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+            "dou_index": 4,
+        }
+
+    runner = LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter)
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-dou",
+                agent="codex",
+                prompt="measure the launch gap",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert state["status"] == "completed"
+    assert state["stages"][0]["dou_index"] == 4
+    assert state["dou_index"] == {
+        "value": 4,
+        "stage": "dou",
+        "report": str(tmp_path / "dou.md"),
+    }
+    assert state["baton"]["dou_index"] == 4
+    report = Path(state["report_path"]).read_text(encoding="utf-8")
+    assert "- dou_index: 4 (stage: dou)" in report
+    status = LifecycleSupervisor().status(state)
+    assert status["dou_index"] == 4
+    assert status["accepted_dou"] == 0
+
+
+def test_lifecycle_status_reads_dou_index_live_in_no_await_mode(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    report_path = tmp_path / "dou.md"
+
+    def fake_launcher(spec, _source_dir):
+        return {
+            "accepted": True,
+            "run_id": "dou-run",
+            "skill": spec.skill,
+            "report": str(report_path),
+        }
+
+    supervisor = LifecycleSupervisor(runner=LifecycleRunner(launcher=fake_launcher))
+    state = asyncio.run(
+        supervisor.start(
+            LifecycleRunSpec(
+                workflow_id="vc-dou",
+                agent="codex",
+                prompt="measure the launch gap",
+                root=str(tmp_path),
+            )
+        )
+    )
+
+    # The runner exited before the worker finished; no dou_index in state yet.
+    assert supervisor.status(state)["dou_index"] is None
+    # The worker writes its report afterwards — status must read the live truth.
+    report_path.write_text(
+        "---\nstatus: completed\ndou_index: 0\n---\nZERO DoU index\n",
+        encoding="utf-8",
+    )
+    status = supervisor.status(supervisor.read_state(state["state_path"]))
+    assert status["dou_index"] == 0
 
 
 def test_lifecycle_supervisor_reports_status(monkeypatch, tmp_path: Path) -> None:

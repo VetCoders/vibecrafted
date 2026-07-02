@@ -655,7 +655,7 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
                 "assert 'launcher truth worker complete' not in sys.stdin.read(); "
                 "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
                 "'---\\nstatus: completed\\nnext_stage: polarize\\n"
-                "next_agent: codex\\n---\\nbody\\n', "
+                "next_agent: codex\\ndou_index: 3\\n---\\nbody\\n', "
                 "encoding='utf-8'"
                 "); "
                 "print('launcher truth worker complete')"
@@ -700,6 +700,7 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
     assert truth["meta_payload"]["report"] == payload["report"]
     assert truth["next_stage"] == "polarize"
     assert truth["next_agent"] == "codex"
+    assert truth["dou_index"] == 3
 
 
 def test_report_requested_next_stage_reads_report_frontmatter(
@@ -734,6 +735,35 @@ def test_report_requested_next_agent_reads_report_frontmatter(
     assert workflow._report_requested_next_agent(str(bare)) == ""
     assert workflow._report_requested_next_agent("") == ""
     assert workflow._report_requested_next_agent(str(tmp_path / "missing.md")) == ""
+
+
+def test_report_dou_index_reads_report_frontmatter(tmp_path: Path) -> None:
+    zero = tmp_path / "zero.md"
+    zero.write_text(
+        "---\nstatus: completed\ndou_index: 0\n---\nbody\n", encoding="utf-8"
+    )
+    # 0 is the whole point (ZERO DoU index) — it must survive as 0, not None.
+    assert workflow.report_dou_index(str(zero)) == 0
+
+    gaps = tmp_path / "gaps.md"
+    gaps.write_text(
+        "---\nstatus: completed\ndou_index: 7\n---\nbody\n", encoding="utf-8"
+    )
+    assert workflow.report_dou_index(str(gaps)) == 7
+
+    for invalid in ("banana", "-2", "true"):
+        bad = tmp_path / "bad.md"
+        bad.write_text(
+            f"---\nstatus: completed\ndou_index: {invalid}\n---\nbody\n",
+            encoding="utf-8",
+        )
+        assert workflow.report_dou_index(str(bad)) is None
+
+    bare = tmp_path / "bare.md"
+    bare.write_text("no frontmatter here\n", encoding="utf-8")
+    assert workflow.report_dou_index(str(bare)) is None
+    assert workflow.report_dou_index("") is None
+    assert workflow.report_dou_index(str(tmp_path / "missing.md")) is None
 
 
 def test_stop_run_terms_live_launcher_process_group(
