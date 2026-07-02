@@ -332,8 +332,11 @@ assert run["next_stage"] == "implement", run
 assert run["next_agent"] == "codex", run
 assert run["dou_index"] == 0, run
 assert run["dou_readiness"] == "zero", run
+assert run["accepted_dou"] == 1, run
+assert run["human_controls_count"] == 3, run
+assert run["operator_actions_count"] == 1, run
 ' >/dev/null 2>&1; then
-  ok "lifecycle list route returns seeded lifecycle summary with ZERO DoU readiness"
+  ok "lifecycle list route returns seeded lifecycle summary with ZERO DoU readiness and control metrics"
 else
   fail "lifecycle list route did not return the seeded lifecycle summary"
   cat "$LOG_FILE"
@@ -396,8 +399,11 @@ assert "vc-ship" in html, "dashboard missing lifecycle workflow"
 assert "approve_transition" in html, "dashboard missing lifecycle human control"
 assert "interrupt_workflow" in html, "dashboard missing lifecycle human control"
 assert "ZERO DoU" in html, "dashboard missing lifecycle ZERO DoU signal"
+assert "accepted 1" in html, "dashboard missing lifecycle accepted DoU count"
+assert "control count 3" in html, "dashboard missing lifecycle control count"
+assert "actions 1" in html, "dashboard missing lifecycle operator action count"
 ' >/dev/null 2>&1; then
-  ok "dashboard HTML exposes snapshots, lifecycle controls, and ZERO DoU signal"
+  ok "dashboard HTML exposes snapshots, lifecycle controls, ZERO DoU signal, and lifecycle counters"
 else
   fail "dashboard HTML does not expose seeded runs, controls, and lifecycle signal"
   cat "$LOG_FILE"
