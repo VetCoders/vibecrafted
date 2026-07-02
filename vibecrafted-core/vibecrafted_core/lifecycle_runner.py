@@ -39,6 +39,10 @@ class LifecycleRunSpec:
     count: int | None = None
     depth: int | None = None
     parent_run_id: str = ""
+    # Baton cargo: stage reports accumulated by earlier runs in the relay.
+    # Continuation runs (approve / force-audit) seed these so the next stage
+    # prompt keeps consuming what the previous Read/Write stages produced.
+    previous_reports: tuple[str, ...] = ()
 
 
 def _lifecycle_run_id(workflow_id: str) -> str:
@@ -303,6 +307,9 @@ class LifecycleRunner:
             root,
             task=f"{manifest.id}: {source_prompt[:160] or spec.file or 'lifecycle run'}",
         )
+        previous_reports: list[str] = [
+            str(path).strip() for path in spec.previous_reports if str(path).strip()
+        ]
         state: dict[str, Any] = {
             "run_id": run_id,
             "workflow": manifest.id,
@@ -323,6 +330,7 @@ class LifecycleRunner:
                 "start_stage": current_stage,
                 "count": spec.count,
                 "depth": spec.depth,
+                "previous_reports": list(previous_reports),
             },
             "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
             "human_controls": list(manifest.human_controls),
@@ -342,13 +350,12 @@ class LifecycleRunner:
                 "next_stage": current_stage,
                 "next_agent": spec.agent,
                 "reason": "initial",
-                "previous_reports": [],
+                "previous_reports": list(previous_reports),
             },
             "stages": [],
         }
         self._write_state(state_path, state)
 
-        previous_reports: list[str] = []
         max_stage_launches = _lifecycle_max_stage_launches(manifest)
         current = current_stage
         current_agent = spec.agent
@@ -382,6 +389,11 @@ class LifecycleRunner:
             ) as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             if not spec.await_stages:
+                # The worker writes this report while the operator decides;
+                # the baton must carry it into the approved continuation.
+                launched_report = str(record["launch"].get("report") or "").strip()
+                if launched_report:
+                    previous_reports.append(launched_report)
                 state["status"] = "launching"
                 state["next_stage"] = stage.next_stage
                 state["baton"] = self._baton(

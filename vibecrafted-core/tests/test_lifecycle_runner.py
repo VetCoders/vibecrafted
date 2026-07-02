@@ -363,8 +363,50 @@ def test_lifecycle_runner_records_first_stage_without_await(
     assert state["status"] == "launching"
     assert state["next_stage"] == ""
     assert state["baton"]["reason"] == "stage_launched_without_await"
+    # The launched stage's report is the baton cargo an approve must carry on.
+    assert state["baton"]["previous_reports"] == [str(tmp_path / "dou.md")]
     assert state["stages"][0]["workflow"] == "dou"
     assert state["stages"][0]["can_modify_code"] is False
+
+
+def test_lifecycle_runner_seeds_previous_reports_from_spec(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    prompts: list[str] = []
+
+    def fake_launcher(spec, _source_dir):
+        prompts.append(spec.prompt)
+        return {
+            "accepted": True,
+            "run_id": "implement-run",
+            "report": str(tmp_path / "implement.md"),
+        }
+
+    inherited = str(tmp_path / "scaffold.md")
+    runner = LifecycleRunner(launcher=fake_launcher)
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-implement",
+                agent="codex",
+                prompt="build it",
+                root=str(tmp_path),
+                previous_reports=(inherited, "  ", ""),
+            )
+        )
+    )
+
+    assert inherited in prompts[0]
+    assert state["spec"]["previous_reports"] == [inherited]
+    assert state["baton"]["previous_reports"] == [
+        inherited,
+        str(tmp_path / "implement.md"),
+    ]
 
 
 def test_lifecycle_runner_injects_context_atlas_into_stage_prompt(

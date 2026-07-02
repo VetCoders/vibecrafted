@@ -135,6 +135,15 @@ def record_operator_action(
     return entry
 
 
+def _baton_previous_reports(state: dict[str, Any]) -> tuple[str, ...]:
+    baton = dict(state.get("baton") or {})
+    return tuple(
+        str(path).strip()
+        for path in (baton.get("previous_reports") or [])
+        if str(path).strip()
+    )
+
+
 def _continuation_spec(
     state: dict[str, Any],
     *,
@@ -155,6 +164,7 @@ def _continuation_spec(
         count=spec_data.get("count"),
         depth=spec_data.get("depth"),
         parent_run_id=str(state.get("run_id") or ""),
+        previous_reports=_baton_previous_reports(state),
     )
 
 

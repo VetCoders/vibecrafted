@@ -112,6 +112,8 @@ def test_approve_launches_continuation_from_baton(
     assert spec.agent == "codex"
     assert spec.prompt == "operator prompt"
     assert spec.parent_run_id == state["run_id"]
+    # The baton cargo: the scaffold report rides into the implement continuation.
+    assert spec.previous_reports == (str(tmp_path / "scaffold.md"),)
 
     reloaded = _reload_state(state)
     actions = reloaded["operator_actions"]
