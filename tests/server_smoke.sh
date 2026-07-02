@@ -161,7 +161,7 @@ cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<E
     "next_agent": "codex",
     "reason": "stage_launched_without_await",
     "previous_reports": ["$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/worker-report.md"],
-    "dou_index": null,
+    "dou_index": 0,
     "audit_after": "",
     "fallback_stage": ""
   },
@@ -188,7 +188,11 @@ cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<E
       "audit_after": ""
     }
   }],
-  "dou_index": null,
+  "dou_index": {
+    "value": 0,
+    "stage": "scaffold",
+    "report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/worker-report.md"
+  },
   "accepted_dou": 1,
   "accepted_dou_findings": [{"id": "accepted-1"}]
 }
@@ -331,6 +335,7 @@ assert run["current_stage"] == "scaffold", run
 assert run["next_stage"] == "implement", run
 assert run["next_agent"] == "codex", run
 assert run["dou_index"] == 0, run
+assert run["baton_dou_index"] == 0, run
 assert run["dou_readiness"] == "zero", run
 assert run["accepted_dou"] == 1, run
 assert run["human_controls_count"] == 3, run
@@ -349,7 +354,12 @@ resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/lifecycle/
 data = json.loads(resp.read().decode())
 assert data["run_id"] == "smoke-life", data
 assert data["baton"]["next_stage"] == "implement", data
+assert data["baton"]["dou_index"] == 0, data
 assert data["stages"][0]["id"] == "scaffold", data
+assert data["dou_index"]["value"] == 0, data
+assert data["dou_index"]["stage"] == "scaffold", data
+assert data["accepted_dou"] == 1, data
+assert len(data["accepted_dou_findings"]) == 1, data
 ' >/dev/null 2>&1; then
   ok "lifecycle detail route returns full nested state"
 else
