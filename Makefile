@@ -661,7 +661,7 @@ install-server:
 	@echo "[server] compat: $(SERVER_COMPAT_BIN) -> $(BIN_DIR) (real file)"
 	@echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
 
-server-smoke:
+server-smoke: install-server
 	@echo "[server-smoke] Run 1/3" && bash tests/server_smoke.sh
 	@echo "[server-smoke] Run 2/3" && bash tests/server_smoke.sh
 	@echo "[server-smoke] Run 3/3" && bash tests/server_smoke.sh

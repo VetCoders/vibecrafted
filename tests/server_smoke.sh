@@ -120,11 +120,15 @@ EOF_RUN
 ok "seeded control-plane run snapshots"
 
 cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md" <<'EOF_LIFE_REPORT'
+# smoke lifecycle report
+EOF_LIFE_REPORT
+
+cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/worker-report.md" <<'EOF_WORKER_REPORT'
 ---
 dou_index: 0
 ---
-# smoke lifecycle report
-EOF_LIFE_REPORT
+# smoke worker lifecycle report
+EOF_WORKER_REPORT
 
 cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/transcript.log" <<'EOF_LIFE_TRANSCRIPT'
 {"kind":"stage","id":"scaffold"}
@@ -156,7 +160,7 @@ cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<E
     "next_stage": "implement",
     "next_agent": "codex",
     "reason": "stage_launched_without_await",
-    "previous_reports": ["$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md"],
+    "previous_reports": ["$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/worker-report.md"],
     "dou_index": null,
     "audit_after": "",
     "fallback_stage": ""
@@ -168,7 +172,7 @@ cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<E
     "phase": "read",
     "agent": "codex",
     "status": "completed",
-    "launch": {"report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md"},
+    "launch": {"report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/worker-report.md"},
     "await": {},
     "commit_before": "abc123",
     "commit_after": "def456",
@@ -184,7 +188,7 @@ cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<E
       "audit_after": ""
     }
   }],
-  "dou_index": {"value": 0, "stage": "audit", "report": "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/report.md"},
+  "dou_index": null,
   "accepted_dou": 1,
   "accepted_dou_findings": [{"id": "accepted-1"}]
 }

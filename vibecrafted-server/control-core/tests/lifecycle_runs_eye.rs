@@ -177,6 +177,53 @@ fn lifecycle_summaries_surface_baton_and_report_dou_fallback() {
 }
 
 #[test]
+fn lifecycle_summary_reads_live_dou_from_latest_stage_report() {
+    let home = temp_home("lifecycle-stage-report");
+    let run_id = "life-ship-smoke-stage-report";
+    write_lifecycle_run(&home, run_id, None);
+
+    let run_dir = home
+        .join("control_plane")
+        .join("lifecycle_runs")
+        .join(run_id);
+    let state_path = run_dir.join("state.json");
+    let lifecycle_report_path = run_dir.join("report.md");
+    let worker_report_path = run_dir.join("worker-report.md");
+    fs::write(&lifecycle_report_path, "# lifecycle report without DoU\n")
+        .expect("lifecycle report");
+    fs::write(
+        &worker_report_path,
+        "---\ndou_index: 0\n---\n# worker ZERO DoU report\n",
+    )
+    .expect("worker report");
+
+    let mut state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&state_path).expect("state text"))
+            .expect("state json");
+    state["dou_index"] = serde_json::Value::Null;
+    state["stages"][0]["launch"]["report"] = json!(worker_report_path.to_string_lossy());
+    fs::write(
+        &state_path,
+        serde_json::to_string_pretty(&state).expect("serialise state"),
+    )
+    .expect("rewrite state");
+
+    let plane = ControlPlane::new(&home);
+    let summary = plane
+        .load_lifecycle_run_summaries()
+        .into_iter()
+        .find(|summary| summary.run_id == run_id)
+        .expect("summary present");
+
+    assert_eq!(
+        summary.dou_index,
+        Some(0),
+        "no-await lifecycle status reads the launched worker report before the lifecycle report"
+    );
+    assert_eq!(summary.dou_readiness, "zero");
+}
+
+#[test]
 fn lifecycle_summary_falls_back_to_canonical_files_when_embedded_paths_are_stale() {
     let home = temp_home("lifecycle-stale-paths");
     let run_id = "life-ship-smoke-stale-paths";

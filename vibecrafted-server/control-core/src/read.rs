@@ -329,15 +329,22 @@ impl ControlPlane {
     fn lifecycle_run_summary(&self, run: &LifecycleRun) -> LifecycleRunSummary {
         run.summary(
             self.lifecycle_run_updated_at(run),
-            report_dou_index(&self.lifecycle_report_path(run)),
+            self.lifecycle_dou_index_from_reports(run),
         )
     }
 
     fn lifecycle_run_status(&self, run: &LifecycleRun) -> RunStatus {
         run.to_run_status(
             self.lifecycle_run_updated_at(run),
-            report_dou_index(&self.lifecycle_report_path(run)),
+            self.lifecycle_dou_index_from_reports(run),
         )
+    }
+
+    fn lifecycle_dou_index_from_reports(&self, run: &LifecycleRun) -> Option<i64> {
+        self.lifecycle_stage_report_path(run)
+            .as_deref()
+            .and_then(report_dou_index)
+            .or_else(|| report_dou_index(&self.lifecycle_report_path(run)))
     }
 
     fn lifecycle_state_path(&self, run: &LifecycleRun) -> PathBuf {
@@ -352,6 +359,15 @@ impl ControlPlane {
             &run.report_path,
             self.lifecycle_run_dir(&run.run_id).join("report.md"),
         )
+    }
+
+    fn lifecycle_stage_report_path(&self, run: &LifecycleRun) -> Option<PathBuf> {
+        let raw = run.stages.last()?.launch.get("report")?.as_str()?.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        let path = PathBuf::from(raw);
+        path.is_file().then_some(path)
     }
 
     fn lifecycle_run_updated_at(&self, run: &LifecycleRun) -> String {
