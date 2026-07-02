@@ -6,7 +6,7 @@
 #   - Starts a copied binary from /tmp with no LEPTOS_* environment.
 #   - Binds to a free ephemeral port (no hardcoded port).
 #   - Polls /api/control/state and /api/control/runs to 200 OK.
-#   - Asserts JSON payload structure and dashboard visibility.
+#   - Asserts JSON payload structure, dashboard visibility, and favicon hygiene.
 #   - SIGTERM shuts down clean (no process leaks, no panics in log).
 #
 # Usage:
@@ -396,6 +396,19 @@ assert "ZERO DoU" in html, "dashboard missing lifecycle ZERO DoU signal"
   ok "dashboard HTML exposes snapshots, lifecycle controls, and ZERO DoU signal"
 else
   fail "dashboard HTML does not expose seeded runs, controls, and lifecycle signal"
+  cat "$LOG_FILE"
+  exit 1
+fi
+
+if python3 -c '
+import urllib.request, sys
+resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/favicon.ico", timeout=1.0)
+assert resp.status == 204, resp.status
+assert resp.read() == b"", "favicon response should be empty"
+' >/dev/null 2>&1; then
+  ok "favicon route returns clean no-content response"
+else
+  fail "favicon route did not return clean no-content response"
   cat "$LOG_FILE"
   exit 1
 fi
