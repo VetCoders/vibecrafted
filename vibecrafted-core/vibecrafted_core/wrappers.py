@@ -244,11 +244,11 @@ def agents_main(argv: Sequence[str] | None = None) -> int:
 
 
 def followup_main(argv: Sequence[str] | None = None) -> int:
-    return supervised_skill_main("followup", argv)
+    return _lifecycle_main("vc-followup", argv)
 
 
 def implement_main(argv: Sequence[str] | None = None) -> int:
-    return supervised_skill_main("implement", argv)
+    return _lifecycle_main("vc-implement", argv)
 
 
 def _lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
@@ -296,11 +296,11 @@ def prune_main(argv: Sequence[str] | None = None) -> int:
 
 
 def review_main(argv: Sequence[str] | None = None) -> int:
-    return supervised_skill_main("review", argv)
+    return _lifecycle_main("vc-review", argv)
 
 
 def scaffold_main(argv: Sequence[str] | None = None) -> int:
-    return supervised_skill_main("scaffold", argv)
+    return _lifecycle_main("vc-scaffold", argv)
 
 
 def decorate_main(argv: Sequence[str] | None = None) -> int:
@@ -324,11 +324,11 @@ def partner_main(argv: Sequence[str] | None = None) -> int:
 
 
 def release_main(argv: Sequence[str] | None = None) -> int:
-    return supervised_skill_main("release", argv)
+    return _lifecycle_main("vc-release", argv)
 
 
 def workflow_main(argv: Sequence[str] | None = None) -> int:
-    return supervised_skill_main("workflow", argv)
+    return _lifecycle_main("vc-workflow", argv)
 
 
 def _prepare_research(args: Sequence[str], run_id: str) -> tuple[int, str]:

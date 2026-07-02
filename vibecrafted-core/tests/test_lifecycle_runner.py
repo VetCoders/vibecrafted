@@ -4,6 +4,8 @@ import asyncio
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from vibecrafted_core import ship, wrappers
 from vibecrafted_core.lifecycle_runner import (
     LifecycleRunSpec,
@@ -545,6 +547,44 @@ def test_vc_marbles_wrapper_uses_lifecycle_runner_with_loop_options(
     assert captured[0].depth == 7
 
 
+@pytest.mark.parametrize(
+    ("wrapper_name", "workflow_id"),
+    [
+        ("scaffold_main", "vc-scaffold"),
+        ("implement_main", "vc-implement"),
+        ("review_main", "vc-review"),
+        ("workflow_main", "vc-workflow"),
+        ("followup_main", "vc-followup"),
+        ("release_main", "vc-release"),
+    ],
+)
+def test_ship_stage_wrappers_route_to_lifecycle_runner(
+    monkeypatch, tmp_path: Path, wrapper_name: str, workflow_id: str
+) -> None:
+    captured: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec):
+        captured.append(spec)
+        return {
+            "run_id": f"life-{workflow_id}-test",
+            "workflow": spec.workflow_id,
+            "status": "launching",
+            "state_path": str(tmp_path / "state.json"),
+            "report_path": str(tmp_path / "report.md"),
+        }
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.run_lifecycle", fake_run_lifecycle
+    )
+    wrapper = getattr(wrappers, wrapper_name)
+    rc = wrapper(["codex", "--prompt", "run the stage"])
+
+    assert rc == 0
+    assert captured[0].workflow_id == workflow_id
+    assert captured[0].agent == "codex"
+    assert captured[0].prompt == "run the stage"
+
+
 def test_lifecycle_console_scripts_are_packaged() -> None:
     pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
         encoding="utf-8"
@@ -553,9 +593,15 @@ def test_lifecycle_console_scripts_are_packaged() -> None:
     for name in (
         "vc-audit",
         "vc-dou",
+        "vc-followup",
         "vc-hydrate",
+        "vc-implement",
         "vc-polarize",
         "vc-marbles",
+        "vc-release",
+        "vc-review",
+        "vc-scaffold",
         "vc-ship",
+        "vc-workflow",
     ):
         assert f"{name} = " in pyproject
