@@ -654,7 +654,8 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
                 "from pathlib import Path; import os, sys; "
                 "assert 'launcher truth worker complete' not in sys.stdin.read(); "
                 "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-                "'---\\nstatus: completed\\nnext_stage: polarize\\n---\\nbody\\n', "
+                "'---\\nstatus: completed\\nnext_stage: polarize\\n"
+                "next_agent: codex\\n---\\nbody\\n', "
                 "encoding='utf-8'"
                 "); "
                 "print('launcher truth worker complete')"
@@ -698,6 +699,7 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
     assert truth["meta_payload"]["state"] == "report_validated"
     assert truth["meta_payload"]["report"] == payload["report"]
     assert truth["next_stage"] == "polarize"
+    assert truth["next_agent"] == "codex"
 
 
 def test_report_requested_next_stage_reads_report_frontmatter(
@@ -715,6 +717,23 @@ def test_report_requested_next_stage_reads_report_frontmatter(
     assert workflow._report_requested_next_stage(str(bare)) == ""
     assert workflow._report_requested_next_stage("") == ""
     assert workflow._report_requested_next_stage(str(tmp_path / "missing.md")) == ""
+
+
+def test_report_requested_next_agent_reads_report_frontmatter(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "report.md"
+    report.write_text(
+        "---\nstatus: completed\nnext_agent: junie\n---\nbody\n",
+        encoding="utf-8",
+    )
+    assert workflow._report_requested_next_agent(str(report)) == "junie"
+
+    bare = tmp_path / "bare.md"
+    bare.write_text("no frontmatter here\n", encoding="utf-8")
+    assert workflow._report_requested_next_agent(str(bare)) == ""
+    assert workflow._report_requested_next_agent("") == ""
+    assert workflow._report_requested_next_agent(str(tmp_path / "missing.md")) == ""
 
 
 def test_stop_run_terms_live_launcher_process_group(

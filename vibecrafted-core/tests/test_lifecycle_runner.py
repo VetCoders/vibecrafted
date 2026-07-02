@@ -12,6 +12,7 @@ from vibecrafted_core.lifecycle_runner import (
     LifecycleRunner,
     LifecycleSupervisor,
 )
+from vibecrafted_core.workflows.model import WorkflowManifest, WorkflowStage
 
 
 def test_lifecycle_runner_triggers_audit_after_marbles(
@@ -138,6 +139,146 @@ def test_lifecycle_runner_honours_worker_requested_next_stage(
     assert steered["requested_next_stage"] == "marbles"
     assert steered["next_stage"] == "marbles"
     assert state["stages"][3]["transition"]["next_stage"] == ""
+
+
+def test_lifecycle_runner_hands_baton_to_worker_requested_next_agent(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    agents: list[str] = []
+
+    def fake_launcher(spec, _source_dir):
+        agents.append(spec.agent)
+        report = tmp_path / f"{spec.skill}-{len(agents)}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run-{len(agents)}",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    def fake_awaiter(payload):
+        result = {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        }
+        if payload["run_id"] == "marbles-run-1":
+            # Marbles hands the baton to junie for the rest of the cycle.
+            result["next_agent"] = "junie"
+        if payload["run_id"] == "audit-run-2":
+            # Steer back once; the unknown agent must NOT steal the baton.
+            result["next_stage"] = "marbles"
+            result["next_agent"] = "chatgpt"
+        return result
+
+    runner = LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter)
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-marbles",
+                agent="codex",
+                prompt="relay the baton",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert agents == ["codex", "junie", "junie", "junie"]
+    assert state["status"] == "completed"
+    assert [stage["agent"] for stage in state["stages"]] == agents
+    handoff = state["stages"][0]["transition"]
+    assert handoff["requested_next_agent"] == "junie"
+    assert handoff["next_agent"] == "junie"
+    ignored = state["stages"][1]["transition"]
+    assert ignored["requested_next_agent"] == "chatgpt"
+    assert ignored["next_agent"] == "junie"
+    assert state["baton"]["next_agent"] == "junie"
+    report = Path(state["report_path"]).read_text(encoding="utf-8")
+    assert "- next_agent: junie" in report
+
+
+def test_lifecycle_runner_stage_agent_pin_overrides_baton_holder(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    manifest = WorkflowManifest(
+        id="vc-pinned",
+        name="Pinned",
+        description="Registry-pinned per-stage agent.",
+        stages=(
+            WorkflowStage(
+                id="review",
+                workflow="review",
+                phase="read",
+                order=1,
+                next_stage="implement",
+            ),
+            WorkflowStage(
+                id="implement",
+                workflow="implement",
+                phase="write",
+                order=2,
+                agent="gemini",
+            ),
+        ),
+        entry_stage="review",
+    )
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.workflow_manifest",
+        lambda _id: manifest,
+    )
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.workflow_manifest_payload",
+        lambda _id: {"id": manifest.id},
+    )
+    agents: list[str] = []
+
+    def fake_launcher(spec, _source_dir):
+        agents.append(spec.agent)
+        report = tmp_path / f"{spec.skill}-{len(agents)}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run-{len(agents)}",
+            "report": str(report),
+        }
+
+    def fake_awaiter(payload):
+        return {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        }
+
+    runner = LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter)
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-pinned",
+                agent="codex",
+                prompt="pin the writer",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert agents == ["codex", "gemini"]
+    assert state["status"] == "completed"
+    # The pin runs its own stage only; the baton holder stays with the launch agent.
+    assert state["baton"]["next_agent"] == "codex"
 
 
 def test_lifecycle_runner_stage_cap_stops_runaway_steering(
@@ -268,6 +409,8 @@ def test_lifecycle_runner_injects_context_atlas_into_stage_prompt(
     )
     assert "Allowed artifacts: reports, cache, run_state, transcripts" in prompts[0]
     assert "Human controls: accept_dou, force_audit, interrupt_workflow" in prompts[0]
+    assert "next_stage: <stage-id>" in prompts[0]
+    assert "next_agent: <agent-id>" in prompts[0]
 
 
 def test_read_stage_detects_mutation_to_preexisting_dirty_file(

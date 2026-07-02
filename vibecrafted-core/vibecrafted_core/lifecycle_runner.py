@@ -325,6 +325,7 @@ class LifecycleRunner:
             "baton": {
                 "from_stage": "",
                 "next_stage": current_stage,
+                "next_agent": spec.agent,
                 "reason": "initial",
                 "previous_reports": [],
             },
@@ -335,6 +336,7 @@ class LifecycleRunner:
         previous_reports: list[str] = []
         max_stage_launches = _lifecycle_max_stage_launches(manifest)
         current = current_stage
+        current_agent = spec.agent
         while current:
             if len(state["stages"]) >= max_stage_launches:
                 state["status"] = "failed"
@@ -352,6 +354,7 @@ class LifecycleRunner:
                 manifest=manifest,
                 stage=stage,
                 spec=spec,
+                agent=stage.agent or current_agent,
                 source_prompt=source_prompt,
                 root=root,
                 previous_reports=previous_reports,
@@ -369,6 +372,7 @@ class LifecycleRunner:
                 state["baton"] = self._baton(
                     stage=stage,
                     next_stage=stage.next_stage,
+                    next_agent=current_agent,
                     previous_reports=previous_reports,
                     reason="stage_launched_without_await",
                 )
@@ -417,9 +421,12 @@ class LifecycleRunner:
             self._write_state(state_path, state)
 
             next_stage = self._next_stage(manifest, stage, await_result)
+            current_agent = self._next_agent(current_agent, await_result)
             record["transition"] = {
                 "next_stage": next_stage,
                 "requested_next_stage": str(await_result.get("next_stage") or ""),
+                "next_agent": current_agent,
+                "requested_next_agent": str(await_result.get("next_agent") or ""),
                 "conditions": list(stage.transition_conditions),
                 "fallback_stage": stage.fallback_stage,
                 "audit_after": stage.audit_after,
@@ -427,6 +434,7 @@ class LifecycleRunner:
             state["baton"] = self._baton(
                 stage=stage,
                 next_stage=next_stage,
+                next_agent=current_agent,
                 previous_reports=previous_reports,
                 reason="awaited_stage_completed",
             )
@@ -447,6 +455,7 @@ class LifecycleRunner:
         manifest: WorkflowManifest,
         stage: WorkflowStage,
         spec: LifecycleRunSpec,
+        agent: str,
         source_prompt: str,
         root: Path,
         previous_reports: list[str],
@@ -460,7 +469,7 @@ class LifecycleRunner:
             context=context,
         )
         launch_spec = WorkflowLaunchSpec(
-            agent=spec.agent,
+            agent=agent,
             mode=stage.workflow,
             skill=stage.workflow,
             prompt=prompt,
@@ -478,6 +487,7 @@ class LifecycleRunner:
             "id": stage.id,
             "name": stage.name,
             "workflow": stage.workflow,
+            "agent": agent,
             "phase": stage.phase,
             "can_modify_code": stage.can_modify_code,
             "tooling": list(stage.tooling),
@@ -510,6 +520,7 @@ class LifecycleRunner:
         )
         allowed_artifacts = ", ".join(stage.allowed_artifacts) or "none"
         human_controls = ", ".join(manifest.human_controls) or "none"
+        known_agents = ", ".join(sorted(SUPPORTED_AGENTS))
         return f"""Vibecrafted Lifecycle Runtime
 
 Workflow: {manifest.id} ({manifest.name})
@@ -529,6 +540,12 @@ READ phase rule:
 
 WRITE phase rule:
 - Code changes are allowed, but changed files must be reported.
+
+Lifecycle steering (optional, via your report YAML frontmatter):
+- next_stage: <stage-id> — steer the lifecycle forward or backward; unknown
+  stage ids are ignored (manifest-validated). No key = manifest order.
+- next_agent: <agent-id> — hand the baton to that agent for the following
+  stages ({known_agents}); unknown agents are ignored.
 
 Previous stage reports:
 {previous}
@@ -555,11 +572,21 @@ Operator prompt:
             return stage.audit_after
         return stage.next_stage
 
+    def _next_agent(self, current_agent: str, await_result: dict[str, Any]) -> str:
+        """Sticky baton handoff: a valid worker-requested ``next_agent`` becomes
+        the holder for the following stages until re-steered; unknown agents
+        are ignored (mirrors unknown ``next_stage`` handling)."""
+        requested = str(await_result.get("next_agent") or "").strip()
+        if requested and requested in SUPPORTED_AGENTS:
+            return requested
+        return current_agent
+
     def _baton(
         self,
         *,
         stage: WorkflowStage,
         next_stage: str,
+        next_agent: str,
         previous_reports: list[str],
         reason: str,
     ) -> dict[str, Any]:
@@ -567,6 +594,7 @@ Operator prompt:
             "from_stage": stage.id,
             "from_phase": stage.phase,
             "next_stage": next_stage,
+            "next_agent": next_agent,
             "fallback_stage": stage.fallback_stage,
             "audit_after": stage.audit_after,
             "reason": reason,
@@ -600,6 +628,7 @@ Operator prompt:
                 [
                     "",
                     f"- {stage.get('id')} ({stage.get('phase')}): {stage.get('status')}",
+                    f"  - agent: {stage.get('agent', '')}",
                     f"  - run_id: {stage.get('launch', {}).get('run_id', '')}",
                     f"  - report: {stage.get('launch', {}).get('report', '')}",
                     f"  - commit_before: {stage.get('commit_before', '')}",
@@ -621,6 +650,7 @@ Operator prompt:
                 "## Baton",
                 f"- from_stage: {baton.get('from_stage', '')}",
                 f"- next_stage: {baton.get('next_stage', '')}",
+                f"- next_agent: {baton.get('next_agent', '')}",
                 f"- reason: {baton.get('reason', '')}",
             ]
         )
@@ -652,6 +682,7 @@ class LifecycleSupervisor:
             "status": state.get("status"),
             "current_stage": last_stage.get("id", ""),
             "next_stage": (state.get("baton") or {}).get("next_stage", ""),
+            "next_agent": (state.get("baton") or {}).get("next_agent", ""),
             "exit_code": (last_stage.get("await") or {}).get("exit_code", ""),
             "state_path": state.get("state_path"),
             "report_path": state.get("report_path"),

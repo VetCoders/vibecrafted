@@ -662,6 +662,13 @@ def _path_exists(path: str) -> bool:
         return False
 
 
+def _report_frontmatter_value(report_path: str, key: str) -> str:
+    if not _path_exists(report_path):
+        return ""
+    values = parse_frontmatter(Path(report_path))
+    return str(values.get(key) or "").strip()
+
+
 def _report_requested_next_stage(report_path: str) -> str:
     """Worker-requested lifecycle steering read from report frontmatter.
 
@@ -669,10 +676,17 @@ def _report_requested_next_stage(report_path: str) -> str:
     by writing ``next_stage: <stage-id>`` in its report frontmatter. Unknown
     stage ids are ignored downstream by the runner's manifest validation.
     """
-    if not _path_exists(report_path):
-        return ""
-    values = parse_frontmatter(Path(report_path))
-    return str(values.get("next_stage") or "").strip()
+    return _report_frontmatter_value(report_path, "next_stage")
+
+
+def _report_requested_next_agent(report_path: str) -> str:
+    """Worker-requested baton handoff read from report frontmatter.
+
+    A stage worker may hand the lifecycle baton to another agent by writing
+    ``next_agent: <agent-id>`` in its report frontmatter. Unknown agents are
+    ignored downstream by the runner's SUPPORTED_AGENTS validation.
+    """
+    return _report_frontmatter_value(report_path, "next_agent")
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
@@ -828,6 +842,7 @@ def await_launch_truth(
         "artifact_warnings": list(validation.warnings),
         "meta_payload": meta_payload or validation.meta_payload,
         "next_stage": _report_requested_next_stage(report_path),
+        "next_agent": _report_requested_next_agent(report_path),
     }
 
 

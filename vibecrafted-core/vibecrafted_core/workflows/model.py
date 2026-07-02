@@ -48,6 +48,8 @@ class WorkflowStage:
     order: int
     name: str = ""
     tooling: tuple[str, ...] = ()
+    # Optional per-stage agent pin; empty = the current baton holder runs it.
+    agent: str = ""
     next_stage: str = ""
     fallback_stage: str = ""
     audit_after: str = ""
