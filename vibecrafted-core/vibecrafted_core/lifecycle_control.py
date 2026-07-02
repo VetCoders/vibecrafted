@@ -144,6 +144,24 @@ def _baton_previous_reports(state: dict[str, Any]) -> tuple[str, ...]:
     )
 
 
+def _missing_previous_reports(state: dict[str, Any]) -> list[str]:
+    """Baton cargo validity: report paths that do not exist or are empty.
+
+    In the primary no-await mode the baton records the launched stage's
+    report path while the worker is still writing it — approving before the
+    file lands would prompt the continuation with evidence that isn't there.
+    """
+    missing: list[str] = []
+    for path in _baton_previous_reports(state):
+        try:
+            target = Path(path).expanduser()
+            if not target.is_file() or target.stat().st_size == 0:
+                missing.append(path)
+        except OSError:
+            missing.append(path)
+    return missing
+
+
 def _continuation_spec(
     state: dict[str, Any],
     *,
@@ -179,6 +197,7 @@ def approve_transition(
     state: dict[str, Any],
     *,
     run_lifecycle_fn: RunLifecycle | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     """Launch the baton's pending next_stage as a parent-linked continuation run."""
     _require_control(state, "approve_transition")
@@ -189,6 +208,14 @@ def approve_transition(
             "nothing to approve: the baton has no pending next_stage "
             "(run is complete or was never handed off)"
         )
+    missing = _missing_previous_reports(state)
+    if missing and not force:
+        raise ValueError(
+            "baton cargo not ready — report(s) missing or empty: "
+            + ", ".join(missing)
+            + "; wait for the stage worker to finish writing, or approve "
+            "--force to continue without the evidence trail"
+        )
     launcher = run_lifecycle_fn or run_lifecycle
     spec = _continuation_spec(
         state,
@@ -197,16 +224,16 @@ def approve_transition(
         agent=_baton_agent(state),
     )
     child = launcher(spec)
-    record_operator_action(
-        state_path,
-        state,
-        "approve_transition",
-        {
-            "approved_stage": next_stage,
-            "agent": spec.agent,
-            "continuation_run_id": str(child.get("run_id") or ""),
-        },
-    )
+    details: dict[str, Any] = {
+        "approved_stage": next_stage,
+        "agent": spec.agent,
+        "continuation_run_id": str(child.get("run_id") or ""),
+    }
+    if force and missing:
+        # A forced approve over missing cargo must leave a trace of what
+        # evidence the continuation ran without.
+        details["forced_missing_reports"] = missing
+    record_operator_action(state_path, state, "approve_transition", details)
     return child
 
 
@@ -379,7 +406,14 @@ def lifecycle_control_main(
         return verb_parser
 
     _run_parser("status", "show one lifecycle run's status")
-    _run_parser("approve", "approve_transition: launch the baton's next_stage")
+    approve_parser = _run_parser(
+        "approve", "approve_transition: launch the baton's next_stage"
+    )
+    approve_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="continue even when baton report files are missing or empty",
+    )
     _run_parser("interrupt", "interrupt_workflow: stop the live stage, mark run")
     _run_parser("force-audit", "force_audit: make an audit the next move")
     accept_parser = _run_parser("accept-dou", "accept_dou: accept a DoU gap")
@@ -408,7 +442,9 @@ def lifecycle_control_main(
             payload["parent_run_id"] = str(state.get("parent_run_id") or "")
             payload["operator_actions"] = len(state.get("operator_actions") or [])
         elif args.verb == "approve":
-            payload = approve_transition(state_path, state)
+            payload = approve_transition(
+                state_path, state, force=bool(getattr(args, "force", False))
+            )
         elif args.verb == "interrupt":
             payload = interrupt_workflow(state_path, state)
         elif args.verb == "force-audit":

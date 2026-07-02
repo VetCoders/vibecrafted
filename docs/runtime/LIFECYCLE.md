@@ -99,9 +99,13 @@ manifest `human_controls` and recorded as a timestamped `operator_actions`
 entry in `state.json`, `report.md`, and the transcript
 (`vibecrafted_core.lifecycle_control`):
 
-- `<cmd> approve [run_id]` — approve transition to the next lifecycle stage:
-  launches the baton's pending `next_stage` with the baton holder as a
-  parent-linked continuation run (`parent_run_id`);
+- `<cmd> approve [run_id] [--force]` — approve transition to the next
+  lifecycle stage: launches the baton's pending `next_stage` with the baton
+  holder as a parent-linked continuation run (`parent_run_id`). Approve first
+  verifies the baton's report files exist and are non-empty (the worker may
+  still be writing in no-await mode) and refuses with the missing paths
+  otherwise; `--force` is the conscious override and is traced
+  (`forced_missing_reports`);
 - `<cmd> interrupt [run_id]` — interrupt a workflow: stops the live stage run
   and leaves the lifecycle run in `interrupted` state;
 - `<cmd> force-audit [run_id]` — force an audit when the current evidence

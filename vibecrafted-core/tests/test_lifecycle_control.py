@@ -129,6 +129,53 @@ def test_approve_launches_continuation_from_baton(
     )
 
 
+def test_approve_gates_on_missing_baton_report_until_forced(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    state = _make_lifecycle_run(tmp_path, monkeypatch, workflow_id="vc-ship")
+    launched: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec) -> dict:
+        launched.append(spec)
+        return {"run_id": "life-cont-forced", "status": "launching"}
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_control.run_lifecycle", fake_run_lifecycle
+    )
+    # The worker has not finished writing: the baton path exists in state
+    # but the file is gone (same truth as not-yet-written or truncated).
+    scaffold_report = tmp_path / "scaffold.md"
+    scaffold_report.unlink()
+
+    assert (
+        lifecycle_control_main(["approve", state["run_id"]], workflow_id="vc-ship") == 1
+    )
+    err = capsys.readouterr().err
+    assert "baton cargo not ready" in err
+    assert str(scaffold_report) in err
+    assert "--force" in err
+    assert launched == []
+
+    # Empty file is equally not-ready.
+    scaffold_report.write_text("", encoding="utf-8")
+    assert (
+        lifecycle_control_main(["approve", state["run_id"]], workflow_id="vc-ship") == 1
+    )
+    assert "baton cargo not ready" in capsys.readouterr().err
+
+    # --force is the conscious override and must leave a trace.
+    assert (
+        lifecycle_control_main(
+            ["approve", state["run_id"], "--force", "--json"], workflow_id="vc-ship"
+        )
+        == 0
+    )
+    assert len(launched) == 1
+    reloaded = _reload_state(state)
+    details = reloaded["operator_actions"][0]["details"]
+    assert details["forced_missing_reports"] == [str(scaffold_report)]
+
+
 def test_approve_rejected_when_nothing_pending(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
