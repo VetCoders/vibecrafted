@@ -389,11 +389,13 @@ assert "smoke-active" in html, "dashboard missing active run"
 assert "smoke-final" in html, "dashboard missing final run"
 assert "smoke-life" in html, "dashboard missing lifecycle run"
 assert "vc-ship" in html, "dashboard missing lifecycle workflow"
+assert "approve_transition" in html, "dashboard missing lifecycle human control"
+assert "interrupt_workflow" in html, "dashboard missing lifecycle human control"
 assert "ZERO DoU" in html, "dashboard missing lifecycle ZERO DoU signal"
 ' >/dev/null 2>&1; then
-  ok "dashboard HTML exposes snapshots and lifecycle ZERO DoU signal"
+  ok "dashboard HTML exposes snapshots, lifecycle controls, and ZERO DoU signal"
 else
-  fail "dashboard HTML does not expose seeded runs and lifecycle signal"
+  fail "dashboard HTML does not expose seeded runs, controls, and lifecycle signal"
   cat "$LOG_FILE"
   exit 1
 fi

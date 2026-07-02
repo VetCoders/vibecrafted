@@ -43,6 +43,7 @@ struct DashboardLifecycleRun {
     next_agent: String,
     dou_label: String,
     accepted_dou: i64,
+    human_controls: Vec<String>,
     human_controls_count: usize,
     operator_actions_count: usize,
     report_path: String,
@@ -100,6 +101,7 @@ fn load_dashboard_data() -> DashboardData {
             next_agent: run.next_agent,
             dou_label,
             accepted_dou: run.accepted_dou,
+            human_controls: run.human_controls,
             human_controls_count: run.human_controls_count,
             operator_actions_count: run.operator_actions_count,
             report_path: run.report_path,
@@ -181,6 +183,11 @@ fn lifecycle_cards(runs: Vec<DashboardLifecycleRun>) -> impl IntoView {
             } else {
                 run.report_path.clone()
             };
+            let controls_label = if run.human_controls.is_empty() {
+                "controls none".to_string()
+            } else {
+                format!("controls {}", run.human_controls.join(", "))
+            };
 
             view! {
                 <article class="control-run-row">
@@ -197,7 +204,8 @@ fn lifecycle_cards(runs: Vec<DashboardLifecycleRun>) -> impl IntoView {
                     </div>
                     <div class="control-run-meta">
                         <span>{run.updated_at}</span>
-                        <span>{format!("controls {}", run.human_controls_count)}</span>
+                        <span>{controls_label}</span>
+                        <span>{format!("control count {}", run.human_controls_count)}</span>
                         <span>{format!("actions {}", run.operator_actions_count)}</span>
                         <span>{report_label}</span>
                     </div>
