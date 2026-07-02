@@ -38,6 +38,7 @@ class LifecycleRunSpec:
     start_stage: str = ""
     count: int | None = None
     depth: int | None = None
+    parent_run_id: str = ""
 
 
 def _lifecycle_run_id(workflow_id: str) -> str:
@@ -309,6 +310,20 @@ class LifecycleRunner:
             "root": str(root),
             "status": "launching",
             "await_stages": spec.await_stages,
+            "parent_run_id": spec.parent_run_id,
+            "operator_actions": [],
+            "spec": {
+                "workflow_id": manifest.id,
+                "agent": spec.agent,
+                "prompt": source_prompt,
+                "file": spec.file,
+                "root": str(root),
+                "runtime": spec.runtime,
+                "await_stages": spec.await_stages,
+                "start_stage": current_stage,
+                "count": spec.count,
+                "depth": spec.depth,
+            },
             "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
             "human_controls": list(manifest.human_controls),
             "state_path": str(state_path),
@@ -602,62 +617,81 @@ Operator prompt:
         }
 
     def _write_state(self, path: Path, state: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        write_lifecycle_state(path, state)
 
     def _write_report(self, path: Path, state: dict[str, Any]) -> None:
-        stages = state.get("stages") or []
-        lines = [
-            f"# Lifecycle run {state.get('run_id')}",
-            "",
-            f"- workflow: {state.get('workflow')}",
-            f"- status: {state.get('status')}",
-            f"- agent: {state.get('agent')}",
-            f"- root: {state.get('root')}",
-            f"- context_atlas_ok: {state.get('context_atlas', {}).get('ok')}",
-            f"- supervisor: {state.get('supervisor')}",
-            "- human_controls: " + ", ".join(state.get("human_controls") or []),
-            "",
-            "## Stages",
-        ]
-        for stage in stages:
-            lines.extend(
-                [
-                    "",
-                    f"- {stage.get('id')} ({stage.get('phase')}): {stage.get('status')}",
-                    f"  - agent: {stage.get('agent', '')}",
-                    f"  - run_id: {stage.get('launch', {}).get('run_id', '')}",
-                    f"  - report: {stage.get('launch', {}).get('report', '')}",
-                    f"  - commit_before: {stage.get('commit_before', '')}",
-                    f"  - commit_after: {stage.get('commit_after', '')}",
-                    f"  - exit_code: {stage.get('await', {}).get('exit_code', '')}",
-                    f"  - artifact_ok: {stage.get('await', {}).get('artifact_ok', '')}",
-                    "  - transition_conditions: "
-                    + ", ".join(stage.get("transition_conditions") or []),
-                    "  - allowed_artifacts: "
-                    + ", ".join(stage.get("allowed_artifacts") or []),
-                    "  - new_commits: " + ", ".join(stage.get("new_commits") or []),
-                    "  - changed_files: " + ", ".join(stage.get("changed_files") or []),
-                ]
-            )
-        baton = state.get("baton") or {}
+        write_lifecycle_report(path, state)
+
+
+def write_lifecycle_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
+    stages = state.get("stages") or []
+    lines = [
+        f"# Lifecycle run {state.get('run_id')}",
+        "",
+        f"- workflow: {state.get('workflow')}",
+        f"- status: {state.get('status')}",
+        f"- agent: {state.get('agent')}",
+        f"- root: {state.get('root')}",
+        f"- context_atlas_ok: {state.get('context_atlas', {}).get('ok')}",
+        f"- supervisor: {state.get('supervisor')}",
+        "- human_controls: " + ", ".join(state.get("human_controls") or []),
+    ]
+    if state.get("parent_run_id"):
+        lines.append(f"- parent_run_id: {state.get('parent_run_id')}")
+    lines.extend(["", "## Stages"])
+    for stage in stages:
         lines.extend(
             [
                 "",
-                "## Baton",
-                f"- from_stage: {baton.get('from_stage', '')}",
-                f"- next_stage: {baton.get('next_stage', '')}",
-                f"- next_agent: {baton.get('next_agent', '')}",
-                f"- reason: {baton.get('reason', '')}",
+                f"- {stage.get('id')} ({stage.get('phase')}): {stage.get('status')}",
+                f"  - agent: {stage.get('agent', '')}",
+                f"  - run_id: {stage.get('launch', {}).get('run_id', '')}",
+                f"  - report: {stage.get('launch', {}).get('report', '')}",
+                f"  - commit_before: {stage.get('commit_before', '')}",
+                f"  - commit_after: {stage.get('commit_after', '')}",
+                f"  - exit_code: {stage.get('await', {}).get('exit_code', '')}",
+                f"  - artifact_ok: {stage.get('await', {}).get('artifact_ok', '')}",
+                "  - transition_conditions: "
+                + ", ".join(stage.get("transition_conditions") or []),
+                "  - allowed_artifacts: "
+                + ", ".join(stage.get("allowed_artifacts") or []),
+                "  - new_commits: " + ", ".join(stage.get("new_commits") or []),
+                "  - changed_files: " + ", ".join(stage.get("changed_files") or []),
             ]
         )
-        if state.get("error"):
-            lines.extend(["", "## Error", str(state["error"])])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    baton = state.get("baton") or {}
+    lines.extend(
+        [
+            "",
+            "## Baton",
+            f"- from_stage: {baton.get('from_stage', '')}",
+            f"- next_stage: {baton.get('next_stage', '')}",
+            f"- next_agent: {baton.get('next_agent', '')}",
+            f"- reason: {baton.get('reason', '')}",
+        ]
+    )
+    operator_actions = state.get("operator_actions") or []
+    if operator_actions:
+        lines.extend(["", "## Operator actions"])
+        for action in operator_actions:
+            details = action.get("details") or {}
+            summary = ", ".join(f"{key}={details[key]}" for key in sorted(details))
+            lines.append(
+                f"- {action.get('at', '')} {action.get('action', '')}"
+                + (f" ({summary})" if summary else "")
+            )
+    if state.get("error"):
+        lines.extend(["", "## Error", str(state["error"])])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 class LifecycleSupervisor:
@@ -705,10 +739,21 @@ def _print_lifecycle_receipt(state: dict[str, Any]) -> None:
     print("=" * (24 + len(title)))
 
 
+def _control_verbs() -> frozenset[str]:
+    from .lifecycle_control import CONTROL_VERBS
+
+    return CONTROL_VERBS
+
+
 def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
     manifest = workflow_manifest(workflow_id)
     if manifest is None:
         raise ValueError(f"Unsupported lifecycle workflow: {workflow_id}")
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    if args_list and args_list[0] in _control_verbs():
+        from .lifecycle_control import lifecycle_control_main
+
+        return lifecycle_control_main(args_list, workflow_id=manifest.id)
     supports_loop_options = any(
         stage.workflow == "marbles" for stage in manifest.stages
     )
@@ -728,7 +773,7 @@ def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
         parser.add_argument("--count", type=int)
         parser.add_argument("--depth", type=int)
     parser.add_argument("--json", action="store_true")
-    args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+    args = parser.parse_args(args_list)
 
     state = run_lifecycle(
         LifecycleRunSpec(

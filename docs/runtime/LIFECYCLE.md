@@ -93,14 +93,34 @@ The operator is part of the lifecycle, but operator actions must leave a trace.
 The runtime should make the project feel steerable without turning manual
 intervention into invisible state mutation.
 
-Allowed operator moves:
+Allowed operator moves — each is a real CLI verb on every lifecycle command
+(`vc-ship`, `vc-dou`, `vc-audit`, `vc-marbles`, …), validated against the run's
+manifest `human_controls` and recorded as a timestamped `operator_actions`
+entry in `state.json`, `report.md`, and the transcript
+(`vibecrafted_core.lifecycle_control`):
 
-- approve transition to the next lifecycle stage;
-- interrupt a workflow and leave the run in a terminal or recoverable state;
-- force an audit when the current evidence feels weak;
-- mark a DoU finding as consciously accepted for this release;
-- choose a fallback or earlier stage when audit evidence says the run should
-  move backwards.
+- `<cmd> approve [run_id]` — approve transition to the next lifecycle stage:
+  launches the baton's pending `next_stage` with the baton holder as a
+  parent-linked continuation run (`parent_run_id`);
+- `<cmd> interrupt [run_id]` — interrupt a workflow: stops the live stage run
+  and leaves the lifecycle run in `interrupted` state;
+- `<cmd> force-audit [run_id]` — force an audit when the current evidence
+  feels weak: re-steers the baton to the manifest's audit stage, or dispatches
+  a parent-linked standalone `vc-audit` run when the manifest has none;
+- `<cmd> accept-dou [run_id] --finding <text>` — mark a DoU finding as
+  consciously accepted for this release;
+- `<cmd> fallback [run_id] --stage <id>` — choose a fallback or earlier stage
+  when audit evidence says the run should move backwards (manifest-validated).
+
+Observability verbs (the same surface the future server wires into):
+
+- `<cmd> status [run_id] [--json]` — one run's truth via
+  `LifecycleSupervisor.read_state`/`status`;
+- `<cmd> runs [--all] [--json]` — lifecycle runs, newest first (scoped to the
+  invoking workflow unless `--all`).
+
+Omitting `run_id` targets the newest run of the invoking workflow. Steering
+verbs (`force-audit`, `fallback`) mutate the baton; `approve` fires it.
 
 Boundaries:
 
@@ -159,6 +179,9 @@ simplicity in UX, flexibility in the backend (code, servers, VM).
 - Umbrella runner: `vibecrafted_core.lifecycle_runner.LifecycleRunner`.
 - Async supervisor facade:
   `vibecrafted_core.lifecycle_runner.LifecycleSupervisor`.
+- Human controls runtime: `vibecrafted_core.lifecycle_control` — the
+  `runs`/`status`/`approve`/`interrupt`/`force-audit`/`accept-dou`/`fallback`
+  verbs shared by `vc-ship` and every single-stage lifecycle wrapper.
 - Run state: `$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/state.json`.
 - Final lifecycle report:
   `$VIBECRAFTED_HOME/control_plane/lifecycle_runs/<run_id>/report.md`.

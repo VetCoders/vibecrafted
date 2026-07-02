@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Sequence
 
 from . import loop, ui
-from .lifecycle_runner import LifecycleRunSpec, run_lifecycle
+from .lifecycle_runner import LifecycleRunSpec, _control_verbs, run_lifecycle
 
 
 SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
@@ -38,6 +39,11 @@ def build_ship_prompt(agent: str, checkpoint: str, prompt: str) -> str:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    if args_list and args_list[0] in _control_verbs():
+        from .lifecycle_control import lifecycle_control_main
+
+        return lifecycle_control_main(args_list, workflow_id="vc-ship")
     parser = argparse.ArgumentParser(prog="vc-ship")
     parser.add_argument("agent", nargs="?", default="codex")
     parser.add_argument("--checkpoint", default="")
@@ -49,7 +55,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--await-stages", action="store_true")
     parser.add_argument("--max-iterations", type=int, default=0)
     parser.add_argument("--loop-only", action="store_true")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(args_list)
 
     if args.agent not in SUPPORTED_AGENTS:
         ui.err(
