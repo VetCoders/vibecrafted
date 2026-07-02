@@ -86,7 +86,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         LifecycleRunSpec(
             workflow_id="vc-ship",
             agent=args.agent,
-            prompt=args.prompt or DEFAULT_SHIP_PROMPT,
+            # The default prompt must not shadow --file: the runner resolves
+            # `spec.prompt or read(spec.file)`, so a --file mission needs an
+            # empty prompt to actually reach the stage workers.
+            prompt=args.prompt or ("" if args.file else DEFAULT_SHIP_PROMPT),
             file=args.file,
             root=args.root or str(Path.cwd()),
             runtime=args.runtime or "headless",

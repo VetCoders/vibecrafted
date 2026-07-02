@@ -779,6 +779,32 @@ def test_vc_ship_can_start_with_default_lifecycle_prompt(
     assert "full Vibecrafted lifecycle" in captured[0].prompt
 
 
+def test_vc_ship_file_mission_is_not_shadowed_by_default_prompt(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec):
+        captured.append(spec)
+        return {
+            "run_id": "life-ship-test",
+            "workflow": spec.workflow_id,
+            "status": "launching",
+            "state_path": str(tmp_path / "state.json"),
+            "report_path": str(tmp_path / "report.md"),
+        }
+
+    monkeypatch.setattr(ship, "run_lifecycle", fake_run_lifecycle)
+    mission = tmp_path / "mission.md"
+    mission.write_text("# Mission: adapt the server\n", encoding="utf-8")
+
+    assert ship.main(["codex", "--file", str(mission)]) == 0
+    # An empty prompt lets the runner read the mission file; the old
+    # `args.prompt or DEFAULT_SHIP_PROMPT` silently discarded --file.
+    assert captured[0].prompt == ""
+    assert captured[0].file == str(mission)
+
+
 def test_vc_dou_wrapper_routes_to_lifecycle_runner(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
