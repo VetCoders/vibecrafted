@@ -204,6 +204,94 @@ Pensieve reads lifecycle truth through the Rust read-model and HTTP endpoints:
 fields. The server is a reader/projection layer; it must not become a second
 lifecycle writer.
 
+### Consumer proof packet
+
+Use this packet when handing the v1 contract to CodeScribe, Pensieve, or another
+reader. It is repo-local proof, not live external acceptance: release still
+needs one captured read from each real consumer environment.
+
+Contract identifiers:
+
+- State schema id: `vibecrafted.lifecycle.v1`
+- Packaged schema path: `vibecrafted_core/schemas/lifecycle.schema.v1.json`
+- MCP schema resource: `vibecrafted://lifecycle/schema`
+- HTTP summaries: `GET /api/control/lifecycle`
+- HTTP detail: `GET /api/control/lifecycle/{run_id}`
+
+MCP status payload shape:
+
+```json
+{
+  "result": {
+    "run_id": "smoke-life",
+    "schema": "vibecrafted.lifecycle.v1",
+    "workflow": "vc-ship",
+    "status": "completed",
+    "next_stage": "release"
+  }
+}
+```
+
+HTTP summary payload shape:
+
+```json
+{
+  "count": 1,
+  "lifecycle_runs": [
+    {
+      "run_id": "smoke-life",
+      "schema": "vibecrafted.lifecycle.v1",
+      "workflow": "vc-ship",
+      "current_stage": "hydrate",
+      "next_stage": "release",
+      "dou_readiness": "zero"
+    }
+  ]
+}
+```
+
+HTTP detail payload shape:
+
+```json
+{
+  "run_id": "smoke-life",
+  "schema": "vibecrafted.lifecycle.v1",
+  "baton": {
+    "next_stage": "release"
+  },
+  "stages": [
+    {
+      "id": "hydrate",
+      "status": "completed"
+    }
+  ],
+  "dou_index": {
+    "value": 0
+  }
+}
+```
+
+Repo gates that currently prove the contract surface:
+
+```bash
+.venv/bin/pytest vibecrafted-core/tests -q
+.venv/bin/pytest vibecrafted-mcp/tests -q
+make server-check
+make server-test
+make server-smoke
+```
+
+Release-time live acceptance checklist:
+
+- CodeScribe reads `vibecrafted://lifecycle/schema` and records
+  `vc_lifecycle_status.result.schema == "vibecrafted.lifecycle.v1"` from its
+  own MCP client runtime.
+- Pensieve reads `/api/control/lifecycle` and
+  `/api/control/lifecycle/{run_id}` from its own control-core or HTTP runtime
+  and records `schema == "vibecrafted.lifecycle.v1"` in both payloads.
+- Neither consumer writes `state.json`; all mutations go through lifecycle
+  operator verbs.
+
 Boundaries:
 
 - do not edit `state.json` by hand without recording why in the report or
