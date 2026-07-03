@@ -1040,3 +1040,46 @@ def test_block_run_lever_pins_terminal_blocked_state(
     assert run["operator_state"] == "blocked"
     assert run["health"] == "final"
     assert run["failure_card"] is not None
+
+
+def test_run_liveness_projects_reconciled_worker_truth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+    import sys
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    _write_meta(
+        home,
+        {
+            "run_id": "impl-dead-worker",
+            "status": "running",
+            "agent": "codex",
+            "mode": "workflow",
+            "skill_code": "impl",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "worker_pid": dead.pid,
+            "worker_pgid": dead.pid,
+            "liveness": "pid_alive",
+        },
+    )
+
+    payload = control_plane.run_liveness("impl-dead-worker")
+
+    # The report-on-death gap: a startup corpse must be tellable from slow
+    # work by OS liveness, not inferred from an eternally-"running" status.
+    assert payload["found"] is True
+    assert payload["worker_alive"] is False
+    assert isinstance(payload["state"], str)
+    assert isinstance(payload["recovery_required"], bool)
+
+    assert control_plane.run_liveness("no-such-run") == {
+        "run_id": "no-such-run",
+        "found": False,
+    }
+    assert control_plane.run_liveness("")["found"] is False

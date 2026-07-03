@@ -287,6 +287,20 @@ def research_agent_selection() -> ResearchAgentSelection:
     return ResearchAgentSelection(DEFAULT_RESEARCH_AGENTS, "builtin-default")
 
 
+# Gate-nap prevention (docs/runtime/AGENT_OPS.md, Class 1): dispatched workers
+# are never re-invoked when their own background tasks complete, so a worker
+# that ends its turn "waiting for the gate signal" hangs forever while its run
+# reports completed. Explaining the mechanics beats a bare prohibition — the
+# ban alone was broken in the wild with the affordance still visible.
+WORKER_SIGNAL_DISCIPLINE = (
+    "- You are a dispatched worker: background-task completions will NEVER wake\n"
+    "  you or re-invoke you. Never end your turn waiting for a signal, monitor,\n"
+    "  or background gate. Run quality gates (tests, builds) synchronously in\n"
+    "  the foreground and finish everything — work, report, commits — within\n"
+    "  this turn.\n"
+)
+
+
 def _child_prompt(kind: str, label: str, root: str, prompt: str) -> str:
     marbles_blindness = ""
     if kind == "marbles":
@@ -304,7 +318,7 @@ Contract:
 - Do not launch external agent fleets.
 - Write your durable report to VIBECRAFTED_REPORT_PATH.
 - Let stdout/stderr form VIBECRAFTED_TRANSCRIPT_PATH.
-{marbles_blindness}
+{WORKER_SIGNAL_DISCIPLINE}{marbles_blindness}
 Operator prompt:
 {prompt}
 """

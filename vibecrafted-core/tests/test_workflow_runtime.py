@@ -466,3 +466,14 @@ def test_polarize_runtime_reuses_loop_with_polarize_identity(
     assert "intentionally blind to prior marbles runs" not in transcript
     assert "Previous loop report" not in transcript
     assert "marbles-L1.md" not in transcript
+
+
+def test_child_prompt_carries_worker_signal_discipline() -> None:
+    prompt = workflow_runtime._child_prompt("marbles", "L1", "/repo", "find gaps")
+
+    # Supervised children (marbles/polarize/research) are subagent-shaped too:
+    # the gate-nap preamble must ride in their contract, not only in the main
+    # dispatched-worker prompt.
+    assert "background-task completions will NEVER wake" in prompt
+    assert "Never end your turn waiting" in prompt
+    assert "intentionally blind to prior marbles runs" in prompt

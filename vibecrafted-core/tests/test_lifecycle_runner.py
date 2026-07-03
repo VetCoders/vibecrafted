@@ -1001,3 +1001,71 @@ def test_lifecycle_console_scripts_are_packaged() -> None:
         "vc-workflow",
     ):
         assert f"{name} = " in pyproject
+
+
+def test_status_surfaces_stage_worker_death_without_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vibecrafted_core import lifecycle_runner
+
+    calls: list[str] = []
+
+    def fake_liveness(run_id: str) -> dict[str, object]:
+        calls.append(run_id)
+        return {
+            "run_id": run_id,
+            "found": True,
+            "state": "running",
+            "liveness": "pid_alive",
+            "worker_alive": False,
+            "recovery_required": False,
+        }
+
+    monkeypatch.setattr(lifecycle_runner, "run_liveness", fake_liveness)
+
+    report_path = tmp_path / "never-written.md"
+    state = {
+        "status": "launching",
+        "stages": [
+            {
+                "id": "implement",
+                "launch": {"run_id": "impl-dead-1", "report": str(report_path)},
+            }
+        ],
+        "baton": {},
+    }
+
+    stage_worker = LifecycleSupervisor().status(state)["stage_worker"]
+
+    assert calls == ["impl-dead-1"]
+    assert stage_worker["worker_alive"] is False
+    assert stage_worker["report_written"] is False
+    # The actionable report-on-death signal: this stage will never deliver on
+    # its own — recover with interrupt/fallback/approve.
+    assert stage_worker["worker_dead_without_report"] is True
+
+    # A dead worker that DID deliver its report is not a death signal — the
+    # normal no-await handoff looks exactly like this.
+    report_path.write_text("---\nstatus: completed\n---\ndone\n", encoding="utf-8")
+    stage_worker = LifecycleSupervisor().status(state)["stage_worker"]
+    assert stage_worker["report_written"] is True
+    assert stage_worker["worker_dead_without_report"] is False
+
+
+def test_status_skips_stage_worker_liveness_when_run_is_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecrafted_core import lifecycle_runner
+
+    def explode(_run_id: str) -> dict[str, object]:
+        raise AssertionError("terminal runs must not pay for a liveness sync")
+
+    monkeypatch.setattr(lifecycle_runner, "run_liveness", explode)
+
+    state = {
+        "status": "completed",
+        "stages": [{"id": "release", "launch": {"run_id": "rel-1"}}],
+        "baton": {},
+    }
+
+    assert LifecycleSupervisor().status(state)["stage_worker"] == {}

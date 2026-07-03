@@ -1067,3 +1067,23 @@ def test_polarize_uses_supervised_marbles_runtime_with_polarize_prompt(
     assert "--prompt-file" in command
     assert command[command.index("--count") + 1] == "2"
     assert command[command.index("--depth") + 1] == "4"
+
+
+def test_runtime_prompt_carries_worker_signal_discipline(tmp_path: Path) -> None:
+    spec = workflow.WorkflowLaunchSpec(
+        agent="codex",
+        mode="workflow",
+        skill="workflow",
+        prompt="ship it",
+        file="",
+        runtime="headless",
+        root=str(tmp_path),
+    )
+
+    prompt = workflow._runtime_prompt(spec)
+
+    # Gate-nap prevention (docs/runtime/AGENT_OPS.md, Class 1): every dispatched
+    # worker is told WHY waiting is futile, not merely forbidden from doing it —
+    # the bare prohibition was broken in the wild.
+    assert "background-task completions will NEVER wake" in prompt
+    assert "Never end your turn waiting" in prompt

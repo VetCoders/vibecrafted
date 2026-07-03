@@ -1606,6 +1606,36 @@ def await_run(
         time.sleep(max(sleep_for, 0.0))
 
 
+def run_liveness(run_id: str) -> dict[str, Any]:
+    """Bounded, reconciled liveness projection for a single run.
+
+    Closes the report-on-death gap (docs/runtime/AGENT_OPS.md, Class 2): in
+    no-await mode a worker that dies at startup emits no report and no
+    terminal state, so passive readers wait on a corpse. This runs the same
+    sync/reconcile pass the dispatch verbs use and answers the one question a
+    supervisor needs before trusting silence: is the worker demonstrably
+    alive, and what state did reconciliation settle on.
+    """
+    target = str(run_id or "").strip()
+    if not target:
+        return {"run_id": "", "found": False}
+    try:
+        snapshot = sync_state()
+    except OSError:
+        return {"run_id": target, "found": False}
+    run = _select_run(snapshot, target)
+    if run is None:
+        return {"run_id": target, "found": False}
+    return {
+        "run_id": target,
+        "found": True,
+        "state": str(run.get("state") or ""),
+        "liveness": str(run.get("liveness") or ""),
+        "worker_alive": _worker_is_alive(run),
+        "recovery_required": bool(run.get("recovery_required")),
+    }
+
+
 def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Sync and inspect Vibecrafted control-plane state."

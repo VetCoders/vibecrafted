@@ -29,7 +29,7 @@ from .control_plane import (
 from .package_resources import deck_path as package_deck_path
 from .events import append_event
 from .spawn import _stdin_command
-from .workflow_runtime import research_agent_selection
+from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE, research_agent_selection
 from .workflows import registry as workflow_registry
 
 SUPPORTED_WORKFLOWS = workflow_registry.SUPPORTED_WORKFLOWS
@@ -1006,6 +1006,7 @@ Contract:
 - Write your final report to the path in VIBECRAFTED_REPORT_PATH ({report_hint}).
 - Let stdout/stderr form the transcript captured at VIBECRAFTED_TRANSCRIPT_PATH ({transcript_hint}).
 - Do not create, overwrite, or summarize run metadata yourself. The runtime owns VIBECRAFTED_META_PATH.
+{WORKER_SIGNAL_DISCIPLINE.rstrip()}
 
 Step 0 — orient before you touch (the vc-init pass).
 The operator prompt below is one framing — a hypothesis, not the ground truth. Reading a

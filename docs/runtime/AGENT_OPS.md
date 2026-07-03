@@ -78,6 +78,13 @@ waiting is futile_ worked.
    waiting." Explanation of mechanics > bare prohibition (evidence: case #3
    vs. the effective resume).
 
+**Implemented in this runtime**: level 3 is wired mechanically — every worker
+prompt the runtime composes carries `WORKER_SIGNAL_DISCIPLINE`
+(`workflow_runtime.py`, injected by both `workflow._runtime_prompt` and
+`workflow_runtime._child_prompt`, so dispatched workers AND supervised
+marbles/polarize/research children get the mechanics explanation in their
+contract). Levels 1–2 remain harness-side proposals.
+
 ### Cost when it hits
 
 ~3 × 10–20 min delay per case plus manual intervention; zero lost work
@@ -130,9 +137,15 @@ No baton cargo is lost; the stage relaunches with the full report trail.
 2. **Terminal-state check** alongside the report poll: read `meta.json` state
    (`failed` / `process_dead` / `contract_failed` / `ghost`), don't infer from
    transcript growth alone.
-3. **Systemic cut (open)**: the dispatcher should notice child-process death
-   in no-await mode and write a terminal state itself, so watchers and the
-   server see the death without a supervisor in the loop.
+3. **Systemic cut (implemented, on-read)**: `control_plane.run_liveness()`
+   runs the dispatch reconciler for one run and answers with OS-level truth;
+   `LifecycleSupervisor.status()` joins it for the current stage as
+   `stage_worker` with the actionable flag `worker_dead_without_report` —
+   surfaced by `vibecrafted ship status`, `vc_lifecycle_status` (MCP), and
+   anything else reading the status projection. Still open: a push-side
+   variant where the detached dispatcher writes the terminal state at death
+   itself, so purely passive readers (raw `state.json` consumers) see it
+   without any status call.
 
 ---
 

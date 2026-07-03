@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from .control_plane import control_plane_home, normalize_run_root
+from .control_plane import control_plane_home, normalize_run_root, run_liveness
 from .workflow import (
     SUPPORTED_AGENTS,
     WorkflowLaunchSpec,
@@ -273,6 +273,35 @@ def _state_dou_value(state: dict[str, Any]) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     return value
+
+
+def _stage_worker_liveness(
+    state: dict[str, Any],
+    stage_launch: dict[str, Any],
+    liveness_reader: Callable[[str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Reconciled liveness of the current stage's worker run.
+
+    Closes the report-on-death gap at the lifecycle surface: in no-await mode
+    a worker that dies at startup leaves the lifecycle run in ``launching``
+    forever, and only OS-level liveness tells a corpse apart from slow work.
+    ``worker_dead_without_report`` is the actionable signal — the stage will
+    never deliver on its own; recover with interrupt/fallback/approve.
+    """
+    stage_run_id = str(stage_launch.get("run_id") or "").strip()
+    if not stage_run_id or state.get("status") != "launching":
+        return {}
+    reader = liveness_reader or run_liveness
+    liveness = reader(stage_run_id)
+    report_path = str(stage_launch.get("report") or "").strip()
+    report_written = bool(report_path) and Path(report_path).is_file()
+    liveness["report_written"] = report_written
+    liveness["worker_dead_without_report"] = (
+        bool(liveness.get("found"))
+        and not liveness.get("worker_alive")
+        and not report_written
+    )
+    return liveness
 
 
 def _lifecycle_max_stage_launches(manifest: WorkflowManifest) -> int:
@@ -775,13 +804,12 @@ class LifecycleSupervisor:
     def status(self, state: dict[str, Any]) -> dict[str, Any]:
         stages = list(state.get("stages") or [])
         last_stage = stages[-1] if stages else {}
+        stage_launch = dict(last_stage.get("launch") or {})
         dou_value = _state_dou_value(state)
         if dou_value is None:
             # Primary no-await mode: the runner exits before the worker writes
             # its report, so the DoU index only exists in the live frontmatter.
-            dou_value = report_dou_index(
-                str((last_stage.get("launch") or {}).get("report") or "")
-            )
+            dou_value = report_dou_index(str(stage_launch.get("report") or ""))
         return {
             "schema": state.get("schema"),
             "run_id": state.get("run_id"),
@@ -795,6 +823,7 @@ class LifecycleSupervisor:
             "accepted_dou": len(state.get("accepted_dou_findings") or []),
             "state_path": state.get("state_path"),
             "report_path": state.get("report_path"),
+            "stage_worker": _stage_worker_liveness(state, stage_launch),
         }
 
 
