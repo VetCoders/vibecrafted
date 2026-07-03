@@ -11,6 +11,9 @@ from vibecrafted_core.lifecycle_runner import (
     LifecycleRunner,
     lifecycle_main,
 )
+from tests.lifecycle_schema_assertions import (
+    assert_lifecycle_state_matches_packaged_schema,
+)
 
 
 def _fake_launcher(tmp_path: Path):
@@ -46,7 +49,7 @@ def _make_lifecycle_run(
         lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
     )
     runner = LifecycleRunner(launcher=_fake_launcher(tmp_path), awaiter=_fake_awaiter)
-    return asyncio.run(
+    state = asyncio.run(
         runner.run(
             LifecycleRunSpec(
                 workflow_id=workflow_id,
@@ -57,10 +60,18 @@ def _make_lifecycle_run(
             )
         )
     )
+    assert_lifecycle_state_matches_packaged_schema(state)
+    return state
 
 
 def _reload_state(state: dict) -> dict:
     return json.loads(Path(state["state_path"]).read_text(encoding="utf-8"))
+
+
+def _reload_contract_state(state: dict) -> dict:
+    reloaded = _reload_state(state)
+    assert_lifecycle_state_matches_packaged_schema(reloaded)
+    return reloaded
 
 
 def test_status_and_runs_surface_lifecycle_state(
@@ -115,7 +126,7 @@ def test_approve_launches_continuation_from_baton(
     # The baton cargo: the scaffold report rides into the implement continuation.
     assert spec.previous_reports == (str(tmp_path / "scaffold.md"),)
 
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     actions = reloaded["operator_actions"]
     assert [action["action"] for action in actions] == ["approve_transition"]
     assert actions[0]["details"]["continuation_run_id"] == "life-cont-1"
@@ -171,7 +182,7 @@ def test_approve_gates_on_missing_baton_report_until_forced(
         == 0
     )
     assert len(launched) == 1
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     details = reloaded["operator_actions"][0]["details"]
     assert details["forced_missing_reports"] == [str(scaffold_report)]
 
@@ -210,7 +221,7 @@ def test_interrupt_stops_stage_and_marks_state(
         == 0
     )
     assert stopped == ["marbles-run"]
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     assert reloaded["status"] == "interrupted"
     assert [action["action"] for action in reloaded["operator_actions"]] == [
         "interrupt_workflow"
@@ -255,7 +266,7 @@ def test_force_audit_steers_baton_when_manifest_has_audit_stage(
         )
         == 0
     )
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     assert reloaded["baton"]["next_stage"] == "audit"
     assert reloaded["baton"]["reason"] == "operator_forced_audit"
     details = reloaded["operator_actions"][0]["details"]
@@ -286,7 +297,7 @@ def test_force_audit_dispatches_vc_audit_for_single_stage_manifest(
     assert len(launched) == 1
     assert launched[0].workflow_id == "vc-audit"
     assert launched[0].parent_run_id == state["run_id"]
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     details = reloaded["operator_actions"][0]["details"]
     assert details["mode"] == "dispatched_vc_audit"
     assert details["continuation_run_id"] == "life-audi-1"
@@ -312,7 +323,7 @@ def test_fallback_validates_stage_and_steers_backwards(
         )
         == 0
     )
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     assert reloaded["baton"]["next_stage"] == "polarize"
     assert reloaded["baton"]["reason"] == "operator_chose_fallback"
 

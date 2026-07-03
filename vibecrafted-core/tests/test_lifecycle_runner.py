@@ -14,42 +14,11 @@ from vibecrafted_core.lifecycle_runner import (
     LifecycleRunner,
     LifecycleSupervisor,
 )
-from vibecrafted_core.package_resources import resource_path
 from vibecrafted_core.workflows.model import WorkflowManifest, WorkflowStage
-
-
-def _assert_lifecycle_state_matches_packaged_schema(
-    state: dict[str, object], schema: dict[str, object]
-) -> None:
-    missing = set(schema["required"]) - set(state)
-    assert not missing
-    assert schema["$id"] == LIFECYCLE_SCHEMA_ID
-    assert schema["properties"]["schema"]["const"] == LIFECYCLE_SCHEMA_ID
-
-    type_map = {
-        "array": list,
-        "boolean": bool,
-        "integer": int,
-        "object": dict,
-        "string": str,
-    }
-    properties = schema["properties"]
-    for key, raw_property in properties.items():
-        if key not in state:
-            continue
-        property_schema = raw_property if isinstance(raw_property, dict) else {}
-        raw_types = property_schema.get("type")
-        if raw_types is None:
-            continue
-        allowed_types = raw_types if isinstance(raw_types, list) else [raw_types]
-        if "null" in allowed_types and state[key] is None:
-            continue
-        expected = tuple(type_map[item] for item in allowed_types if item in type_map)
-        if not expected:
-            continue
-        assert isinstance(state[key], expected), key
-        if allowed_types == ["integer"]:
-            assert not isinstance(state[key], bool), key
+from tests.lifecycle_schema_assertions import (
+    assert_lifecycle_state_matches_packaged_schema,
+    packaged_lifecycle_schema,
+)
 
 
 def test_lifecycle_runner_triggers_audit_after_marbles(
@@ -164,12 +133,11 @@ def test_lifecycle_runner_stamps_packaged_schema_contract(
         )
     )
     written_state = json.loads(Path(state["state_path"]).read_text(encoding="utf-8"))
-    schema_path = resource_path("schemas", "lifecycle.schema.v1.json")
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema = packaged_lifecycle_schema()
 
     assert written_state["schema"] == LIFECYCLE_SCHEMA_ID
     assert LifecycleSupervisor().status(written_state)["schema"] == LIFECYCLE_SCHEMA_ID
-    _assert_lifecycle_state_matches_packaged_schema(written_state, schema)
+    assert_lifecycle_state_matches_packaged_schema(written_state)
     frontmatter = schema["$defs"]["worker_report_frontmatter"]["properties"]
     assert set(frontmatter) == {"next_stage", "next_agent", "dou_index", "status"}
 
