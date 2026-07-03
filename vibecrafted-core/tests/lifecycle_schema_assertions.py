@@ -15,9 +15,26 @@ def packaged_lifecycle_schema() -> dict[str, Any]:
 
 def assert_lifecycle_state_matches_packaged_schema(state: dict[str, Any]) -> None:
     schema = packaged_lifecycle_schema()
+    _assert_lifecycle_schema_identity(schema)
+    _validate_schema_value(state, schema, schema, "$")
+
+
+def assert_worker_report_frontmatter_matches_packaged_schema(
+    frontmatter: dict[str, Any],
+) -> None:
+    schema = packaged_lifecycle_schema()
+    _assert_lifecycle_schema_identity(schema)
+    _validate_schema_value(
+        frontmatter,
+        schema["$defs"]["worker_report_frontmatter"],
+        schema,
+        "$frontmatter",
+    )
+
+
+def _assert_lifecycle_schema_identity(schema: Mapping[str, Any]) -> None:
     assert schema["$id"] == LIFECYCLE_SCHEMA_ID
     assert schema["properties"]["schema"]["const"] == LIFECYCLE_SCHEMA_ID
-    _validate_schema_value(state, schema, schema, "$")
 
 
 def _validate_schema_value(
@@ -81,11 +98,35 @@ def _validate_schema_value(
                     root,
                     f"{path}.{key}",
                 )
+        extra_keys = set(value) - set(properties)
+        additional_properties = schema.get("additionalProperties", True)
+        if additional_properties is False:
+            assert not extra_keys, (
+                f"{path}: unexpected additional keys {sorted(extra_keys)}"
+            )
+        elif isinstance(additional_properties, Mapping):
+            for key in extra_keys:
+                _validate_schema_value(
+                    value[key],
+                    additional_properties,
+                    root,
+                    f"{path}.{key}",
+                )
 
     if isinstance(value, list) and "items" in schema:
+        if "minItems" in schema:
+            assert len(value) >= schema["minItems"], (
+                f"{path}: expected at least {schema['minItems']} item(s), "
+                f"got {len(value)}"
+            )
         item_schema = schema["items"]
         for index, item in enumerate(value):
             _validate_schema_value(item, item_schema, root, f"{path}[{index}]")
+
+    if isinstance(value, str) and "minLength" in schema:
+        assert len(value) >= schema["minLength"], (
+            f"{path}: expected length >= {schema['minLength']}, got {len(value)}"
+        )
 
 
 def _resolve_ref(ref: str, root: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -107,6 +148,9 @@ def _assert_json_type(value: Any, raw_types: str | Sequence[str], path: str) -> 
         "boolean": lambda item: isinstance(item, bool),
         "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
         "null": lambda item: item is None,
+        "number": lambda item: (
+            isinstance(item, (int, float)) and not isinstance(item, bool)
+        ),
         "object": lambda item: isinstance(item, Mapping),
         "string": lambda item: isinstance(item, str),
     }

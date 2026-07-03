@@ -17,6 +17,7 @@ from vibecrafted_core.lifecycle_runner import (
 from vibecrafted_core.workflows.model import WorkflowManifest, WorkflowStage
 from tests.lifecycle_schema_assertions import (
     assert_lifecycle_state_matches_packaged_schema,
+    assert_worker_report_frontmatter_matches_packaged_schema,
     packaged_lifecycle_schema,
 )
 
@@ -140,6 +141,33 @@ def test_lifecycle_runner_stamps_packaged_schema_contract(
     assert_lifecycle_state_matches_packaged_schema(written_state)
     frontmatter = schema["$defs"]["worker_report_frontmatter"]["properties"]
     assert set(frontmatter) == {"next_stage", "next_agent", "dou_index", "status"}
+    assert_worker_report_frontmatter_matches_packaged_schema(
+        {
+            "next_stage": "audit",
+            "next_agent": "codex",
+            "dou_index": 0,
+            "status": "completed",
+        }
+    )
+    assert_worker_report_frontmatter_matches_packaged_schema({"dou_index": "0"})
+
+    wrong_action_shape = json.loads(json.dumps(written_state))
+    wrong_action_shape["operator_actions"] = {}
+    with pytest.raises(AssertionError, match="operator_actions"):
+        assert_lifecycle_state_matches_packaged_schema(wrong_action_shape)
+
+    wrong_stage_phase = json.loads(json.dumps(written_state))
+    wrong_stage_phase["stages"][0]["phase"] = "execute"
+    with pytest.raises(AssertionError, match="phase"):
+        assert_lifecycle_state_matches_packaged_schema(wrong_stage_phase)
+
+    missing_baton_cargo = json.loads(json.dumps(written_state))
+    del missing_baton_cargo["baton"]["previous_reports"]
+    with pytest.raises(AssertionError, match="previous_reports"):
+        assert_lifecycle_state_matches_packaged_schema(missing_baton_cargo)
+
+    with pytest.raises(AssertionError, match="dou_index"):
+        assert_worker_report_frontmatter_matches_packaged_schema({"dou_index": []})
 
 
 def test_lifecycle_runner_honours_worker_requested_next_stage(
