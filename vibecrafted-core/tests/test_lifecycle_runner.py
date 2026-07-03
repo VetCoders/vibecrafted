@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 from pathlib import Path
 
@@ -8,11 +9,47 @@ import pytest
 
 from vibecrafted_core import ship, wrappers
 from vibecrafted_core.lifecycle_runner import (
+    LIFECYCLE_SCHEMA_ID,
     LifecycleRunSpec,
     LifecycleRunner,
     LifecycleSupervisor,
 )
+from vibecrafted_core.package_resources import resource_path
 from vibecrafted_core.workflows.model import WorkflowManifest, WorkflowStage
+
+
+def _assert_lifecycle_state_matches_packaged_schema(
+    state: dict[str, object], schema: dict[str, object]
+) -> None:
+    missing = set(schema["required"]) - set(state)
+    assert not missing
+    assert schema["$id"] == LIFECYCLE_SCHEMA_ID
+    assert schema["properties"]["schema"]["const"] == LIFECYCLE_SCHEMA_ID
+
+    type_map = {
+        "array": list,
+        "boolean": bool,
+        "integer": int,
+        "object": dict,
+        "string": str,
+    }
+    properties = schema["properties"]
+    for key, raw_property in properties.items():
+        if key not in state:
+            continue
+        property_schema = raw_property if isinstance(raw_property, dict) else {}
+        raw_types = property_schema.get("type")
+        if raw_types is None:
+            continue
+        allowed_types = raw_types if isinstance(raw_types, list) else [raw_types]
+        if "null" in allowed_types and state[key] is None:
+            continue
+        expected = tuple(type_map[item] for item in allowed_types if item in type_map)
+        if not expected:
+            continue
+        assert isinstance(state[key], expected), key
+        if allowed_types == ["integer"]:
+            assert not isinstance(state[key], bool), key
 
 
 def test_lifecycle_runner_triggers_audit_after_marbles(
@@ -63,6 +100,7 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
     )
 
     assert calls == ["marbles", "audit"]
+    assert state["schema"] == LIFECYCLE_SCHEMA_ID
     assert loop_options == [(2, 4)]
     assert state["status"] == "completed"
     assert (
@@ -84,6 +122,56 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
         len(Path(state["transcript_path"]).read_text(encoding="utf-8").splitlines())
         == 2
     )
+
+
+def test_lifecycle_runner_stamps_packaged_schema_contract(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+
+    def fake_launcher(spec, _source_dir):
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    def fake_awaiter(payload):
+        return {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        }
+
+    runner = LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter)
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-dou",
+                agent="codex",
+                prompt="validate contract",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+    written_state = json.loads(Path(state["state_path"]).read_text(encoding="utf-8"))
+    schema_path = resource_path("schemas", "lifecycle.schema.v1.json")
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert written_state["schema"] == LIFECYCLE_SCHEMA_ID
+    assert LifecycleSupervisor().status(written_state)["schema"] == LIFECYCLE_SCHEMA_ID
+    _assert_lifecycle_state_matches_packaged_schema(written_state, schema)
+    frontmatter = schema["$defs"]["worker_report_frontmatter"]["properties"]
+    assert set(frontmatter) == {"next_stage", "next_agent", "dou_index", "status"}
 
 
 def test_lifecycle_runner_honours_worker_requested_next_stage(
@@ -726,6 +814,7 @@ def test_lifecycle_supervisor_reports_status(monkeypatch, tmp_path: Path) -> Non
     status = supervisor.status(loaded)
 
     assert loaded["run_id"] == state["run_id"]
+    assert status["schema"] == LIFECYCLE_SCHEMA_ID
     assert status["workflow"] == "vc-dou"
     assert status["status"] == "launching"
     assert status["current_stage"] == "dou"

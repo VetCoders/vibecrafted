@@ -33,8 +33,10 @@ from vibecrafted_core import (
     workflow as _workflow,
 )
 from vibecrafted_core.lifecycle_runner import (
+    LIFECYCLE_SCHEMA_ID as _LIFECYCLE_SCHEMA_ID,
     LifecycleSupervisor as _LifecycleSupervisor,
 )
+from vibecrafted_core.package_resources import resource_path as _core_resource_path
 
 from . import synthesis as _synthesis
 
@@ -448,6 +450,13 @@ def _lifecycle_state_summary(state: dict[str, Any]) -> dict[str, Any]:
     payload["previous_reports"] = [
         str(path) for path in (baton.get("previous_reports") or [])
     ]
+    return payload
+
+
+def _lifecycle_schema_resource_payload() -> dict[str, Any]:
+    path = _core_resource_path("schemas", "lifecycle.schema.v1.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload.setdefault("$id", _LIFECYCLE_SCHEMA_ID)
     return payload
 
 
@@ -972,6 +981,11 @@ def build_server() -> Any:
             "recent_runs": snapshot.get("recent_runs") or [],
             "warnings": snapshot.get("warnings") or [],
         }
+
+    @mcp.resource("vibecrafted://lifecycle/schema")
+    def lifecycle_schema_resource() -> dict[str, Any]:
+        """Packaged JSON Schema for the lifecycle state/report contract."""
+        return _lifecycle_schema_resource_payload()
 
     @mcp.resource("vibecrafted://control-plane/events/{run_id}")
     def event_stream(run_id: str) -> list[dict[str, Any]]:

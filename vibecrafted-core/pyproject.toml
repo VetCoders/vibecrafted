@@ -52,6 +52,7 @@ artifacts = [
     "vibecrafted_core/runtime/**",
     "vibecrafted_core/skills/**",
     "vibecrafted_core/deck/vibecrafted",
+    "vibecrafted_core/schemas/**",
 ]
 
 [tool.hatch.build.targets.wheel]

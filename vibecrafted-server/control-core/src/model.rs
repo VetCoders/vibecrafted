@@ -312,6 +312,8 @@ impl RunStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LifecycleRun {
     #[serde(default)]
+    pub schema: Option<String>,
+    #[serde(default)]
     pub run_id: String,
     #[serde(default)]
     pub workflow: String,
@@ -386,6 +388,7 @@ impl LifecycleRun {
         .to_string();
 
         LifecycleRunSummary {
+            schema: self.schema.clone(),
             run_id: self.run_id.clone(),
             workflow: self.workflow.clone(),
             status: nonempty_or(&self.status, "unknown"),
@@ -563,6 +566,7 @@ pub struct LifecycleDouIndex {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LifecycleRunSummary {
+    pub schema: Option<String>,
     pub run_id: String,
     pub workflow: String,
     pub status: String,

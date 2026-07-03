@@ -136,6 +136,7 @@ EOF_LIFE_TRANSCRIPT
 
 cat > "$VIBECRAFTED_HOME/control_plane/lifecycle_runs/smoke-life/state.json" <<EOF_LIFE
 {
+  "schema": "vibecrafted.lifecycle.v1",
   "run_id": "smoke-life",
   "workflow": "vc-ship",
   "agent": "codex",
@@ -330,6 +331,7 @@ data = json.loads(resp.read().decode())
 assert data["count"] == 1, data
 run = data["lifecycle_runs"][0]
 assert run["run_id"] == "smoke-life", run
+assert run["schema"] == "vibecrafted.lifecycle.v1", run
 assert run["workflow"] == "vc-ship", run
 assert run["current_stage"] == "scaffold", run
 assert run["next_stage"] == "implement", run
@@ -353,6 +355,7 @@ import urllib.request, json, sys
 resp = urllib.request.urlopen("http://127.0.0.1:'"$PORT"'/api/control/lifecycle/smoke-life", timeout=1.0)
 data = json.loads(resp.read().decode())
 assert data["run_id"] == "smoke-life", data
+assert data["schema"] == "vibecrafted.lifecycle.v1", data
 assert data["baton"]["next_stage"] == "implement", data
 assert data["baton"]["dou_index"] == 0, data
 assert data["stages"][0]["id"] == "scaffold", data

@@ -101,6 +101,7 @@ const GOLDEN_EVENT_LINE: &str = r#"{"ts": "2026-04-18T14:52:42.135162+00:00", "r
 /// on 2026-07-02. Lifecycle state is intentionally nested and must not be folded
 /// into the flat `RunStatus` golden schema above.
 const GOLDEN_LIFECYCLE_STATE: &str = r#"{
+  "schema": "vibecrafted.lifecycle.v1",
   "run_id": "life-ship-260702-123238-24000",
   "workflow": "vc-ship",
   "agent": "codex",
@@ -294,6 +295,11 @@ fn lifecycle_state_parses_and_projects_without_runstatus_schema_drift() {
     let summary = lifecycle.summary("2026-07-02T19:32:38Z".to_string(), None);
 
     assert_eq!(lifecycle.run_id, "life-ship-260702-123238-24000");
+    assert_eq!(
+        lifecycle.schema.as_deref(),
+        Some("vibecrafted.lifecycle.v1")
+    );
+    assert_eq!(summary.schema.as_deref(), Some("vibecrafted.lifecycle.v1"));
     assert_eq!(summary.workflow, "vc-ship");
     assert_eq!(summary.current_stage, "scaffold");
     assert_eq!(summary.next_stage, "implement");

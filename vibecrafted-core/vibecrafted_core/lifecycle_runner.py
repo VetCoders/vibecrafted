@@ -25,6 +25,7 @@ from .workflows.model import WorkflowManifest, WorkflowStage
 
 LaunchWorkflow = Callable[[WorkflowLaunchSpec, str | Path], dict[str, Any]]
 AwaitWorkflow = Callable[[dict[str, Any]], dict[str, Any]]
+LIFECYCLE_SCHEMA_ID = "vibecrafted.lifecycle.v1"
 
 
 @dataclass(frozen=True)
@@ -334,6 +335,7 @@ class LifecycleRunner:
             str(path).strip() for path in spec.previous_reports if str(path).strip()
         ]
         state: dict[str, Any] = {
+            "schema": LIFECYCLE_SCHEMA_ID,
             "run_id": run_id,
             "workflow": manifest.id,
             "agent": spec.agent,
@@ -377,6 +379,7 @@ class LifecycleRunner:
                 "dou_index": None,
             },
             "stages": [],
+            "accepted_dou_findings": [],
         }
         self._write_state(state_path, state)
 
@@ -780,6 +783,7 @@ class LifecycleSupervisor:
                 str((last_stage.get("launch") or {}).get("report") or "")
             )
         return {
+            "schema": state.get("schema"),
             "run_id": state.get("run_id"),
             "workflow": state.get("workflow"),
             "status": state.get("status"),
