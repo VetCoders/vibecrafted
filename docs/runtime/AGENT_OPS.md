@@ -142,10 +142,18 @@ No baton cargo is lost; the stage relaunches with the full report trail.
    `LifecycleSupervisor.status()` joins it for the current stage as
    `stage_worker` with the actionable flag `worker_dead_without_report` —
    surfaced by `vibecrafted ship status`, `vc_lifecycle_status` (MCP), and
-   anything else reading the status projection. Still open: a push-side
-   variant where the detached dispatcher writes the terminal state at death
-   itself, so purely passive readers (raw `state.json` consumers) see it
-   without any status call.
+   anything else reading the status projection.
+4. **Systemic cut (implemented, push-side)**: every lifecycle stage launch
+   hands the dispatcher its `state.json` address (`--lifecycle-state`, wired
+   through `WorkflowLaunchSpec.lifecycle_state_path`). On worker failure
+   (nonzero exit or broken artifact contract) the dispatcher calls
+   `lifecycle_runner.record_stage_worker_exit`, which annotates the matching
+   stage with `worker_exit` and — for the current stage of a still-`launching`
+   run — mirrors it top-level as `stage_worker_exit`. Purely passive readers
+   of raw `state.json` (the Rust server, dashboards) now see the death with
+   no status verb in the loop. Additive within `lifecycle.schema.v1`; healthy
+   exits write nothing, which also keeps the write too rare to race operator
+   verbs on the same file.
 
 ---
 

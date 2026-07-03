@@ -61,6 +61,10 @@ class WorkflowLaunchSpec:
     root: str
     count: int | None = None
     depth: int | None = None
+    # Push-side report-on-death (docs/runtime/AGENT_OPS.md, Class 2): when the
+    # launch belongs to a lifecycle run, this carries the lifecycle state.json
+    # path so the dispatcher can write the worker's terminal truth into it.
+    lifecycle_state_path: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -260,6 +264,7 @@ def _dispatcher_command(
     tee_output: bool = False,
     emit_json: bool = True,
     quiet: bool = False,
+    lifecycle_state_path: str = "",
 ) -> list[str]:
     command = [
         sys.executable,
@@ -284,6 +289,8 @@ def _dispatcher_command(
                 str(prompt_path),
             ]
         )
+    if lifecycle_state_path:
+        command.extend(["--lifecycle-state", lifecycle_state_path])
     if tee_output:
         command.append("--tee-output")
     if quiet:
@@ -1125,6 +1132,7 @@ def launch_workflow(
         tee_output=spec.runtime in {"terminal", "visible"},
         emit_json=spec.runtime not in {"terminal", "visible"},
         quiet=spec.runtime in {"terminal", "visible"},
+        lifecycle_state_path=spec.lifecycle_state_path,
     )
     launch_dir = control_plane_home() / "launches"
     launch_dir.mkdir(parents=True, exist_ok=True)

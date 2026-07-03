@@ -1087,3 +1087,24 @@ def test_runtime_prompt_carries_worker_signal_discipline(tmp_path: Path) -> None
     # the bare prohibition was broken in the wild.
     assert "background-task completions will NEVER wake" in prompt
     assert "Never end your turn waiting" in prompt
+
+
+def test_dispatcher_command_carries_lifecycle_state_flag() -> None:
+    base = dict(
+        run_id="impl-1",
+        root="/repo",
+        meta_path=Path("/tmp/m.json"),
+        report_path=Path("/tmp/r.md"),
+        transcript_path=Path("/tmp/t.log"),
+        worker_command=["codex", "exec"],
+    )
+
+    with_state = workflow._dispatcher_command(
+        **base, lifecycle_state_path="/cp/lifecycle_runs/x/state.json"
+    )
+    assert "--lifecycle-state" in with_state
+    flag_index = with_state.index("--lifecycle-state")
+    assert with_state[flag_index + 1] == "/cp/lifecycle_runs/x/state.json"
+
+    without_state = workflow._dispatcher_command(**base)
+    assert "--lifecycle-state" not in without_state

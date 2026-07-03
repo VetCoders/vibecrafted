@@ -478,3 +478,52 @@ def test_dispatcher_cli_fails_missing_report_contract(
     assert payload["artifact_ok"] is False
     assert payload["artifact_errors"] == ["report_missing"]
     assert payload["state"] == "report_missing"
+
+
+def test_dispatcher_cli_records_lifecycle_worker_death(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "status": "launching",
+                "stages": [{"id": "implement", "launch": {"run_id": "disp-death-1"}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = tmp_path / "worker.py"
+    script.write_text("import sys\nsys.exit(3)\n", encoding="utf-8")
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-death-1",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(tmp_path / "never-written.md"),
+            "--transcript",
+            str(tmp_path / "dispatch.log"),
+            "--lifecycle-state",
+            str(state_path),
+            "--json",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 3
+    # Push-side report-on-death: the death landed in the lifecycle state
+    # itself, readable by purely passive consumers with no status verb.
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    worker_exit = reloaded["stages"][0]["worker_exit"]
+    assert worker_exit["exit_code"] == 3
+    assert worker_exit["artifact_ok"] is False
+    assert reloaded["stage_worker_exit"]["stage"] == "implement"
+    assert reloaded["stage_worker_exit"]["run_id"] == "disp-death-1"
+    capsys.readouterr()

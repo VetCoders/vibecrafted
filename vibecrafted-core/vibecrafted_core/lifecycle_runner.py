@@ -437,6 +437,7 @@ class LifecycleRunner:
                 root=root,
                 previous_reports=previous_reports,
                 context=context,
+                state_path=state_path,
             )
             state["stages"].append(record)
             self._write_state(state_path, state)
@@ -553,6 +554,7 @@ class LifecycleRunner:
         root: Path,
         previous_reports: list[str],
         context: dict[str, Any],
+        state_path: Path | None = None,
     ) -> dict[str, Any]:
         prompt = self._stage_prompt(
             manifest=manifest,
@@ -571,6 +573,7 @@ class LifecycleRunner:
             root=str(root),
             count=spec.count if stage.workflow == "marbles" else None,
             depth=spec.depth if stage.workflow == "marbles" else None,
+            lifecycle_state_path=str(state_path or ""),
         )
         commit_before = _git_head(root)
         git_before = _git_status(root)
@@ -717,6 +720,66 @@ def write_lifecycle_state(path: Path, state: dict[str, Any]) -> None:
         json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def record_stage_worker_exit(
+    state_path: str | Path,
+    stage_run_id: str,
+    exit_payload: dict[str, Any],
+) -> bool:
+    """Push-side report-on-death: write the worker's terminal truth into the
+    lifecycle state itself (docs/runtime/AGENT_OPS.md, Class 2).
+
+    Called by the dispatcher when a lifecycle stage worker exits in failure,
+    so purely passive readers of ``state.json`` (the Rust server, dashboards)
+    see the death without anyone running a status verb. Additive within
+    lifecycle.schema.v1: annotates the matching stage with ``worker_exit`` and
+    mirrors it top-level as ``stage_worker_exit`` while the run still waits in
+    ``launching``. Never raises — a corrupt or missing state file returns
+    ``False``; poisoning the dispatch exit path would trade one blind spot for
+    another.
+    """
+    target = str(stage_run_id or "").strip()
+    path = Path(state_path).expanduser()
+    if not target:
+        return False
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(state, dict):
+        return False
+    stages = state.get("stages")
+    if not isinstance(stages, list) or not stages:
+        return False
+    matched_index: int | None = None
+    for index in range(len(stages) - 1, -1, -1):
+        stage = stages[index]
+        if not isinstance(stage, dict):
+            continue
+        launch = stage.get("launch") or {}
+        if str(launch.get("run_id") or "") == target:
+            matched_index = index
+            break
+    if matched_index is None:
+        return False
+    payload = dict(exit_payload)
+    payload.setdefault("recorded_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    stages[matched_index]["worker_exit"] = payload
+    # Top-level mirror only for the CURRENT stage of a still-waiting run: a
+    # stage that was already superseded (fallback/approve relaunch) is
+    # history, not an alarm.
+    if matched_index == len(stages) - 1 and state.get("status") == "launching":
+        state["stage_worker_exit"] = {
+            **payload,
+            "stage": str(stages[matched_index].get("id") or ""),
+            "run_id": target,
+        }
+    try:
+        write_lifecycle_state(path, state)
+    except OSError:
+        return False
+    return True
 
 
 def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:

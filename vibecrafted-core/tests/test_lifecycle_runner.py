@@ -1069,3 +1069,110 @@ def test_status_skips_stage_worker_liveness_when_run_is_terminal(
     }
 
     assert LifecycleSupervisor().status(state)["stage_worker"] == {}
+
+
+def test_record_stage_worker_exit_writes_push_side_death(tmp_path: Path) -> None:
+    from vibecrafted_core.lifecycle_runner import record_stage_worker_exit
+
+    state_path = tmp_path / "state.json"
+    state = {
+        "status": "launching",
+        "stages": [
+            {"id": "scaffold", "launch": {"run_id": "scaf-1"}},
+            {"id": "implement", "launch": {"run_id": "impl-1"}},
+        ],
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    ok = record_stage_worker_exit(
+        state_path,
+        "impl-1",
+        {"state": "process_dead", "exit_code": 3, "artifact_ok": False},
+    )
+
+    assert ok is True
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    worker_exit = reloaded["stages"][1]["worker_exit"]
+    assert worker_exit["state"] == "process_dead"
+    assert worker_exit["exit_code"] == 3
+    assert worker_exit["recorded_at"]
+    # The passive-reader alarm: current stage of a still-waiting run.
+    assert reloaded["stage_worker_exit"]["stage"] == "implement"
+    assert reloaded["stage_worker_exit"]["run_id"] == "impl-1"
+
+
+def test_record_stage_worker_exit_keeps_history_quiet(tmp_path: Path) -> None:
+    from vibecrafted_core.lifecycle_runner import record_stage_worker_exit
+
+    state_path = tmp_path / "state.json"
+    state = {
+        "status": "launching",
+        "stages": [
+            {"id": "scaffold", "launch": {"run_id": "scaf-1"}},
+            {"id": "implement", "launch": {"run_id": "impl-1"}},
+        ],
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    # A superseded stage (fallback/approve relaunched past it) is history:
+    # annotate the stage, do NOT raise the top-level alarm.
+    assert record_stage_worker_exit(state_path, "scaf-1", {"state": "failed"})
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded["stages"][0]["worker_exit"]["state"] == "failed"
+    assert "stage_worker_exit" not in reloaded
+
+    # Unknown run and corrupt state must fail closed, never raise.
+    assert record_stage_worker_exit(state_path, "no-such-run", {}) is False
+    assert record_stage_worker_exit(state_path, "", {}) is False
+    assert record_stage_worker_exit(tmp_path / "missing.json", "impl-1", {}) is False
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert record_stage_worker_exit(broken, "impl-1", {}) is False
+
+
+def test_start_stage_carries_lifecycle_state_path_to_launch_spec(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    seen_state_paths: list[str] = []
+
+    def fake_launcher(spec, _source_dir):
+        seen_state_paths.append(spec.lifecycle_state_path)
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-marbles",
+                agent="codex",
+                prompt="close the gaps",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    # Every stage launch tells the dispatcher which lifecycle state.json it
+    # belongs to — the push-side report-on-death write-back address.
+    assert seen_state_paths
+    assert all(path == state["state_path"] for path in seen_state_paths)
