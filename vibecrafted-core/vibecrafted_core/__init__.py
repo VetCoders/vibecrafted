@@ -48,7 +48,7 @@ from .runtime_paths import (
 )
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 
-__version__ = "3.2.0"
+__version__ = "3.3.0"
 
 _LAZY_EXPORTS = {
     "WorkflowLaunchSpec": ".workflow",
