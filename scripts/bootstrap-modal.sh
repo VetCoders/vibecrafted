@@ -32,7 +32,7 @@
 # Env overrides (in addition to flags):
 #   VIBECRAFTED_BRANCH        (default: main)
 #   VIBECRAFTED_WORKDIR       (default: $HOME/vibecrafted-runtime)
-#   VIBECRAFTED_REPO_URL      (default: https://github.com/VetCoders/vibecrafted.git)
+#   VIBECRAFTED_REPO_URL      (default: https://github.com/vetcoders/vibecrafted.git)
 #   TS_AUTHKEY                (no default — prompts if missing and TTY)
 #   TS_HOSTNAME               (default: runtime-$(hostname -s))
 #   VIBECRAFTED_BOOTSTRAP_YES (default: 0 — set 1 to skip prompts)
@@ -53,7 +53,7 @@ hdr()   { printf '\n\033[1m\033[38;5;173m⚒  %s\033[0m\n' "$*"; printf '  ─�
 # ---------------------------------------------------------------------------
 VIBECRAFTED_BRANCH="${VIBECRAFTED_BRANCH:-main}"
 VIBECRAFTED_WORKDIR="${VIBECRAFTED_WORKDIR:-$HOME/vibecrafted-runtime}"
-VIBECRAFTED_REPO_URL="${VIBECRAFTED_REPO_URL:-https://github.com/VetCoders/vibecrafted.git}"
+VIBECRAFTED_REPO_URL="${VIBECRAFTED_REPO_URL:-https://github.com/vetcoders/vibecrafted.git}"
 TS_AUTHKEY="${TS_AUTHKEY:-}"
 TS_HOSTNAME_DEFAULT="runtime-$(hostname -s 2>/dev/null || echo unknown)"
 TS_HOSTNAME="${TS_HOSTNAME:-$TS_HOSTNAME_DEFAULT}"
@@ -76,7 +76,7 @@ bootstrap-modal.sh — Vibecrafted runtime container installer
 Options:
   --branch BRANCH        git branch / tag to check out (default: main)
   --workdir DIR          clone target (default: $HOME/vibecrafted-runtime)
-  --repo-url URL         git remote (default: https://github.com/VetCoders/vibecrafted.git)
+  --repo-url URL         git remote (default: https://github.com/vetcoders/vibecrafted.git)
   --ts-authkey KEY       Tailscale auth key (prompts if missing and TTY)
   --ts-hostname NAME     Tailscale hostname (default: runtime-$(hostname -s))
   --yes / -y             skip all prompts (TS_AUTHKEY must be set via env/flag)

@@ -33,7 +33,7 @@ usage() {
     cat <<'USAGE'
 install-hammerspoon.sh — Plan 11 (META_22) Hammerspoon config installer
 
-Copies the VetCoders Hammerspoon template (config/hammerspoon/init.lua)
+Copies the Vetcoders Hammerspoon template (config/hammerspoon/init.lua)
 to ~/.hammerspoon/init.lua so the vc-* URL handlers (vc-ping, vc-loct,
 vc-aicx, vc-open-file, vc-atlas, vc-prism, vc-marbles, vc-followup) are
 registered with macOS Launch Services.

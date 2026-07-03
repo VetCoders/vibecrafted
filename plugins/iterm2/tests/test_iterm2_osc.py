@@ -34,8 +34,8 @@ def test_set_badge_handles_unicode() -> None:
 
 
 def test_set_profile_passthrough() -> None:
-    out = osc.set_profile("VetCoders / dragon")
-    assert out == "\x1b]1337;SetProfile=VetCoders / dragon\x07"
+    out = osc.set_profile("Vetcoders / dragon")
+    assert out == "\x1b]1337;SetProfile=Vetcoders / dragon\x07"
 
 
 def test_set_user_var_b64_value_only() -> None:

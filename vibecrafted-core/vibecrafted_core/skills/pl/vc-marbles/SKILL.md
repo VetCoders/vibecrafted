@@ -75,7 +75,7 @@ vibecrafted marbles codex --count 5 --prompt 'Stabilize until P0=0'
 vc-marbles claude --count 8 --prompt 'Refactor the 1500 LOC monoliths'
 
 # From a plan file:
-vibecrafted marbles codex --file ~/.vibecrafted/artifacts/VetCoders/vibecrafted/2026_0407/plans/marbles-plan.md
+vibecrafted marbles codex --file ~/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0407/plans/marbles-plan.md
 vc-marbles gemini --count 5 --file /path/to/plan.md
 
 # Crawl back into the canonical store then read 'n' recently
@@ -255,7 +255,7 @@ Jedno wywołanie = jedna bounded round.
    prawdę. Dodaj brakujący scope/auth, brakujące indeksy, zamień
    połknięte wyjątki na obsługę, po której da się działać, dodaj smoke testy,
    scal zduplikowane kontrakty, usuń zgniłe wrappery. Aksjomat
-   VetCoders: **idź dalej ponad wsteczną kompatybilność** — tnij czysto, jeśli
+   Vetcoders: **idź dalej ponad wsteczną kompatybilność** — tnij czysto, jeśli
    lokalna abstrakcja jest zgniła i blokuje stabilizację.
 4. **Bramkuj.** Najwęższe wiarygodne bramki najpierw; szersze, jeśli zasadne.
    Minimum: składnia / lint dla dotkniętych powierzchni, testy pokrywające
@@ -395,4 +395,4 @@ Bo do tego czasu już wyszedł z szatni.  (._.)
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

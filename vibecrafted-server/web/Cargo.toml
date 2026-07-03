@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85.0"
 license = "BUSL-1.1"
-authors = ["VetCoders <agents@vetcoders.io>"]
+authors = ["Vetcoders <agents@vetcoders.io>"]
 publish = false
 
 [lib]
@@ -82,16 +82,3 @@ lib-default-features = false
 lib-profile-release = "wasm-release"
 hash-files = true
 watch-additional-files = ["public", "styles"]
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
-
-[profile.wasm-release]
-inherits = "release"
-opt-level = "z"
-lto = true
-codegen-units = 1
-panic = "abort"

@@ -1,6 +1,6 @@
 # vibecrafted-hooks-template
 
-> One git-hook stack for every VetCoders / LibraxisAI repository,
+> One git-hook stack for every Vetcoders / LibraxisAI repository,
 > across every language — TypeScript, Rust, Python, Shell.
 
 Modular shell hooks unified from the four legacy snowflakes we accumulated
@@ -190,9 +190,9 @@ at repo root is swapped.
 ## License
 
 BUSL — same as the parent vibecrafted project. Free for use inside any
-VetCoders / LibraxisAI repository, third-party usage subject to the BUSL
+Vetcoders / LibraxisAI repository, third-party usage subject to the BUSL
 conversion timeline.
 
 ---
 
-_Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

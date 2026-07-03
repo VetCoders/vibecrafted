@@ -77,7 +77,7 @@ write_json_chunk() {
   "chunk_id": "$chunk_id",
   "authority": "$authority",
   "content_hash": "$content_hash",
-  "namespace": "VetCoders/vibecrafted",
+  "namespace": "vetcoders/vibecrafted",
   "timestamp": "2026-05-12T10:00:00+00:00"
 }
 JSON
@@ -299,7 +299,7 @@ cat > "$CFG" <<'TOML'
 [default]
 local_store = "/tmp/from-toml"
 remote_host = "sztudio"
-namespace = "VetCoders/vibecrafted"
+namespace = "vetcoders/vibecrafted"
 TOML
 
 set +e

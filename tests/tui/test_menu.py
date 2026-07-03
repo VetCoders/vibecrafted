@@ -35,12 +35,12 @@ def test_textual_chrome_uses_full_pane_width(monkeypatch) -> None:
     )
     monkeypatch.setattr(app, "_terminal_size", lambda: (102, 32))
 
-    rendered = app._render_chrome("────\nVetCoders\n────")
+    rendered = app._render_chrome("────\nVetcoders\n────")
 
     lines = rendered.splitlines()
     assert len(lines[0]) == 100
     assert lines[0] == "─" * 100
-    assert lines[1].strip() == "VetCoders"
+    assert lines[1].strip() == "Vetcoders"
     assert len(lines[2]) == 100
 
 
@@ -60,7 +60,7 @@ def test_textual_install_preview_hides_raw_tail(monkeypatch) -> None:
     app.install_phase_reason = "Install foundations, skills, helpers, and runtime."
     app._add_install_log("╠════════ Live progress ════════╣")
     app._add_install_log(
-        "/Users/maciejgad/.config/vetcoders/frontier/vc-frame/layouts/operator.kdl"
+        "/Users/tester/.config/vetcoders/frontier/vc-frame/layouts/operator.kdl"
     )
     app._add_install_log("already linked")
 

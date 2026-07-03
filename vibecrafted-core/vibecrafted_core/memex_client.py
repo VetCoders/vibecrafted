@@ -4,8 +4,8 @@ Wires the locally-installed ``rust-memex`` foundation into the
 ``/vc-init`` Sense 1 (intentions) perception layer as a fallthrough.
 When local AICX search returns sparse results for the current scope
 (< 5 chunks by default), the agent SHOULD call :func:`search` to pull
-cross-session semantic context from the operator's mesh-hosted memex
-endpoint (dragon-side per kronika 2026-05-05 mesh topology).
+cross-session semantic context from the configured memex
+endpoint.
 
 Design rules:
 
@@ -34,7 +34,7 @@ The client is intentionally tiny: it has no third-party dependencies,
 type-checks under strict mypy, and degrades gracefully so the absence
 of memex is invisible to operators who haven't opted in.
 
-𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 """
 
 from __future__ import annotations
@@ -75,8 +75,8 @@ MEMEX_AUTHORITY_LABEL: str = "memex_derived"
 #: Operator config file (precedence over env vars).
 DEFAULT_CONFIG_PATH: Path = Path.home() / ".config" / "vetcoders" / "memex.toml"
 
-#: Default memex endpoint (dragon-side mesh host, kronika 2026-05-05).
-DEFAULT_ENDPOINT: str = "http://dragon.local:11211"
+#: Default memex endpoint. Override via config or env.
+DEFAULT_ENDPOINT: str = "http://memex.local:11211"
 
 #: Default HTTP timeout in seconds.
 DEFAULT_TIMEOUT_SECONDS: float = 5.0

@@ -15,7 +15,7 @@ component architecture, async supervision), see
 
 ## Under the Hood
 
-**𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.** is a framework designed by VetCoders and **`vc-agents`**
+**𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.** is a framework designed by Vetcoders and **`vc-agents`**
 is a part of it. It provides telemetry, default store with durable artifacts,
 portable spawn helpers, telemetry driven context and intentions retrieval
 for straightforward, robust and measurable work in the AI-human teams.
@@ -30,13 +30,13 @@ provides all the necessary tools to follow this pattern.
    - [loctree](https://loct.io) — Codebase mapping and architectural perception.
    - [aicx](https://github.com/Loctree/aicx) — Context boundaries and intentions retrieval.
    - [prview](https://github.com/Loctree/prview) — Continuous review pipelines.
-   - [ScreenScribe](https://github.com/VetCoders/ScreenScribe) — Voice-to-text context ingestion.
+   - [Screenscribe](https://github.com/vetcoders/Screenscribe) — Voice-to-text context ingestion.
 
-   The main VetCoders native framework drivers, designed to make non-programmers
+   The main Vetcoders native framework drivers, designed to make non-programmers
    capable of production-grade implementation of complex development tasks.
 
 2. **`vc-workflows`** (technically `skills`) are the specialized instructions
-   based on the VetCoders team experience and are used to optimize the
+   based on the Vetcoders team experience and are used to optimize the
    delegation of work to the AI agents.
 
 3. **`vc-runtime`:**

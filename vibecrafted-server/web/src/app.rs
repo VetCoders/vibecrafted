@@ -15,6 +15,7 @@ struct DashboardData {
     active_runs: Vec<DashboardRun>,
     recent_runs: Vec<DashboardRun>,
     all_runs: Vec<DashboardRun>,
+    lifecycle_runs: Vec<DashboardLifecycleRun>,
     warnings: Vec<String>,
     events: Vec<DashboardEvent>,
 }
@@ -33,6 +34,23 @@ struct DashboardRun {
 }
 
 #[derive(Clone, Default)]
+struct DashboardLifecycleRun {
+    run_id: String,
+    workflow: String,
+    status: String,
+    current_stage: String,
+    next_stage: String,
+    next_agent: String,
+    dou_label: String,
+    accepted_dou: i64,
+    human_controls: Vec<String>,
+    human_controls_count: usize,
+    operator_actions_count: usize,
+    report_path: String,
+    updated_at: String,
+}
+
+#[derive(Clone, Default)]
 struct DashboardEvent {
     ts: String,
     run_id: String,
@@ -43,7 +61,7 @@ struct DashboardEvent {
 #[cfg(feature = "ssr")]
 fn load_dashboard_data() -> DashboardData {
     use chrono::Utc;
-    use control_core::{ControlPlane, Event, RunStatus};
+    use control_core::{ControlPlane, Event, LifecycleRunSummary, RunStatus};
 
     fn run_summary(run: RunStatus) -> DashboardRun {
         DashboardRun {
@@ -68,10 +86,34 @@ fn load_dashboard_data() -> DashboardData {
         }
     }
 
+    fn lifecycle_summary(run: LifecycleRunSummary) -> DashboardLifecycleRun {
+        let dou_label = match (run.dou_readiness.as_str(), run.dou_index) {
+            ("zero", Some(0)) => "ZERO DoU".to_string(),
+            ("open", Some(value)) => format!("DoU {value}"),
+            _ => "DoU unknown".to_string(),
+        };
+        DashboardLifecycleRun {
+            run_id: run.run_id,
+            workflow: run.workflow,
+            status: run.status,
+            current_stage: run.current_stage,
+            next_stage: run.next_stage,
+            next_agent: run.next_agent,
+            dou_label,
+            accepted_dou: run.accepted_dou,
+            human_controls: run.human_controls,
+            human_controls_count: run.human_controls_count,
+            operator_actions_count: run.operator_actions_count,
+            report_path: run.report_path,
+            updated_at: run.updated_at,
+        }
+    }
+
     let plane = ControlPlane::from_env();
     let now = Utc::now();
     let view = plane.compute_view(now);
     let all_runs = plane.load_snapshots();
+    let lifecycle_runs = plane.load_lifecycle_run_summaries();
 
     DashboardData {
         control_plane: plane.control_plane_home().display().to_string(),
@@ -79,6 +121,7 @@ fn load_dashboard_data() -> DashboardData {
         active_runs: view.active_runs.into_iter().map(run_summary).collect(),
         recent_runs: view.recent_runs.into_iter().map(run_summary).collect(),
         all_runs: all_runs.into_iter().map(run_summary).collect(),
+        lifecycle_runs: lifecycle_runs.into_iter().map(lifecycle_summary).collect(),
         warnings: view.warnings,
         events: view.events.into_iter().map(event_summary).collect(),
     }
@@ -113,6 +156,57 @@ fn run_cards(runs: Vec<DashboardRun>) -> impl IntoView {
                     </div>
                     <div class="control-run-meta">
                         <span>{run.updated_at}</span>
+                        <span>{report_label}</span>
+                    </div>
+                </article>
+            }
+        })
+        .collect_view()
+}
+
+fn lifecycle_cards(runs: Vec<DashboardLifecycleRun>) -> impl IntoView {
+    runs.into_iter()
+        .map(|run| {
+            let stage_label = if run.current_stage.is_empty() {
+                "stage unknown".to_string()
+            } else {
+                run.current_stage.clone()
+            };
+            let baton_label = match (run.next_stage.is_empty(), run.next_agent.is_empty()) {
+                (true, true) => "baton clear".to_string(),
+                (false, true) => format!("next {}", run.next_stage),
+                (true, false) => format!("next agent {}", run.next_agent),
+                (false, false) => format!("next {} / {}", run.next_stage, run.next_agent),
+            };
+            let report_label = if run.report_path.is_empty() {
+                "no report".to_string()
+            } else {
+                run.report_path.clone()
+            };
+            let controls_label = if run.human_controls.is_empty() {
+                "controls none".to_string()
+            } else {
+                format!("controls {}", run.human_controls.join(", "))
+            };
+
+            view! {
+                <article class="control-run-row">
+                    <div class="control-run-primary">
+                        <span class="control-run-id">{run.run_id}</span>
+                        <span class="control-run-root">{run.workflow}</span>
+                    </div>
+                    <div class="control-run-tags">
+                        <span class="control-badge">{run.status}</span>
+                        <span class="control-badge">{stage_label}</span>
+                        <span class="control-badge">{baton_label}</span>
+                        <span class="control-badge">{run.dou_label}</span>
+                        <span class="control-badge">{format!("accepted {}", run.accepted_dou)}</span>
+                    </div>
+                    <div class="control-run-meta">
+                        <span>{run.updated_at}</span>
+                        <span>{controls_label}</span>
+                        <span>{format!("control count {}", run.human_controls_count)}</span>
+                        <span>{format!("actions {}", run.operator_actions_count)}</span>
                         <span>{report_label}</span>
                     </div>
                 </article>
@@ -195,10 +289,12 @@ pub fn ConsolePage() -> impl IntoView {
     let active_count = dashboard.active_runs.len();
     let recent_count = dashboard.recent_runs.len();
     let all_count = dashboard.all_runs.len();
+    let lifecycle_count = dashboard.lifecycle_runs.len();
     let warning_count = dashboard.warnings.len();
     let event_count = dashboard.events.len();
     let no_active_runs = dashboard.active_runs.is_empty();
     let no_all_runs = dashboard.all_runs.is_empty();
+    let no_lifecycle_runs = dashboard.lifecycle_runs.is_empty();
     let no_warnings = dashboard.warnings.is_empty();
     let no_events = dashboard.events.is_empty();
     let theme_state = move || match theme.get() {
@@ -252,6 +348,10 @@ pub fn ConsolePage() -> impl IntoView {
                                 <dt>"all runs"</dt>
                                 <dd>{all_count}</dd>
                             </div>
+                            <div>
+                                <dt>"lifecycle"</dt>
+                                <dd>{lifecycle_count}</dd>
+                            </div>
                         </dl>
                     </aside>
                 </div>
@@ -284,6 +384,17 @@ pub fn ConsolePage() -> impl IntoView {
                         </ul>
                     </section>
                 </div>
+
+                <section class="control-panel control-panel-wide" aria-label="Lifecycle runs">
+                    <div class="control-panel-head">
+                        <h2>"Lifecycle"</h2>
+                        <span>{lifecycle_count}</span>
+                    </div>
+                    <p class="control-empty" hidden={!no_lifecycle_runs}>"No lifecycle runs found under the control plane."</p>
+                    <div class="control-run-list">
+                        {lifecycle_cards(dashboard.lifecycle_runs)}
+                    </div>
+                </section>
 
                 <section class="control-panel control-panel-wide" aria-label="All runs">
                     <div class="control-panel-head">

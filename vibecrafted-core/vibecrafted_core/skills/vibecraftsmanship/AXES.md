@@ -189,7 +189,7 @@ Power axis is not yet earning its keep.
   red gate = not yet survived. Substrate-failure is information; it is
   NOT a pass.
 - **No estimate without empirical reference**: when a source says "3-6
-  months", check whether their assumptions match VetCoders working
+  months", check whether their assumptions match Vetcoders working
   pattern. Pensieve falsified gemini's 3-6 months in 28 hours of real
   work.
 
@@ -267,4 +267,4 @@ operator for triage. Don't pretend the trinity is aligned when it isn't.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

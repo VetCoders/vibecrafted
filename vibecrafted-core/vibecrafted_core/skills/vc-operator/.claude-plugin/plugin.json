@@ -2,7 +2,7 @@
   "name": "vc-operator",
   "description": "Autonomous orchestration posture for multi-wave dispatch, durable artifacts, verification, recovery dispatches, and operator-button handoff.",
   "author": {
-    "name": "VetCoders",
+    "name": "Vetcoders",
     "email": "hello@vetcoders.io"
   }
 }

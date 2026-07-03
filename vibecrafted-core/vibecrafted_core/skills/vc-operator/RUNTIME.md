@@ -57,6 +57,29 @@ proof that a public `vibecrafted operator` command exists.
 | Deterministic supervisor    | `vibecrafted dispatch <file.toml>` |
 | Outward ship                | `vibecrafted release <agent>`      |
 
+## Visible runtime (vc-frame) is the attended default
+
+Runtime mode is `headless | terminal | visible` (`SUPPORTED_RUNTIMES`). The
+selector resolves like this:
+
+- When a vc-frame operator session is live — `VC_FRAME_SESSION_NAME` is set —
+  `terminal`/`visible` opens the worker in a **new vc-frame tab** the operator
+  watches in real time.
+- With no session, `terminal` **degrades to headless** rather than stranding a
+  worker in a tab that cannot exist (degrade-not-die).
+- `headless` runs the dispatcher directly with no tab — correct for cron and
+  no-session hosts, wrong for attended work.
+
+The CLI (`vibecrafted <skill> <agent> --file <brief>`) auto-selects `terminal`
+when the session exists, so attended dispatch is visible by default. The MCP
+launch tools (`vc_run_launch` / `vc_launch`) do NOT: they default
+`runtime="headless"` and ignore `VC_FRAME_SESSION_NAME`. When you dispatch
+through MCP while a session is live, pass `runtime="visible"` explicitly — or use
+the CLI. A headless dispatch into a live operator session is an invisible orphan,
+not a quiet success: the operator cannot see it, and the conductor is reduced to
+relaying status by hand. Visible-by-default is what keeps the operator in the
+loop instead of asking "is it running?".
+
 ## Terminal States
 
 ```yaml

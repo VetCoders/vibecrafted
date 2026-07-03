@@ -2,7 +2,7 @@
 
 _Plan 08 (META_22) — bidirectional sync substrate with authority-tier conflict resolution. Ships in v1.8.0._
 
-The AICX corpus is the operator's cross-session memory layer for AI agents — every Codex / Claude / Gemini session writes its outcome into `~/.aicx/store/<org>/<project>/<YYYY_MMDD>/conversations/<agent>/*.md`. On a single machine that is enough. On the **VetCoders mesh** (dragon ↔ sztudio ↔ silver ↔ div0, per kronika 2026-05-05) the same corpus must converge across hosts so an agent dispatched on `sztudio` sees what `dragon` learned thirty minutes earlier.
+The AICX corpus is the operator's cross-session memory layer for AI agents — every Codex / Claude / Gemini session writes its outcome into `~/.aicx/store/<org>/<project>/<YYYY_MMDD>/conversations/<agent>/*.md`. On a single machine that is enough. On the **Vetcoders mesh** (dragon ↔ sztudio ↔ silver ↔ div0, per kronika 2026-05-05) the same corpus must converge across hosts so an agent dispatched on `sztudio` sees what `dragon` learned thirty minutes earlier.
 
 This document covers the **v2 bidirectional engine** (`vibecrafted_core.aicx_sync`) and its operator CLI (`scripts/aicx-sync.sh`). The transport layer (rsync, staging, nightly launchd) is owned by the operator's existing `~/.scripts/sync-tool.py` (kronika 2026-05-05); this engine plugs in on top of that.
 
@@ -44,7 +44,7 @@ Equal tiers on both sides → tie → operator decides → logged.
 ### Dry-run first — always
 
 ```bash
-scripts/aicx-sync.sh dry-run --remote sztudio --namespace VetCoders/vibecrafted
+scripts/aicx-sync.sh dry-run --remote sztudio --namespace vetcoders/vibecrafted
 ```
 
 Prints a JSON `SyncResult` describing adds, conflicts, ties, and corrupted chunks. **No filesystem mutation.** Operator reviews the preview before pushing further.
@@ -52,7 +52,7 @@ Prints a JSON `SyncResult` describing adds, conflicts, ties, and corrupted chunk
 ### Apply after review
 
 ```bash
-scripts/aicx-sync.sh apply --remote sztudio --namespace VetCoders/vibecrafted
+scripts/aicx-sync.sh apply --remote sztudio --namespace vetcoders/vibecrafted
 ```
 
 Executes the same plan. Adds copy in both directions; conflicts apply the authority-tier winner; ties are surfaced and the run exits non-zero so the operator records a decision before re-running.
@@ -79,7 +79,7 @@ Fields:
 | ----------------- | --------------- | ----------------------------------------------------------------------------- |
 | `local_store`     | `~/.aicx/store` | Override only if AICX corpus lives outside XDG default.                       |
 | `remote_host`     | (none)          | One of `dragon`, `sztudio`, `silver`, `div0`, `mgbook16`.                     |
-| `namespace`       | (all)           | Scope to `<org>/<project>` (e.g. `VetCoders/vibecrafted`).                    |
+| `namespace`       | (all)           | Scope to `<org>/<project>` (e.g. `vetcoders/vibecrafted`).                    |
 | `dry_run_default` | `true`          | Informational; the wrapper always honours dry-run unless `apply` is explicit. |
 | `prompt_on_tie`   | `true`          | When `false`, ties are silently logged as unresolved.                         |
 
@@ -178,4 +178,4 @@ The operator currently runs `~/.scripts/sync-tool.py` as a nightly launchd job (
 ---
 
 _Plan 08 (META_22) — Wave 3 / agent orchestration cut._
-_Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI._
+_Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI._

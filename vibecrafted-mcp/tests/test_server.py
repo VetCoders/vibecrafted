@@ -225,6 +225,13 @@ def test_build_server_registers_tools_and_resources() -> None:
         "vc_run_blocked",
         "vc_loct_capabilities",
         "vc_init",
+        "vc_lifecycle_runs",
+        "vc_lifecycle_status",
+        "vc_lifecycle_approve",
+        "vc_lifecycle_interrupt",
+        "vc_lifecycle_force_audit",
+        "vc_lifecycle_accept_dou",
+        "vc_lifecycle_fallback",
     } <= tool_names
     assert any("vibecrafted://board/runs" in uri for uri in resource_uris)
     assert any("vibecrafted://control-plane/events" in uri for uri in resource_uris)
@@ -558,7 +565,7 @@ def test_vc_run_status_and_await_use_control_plane_meta(
 ) -> None:
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
-    reports = home / "artifacts" / "VetCoders" / "vibecrafted" / "2026_0519" / "reports"
+    reports = home / "artifacts" / "Vetcoders" / "vibecrafted" / "2026_0519" / "reports"
     reports.mkdir(parents=True)
     (reports / "impl.meta.json").write_text(
         json.dumps(
@@ -693,6 +700,24 @@ def test_vc_run_observe_returns_bounded_cursor_deltas(
     assert at_end["cursor"]["transcript_offset"] == 10
 
 
+def test_vc_run_observe_defaults_to_recent_tail_for_long_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _write_observe_fixture(tmp_path)
+    monkeypatch.setenv("VIBECRAFTED_HOME", fixture["home"])
+    transcript = Path(fixture["transcript"])
+    transcript.write_text("old-head" + ("x" * 200) + "recent-tail", encoding="utf-8")
+
+    payload = server._observe_run_once(
+        fixture["run_id"], home=fixture["home"], max_bytes=32
+    )
+
+    assert payload["transcript"]["bytes"] <= 32
+    assert "recent-tail" in payload["transcript"]["text"]
+    assert "old-head" not in payload["transcript"]["text"]
+    assert payload["transcript"]["truncated"] is True
+
+
 def test_run_resource_templates_resolve_bounded_artifacts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -819,3 +844,113 @@ def test_vc_run_stop_and_retry_route_to_workflow(
     assert captured["retry"]["home"] == str(home)
     assert captured["block"]["reason"] == "needs-intervention"
     assert captured["block"]["note"] == "missing api key"
+
+
+def _seed_lifecycle_run(home: Path, run_id: str, report: Path) -> Path:
+    run_dir = home / "control_plane" / "lifecycle_runs" / run_id
+    run_dir.mkdir(parents=True)
+    state_path = run_dir / "state.json"
+    state = {
+        "run_id": run_id,
+        "workflow": "vc-ship",
+        "agent": "codex",
+        "root": str(home),
+        "status": "launching",
+        "parent_run_id": "",
+        "operator_actions": [],
+        "human_controls": ["approve_transition", "interrupt_workflow"],
+        "state_path": str(state_path),
+        "report_path": str(run_dir / "report.md"),
+        "transcript_path": str(run_dir / "transcript.log"),
+        "spec": {
+            "workflow_id": "vc-ship",
+            "agent": "codex",
+            "prompt": "mission",
+            "file": "",
+            "root": str(home),
+            "runtime": "headless",
+            "await_stages": False,
+            "start_stage": "scaffold",
+            "count": None,
+            "depth": None,
+            "previous_reports": [],
+        },
+        "manifest": {"id": "vc-ship", "stages": [{"id": "scaffold"}]},
+        "baton": {
+            "from_stage": "scaffold",
+            "next_stage": "implement",
+            "next_agent": "codex",
+            "reason": "stage_launched_without_await",
+            "previous_reports": [str(report)],
+        },
+        "stages": [
+            {
+                "id": "scaffold",
+                "phase": "read",
+                "launch": {"run_id": "scaf-1", "report": str(report)},
+            }
+        ],
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    return state_path
+
+
+def test_lifecycle_tools_status_and_approve_roundtrip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    report = tmp_path / "scaffold-report.md"
+    report.write_text("scaffold ok\n", encoding="utf-8")
+    _seed_lifecycle_run(home, "life-ship-000000-00000", report)
+
+    launched: list[Any] = []
+
+    def _fake_run_lifecycle(spec: Any) -> dict[str, Any]:
+        launched.append(spec)
+        return {
+            "run_id": "life-cont-1",
+            "workflow": "vc-ship",
+            "status": "launching",
+            "stages": [],
+            "baton": {"next_stage": "review", "previous_reports": []},
+        }
+
+    monkeypatch.setattr(server._lifecycle_control, "run_lifecycle", _fake_run_lifecycle)
+
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call(tool: str, args: dict[str, Any]) -> Any:
+        async with Client(mcp) as client:
+            return await client.call_tool(tool, args)
+
+    listed = _run(
+        _call("vc_lifecycle_runs", {"workflow_id": "vc-ship", "home": str(home)})
+    ).data
+    assert listed["count"] == 1
+    assert listed["runs"][0]["run_id"] == "life-ship-000000-00000"
+
+    status = _run(_call("vc_lifecycle_status", {"home": str(home)})).data
+    assert status["ok"] is True
+    assert status["result"]["next_stage"] == "implement"
+    assert status["result"]["human_controls"] == [
+        "approve_transition",
+        "interrupt_workflow",
+    ]
+    assert status["result"]["previous_reports"] == [str(report)]
+
+    approved = _run(_call("vc_lifecycle_approve", {"home": str(home)})).data
+    assert approved["ok"] is True
+    assert approved["result"]["run_id"] == "life-cont-1"
+    assert len(launched) == 1
+    assert launched[0].start_stage == "implement"
+    assert launched[0].previous_reports == (str(report),)
+
+    # Unknown verb target: fallback rejects a stage the manifest lacks and
+    # human_controls gating still applies (no choose_fallback_stage here).
+    fallback = _run(
+        _call("vc_lifecycle_fallback", {"stage": "release", "home": str(home)})
+    ).data
+    assert fallback["ok"] is False
+    assert "choose_fallback_stage" in fallback["error"]

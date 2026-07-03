@@ -12,7 +12,7 @@ Generates interactive HTML forms and can execute bulk operations from JSON.
 
 Usage:
     # Generate HTML form and serve it (recommended)
-    ./repo-transfer.py Szowesgad LibraxisAI Loctree VetCoders
+    ./repo-transfer.py Szowesgad LibraxisAI Loctree Vetcoders
 
     # Generate HTML and open in browser
     ./repo-transfer.py Szowesgad LibraxisAI --open
@@ -29,7 +29,7 @@ Usage:
     ./repo-transfer.py --transfer owner/repo --to NewOwner --yes
     ./repo-transfer.py --transfer owner/repo --to NewOwner --clean --yes
 
-Created by M&K (c)2026 The VetCoders Team
+Created by vetcoders (c)2026
 """
 
 from __future__ import annotations
@@ -314,7 +314,7 @@ def generate_html(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Repo Transfer - VetCoders</title>
+    <title>Repo Transfer - Vetcoders</title>
     <style>
         :root {{ --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#c9d1d9; --dim:#8b949e; --red:#f85149; --green:#3fb950; --blue:#58a6ff; --yellow:#d29922; --purple:#a371f7; --orange:#f0883e; }}
         * {{ box-sizing:border-box; margin:0; padding:0; }}
@@ -410,7 +410,7 @@ def generate_html(
 <script>
 let repos = {repos_json};
 const decisions = {{}};
-const defaultTarget = 'VetCoders';
+const defaultTarget = 'Vetcoders';
 {refresh_script}
 
 function init() {{
@@ -448,7 +448,7 @@ function repoRow(r) {{
         <div class="repo-options">
             <input placeholder="New name" id="nn-${{r.owner}}-${{r.name}}" value="${{nameVal}}">
             <select id="tg-${{r.owner}}-${{r.name}}">
-                <option ${{targetVal==='VetCoders'?'selected':''}}>VetCoders</option>
+                <option ${{targetVal==='Vetcoders'?'selected':''}}>Vetcoders</option>
                 <option ${{targetVal==='Szowesgad'?'selected':''}}>Szowesgad</option>
                 <option ${{targetVal==='LibraxisAI'?'selected':''}}>LibraxisAI</option>
                 <option ${{targetVal==='Loctree'?'selected':''}}>Loctree</option>
@@ -725,7 +725,7 @@ def main():
         epilog="""
 Examples:
   # Generate form and serve
-  ./repo-transfer.py Szowesgad LibraxisAI VetCoders
+  ./repo-transfer.py Szowesgad LibraxisAI Vetcoders
 
   # Generate form and open in browser
   ./repo-transfer.py Szowesgad LibraxisAI --open
@@ -742,7 +742,7 @@ Examples:
   ./repo-transfer.py --transfer owner/repo --to NewOwner/new-name --yes
   ./repo-transfer.py --transfer owner/repo --to NewOwner --clean --yes
 
-Created by M&K (c)2024-2026 VetCoders
+Created by vetcoders (c)2024-2026
 """,
     )
 
@@ -854,7 +854,7 @@ Created by M&K (c)2024-2026 VetCoders
         return 0 if ok else 1
 
     # Form generation mode (default)
-    orgs = args.orgs or ["Szowesgad", "LibraxisAI", "Loctree", "VetCoders"]
+    orgs = args.orgs or ["Szowesgad", "LibraxisAI", "Loctree", "Vetcoders"]
 
     print(f"\n  {C.CYAN}🚀 Repo Transfer Tool{C.RESET}")
     print(f"  {C.DIM}Fetching repos...{C.RESET}\n")

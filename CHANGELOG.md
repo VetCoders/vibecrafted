@@ -390,7 +390,7 @@ operator` crate — see **Changed** above).
 - AICX extract skill documentation
 - Mission-control layout for vc-frame
 - Compact install mode and enhanced logging
-- ScreenScribe foundation setup
+- Screenscribe foundation setup
 - GitHub Pages onboarding pages for Quick Start and answered FAQ
 - Marketplace listing draft for the framework
 - GitHub issue templates for bugs and workflow requests

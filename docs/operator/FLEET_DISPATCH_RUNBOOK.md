@@ -1,6 +1,6 @@
 # Fleet Dispatch Runbook — for an operator `claude` in ultra mode
 
-> How to dispatch the VetCoders fleet effectively. Hand this to any operator agent.
+> How to dispatch the Vetcoders fleet effectively. Hand this to any operator agent.
 
 ## 0. The ultra-mode trap (read first)
 

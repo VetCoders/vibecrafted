@@ -10,9 +10,12 @@
 //! Routes:
 //! * `GET /api/control/state` — merged [`StateView`](control_core::StateView)
 //!   (active/recent runs, warnings, event tail), computed in Rust from the three
-//!   raw sources so the server never depends on the Python sync having run.
+//!   raw sources plus lifecycle projections so the server never depends on the
+//!   Python sync having run.
 //! * `GET /api/control/runs` — every `runs/<id>.json` snapshot, newest-first.
 //! * `GET /api/control/runs/{run_id}` — a single run, or `404` JSON.
+//! * `GET /api/control/lifecycle` — lifecycle run summaries, newest-first.
+//! * `GET /api/control/lifecycle/{run_id}` — full nested lifecycle state.
 
 #[cfg(feature = "ssr")]
 pub mod api {
@@ -33,13 +36,19 @@ pub mod api {
             .route("/api/control/state", get(state))
             .route("/api/control/runs", get(runs))
             .route("/api/control/runs/{run_id}", get(run))
+            .route("/api/control/lifecycle", get(lifecycle))
+            .route("/api/control/lifecycle/{run_id}", get(lifecycle_run))
     }
 
     /// Serialise a [`StateView`] into the JSON envelope. `StateView` itself is
     /// not `Serialize` (it carries no clock), but its `RunStatus` / `Event`
     /// members are, so we project field-by-field and stamp `generated_at` here —
     /// matching the `generated_at` the Python `sync_state` payload adds.
-    fn state_envelope(plane: &ControlPlane, view: &StateView, generated_at: String) -> Json<serde_json::Value> {
+    fn state_envelope(
+        plane: &ControlPlane,
+        view: &StateView,
+        generated_at: String,
+    ) -> Json<serde_json::Value> {
         Json(json!({
             "control_plane": plane.control_plane_home().display().to_string(),
             "generated_at": generated_at,
@@ -68,6 +77,30 @@ pub mod api {
             "count": snapshots.len(),
             "runs": snapshots,
         }))
+    }
+
+    /// Lifecycle run summaries, newest-first by `state.json` mtime.
+    async fn lifecycle() -> impl IntoResponse {
+        let plane = ControlPlane::from_env();
+        let lifecycle_runs = plane.load_lifecycle_run_summaries();
+        Json(json!({
+            "control_plane": plane.control_plane_home().display().to_string(),
+            "count": lifecycle_runs.len(),
+            "lifecycle_runs": lifecycle_runs,
+        }))
+    }
+
+    /// Full nested lifecycle state by id, or a `404` JSON body when absent.
+    async fn lifecycle_run(Path(run_id): Path<String>) -> impl IntoResponse {
+        let plane = ControlPlane::from_env();
+        match plane.resolve_lifecycle_run(&run_id) {
+            Some(run) => Json(json!(run)).into_response(),
+            None => (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": format!("lifecycle run not found: {run_id}") })),
+            )
+                .into_response(),
+        }
     }
 
     /// A single run by id, or a `404` JSON body when absent.

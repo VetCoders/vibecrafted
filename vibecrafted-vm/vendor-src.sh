@@ -10,7 +10,7 @@
 # Run from vc-workspace/ before a fresh build if the sibling sources moved:
 #   ./vendor-src.sh
 #
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 # ============================================================================
 set -euo pipefail
 

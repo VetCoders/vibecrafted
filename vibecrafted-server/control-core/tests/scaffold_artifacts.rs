@@ -18,7 +18,7 @@ fn scaffold_workspace_discovers_edits_and_checkpoints_operator_artifacts() {
     let home = temp_home("scaffold");
     let operator = home
         .join("artifacts")
-        .join("VetCoders")
+        .join("Vetcoders")
         .join("vibecrafted")
         .join("2026_0606")
         .join("operator");
@@ -30,7 +30,7 @@ fn scaffold_workspace_discovers_edits_and_checkpoints_operator_artifacts() {
 
     let store = ScaffoldArtifactStore::new(&home);
     let workspace = store
-        .workspace("VetCoders", "vibecrafted", "2026_0606")
+        .workspace("Vetcoders", "vibecrafted", "2026_0606")
         .expect("workspace");
     assert_eq!(workspace.artifacts.len(), 3);
     assert_eq!(workspace.artifacts[0].kind, ScaffoldArtifactKind::WaveAtlas);
@@ -40,7 +40,7 @@ fn scaffold_workspace_discovers_edits_and_checkpoints_operator_artifacts() {
     let brief_id = workspace.artifacts[1].id.clone();
     let edited = store
         .write_artifact(
-            "VetCoders",
+            "Vetcoders",
             "vibecrafted",
             "2026_0606",
             ScaffoldArtifactPatch {
@@ -53,7 +53,7 @@ fn scaffold_workspace_discovers_edits_and_checkpoints_operator_artifacts() {
 
     let checkpoint = store
         .checkpoint(
-            "VetCoders",
+            "Vetcoders",
             "vibecrafted",
             "2026_0606",
             ScaffoldCheckpointPatch {
@@ -66,7 +66,7 @@ fn scaffold_workspace_discovers_edits_and_checkpoints_operator_artifacts() {
     assert!(checkpoint.approved);
 
     let changes = store
-        .changes("VetCoders", "vibecrafted", "2026_0606")
+        .changes("Vetcoders", "vibecrafted", "2026_0606")
         .expect("changes");
     assert_eq!(changes.len(), 2);
     assert_eq!(changes[0].action, "edit");

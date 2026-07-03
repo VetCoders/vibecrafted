@@ -35,7 +35,7 @@ Vibecrafted.
 
 Zostaje: Vibecrafted
 
-Nie tłumaczyć. Nie spolszczać. Nie pisać "VibeCrafted",“Widecrafted”, “Vibecraft”, “Wajbkrafted”.
+Nie tłumaczyć. Nie spolszczać. Nie pisać "Vibecrafted",“Widecrafted”, “Vibecraft”, “Wajbkrafted”.
 
 Dopuszczalne skróty w roboczych notatkach:
 
@@ -466,7 +466,7 @@ Zostaje: vc-screenscribe albo screenscribe
 
 Znaczenie: skill / mechanika pracy z nagraniem ekranu, transcriptami, findingami, screenshotami, paczką dla agenta.
 
-Nie pisać ScreenScribe, jeśli decyzja produktu mówi lowercase screenscribe.
+Nie pisać Screenscribe, jeśli decyzja produktu mówi lowercase screenscribe.
 
 ⸻
 
@@ -2337,7 +2337,7 @@ Blok potwierdzony jako verbatim
 | DoU / dou / Definition of Undone                    | Zostaje. Koncept: DoU. Komenda/slug: vc-dou, dou. Rozwinięcie: Definition of Undone. Można objaśnić po polsku, ale nie tłumaczyć jako oficjalna nazwa.                                                                             |
 | mylik / myliki                                      | Zostaje. To polski neologizm i jest dobry.                                                                                                                                                                                         |
 | marbles                                             | Zostaje. Nigdy “kulki/marmurki” w oficjalnym glosariuszu.                                                                                                                                                                          |
-| screenscribe / ScreenScribe                         | Ujednolicić do screenscribe jako public/product-facing nazwa, jeśli tłumaczenie nie cytuje literalnego starego wystąpienia. ScreenScribe tylko w cytatach/historycznych fragmentach albo jeśli źródło literalne wymaga zachowania. |
+| screenscribe / Screenscribe                         | Ujednolicić do screenscribe jako public/product-facing nazwa, jeśli tłumaczenie nie cytuje literalnego starego wystąpienia. Screenscribe tylko w cytatach/historycznych fragmentach albo jeśli źródło literalne wymaga zachowania. |
 | skillaunch / Distiller                              | Zostają verbatim.                                                                                                                                                                                                                  |
 | prview / prview-rs                                  | Zostają verbatim.                                                                                                                                                                                                                  |
 | scaffold-doctor, DRIVER.md, Vector                  | Zostają verbatim jako nazwy artefaktów/bramek.                                                                                                                                                                                     |
@@ -2950,7 +2950,7 @@ mylik / myliki
 - Bank sucharów (vc-operator/DISPATCH) — 7 dowcipów zostało EN (źródło: „port-ready EN dad-jokes"; etykieta „Suchar:"
   ujednolicona).
 - EMIL.md — nazwa pliku/dokumentu („Plan-shape Style Guide"), NIE persona; nazwa verbatim, treść PL.
-- Stopki niestandardowe — vc-prview / vc-research: „ _Created by M&K (c)2026 VetCoders_" (verbatim); część plików
+- Stopki niestandardowe — vc-prview / vc-research: „ _Created by Vetcoders (c)2026_" (verbatim); część plików
   (operator/partner/ownership/screenscribe/skillaunch) bez stopki — 1:1.
 - Quirki źródła zachowane 1:1: „braad" (vc-marbles), „handsoff" (vc-scaffold), `jp` zamiast `jq`? (vc-skillaunch),
   „dziurawy" fence szablonu w vc-workflow/references/phase-research, podwójny ukośnik `agents//…spawn.sh` w

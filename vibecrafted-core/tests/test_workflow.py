@@ -18,7 +18,7 @@ def _source_dir(tmp_path: Path) -> Path:
 
 
 def _write_run_meta(home: Path, payload: dict[str, object]) -> Path:
-    run_dir = home / "artifacts" / "VetCoders" / "vibecrafted" / "2026_0611" / "reports"
+    run_dir = home / "artifacts" / "Vetcoders" / "vibecrafted" / "2026_0611" / "reports"
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / f"{payload['run_id']}.meta.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -654,7 +654,9 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
                 "from pathlib import Path; import os, sys; "
                 "assert 'launcher truth worker complete' not in sys.stdin.read(); "
                 "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-                "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+                "'---\\nstatus: completed\\nnext_stage: polarize\\n"
+                "next_agent: codex\\ndou_index: 3\\n---\\nbody\\n', "
+                "encoding='utf-8'"
                 "); "
                 "print('launcher truth worker complete')"
             ),
@@ -696,6 +698,72 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
     assert truth["meta_payload"]["terminal"] is True
     assert truth["meta_payload"]["state"] == "report_validated"
     assert truth["meta_payload"]["report"] == payload["report"]
+    assert truth["next_stage"] == "polarize"
+    assert truth["next_agent"] == "codex"
+    assert truth["dou_index"] == 3
+
+
+def test_report_requested_next_stage_reads_report_frontmatter(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "report.md"
+    report.write_text(
+        "---\nstatus: completed\nnext_stage: marbles\n---\nbody\n",
+        encoding="utf-8",
+    )
+    assert workflow._report_requested_next_stage(str(report)) == "marbles"
+
+    bare = tmp_path / "bare.md"
+    bare.write_text("no frontmatter here\n", encoding="utf-8")
+    assert workflow._report_requested_next_stage(str(bare)) == ""
+    assert workflow._report_requested_next_stage("") == ""
+    assert workflow._report_requested_next_stage(str(tmp_path / "missing.md")) == ""
+
+
+def test_report_requested_next_agent_reads_report_frontmatter(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "report.md"
+    report.write_text(
+        "---\nstatus: completed\nnext_agent: junie\n---\nbody\n",
+        encoding="utf-8",
+    )
+    assert workflow._report_requested_next_agent(str(report)) == "junie"
+
+    bare = tmp_path / "bare.md"
+    bare.write_text("no frontmatter here\n", encoding="utf-8")
+    assert workflow._report_requested_next_agent(str(bare)) == ""
+    assert workflow._report_requested_next_agent("") == ""
+    assert workflow._report_requested_next_agent(str(tmp_path / "missing.md")) == ""
+
+
+def test_report_dou_index_reads_report_frontmatter(tmp_path: Path) -> None:
+    zero = tmp_path / "zero.md"
+    zero.write_text(
+        "---\nstatus: completed\ndou_index: 0\n---\nbody\n", encoding="utf-8"
+    )
+    # 0 is the whole point (ZERO DoU index) — it must survive as 0, not None.
+    assert workflow.report_dou_index(str(zero)) == 0
+
+    gaps = tmp_path / "gaps.md"
+    gaps.write_text(
+        "---\nstatus: completed\ndou_index: 7\n---\nbody\n", encoding="utf-8"
+    )
+    assert workflow.report_dou_index(str(gaps)) == 7
+
+    for invalid in ("banana", "-2", "true"):
+        bad = tmp_path / "bad.md"
+        bad.write_text(
+            f"---\nstatus: completed\ndou_index: {invalid}\n---\nbody\n",
+            encoding="utf-8",
+        )
+        assert workflow.report_dou_index(str(bad)) is None
+
+    bare = tmp_path / "bare.md"
+    bare.write_text("no frontmatter here\n", encoding="utf-8")
+    assert workflow.report_dou_index(str(bare)) is None
+    assert workflow.report_dou_index("") is None
+    assert workflow.report_dou_index(str(tmp_path / "missing.md")) is None
 
 
 def test_stop_run_terms_live_launcher_process_group(

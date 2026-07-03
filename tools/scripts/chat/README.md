@@ -81,4 +81,4 @@ Assistant: Jestem Svetliq - polski model AI specjalizujacy sie w medycynie weter
 
 ---
 
-_Copyright © 2024–2026 VetCoders_
+_Copyright © 2024–2026 Vetcoders_

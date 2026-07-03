@@ -99,12 +99,12 @@
     "options": {
       "pl": [
         "Minimal — Rust + Claude Code (~3 min build, ~600 MB)",
-        "Standard — Pełen framework VetCoders + 3 agent CLIs + tailnet (~15 min build, ~2.5 GB)",
+        "Standard — Pełen framework Vetcoders + 3 agent CLIs + tailnet (~15 min build, ~2.5 GB)",
         "SoTA — Standard + Metal/GPU passthrough + Lance steer index (~25 min build, ~4 GB)"
       ],
       "en": [
         "Minimal — Rust + Claude Code (~3 min build, ~600 MB)",
-        "Standard — Full VetCoders framework + 3 agent CLIs + tailnet (~15 min build, ~2.5 GB)",
+        "Standard — Full Vetcoders framework + 3 agent CLIs + tailnet (~15 min build, ~2.5 GB)",
         "SoTA — Standard + Metal/GPU passthrough + Lance steer index (~25 min build, ~4 GB)"
       ]
     }

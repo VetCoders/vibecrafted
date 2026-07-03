@@ -1,6 +1,6 @@
-// VibeCrafted vc-frame Configuration
-// Branded terminal multiplexer configuration for the VibeCrafted framework.
-// VibeCrafted with AI Agents (c)2026 VetCoders
+// Vibecrafted vc-frame Configuration
+// Branded terminal multiplexer configuration for the Vibecrafted framework.
+// Vibecrafted with AI Agents (c)2026 Vetcoders
 
 // ─── Theme ──────────────────────────────────────────────────────────────────────
 // Colors built around a dark base with amber/gold accents (craft)
@@ -27,9 +27,9 @@ themes {
 // same config dir (vc-frame auto-discovers nested theme blocks). Variants:
 //
 //   vetcoders-dragon   — red    — LibraxisAI server, central hub
-//   vetcoders-sztudio  — purple — Monika's desktop
-//   vetcoders-silver   — cyan   — Monika's laptop
-//   vetcoders-div0     — green  — Maciej's laptop, primary dev
+//   vetcoders-sztudio  — purple — desktop
+//   vetcoders-silver   — cyan   — laptop
+//   vetcoders-div0     — green  — laptop (primary dev)
 //   vibecrafted        — neutral default (this file)
 //
 // To switch theme per host, run `./config/vc-frame/auto-theme.sh` which emits

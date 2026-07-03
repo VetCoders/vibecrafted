@@ -10,7 +10,7 @@ directly from the repo-owned Python script.
 ## Why vendored?
 
 The default source lives in the
-[`vetcoders-tools`](https://github.com/VetCoders/vetcoders-tools) repo
+[`vetcoders-tools`](https://github.com/vetcoders/vetcoders-tools) repo
 (`installer/` sub-tree) and targets universal use (any repo,
 Python/Rust/anything). This directory is a vendored copy kept in sync —
 Vibecrafted must remain self-contained so that a fresh clone +

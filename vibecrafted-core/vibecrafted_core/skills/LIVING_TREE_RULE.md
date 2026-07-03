@@ -1,6 +1,6 @@
 # Living Tree Rule
 
-VetCoders work in one shared repository checkout.
+Vetcoders work in one shared repository checkout.
 
 Vibecrafted workflows do **not** create, switch to, or move work into git
 worktrees by default. Worktrees are not a harmless implementation detail here:

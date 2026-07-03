@@ -86,7 +86,7 @@ Trigger conditions (replace all bullets):
 
 ## Pipeline Position
 
-Where does this fit in the VetCoders workflow chain?
+Where does this fit in the Vetcoders workflow chain?
 
 - Upstream: TODO (e.g. follows `vc-init`, runs after `vc-research`)
 - Downstream: TODO (e.g. emits handoff for `vc-release` or `vc-dou`)
@@ -122,4 +122,4 @@ trigger phrase + expected behavior pair.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

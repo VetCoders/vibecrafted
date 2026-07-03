@@ -6,7 +6,7 @@
 // to .husky/warns/ so we don't leak credentials into the repo's git tree
 // (warns/ is gitignored but the file still lives on disk).
 //
-// Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+// Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 import { createInterface } from 'node:readline';
 

@@ -59,6 +59,7 @@ If invoked outside vc-frame, the framework attaches/creates the operator session
 
 - [vc-loctree](../foundations/vc-loctree/SKILL.md) — structural awareness
 - [vc-aicx](../foundations/vc-aicx/SKILL.md) — intentions and steerability
+
 </details>
 
 ## Repository Work Doctrine
@@ -266,4 +267,4 @@ research │                         │
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

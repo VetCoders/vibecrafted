@@ -181,7 +181,7 @@ def plugin_manifest(version: str, metadata: ListingMetadata) -> dict[str, object
         "version": version,
         "description": metadata.description,
         "author": {
-            "name": "VetCoders",
+            "name": "Vetcoders",
             "email": "hello@vetcoders.io",
         },
         "homepage": metadata.homepage,

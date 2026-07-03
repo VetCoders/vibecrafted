@@ -13,6 +13,12 @@
 #                vc-delegate, but the override env var is what the operator
 #                must use to invoke it — the gate stays strict by default).
 #
+# Scope note: this guards the AGENT MODEL PARITY axiom only. EXECUTION-PATH
+# state parity (both launch paths projecting equivalent control_plane/runs/<id>
+# .json) is a separate gate, owned by
+# vibecrafted-core/tests/test_run_state_parity.py::test_execution_path_state_parity
+# (W1-05). See runtime/docs/launcher-migration.md "Execution-Path Doctrine".
+#
 # This script is self-contained: it sources the library file under test
 # and assertion-driven. shellcheck-clean.
 

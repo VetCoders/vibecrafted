@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # vibecrafted-husky-template :: commit-msg
 #
-# Conventional Commits with optional [<agent>/<workflow>] prefix and optional
-# Vibecrafted agent/runtime trailers.
+# Conventional Commits with MANDATORY [<agent>/<workflow>] prefix (Vibecrafted
+# standard) plus the agent/runtime trailers when REQUIRE_AGENT_RUNTIME=1.
 #
-#   <type>(<scope>): <subject>
 #   [<agent>/<workflow>] <type>(<scope>): <subject>
 #
-# Types: feat fix docs style refactor perf test build ci chore revert
+# Types: feat fix docs style refactor perf test build ci chore revert release
 # Subject: 1..$HUSKY_COMMIT_MSG_SUBJECT_MAX chars after the colon
 #
-# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 set -euo pipefail
 
@@ -29,11 +28,14 @@ case "$first_line" in
   "Merge "*|"Revert "*|"fixup!"*|"squash!"*|"amend!"*) exit 0 ;;
 esac
 
-types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert|release'
 agent_prefix='\[[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_-]*\] '
 
+# Vibecrafted standard: the [<agent>/<workflow>] prefix is MANDATORY, not optional.
+# Set HUSKY_COMMIT_MSG_ALLOW_AGENT_PREFIX=0 only for non-agent repos that opt out
+# to bare Conventional Commits.
 if [ "$HUSKY_COMMIT_MSG_ALLOW_AGENT_PREFIX" = "1" ]; then
-  pattern="^(${agent_prefix})?(${types})(\\(.+\\))?: .{1,${HUSKY_COMMIT_MSG_SUBJECT_MAX}}$"
+  pattern="^(${agent_prefix})(${types})(\\(.+\\))?: .{1,${HUSKY_COMMIT_MSG_SUBJECT_MAX}}$"
 else
   pattern="^(${types})(\\(.+\\))?: .{1,${HUSKY_COMMIT_MSG_SUBJECT_MAX}}$"
 fi
@@ -41,9 +43,10 @@ fi
 if ! printf '%s' "$first_line" | grep -Eq "$pattern"; then
   husky_err "Invalid commit message subject."
   husky_log
-  husky_log "Format:  <type>(<scope>): <subject>"
   if [ "$HUSKY_COMMIT_MSG_ALLOW_AGENT_PREFIX" = "1" ]; then
-    husky_log "     or  [<agent>/<workflow>] <type>(<scope>): <subject>"
+    husky_log "Format:  [<agent>/<workflow>] <type>(<scope>): <subject>   (prefix mandatory)"
+  else
+    husky_log "Format:  <type>(<scope>): <subject>"
   fi
   husky_log
   husky_log "Types:   ${types//|/, }"

@@ -2,7 +2,7 @@
 title: Integrate agy and junie into vc-scaffold
 description: Plan for adapting the installation manifests, diagnostic utilities, and founder-first scaffold planning configs to include agy and junie
 type: implementation_plan
-project: VetCoders/vibecrafted
+project: vetcoders/vibecrafted
 created: 2026-05-23
 parent_branch: release/v2.0.0
 ---
@@ -23,7 +23,7 @@ Aby przejście na `agy` i `junie` było bezszwowe zarówno dla founderów, jak i
 
 ### Komponent: Bootstrapping frameworka
 
-#### [MODIFY] [scripts/install-foundations.sh](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/scripts/install-foundations.sh)
+#### [MODIFY] [scripts/install-foundations.sh](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/scripts/install-foundations.sh)
 
 - Zaktualizuj `AGENT_PACKAGES`, podmieniając Gemini na `agy`:
   ```diff
@@ -36,7 +36,7 @@ Aby przejście na `agy` i `junie` było bezszwowe zarówno dla founderów, jak i
   "junie:junie-cli"
   ```
 
-#### [MODIFY] [install.toml](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/install.toml)
+#### [MODIFY] [install.toml](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/install.toml)
 
 - Zaktualizuj opisy intro/reason tak, by powoływały się na `antigravity-cli (agy)` i `junie` zamiast `gemini-cli`.
 - W `[diagnostics.commands]` podmień `gemini` na `agy` i dodaj `junie`:
@@ -52,7 +52,7 @@ Aby przejście na `agy` i `junie` było bezszwowe zarówno dla founderów, jak i
 
 ### Komponent: Skrypty diagnostyki i instalatora
 
-#### [MODIFY] [scripts/vetcoders_install.py](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/scripts/vetcoders_install.py)
+#### [MODIFY] [scripts/vetcoders_install.py](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/scripts/vetcoders_install.py)
 
 - Zaktualizuj rdzeniową listę metadanych:
   ```python
@@ -70,12 +70,12 @@ Aby przejście na `agy` i `junie` było bezszwowe zarówno dla founderów, jak i
 
 ### Komponent: `skills/vc-scaffold/`
 
-#### [MODIFY] [SKILL.md](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/SKILL.md)
+#### [MODIFY] [SKILL.md](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/SKILL.md)
 
 - Zarejestruj `agy` i `junie` w prawidłowych targetach agent runtime dla planowania architektury.
 - Zaktualizuj definicje modeli, dodając konfiguracje JetBrains Junie i Antigravity Gemini.
 
-#### [NEW] [agy.yaml](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/agents/agy.yaml)
+#### [NEW] [agy.yaml](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/agents/agy.yaml)
 
 Utwórz mapowanie configu agenta scaffoldu dla `agy`:
 
@@ -86,7 +86,7 @@ agent:
   default_prompt: "Use /vc-scaffold to output robust structural plans while leveraging agy sandbox parameters."
 ```
 
-#### [NEW] [junie.yaml](file:///Users/polyversai/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/agents/junie.yaml)
+#### [NEW] [junie.yaml](file:///Users/tester/Libraxis/vc-runtime/vibecrafted/skills/vc-scaffold/agents/junie.yaml)
 
 Utwórz mapowanie configu agenta scaffoldu dla `junie`:
 

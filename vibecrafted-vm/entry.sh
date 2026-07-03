@@ -13,7 +13,7 @@
 #   LOCTREE_GPG_KEY_ID   — GPG key id for release-tag signing (optional)
 #   AICX_NO_MUTATION_WARN=1 — suppress aicx all/store mutation warning for scripts
 #
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 # ============================================================================
 
 set -euo pipefail
@@ -30,7 +30,7 @@ warn() { printf "${YELLOW}  ⚠${NC} %s\n" "$*" >&2; }
 
 # ── Banner ────────────────────────────────────────────────────────────────
 cat <<'EOF'
-⚒  vc-workspace — VetCoders / vibecrafted / loctree / aicx dev container
+⚒  vc-workspace — Vetcoders / vibecrafted / loctree / aicx dev container
    debian:trixie · multi-arch · tailnet-aware · 21 skills · 11 foundations
 EOF
 

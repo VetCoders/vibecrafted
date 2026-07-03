@@ -5,7 +5,7 @@
 # Reads <local-ref> <local-sha> <remote-ref> <remote-sha> from stdin to
 # compute the pushed-diff range for secret scanning.
 #
-# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 set -euo pipefail
 HUSKY_HOOK_NAME="pre-push"

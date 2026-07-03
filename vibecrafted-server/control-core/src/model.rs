@@ -169,8 +169,7 @@ pub fn coerce_int_value(value: &serde_json::Value) -> Option<i64> {
         serde_json::Value::String(s) => {
             let trimmed = s.trim();
             let body = trimmed.strip_prefix('-').unwrap_or(trimmed);
-            if !trimmed.is_empty() && !body.is_empty() && body.bytes().all(|b| b.is_ascii_digit())
-            {
+            if !trimmed.is_empty() && !body.is_empty() && body.bytes().all(|b| b.is_ascii_digit()) {
                 trimmed.parse::<i64>().ok()
             } else {
                 None
@@ -306,6 +305,287 @@ impl RunStatus {
     }
 }
 
+/// Nested lifecycle run state written by `lifecycle_runner.py`.
+///
+/// This intentionally sits beside [`RunStatus`]: lifecycle state is stageful and
+/// nested, while `RunStatus` is the legacy flat dashboard/API projection.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleRun {
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub workflow: String,
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub root: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub await_stages: bool,
+    #[serde(default)]
+    pub parent_run_id: Option<String>,
+    #[serde(default)]
+    pub operator_actions: Vec<LifecycleOperatorAction>,
+    #[serde(default)]
+    pub spec: serde_json::Value,
+    #[serde(default)]
+    pub supervisor: String,
+    #[serde(default)]
+    pub human_controls: Vec<String>,
+    #[serde(default)]
+    pub state_path: String,
+    #[serde(default)]
+    pub report_path: String,
+    #[serde(default)]
+    pub transcript_path: String,
+    #[serde(default)]
+    pub context_atlas: serde_json::Value,
+    #[serde(default)]
+    pub manifest: serde_json::Value,
+    #[serde(default)]
+    pub baton: LifecycleBaton,
+    #[serde(default)]
+    pub stages: Vec<LifecycleStage>,
+    #[serde(default)]
+    pub next_stage: String,
+    #[serde(default)]
+    pub error: String,
+    #[serde(default, deserialize_with = "de_optional_lifecycle_dou_index")]
+    pub dou_index: Option<LifecycleDouIndex>,
+    #[serde(default, deserialize_with = "de_nonnegative_int")]
+    pub accepted_dou: Option<i64>,
+    #[serde(default)]
+    pub accepted_dou_findings: Vec<serde_json::Value>,
+}
+
+impl LifecycleRun {
+    /// Build the compact read-model used by `/api/control/lifecycle` and the
+    /// dashboard. `updated_at` is normally the `state.json` mtime because the
+    /// lifecycle state file does not carry a canonical timestamp.
+    #[must_use]
+    pub fn summary(
+        &self,
+        updated_at: String,
+        report_dou_index: Option<i64>,
+    ) -> LifecycleRunSummary {
+        let state_dou = self.dou_index.as_ref().and_then(|dou| dou.value);
+        let stage_dou = self.stages.last().and_then(|stage| stage.dou_index);
+        let dou_index = state_dou
+            .or(report_dou_index)
+            .or(self.baton.dou_index)
+            .or(stage_dou);
+        let accepted_dou = self
+            .accepted_dou
+            .unwrap_or(self.accepted_dou_findings.len() as i64);
+        let dou_readiness = match dou_index {
+            Some(0) => "zero",
+            Some(_) => "open",
+            None => "unknown",
+        }
+        .to_string();
+
+        LifecycleRunSummary {
+            run_id: self.run_id.clone(),
+            workflow: self.workflow.clone(),
+            status: nonempty_or(&self.status, "unknown"),
+            agent: nonempty_or(&self.agent, "unknown"),
+            root: self.root.clone(),
+            current_stage: self.current_stage(),
+            next_stage: nonempty_or(&self.baton.next_stage, &self.next_stage),
+            next_agent: self.baton.next_agent.clone(),
+            exit_code: self.stages.last().and_then(|stage| stage.await_exit_code()),
+            dou_index,
+            baton_dou_index: self.baton.dou_index,
+            accepted_dou,
+            dou_readiness,
+            human_controls: self.human_controls.clone(),
+            human_controls_count: self.human_controls.len(),
+            operator_actions_count: self.operator_actions.len(),
+            state_path: self.state_path.clone(),
+            report_path: self.report_path.clone(),
+            transcript_path: self.transcript_path.clone(),
+            updated_at,
+            source: "lifecycle_runs".to_string(),
+        }
+    }
+
+    /// Lossy projection into the existing flat [`RunStatus`] surface.
+    #[must_use]
+    pub fn to_run_status(&self, updated_at: String, report_dou_index: Option<i64>) -> RunStatus {
+        let summary = self.summary(updated_at.clone(), report_dou_index);
+        let state = summary.status.clone();
+        let health = state_health(&state, &updated_at, Utc::now());
+        let final_health = if is_final_state(&state) || summary.exit_code.is_some() {
+            Health::Final
+        } else {
+            health
+        };
+
+        RunStatus {
+            run_id: summary.run_id,
+            state,
+            agent: summary.agent,
+            skill: nonempty_or(&summary.workflow, "lifecycle"),
+            mode: "lifecycle".to_string(),
+            root: summary.root.clone(),
+            operator_session: operator_session_name(&summary.root, &self.run_id),
+            latest_report: summary.report_path,
+            latest_transcript: summary.transcript_path,
+            last_error: self.error.clone(),
+            updated_at: summary.updated_at.clone(),
+            started_at: summary.updated_at,
+            health: final_health.as_str().to_string(),
+            source: summary.source,
+            lock_present: false,
+            exit_code: summary.exit_code,
+            liveness: if final_health == Health::Final {
+                "terminal".to_string()
+            } else {
+                String::new()
+            },
+            launcher_pid: None,
+            completed_at: String::new(),
+            session_id: String::new(),
+            current_loop: None,
+            total_loops: None,
+        }
+    }
+
+    fn current_stage(&self) -> String {
+        self.stages
+            .last()
+            .map(|stage| stage.id.clone())
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| self.baton.from_stage.clone())
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleBaton {
+    #[serde(default)]
+    pub from_stage: String,
+    #[serde(default)]
+    pub from_phase: String,
+    #[serde(default)]
+    pub next_stage: String,
+    #[serde(default)]
+    pub next_agent: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(default)]
+    pub previous_reports: Vec<String>,
+    #[serde(default, deserialize_with = "de_nonnegative_int")]
+    pub dou_index: Option<i64>,
+    #[serde(default)]
+    pub audit_after: String,
+    #[serde(default)]
+    pub fallback_stage: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleStage {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub workflow: String,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub agent: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub launch: serde_json::Value,
+    #[serde(default, rename = "await")]
+    pub await_result: serde_json::Value,
+    #[serde(default)]
+    pub commit_before: String,
+    #[serde(default)]
+    pub commit_after: String,
+    #[serde(default)]
+    pub changed_files: Vec<String>,
+    #[serde(default)]
+    pub new_commits: Vec<String>,
+    #[serde(default)]
+    pub transition: Option<LifecycleTransition>,
+    #[serde(default, deserialize_with = "de_nonnegative_int")]
+    pub dou_index: Option<i64>,
+}
+
+impl LifecycleStage {
+    fn await_exit_code(&self) -> Option<i64> {
+        self.await_result
+            .get("exit_code")
+            .and_then(coerce_int_value)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleTransition {
+    #[serde(default)]
+    pub next_stage: String,
+    #[serde(default)]
+    pub requested_next_stage: String,
+    #[serde(default)]
+    pub next_agent: String,
+    #[serde(default)]
+    pub requested_next_agent: String,
+    #[serde(default)]
+    pub conditions: Vec<String>,
+    #[serde(default)]
+    pub fallback_stage: String,
+    #[serde(default)]
+    pub audit_after: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleOperatorAction {
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub at: String,
+    #[serde(default)]
+    pub details: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleDouIndex {
+    #[serde(default, deserialize_with = "de_nonnegative_int")]
+    pub value: Option<i64>,
+    #[serde(default)]
+    pub stage: String,
+    #[serde(default)]
+    pub report: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LifecycleRunSummary {
+    pub run_id: String,
+    pub workflow: String,
+    pub status: String,
+    pub agent: String,
+    pub root: String,
+    pub current_stage: String,
+    pub next_stage: String,
+    pub next_agent: String,
+    pub exit_code: Option<i64>,
+    pub dou_index: Option<i64>,
+    pub baton_dou_index: Option<i64>,
+    pub accepted_dou: i64,
+    pub dou_readiness: String,
+    pub human_controls: Vec<String>,
+    pub human_controls_count: usize,
+    pub operator_actions_count: usize,
+    pub state_path: String,
+    pub report_path: String,
+    pub transcript_path: String,
+    pub updated_at: String,
+    pub source: String,
+}
+
 /// A control-plane event. Field-for-field mirror of `control_plane.Event`.
 ///
 /// On disk in `events.jsonl` each line carries `ts/run_id/kind/message/payload`
@@ -375,6 +655,29 @@ where
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(coerce_int_value(&value))
+}
+
+fn de_nonnegative_int<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(coerce_int_value(&value).filter(|value| *value >= 0))
+}
+
+fn de_optional_lifecycle_dou_index<'de, D>(
+    deserializer: D,
+) -> Result<Option<LifecycleDouIndex>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    if !value.is_object() {
+        return Ok(None);
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(serde::de::Error::custom)
 }
 
 impl AgentMeta {

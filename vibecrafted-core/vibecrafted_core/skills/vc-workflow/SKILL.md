@@ -115,7 +115,7 @@ sensory layer.
 3. **AICX (intentions)** — `aicx extract` if previous session output is too large
    or in raw JSONL.
 4. **PRView** — generate artifacts first if the workflow is part of a PR review.
-5. **ScreenScribe** — consume findings if the task originated from a visual demo.
+5. **Screenscribe** — consume findings if the task originated from a visual demo.
 
 ### Output: CONTEXT.md
 
@@ -300,4 +300,4 @@ State which phases apply at pipeline start.
 
 Before you report "done", walk around the truck — see [Verification Rule](../VERIFICATION_RULE.md): run the REAL artifact (launch the app/binary, not just `--version`), re-verify runtime, never trust upstream verification as proof, and check your own check. Gates green ≠ works. When composing implement-agent prompts, carry it into the dispatch footer.
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

@@ -58,7 +58,7 @@ Anything else lands in the tarball but is not auto-installed.
 ## Notarization contract (macOS)
 
 Binaries in `macos-*` subdirectories are expected to be signed with the
-VetCoders Developer ID and notarized via `xcrun notarytool`. The
+Vetcoders Developer ID and notarized via `xcrun notarytool`. The
 installer runs a basic `binary_runs` smoke test after copying — it does
 **not** re-run `codesign --verify` or `spctl --assess` today. That gate
 lives in the release pipeline, not on end-user machines.
@@ -67,7 +67,7 @@ To re-stamp locally before shipping:
 
 ```bash
 codesign --force --options runtime --timestamp \
-  --sign "Developer ID Application: VetCoders" \
+  --sign "Developer ID Application: Vetcoders" \
   tools/bin/macos-aarch64/aicx
 xcrun notarytool submit tools/bin/macos-aarch64/aicx \
   --keychain-profile vetcoders-notary --wait

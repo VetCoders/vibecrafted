@@ -143,11 +143,17 @@ def test_manifest_payload_is_json_ready() -> None:
 def test_required_lifecycle_manifests_are_single_source() -> None:
     expected = {
         "vc-ship": ("scaffold", "read"),
+        "vc-scaffold": ("scaffold", "read"),
+        "vc-implement": ("implement", "write"),
+        "vc-review": ("review", "read"),
+        "vc-workflow": ("workflow", "write"),
+        "vc-followup": ("followup", "read"),
         "vc-dou": ("dou", "read"),
         "vc-audit": ("audit", "read"),
         "vc-marbles": ("marbles", "write"),
         "vc-polarize": ("polarize", "write"),
         "vc-hydrate": ("hydrate", "write"),
+        "vc-release": ("release", "write"),
     }
 
     for workflow_id, (entry_stage, phase) in expected.items():

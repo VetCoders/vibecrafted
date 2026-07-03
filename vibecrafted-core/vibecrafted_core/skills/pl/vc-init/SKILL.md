@@ -54,7 +54,7 @@ vibecrafted init gemini --prompt 'Bootstrap context for the payments module'
 Zależności fundamentowe (ładowane wraz z frameworkiem): `vc-loctree`, `vc-aicx`.
 
 > 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚜𝚖𝚊𝚗𝚜𝚑𝚒𝚙 to odpowiedź na porażkę vibe codingu uwięzionego w
-> pułapce 80/20 ↔ 20/80. Zobacz [MANIFESTO_EN.md](https://raw.githubusercontent.com/VetCoders/vibecrafted/refs/heads/main/docs/runtime/MANIFESTO_EN.md).
+> pułapce 80/20 ↔ 20/80. Zobacz [MANIFESTO_EN.md](https://raw.githubusercontent.com/vetcoders/vibecrafted/refs/heads/main/docs/runtime/MANIFESTO_EN.md).
 > „Nie hejtuję vibe codingu. Doprowadził cię do launchu... ale founderzy, którzy zbudowali
 > w weekend na Cursorze, utknęli. Nie domkną dealów enterprise. Nie przejdą
 > security review. Ich integracja ze Stripe działa, dopóki nie przestanie."
@@ -63,7 +63,7 @@ Init to **techniczne due diligence**. Jesteśmy tu, żeby stabilizować. Działa
 kompletnego wstępnego przeglądu na vibe-codowanej bazie kodu, która złożonością przerosła
 połowę agenta logowania Google'a, to szybka droga do katastrofalnej awarii.
 
-Stosujemy aksjomaty VetCoders: **Percepcja ponad pamięć** oraz **Pozyskiwanie intencji
+Stosujemy aksjomaty Vetcoders: **Percepcja ponad pamięć** oraz **Pozyskiwanie intencji
 ponad RAG**. Nie ładujemy na ślepo miliona tokenów historycznego kontekstu — widzimy,
 czym kod jest _teraz_, i znajdujemy to, co zepsute na ścieżce krytycznej, zanim dotkniemy
 choćby jednej linii.
@@ -262,4 +262,4 @@ Prawda strukturalna bije sztuczne sprawdzenia.
 
 _„Percepcja. Intencje. Twarde fakty. Wtedy — i dopiero wtedy — stabilizuj."_
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

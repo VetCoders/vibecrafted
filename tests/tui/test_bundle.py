@@ -13,7 +13,7 @@ def test_parse_listing_metadata_reads_current_registry_fields() -> None:
     metadata = bundle.parse_listing_metadata(text)
 
     assert metadata.homepage == "https://vibecrafted.io/"
-    assert metadata.repository == "https://github.com/VetCoders/vibecrafted"
+    assert metadata.repository == "https://github.com/vetcoders/vibecrafted"
     assert metadata.documentation == "https://vibecrafted.io/en/quickstart/"
     assert metadata.faq == "https://vibecrafted.io/en/faq/"
     assert metadata.license.startswith("Business Source License 1.1")
@@ -112,7 +112,7 @@ def test_write_bundle_includes_bundled_tool_drop_in_slot(
             description="desc",
             keywords=("codex",),
             homepage="https://vibecrafted.io/",
-            repository="https://github.com/VetCoders/vibecrafted",
+            repository="https://github.com/vetcoders/vibecrafted",
             documentation="https://vibecrafted.io/en/quickstart/",
             faq="https://vibecrafted.io/en/faq/",
             license="Business Source License 1.1",

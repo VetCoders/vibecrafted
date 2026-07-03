@@ -55,11 +55,9 @@ EOF
 }
 
 _vetcoders_in_vc_frame() {
-  # vc-frame dual-emits VC_FRAME* and legacy ZELLIJ* pane env during transition.
-  # VC_FRAME=0 / ZELLIJ=0 are valid pane indexes — do NOT treat them as false.
-  [[ -n "${VC_FRAME_PANE_ID:-${ZELLIJ_PANE_ID:-}}" ]] \
-    || [[ -n "${VC_FRAME+set}" ]] \
-    || [[ -n "${ZELLIJ+set}" ]]
+  # VC_FRAME_* is the trusted attached-context signal. Legacy ZELLIJ_* values
+  # can leak from a parent shell and must not hijack visible launch targeting.
+  [[ -n "${VC_FRAME_PANE_ID:-}" ]] && [[ -n "${VC_FRAME_SESSION_NAME:-}" ]]
 }
 
 _vetcoders_guess_active_vc_frame_session() {
@@ -369,6 +367,11 @@ _vetcoders_prepare_operator_runtime() {
   fi
 
   if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
+    # Honour an explicitly-provided operator session as the visible target
+    # (vc-resume / CLI dispatch rely on this). Stale ambient leaks are already
+    # blocked by the tightened _vetcoders_in_vc_frame signal above, so dropping an
+    # explicit session here only breaks legitimate targeting.
+    export VC_FRAME_SESSION_NAME="${VC_FRAME_SESSION_NAME:-$VIBECRAFTED_OPERATOR_SESSION}"
     return 0
   fi
 

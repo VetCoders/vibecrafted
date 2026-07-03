@@ -20,8 +20,9 @@ use chrono::{DateTime, Utc};
 
 use crate::events::EventStream;
 use crate::model::{
-    AgentMeta, Event, FINAL_STATES, Health, RunStatus, RECENT_RUN_LIMIT, RUN_STALL_SECONDS,
-    is_final_state, merge_status, operator_session_name, parse_iso, skill_from_code, state_health,
+    AgentMeta, Event, FINAL_STATES, Health, LifecycleRun, LifecycleRunSummary, RECENT_RUN_LIMIT,
+    RUN_STALL_SECONDS, RunStatus, coerce_int_value, is_final_state, merge_status,
+    operator_session_name, parse_iso, skill_from_code, state_health,
 };
 
 /// Resolve `~`-prefixed paths against `$HOME`. Other paths pass through.
@@ -108,6 +109,18 @@ impl ControlPlane {
         self.control_plane_home().join("runtime_runs").join(run_id)
     }
 
+    /// `<home>/control_plane/lifecycle_runs`.
+    #[must_use]
+    pub fn lifecycle_runs_dir(&self) -> PathBuf {
+        self.control_plane_home().join("lifecycle_runs")
+    }
+
+    /// `<home>/control_plane/lifecycle_runs/<id>`.
+    #[must_use]
+    pub fn lifecycle_run_dir(&self, run_id: &str) -> PathBuf {
+        self.lifecycle_runs_dir().join(run_id)
+    }
+
     /// `<home>/control_plane/events.jsonl`.
     #[must_use]
     pub fn event_stream_path(&self) -> PathBuf {
@@ -176,7 +189,11 @@ impl ControlPlane {
         // the snapshot sync merges it into runs/<id>.json. Mirror the first probe
         // of control_plane.resolve_run so this frontend eye reads the same place
         // the runtime wrote (Niezmiennik 3 — one contract, many eyes).
-        self.resolve_runtime_run(target)
+        if let Some(run) = self.resolve_runtime_run(target) {
+            return Some(run);
+        }
+        self.resolve_lifecycle_run(target)
+            .map(|run| self.lifecycle_run_status(&run))
     }
 
     /// Resolve a run straight from `runtime_runs/<id>/` — the read-follows-write
@@ -251,6 +268,115 @@ impl ControlPlane {
         runs
     }
 
+    /// Resolve a full nested lifecycle run from `lifecycle_runs/<id>/state.json`.
+    #[must_use]
+    pub fn resolve_lifecycle_run(&self, run_id: &str) -> Option<LifecycleRun> {
+        let target = run_id.trim();
+        if target.is_empty() {
+            return None;
+        }
+        let state_path = self.lifecycle_run_dir(target).join("state.json");
+        let run = read_json::<LifecycleRun>(&state_path)?;
+        if run.run_id == target {
+            Some(run)
+        } else {
+            None
+        }
+    }
+
+    /// Full nested lifecycle runs, newest first by `state.json` mtime.
+    #[must_use]
+    pub fn load_lifecycle_runs(&self) -> Vec<LifecycleRun> {
+        let Ok(entries) = fs::read_dir(self.lifecycle_runs_dir()) else {
+            return Vec::new();
+        };
+        let mut runs = Vec::new();
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let state_path = entry.path().join("state.json");
+            let Some(run) = read_json::<LifecycleRun>(&state_path) else {
+                continue;
+            };
+            if run.run_id.is_empty() {
+                continue;
+            }
+            runs.push((modified_at(&state_path), run));
+        }
+        runs.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+        runs.into_iter().map(|(_, run)| run).collect()
+    }
+
+    /// Compact lifecycle summaries for list APIs and dashboard cards.
+    #[must_use]
+    pub fn load_lifecycle_run_summaries(&self) -> Vec<LifecycleRunSummary> {
+        self.load_lifecycle_runs()
+            .iter()
+            .map(|run| self.lifecycle_run_summary(run))
+            .collect()
+    }
+
+    /// Every lifecycle run as a flat status projection for existing state views.
+    #[must_use]
+    pub fn iter_lifecycle_run_status(&self) -> Vec<RunStatus> {
+        self.load_lifecycle_runs()
+            .iter()
+            .map(|run| self.lifecycle_run_status(run))
+            .collect()
+    }
+
+    fn lifecycle_run_summary(&self, run: &LifecycleRun) -> LifecycleRunSummary {
+        run.summary(
+            self.lifecycle_run_updated_at(run),
+            self.lifecycle_dou_index_from_reports(run),
+        )
+    }
+
+    fn lifecycle_run_status(&self, run: &LifecycleRun) -> RunStatus {
+        run.to_run_status(
+            self.lifecycle_run_updated_at(run),
+            self.lifecycle_dou_index_from_reports(run),
+        )
+    }
+
+    fn lifecycle_dou_index_from_reports(&self, run: &LifecycleRun) -> Option<i64> {
+        self.lifecycle_stage_report_path(run)
+            .as_deref()
+            .and_then(report_dou_index)
+            .or_else(|| report_dou_index(&self.lifecycle_report_path(run)))
+    }
+
+    fn lifecycle_state_path(&self, run: &LifecycleRun) -> PathBuf {
+        existing_or_canonical(
+            &run.state_path,
+            self.lifecycle_run_dir(&run.run_id).join("state.json"),
+        )
+    }
+
+    fn lifecycle_report_path(&self, run: &LifecycleRun) -> PathBuf {
+        existing_or_canonical(
+            &run.report_path,
+            self.lifecycle_run_dir(&run.run_id).join("report.md"),
+        )
+    }
+
+    fn lifecycle_stage_report_path(&self, run: &LifecycleRun) -> Option<PathBuf> {
+        let raw = run.stages.last()?.launch.get("report")?.as_str()?.trim();
+        if raw.is_empty() {
+            return None;
+        }
+        let path = PathBuf::from(raw);
+        path.is_file().then_some(path)
+    }
+
+    fn lifecycle_run_updated_at(&self, run: &LifecycleRun) -> String {
+        modified_at(&self.lifecycle_state_path(run))
+            .map(DateTime::<Utc>::from)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default()
+    }
+
     /// Read the newest-first event tail (default [`crate::model::EVENT_TAIL_LIMIT`]).
     #[must_use]
     pub fn read_event_tail(&self, limit: usize) -> Vec<Event> {
@@ -296,8 +422,8 @@ impl ControlPlane {
             }
         }
         for path in self.iter_marbles_state_files() {
-            if let Some(status) = read_json::<MarblesState>(&path)
-                .and_then(|state| state.normalize(now))
+            if let Some(status) =
+                read_json::<MarblesState>(&path).and_then(|state| state.normalize(now))
             {
                 absorb(status);
             }
@@ -307,6 +433,11 @@ impl ControlPlane {
         // sync merges the run (Niezmiennik 3). Only fills run ids no meta/lock/
         // marbles source already provided.
         for run in self.iter_runtime_run_status() {
+            if !merged.iter().any(|r| r.run_id == run.run_id) {
+                merged.push(run);
+            }
+        }
+        for run in self.iter_lifecycle_run_status() {
             if !merged.iter().any(|r| r.run_id == run.run_id) {
                 merged.push(run);
             }
@@ -321,8 +452,7 @@ impl ControlPlane {
         let active_runs = runs
             .iter()
             .filter(|run| {
-                matches!(run.health.as_str(), "active" | "stalled")
-                    && !is_final_state(&run.state)
+                matches!(run.health.as_str(), "active" | "stalled") && !is_final_state(&run.state)
             })
             .cloned()
             .collect();
@@ -389,6 +519,48 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     serde_json::from_str(&text).ok()
 }
 
+fn modified_at(path: &Path) -> Option<std::time::SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
+}
+
+fn existing_or_canonical(declared: &str, canonical: PathBuf) -> PathBuf {
+    if declared.is_empty() {
+        return canonical;
+    }
+    let declared = PathBuf::from(declared);
+    if declared.is_file() {
+        declared
+    } else {
+        canonical
+    }
+}
+
+fn report_dou_index(path: &Path) -> Option<i64> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut lines = text.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            break;
+        }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if key.trim() == "dou_index" {
+            return parse_nonnegative_i64(value.trim());
+        }
+    }
+    None
+}
+
+fn parse_nonnegative_i64(raw: &str) -> Option<i64> {
+    let value = raw.trim().trim_matches('"').trim_matches('\'');
+    coerce_int_value(&serde_json::Value::String(value.to_string())).filter(|item| *item >= 0)
+}
+
 /// Recursively collect files under `root` matching `pred`. Empty when `root`
 /// is absent. A small std-only stand-in for `Path.rglob`.
 fn rglob(root: &Path, pred: &dyn Fn(&Path) -> bool) -> Vec<PathBuf> {
@@ -428,7 +600,11 @@ fn normalize_lock(path: &Path, now: DateTime<Utc>) -> Option<RunStatus> {
     let root = get("root");
     let state = {
         let s = get("status");
-        if s.is_empty() { "running".to_string() } else { s }
+        if s.is_empty() {
+            "running".to_string()
+        } else {
+            s
+        }
     };
     let started_at = get("started");
     let mode = {
@@ -442,7 +618,11 @@ fn normalize_lock(path: &Path, now: DateTime<Utc>) -> Option<RunStatus> {
     };
     let agent = {
         let a = get("agent");
-        if a.is_empty() { "unknown".to_string() } else { a }
+        if a.is_empty() {
+            "unknown".to_string()
+        } else {
+            a
+        }
     };
     Some(RunStatus {
         run_id: run_id.to_string(),

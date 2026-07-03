@@ -2,10 +2,10 @@
 
 Local control-plane viewer for the Vibecrafted control plane (scaffold editor writes artifacts — local-only). **One core, two frontends.** The Python runtime (`vibecrafted-core/vibecrafted_core/control_plane.py`) is the source of truth that _writes_ `~/.vibecrafted/control_plane/`; this Rust workspace gives a typed, **read-only** view of the same data over HTTP.
 
-| crate          | role                                                                                                                                                  |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `control-core` | read-model: `ControlPlane` / `StateView`, the `*.meta.json` + `*.lock` + `marbles/**/state.json` merge, events. Never writes control-plane snapshots. |
-| `web`          | Leptos 0.8 SSR + axum app. Serves the console shell, the scaffold review surface, and the control-plane read API.                                     |
+| crate          | role                                                                                                                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `control-core` | read-model: `ControlPlane` / `StateView`, the `*.meta.json` + `*.lock` + `marbles/**/state.json` + `lifecycle_runs/**/state.json` merge, events. Never writes control-plane snapshots. |
+| `web`          | Leptos 0.8 SSR + axum app. Serves the console shell, the scaffold review surface, and the control-plane read API.                                                                      |
 
 > Installed by `make install-all` as part of the product runtime. `make install-server`
 > remains the focused server-only install target.
@@ -46,17 +46,27 @@ make server SERVER_ADDR=127.0.0.1:8080   # pick another address
 
 Reads against the live `~/.vibecrafted/control_plane/` (or `$VIBECRAFTED_HOME`):
 
-| route                            | returns                                                                                 |
-| -------------------------------- | --------------------------------------------------------------------------------------- |
-| `GET /api/control/state`         | merged `StateView` — `active_runs`, `recent_runs`, `warnings`, `events`, `generated_at` |
-| `GET /api/control/runs`          | every `runs/<id>.json` snapshot, newest-first, with `count`                             |
-| `GET /api/control/runs/{run_id}` | a single run, or `404` JSON                                                             |
+| route                                 | returns                                                                                                                 |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/control/state`              | merged `StateView` — `active_runs`, `recent_runs`, `warnings`, `events`, `generated_at`; includes lifecycle projections |
+| `GET /api/control/runs`               | every `runs/<id>.json` snapshot, newest-first, with `count`                                                             |
+| `GET /api/control/runs/{run_id}`      | a single flat run projection, including lifecycle runs, or `404` JSON                                                   |
+| `GET /api/control/lifecycle`          | lifecycle run summaries from `control_plane/lifecycle_runs/`, newest-first, with DoU readiness and controls             |
+| `GET /api/control/lifecycle/{run_id}` | the full nested lifecycle `state.json`, or `404` JSON                                                                   |
+
+Lifecycle summaries surface workflow, status, current stage, baton next
+stage/agent, human controls, operator action count, accepted DoU, and
+`dou_readiness`. `ZERO DoU` is shown only when `dou_index` resolves to integer
+`0` from state, baton/stage data, or the latest worker report fallback; absent
+values stay unknown.
 
 Smoke it:
 
 ```bash
 curl -s http://127.0.0.1:3024/api/control/state | python3 -m json.tool | head
 curl -s http://127.0.0.1:3024/api/control/runs  | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"],"runs")'
+curl -s http://127.0.0.1:3024/api/control/lifecycle | python3 -c 'import sys,json;print(json.load(sys.stdin)["count"],"lifecycle runs")'
+curl -s http://127.0.0.1:3024/api/control/lifecycle/<run_id> | python3 -m json.tool | head
 ```
 
 ## Verify

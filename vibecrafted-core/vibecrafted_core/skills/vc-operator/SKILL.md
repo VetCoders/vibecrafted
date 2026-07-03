@@ -194,6 +194,29 @@ allowed for parallel recon or small bounded research inside the operator
 session, but dispatched worker slices need telemetry, launch cards, reports,
 transcripts, meta, and awaitable state.
 
+### Visible Dispatch (vc-frame default — non-negotiable when a session is live)
+
+When a vc-frame operator session is live (`VC_FRAME_SESSION_NAME` is set), every
+attended fleet dispatch MUST launch in the **visible** runtime so each worker
+opens as a vc-frame tab the operator watches directly. A headless, unwatchable
+dispatch is the failure mode, not the safe default — it blinds the operator,
+forces them to ask "is it running?", and pushes the conductor into relaying
+status in a panic instead of both simply watching the pane.
+
+- **CLI auto-selects visible.** `vibecrafted <skill> <agent> --file <brief>`
+  picks the `terminal` runtime automatically when an operator session exists,
+  and degrades to headless ONLY when no session is present (degrade-not-die).
+  Prefer the CLI for attended dispatch — it does the right thing by default.
+- **MCP launcher does NOT auto-select.** `vc_run_launch` / `vc_launch` default to
+  `runtime="headless"` and do not detect `VC_FRAME_SESSION_NAME`. Dispatching
+  through MCP with a live session therefore REQUIRES an explicit
+  `runtime="visible"` (or `"terminal"`). Passing — or defaulting to — `headless`
+  while a session is live is a dispatch error: it strands the worker as an
+  invisible orphan the operator never sees.
+- **Headless is for the unattended lane only:** cron heartbeats, no-session
+  CI/headless hosts, and runs the operator explicitly chose to background. Never
+  for work the operator is sitting and watching.
+
 ## Plan Mutation Allowance
 
 The operator may skip, add, reorder, or regroup prompts, and may cherry-pick

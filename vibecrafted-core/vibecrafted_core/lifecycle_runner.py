@@ -18,6 +18,7 @@ from .workflow import (
     WorkflowLaunchSpec,
     await_launch_truth,
     launch_workflow,
+    report_dou_index,
 )
 from .workflows.registry import workflow_manifest, workflow_manifest_payload
 from .workflows.model import WorkflowManifest, WorkflowStage
@@ -38,6 +39,11 @@ class LifecycleRunSpec:
     start_stage: str = ""
     count: int | None = None
     depth: int | None = None
+    parent_run_id: str = ""
+    # Baton cargo: stage reports accumulated by earlier runs in the relay.
+    # Continuation runs (approve / force-audit) seed these so the next stage
+    # prompt keeps consuming what the previous Read/Write stages produced.
+    previous_reports: tuple[str, ...] = ()
 
 
 def _lifecycle_run_id(workflow_id: str) -> str:
@@ -246,6 +252,48 @@ def _lifecycle_await_hard_cap_seconds() -> float | None:
     return 21600.0
 
 
+def _surfaced_dou_index(payload: dict[str, Any]) -> int | None:
+    """Validated worker-reported DoU index from an await/launch payload.
+
+    ``bool`` is an ``int`` subclass in Python — reject it explicitly so a
+    stray ``dou_index: true`` never reads as 1.
+    """
+    value = payload.get("dou_index")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if value >= 0 else None
+
+
+def _state_dou_value(state: dict[str, Any]) -> int | None:
+    dou = state.get("dou_index")
+    if not isinstance(dou, dict):
+        return None
+    value = dou.get("value")
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _lifecycle_max_stage_launches(manifest: WorkflowManifest) -> int:
+    """Ceiling on stage launches per lifecycle run.
+
+    Fallback edges (audit -> marbles) and worker-requested steering
+    (``next_stage`` in the report frontmatter) make the stage graph cyclic by
+    design — the umbrella may walk backwards. This cap turns a steering loop
+    that never converges into an explicit failure instead of an unbounded
+    dispatch spree. Override with ``VIBECRAFTED_LIFECYCLE_MAX_STAGES``.
+    """
+    raw = str(os.environ.get("VIBECRAFTED_LIFECYCLE_MAX_STAGES") or "").strip()
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = 0
+        if value > 0:
+            return value
+    return max(6, 3 * len(manifest.stages))
+
+
 class LifecycleRunner:
     def __init__(
         self,
@@ -282,6 +330,9 @@ class LifecycleRunner:
             root,
             task=f"{manifest.id}: {source_prompt[:160] or spec.file or 'lifecycle run'}",
         )
+        previous_reports: list[str] = [
+            str(path).strip() for path in spec.previous_reports if str(path).strip()
+        ]
         state: dict[str, Any] = {
             "run_id": run_id,
             "workflow": manifest.id,
@@ -289,6 +340,21 @@ class LifecycleRunner:
             "root": str(root),
             "status": "launching",
             "await_stages": spec.await_stages,
+            "parent_run_id": spec.parent_run_id,
+            "operator_actions": [],
+            "spec": {
+                "workflow_id": manifest.id,
+                "agent": spec.agent,
+                "prompt": source_prompt,
+                "file": spec.file,
+                "root": str(root),
+                "runtime": spec.runtime,
+                "await_stages": spec.await_stages,
+                "start_stage": current_stage,
+                "count": spec.count,
+                "depth": spec.depth,
+                "previous_reports": list(previous_reports),
+            },
             "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
             "human_controls": list(manifest.human_controls),
             "state_path": str(state_path),
@@ -305,16 +371,26 @@ class LifecycleRunner:
             "baton": {
                 "from_stage": "",
                 "next_stage": current_stage,
+                "next_agent": spec.agent,
                 "reason": "initial",
-                "previous_reports": [],
+                "previous_reports": list(previous_reports),
+                "dou_index": None,
             },
             "stages": [],
         }
         self._write_state(state_path, state)
 
-        previous_reports: list[str] = []
+        max_stage_launches = _lifecycle_max_stage_launches(manifest)
         current = current_stage
+        current_agent = spec.agent
         while current:
+            if len(state["stages"]) >= max_stage_launches:
+                state["status"] = "failed"
+                state["error"] = (
+                    f"lifecycle stage cap reached ({max_stage_launches} launches); "
+                    f"steering loop suspected before stage: {current}"
+                )
+                break
             stage = manifest.stage(current)
             if stage is None:
                 state["status"] = "failed"
@@ -324,6 +400,7 @@ class LifecycleRunner:
                 manifest=manifest,
                 stage=stage,
                 spec=spec,
+                agent=stage.agent or current_agent,
                 source_prompt=source_prompt,
                 root=root,
                 previous_reports=previous_reports,
@@ -336,12 +413,19 @@ class LifecycleRunner:
             ) as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             if not spec.await_stages:
+                # The worker writes this report while the operator decides;
+                # the baton must carry it into the approved continuation.
+                launched_report = str(record["launch"].get("report") or "").strip()
+                if launched_report:
+                    previous_reports.append(launched_report)
                 state["status"] = "launching"
                 state["next_stage"] = stage.next_stage
                 state["baton"] = self._baton(
                     stage=stage,
                     next_stage=stage.next_stage,
+                    next_agent=current_agent,
                     previous_reports=previous_reports,
+                    dou_index=_state_dou_value(state),
                     reason="stage_launched_without_await",
                 )
                 break
@@ -353,6 +437,14 @@ class LifecycleRunner:
             record["status"] = (
                 "completed" if await_result.get("artifact_ok") else "failed"
             )
+            reported_dou = _surfaced_dou_index(await_result)
+            if reported_dou is not None:
+                record["dou_index"] = reported_dou
+                state["dou_index"] = {
+                    "value": reported_dou,
+                    "stage": stage.id,
+                    "report": str(record["launch"].get("report") or ""),
+                }
             record["commit_after"] = _git_head(root)
             record["git_after"] = _git_status(root)
             record["git_snapshot_after"] = _git_worktree_snapshot(
@@ -389,9 +481,12 @@ class LifecycleRunner:
             self._write_state(state_path, state)
 
             next_stage = self._next_stage(manifest, stage, await_result)
+            current_agent = self._next_agent(current_agent, await_result)
             record["transition"] = {
                 "next_stage": next_stage,
                 "requested_next_stage": str(await_result.get("next_stage") or ""),
+                "next_agent": current_agent,
+                "requested_next_agent": str(await_result.get("next_agent") or ""),
                 "conditions": list(stage.transition_conditions),
                 "fallback_stage": stage.fallback_stage,
                 "audit_after": stage.audit_after,
@@ -399,7 +494,9 @@ class LifecycleRunner:
             state["baton"] = self._baton(
                 stage=stage,
                 next_stage=next_stage,
+                next_agent=current_agent,
                 previous_reports=previous_reports,
+                dou_index=_state_dou_value(state),
                 reason="awaited_stage_completed",
             )
             if not next_stage:
@@ -419,6 +516,7 @@ class LifecycleRunner:
         manifest: WorkflowManifest,
         stage: WorkflowStage,
         spec: LifecycleRunSpec,
+        agent: str,
         source_prompt: str,
         root: Path,
         previous_reports: list[str],
@@ -432,7 +530,7 @@ class LifecycleRunner:
             context=context,
         )
         launch_spec = WorkflowLaunchSpec(
-            agent=spec.agent,
+            agent=agent,
             mode=stage.workflow,
             skill=stage.workflow,
             prompt=prompt,
@@ -450,6 +548,7 @@ class LifecycleRunner:
             "id": stage.id,
             "name": stage.name,
             "workflow": stage.workflow,
+            "agent": agent,
             "phase": stage.phase,
             "can_modify_code": stage.can_modify_code,
             "tooling": list(stage.tooling),
@@ -482,6 +581,15 @@ class LifecycleRunner:
         )
         allowed_artifacts = ", ".join(stage.allowed_artifacts) or "none"
         human_controls = ", ".join(manifest.human_controls) or "none"
+        known_agents = ", ".join(sorted(SUPPORTED_AGENTS))
+        dou_contract = ""
+        if stage.workflow == "dou":
+            dou_contract = (
+                "\n- dou_index: <int> — REQUIRED for DoU stages: the count of open"
+                "\n  Definition-of-Undone findings you measured (gaps the operator has"
+                "\n  consciously accepted via accept-dou do not count as open);"
+                "\n  0 = ZERO DoU index, the launch-ready target."
+            )
         return f"""Vibecrafted Lifecycle Runtime
 
 Workflow: {manifest.id} ({manifest.name})
@@ -501,6 +609,12 @@ READ phase rule:
 
 WRITE phase rule:
 - Code changes are allowed, but changed files must be reported.
+
+Lifecycle steering (optional, via your report YAML frontmatter):
+- next_stage: <stage-id> — steer the lifecycle forward or backward; unknown
+  stage ids are ignored (manifest-validated). No key = manifest order.
+- next_agent: <agent-id> — hand the baton to that agent for the following
+  stages ({known_agents}); unknown agents are ignored.{dou_contract}
 
 Previous stage reports:
 {previous}
@@ -527,79 +641,119 @@ Operator prompt:
             return stage.audit_after
         return stage.next_stage
 
+    def _next_agent(self, current_agent: str, await_result: dict[str, Any]) -> str:
+        """Sticky baton handoff: a valid worker-requested ``next_agent`` becomes
+        the holder for the following stages until re-steered; unknown agents
+        are ignored (mirrors unknown ``next_stage`` handling)."""
+        requested = str(await_result.get("next_agent") or "").strip()
+        if requested and requested in SUPPORTED_AGENTS:
+            return requested
+        return current_agent
+
     def _baton(
         self,
         *,
         stage: WorkflowStage,
         next_stage: str,
+        next_agent: str,
         previous_reports: list[str],
+        dou_index: int | None,
         reason: str,
     ) -> dict[str, Any]:
         return {
             "from_stage": stage.id,
             "from_phase": stage.phase,
             "next_stage": next_stage,
+            "next_agent": next_agent,
             "fallback_stage": stage.fallback_stage,
             "audit_after": stage.audit_after,
             "reason": reason,
             "previous_reports": list(previous_reports),
+            "dou_index": dou_index,
         }
 
     def _write_state(self, path: Path, state: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        write_lifecycle_state(path, state)
 
     def _write_report(self, path: Path, state: dict[str, Any]) -> None:
-        stages = state.get("stages") or []
-        lines = [
-            f"# Lifecycle run {state.get('run_id')}",
-            "",
-            f"- workflow: {state.get('workflow')}",
-            f"- status: {state.get('status')}",
-            f"- agent: {state.get('agent')}",
-            f"- root: {state.get('root')}",
-            f"- context_atlas_ok: {state.get('context_atlas', {}).get('ok')}",
-            f"- supervisor: {state.get('supervisor')}",
-            "- human_controls: " + ", ".join(state.get("human_controls") or []),
-            "",
-            "## Stages",
-        ]
-        for stage in stages:
-            lines.extend(
-                [
-                    "",
-                    f"- {stage.get('id')} ({stage.get('phase')}): {stage.get('status')}",
-                    f"  - run_id: {stage.get('launch', {}).get('run_id', '')}",
-                    f"  - report: {stage.get('launch', {}).get('report', '')}",
-                    f"  - commit_before: {stage.get('commit_before', '')}",
-                    f"  - commit_after: {stage.get('commit_after', '')}",
-                    f"  - exit_code: {stage.get('await', {}).get('exit_code', '')}",
-                    f"  - artifact_ok: {stage.get('await', {}).get('artifact_ok', '')}",
-                    "  - transition_conditions: "
-                    + ", ".join(stage.get("transition_conditions") or []),
-                    "  - allowed_artifacts: "
-                    + ", ".join(stage.get("allowed_artifacts") or []),
-                    "  - new_commits: " + ", ".join(stage.get("new_commits") or []),
-                    "  - changed_files: " + ", ".join(stage.get("changed_files") or []),
-                ]
-            )
-        baton = state.get("baton") or {}
+        write_lifecycle_report(path, state)
+
+
+def write_lifecycle_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(state, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
+    stages = state.get("stages") or []
+    lines = [
+        f"# Lifecycle run {state.get('run_id')}",
+        "",
+        f"- workflow: {state.get('workflow')}",
+        f"- status: {state.get('status')}",
+        f"- agent: {state.get('agent')}",
+        f"- root: {state.get('root')}",
+        f"- context_atlas_ok: {state.get('context_atlas', {}).get('ok')}",
+        f"- supervisor: {state.get('supervisor')}",
+        "- human_controls: " + ", ".join(state.get("human_controls") or []),
+    ]
+    if state.get("parent_run_id"):
+        lines.append(f"- parent_run_id: {state.get('parent_run_id')}")
+    dou = state.get("dou_index")
+    if isinstance(dou, dict) and dou.get("value") is not None:
+        lines.append(f"- dou_index: {dou.get('value')} (stage: {dou.get('stage', '')})")
+    accepted_dou = state.get("accepted_dou_findings") or []
+    if accepted_dou:
+        lines.append(f"- accepted_dou_findings: {len(accepted_dou)}")
+    lines.extend(["", "## Stages"])
+    for stage in stages:
         lines.extend(
             [
                 "",
-                "## Baton",
-                f"- from_stage: {baton.get('from_stage', '')}",
-                f"- next_stage: {baton.get('next_stage', '')}",
-                f"- reason: {baton.get('reason', '')}",
+                f"- {stage.get('id')} ({stage.get('phase')}): {stage.get('status')}",
+                f"  - agent: {stage.get('agent', '')}",
+                f"  - run_id: {stage.get('launch', {}).get('run_id', '')}",
+                f"  - report: {stage.get('launch', {}).get('report', '')}",
+                f"  - commit_before: {stage.get('commit_before', '')}",
+                f"  - commit_after: {stage.get('commit_after', '')}",
+                f"  - exit_code: {stage.get('await', {}).get('exit_code', '')}",
+                f"  - artifact_ok: {stage.get('await', {}).get('artifact_ok', '')}",
+                "  - transition_conditions: "
+                + ", ".join(stage.get("transition_conditions") or []),
+                "  - allowed_artifacts: "
+                + ", ".join(stage.get("allowed_artifacts") or []),
+                "  - new_commits: " + ", ".join(stage.get("new_commits") or []),
+                "  - changed_files: " + ", ".join(stage.get("changed_files") or []),
             ]
         )
-        if state.get("error"):
-            lines.extend(["", "## Error", str(state["error"])])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    baton = state.get("baton") or {}
+    lines.extend(
+        [
+            "",
+            "## Baton",
+            f"- from_stage: {baton.get('from_stage', '')}",
+            f"- next_stage: {baton.get('next_stage', '')}",
+            f"- next_agent: {baton.get('next_agent', '')}",
+            f"- reason: {baton.get('reason', '')}",
+        ]
+    )
+    operator_actions = state.get("operator_actions") or []
+    if operator_actions:
+        lines.extend(["", "## Operator actions"])
+        for action in operator_actions:
+            details = action.get("details") or {}
+            summary = ", ".join(f"{key}={details[key]}" for key in sorted(details))
+            lines.append(
+                f"- {action.get('at', '')} {action.get('action', '')}"
+                + (f" ({summary})" if summary else "")
+            )
+    if state.get("error"):
+        lines.extend(["", "## Error", str(state["error"])])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 class LifecycleSupervisor:
@@ -618,13 +772,23 @@ class LifecycleSupervisor:
     def status(self, state: dict[str, Any]) -> dict[str, Any]:
         stages = list(state.get("stages") or [])
         last_stage = stages[-1] if stages else {}
+        dou_value = _state_dou_value(state)
+        if dou_value is None:
+            # Primary no-await mode: the runner exits before the worker writes
+            # its report, so the DoU index only exists in the live frontmatter.
+            dou_value = report_dou_index(
+                str((last_stage.get("launch") or {}).get("report") or "")
+            )
         return {
             "run_id": state.get("run_id"),
             "workflow": state.get("workflow"),
             "status": state.get("status"),
             "current_stage": last_stage.get("id", ""),
             "next_stage": (state.get("baton") or {}).get("next_stage", ""),
+            "next_agent": (state.get("baton") or {}).get("next_agent", ""),
             "exit_code": (last_stage.get("await") or {}).get("exit_code", ""),
+            "dou_index": dou_value,
+            "accepted_dou": len(state.get("accepted_dou_findings") or []),
             "state_path": state.get("state_path"),
             "report_path": state.get("report_path"),
         }
@@ -646,10 +810,21 @@ def _print_lifecycle_receipt(state: dict[str, Any]) -> None:
     print("=" * (24 + len(title)))
 
 
+def _control_verbs() -> frozenset[str]:
+    from .lifecycle_control import CONTROL_VERBS
+
+    return CONTROL_VERBS
+
+
 def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
     manifest = workflow_manifest(workflow_id)
     if manifest is None:
         raise ValueError(f"Unsupported lifecycle workflow: {workflow_id}")
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    if args_list and args_list[0] in _control_verbs():
+        from .lifecycle_control import lifecycle_control_main
+
+        return lifecycle_control_main(args_list, workflow_id=manifest.id)
     supports_loop_options = any(
         stage.workflow == "marbles" for stage in manifest.stages
     )
@@ -669,7 +844,7 @@ def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
         parser.add_argument("--count", type=int)
         parser.add_argument("--depth", type=int)
     parser.add_argument("--json", action="store_true")
-    args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+    args = parser.parse_args(args_list)
 
     state = run_lifecycle(
         LifecycleRunSpec(

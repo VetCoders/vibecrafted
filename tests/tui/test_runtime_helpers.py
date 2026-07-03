@@ -382,6 +382,11 @@ def test_await_pane_targets_operator_tab_with_bundled_vc_frame_without_path_leak
             "VIBECRAFTED_RUNTIME_HOME": str(runtime_home),
             "VIBECRAFTED_ROOT": str(helper_root),
             "VC_FRAME": "operator",
+            # _vetcoders_in_vc_frame trusts only the VC_FRAME_* attached-context
+            # pair; without it the spawn is skipped (legacy VC_FRAME alone is
+            # not an attachment signal). CI has no frame, so set it explicitly.
+            "VC_FRAME_PANE_ID": "1",
+            "VC_FRAME_SESSION_NAME": "operator",
         },
     )
 
@@ -779,7 +784,7 @@ def test_runtime_core_preserves_origin_org_repo_resolution(tmp_path: Path) -> No
             "remote",
             "add",
             "origin",
-            "https://github.com/VetCoders/vibecrafted.git",
+            "https://github.com/vetcoders/vibecrafted.git",
         ],
         check=True,
         capture_output=True,
@@ -793,7 +798,7 @@ def test_runtime_core_preserves_origin_org_repo_resolution(tmp_path: Path) -> No
     )
 
     assert result.returncode == 0
-    assert result.stdout.strip() == "VetCoders/vibecrafted"
+    assert result.stdout.strip() == "vetcoders/vibecrafted"
 
 
 def test_research_summary_does_not_execute_await_command(tmp_path: Path) -> None:

@@ -7,6 +7,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "vibecrafted-core"))
 
-from vibecrafted_core.wrappers import supervised_skill_main
+from vibecrafted_core.wrappers import review_main
 
-raise SystemExit(supervised_skill_main("review"))
+raise SystemExit(review_main())

@@ -1,5 +1,5 @@
 // Vibecrafted — Sidebar
-// Created by VetCoders
+// Created by Vetcoders
 
 import AppKit
 

@@ -12,7 +12,7 @@
 # but having no rustfmt on PATH yields a config that mentions the gap, not
 # one that enables a broken hook.
 #
-# Vibecrafted with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# Vibecrafted with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 
 set -euo pipefail
 

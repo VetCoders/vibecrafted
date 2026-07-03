@@ -16,8 +16,8 @@
 use std::collections::BTreeSet;
 
 use chrono::Duration;
-use control_core::model::{coerce_int_value, AgentMeta, Health};
-use control_core::{parse_iso, state_health, EventStream, RunStatus};
+use control_core::model::{AgentMeta, Health, coerce_int_value};
+use control_core::{EventStream, LifecycleRun, RunStatus, parse_iso, state_health};
 
 /// Real `runs/marb-000.json` — a terminal run (exit_code present, lock absent).
 const GOLDEN_RUN_FINAL: &str = r#"{
@@ -26,10 +26,10 @@ const GOLDEN_RUN_FINAL: &str = r#"{
   "agent": "codex",
   "skill": "marbles",
   "mode": "implement",
-  "root": "/Users/maciejgad/hosted/VetCoders/vista",
+  "root": "/Users/you/hosted/vetcoders/vista",
   "operator_session": "vista-marb-000",
-  "latest_report": "/Users/maciejgad/.vibecrafted/artifacts/VetCoders/Vista/2026_0329/reports/report.md",
-  "latest_transcript": "/Users/maciejgad/.vibecrafted/artifacts/VetCoders/Vista/2026_0329/reports/report.transcript.log",
+  "latest_report": "/Users/you/.vibecrafted/artifacts/vetcoders/Vista/2026_0329/reports/report.md",
+  "latest_transcript": "/Users/you/.vibecrafted/artifacts/vetcoders/Vista/2026_0329/reports/report.transcript.log",
   "last_error": "",
   "updated_at": "2026-03-29T09:21:15.681613+00:00",
   "started_at": "2026-03-29T09:21:15.681613+00:00",
@@ -53,10 +53,10 @@ const GOLDEN_RUN_ACTIVE: &str = r#"{
   "agent": "claude",
   "skill": "justdo",
   "mode": "implement",
-  "root": "/Users/maciejgad/vc-workspace/VetCoders/vibecrafted",
+  "root": "/Users/you/vc-workspace/vetcoders/vibecrafted",
   "operator_session": "vibecrafted-just-194457-58333",
-  "latest_report": "/Users/maciejgad/.vibecrafted/artifacts/report.md",
-  "latest_transcript": "/Users/maciejgad/.vibecrafted/artifacts/report.transcript.log",
+  "latest_report": "/Users/you/.vibecrafted/artifacts/report.md",
+  "latest_transcript": "/Users/you/.vibecrafted/artifacts/report.transcript.log",
   "last_error": "",
   "updated_at": "2026-06-01T01:45:09.807447+00:00",
   "started_at": "2026-06-01T01:45:09.807447+00:00",
@@ -79,10 +79,10 @@ const GOLDEN_META: &str = r#"{
   "status": "launching",
   "agent": "claude",
   "mode": "implement",
-  "root": "/Users/maciejgad/vc-workspace/VetCoders/vibecrafted",
+  "root": "/Users/you/vc-workspace/vetcoders/vibecrafted",
   "input": "/tmp/prompt.md",
-  "report": "/Users/maciejgad/.vibecrafted/artifacts/report.md",
-  "transcript": "/Users/maciejgad/.vibecrafted/artifacts/report.transcript.log",
+  "report": "/Users/you/.vibecrafted/artifacts/report.md",
+  "transcript": "/Users/you/.vibecrafted/artifacts/report.transcript.log",
   "launcher": "/tmp/launch.sh",
   "prompt_id": "20260531_1944_demo",
   "run_id": "just-194457-58333",
@@ -97,14 +97,78 @@ const GOLDEN_META: &str = r#"{
 /// A real `events.jsonl` line — note it has no `cursor` field.
 const GOLDEN_EVENT_LINE: &str = r#"{"ts": "2026-04-18T14:52:42.135162+00:00", "run_id": "marb-000618-001", "kind": "state", "message": "marb-000618-001 entered failed", "payload": {"previous_state": "", "state": "failed", "agent": "gemini", "skill": "marbles", "mode": "marbles", "health": "final"}}"#;
 
+/// Representative lifecycle `state.json` captured from the Python writer shape
+/// on 2026-07-02. Lifecycle state is intentionally nested and must not be folded
+/// into the flat `RunStatus` golden schema above.
+const GOLDEN_LIFECYCLE_STATE: &str = r#"{
+  "run_id": "life-ship-260702-123238-24000",
+  "workflow": "vc-ship",
+  "agent": "codex",
+  "root": "/Users/you/vc-workspace/vetcoders/vibecrafted",
+  "status": "launching",
+  "await_stages": false,
+  "parent_run_id": null,
+  "operator_actions": [],
+  "spec": {"workflow_id": "vc-ship", "agent": "codex"},
+  "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
+  "human_controls": [
+    "approve_transition",
+    "interrupt_workflow",
+    "force_audit",
+    "accept_dou",
+    "choose_fallback_stage"
+  ],
+  "state_path": "/Users/you/.vibecrafted/control_plane/lifecycle_runs/life-ship-260702-123238-24000/state.json",
+  "report_path": "/Users/you/.vibecrafted/control_plane/lifecycle_runs/life-ship-260702-123238-24000/report.md",
+  "transcript_path": "/Users/you/.vibecrafted/control_plane/lifecycle_runs/life-ship-260702-123238-24000/transcript.log",
+  "context_atlas": {"ok": true},
+  "manifest": {"id": "vc-ship"},
+  "baton": {
+    "from_stage": "scaffold",
+    "from_phase": "read",
+    "next_stage": "implement",
+    "next_agent": "codex",
+    "reason": "stage_launched_without_await",
+    "previous_reports": ["/Users/you/.vibecrafted/artifacts/report.md"],
+    "dou_index": null,
+    "audit_after": "",
+    "fallback_stage": ""
+  },
+  "stages": [{
+    "id": "scaffold",
+    "name": "VC Scaffold",
+    "workflow": "scaffold",
+    "phase": "read",
+    "agent": "codex",
+    "status": "completed",
+    "launch": {"report": "/Users/you/.vibecrafted/artifacts/report.md"},
+    "await": {},
+    "commit_before": "abc123",
+    "commit_after": "def456",
+    "changed_files": [],
+    "new_commits": [],
+    "transition": {
+      "next_stage": "implement",
+      "requested_next_stage": "",
+      "next_agent": "codex",
+      "requested_next_agent": "",
+      "conditions": ["stage_completed"],
+      "fallback_stage": "",
+      "audit_after": ""
+    }
+  }],
+  "dou_index": {"value": 0, "stage": "audit", "report": "/Users/you/.vibecrafted/artifacts/report.md"},
+  "accepted_dou": 1,
+  "accepted_dou_findings": [{"id": "accepted-1"}]
+}"#;
+
 fn assert_run_roundtrips_without_loss(golden: &str) -> RunStatus {
     let run: RunStatus = serde_json::from_str(golden).expect("RunStatus deserialises");
     let reserialised = serde_json::to_value(&run).expect("RunStatus serialises");
     let original: serde_json::Value = serde_json::from_str(golden).expect("golden is valid JSON");
 
     // No field gained or lost: the key set is identical.
-    let original_keys: BTreeSet<&String> =
-        original.as_object().expect("object").keys().collect();
+    let original_keys: BTreeSet<&String> = original.as_object().expect("object").keys().collect();
     let reserialised_keys: BTreeSet<&String> =
         reserialised.as_object().expect("object").keys().collect();
     assert_eq!(
@@ -126,7 +190,10 @@ fn final_run_snapshot_roundtrips() {
     assert_eq!(run.run_id, "marb-000");
     assert_eq!(run.exit_code, Some(0));
     assert_eq!(run.launcher_pid, None);
-    assert!(run.is_terminal(), "completed + exit_code should be terminal");
+    assert!(
+        run.is_terminal(),
+        "completed + exit_code should be terminal"
+    );
     assert_eq!(run.health, "final");
 }
 
@@ -156,7 +223,10 @@ fn meta_normalizes_to_runstatus() {
     assert_eq!(fresh.state, "launching");
     assert_eq!(fresh.source, "agent-meta");
     assert_eq!(fresh.operator_session, "vibecrafted-just-194457-58333");
-    assert_eq!(fresh.latest_report, "/Users/maciejgad/.vibecrafted/artifacts/report.md");
+    assert_eq!(
+        fresh.latest_report,
+        "/Users/you/.vibecrafted/artifacts/report.md"
+    );
     assert_eq!(fresh.exit_code, None);
     assert_eq!(fresh.launcher_pid, Some(59321));
     assert!(!fresh.lock_present, "meta source never sets lock_present");
@@ -215,6 +285,26 @@ fn event_line_parses_with_default_cursor() {
         event.payload.get("state").and_then(|v| v.as_str()),
         Some("failed")
     );
+}
+
+#[test]
+fn lifecycle_state_parses_and_projects_without_runstatus_schema_drift() {
+    let lifecycle: LifecycleRun =
+        serde_json::from_str(GOLDEN_LIFECYCLE_STATE).expect("LifecycleRun deserialises");
+    let summary = lifecycle.summary("2026-07-02T19:32:38Z".to_string(), None);
+
+    assert_eq!(lifecycle.run_id, "life-ship-260702-123238-24000");
+    assert_eq!(summary.workflow, "vc-ship");
+    assert_eq!(summary.current_stage, "scaffold");
+    assert_eq!(summary.next_stage, "implement");
+    assert_eq!(summary.dou_index, Some(0));
+    assert_eq!(summary.dou_readiness, "zero");
+    assert_eq!(summary.accepted_dou, 1);
+
+    let projected = lifecycle.to_run_status("2026-07-02T19:32:38Z".to_string(), None);
+    assert_eq!(projected.source, "lifecycle_runs");
+    assert_eq!(projected.skill, "vc-ship");
+    assert_eq!(projected.mode, "lifecycle");
 }
 
 #[test]

@@ -43,7 +43,7 @@ _(Read the full use case: [The 4 ways AI-coded MVPs break in production](docs/TH
 
 ---
 
-## The VetCoders Axioms
+## The Vetcoders Axioms
 
 1. **AI-Native, not AI-assisted:** We don't write the code. We craft the delivery.
 2. **Perception over Memory:** The agent must see the structural truth now, not rely on stale summaries.
@@ -207,5 +207,5 @@ For enterprise: **info@vibecrafted.io**
 </p>
 
 <p align="center">
-  <sub>(c)2024-2026 VetCoders · <a href="https://vibecrafted.io">vibecrafted.io</a></sub>
+  <sub>(c)2024-2026 Vetcoders · <a href="https://vibecrafted.io">vibecrafted.io</a></sub>
 </p>

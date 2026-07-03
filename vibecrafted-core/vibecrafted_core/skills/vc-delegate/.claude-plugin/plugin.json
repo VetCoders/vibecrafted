@@ -2,7 +2,7 @@
   "name": "vc-delegate",
   "description": "Native in-session subagent delegation. Use /vc-delegate to invoke.",
   "author": {
-    "name": "VetCoders",
+    "name": "Vetcoders",
     "email": "hello@vetcoders.io"
   }
 }

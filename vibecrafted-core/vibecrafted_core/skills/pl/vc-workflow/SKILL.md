@@ -98,7 +98,7 @@ warstwa sensoryczna.
 3. **AICX (intencje)** — `aicx extract`, jeśli wyjście poprzedniej sesji jest zbyt duże
    lub w surowym JSONL.
 4. **PRView** — wygeneruj najpierw artefakty, jeśli workflow jest częścią review PR-a.
-5. **ScreenScribe** — skonsumuj findingi, jeśli task wziął się z wizualnego dema.
+5. **Screenscribe** — skonsumuj findingi, jeśli task wziął się z wizualnego dema.
 
 ### Wyjście: CONTEXT.md
 
@@ -279,4 +279,4 @@ Na starcie pipeline'u zadeklaruj, które fazy mają zastosowanie.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

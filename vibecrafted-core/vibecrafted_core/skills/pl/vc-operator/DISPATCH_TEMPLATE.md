@@ -223,7 +223,7 @@ Suchar: {{SUCHAR_PUNCHLINE}} {{SUCHAR_KAOMOJI}}
 ---
 
 Referencja wypełnionego przykładu:
-`$HOME/.vibecrafted/artifacts/VetCoders/vibecrafted/2026_0521/operator-reform-2.0.0/briefs/W1-A_runner.md`
+`$HOME/.vibecrafted/artifacts/vetcoders/vibecrafted/2026_0521/operator-reform-2.0.0/briefs/W1-A_runner.md`
 
 ```text
 =======================
@@ -237,4 +237,4 @@ Suchar: Why does the template never write itself?
 Because it already showed where the variables live. (._.)
 ```
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

@@ -2,21 +2,21 @@
 name: vc-screenscribe
 version: 1.2.1
 description: >
-  ScreenScribe workflow skill for analyzing screencast recordings and for
-  working inside the ScreenScribe repo itself. Use this whenever the user
-  mentions ScreenScribe, screencast review, app review videos, bug demo
+  Screenscribe workflow skill for analyzing screencast recordings and for
+  working inside the Screenscribe repo itself. Use this whenever the user
+  mentions Screenscribe, screencast review, app review videos, bug demo
   recordings, HTML Pro reports, transcript-first artifact extraction,
   extracting actionable findings from narrated videos, batch video analysis,
-  or wants to debug/build/improve the ScreenScribe project or the default
-  https://github.com/VetCoders/Screenscribe repository. Prefer this skill even
-  if the user does not explicitly ask for "ScreenScribe" but clearly wants a
+  or wants to debug/build/improve the Screenscribe project or the default
+  https://github.com/vetcoders/Screenscribe repository. Prefer this skill even
+  if the user does not explicitly ask for "Screenscribe" but clearly wants a
   spoken screen recording turned into structured engineering findings.
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-# Vibecrafted. ScreenScribe
+# Vibecrafted. Screenscribe
 
 Użyj tego skilla do dwóch powiązanych zadań:
 
@@ -46,7 +46,7 @@ zawiedzie lub przeoczy jakąś powierzchnię, dopisz feedback do `~/.vibecrafted
 
 ## Czym jest screenscribe
 
-ScreenScribe to pipeline screencastów, nie mgliste „coś do wideo z AI".
+Screenscribe to pipeline screencastów, nie mgliste „coś do wideo z AI".
 
 Jego największa wartość to produkcja artefaktów:
 
@@ -173,7 +173,7 @@ To najlepszy kształt handoffu, gdy:
 
 Kanoniczne repo upstream:
 
-- [VetCoders/Screenscribe](https://github.com/VetCoders/Screenscribe)
+- [vetcoders/Screenscribe](https://github.com/vetcoders/Screenscribe)
 
 Gdy potrzebna jest praca z repo, preferuj bieżący checkout screenscribe, jeśli użytkownik
 już go otworzył. Nie zakładaj stałej lokalnej ścieżki. Jeśli żaden checkout nie jest
@@ -189,7 +189,7 @@ Wejdź do repo tylko wtedy, gdy:
 Wtedy preferuj:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe review /absolute/path/to/video.mov
 ```
 
@@ -198,14 +198,14 @@ uv run python -m screenscribe review /absolute/path/to/video.mov
 Pojedyncze wideo:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe review /absolute/path/to/video.mov
 ```
 
 Batch:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe review /path/video1.mov /path/video2.mov -o /absolute/output/dir
 ```
 
@@ -222,7 +222,7 @@ Przydatne flagi:
 ### Preprocess
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe preprocess /absolute/path/to/video.mov
 ```
 
@@ -236,7 +236,7 @@ Przydatne flagi:
 ### Transcribe
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe transcribe /absolute/path/to/video.mov -o /absolute/path/to/transcript.txt
 ```
 
@@ -245,7 +245,7 @@ uv run python -m screenscribe transcribe /absolute/path/to/video.mov -o /absolut
 Preferowane:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 make analyze VIDEO=/absolute/path/to/video.mov PORT=8766
 ```
 
@@ -312,7 +312,7 @@ Nie wymyślaj wartości konfiguracji ani nie udawaj sukcesu API.
 Edytując lub debugując sam screenscribe, używaj natywnych bramek repo:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 make lint
 make typecheck
 make test
@@ -350,7 +350,7 @@ Nie skacz od razu do obwiniania modelu przed sprawdzeniem granic etapów pipelin
 Użyj tej struktury odpowiedzi, gdy jest pomocna:
 
 ```markdown
-Current state: what the input is and what ScreenScribe path we are using.
+Current state: what the input is and what Screenscribe path we are using.
 Proposal: which command/workflow best fits and why.
 Migration plan: concrete steps or fixes if repo work is involved.
 Quick win: the smallest useful run or fix right now.
@@ -369,7 +369,7 @@ Wejście: „Mam video, ale chcę tylko transcript, timestampy i pack dla agenta
 Działanie: uruchom `screenscribe preprocess /absolute/path/to/video.mov`, zwróć katalog bundle'a i listę artefaktów.
 
 **Przykład 3**
-Wejście: „W repo https://github.com/VetCoders/Screenscribe coś popsuliśmy w HTML Pro."
+Wejście: „W repo https://github.com/vetcoders/Screenscribe coś popsuliśmy w HTML Pro."
 Działanie: potraktuj to jako pracę z repo, użyj natywnych komend repo i bramek jakości, a nie zwykłego przebiegu review.
 
 ## Antywzorce

@@ -315,8 +315,11 @@ def _artifact_projection(
     result = dict(run)
     errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
     artifact_ok = run.get("artifact_ok")
+    terminal_state = state in {"report_validated", "completed", "closed"}
+    has_live_identity = bool(str(run.get("session_id") or "").strip())
+    defer_report_gate = state in ACTIVE_STATES and has_live_identity
 
-    if report:
+    if report and not defer_report_gate:
         report_path = Path(report)
         try:
             if not report_path.exists():
@@ -327,7 +330,7 @@ def _artifact_projection(
         except OSError:
             if "report_invalid" not in errors:
                 errors.append("report_invalid")
-    elif state in {"report_validated", "completed", "closed"}:
+    elif terminal_state:
         if "report_missing" not in errors:
             errors.append("report_missing")
 
@@ -365,6 +368,13 @@ def _artifact_projection(
     result["transcript_bytes"] = transcript_bytes
     result["transcript_growth"] = transcript_growth
     result["heartbeat_at"] = str(run.get("heartbeat_at") or run.get("updated_at") or "")
+    if terminal_state and artifact_ok and not errors:
+        if _coerce_int(result.get("exit_code")) is None:
+            result["exit_code"] = 0
+        if not str(result.get("completed_at") or ""):
+            result["completed_at"] = str(result.get("updated_at") or _now().isoformat())
+        result["liveness"] = "terminal"
+        result.pop("recovery_required", None)
     result["operator_state"] = _operator_state(result)
     return result
 

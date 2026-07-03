@@ -14,7 +14,7 @@ responsibly.
 
 **Do not open a public issue.**
 
-Email: **void@div0.space**
+Email: **hello@vetcoders.io**
 
 Include:
 

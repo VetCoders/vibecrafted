@@ -9,6 +9,8 @@ async fn main() {
     use std::path::PathBuf;
 
     use axum::Router;
+    use axum::http::StatusCode;
+    use axum::routing::get;
     use leptos::config::{Env, LeptosOptions};
     use leptos::logging::log;
     use leptos_axum::{LeptosRoutes, generate_route_list};
@@ -78,6 +80,10 @@ async fn main() {
             .into_owned()
     }
 
+    async fn favicon() -> StatusCode {
+        StatusCode::NO_CONTENT
+    }
+
     let leptos_options = LeptosOptions::builder()
         .output_name("vibecrafted-server-web")
         .site_root(configured_site_root())
@@ -94,6 +100,7 @@ async fn main() {
             let opts = leptos_options.clone();
             move || shell(opts.clone())
         })
+        .route("/favicon.ico", get(favicon))
         .merge(scaffold_routes())
         .merge(control_routes())
         .fallback(leptos_axum::file_and_error_handler(shell))

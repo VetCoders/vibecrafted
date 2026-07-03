@@ -129,12 +129,12 @@ Tryby:
 - **Niespójności bramek**: `MERGE_GATE.json` mówi „All checks passed", ale istnieją WARN/findingi → P2 [TOOLING]. Rekomendacja: rozróżnij „All blocking checks passed" vs „Non-blocking issues present".
 - **Dryf gałęzi**: pliki zmienione poza scope PR-a (CI, infra, niezwiązany config) → P1 przy >10 plikach. Rekomendacja: zrób rebase na gałęzi bazowej.
 
-## Integracja ze ScreenScribe
+## Integracja ze Screenscribe
 
-vc-review może analizować nagrania screencastów obok diffów kodu, gdy ScreenScribe jest dostępny jako narzędzie fundamentowe. Użyj do:
+vc-review może analizować nagrania screencastów obok diffów kodu, gdy Screenscribe jest dostępny jako narzędzie fundamentowe. Użyj do:
 
 - Przeglądu zachowania runtime (wizualne potwierdzenie tego, co kod robi)
 - Analizy demo buga (narracyjne nagrania ekranu → ustrukturyzowane findingi)
 - Przebiegów review UX (screencast flow użytkownika → problemy UX z poziomem P)
 
-ScreenScribe jest opcjonalny. Jeśli nie jest zainstalowany, vc-review operuje wyłącznie na artefaktach kodu.
+Screenscribe jest opcjonalny. Jeśli nie jest zainstalowany, vc-review operuje wyłącznie na artefaktach kodu.

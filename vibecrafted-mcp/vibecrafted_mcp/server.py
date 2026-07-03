@@ -29,7 +29,11 @@ from vibecrafted_core import (
     control_plane as _control_plane,
     doctor as _doctor,
     git as _git,
+    lifecycle_control as _lifecycle_control,
     workflow as _workflow,
+)
+from vibecrafted_core.lifecycle_runner import (
+    LifecycleSupervisor as _LifecycleSupervisor,
 )
 
 from . import synthesis as _synthesis
@@ -163,7 +167,7 @@ def _clamp_float(value: float | None, default: float, ceiling: float) -> float:
 def _bounded_text_read(
     path_value: str,
     *,
-    offset: int = 0,
+    offset: int | None = 0,
     max_bytes: int = OBSERVE_MAX_BYTES,
 ) -> dict[str, Any]:
     """Read at most ``max_bytes`` from ``path_value`` starting at byte offset."""
@@ -186,6 +190,8 @@ def _bounded_text_read(
     except OSError:
         return payload
 
+    if offset is None:
+        start = max(size - limit, 0)
     start = min(start, size)
     payload["offset"] = start
     payload["next_offset"] = start
@@ -206,7 +212,7 @@ def _bounded_text_read(
         {
             "next_offset": next_offset,
             "bytes": len(chunk),
-            "truncated": next_offset < size,
+            "truncated": start > 0 or next_offset < size,
             "text": chunk.decode("utf-8", errors="replace"),
         }
     )
@@ -302,8 +308,10 @@ def _observe_run_once(
     target = str(run_id or "").strip()
     cursor_payload = dict(cursor or {})
     event_offset = _clamp_int(cursor_payload.get("event_offset"), 0, 2**63 - 1)
-    transcript_offset = _clamp_int(
-        cursor_payload.get("transcript_offset"), 0, 2**63 - 1
+    transcript_offset = (
+        None
+        if "transcript_offset" not in cursor_payload
+        else _clamp_int(cursor_payload.get("transcript_offset"), 0, 2**63 - 1)
     )
     with _override_vibecrafted_home(home):
         run = _control_plane.lookup_run(target)
@@ -421,6 +429,49 @@ def _run_report_resource_payload(run_id: str) -> dict[str, Any]:
         "found": run is not None or resolved is not None,
         "report": _bounded_text_read(report_path, max_bytes=OBSERVE_MAX_BYTES),
     }
+
+
+def _lifecycle_state_summary(state: dict[str, Any]) -> dict[str, Any]:
+    """Bounded projection of a lifecycle run state for MCP payloads.
+
+    Full lifecycle ``state.json`` carries prompts, manifests, and git
+    snapshots — too heavy for a tool result. This mirrors the CLI
+    ``status`` verb: supervisor projection plus operator-relevant extras.
+    """
+    payload = _LifecycleSupervisor().status(state)
+    payload["parent_run_id"] = str(state.get("parent_run_id") or "")
+    payload["operator_actions"] = len(state.get("operator_actions") or [])
+    payload["human_controls"] = [
+        str(item) for item in (state.get("human_controls") or [])
+    ]
+    baton = dict(state.get("baton") or {})
+    payload["previous_reports"] = [
+        str(path) for path in (baton.get("previous_reports") or [])
+    ]
+    return payload
+
+
+def _lifecycle_verb(
+    run_id: str,
+    workflow_id: str,
+    home: str | None,
+    action: Any,
+) -> dict[str, Any]:
+    """Resolve a lifecycle run and apply one traced operator verb.
+
+    The whole resolve→load→act sequence runs under the ``home`` override
+    because the verbs write state/report/transcript and may launch
+    continuation runs through the control plane.
+    """
+    try:
+        with _override_vibecrafted_home(home):
+            state_path = _lifecycle_control.resolve_lifecycle_state_path(
+                run_id, workflow_id="" if run_id else workflow_id
+            )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            return {"ok": True, "result": action(state_path, state)}
+    except (ValueError, OSError, json.JSONDecodeError) as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def build_server() -> Any:
@@ -685,6 +736,166 @@ def build_server() -> Any:
         """Mutating: mark an active run as blocked with an audit trail."""
         with _override_vibecrafted_home(home):
             return _workflow.block_run(run_id, reason=reason, note=note)
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def vc_lifecycle_runs(
+        workflow_id: str = "",
+        limit: int = 10,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """List lifecycle runs (vc-ship and stage wrappers), newest first.
+
+        Read-only mirror of the ``runs`` operator verb over
+        ``control_plane/lifecycle_runs/``. ``workflow_id`` filters to one
+        manifest (e.g. ``vc-ship``); empty lists all workflows.
+        """
+        with _override_vibecrafted_home(home):
+            runs = _lifecycle_control.list_lifecycle_runs(
+                workflow_id=workflow_id, limit=max(int(limit), 0)
+            )
+        return {"count": len(runs), "runs": runs}
+
+    @mcp.tool(annotations={"readOnlyHint": True})
+    def vc_lifecycle_status(
+        run_id: str = "",
+        workflow_id: str = "",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """One lifecycle run's status: stage, baton, controls, cargo.
+
+        Read-only mirror of the ``status`` operator verb. Empty ``run_id``
+        resolves the newest run (optionally scoped to ``workflow_id``).
+        """
+        return _lifecycle_verb(
+            run_id,
+            workflow_id,
+            home,
+            lambda _path, state: _lifecycle_state_summary(state),
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
+    def vc_lifecycle_approve(
+        run_id: str = "",
+        workflow_id: str = "",
+        force: bool = False,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating: approve_transition — launch the baton's next_stage.
+
+        Spawns a parent-linked continuation run carrying the baton cargo
+        (previous stage reports). Refuses while cargo reports are missing
+        or empty unless ``force=True`` (the override is traced in
+        ``operator_actions``). Validated against the run's human_controls.
+        """
+        return _lifecycle_verb(
+            run_id,
+            workflow_id,
+            home,
+            lambda path, state: _lifecycle_state_summary(
+                _lifecycle_control.approve_transition(path, state, force=force)
+            ),
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": True,
+            "openWorldHint": True,
+        }
+    )
+    def vc_lifecycle_interrupt(
+        run_id: str = "",
+        workflow_id: str = "",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating: interrupt_workflow — stop the live stage, mark the run."""
+        return _lifecycle_verb(
+            run_id,
+            workflow_id,
+            home,
+            lambda path, state: _lifecycle_control.interrupt_workflow(path, state),
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
+    def vc_lifecycle_force_audit(
+        run_id: str = "",
+        workflow_id: str = "",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating: force_audit — make an audit the next lifecycle move.
+
+        Steers the baton to the manifest's audit stage, or dispatches a
+        parent-linked standalone vc-audit run for single-stage manifests.
+        """
+
+        def _act(path: Path, state: dict[str, Any]) -> dict[str, Any]:
+            outcome = _lifecycle_control.force_audit(path, state)
+            if isinstance(outcome.get("run"), dict):
+                outcome = dict(outcome)
+                outcome["run"] = _lifecycle_state_summary(outcome["run"])
+            return outcome
+
+        return _lifecycle_verb(run_id, workflow_id, home, _act)
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
+    def vc_lifecycle_accept_dou(
+        finding: str,
+        run_id: str = "",
+        workflow_id: str = "",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating: accept_dou — consciously accept a DoU gap with a trace."""
+        return _lifecycle_verb(
+            run_id,
+            workflow_id,
+            home,
+            lambda path, state: _lifecycle_control.accept_dou(path, state, finding),
+        )
+
+    @mcp.tool(
+        annotations={
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "openWorldHint": True,
+        }
+    )
+    def vc_lifecycle_fallback(
+        stage: str,
+        run_id: str = "",
+        workflow_id: str = "",
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Mutating: choose_fallback_stage — steer the baton to an earlier stage.
+
+        Manifest-validated; unknown stage ids are rejected with the known
+        stage list in the error.
+        """
+        return _lifecycle_verb(
+            run_id,
+            workflow_id,
+            home,
+            lambda path, state: _lifecycle_control.choose_fallback_stage(
+                path, state, stage
+            ),
+        )
 
     @mcp.tool(annotations={"readOnlyHint": True})
     def vc_loct_capabilities(timeout: float = 5.0) -> dict[str, Any]:

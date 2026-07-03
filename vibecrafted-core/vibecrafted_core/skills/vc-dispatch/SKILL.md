@@ -88,8 +88,15 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
 2. **Dispatch**: one prompt file (never argv — `ps`-public, ARG_MAX, broken
    newlines), four layers per the checklist. Launch:
    `bash -c 'ulimit -f unlimited; vibecrafted <skill> <agent> --file <p.md>'`
-   (shells may carry soft `ulimit -f` → SIGXFSZ/exit 153). Record the receipt
-   (run_id, report, transcript, meta) in the tracker.
+   (shells may carry soft `ulimit -f` → SIGXFSZ/exit 153). **Visible by default:**
+   when a vc-frame session is live (`VC_FRAME_SESSION_NAME` set) the CLI launcher
+   auto-selects the `terminal` runtime and the worker opens as a vc-frame tab the
+   operator watches. Do NOT dispatch headless into a live session — that strands
+   an invisible orphan and forces hand-relayed status. The MCP launchers
+   (`vc_run_launch` / `vc_launch`) default `runtime="headless"` and do NOT detect
+   the session, so when dispatching through MCP pass `runtime="visible"`
+   explicitly, or use the CLI. Headless is the unattended/cron lane only. Record
+   the receipt (run_id, report, transcript, meta) in the tracker.
 3. **Spanko**: await through artifacts, never by staring at a pane. Use the
    dedicated command as the standard dispatcher loop:
    `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>' --tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'`
@@ -213,4 +220,4 @@ from wave divergence) · Loctree (structural truth before text search).
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

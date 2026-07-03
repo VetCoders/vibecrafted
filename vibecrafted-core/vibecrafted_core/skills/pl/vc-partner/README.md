@@ -1,4 +1,4 @@
-# VetCoders Partner
+# Vetcoders Partner
 
 Proaktywna postawa wspólnego sterowania dla sesji, w których operator i agent
 muszą zachować pierwotny kształt, a jednocześnie posuwać się naprzód zdecydowanie.

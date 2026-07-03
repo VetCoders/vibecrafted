@@ -11,7 +11,7 @@ Official submit/help surfaces below were re-checked on 2026-04-11 before this pa
 - Secondary tagline: Ship AI-built software without the vibe hangover.
 - Core promise: Take the repo your AI agents already produced and force it through structural mapping, convergence loops, install truth, packaging, and launch-readiness checks until it is fit to ship.
 - Website: https://vibecrafted.io/
-- Repository: https://github.com/VetCoders/vibecrafted
+- Repository: https://github.com/vetcoders/vibecrafted
 - Docs: https://vibecrafted.io/en/quickstart/
 - FAQ: https://vibecrafted.io/en/faq/
 - Contact: info@vibecrafted.io
@@ -129,7 +129,7 @@ Prepare these fields once, then reuse them across directories:
   https://vibecrafted.io/
 
 - Product URL
-  https://github.com/VetCoders/vibecrafted
+  https://github.com/vetcoders/vibecrafted
 
 - Primary CTA
   Guided install
@@ -295,7 +295,7 @@ launch fields:
 | Tagline          | `Release engine for AI-built software.`                                                                                                                                                                                                                 |
 | Secondary line   | `Ship AI-built software without the vibe hangover.`                                                                                                                                                                                                     |
 | Website          | `https://vibecrafted.io/`                                                                                                                                                                                                                               |
-| Repository       | `https://github.com/VetCoders/vibecrafted`                                                                                                                                                                                                              |
+| Repository       | `https://github.com/vetcoders/vibecrafted`                                                                                                                                                                                                              |
 | Docs             | `https://vibecrafted.io/en/quickstart/`                                                                                                                                                                                                                 |
 | Category         | `Developer Tools`, `AI Agents`, `Release Engineering`                                                                                                                                                                                                   |
 | Pricing          | `Free for personal use and startups. Enterprise licensing available.`                                                                                                                                                                                   |

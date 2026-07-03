@@ -76,7 +76,7 @@ usage:
   living-tree-commit.sh "<commit message>" -- <file> [<file>...]
   living-tree-commit.sh --message-file <path> -- <file> [<file>...]
 
-Race-protected commit helper for VetCoders Living Tree workflow.
+Race-protected commit helper for Vetcoders Living Tree workflow.
 
 Captures pre-flight HEAD, stages only the named files, commits with the
 given message, then verifies no concurrent agent commit interleaved between

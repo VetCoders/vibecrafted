@@ -42,7 +42,7 @@ services:
     volumes:
       # The multiroot repo tree → /workspace (override path via VC_RUNTIME_DIR)
       - ${VC_RUNTIME_DIR:-${HOME}/Libraxis/vc-runtime}:/workspace:rw
-      # Persistent VetCoders state
+      # Persistent Vetcoders state
       - ${HOME}/.aicx:/root/.aicx:rw
       - ${HOME}/.claude:/root/.claude:rw
       - ${HOME}/.codex:/root/.codex:rw
@@ -58,4 +58,4 @@ services:
 volumes:
   tailscale-state:
     driver: local
-# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+# 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI

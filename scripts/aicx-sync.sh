@@ -155,7 +155,7 @@ else
     REMOTE_STAGING="$DEFAULT_REMOTE_STAGING_BASE/_no_remote_/staging"
 fi
 
-# Narrow to namespace subdir when specified (e.g. ~/.aicx/store/VetCoders/vibecrafted).
+# Narrow to namespace subdir when specified (e.g. ~/.aicx/store/vetcoders/vibecrafted).
 if [[ -n "$NAMESPACE" ]]; then
     LOCAL_STORE="$LOCAL_STORE/$NAMESPACE"
     REMOTE_STAGING="$REMOTE_STAGING/$NAMESPACE"

@@ -1,6 +1,6 @@
 # VC Operator 22-Next: Mission Control From Shell To Product
 
-- Repo: `/Users/maciejgad/vc-workspace/VetCoders/vc-operator`
+- Repo: `/Users/tester/vc-workspace/vetcoders/vc-operator`
 - Branch: `main`
 - Baseline commit: `a2a0a51`
 - Generated: `2026-05-12`
@@ -19,7 +19,7 @@ The first product promise is intentionally narrow:
 > failed, and what the next useful action is.
 
 This repo should not become a generic dashboard framework. It should expose
-runtime truth for the VetCoders agent workflow.
+runtime truth for the Vetcoders agent workflow.
 
 ## Current Truth
 

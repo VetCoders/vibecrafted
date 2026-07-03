@@ -51,7 +51,7 @@ Enterprise: info@vibecrafted.io
 
 ## Part of
 
-VetCoders 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Suite — structured AI-guided engineering,
+Vetcoders 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Suite — structured AI-guided engineering,
 convergence, packaging, and release.
 
 ## Registry Metadata
@@ -59,7 +59,7 @@ convergence, packaging, and release.
 - description: Release engine for AI-built software. Structural mapping, convergence loops, install truth, and launch-ready packaging for AI-generated repos.
 - keywords: ai-agent-engineering, release-engineering, developer-tools, codex, claude, gemini, workflow, multi-agent, ai-native
 - homepage: https://vibecrafted.io/
-- repository: https://github.com/VetCoders/vibecrafted
+- repository: https://github.com/vetcoders/vibecrafted
 - documentation: https://vibecrafted.io/en/quickstart/
 - faq: https://vibecrafted.io/en/faq/
 - license: Business Source License 1.1 with Additional Use Grant for non-competitive small-team production use

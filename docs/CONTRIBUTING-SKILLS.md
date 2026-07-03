@@ -155,7 +155,7 @@ and the helper shim is reinstalled.
 ## Submitting the PR
 
 vibecrafted commits ship with the `[<agent>/<workflow>]` prefix per the
-[VetCoders Global Agent Charter](../AGENTS.md):
+[Vetcoders Global Agent Charter](../AGENTS.md):
 
 ```
 [claude/skill-authoring] feat(skills): add vc-my-new-skill
@@ -211,7 +211,7 @@ across ubuntu + macos. Open the PR against `develop`.
 - **Skipping examples** — agents pick up new skills cold by reading
   `examples/`. Empty examples directory = your skill will be misused.
 - **Stealing branding** — the default footer is
-  `𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI` (or
+  `𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI` (or
   omitted entirely). No personal Co-Authored-By signatures in skill files.
 
 ---
@@ -229,4 +229,4 @@ across ubuntu + macos. Open the PR against `develop`.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

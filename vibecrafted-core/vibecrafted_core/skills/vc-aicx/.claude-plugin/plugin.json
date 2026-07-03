@@ -2,7 +2,7 @@
   "name": "vc-aicx",
   "description": "Recover and parse large or unreadable agent output from JSONL files into clean Markdown.",
   "author": {
-    "name": "VetCoders",
+    "name": "Vetcoders",
     "email": "hello@vetcoders.io"
   }
 }

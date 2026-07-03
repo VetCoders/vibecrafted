@@ -6,8 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
-    { name = "Maciej Gad", email = "void@div0.space" },
-    { name = "Monika Szymańska", email = "hello@vetcoders.io" },
+    { name = "Vetcoders", email = "hello@vetcoders.io" },
 ]
 dependencies = [
     "rich>=13.0",

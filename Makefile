@@ -37,7 +37,7 @@ help-dev:
 	@printf "  \033[1mtests\033[0m     test · test-core · test-skills · test-install · test-parity · test-vc-frame · test-iterm2-migrate\n"
 	@printf "            test-memex · test-aicx-sync · test-hammerspoon · dispatch-test · test-race-protection · check · semgrep\n"
 	@printf "  \033[1miterm2\033[0m    iterm-plugin · iterm-plugin-refresh · iterm-plugin-show · iterm-plugin-uninstall · iterm-plugin-migrate\n"
-	@printf "  \033[1mserver\033[0m    server · server-build · server-check · server-test\n"
+	@printf "  \033[1mserver\033[0m    server · server-build · server-check · server-test · server-smoke\n"
 	@printf "  \033[1mversion\033[0m   version · version-show · version-bump · bump-patch · bump-minor · bump-major\n"
 	@printf "  \033[1mhooks\033[0m     init-hooks · seed-commit-msg-hooks · commit-safe\n"
 	@printf "  \033[1mmisc\033[0m      doctor · list · update · uninstall · demo · demo-full · skill-new\n"
@@ -634,6 +634,7 @@ server: server-build
 	@echo "[server] control plane: $${VIBECRAFTED_HOME:-$$HOME/.vibecrafted}/control_plane"
 	@echo "[server] listening on  http://$(SERVER_ADDR)   (Ctrl-C to stop)"
 	@echo "[server] reads: /api/control/state  /api/control/runs  /api/control/runs/{run_id}"
+	@echo "[server] reads: /api/control/lifecycle  /api/control/lifecycle/{run_id}"
 	@cd $(SERVER_DIR) && ./target/debug/$(SERVER_PACKAGE) --addr "$(SERVER_ADDR)"
 
 server-check:
@@ -661,7 +662,7 @@ install-server:
 	@echo "[server] compat: $(SERVER_COMPAT_BIN) -> $(BIN_DIR) (real file)"
 	@echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
 
-server-smoke:
+server-smoke: install-server
 	@echo "[server-smoke] Run 1/3" && bash tests/server_smoke.sh
 	@echo "[server-smoke] Run 2/3" && bash tests/server_smoke.sh
 	@echo "[server-smoke] Run 3/3" && bash tests/server_smoke.sh

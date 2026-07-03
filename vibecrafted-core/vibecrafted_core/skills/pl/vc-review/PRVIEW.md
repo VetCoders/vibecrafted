@@ -6,8 +6,8 @@
 Czytaj wraz z [`SKILL.md`](SKILL.md) i [`FINDINGS.md`](FINDINGS.md).
 
 - Binarka: `prview` (rozwiąż przez `command -v prview`; nie zakładaj ścieżki cargo)
-- Źródło: `https://github.com/VetCoders/prview-rs`
-- Autorka: Monika (@m-szymanska) — VetCoders
+- Źródło: `https://github.com/vetcoders/prview-rs`
+- Autorka: Monika (@m-szymanska) — Vetcoders
 
 ---
 
@@ -94,4 +94,4 @@ trajektorii po review.
 
 ---
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

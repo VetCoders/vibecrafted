@@ -92,6 +92,31 @@ def test_spawn_require_command_adds_curated_agent_tool_paths(tmp_path: Path) -> 
     assert result.stdout.strip() == str(fake_claude)
 
 
+def test_visible_launch_wrapper_foregrounds_transcript_tail(tmp_path: Path) -> None:
+    launcher = tmp_path / "launcher.sh"
+    transcript = tmp_path / "transcript.log"
+    cmd_script = tmp_path / "visible.sh"
+    launcher.write_text(
+        "#!/usr/bin/env bash\nprintf 'live-line\\n' >> \"$1\"\n", encoding="utf-8"
+    )
+    launcher.chmod(0o755)
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export SPAWN_ROOT="{tmp_path}"
+        export SPAWN_TRANSCRIPT="{transcript}"
+        source "{COMMON_SH}"
+        spawn_write_visible_launch_script "{cmd_script}" "{launcher} {transcript}"
+        sed -n '1,80p' "{cmd_script}"
+        '''
+    )
+
+    assert str(transcript) in result.stdout
+    assert "tail -n +1 -f" in result.stdout
+    assert 'wait "$pid"' in result.stdout
+
+
 def test_spawn_tool_paths_follow_silver_runtime_contract(tmp_path: Path) -> None:
     home = tmp_path / "home"
     rogue_bin = tmp_path / "rogue" / "bin"
@@ -850,7 +875,7 @@ def test_spawn_finalize_artifacts_canonicalizes_by_date_repo_session_and_kind(
         / "home"
         / ".vibecrafted"
         / "artifacts"
-        / "VetCoders"
+        / "Vetcoders"
         / "vibecrafted"
         / "2026_0604"
         / "reports"
@@ -882,7 +907,7 @@ def test_spawn_finalize_artifacts_canonicalizes_by_date_repo_session_and_kind(
 
     assert result.returncode == 0
     matches = sorted(
-        reports.glob(f"*_VetCoders_vibecrafted_{session_id}-report.meta.json")
+        reports.glob(f"*_Vetcoders_vibecrafted_{session_id}-report.meta.json")
     )
     assert len(matches) == 1
     payload = json.loads(matches[0].read_text(encoding="utf-8"))
@@ -1535,6 +1560,13 @@ def test_spawn_in_vc_frame_pane_honors_requested_direction(tmp_path: Path) -> No
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                # The W1-06 liveness gate resolves the effective operator
+                # session via list-sessions; without a live listing the
+                # explicit session is rejected and the spawn refuses.
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{operator_session}"',
+                "  exit 0",
+                "fi",
                 'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
             ]
         )
@@ -1710,7 +1742,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
 def test_vc_resume_can_infer_agent_from_session_meta(tmp_path: Path) -> None:
     crafted_home = tmp_path / ".vibecrafted"
     meta_dir = (
-        crafted_home / "artifacts" / "VetCoders" / "repo" / "2026_0528" / "reports"
+        crafted_home / "artifacts" / "Vetcoders" / "repo" / "2026_0528" / "reports"
     )
     meta_dir.mkdir(parents=True)
     (meta_dir / "run.meta.json").write_text(

@@ -1,5 +1,5 @@
 # shell-agent - UniFFI bridge + SwiftUI app
-# Created by VetCoders (c)2026 LibraxisAI
+# Created by Vetcoders (c)2026 LibraxisAI
 
 export MACOSX_DEPLOYMENT_TARGET ?= 14.0
 

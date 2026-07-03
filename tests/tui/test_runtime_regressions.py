@@ -89,6 +89,8 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
         text=True,
     )
 
+    # Explicit VIBECRAFTED_OPERATOR_SESSION wins over the repo-derived name
+    # (W1-06: honour explicit operator session in vc-frame targeting).
     assert "Resume launched in operator session: operator-session" in result.stdout
     assert not codex_capture.exists()
     vc_frame_lines = vc_frame_capture.read_text(encoding="utf-8").splitlines()

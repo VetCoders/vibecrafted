@@ -12,7 +12,7 @@ from vibecrafted_core import control_plane
 
 
 def _write_meta(home: Path, payload: dict[str, object]) -> Path:
-    reports = home / "artifacts" / "VetCoders" / "vibecrafted" / "2026_0519" / "reports"
+    reports = home / "artifacts" / "Vetcoders" / "vibecrafted" / "2026_0519" / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     path = reports / f"{payload['run_id']}.meta.json"
     path.write_text(json.dumps(payload), encoding="utf-8")

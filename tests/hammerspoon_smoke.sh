@@ -241,7 +241,7 @@ end
 -- Test harness
 local cases_positive = {
     {label = "vc-ping msg=hello",          params = {msg = "hello"},                     allowed = {"msg", "hello"}},
-    {label = "vc-open-file abs path",      params = {path = "/Users/op/repo/file.md"},   allowed = {"path"}},
+    {label = "vc-open-file abs path",      params = {path = "/Users/you/repo/file.md"},   allowed = {"path"}},
     {label = "vc-loct cmd=health",         params = {cmd = "health", repo = "/abs/p"},   allowed = {"cmd", "repo"}},
     {label = "vc-aicx query=text",         params = {query = "search terms"},            allowed = {"query", "project"}},
     {label = "vc-atlas card=plan-11",      params = {card = "plan-11", project = "/r"},  allowed = {"card", "project"}},
@@ -260,7 +260,7 @@ local cases_negative = {
         allowed = {"cmd", "repo"},
         expect_reason_contains = "charset"},
     {label = "path traversal in path",
-        params = {path = "/Users/op/../etc/passwd"},
+        params = {path = "/Users/you/../etc/passwd"},
         allowed = {"path"},
         expect_reason_contains = "traversal"},
     {label = "DoS length > 256 in query",

@@ -2,39 +2,39 @@
 name: vc-screenscribe
 version: 1.2.1
 description: >
-  ScreenScribe workflow skill for analyzing screencast recordings and for
-  working inside the ScreenScribe repo itself. Use this whenever the user
-  mentions ScreenScribe, screencast review, app review videos, bug demo
+  Screenscribe workflow skill for analyzing screencast recordings and for
+  working inside the Screenscribe repo itself. Use this whenever the user
+  mentions Screenscribe, screencast review, app review videos, bug demo
   recordings, HTML Pro reports, transcript-first artifact extraction,
   extracting actionable findings from narrated videos, batch video analysis,
-  or wants to debug/build/improve the ScreenScribe project or the default
-  https://github.com/VetCoders/Screenscribe repository. Prefer this skill even
-  if the user does not explicitly ask for "ScreenScribe" but clearly wants a
+  or wants to debug/build/improve the Screenscribe project or the default
+  https://github.com/vetcoders/Screenscribe repository. Prefer this skill even
+  if the user does not explicitly ask for "Screenscribe" but clearly wants a
   spoken screen recording turned into structured engineering findings.
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-# Vibecrafted. ScreenScribe
+# Vibecrafted. Screenscribe
 
 Use this skill for two related jobs:
 
-1. Run ScreenScribe on real recordings and turn them into actionable outputs.
-2. Work on the ScreenScribe codebase without guessing its CLI, gates, or report model.
+1. Run Screenscribe on real recordings and turn them into actionable outputs.
+2. Work on the Screenscribe codebase without guessing its CLI, gates, or report model.
 
 ## Canonical Orientation Gate
 
-For ScreenScribe repo work, run or consume the `vc-init` procedure before
+For Screenscribe repo work, run or consume the `vc-init` procedure before
 editing, planning, or release judgement. `Loctree:loctree` is the default
 structural perception skill for that pass and must produce or refresh the
 Code-Derived Application Map.
 
 If fresh `vc-init` evidence is absent, perform the init pass first and treat
-ScreenScribe repo work as blocked until repo truth exists.
+Screenscribe repo work as blocked until repo truth exists.
 
 For pure video-analysis runs, state the no-repo exception and use the installed
-ScreenScribe CLI directly.
+Screenscribe CLI directly.
 
 ## Repository Work Doctrine
 
@@ -44,9 +44,9 @@ search. Use AICX for intent and session context. Use rg/grep as fallback or
 local magnifier, not as a replacement for structural mapping. If Loctree fails
 or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
-## What ScreenScribe Is
+## What Screenscribe Is
 
-ScreenScribe is a screencast pipeline, not a vague "video AI thing."
+Screenscribe is a screencast pipeline, not a vague "video AI thing."
 
 Its strongest value is artifact production:
 
@@ -73,14 +73,14 @@ Use this skill when the user wants to:
 - turn spoken bug commentary into structured findings
 - process one or many `.mov` / `.mp4` files
 - generate HTML Pro reports, screenshots, transcripts, or transcript-first bundles
-- run ScreenScribe in dry-run, estimate, resume, or batch mode
+- run Screenscribe in dry-run, estimate, resume, or batch mode
 - extract artifacts first and let an agent/model analyze them later
-- debug ScreenScribe output, prompts, providers, or report generation
-- modify the ScreenScribe repo and keep its quality gates honest
+- debug Screenscribe output, prompts, providers, or report generation
+- modify the Screenscribe repo and keep its quality gates honest
 
 ## Default Mindset
 
-Do not treat ScreenScribe like a model endpoint.
+Do not treat Screenscribe like a model endpoint.
 Treat it like a concrete pipeline with real stages, real artifacts, and real failure points.
 
 Default to the shortest working path.
@@ -173,9 +173,9 @@ This is the best handoff shape when:
 
 Canonical upstream repo:
 
-- [VetCoders/Screenscribe](https://github.com/VetCoders/Screenscribe)
+- [vetcoders/Screenscribe](https://github.com/vetcoders/Screenscribe)
 
-When repo work is needed, prefer the current ScreenScribe checkout if the user
+When repo work is needed, prefer the current Screenscribe checkout if the user
 already opened one. Do not assume a fixed local path. If no checkout is open,
 refer to the default repo above and only mention a local path once it is
 actually known.
@@ -184,12 +184,12 @@ Drop into the repo only when:
 
 - the CLI is missing or broken
 - provider/config/runtime debugging is needed
-- the user wants work on ScreenScribe itself
+- the user wants work on Screenscribe itself
 
 Then prefer:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe review /absolute/path/to/video.mov
 ```
 
@@ -198,14 +198,14 @@ uv run python -m screenscribe review /absolute/path/to/video.mov
 Single video:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe review /absolute/path/to/video.mov
 ```
 
 Batch:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe review /path/video1.mov /path/video2.mov -o /absolute/output/dir
 ```
 
@@ -222,7 +222,7 @@ Useful flags:
 ### Preprocess
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe preprocess /absolute/path/to/video.mov
 ```
 
@@ -236,7 +236,7 @@ Useful flags:
 ### Transcribe
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 uv run python -m screenscribe transcribe /absolute/path/to/video.mov -o /absolute/path/to/transcript.txt
 ```
 
@@ -245,7 +245,7 @@ uv run python -m screenscribe transcribe /absolute/path/to/video.mov -o /absolut
 Preferred:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 make analyze VIDEO=/absolute/path/to/video.mov PORT=8766
 ```
 
@@ -309,10 +309,10 @@ Do not invent config values or fake API success.
 
 ## Repo Workflows
 
-When editing or debugging ScreenScribe itself, use the repo-native gates:
+When editing or debugging Screenscribe itself, use the repo-native gates:
 
 ```bash
-cd /path/to/ScreenScribe
+cd /path/to/Screenscribe
 make lint
 make typecheck
 make test
@@ -331,7 +331,7 @@ If integration tests need external API access and keys are missing, say so clear
 
 ## Investigation Order For Failures
 
-When ScreenScribe behavior looks wrong, debug in this order:
+When Screenscribe behavior looks wrong, debug in this order:
 
 1. command shape
 2. input file validity
@@ -345,12 +345,12 @@ When ScreenScribe behavior looks wrong, debug in this order:
 
 Do not jump straight to model blame before checking pipeline stage boundaries.
 
-## Output Format For ScreenScribe Tasks
+## Output Format For Screenscribe Tasks
 
 Use this response structure when helpful:
 
 ```markdown
-Current state: what the input is and what ScreenScribe path we are using.
+Current state: what the input is and what Screenscribe path we are using.
 Proposal: which command/workflow best fits and why.
 Migration plan: concrete steps or fixes if repo work is involved.
 Quick win: the smallest useful run or fix right now.
@@ -369,14 +369,14 @@ Input: "Mam video, ale chcę tylko transcript, timestampy i pack dla agenta."
 Action: run `screenscribe preprocess /absolute/path/to/video.mov`, return bundle dir and artifact list.
 
 **Example 3**
-Input: "W repo https://github.com/VetCoders/Screenscribe coś popsuliśmy w HTML Pro."
+Input: "W repo https://github.com/vetcoders/Screenscribe coś popsuliśmy w HTML Pro."
 Action: treat this as repo work, use repo-native commands and quality gates, not a plain review run.
 
 ## Anti-Patterns
 
 Do not:
 
-- treat ScreenScribe as a generic summarizer
+- treat Screenscribe as a generic summarizer
 - start with repo plumbing when a plain `screenscribe review <file>` or `screenscribe preprocess <file>` would do
 - probe `--help` before the first real run on a normal video-analysis request
 - run random repo commands when `make` already defines the quality path
@@ -388,7 +388,7 @@ Do not:
 
 ## Definition of Done
 
-A ScreenScribe task is done when:
+A Screenscribe task is done when:
 
 - the right command was chosen
 - the run or code change actually completed

@@ -1,6 +1,6 @@
 # Verification Rule — walk around the truck
 
-VetCoders ship by proof, not by gates. Before any worker says "done",
+Vetcoders ship by proof, not by gates. Before any worker says "done",
 "shippable", or "ready" — even for work it personally supervised — it walks
 around the truck and checks every strap before it says "now you can drive".
 
@@ -77,4 +77,4 @@ magnifier after loct, with the failed loct command logged to
   prompt — see `vc-operator/DISPATCH_TEMPLATE.md`.
 - Any READ skill making a runtime claim (Review, Audit, Followup, DoU).
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 The LibraxisAI Team_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 The LibraxisAI Team_

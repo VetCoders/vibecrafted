@@ -2,7 +2,7 @@
 name: vc-ownership
 version: 1.1.0
 description: >
-  Full-spectrum VetCoders ownership mode for moments when the user wants Agent
+  Full-spectrum Vetcoders ownership mode for moments when the user wants Agent
   to take the wheel and drive a product from A to Z: architecture, coding,
   runtime debugging, UI polish, packaging, docs, testing, local tooling,
   agent orchestration, and wow-effect finish. Use whenever the user says things
@@ -362,6 +362,13 @@ Keep these rules:
 - reports beat vibes
 - one resumed agent may spawn one bounded helper if the controlling skill allows it
 - synthesis stays in the main thread
+- **dispatch visibly when a session is live.** When `VC_FRAME_SESSION_NAME` is
+  set, fleet workers launch in the `terminal`/`visible` runtime as vc-frame tabs
+  the operator watches — never headless. The CLI `vibecrafted <skill> <agent>
+--file` auto-selects visible; the MCP `vc_run_launch`/`vc_launch` default to
+  `headless` and need an explicit `runtime="visible"`. A black-box dispatch the
+  operator can't see is the failure, not the safe default. Headless is the
+  unattended/cron lane only.
 
 ## Output Style
 

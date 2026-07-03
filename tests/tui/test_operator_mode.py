@@ -374,10 +374,10 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert "new-pane" in payload
+    assert "new-tab" in payload
     assert "--name" in payload
-    assert "marb-014520" in payload
-    assert any("vibecrafted-marbles." in line for line in payload)
+    assert "marbles" in payload
+    assert "vibecrafted-marb-014520" in payload
 
 
 def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
@@ -426,8 +426,7 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     assert result.returncode == 0
     assert result.stderr == ""
     payload = capture_file.read_text(encoding="utf-8")
-    assert "new-tab" not in payload
-    assert "new-pane" in payload
+    assert "new-tab" in payload
     assert result.stdout.endswith(f"PATH={os.defpath}\n")
 
 

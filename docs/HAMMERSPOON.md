@@ -1,6 +1,6 @@
 # Hammerspoon URL handler stack — Plan 11
 
-VetCoders ships a repo-tracked Hammerspoon configuration that registers eight
+Vetcoders ships a repo-tracked Hammerspoon configuration that registers eight
 `hammerspoon://vc-*` URL schemes with macOS Launch Services. Combined with the
 iTerm2 OSC 8 hyperlink GA (Plan 10) and the vc_frame mesh-aware theming (Plan 12),
 this closes the **stack agent-native runtime** loop documented in
@@ -199,4 +199,4 @@ vibecrafted/
 
 ---
 
-Vibecrafted. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+Vibecrafted. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
