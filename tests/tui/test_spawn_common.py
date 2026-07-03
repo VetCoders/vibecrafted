@@ -1560,6 +1560,13 @@ def test_spawn_in_vc_frame_pane_honors_requested_direction(tmp_path: Path) -> No
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                # The W1-06 liveness gate resolves the effective operator
+                # session via list-sessions; without a live listing the
+                # explicit session is rejected and the spawn refuses.
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{operator_session}"',
+                "  exit 0",
+                "fi",
                 'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
             ]
         )
