@@ -343,7 +343,7 @@ def test_accept_dou_records_finding(monkeypatch, tmp_path: Path, capsys) -> None
         )
         == 0
     )
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     assert reloaded["accepted_dou_findings"][0]["finding"].startswith(
         "install path unverified"
     )
