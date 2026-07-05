@@ -75,6 +75,10 @@ vc-ship claude --file mission.md                        # shell shortcut
 vibecrafted ship <agent> --start-stage review --file m.md  # resume mid-pipeline
 ```
 
+Operator invariant: stage workers fly **visibly, as vc-frame tabs**, whenever
+a live operator session can host them (headless is only the degrade-not-die
+fallback; force quiet with `--runtime headless`).
+
 ---
 
 ## Purpose

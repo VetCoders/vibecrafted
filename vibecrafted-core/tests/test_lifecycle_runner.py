@@ -1176,3 +1176,34 @@ def test_start_stage_carries_lifecycle_state_path_to_launch_spec(
     # belongs to — the push-side report-on-death write-back address.
     assert seen_state_paths
     assert all(path == state["state_path"] for path in seen_state_paths)
+
+
+def test_vc_ship_default_runtime_prefers_visible_tabs(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec):
+        captured.append(spec)
+        return {
+            "run_id": "life-ship-test",
+            "workflow": spec.workflow_id,
+            "status": "launching",
+            "state_path": str(tmp_path / "state.json"),
+            "report_path": str(tmp_path / "report.md"),
+        }
+
+    monkeypatch.setattr(ship, "run_lifecycle", fake_run_lifecycle)
+    # Operator invariant: workers fly visibly in vc-frame tabs. Ship must route
+    # through the fleet-wide resolution instead of hardcoding headless.
+    monkeypatch.setattr(
+        "vibecrafted_core.cli._default_runtime",
+        lambda explicit, root="": explicit or "terminal",
+    )
+
+    assert ship.main(["codex", "--prompt", "ship it"]) == 0
+    assert captured[0].runtime == "terminal"
+
+    # An explicit --runtime always wins over the resolved default.
+    assert ship.main(["codex", "--prompt", "quiet", "--runtime", "headless"]) == 0
+    assert captured[1].runtime == "headless"
