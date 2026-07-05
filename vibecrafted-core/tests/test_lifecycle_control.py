@@ -386,3 +386,35 @@ def test_ship_and_wrapper_clis_route_control_verbs(
     assert lifecycle_main("vc-dou", ["runs", "--all", "--json"]) == 0
     listed = json.loads(capsys.readouterr().out)
     assert {entry["workflow"] for entry in listed} == {"vc-dou", "vc-ship"}
+
+
+def test_approve_honors_operator_stage_casting(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    state = _make_lifecycle_run(tmp_path, monkeypatch, workflow_id="vc-ship")
+    state_file = Path(state["state_path"])
+    payload = json.loads(state_file.read_text(encoding="utf-8"))
+    payload["spec"]["stage_agents"] = {"implement": "junie"}
+    state_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    launched: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec) -> dict:
+        launched.append(spec)
+        return {"run_id": "life-cast-1", "status": "launching"}
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_control.run_lifecycle", fake_run_lifecycle
+    )
+
+    assert (
+        lifecycle_control_main(
+            ["approve", state["run_id"], "--json"], workflow_id="vc-ship"
+        )
+        == 0
+    )
+    # The operator's A-to-Z casting wins over the baton's next_agent for a
+    # stage it names, and the map rides into the continuation spec.
+    assert launched[0].agent == "junie"
+    assert launched[0].stage_agents == {"implement": "junie"}
+    capsys.readouterr()

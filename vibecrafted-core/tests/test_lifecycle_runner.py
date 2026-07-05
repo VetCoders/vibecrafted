@@ -1207,3 +1207,114 @@ def test_vc_ship_default_runtime_prefers_visible_tabs(
     # An explicit --runtime always wins over the resolved default.
     assert ship.main(["codex", "--prompt", "quiet", "--runtime", "headless"]) == 0
     assert captured[1].runtime == "headless"
+
+
+def test_mission_stage_agents_parses_inline_and_nested() -> None:
+    from vibecrafted_core.lifecycle_runner import _mission_stage_agents
+
+    inline = "---\nstage_agents: scaffold=claude, review=codex\n---\nmission"
+    assert _mission_stage_agents(inline) == {"scaffold": "claude", "review": "codex"}
+
+    nested = (
+        "---\n"
+        "doc_id: x\n"
+        "stage_agents:\n"
+        "  marbles: codex\n"
+        "  audit: claude\n"
+        "other: y\n"
+        "---\n"
+        "mission body\n"
+    )
+    assert _mission_stage_agents(nested) == {"marbles": "codex", "audit": "claude"}
+
+    assert _mission_stage_agents("plain mission, no frontmatter") == {}
+
+
+def test_lifecycle_run_casts_stage_agents_from_mission_frontmatter(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    casting: list[tuple[str, str]] = []
+
+    def fake_launcher(spec, _source_dir):
+        casting.append((spec.skill, spec.agent))
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    mission = (
+        "---\n"
+        "stage_agents:\n"
+        "  marbles: codex\n"
+        "  audit: claude\n"
+        "---\n"
+        "# Mission: cast the relay A-to-Z\n"
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-marbles",
+                agent="gemini",
+                prompt=mission,
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    # The operator's A-to-Z casting drives every stage launch, overriding the
+    # run-level agent; the map is persisted for continuations and readers.
+    assert casting == [("marbles", "codex"), ("audit", "claude")]
+    assert state["spec"]["stage_agents"] == {"marbles": "codex", "audit": "claude"}
+
+
+def test_lifecycle_run_rejects_invalid_stage_casting(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    runner = LifecycleRunner(
+        launcher=lambda spec, _src: {"accepted": True},
+        awaiter=lambda payload: {"completed": True},
+    )
+
+    with pytest.raises(ValueError, match="unknown stage 'nosuch'"):
+        asyncio.run(
+            runner.run(
+                LifecycleRunSpec(
+                    workflow_id="vc-marbles",
+                    agent="codex",
+                    prompt="---\nstage_agents: nosuch=claude\n---\nmission",
+                    root=str(tmp_path),
+                )
+            )
+        )
+
+    with pytest.raises(ValueError, match="unsupported agent 'hal9000'"):
+        asyncio.run(
+            runner.run(
+                LifecycleRunSpec(
+                    workflow_id="vc-marbles",
+                    agent="codex",
+                    prompt="---\nstage_agents: marbles=hal9000\n---\nmission",
+                    root=str(tmp_path),
+                )
+            )
+        )

@@ -183,12 +183,19 @@ def _continuation_spec(
         depth=spec_data.get("depth"),
         parent_run_id=str(state.get("run_id") or ""),
         previous_reports=_baton_previous_reports(state),
+        stage_agents=dict(spec_data.get("stage_agents") or {}),
     )
 
 
-def _baton_agent(state: dict[str, Any]) -> str:
+def _baton_agent(state: dict[str, Any], stage: str = "") -> str:
     baton = dict(state.get("baton") or {})
     spec_data = dict(state.get("spec") or {})
+    # Operator-declared casting (mission frontmatter stage_agents) wins for a
+    # stage it names; worker-requested next_agent steers only the un-cast rest.
+    stage_agents = dict(spec_data.get("stage_agents") or {})
+    cast = str(stage_agents.get(str(stage or "").strip()) or "").strip()
+    if cast:
+        return cast
     return str(baton.get("next_agent") or spec_data.get("agent") or "codex")
 
 
@@ -221,7 +228,7 @@ def approve_transition(
         state,
         workflow_id=str(state.get("workflow") or ""),
         start_stage=next_stage,
-        agent=_baton_agent(state),
+        agent=_baton_agent(state, next_stage),
     )
     child = launcher(spec)
     details: dict[str, Any] = {
@@ -316,7 +323,7 @@ def force_audit(
         state,
         workflow_id="vc-audit",
         start_stage="",
-        agent=_baton_agent(state),
+        agent=_baton_agent(state, "audit"),
     )
     child = launcher(spec)
     entry = record_operator_action(

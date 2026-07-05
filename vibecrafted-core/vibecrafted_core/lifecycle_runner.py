@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -45,6 +45,11 @@ class LifecycleRunSpec:
     # Continuation runs (approve / force-audit) seed these so the next stage
     # prompt keeps consuming what the previous Read/Write stages produced.
     previous_reports: tuple[str, ...] = ()
+    # Operator-declared per-stage casting: {stage_id: agent}. Usually parsed
+    # from the mission file's frontmatter (stage_agents:) so one plan file
+    # carries the whole relay's crew. An explicit entry for a stage wins over
+    # worker-requested next_agent steering.
+    stage_agents: dict[str, str] = field(default_factory=dict)
 
 
 def _lifecycle_run_id(workflow_id: str) -> str:
@@ -304,6 +309,79 @@ def _stage_worker_liveness(
     return liveness
 
 
+def _mission_stage_agents(mission_text: str) -> dict[str, str]:
+    """Per-stage casting declared in the mission file's YAML frontmatter.
+
+    Two accepted shapes, so an operator plan file can carry the whole relay's
+    crew A-to-Z:
+
+        ---
+        stage_agents: scaffold=claude, review=codex
+        ---
+
+        ---
+        stage_agents:
+          scaffold: claude
+          review: codex
+        ---
+    """
+    lines = str(mission_text or "").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    agents: dict[str, str] = {}
+    in_block = False
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if not in_block:
+            if not stripped.startswith("stage_agents:"):
+                continue
+            inline = stripped.split(":", 1)[1].strip()
+            if inline:
+                for pair in inline.split(","):
+                    separator = "=" if "=" in pair else ":"
+                    if separator not in pair:
+                        continue
+                    key, value = pair.split(separator, 1)
+                    agents[key.strip()] = value.strip().strip('"')
+                break
+            in_block = True
+            continue
+        if not line.startswith((" ", "\t")) or ":" not in stripped:
+            break
+        key, value = stripped.split(":", 1)
+        agents[key.strip()] = value.strip().strip('"')
+    return agents
+
+
+def _validated_stage_agents(
+    raw: dict[str, str], manifest: WorkflowManifest
+) -> dict[str, str]:
+    """Fail fast at launch: an A-to-Z casting with a typo must not fly."""
+    stage_ids = {stage.id for stage in manifest.stages}
+    resolved: dict[str, str] = {}
+    for stage_id, agent in dict(raw or {}).items():
+        stage_key = str(stage_id).strip()
+        agent_name = str(agent).strip()
+        if not stage_key or not agent_name:
+            continue
+        if stage_key not in stage_ids:
+            raise ValueError(
+                f"stage_agents names unknown stage '{stage_key}' "
+                f"for workflow {manifest.id}"
+            )
+        if agent_name not in SUPPORTED_AGENTS:
+            raise ValueError(
+                f"stage_agents names unsupported agent '{agent_name}' "
+                f"for stage '{stage_key}' (supported: "
+                + ", ".join(sorted(SUPPORTED_AGENTS))
+                + ")"
+            )
+        resolved[stage_key] = agent_name
+    return resolved
+
+
 def _lifecycle_max_stage_launches(manifest: WorkflowManifest) -> int:
     """Ceiling on stage launches per lifecycle run.
 
@@ -348,6 +426,10 @@ class LifecycleRunner:
 
         root = Path(normalize_run_root(spec.root, Path.cwd()))
         source_prompt = spec.prompt or _read_file(spec.file)
+        stage_agents = _validated_stage_agents(
+            dict(spec.stage_agents or {}) or _mission_stage_agents(source_prompt),
+            manifest,
+        )
         run_id = _lifecycle_run_id(manifest.id)
         run_dir = control_plane_home() / "lifecycle_runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -385,6 +467,7 @@ class LifecycleRunner:
                 "count": spec.count,
                 "depth": spec.depth,
                 "previous_reports": list(previous_reports),
+                "stage_agents": dict(stage_agents),
             },
             "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
             "human_controls": list(manifest.human_controls),
@@ -432,7 +515,9 @@ class LifecycleRunner:
                 manifest=manifest,
                 stage=stage,
                 spec=spec,
-                agent=stage.agent or current_agent,
+                # Operator-declared casting wins for a stage it names; then
+                # manifest defaults; then the baton's current agent.
+                agent=stage_agents.get(current) or stage.agent or current_agent,
                 source_prompt=source_prompt,
                 root=root,
                 previous_reports=previous_reports,
