@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from .control_plane import await_run as control_plane_await_run
 from .control_plane import control_plane_home
 from .lifecycle_runner import (
     LifecycleRunSpec,
@@ -26,6 +27,7 @@ CONTROL_VERBS = frozenset(
     {
         "runs",
         "status",
+        "await",
         "approve",
         "interrupt",
         "force-audit",
@@ -197,6 +199,65 @@ def _baton_agent(state: dict[str, Any], stage: str = "") -> str:
     if cast:
         return cast
     return str(baton.get("next_agent") or spec_data.get("agent") or "codex")
+
+
+def await_stage(
+    state: dict[str, Any],
+    *,
+    idle_seconds: float = 300,
+    interval_seconds: float = 5,
+    hard_cap_seconds: float | None = None,
+) -> dict[str, Any]:
+    """The lifecycle-level observability contract: block on the CURRENT stage.
+
+    Wraps ``control_plane.await_run`` (liveness-aware idle window that resets
+    on real movement, optional hard cap) so supervisors — human or agent —
+    wait through the runtime contract instead of ad-hoc sleep/poll loops, and
+    get back the one truth that decides the next verb: the stage delivered
+    its report, died without one, or genuinely stalled.
+    """
+    stages = list(state.get("stages") or [])
+    if not stages:
+        raise ValueError("nothing to await: no stage launched yet")
+    last_stage = stages[-1]
+    launch = dict(last_stage.get("launch") or {})
+    stage_run_id = str(launch.get("run_id") or "").strip()
+    if not stage_run_id:
+        raise ValueError("nothing to await: current stage has no worker run")
+    report_path = str(launch.get("report") or "").strip()
+
+    result = control_plane_await_run(
+        stage_run_id,
+        timeout_seconds=idle_seconds,
+        interval_seconds=interval_seconds,
+        hard_cap_seconds=hard_cap_seconds,
+    )
+
+    report_written = False
+    if report_path:
+        try:
+            report_written = Path(report_path).stat().st_size > 0
+        except OSError:
+            report_written = False
+    settled = bool(result.get("completed")) or bool(result.get("timed_out"))
+    worker_alive = bool(result.get("worker_alive"))
+    baton = dict(state.get("baton") or {})
+    return {
+        "run_id": str(state.get("run_id") or ""),
+        "stage": str(last_stage.get("id") or ""),
+        "stage_run_id": stage_run_id,
+        "report": report_path,
+        "report_written": report_written,
+        "completed": bool(result.get("completed")),
+        "timed_out": bool(result.get("timed_out")),
+        "reason": str(result.get("reason") or ""),
+        "worker_alive": worker_alive,
+        "worker_dead_without_report": settled
+        and not worker_alive
+        and not report_written,
+        "next_stage": str(baton.get("next_stage") or ""),
+        "next_agent": str(baton.get("next_agent") or ""),
+    }
 
 
 def approve_transition(
@@ -413,6 +474,22 @@ def lifecycle_control_main(
         return verb_parser
 
     _run_parser("status", "show one lifecycle run's status")
+    await_parser = _run_parser(
+        "await", "await_stage: block on the current stage via the runtime contract"
+    )
+    await_parser.add_argument(
+        "--idle",
+        type=float,
+        default=300,
+        help="idle window in seconds; resets on real movement (default 300)",
+    )
+    await_parser.add_argument("--interval", type=float, default=5)
+    await_parser.add_argument(
+        "--hard-cap",
+        type=float,
+        default=None,
+        help="absolute ceiling in seconds (default: none, liveness governs)",
+    )
     approve_parser = _run_parser(
         "approve", "approve_transition: launch the baton's next_stage"
     )
@@ -448,6 +525,13 @@ def lifecycle_control_main(
             payload = LifecycleSupervisor().status(state)
             payload["parent_run_id"] = str(state.get("parent_run_id") or "")
             payload["operator_actions"] = len(state.get("operator_actions") or [])
+        elif args.verb == "await":
+            payload = await_stage(
+                state,
+                idle_seconds=args.idle,
+                interval_seconds=args.interval,
+                hard_cap_seconds=args.hard_cap,
+            )
         elif args.verb == "approve":
             payload = approve_transition(
                 state_path, state, force=bool(getattr(args, "force", False))

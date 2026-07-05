@@ -418,3 +418,53 @@ def test_approve_honors_operator_stage_casting(
     assert launched[0].agent == "junie"
     assert launched[0].stage_agents == {"implement": "junie"}
     capsys.readouterr()
+
+
+def test_await_stage_reports_delivery_and_death(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    state = _make_lifecycle_run(tmp_path, monkeypatch, workflow_id="vc-ship")
+
+    awaited: list[str] = []
+
+    def fake_await_run(run_id: str, **_kwargs) -> dict:
+        awaited.append(run_id)
+        return {
+            "completed": True,
+            "timed_out": False,
+            "reason": "terminal",
+            "worker_alive": False,
+        }
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_control.control_plane_await_run", fake_await_run
+    )
+
+    # The seeded run's scaffold report exists -> a dead worker with a written
+    # report is the normal no-await handoff, not a death signal.
+    assert (
+        lifecycle_control_main(
+            ["await", state["run_id"], "--idle", "1", "--json"],
+            workflow_id="vc-ship",
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert awaited  # went through the runtime contract, not a sleep loop
+    assert payload["stage"] == "scaffold"
+    assert payload["report_written"] is True
+    assert payload["worker_dead_without_report"] is False
+    assert payload["next_stage"] == "implement"
+
+    # Erase the report: same terminal await now means death-without-delivery.
+    Path(payload["report"]).unlink()
+    assert (
+        lifecycle_control_main(
+            ["await", state["run_id"], "--idle", "1", "--json"],
+            workflow_id="vc-ship",
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["report_written"] is False
+    assert payload["worker_dead_without_report"] is True
