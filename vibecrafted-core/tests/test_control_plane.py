@@ -900,28 +900,69 @@ def test_await_run_idle_stall_fires_when_worker_is_dead(
     assert payload["worker_alive"] is False
 
 
-def test_await_run_returns_report_delivered_instead_of_holding_on_liveness(
+def test_await_run_returns_report_delivered_when_worker_is_gone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A non-empty report is the no-await handoff itself. Await must return
-    ``report_delivered`` on the first poll — even while the worker is still
-    demonstrably alive — instead of holding the supervisor through the
-    liveness gate (or idling out a full window on the already-delivered run,
-    which taught agents to distrust await and hedge with manual monitors)."""
+    """Dead worker + non-empty report is the sealed no-await handoff. Await
+    must return ``report_delivered`` on the first poll instead of idling out a
+    full window on the corpse and answering with a misleading ``idle_stall``
+    (which taught agents to distrust await and hedge with manual monitors)."""
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "100000")
+    report = tmp_path / "stage-report.md"
+    report.write_text("### Summary\ndelivered\n", encoding="utf-8")
+    _write_meta(
+        home,
+        {
+            "run_id": "revi-delivered-42",
+            "status": "running",
+            "agent": "junie",
+            "mode": "review",
+            "skill_code": "revi",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "worker_pid": 999999999,
+            "worker_pgid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    payload = control_plane.await_run(
+        "revi-delivered-42",
+        timeout_seconds=5,
+        interval_seconds=0.05,
+        hard_cap_seconds=5,
+        report_path=str(report),
+    )
+
+    assert payload["completed"] is True
+    assert payload["timed_out"] is False
+    assert payload["reason"] == "report_delivered"
+    assert payload["attempts"] == 1
+
+
+def test_await_run_report_alone_never_completes_a_live_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The inverse guard (fleet bug: `codex await` exited 0 on a still-live
+    run): while the worker is ALIVE, a non-empty report never completes the
+    wait — it may be mid-write, or a stale leftover from a previous attempt on
+    the same announced path. Liveness holds the window until the hard cap."""
     import subprocess
     import sys
 
     home = tmp_path / ".vibecrafted"
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
     report = tmp_path / "stage-report.md"
-    report.write_text("### Summary\ndelivered\n", encoding="utf-8")
+    report.write_text("### Summary\nstale or mid-write\n", encoding="utf-8")
 
     worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
         _write_meta(
             home,
             {
-                "run_id": "revi-delivered-42",
+                "run_id": "revi-live-writer-42",
                 "status": "running",
                 "agent": "junie",
                 "mode": "review",
@@ -935,20 +976,20 @@ def test_await_run_returns_report_delivered_instead_of_holding_on_liveness(
         )
 
         payload = control_plane.await_run(
-            "revi-delivered-42",
-            timeout_seconds=5,
+            "revi-live-writer-42",
+            timeout_seconds=0.2,
             interval_seconds=0.05,
-            hard_cap_seconds=5,
+            hard_cap_seconds=0.6,
             report_path=str(report),
         )
     finally:
         worker.terminate()
         worker.wait()
 
-    assert payload["completed"] is True
-    assert payload["timed_out"] is False
-    assert payload["reason"] == "report_delivered"
-    assert payload["attempts"] == 1
+    assert payload["completed"] is False
+    assert payload["timed_out"] is True
+    assert payload["reason"] == "hard_cap"
+    assert payload["worker_alive"] is True
 
 
 def test_await_run_live_child_keeps_loop_parent_open_past_idle_window(

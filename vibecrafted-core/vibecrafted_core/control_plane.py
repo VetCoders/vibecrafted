@@ -1566,9 +1566,11 @@ def await_run(
     Two more truths keep this the ONE await nobody has to second-guess:
 
     - A non-empty report file (``report_path`` argument, else the run's own
-      ``latest_report``) is the handoff itself — return ``completed`` with
-      ``reason: report_delivered`` immediately instead of idling out on the
-      worker that already delivered and exited.
+      ``latest_report``) from a worker that is GONE is the handoff itself —
+      return ``completed`` with ``reason: report_delivered`` immediately
+      instead of idling out a full window on the corpse. While the worker is
+      alive the report alone never completes the wait: it may be mid-write,
+      or a stale leftover from a previous attempt on the same announced path.
     - Movement and liveness aggregate the run's CHILD runs (marbles/polarize
       loop rounds live in separate ``<parent>-…-L<n>`` records), so a working
       child keeps the parent's await open even while the parent record is
@@ -1613,14 +1615,22 @@ def await_run(
         delivered_report = str(
             report_path or (last_run.get("latest_report") if last_run else "") or ""
         ).strip()
-        if delivered_report and _report_file_written(delivered_report):
+        # Worker death is the handoff seal: a LIVE worker may still be
+        # mid-write, and the announced path can hold a stale report from a
+        # previous attempt (stage retries reuse artifact paths) — returning
+        # `completed` on it reported exit 0 for a still-working run.
+        if (
+            delivered_report
+            and _report_file_written(delivered_report)
+            and not (last_run is not None and _worker_is_alive(last_run))
+        ):
             return {
                 "run_id": target,
                 "found": last_run is not None,
                 "completed": True,
                 "timed_out": False,
                 "reason": "report_delivered",
-                "worker_alive": _worker_is_alive(last_run) if last_run else False,
+                "worker_alive": False,
                 "attempts": attempts,
                 "run": last_run,
             }
