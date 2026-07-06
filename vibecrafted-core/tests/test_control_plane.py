@@ -900,6 +900,124 @@ def test_await_run_idle_stall_fires_when_worker_is_dead(
     assert payload["worker_alive"] is False
 
 
+def test_await_run_returns_report_delivered_instead_of_holding_on_liveness(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A non-empty report is the no-await handoff itself. Await must return
+    ``report_delivered`` on the first poll — even while the worker is still
+    demonstrably alive — instead of holding the supervisor through the
+    liveness gate (or idling out a full window on the already-delivered run,
+    which taught agents to distrust await and hedge with manual monitors)."""
+    import subprocess
+    import sys
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "stage-report.md"
+    report.write_text("### Summary\ndelivered\n", encoding="utf-8")
+
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        _write_meta(
+            home,
+            {
+                "run_id": "revi-delivered-42",
+                "status": "running",
+                "agent": "junie",
+                "mode": "review",
+                "skill_code": "revi",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "worker_pid": worker.pid,
+                "worker_pgid": worker.pid,
+                "liveness": "pid_alive",
+            },
+        )
+
+        payload = control_plane.await_run(
+            "revi-delivered-42",
+            timeout_seconds=5,
+            interval_seconds=0.05,
+            hard_cap_seconds=5,
+            report_path=str(report),
+        )
+    finally:
+        worker.terminate()
+        worker.wait()
+
+    assert payload["completed"] is True
+    assert payload["timed_out"] is False
+    assert payload["reason"] == "report_delivered"
+    assert payload["attempts"] == 1
+
+
+def test_await_run_live_child_keeps_loop_parent_open_past_idle_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Marbles/polarize loop parents freeze between rounds — no transcript of
+    their own, sometimes no live pid — while the children do the real work in
+    separate ``<parent>-…-L<n>`` records linked only by id prefix. A live
+    child must keep the parent's await open: the run stops only at the hard
+    cap, never on a false ``idle_stall`` mid-loop (the premature return that
+    made supervising agents double-guard await with manual monitors)."""
+    import subprocess
+    import sys
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "100000")
+    _write_meta(
+        home,
+        {
+            "run_id": "marb-loop-parent",
+            "status": "running",
+            "agent": "codex",
+            "mode": "marbles",
+            "skill_code": "marb",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "worker_pid": 999999999,
+            "worker_pgid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        _write_meta(
+            home,
+            {
+                "run_id": "marb-loop-parent-marbles-L2",
+                "status": "running",
+                "agent": "codex",
+                "mode": "marbles",
+                "skill_code": "marb",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "worker_pid": child.pid,
+                "worker_pgid": child.pid,
+                "liveness": "pid_alive",
+            },
+        )
+
+        payload = control_plane.await_run(
+            "marb-loop-parent",
+            timeout_seconds=0.2,
+            interval_seconds=0.05,
+            hard_cap_seconds=0.8,
+        )
+    finally:
+        child.terminate()
+        child.wait()
+
+    # Stopped only by the absolute ceiling: the dead-pid parent survived many
+    # idle-window lengths because its live child kept resetting the deadline.
+    assert payload["timed_out"] is True
+    assert payload["reason"] == "hard_cap"
+    assert payload["worker_alive"] is True
+    assert payload["attempts"] >= 3
+
+
 def test_sync_state_projects_event_stream_lifecycle(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

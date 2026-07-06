@@ -226,11 +226,15 @@ def await_stage(
         raise ValueError("nothing to await: current stage has no worker run")
     report_path = str(launch.get("report") or "").strip()
 
+    # The stage report IS the no-await handoff: with report_path forwarded,
+    # await_run returns `report_delivered` on its first poll instead of idling
+    # out a full window on a worker that already delivered and exited.
     result = control_plane_await_run(
         stage_run_id,
         timeout_seconds=idle_seconds,
         interval_seconds=interval_seconds,
         hard_cap_seconds=hard_cap_seconds,
+        report_path=report_path or None,
     )
 
     report_written = False

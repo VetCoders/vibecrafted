@@ -157,6 +157,46 @@ No baton cargo is lost; the stage relaunches with the full report trail.
 
 ---
 
+## Class 3 — Premature/untrusted await (observability contract drift)
+
+### Symptom
+
+Supervising agents stop trusting `await` and hedge: they run the verb in the
+background AND keep a manual sleep/ps/git monitor "because await can return
+early". Every hedge is a doctrine violation (ad-hoc watchers) caused by a real
+contract gap, not by agent paranoia.
+
+### Mechanism (three confirmed gaps, all fixed at the source)
+
+1. **A third private await loop**: `cli._agent_await`'s human path had its own
+   inline loop treating `--timeout` as an ABSOLUTE wall clock — it abandoned
+   demonstrably-working runs at 300 s. Fixed: the verb now blocks through the
+   one canonical `control_plane.await_run` (liveness-aware idle window), with
+   an `on_poll` callback for progress printing. There must be exactly ONE
+   await loop in the runtime; a new inline loop is this class reborn.
+2. **Loop parents look dead while children work**: marbles/polarize rounds are
+   sequenced deterministically (next round fires on the previous child
+   PROCESS EXIT + artifact validation in `workflow_runtime.run_marbles`), but
+   each round is a separate run record (`<parent>-<kind>-L<n>`) linked only by
+   id prefix. The parent record freezes between rounds, so a parent-only
+   fingerprint fired false `idle_stall` mid-loop. Fixed: `await_run`
+   aggregates child-run movement and liveness into the parent's idle window.
+3. **Delivered report ≠ return**: a no-await stage worker writes its report
+   and exits; `await_run` knew nothing about reports, so `ship await` idled a
+   full window on the corpse and returned a misleading
+   `timed_out: idle_stall` + `report_written: true`. Fixed: a non-empty
+   report (`report_path` argument, else the run's `latest_report`) returns
+   `completed` with `reason: report_delivered` on the first poll.
+
+### The rule
+
+The runtime hands out a run id; `await`/`observe` on that id must ALWAYS be
+the whole answer. If an agent feels the need to double-guard await with a
+manual monitor, treat that as a Class 3 bug report against the runtime — fix
+the contract, do not normalize the hedge.
+
+---
+
 ## Supervisor watcher patterns (battle-tested, two full vc-ship flights)
 
 - Poll the stage **report file** (`[ -s "$REPORT" ]`), paired with the
@@ -178,3 +218,7 @@ No baton cargo is lost; the stage relaunches with the full report trail.
 - Class 2: vibecrafted, vc-ship flights `life-ship-260702-123238-24000`
   (v3.3.0) and `life-ship-260702-202338-58000` (lifecycle.schema.v1),
   supervision by claude, session `2603026d-0c40-4ca9-af91-e2ab74256926`.
+- Class 3: operator report 2026-07-05 (agents hedging
+  `codex await --run-id marb-260705-164001-84000` with parallel manual
+  monitors) + live evidence from the vc-frame redesign flight (`ship await`
+  idle-stalling on a delivered review report); fixes by claude, same session.

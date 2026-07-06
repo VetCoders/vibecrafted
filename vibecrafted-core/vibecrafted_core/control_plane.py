@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from .runtime_paths import vibecrafted_home
 
@@ -1495,6 +1495,33 @@ def _await_progress_fingerprint(run: dict[str, Any] | None) -> tuple[Any, ...]:
     )
 
 
+def _await_child_runs(snapshot: dict[str, Any], target: str) -> list[dict[str, Any]]:
+    """Child runs of a loop parent (marbles/polarize ``<parent>-<kind>-L<n>``).
+
+    Loop parents write almost nothing themselves — the children carry the real
+    transcripts and pids, yet they are separate run records linked only by the
+    id prefix. An await that fingerprints the parent alone sees a frozen record
+    (and possibly a gone pid between rounds) while a child is demonstrably
+    working, then fires a false ``idle_stall`` mid-loop.
+    """
+    prefix = f"{target}-"
+    children: list[dict[str, Any]] = []
+    for key in ("active_runs", "recent_runs"):
+        for run in snapshot.get(key) or []:
+            if not isinstance(run, dict):
+                continue
+            if str(run.get("run_id") or "").startswith(prefix):
+                children.append(run)
+    return children
+
+
+def _report_file_written(path: str) -> bool:
+    try:
+        return Path(str(path)).stat().st_size > 0
+    except OSError:
+        return False
+
+
 def _resolve_await_hard_cap(hard_cap_seconds: float | None) -> float | None:
     """Optional absolute ceiling for :func:`await_run`.
 
@@ -1522,6 +1549,8 @@ def await_run(
     timeout_seconds: float = 300,
     interval_seconds: float = 5,
     hard_cap_seconds: float | None = None,
+    report_path: str | None = None,
+    on_poll: Callable[[dict[str, Any] | None], None] | None = None,
 ) -> dict[str, Any]:
     """Liveness-aware bounded wait for a run using control-plane state only.
 
@@ -1533,6 +1562,20 @@ def await_run(
     optional ``hard_cap_seconds`` absolute ceiling. This stops the orchestrator
     from killing a marbles loop that is still doing real work (~13 min single
     marble) just because a fixed wall-clock budget expired.
+
+    Two more truths keep this the ONE await nobody has to second-guess:
+
+    - A non-empty report file (``report_path`` argument, else the run's own
+      ``latest_report``) is the handoff itself — return ``completed`` with
+      ``reason: report_delivered`` immediately instead of idling out on the
+      worker that already delivered and exited.
+    - Movement and liveness aggregate the run's CHILD runs (marbles/polarize
+      loop rounds live in separate ``<parent>-…-L<n>`` records), so a working
+      child keeps the parent's await open even while the parent record is
+      frozen between rounds.
+
+    ``on_poll`` (when given) is called once per poll with the latest run
+    projection — for callers that print progress while blocking.
     """
     target = str(run_id or "").strip()
     if not target:
@@ -1553,6 +1596,8 @@ def await_run(
         attempts += 1
         snapshot = sync_state()
         last_run = _select_run(snapshot, target)
+        if on_poll is not None:
+            on_poll(last_run)
         if last_run is not None and _run_is_terminal(last_run):
             return {
                 "run_id": target,
@@ -1565,9 +1610,37 @@ def await_run(
                 "run": last_run,
             }
 
+        delivered_report = str(
+            report_path or (last_run.get("latest_report") if last_run else "") or ""
+        ).strip()
+        if delivered_report and _report_file_written(delivered_report):
+            return {
+                "run_id": target,
+                "found": last_run is not None,
+                "completed": True,
+                "timed_out": False,
+                "reason": "report_delivered",
+                "worker_alive": _worker_is_alive(last_run) if last_run else False,
+                "attempts": attempts,
+                "run": last_run,
+            }
+
         now = time.monotonic()
-        worker_alive = _worker_is_alive(last_run) if last_run else False
-        fingerprint = _await_progress_fingerprint(last_run)
+        children = _await_child_runs(snapshot, target)
+        worker_alive = bool(
+            (last_run is not None and _worker_is_alive(last_run))
+            or any(_worker_is_alive(child) for child in children)
+        )
+        fingerprint = (
+            _await_progress_fingerprint(last_run),
+            tuple(
+                sorted(
+                    (str(child.get("run_id") or ""),)
+                    + _await_progress_fingerprint(child)
+                    for child in children
+                )
+            ),
+        )
         moved = fingerprint != previous_fingerprint
         previous_fingerprint = fingerprint
         # Real activity or a live worker keeps the idle window open: never

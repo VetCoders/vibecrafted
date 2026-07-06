@@ -426,9 +426,11 @@ def test_await_stage_reports_delivery_and_death(
     state = _make_lifecycle_run(tmp_path, monkeypatch, workflow_id="vc-ship")
 
     awaited: list[str] = []
+    forwarded_report_paths: list[str] = []
 
-    def fake_await_run(run_id: str, **_kwargs) -> dict:
+    def fake_await_run(run_id: str, **kwargs) -> dict:
         awaited.append(run_id)
+        forwarded_report_paths.append(str(kwargs.get("report_path") or ""))
         return {
             "completed": True,
             "timed_out": False,
@@ -451,6 +453,9 @@ def test_await_stage_reports_delivery_and_death(
     )
     payload = json.loads(capsys.readouterr().out)
     assert awaited  # went through the runtime contract, not a sleep loop
+    # The stage report is the handoff: forwarding it lets await_run return
+    # `report_delivered` on the first poll instead of idling on the corpse.
+    assert forwarded_report_paths[0] == payload["report"]
     assert payload["stage"] == "scaffold"
     assert payload["report_written"] is True
     assert payload["worker_dead_without_report"] is False

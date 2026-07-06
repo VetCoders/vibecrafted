@@ -404,21 +404,33 @@ def test_root_cli_agent_observe_uses_codex_config_model(
 
 
 def test_root_cli_agent_await_accepts_receipt_command(monkeypatch, capsys) -> None:
+    run = {
+        "run_id": "impl-1",
+        "agent": "codex",
+        "state": "report_validated",
+        "skill": "implement",
+        "root": "/repo",
+        "artifact_ok": True,
+        "latest_report": "/tmp/report.md",
+        "latest_transcript": "/tmp/transcript.log",
+    }
     monkeypatch.setattr(
         cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
     )
+    monkeypatch.setattr(cli, "lookup_run", lambda _run_id: run)
+    # The verb must block through the ONE canonical loop — the CLI's own job
+    # is only the exit-code/print mapping of its verdict.
     monkeypatch.setattr(
         cli,
-        "lookup_run",
-        lambda run_id: {
+        "await_run",
+        lambda run_id, **_kwargs: {
             "run_id": run_id,
-            "agent": "codex",
-            "state": "report_validated",
-            "skill": "implement",
-            "root": "/repo",
-            "artifact_ok": True,
-            "latest_report": "/tmp/report.md",
-            "latest_transcript": "/tmp/transcript.log",
+            "found": True,
+            "completed": True,
+            "timed_out": False,
+            "reason": "terminal",
+            "worker_alive": False,
+            "run": run,
         },
     )
 
@@ -450,6 +462,21 @@ def test_root_cli_agent_await_fails_dead_stale_worker(
         cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
     )
     monkeypatch.setattr(cli, "lookup_run", lambda _run_id: run)
+    # Dead + no movement is the canonical loop's idle_stall verdict — the CLI
+    # maps it to a nonzero exit with the final run status printed.
+    monkeypatch.setattr(
+        cli,
+        "await_run",
+        lambda run_id, **_kwargs: {
+            "run_id": run_id,
+            "found": True,
+            "completed": False,
+            "timed_out": True,
+            "reason": "idle_stall",
+            "worker_alive": False,
+            "run": run,
+        },
+    )
 
     rc = cli.main(
         [
@@ -466,7 +493,7 @@ def test_root_cli_agent_await_fails_dead_stale_worker(
 
     assert rc == 1
     captured = capsys.readouterr()
-    assert "await: worker dead or stale" in captured.out
+    assert "await: timed out (idle_stall)" in captured.out
     assert "state:      stalled" in captured.out
     assert "last useful line" in captured.out
 

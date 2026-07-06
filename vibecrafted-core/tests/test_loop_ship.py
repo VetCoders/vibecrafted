@@ -135,7 +135,7 @@ def test_spanko_awaits_verifies_flips_tracker_and_runs_then(
             "--root",
             str(root),
             "--verify",
-            f"{subprocess.list2cmdline(['python3', '-c', 'print("verified")'])}",
+            subprocess.list2cmdline(["python3", "-c", 'print("verified")']),
             "--tracker",
             str(tracker),
             "--cut-id",
