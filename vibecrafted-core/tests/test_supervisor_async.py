@@ -258,7 +258,11 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
         "'model': 'claude-opus-4-8'}))\n"
         "print(json.dumps({'type': 'assistant', 'message': {'content': ["
         "{'type': 'text', 'text': 'visible text from claude'}"
-        "]}}))\n",
+        "]}}))\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'usage': {"
+        "'input_tokens': 10, 'cache_read_input_tokens': 3, "
+        "'cache_creation_input_tokens': 2, 'output_tokens': 5}, "
+        "'total_cost_usd': 0.02}))\n",
         encoding="utf-8",
     )
     claude.chmod(0o755)
@@ -286,6 +290,8 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     assert "session: sess-123" in out
     assert "model: claude-opus-4-8" in out
     assert "visible text from claude" in out
+    assert "tokens_cache_write: 2" in out
+    assert "tokens_total: 18" in out
     assert '"type": "assistant"' not in out
     transcript_text = transcript.read_text(encoding="utf-8")
     assert '"type": "assistant"' in transcript_text
@@ -295,6 +301,9 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     meta_payload = json.loads(meta.read_text(encoding="utf-8"))
     assert meta_payload["agent_session_id"] == "sess-123"
     assert meta_payload["agent_model"] == "claude-opus-4-8"
+    assert meta_payload["tokens_cached_input"] == 3
+    assert meta_payload["tokens_cache_write"] == 2
+    assert meta_payload["tokens_total"] == 18
     assert meta_payload["resume_command"].endswith("claude --resume sess-123")
 
 

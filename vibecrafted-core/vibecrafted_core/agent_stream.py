@@ -162,6 +162,7 @@ class AgentStreamParser:
         self.model_id = _clean_model(default_model)
         self.tokens_input = 0
         self.tokens_cached_input = 0
+        self.tokens_cache_write: int | None = None
         self.tokens_output = 0
         self.cost_usd: float | None = None
 
@@ -232,11 +233,14 @@ class AgentStreamParser:
 
     def _record_usage(self, usage: dict[str, Any]) -> None:
         self.tokens_input += _as_int(usage.get("input_tokens"))
-        self.tokens_cached_input += _as_int(
-            usage.get("cached_input_tokens")
-            or usage.get("cache_read_input_tokens")
-            or usage.get("cache_creation_input_tokens")
-        )
+        cached_input = usage.get("cached_input_tokens")
+        if cached_input is None:
+            cached_input = usage.get("cache_read_input_tokens")
+        self.tokens_cached_input += _as_int(cached_input)
+        if "cache_creation_input_tokens" in usage:
+            self.tokens_cache_write = (self.tokens_cache_write or 0) + _as_int(
+                usage.get("cache_creation_input_tokens")
+            )
         self.tokens_output += _as_int(usage.get("output_tokens"))
 
     def _record_cost(self, event: dict[str, Any]) -> None:

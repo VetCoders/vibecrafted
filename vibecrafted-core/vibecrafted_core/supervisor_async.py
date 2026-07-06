@@ -78,6 +78,22 @@ def _fallback_report_body(transcript_text: str) -> str:
     return "\n".join(plain_lines).strip() + ("\n" if plain_lines else "")
 
 
+def _tokens_total(
+    input_tokens: int, cached_input_tokens: int, output_tokens: int
+) -> int:
+    return input_tokens + cached_input_tokens + output_tokens
+
+
+def _handle_tokens_total(handle: AsyncRunHandle) -> int:
+    return _tokens_total(
+        handle.tokens_input, handle.tokens_cached_input, handle.tokens_output
+    )
+
+
+def _cache_write_line(prefix: str, value: int | None) -> str:
+    return f"{prefix}tokens_cache_write: {value}\n" if value is not None else ""
+
+
 def _render_fallback_report(handle: AsyncRunHandle, transcript_text: str) -> str:
     body = _fallback_report_body(transcript_text)
     if not body:
@@ -98,8 +114,9 @@ def _render_fallback_report(handle: AsyncRunHandle, transcript_text: str) -> str
         f"session_id: {handle.agent_session_id or 'unknown'}\n"
         f"tokens_input: {handle.tokens_input}\n"
         f"tokens_cached_input: {handle.tokens_cached_input}\n"
+        f"{_cache_write_line('', handle.tokens_cache_write)}"
         f"tokens_output: {handle.tokens_output}\n"
-        f"tokens_total: {handle.tokens_input + handle.tokens_output}\n"
+        f"tokens_total: {_handle_tokens_total(handle)}\n"
         f"cost_usd: {handle.cost_usd if handle.cost_usd is not None else 'unknown'}\n"
         f"completed_at: {now}\n"
         "fallback_report: true\n"
@@ -127,7 +144,6 @@ def _terminal_frontmatter(handle: AsyncRunHandle) -> str:
 
 
 def _terminal_footer(handle: AsyncRunHandle) -> str:
-    tokens_total = handle.tokens_input + handle.tokens_output
     return (
         "\n---\n"
         "runner: vibecrafted\n"
@@ -138,8 +154,9 @@ def _terminal_footer(handle: AsyncRunHandle) -> str:
         f"model: {handle.agent_model or 'unknown'}\n"
         f"tokens_input: {handle.tokens_input}\n"
         f"tokens_cached_input: {handle.tokens_cached_input}\n"
+        f"{_cache_write_line('', handle.tokens_cache_write)}"
         f"tokens_output: {handle.tokens_output}\n"
-        f"tokens_total: {tokens_total}\n"
+        f"tokens_total: {_handle_tokens_total(handle)}\n"
         f"cost_usd: {handle.cost_usd if handle.cost_usd is not None else 'unknown'}\n"
         f"resume: {handle.resume_command}\n"
         f"report: {handle.report_path or ''}\n"
@@ -175,6 +192,7 @@ class AsyncRunHandle:
     agent_model: str = ""
     tokens_input: int = 0
     tokens_cached_input: int = 0
+    tokens_cache_write: int | None = None
     tokens_output: int = 0
     cost_usd: float | None = None
     resume_command: str = ""
@@ -382,26 +400,29 @@ class AsyncSupervisor:
             require_report=require_report,
             require_transcript_output=require_transcript_output,
         )
+        artifact_payload = {
+            "event_kind": EventKind.ARTIFACT.value,
+            "meta": str(handle.meta_path or ""),
+            "report": str(handle.report_path or ""),
+            "transcript": str(handle.transcript_path or ""),
+            "agent": handle.agent,
+            "agent_session_id": handle.agent_session_id,
+            "agent_model": handle.agent_model,
+            "tokens_input": handle.tokens_input,
+            "tokens_cached_input": handle.tokens_cached_input,
+            "tokens_output": handle.tokens_output,
+            "tokens_total": _handle_tokens_total(handle),
+            "cost_usd": handle.cost_usd,
+            "resume_command": handle.resume_command,
+            **handle.artifact_validation.as_payload(),
+        }
+        if handle.tokens_cache_write is not None:
+            artifact_payload["tokens_cache_write"] = handle.tokens_cache_write
         await self._emit(
             handle.run_id,
             RunState.ARTIFACT_SEEN,
             "artifacts inspected",
-            payload={
-                "event_kind": EventKind.ARTIFACT.value,
-                "meta": str(handle.meta_path or ""),
-                "report": str(handle.report_path or ""),
-                "transcript": str(handle.transcript_path or ""),
-                "agent": handle.agent,
-                "agent_session_id": handle.agent_session_id,
-                "agent_model": handle.agent_model,
-                "tokens_input": handle.tokens_input,
-                "tokens_cached_input": handle.tokens_cached_input,
-                "tokens_output": handle.tokens_output,
-                "tokens_total": handle.tokens_input + handle.tokens_output,
-                "cost_usd": handle.cost_usd,
-                "resume_command": handle.resume_command,
-                **handle.artifact_validation.as_payload(),
-            },
+            payload=artifact_payload,
         )
         if handle.artifact_validation.ok:
             await self._transition(
@@ -493,6 +514,7 @@ class AsyncSupervisor:
         handle.agent_model = parser.model_id
         handle.tokens_input = parser.tokens_input
         handle.tokens_cached_input = parser.tokens_cached_input
+        handle.tokens_cache_write = parser.tokens_cache_write
         handle.tokens_output = parser.tokens_output
         handle.cost_usd = parser.cost_usd
         handle.resume_command = parser.resume_command(handle.root)
@@ -508,34 +530,35 @@ class AsyncSupervisor:
                 loaded = {}
             if isinstance(loaded, dict):
                 payload.update(loaded)
-        payload.update(
-            {
-                "run_id": handle.run_id,
-                "agent": handle.agent,
-                "session_id": handle.agent_session_id,
-                "agent_session_id": handle.agent_session_id,
-                "agent_model": handle.agent_model,
-                "runtime_session_id": handle.session_id,
-                "root": str(handle.root),
-                "report": str(handle.report_path or ""),
-                "transcript": str(handle.transcript_path or ""),
-                "tokens_input": handle.tokens_input,
-                "tokens_cached_input": handle.tokens_cached_input,
-                "tokens_output": handle.tokens_output,
-                "tokens_total": handle.tokens_input + handle.tokens_output,
-                "cost_usd": handle.cost_usd
-                if handle.cost_usd is not None
-                else "unknown",
-                "resume_command": handle.resume_command,
-                "exit_code": handle.exit_code,
-                "completed_at": handle.completed_at.isoformat()
-                if handle.completed_at
-                else "",
-                "status": "completed"
-                if handle.exit_code == 0
-                else ("failed" if handle.exit_code is not None else "running"),
-            }
-        )
+        summary = {
+            "run_id": handle.run_id,
+            "agent": handle.agent,
+            "session_id": handle.agent_session_id,
+            "agent_session_id": handle.agent_session_id,
+            "agent_model": handle.agent_model,
+            "runtime_session_id": handle.session_id,
+            "root": str(handle.root),
+            "report": str(handle.report_path or ""),
+            "transcript": str(handle.transcript_path or ""),
+            "tokens_input": handle.tokens_input,
+            "tokens_cached_input": handle.tokens_cached_input,
+            "tokens_output": handle.tokens_output,
+            "tokens_total": _handle_tokens_total(handle),
+            "cost_usd": handle.cost_usd if handle.cost_usd is not None else "unknown",
+            "resume_command": handle.resume_command,
+            "exit_code": handle.exit_code,
+            "completed_at": handle.completed_at.isoformat()
+            if handle.completed_at
+            else "",
+            "status": "completed"
+            if handle.exit_code == 0
+            else ("failed" if handle.exit_code is not None else "running"),
+        }
+        if handle.tokens_cache_write is not None:
+            summary["tokens_cache_write"] = handle.tokens_cache_write
+        else:
+            payload.pop("tokens_cache_write", None)
+        payload.update(summary)
         handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
         handle.meta_path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",

@@ -17,7 +17,8 @@ def test_agent_stream_parser_extracts_claude_session_usage_cost_and_text() -> No
         ),
         parser.feed_line(
             b'{"type":"result","result":"done","usage":{"input_tokens":10,'
-            b'"cache_read_input_tokens":3,"output_tokens":5},'
+            b'"cache_read_input_tokens":3,"cache_creation_input_tokens":2,'
+            b'"output_tokens":5},'
             b'"total_cost_usd":0.0123}\n'
         ),
     ]
@@ -29,6 +30,7 @@ def test_agent_stream_parser_extracts_claude_session_usage_cost_and_text() -> No
     assert parser.model_id == "claude-opus-4-8"
     assert parser.tokens_input == 10
     assert parser.tokens_cached_input == 3
+    assert parser.tokens_cache_write == 2
     assert parser.tokens_output == 5
     assert parser.cost_usd == 0.0123
 
@@ -57,6 +59,7 @@ def test_agent_stream_parser_extracts_codex_thread_usage_and_text() -> None:
     assert parser.model_id == "gpt-5.3-codex"
     assert parser.tokens_input == 11
     assert parser.tokens_cached_input == 4
+    assert parser.tokens_cache_write is None
     assert parser.tokens_output == 6
 
 

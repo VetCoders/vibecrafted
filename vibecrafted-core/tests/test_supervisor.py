@@ -197,7 +197,8 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     assert payload["tokens_input"] == 12
     assert payload["tokens_cached_input"] == 3
     assert payload["tokens_output"] == 7
-    assert payload["tokens_total"] == 19
+    assert payload["tokens_total"] == 22
+    assert "tokens_cache_write" not in payload
     assert payload["cost_usd"] == 0.045
     assert payload["artifact_contract"] == "vibecrafted.agent-artifact.v1"
 
@@ -276,11 +277,21 @@ def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
         "runner: vibecrafted\n"
         "model: gemini-3.1-pro-preview\n"
         "tokens_input: 648618\n"
-        "tokens_cached_input: 0\n"
+        "tokens_cached_input: 50\n"
         "tokens_output: 1680\n"
-        "tokens_total: 650298\n"
+        "tokens_total: 650348\n"
     )
-    assert _extract_tokens(gemini_transcript)["total"] == 650298
+    assert _extract_tokens(gemini_transcript)["total"] == 650348
+
+    claude_footer = (
+        "tokens_input: 100\n"
+        "tokens_cached_input: 400\n"
+        "tokens_cache_write: 25\n"
+        "tokens_output: 30\n"
+    )
+    claude_tokens = _extract_tokens(claude_footer)
+    assert claude_tokens["total"] == 530
+    assert claude_tokens["cache_write"] == 25
 
     # junie-style footer, no per-event render line either.
     junie_transcript = "tokens_input: 5000\ntokens_output: 200\ntokens_total: 5200\n"

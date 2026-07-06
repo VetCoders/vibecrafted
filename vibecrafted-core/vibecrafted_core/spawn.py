@@ -42,9 +42,20 @@ FOOTER_TOKEN_PATTERNS = {
     "cached_input": re.compile(
         r"^\s*tokens_cached_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
     ),
+    "cache_write": re.compile(
+        r"^\s*tokens_cache_write:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
+    ),
     "output": re.compile(
         r"^\s*tokens_output:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
     ),
+}
+JSON_TOKEN_PATTERNS = {
+    "input": re.compile(r'"input_tokens"\s*:\s*([0-9]+)'),
+    "cached_input": re.compile(
+        r'"(?:cached_input_tokens|cache_read_input_tokens)"\s*:\s*([0-9]+)'
+    ),
+    "cache_write": re.compile(r'"cache_creation_input_tokens"\s*:\s*([0-9]+)'),
+    "output": re.compile(r'"output_tokens"\s*:\s*([0-9]+)'),
 }
 COST_PATTERNS = (
     re.compile(r"cost(?:_usd)?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
@@ -265,7 +276,13 @@ def _extract_session(text: str) -> str:
     return ""
 
 
-def _extract_tokens(text: str) -> dict[str, int]:
+def _tokens_total(
+    input_tokens: int, cached_input_tokens: int, output_tokens: int
+) -> int:
+    return input_tokens + cached_input_tokens + output_tokens
+
+
+def _extract_tokens(text: str) -> dict[str, int | None]:
     clean = _clean_text(text)
     found = TOKEN_PATTERN.findall(clean)
     # Prefer the authoritative run-closure footer totals when present: they are
@@ -275,19 +292,46 @@ def _extract_tokens(text: str) -> dict[str, int]:
     footer_out = FOOTER_TOKEN_PATTERNS["output"].findall(clean)
     if footer_in or footer_out:
         footer_cached = FOOTER_TOKEN_PATTERNS["cached_input"].findall(clean)
+        footer_cache_write = FOOTER_TOKEN_PATTERNS["cache_write"].findall(clean)
         input_tokens = int(footer_in[-1]) if footer_in else 0
         cached_tokens = int(footer_cached[-1]) if footer_cached else 0
+        cache_write_tokens = int(footer_cache_write[-1]) if footer_cache_write else None
         output_tokens = int(footer_out[-1]) if footer_out else 0
-        total_tokens = input_tokens + output_tokens
+        total_tokens = _tokens_total(input_tokens, cached_tokens, output_tokens)
         if total_tokens or not found:
             return {
                 "input": input_tokens,
                 "cached_input": cached_tokens,
+                "cache_write": cache_write_tokens,
                 "output": output_tokens,
                 "total": total_tokens,
             }
+    json_tokens = {
+        key: sum(int(match) for match in pattern.findall(clean))
+        for key, pattern in JSON_TOKEN_PATTERNS.items()
+    }
+    if any(json_tokens.values()):
+        return {
+            "input": json_tokens["input"],
+            "cached_input": json_tokens["cached_input"],
+            "cache_write": json_tokens["cache_write"]
+            if json_tokens["cache_write"]
+            else None,
+            "output": json_tokens["output"],
+            "total": _tokens_total(
+                json_tokens["input"],
+                json_tokens["cached_input"],
+                json_tokens["output"],
+            ),
+        }
     if not found:
-        return {"input": 0, "cached_input": 0, "output": 0, "total": 0}
+        return {
+            "input": 0,
+            "cached_input": 0,
+            "cache_write": None,
+            "output": 0,
+            "total": 0,
+        }
     input_tokens = cached_tokens = output_tokens = 0
     for raw_in, raw_cached, raw_out in found:
         input_tokens += int(raw_in)
@@ -296,8 +340,9 @@ def _extract_tokens(text: str) -> dict[str, int]:
     return {
         "input": input_tokens,
         "cached_input": cached_tokens,
+        "cache_write": None,
         "output": output_tokens,
-        "total": input_tokens + output_tokens,
+        "total": _tokens_total(input_tokens, cached_tokens, output_tokens),
     }
 
 
@@ -541,9 +586,12 @@ def _render_frontmatter(data: dict[str, object]) -> str:
         "artifact_kind",
         "repo_path",
         "tokens_input",
+        "tokens_cached_input",
+        "tokens_cache_write",
         "tokens_output",
         "tokens_total",
         "cost_usd",
+        "cost_source",
     ]
     lines = ["---"]
     emitted = set()
@@ -646,18 +694,29 @@ def _leave_compat_link(announced: Path, final: Path) -> None:
 
 
 def _footer(marker: str, payload: dict[str, object]) -> str:
-    return "\n".join(
+    lines = [
+        "",
+        f"<!-- vibecrafted-artifact-footer:{marker} -->",
+        "---",
+        "run_closure:",
+        f"  run_id: {payload.get('run_id', 'unknown')}",
+        f"  session_id: {payload.get('session_id') or 'unknown'}",
+        f"  tokens_input: {payload.get('tokens_input', 0)}",
+        f"  tokens_cached_input: {payload.get('tokens_cached_input', 0)}",
+    ]
+    if payload.get("tokens_cache_write") is not None:
+        lines.append(f"  tokens_cache_write: {payload.get('tokens_cache_write')}")
+    lines.extend(
         [
-            "",
-            f"<!-- vibecrafted-artifact-footer:{marker} -->",
-            "---",
-            "run_closure:",
-            f"  run_id: {payload.get('run_id', 'unknown')}",
-            f"  session_id: {payload.get('session_id') or 'unknown'}",
-            f"  tokens_input: {payload.get('tokens_input', 0)}",
             f"  tokens_output: {payload.get('tokens_output', 0)}",
             f"  tokens_total: {payload.get('tokens_total', 0)}",
             f"  cost_usd: {payload.get('cost_usd') if payload.get('cost_usd') is not None else 'unknown'}",
+        ]
+    )
+    if payload.get("cost_source"):
+        lines.append(f"  cost_source: {payload.get('cost_source')}")
+    lines.extend(
+        [
             f"  status: {payload.get('status', 'unknown')}",
             f"  completed_at: {payload.get('completed_at', 'unknown')}",
             f'  resume_hint: "{payload.get("resume_hint", "")}"',
@@ -665,6 +724,7 @@ def _footer(marker: str, payload: dict[str, object]) -> str:
             "",
         ]
     )
+    return "\n".join(lines)
 
 
 def _normalize_markdown_artifact(
@@ -677,27 +737,35 @@ def _normalize_markdown_artifact(
         return
     fm, body = _parse_frontmatter(text)
     frontmatter: dict[str, object] = dict(fm)
-    frontmatter.update(
-        {
-            "run_id": payload.get("run_id", "unknown"),
-            "prompt_id": payload.get("prompt_id", "unknown"),
-            "agent": payload.get("agent", "unknown"),
-            "skill": payload.get("skill_code") or payload.get("skill") or "unknown",
-            "model": payload.get("model", "unknown"),
-            "status": payload.get("status", "unknown"),
-            "date": payload.get("date", "unknown"),
-            "session_id": payload.get("session_id") or "unknown",
-            "artifact_stem": payload.get("artifact_stem", "unknown"),
-            "artifact_kind": payload.get("artifact_kind", "unknown"),
-            "repo_path": payload.get("root", "unknown"),
-            "tokens_input": payload.get("tokens_input", 0),
-            "tokens_output": payload.get("tokens_output", 0),
-            "tokens_total": payload.get("tokens_total", 0),
-            "cost_usd": payload.get("cost_usd")
-            if payload.get("cost_usd") is not None
-            else "unknown",
-        }
-    )
+    frontmatter_update = {
+        "run_id": payload.get("run_id", "unknown"),
+        "prompt_id": payload.get("prompt_id", "unknown"),
+        "agent": payload.get("agent", "unknown"),
+        "skill": payload.get("skill_code") or payload.get("skill") or "unknown",
+        "model": payload.get("model", "unknown"),
+        "status": payload.get("status", "unknown"),
+        "date": payload.get("date", "unknown"),
+        "session_id": payload.get("session_id") or "unknown",
+        "artifact_stem": payload.get("artifact_stem", "unknown"),
+        "artifact_kind": payload.get("artifact_kind", "unknown"),
+        "repo_path": payload.get("root", "unknown"),
+        "tokens_input": payload.get("tokens_input", 0),
+        "tokens_cached_input": payload.get("tokens_cached_input", 0),
+        "tokens_output": payload.get("tokens_output", 0),
+        "tokens_total": payload.get("tokens_total", 0),
+        "cost_usd": payload.get("cost_usd")
+        if payload.get("cost_usd") is not None
+        else "unknown",
+    }
+    if payload.get("tokens_cache_write") is not None:
+        frontmatter_update["tokens_cache_write"] = payload.get("tokens_cache_write")
+    else:
+        frontmatter.pop("tokens_cache_write", None)
+    if payload.get("cost_source"):
+        frontmatter_update["cost_source"] = payload.get("cost_source")
+    else:
+        frontmatter.pop("cost_source", None)
+    frontmatter.update(frontmatter_update)
     marker = str(payload.get("run_id") or "unknown")
     new_text = _render_frontmatter(frontmatter) + body.rstrip() + "\n"
     if f"vibecrafted-artifact-footer:{marker}" not in new_text:
@@ -730,6 +798,11 @@ def finalize_artifacts(
 
     session_id = payload.get("session_id") or _extract_session(combined_text)
     tokens = _extract_tokens(combined_text)
+    tokens_input = int(tokens["input"] or 0)
+    tokens_cached_input = int(tokens["cached_input"] or 0)
+    tokens_cache_write = tokens["cache_write"]
+    tokens_output = int(tokens["output"] or 0)
+    tokens_total = int(tokens["total"] or 0)
     cost = _extract_cost(combined_text)
     completed_at = (
         payload.get("completed_at") or dt.datetime.now(dt.timezone.utc).isoformat()
@@ -745,11 +818,23 @@ def finalize_artifacts(
     payload["session_id"] = session_id or payload.get("session_id") or ""
     payload["model"] = _resolve_model(payload, combined_text)
     payload["duration_s"] = _resolve_duration(payload, str(completed_at))
-    payload["tokens_input"] = tokens["input"]
-    payload["tokens_cached_input"] = tokens["cached_input"]
-    payload["tokens_output"] = tokens["output"]
-    payload["tokens_total"] = tokens["total"]
-    payload["token_usage"] = tokens
+    payload["tokens_input"] = tokens_input
+    payload["tokens_cached_input"] = tokens_cached_input
+    if tokens_cache_write is not None:
+        payload["tokens_cache_write"] = tokens_cache_write
+    else:
+        payload.pop("tokens_cache_write", None)
+    payload["tokens_output"] = tokens_output
+    payload["tokens_total"] = tokens_total
+    token_usage: dict[str, int] = {
+        "input": tokens_input,
+        "cached_input": tokens_cached_input,
+        "output": tokens_output,
+        "total": tokens_total,
+    }
+    if tokens_cache_write is not None:
+        token_usage["cache_write"] = int(tokens_cache_write)
+    payload["token_usage"] = token_usage
     payload["cost_usd"] = cost
     payload["resume_hint"] = resume_hint
     payload["artifact_contract"] = "vibecrafted.agent-artifact.v1"
@@ -807,10 +892,17 @@ def finalize_artifacts(
     payload["artifact_footer"] = {
         "run_id": payload.get("run_id", "unknown"),
         "session_id": payload.get("session_id") or "",
-        "tokens_total": tokens["total"],
+        "tokens_input": tokens_input,
+        "tokens_cached_input": tokens_cached_input,
+        "tokens_output": tokens_output,
+        "tokens_total": tokens_total,
         "cost_usd": cost,
         "resume_hint": resume_hint,
     }
+    if tokens_cache_write is not None:
+        payload["artifact_footer"]["tokens_cache_write"] = tokens_cache_write
+    if payload.get("cost_source"):
+        payload["artifact_footer"]["cost_source"] = payload.get("cost_source")
     payload.setdefault("completed_at", completed_at)
     payload["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 
@@ -825,11 +917,16 @@ def finalize_artifacts(
 
     footer_payload = {
         **payload,
-        "tokens_input": tokens["input"],
-        "tokens_output": tokens["output"],
-        "tokens_total": tokens["total"],
+        "tokens_input": tokens_input,
+        "tokens_cached_input": tokens_cached_input,
+        "tokens_output": tokens_output,
+        "tokens_total": tokens_total,
         "cost_usd": cost,
     }
+    if tokens_cache_write is not None:
+        footer_payload["tokens_cache_write"] = tokens_cache_write
+    else:
+        footer_payload.pop("tokens_cache_write", None)
 
     if str(transcript):
         _normalize_markdown_artifact(transcript, footer_payload)

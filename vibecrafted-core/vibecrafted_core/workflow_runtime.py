@@ -34,6 +34,7 @@ class ChildResult:
     artifact_errors: tuple[str, ...]
     tokens_input: int = 0
     tokens_cached_input: int = 0
+    tokens_cache_write: int | None = None
     tokens_output: int = 0
     cost_usd: float | None = None
     resume_command: str = ""
@@ -174,6 +175,133 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+
+
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _optional_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _tokens_total(
+    input_tokens: int, cached_input_tokens: int, output_tokens: int
+) -> int:
+    return input_tokens + cached_input_tokens + output_tokens
+
+
+def _child_tokens_total(result: ChildResult) -> int:
+    return _tokens_total(
+        result.tokens_input,
+        result.tokens_cached_input,
+        result.tokens_output,
+    )
+
+
+def _sum_cache_write(results: Sequence[ChildResult]) -> int | None:
+    values = [
+        item.tokens_cache_write
+        for item in results
+        if item.tokens_cache_write is not None
+    ]
+    return sum(values) if values else None
+
+
+def _sum_cost_usd(results: Sequence[ChildResult]) -> float | None:
+    values = [item.cost_usd for item in results if item.cost_usd is not None]
+    return round(sum(values), 6) if values else None
+
+
+def _result_meta(result: ChildResult) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "label": result.label,
+        "agent": result.agent,
+        "run_id": result.run_id,
+        "agent_session_id": result.agent_session_id,
+        "agent_model": result.agent_model,
+        "report": str(result.report),
+        "transcript": str(result.transcript),
+        "exit_code": result.exit_code,
+        "artifact_ok": result.artifact_ok,
+        "artifact_errors": list(result.artifact_errors),
+        "tokens_input": result.tokens_input,
+        "tokens_cached_input": result.tokens_cached_input,
+        "tokens_output": result.tokens_output,
+        "tokens_total": _child_tokens_total(result),
+        "cost_usd": result.cost_usd if result.cost_usd is not None else "unknown",
+        "resume_command": result.resume_command,
+        "completed_at": result.completed_at,
+    }
+    if result.tokens_cache_write is not None:
+        payload["tokens_cache_write"] = result.tokens_cache_write
+    return payload
+
+
+def _parent_receipt(results: Sequence[ChildResult]) -> dict[str, object]:
+    tokens_input = sum(result.tokens_input for result in results)
+    tokens_cached_input = sum(result.tokens_cached_input for result in results)
+    tokens_output = sum(result.tokens_output for result in results)
+    receipt: dict[str, object] = {
+        "session_id": "aggregated" if results else "",
+        "tokens_input": tokens_input,
+        "tokens_cached_input": tokens_cached_input,
+        "tokens_output": tokens_output,
+        "tokens_total": _tokens_total(tokens_input, tokens_cached_input, tokens_output),
+        "cost_usd": _sum_cost_usd(results),
+        "cost_source": "children_sum" if results else "none",
+    }
+    cache_write = _sum_cache_write(results)
+    if cache_write is not None:
+        receipt["tokens_cache_write"] = cache_write
+    return receipt
+
+
+def _parent_footer(run_id: str, status: str, receipt: dict[str, object]) -> list[str]:
+    cost = receipt.get("cost_usd")
+    lines = [
+        "",
+        f"<!-- vibecrafted-artifact-footer:{run_id} -->",
+        "---",
+        "run_closure:",
+        f"  run_id: {run_id}",
+        f"  session_id: {receipt.get('session_id') or 'aggregated'}",
+        f"  tokens_input: {receipt.get('tokens_input', 0)}",
+        f"  tokens_cached_input: {receipt.get('tokens_cached_input', 0)}",
+    ]
+    if receipt.get("tokens_cache_write") is not None:
+        lines.append(f"  tokens_cache_write: {receipt.get('tokens_cache_write')}")
+    lines.extend(
+        [
+            f"  tokens_output: {receipt.get('tokens_output', 0)}",
+            f"  tokens_total: {receipt.get('tokens_total', 0)}",
+            f"  cost_usd: {cost if cost is not None else 'unknown'}",
+            f"  cost_source: {receipt.get('cost_source', 'none')}",
+            f"  status: {status}",
+            f"  completed_at: {datetime.now(timezone.utc).isoformat()}",
+            '  resume_hint: ""',
+            "---",
+            "",
+        ]
+    )
+    return lines
 
 
 def _read_prompt_file(path: str) -> str:
@@ -494,6 +622,7 @@ async def _run_child(
         artifact_errors=tuple(validation.errors if validation is not None else ()),
         tokens_input=handle.tokens_input,
         tokens_cached_input=handle.tokens_cached_input,
+        tokens_cache_write=handle.tokens_cache_write,
         tokens_output=handle.tokens_output,
         cost_usd=handle.cost_usd,
         resume_command=handle.resume_command,
@@ -541,10 +670,9 @@ def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
         artifact_errors=artifact_errors,
         tokens_input=int(payload.get("tokens_input") or 0),
         tokens_cached_input=int(payload.get("tokens_cached_input") or 0),
+        tokens_cache_write=_optional_int(payload.get("tokens_cache_write")),
         tokens_output=int(payload.get("tokens_output") or 0),
-        cost_usd=payload.get("cost_usd")
-        if isinstance(payload.get("cost_usd"), float)
-        else None,
+        cost_usd=_optional_float(payload.get("cost_usd")),
         resume_command=str(payload.get("resume_command") or ""),
         completed_at=str(
             payload.get("completed_at") or payload.get("updated_at") or ""
@@ -723,6 +851,11 @@ def _write_parent_report(
     research_selection: ResearchAgentSelection | None = None,
 ) -> None:
     status = _research_run_status(results, synthesis, kind=kind)
+    accounting_results = tuple(results) + (
+        (synthesis,) if synthesis is not None else ()
+    )
+    receipt = _parent_receipt(accounting_results)
+    cost = receipt.get("cost_usd")
     report = _parent_report_path()
     report.parent.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -730,20 +863,39 @@ def _write_parent_report(
         f"status: {status}",
         f"skill: vc-{kind}",
         f"run_id: {_parent_run_id()}",
+        f"session_id: {receipt.get('session_id') or 'aggregated'}",
         f"root: {root}",
-        "---",
-        "",
-        f"# vc-{kind} supervised run",
-        "",
-        "## Operator Prompt",
-        "",
-        prompt or "(empty)",
-        "",
-        "## Reception Ledger",
-        "",
-        "Child reports are supervised artifacts for the parent runtime. Research synthesis resumes the last-finishing lane so the reducer can use native agent context/cache.",
-        "",
+        f"tokens_input: {receipt['tokens_input']}",
+        f"tokens_cached_input: {receipt['tokens_cached_input']}",
     ]
+    if receipt.get("tokens_cache_write") is not None:
+        lines.append(f"tokens_cache_write: {receipt['tokens_cache_write']}")
+    lines.extend(
+        [
+            f"tokens_output: {receipt['tokens_output']}",
+            f"tokens_total: {receipt['tokens_total']}",
+            f"cost_usd: {cost if cost is not None else 'unknown'}",
+            f"cost_source: {receipt['cost_source']}",
+        ]
+    )
+    lines.extend(
+        [
+            "---",
+            "",
+            f"# vc-{kind} supervised run",
+            "",
+            "## Operator Prompt",
+            "",
+            prompt or "(empty)",
+            "",
+            "## Reception Ledger",
+            "",
+            "Child reports are supervised artifacts for the parent runtime. "
+            "Research synthesis resumes the last-finishing lane so the reducer "
+            "can use native agent context/cache.",
+            "",
+        ]
+    )
     if research_selection is not None:
         lines.extend(
             [
@@ -756,43 +908,65 @@ def _write_parent_report(
             ]
         )
     if synthesis is not None:
-        lines.extend(
+        synthesis_lines = [
+            "## Synthesis",
+            "",
+            f"- {synthesis.label} ({synthesis.agent})",
+            f"  - run_id: {synthesis.run_id}",
+            f"  - agent_session_id: {synthesis.agent_session_id or 'unknown'}",
+            f"  - agent_model: {synthesis.agent_model or 'unknown'}",
+            f"  - exit_code: {synthesis.exit_code}",
+            f"  - artifact_ok: {str(synthesis.artifact_ok).lower()}",
+            f"  - resume: {synthesis.resume_command}",
+            "  - tokens: "
+            f"{synthesis.tokens_input} in "
+            f"({synthesis.tokens_cached_input} cached) / "
+            f"{synthesis.tokens_output} out",
+        ]
+        if synthesis.tokens_cache_write is not None:
+            synthesis_lines.append(
+                f"  - tokens_cache_write: {synthesis.tokens_cache_write}"
+            )
+        synthesis_lines.extend(
             [
-                "## Synthesis",
-                "",
-                f"- {synthesis.label} ({synthesis.agent})",
-                f"  - run_id: {synthesis.run_id}",
-                f"  - agent_session_id: {synthesis.agent_session_id or 'unknown'}",
-                f"  - agent_model: {synthesis.agent_model or 'unknown'}",
-                f"  - exit_code: {synthesis.exit_code}",
-                f"  - artifact_ok: {str(synthesis.artifact_ok).lower()}",
-                f"  - resume: {synthesis.resume_command}",
+                "  - cost_usd: "
+                f"{synthesis.cost_usd if synthesis.cost_usd is not None else 'unknown'}",
                 f"  - report: {synthesis.report}",
                 f"  - transcript: {synthesis.transcript}",
                 "",
             ]
         )
+        lines.extend(synthesis_lines)
     elif kind == "research":
         lines.extend(["## Synthesis", "", "- skipped: child run failure", ""])
     lines.extend(["## Child Runs", ""])
     for result in results:
         errors = ", ".join(result.artifact_errors) if result.artifact_errors else "none"
-        lines.extend(
+        child_lines = [
+            f"- {result.label} ({result.agent})",
+            f"  - run_id: {result.run_id}",
+            f"  - agent_session_id: {result.agent_session_id or 'unknown'}",
+            f"  - agent_model: {result.agent_model or 'unknown'}",
+            f"  - exit_code: {result.exit_code}",
+            f"  - artifact_ok: {str(result.artifact_ok).lower()}",
+            f"  - artifact_errors: {errors}",
+            "  - tokens: "
+            f"{result.tokens_input} in ({result.tokens_cached_input} cached) / "
+            f"{result.tokens_output} out",
+        ]
+        if result.tokens_cache_write is not None:
+            child_lines.append(f"  - tokens_cache_write: {result.tokens_cache_write}")
+        child_lines.extend(
             [
-                f"- {result.label} ({result.agent})",
-                f"  - run_id: {result.run_id}",
-                f"  - agent_session_id: {result.agent_session_id or 'unknown'}",
-                f"  - agent_model: {result.agent_model or 'unknown'}",
-                f"  - exit_code: {result.exit_code}",
-                f"  - artifact_ok: {str(result.artifact_ok).lower()}",
-                f"  - artifact_errors: {errors}",
-                f"  - tokens: {result.tokens_input} in ({result.tokens_cached_input} cached) / {result.tokens_output} out",
-                f"  - cost_usd: {result.cost_usd if result.cost_usd is not None else 'unknown'}",
+                "  - cost_usd: "
+                f"{result.cost_usd if result.cost_usd is not None else 'unknown'}",
                 f"  - resume: {result.resume_command}",
                 f"  - report: {result.report}",
                 f"  - transcript: {result.transcript}",
             ]
         )
+        lines.extend(child_lines)
+    lines.extend(_parent_footer(_parent_run_id(), status, receipt))
     report.write_text("\n".join(lines) + "\n", encoding="utf-8")
     _write_json(
         _parent_meta_path(),
@@ -801,6 +975,18 @@ def _write_parent_report(
             "skill": kind,
             "status": status,
             "report": str(report),
+            "session_id": receipt.get("session_id") or "aggregated",
+            "tokens_input": receipt["tokens_input"],
+            "tokens_cached_input": receipt["tokens_cached_input"],
+            **(
+                {"tokens_cache_write": receipt["tokens_cache_write"]}
+                if receipt.get("tokens_cache_write") is not None
+                else {}
+            ),
+            "tokens_output": receipt["tokens_output"],
+            "tokens_total": receipt["tokens_total"],
+            "cost_usd": cost if cost is not None else "unknown",
+            "cost_source": receipt["cost_source"],
             "research_agent_source": research_selection.source
             if research_selection is not None
             else "",
@@ -810,45 +996,8 @@ def _write_parent_report(
             "research_ignored_agents": list(research_selection.ignored)
             if research_selection is not None
             else [],
-            "synthesis": {
-                "label": synthesis.label,
-                "agent": synthesis.agent,
-                "run_id": synthesis.run_id,
-                "agent_session_id": synthesis.agent_session_id,
-                "agent_model": synthesis.agent_model,
-                "report": str(synthesis.report),
-                "transcript": str(synthesis.transcript),
-                "exit_code": synthesis.exit_code,
-                "artifact_ok": synthesis.artifact_ok,
-                "artifact_errors": list(synthesis.artifact_errors),
-                "resume_command": synthesis.resume_command,
-            }
-            if synthesis is not None
-            else {},
-            "children": [
-                {
-                    "label": result.label,
-                    "agent": result.agent,
-                    "run_id": result.run_id,
-                    "agent_session_id": result.agent_session_id,
-                    "agent_model": result.agent_model,
-                    "report": str(result.report),
-                    "transcript": str(result.transcript),
-                    "exit_code": result.exit_code,
-                    "artifact_ok": result.artifact_ok,
-                    "artifact_errors": list(result.artifact_errors),
-                    "tokens_input": result.tokens_input,
-                    "tokens_cached_input": result.tokens_cached_input,
-                    "tokens_output": result.tokens_output,
-                    "tokens_total": result.tokens_input + result.tokens_output,
-                    "cost_usd": result.cost_usd
-                    if result.cost_usd is not None
-                    else "unknown",
-                    "resume_command": result.resume_command,
-                    "completed_at": result.completed_at,
-                }
-                for result in results
-            ],
+            "synthesis": _result_meta(synthesis) if synthesis is not None else {},
+            "children": [_result_meta(result) for result in results],
         },
     )
 
