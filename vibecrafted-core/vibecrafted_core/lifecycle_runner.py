@@ -50,6 +50,9 @@ class LifecycleRunSpec:
     # carries the whole relay's crew. An explicit entry for a stage wins over
     # worker-requested next_agent steering.
     stage_agents: dict[str, str] = field(default_factory=dict)
+    # Operator-declared per-stage model requests: {stage_id: model}. Explicit
+    # mission frontmatter wins over manifest defaults; empty = runner default.
+    stage_models: dict[str, str] = field(default_factory=dict)
 
 
 def _lifecycle_run_id(workflow_id: str) -> str:
@@ -355,6 +358,43 @@ def _mission_stage_agents(mission_text: str) -> dict[str, str]:
     return agents
 
 
+def _mission_stage_models(mission_text: str) -> dict[str, str]:
+    """Per-stage model pins declared in mission YAML frontmatter.
+
+    Accepted shapes mirror stage_agents. Model names are passed through
+    verbatim; the runtime only knows whether a runner has a model flag.
+    """
+
+    lines = str(mission_text or "").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    models: dict[str, str] = {}
+    in_block = False
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if not in_block:
+            if not stripped.startswith("stage_models:"):
+                continue
+            inline = stripped.split(":", 1)[1].strip()
+            if inline:
+                for pair in inline.split(","):
+                    separator = "=" if "=" in pair else ":"
+                    if separator not in pair:
+                        continue
+                    key, value = pair.split(separator, 1)
+                    models[key.strip()] = value.strip().strip('"')
+                break
+            in_block = True
+            continue
+        if not line.startswith((" ", "\t")) or ":" not in stripped:
+            break
+        key, value = stripped.split(":", 1)
+        models[key.strip()] = value.strip().strip('"')
+    return models
+
+
 def _validated_stage_agents(
     raw: dict[str, str], manifest: WorkflowManifest
 ) -> dict[str, str]:
@@ -379,6 +419,21 @@ def _validated_stage_agents(
                 + ")"
             )
         resolved[stage_key] = agent_name
+    return resolved
+
+
+def _validated_stage_models(
+    raw: dict[str, str], manifest: WorkflowManifest
+) -> dict[str, str]:
+    """Manifest-gate optional model pins without whitelisting model names."""
+    stage_ids = {stage.id for stage in manifest.stages}
+    resolved: dict[str, str] = {}
+    for stage_id, model in dict(raw or {}).items():
+        stage_key = str(stage_id).strip()
+        model_name = str(model).strip()
+        if not stage_key or not model_name or stage_key not in stage_ids:
+            continue
+        resolved[stage_key] = model_name
     return resolved
 
 
@@ -430,6 +485,10 @@ class LifecycleRunner:
             dict(spec.stage_agents or {}) or _mission_stage_agents(source_prompt),
             manifest,
         )
+        stage_models = _validated_stage_models(
+            dict(spec.stage_models or {}) or _mission_stage_models(source_prompt),
+            manifest,
+        )
         run_id = _lifecycle_run_id(manifest.id)
         run_dir = control_plane_home() / "lifecycle_runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -468,6 +527,7 @@ class LifecycleRunner:
                 "depth": spec.depth,
                 "previous_reports": list(previous_reports),
                 "stage_agents": dict(stage_agents),
+                "stage_models": dict(stage_models),
             },
             "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
             "human_controls": list(manifest.human_controls),
@@ -518,6 +578,7 @@ class LifecycleRunner:
                 # Operator-declared casting wins for a stage it names; then
                 # manifest defaults; then the baton's current agent.
                 agent=stage_agents.get(current) or stage.agent or current_agent,
+                model=stage_models.get(current) or stage.model,
                 source_prompt=source_prompt,
                 root=root,
                 previous_reports=previous_reports,
@@ -635,6 +696,7 @@ class LifecycleRunner:
         stage: WorkflowStage,
         spec: LifecycleRunSpec,
         agent: str,
+        model: str,
         source_prompt: str,
         root: Path,
         previous_reports: list[str],
@@ -658,6 +720,7 @@ class LifecycleRunner:
             root=str(root),
             count=spec.count if stage.workflow == "marbles" else None,
             depth=spec.depth if stage.workflow == "marbles" else None,
+            model=model,
             lifecycle_state_path=str(state_path or ""),
         )
         commit_before = _git_head(root)
@@ -669,6 +732,7 @@ class LifecycleRunner:
             "name": stage.name,
             "workflow": stage.workflow,
             "agent": agent,
+            "model_requested": model,
             "phase": stage.phase,
             "can_modify_code": stage.can_modify_code,
             "tooling": list(stage.tooling),
@@ -895,6 +959,12 @@ def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
                 "",
                 f"- {stage.get('id')} ({stage.get('phase')}): {stage.get('status')}",
                 f"  - agent: {stage.get('agent', '')}",
+                "  - model_requested: "
+                + str(
+                    stage.get("model_requested")
+                    or stage.get("launch", {}).get("model_requested")
+                    or ""
+                ),
                 f"  - run_id: {stage.get('launch', {}).get('run_id', '')}",
                 f"  - report: {stage.get('launch', {}).get('report', '')}",
                 f"  - commit_before: {stage.get('commit_before', '')}",

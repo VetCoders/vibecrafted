@@ -50,6 +50,8 @@ class WorkflowStage:
     tooling: tuple[str, ...] = ()
     # Optional per-stage agent pin; empty = the current baton holder runs it.
     agent: str = ""
+    # Optional per-stage model pin; empty = runner default.
+    model: str = ""
     next_stage: str = ""
     fallback_stage: str = ""
     audit_after: str = ""

@@ -350,6 +350,55 @@ def test_async_supervisor_uses_env_model_for_codex_thread_banner(
     assert meta_payload["agent_model"] == "gpt-5.3-codex"
 
 
+def test_async_supervisor_records_requested_model_next_to_reported_model(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_AGENT", "gemini")
+    monkeypatch.setenv("VIBECRAFTED_MODEL_REQUESTED", "gemini-pro")
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    meta = tmp_path / "dispatch.meta.json"
+    worker = tmp_path / "gemini"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        ")\n"
+        "print('model: gemini-real')\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="asup-gemini-model-requested",
+            command=[str(worker)],
+            root=tmp_path,
+            meta_path=meta,
+            report_path=report,
+            transcript_path=transcript,
+            tee_output=True,
+        )
+    )
+
+    assert handle.exit_code == 0
+    assert handle.agent_model == "gemini-real"
+    assert handle.model_requested == "gemini-pro"
+    assert handle.model_override_skipped is True
+    out = capsys.readouterr().out
+    assert "model: gemini-real" in out
+    assert "model_requested: gemini-pro" in out
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload["agent_model"] == "gemini-real"
+    assert meta_payload["model_requested"] == "gemini-pro"
+    assert meta_payload["model_override_supported"] is False
+    assert meta_payload["model_override_skipped"] is True
+    assert meta_payload["model_override_skip_reason"] == "unsupported_agent_model_flag"
+
+
 def test_async_supervisor_salvages_grok_report_from_streaming_json(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

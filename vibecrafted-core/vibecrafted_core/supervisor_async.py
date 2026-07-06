@@ -19,6 +19,7 @@ from .artifacts import ArtifactValidation, validate_artifacts
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
 from .lifecycle import EventKind, RunState
+from .model_overrides import _model_override_receipt
 
 STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 
@@ -130,11 +131,15 @@ def _render_fallback_report(handle: AsyncRunHandle, transcript_text: str) -> str
 
 
 def _terminal_frontmatter(handle: AsyncRunHandle) -> str:
+    model_requested = (
+        f"model_requested: {handle.model_requested}\n" if handle.model_requested else ""
+    )
     return (
         "---\n"
         "runner: vibecrafted\n"
         f"run_id: {handle.run_id}\n"
         f"agent: {handle.agent}\n"
+        f"{model_requested}"
         f"root: {handle.root}\n"
         f"report: {handle.report_path or ''}\n"
         f"transcript: {handle.transcript_path or ''}\n"
@@ -144,6 +149,14 @@ def _terminal_frontmatter(handle: AsyncRunHandle) -> str:
 
 
 def _terminal_footer(handle: AsyncRunHandle) -> str:
+    model_requested = (
+        f"model_requested: {handle.model_requested}\n" if handle.model_requested else ""
+    )
+    override_skipped = (
+        f"model_override_skipped: {str(handle.model_override_skipped).lower()}\n"
+        if handle.model_requested
+        else ""
+    )
     return (
         "\n---\n"
         "runner: vibecrafted\n"
@@ -152,6 +165,8 @@ def _terminal_footer(handle: AsyncRunHandle) -> str:
         f"exit_code: {handle.exit_code if handle.exit_code is not None else 'unknown'}\n"
         f"session_id: {handle.agent_session_id or 'unknown'}\n"
         f"model: {handle.agent_model or 'unknown'}\n"
+        f"{model_requested}"
+        f"{override_skipped}"
         f"tokens_input: {handle.tokens_input}\n"
         f"tokens_cached_input: {handle.tokens_cached_input}\n"
         f"{_cache_write_line('', handle.tokens_cache_write)}"
@@ -190,6 +205,10 @@ class AsyncRunHandle:
     agent: str = ""
     agent_session_id: str = ""
     agent_model: str = ""
+    model_requested: str = ""
+    model_override_supported: bool = False
+    model_override_skipped: bool = False
+    model_override_skip_reason: str = ""
     tokens_input: int = 0
     tokens_cached_input: int = 0
     tokens_cache_write: int | None = None
@@ -244,6 +263,9 @@ class AsyncSupervisor:
             merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_file)
         agent = str(merged_env.get("VIBECRAFTED_AGENT") or _infer_agent(command))
         agent_model = resolve_default_model(agent, command=command, env=merged_env)
+        model_receipt = _model_override_receipt(
+            agent, str(merged_env.get("VIBECRAFTED_MODEL_REQUESTED") or "")
+        )
         started_at = _utc_now()
 
         await self._emit(
@@ -262,6 +284,7 @@ class AsyncSupervisor:
                 "identity_required": True,
                 "agent": agent,
                 "agent_model": agent_model,
+                **model_receipt,
             },
         )
 
@@ -294,6 +317,14 @@ class AsyncSupervisor:
             session_id=session_id,
             agent=agent,
             agent_model=agent_model,
+            model_requested=str(model_receipt.get("model_requested") or ""),
+            model_override_supported=bool(
+                model_receipt.get("model_override_supported")
+            ),
+            model_override_skipped=bool(model_receipt.get("model_override_skipped")),
+            model_override_skip_reason=str(
+                model_receipt.get("model_override_skip_reason") or ""
+            ),
         )
         try:
             handle.pgid = os.getpgid(process.pid)
@@ -554,6 +585,14 @@ class AsyncSupervisor:
             if handle.exit_code == 0
             else ("failed" if handle.exit_code is not None else "running"),
         }
+        if handle.model_requested:
+            summary["model_requested"] = handle.model_requested
+            summary["model_override_supported"] = handle.model_override_supported
+            summary["model_override_skipped"] = handle.model_override_skipped
+            if handle.model_override_skip_reason:
+                summary["model_override_skip_reason"] = (
+                    handle.model_override_skip_reason
+                )
         if handle.tokens_cache_write is not None:
             summary["tokens_cache_write"] = handle.tokens_cache_write
         else:

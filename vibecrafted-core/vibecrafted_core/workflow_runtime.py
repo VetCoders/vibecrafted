@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
+from .model_overrides import _with_model_override
 from .package_resources import package_root
 from .spawn import _stdin_command
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
@@ -27,6 +28,10 @@ class ChildResult:
     run_id: str
     agent_session_id: str
     agent_model: str
+    model_requested: str
+    model_override_supported: bool
+    model_override_skipped: bool
+    model_override_skip_reason: str
     report: Path
     transcript: Path
     exit_code: int | None
@@ -156,13 +161,19 @@ def _child_artifact_paths(
 
 
 def _child_env(
-    agent: str, report: Path, transcript: Path, meta: Path
+    agent: str,
+    report: Path,
+    transcript: Path,
+    meta: Path,
+    model_requested: str = "",
 ) -> dict[str, str]:
     env = os.environ.copy()
     env["VIBECRAFTED_AGENT"] = agent
     env["VIBECRAFTED_REPORT_PATH"] = str(report)
     env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(transcript)
     env["VIBECRAFTED_META_PATH"] = str(meta)
+    if model_requested:
+        env["VIBECRAFTED_MODEL_REQUESTED"] = model_requested
     return env
 
 
@@ -230,6 +241,17 @@ def _sum_cost_usd(results: Sequence[ChildResult]) -> float | None:
     return round(sum(values), 6) if values else None
 
 
+def _runtime_model_requested() -> str:
+    return str(os.environ.get("VIBECRAFTED_MODEL_REQUESTED") or "").strip()
+
+
+def _remember_runtime_model_request(model_requested: str) -> str:
+    requested = str(model_requested or "").strip()
+    if requested:
+        os.environ["VIBECRAFTED_MODEL_REQUESTED"] = requested
+    return requested
+
+
 def _result_meta(result: ChildResult) -> dict[str, object]:
     payload: dict[str, object] = {
         "label": result.label,
@@ -237,6 +259,9 @@ def _result_meta(result: ChildResult) -> dict[str, object]:
         "run_id": result.run_id,
         "agent_session_id": result.agent_session_id,
         "agent_model": result.agent_model,
+        "model_requested": result.model_requested,
+        "model_override_supported": result.model_override_supported,
+        "model_override_skipped": result.model_override_skipped,
         "report": str(result.report),
         "transcript": str(result.transcript),
         "exit_code": result.exit_code,
@@ -252,6 +277,8 @@ def _result_meta(result: ChildResult) -> dict[str, object]:
     }
     if result.tokens_cache_write is not None:
         payload["tokens_cache_write"] = result.tokens_cache_write
+    if result.model_override_skip_reason:
+        payload["model_override_skip_reason"] = result.model_override_skip_reason
     return payload
 
 
@@ -271,6 +298,9 @@ def _parent_receipt(results: Sequence[ChildResult]) -> dict[str, object]:
     cache_write = _sum_cache_write(results)
     if cache_write is not None:
         receipt["tokens_cache_write"] = cache_write
+    model_requested = _runtime_model_requested()
+    if model_requested:
+        receipt["model_requested"] = model_requested
     return receipt
 
 
@@ -288,6 +318,8 @@ def _parent_footer(run_id: str, status: str, receipt: dict[str, object]) -> list
     ]
     if receipt.get("tokens_cache_write") is not None:
         lines.append(f"  tokens_cache_write: {receipt.get('tokens_cache_write')}")
+    if receipt.get("model_requested"):
+        lines.append(f"  model_requested: {receipt.get('model_requested')}")
     lines.extend(
         [
             f"  tokens_output: {receipt.get('tokens_output', 0)}",
@@ -577,6 +609,7 @@ async def _run_child(
     agent: str,
     root: str,
     prompt: str,
+    model_requested: str = "",
     command: Sequence[str] | None = None,
     prompt_body: str | None = None,
 ) -> ChildResult:
@@ -592,14 +625,18 @@ async def _run_child(
     prompt_file.write_text(
         prompt_body or _child_prompt(kind, label, root, prompt), encoding="utf-8"
     )
-    child_command = list(command) if command is not None else _stdin_command(agent)
+    child_command = (
+        list(command)
+        if command is not None
+        else _with_model_override(agent, _stdin_command(agent), model_requested)
+    )
     if _tee_enabled():
         print(f"\n===== {kind}:{label}:{agent} =====", flush=True)
     handle: AsyncRunHandle = await AsyncSupervisor().run(
         run_id=run_id,
         command=child_command,
         root=root,
-        env=_child_env(agent, report, transcript, meta),
+        env=_child_env(agent, report, transcript, meta, model_requested),
         meta_path=meta,
         report_path=report,
         transcript_path=transcript,
@@ -615,6 +652,10 @@ async def _run_child(
         run_id=run_id,
         agent_session_id=handle.agent_session_id,
         agent_model=handle.agent_model,
+        model_requested=handle.model_requested,
+        model_override_supported=handle.model_override_supported,
+        model_override_skipped=handle.model_override_skipped,
+        model_override_skip_reason=handle.model_override_skip_reason,
         report=report,
         transcript=transcript,
         exit_code=handle.exit_code,
@@ -663,6 +704,10 @@ def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
             payload.get("agent_session_id") or payload.get("session_id") or ""
         ),
         agent_model=str(payload.get("agent_model") or payload.get("model") or ""),
+        model_requested=str(payload.get("model_requested") or ""),
+        model_override_supported=bool(payload.get("model_override_supported")),
+        model_override_skipped=bool(payload.get("model_override_skipped")),
+        model_override_skip_reason=str(payload.get("model_override_skip_reason") or ""),
         report=report,
         transcript=transcript,
         exit_code=exit_code,
@@ -811,6 +856,10 @@ def _failed_synthesis_result(last: ChildResult, reason: str) -> ChildResult:
         run_id=f"{_parent_run_id()}-research-synthesis",
         agent_session_id=last.agent_session_id,
         agent_model=last.agent_model,
+        model_requested=last.model_requested,
+        model_override_supported=last.model_override_supported,
+        model_override_skipped=last.model_override_skipped,
+        model_override_skip_reason=last.model_override_skip_reason,
         report=report,
         transcript=transcript,
         exit_code=1,
@@ -870,6 +919,8 @@ def _write_parent_report(
     ]
     if receipt.get("tokens_cache_write") is not None:
         lines.append(f"tokens_cache_write: {receipt['tokens_cache_write']}")
+    if receipt.get("model_requested"):
+        lines.append(f"model_requested: {receipt['model_requested']}")
     lines.extend(
         [
             f"tokens_output: {receipt['tokens_output']}",
@@ -915,6 +966,11 @@ def _write_parent_report(
             f"  - run_id: {synthesis.run_id}",
             f"  - agent_session_id: {synthesis.agent_session_id or 'unknown'}",
             f"  - agent_model: {synthesis.agent_model or 'unknown'}",
+            f"  - model_requested: {synthesis.model_requested or 'none'}",
+            "  - model_override_supported: "
+            f"{str(synthesis.model_override_supported).lower()}",
+            "  - model_override_skipped: "
+            f"{str(synthesis.model_override_skipped).lower()}",
             f"  - exit_code: {synthesis.exit_code}",
             f"  - artifact_ok: {str(synthesis.artifact_ok).lower()}",
             f"  - resume: {synthesis.resume_command}",
@@ -947,6 +1003,10 @@ def _write_parent_report(
             f"  - run_id: {result.run_id}",
             f"  - agent_session_id: {result.agent_session_id or 'unknown'}",
             f"  - agent_model: {result.agent_model or 'unknown'}",
+            f"  - model_requested: {result.model_requested or 'none'}",
+            "  - model_override_supported: "
+            f"{str(result.model_override_supported).lower()}",
+            f"  - model_override_skipped: {str(result.model_override_skipped).lower()}",
             f"  - exit_code: {result.exit_code}",
             f"  - artifact_ok: {str(result.artifact_ok).lower()}",
             f"  - artifact_errors: {errors}",
@@ -987,6 +1047,11 @@ def _write_parent_report(
             "tokens_total": receipt["tokens_total"],
             "cost_usd": cost if cost is not None else "unknown",
             "cost_source": receipt["cost_source"],
+            **(
+                {"model_requested": receipt["model_requested"]}
+                if receipt.get("model_requested")
+                else {}
+            ),
             "research_agent_source": research_selection.source
             if research_selection is not None
             else "",
@@ -1002,7 +1067,8 @@ def _write_parent_report(
     )
 
 
-async def run_research(root: str, prompt: str) -> int:
+async def run_research(root: str, prompt: str, model_requested: str = "") -> int:
+    model_requested = _remember_runtime_model_request(model_requested)
     selection = research_agent_selection()
     for agent in selection.ignored:
         print(
@@ -1019,6 +1085,7 @@ async def run_research(root: str, prompt: str) -> int:
             agent=agent,
             root=root,
             prompt=prompt,
+            model_requested=model_requested,
         )
         for agent in selection.agents
     ]
@@ -1040,7 +1107,10 @@ async def run_research(root: str, prompt: str) -> int:
     )
 
 
-async def run_research_lane(root: str, prompt: str, agent: str) -> int:
+async def run_research_lane(
+    root: str, prompt: str, agent: str, model_requested: str = ""
+) -> int:
+    model_requested = _remember_runtime_model_request(model_requested)
     if agent not in SUPPORTED_RESEARCH_AGENTS:
         print(f"vc-research: unsupported research agent: {agent}", file=sys.stderr)
         return 1
@@ -1050,6 +1120,7 @@ async def run_research_lane(root: str, prompt: str, agent: str) -> int:
         agent=agent,
         root=root,
         prompt=prompt,
+        model_requested=model_requested,
     )
     return 0 if result.exit_code == 0 and result.artifact_ok else 1
 
@@ -1103,7 +1174,9 @@ async def run_marbles(
     count: int,
     depth: int,
     workflow: str = "marbles",
+    model_requested: str = "",
 ) -> int:
+    model_requested = _remember_runtime_model_request(model_requested)
     kind = _safe_label(workflow) or "marbles"
     results: list[ChildResult] = []
     for index in range(1, max(count, 1) + 1):
@@ -1114,6 +1187,7 @@ async def run_marbles(
             agent=agent,
             root=root,
             prompt=loop_prompt,
+            model_requested=model_requested,
         )
         results.append(result)
         if result.exit_code != 0 or not result.artifact_ok:
@@ -1136,15 +1210,18 @@ def _parser() -> argparse.ArgumentParser:
     research.add_argument("--root", required=True)
     research.add_argument("--prompt", default="")
     research.add_argument("--prompt-file", default="")
+    research.add_argument("--model", default="")
     research_lane = sub.add_parser("research-lane")
     research_lane.add_argument("--agent", required=True)
     research_lane.add_argument("--root", required=True)
     research_lane.add_argument("--prompt", default="")
     research_lane.add_argument("--prompt-file", default="")
+    research_lane.add_argument("--model", default="")
     research_synthesis = sub.add_parser("research-synthesis")
     research_synthesis.add_argument("--root", required=True)
     research_synthesis.add_argument("--prompt", default="")
     research_synthesis.add_argument("--prompt-file", default="")
+    research_synthesis.add_argument("--model", default="")
     marbles = sub.add_parser("marbles")
     marbles.add_argument("--workflow", default="marbles")
     marbles.add_argument("--agent", default="codex")
@@ -1153,24 +1230,40 @@ def _parser() -> argparse.ArgumentParser:
     marbles.add_argument("--prompt-file", default="")
     marbles.add_argument("--count", type=int, default=3)
     marbles.add_argument("--depth", type=int, default=3)
+    marbles.add_argument("--model", default="")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     ns = _parser().parse_args(argv)
+    model_requested = str(
+        getattr(ns, "model", "") or os.environ.get("VIBECRAFTED_MODEL_REQUESTED") or ""
+    ).strip()
+    if model_requested:
+        os.environ["VIBECRAFTED_MODEL_REQUESTED"] = model_requested
     if ns.command == "research":
         prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
-        return asyncio.run(run_research(ns.root, prompt))
+        return asyncio.run(run_research(ns.root, prompt, model_requested))
     if ns.command == "research-lane":
         prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
-        return asyncio.run(run_research_lane(ns.root, prompt, ns.agent))
+        return asyncio.run(
+            run_research_lane(ns.root, prompt, ns.agent, model_requested)
+        )
     if ns.command == "research-synthesis":
         prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
         return asyncio.run(run_research_synthesis(ns.root, prompt))
     if ns.command == "marbles":
         prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
         return asyncio.run(
-            run_marbles(ns.root, ns.agent, prompt, ns.count, ns.depth, ns.workflow)
+            run_marbles(
+                ns.root,
+                ns.agent,
+                prompt,
+                ns.count,
+                ns.depth,
+                ns.workflow,
+                model_requested,
+            )
         )
     return 2
 

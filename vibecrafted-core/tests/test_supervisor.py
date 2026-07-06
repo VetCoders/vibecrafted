@@ -173,6 +173,7 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
                 "agent": "codex",
                 "skill": "implement",
                 "model": "unknown",
+                "model_requested": "gpt-5.5",
                 "status": "completed",
                 "root": str(tmp_path),
                 "report": str(report),
@@ -193,6 +194,7 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     payload = json.loads(final_meta.read_text(encoding="utf-8"))
     assert payload["session_id"] == "codex-finalize-001"
     assert payload["model"] == "gpt-5.3-codex"
+    assert payload["model_requested"] == "gpt-5.5"
     assert payload["duration_s"] == 5.0
     assert payload["tokens_input"] == 12
     assert payload["tokens_cached_input"] == 3
@@ -207,6 +209,8 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     assert final_report.name.endswith("-report.md")
     assert final_report.is_file()
     assert final_transcript.is_file()
+    report_text = final_report.read_text(encoding="utf-8")
+    assert "model_requested: gpt-5.5" in report_text
     assert report.exists()
     assert transcript.exists()
     assert meta.exists()

@@ -101,6 +101,53 @@ def test_research_runtime_uses_user_configured_agents(
     assert '"research_agents": [\n    "grok",\n    "codex",\n    "gemini"\n  ]' in meta
 
 
+def test_research_runtime_applies_model_request_per_child_runner(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-models")
+    monkeypatch.setenv("VIBECRAFTED_RESEARCH_AGENTS", "claude,codex,gemini")
+
+    rc = workflow_runtime.main(
+        [
+            "research",
+            "--root",
+            str(tmp_path),
+            "--prompt",
+            "map it",
+            "--model",
+            "frontier",
+        ]
+    )
+
+    assert rc == 0
+    claude_transcript = (
+        home / "rsch-models-children" / "research-claude.transcript.log"
+    ).read_text(encoding="utf-8")
+    codex_transcript = (
+        home / "rsch-models-children" / "research-codex.transcript.log"
+    ).read_text(encoding="utf-8")
+    gemini_transcript = (
+        home / "rsch-models-children" / "research-gemini.transcript.log"
+    ).read_text(encoding="utf-8")
+    assert "--model\nfrontier\n-p" in claude_transcript
+    assert "exec\n-m\nfrontier\n--json" in codex_transcript
+    assert "\nfrontier\n" not in gemini_transcript
+
+    meta = json.loads((home / "parent.meta.json").read_text(encoding="utf-8"))
+    assert meta["model_requested"] == "frontier"
+    children = {child["agent"]: child for child in meta["children"]}
+    assert children["claude"]["model_requested"] == "frontier"
+    assert children["claude"]["model_override_supported"] is True
+    assert children["claude"]["model_override_skipped"] is False
+    assert children["codex"]["model_override_supported"] is True
+    assert children["gemini"]["model_override_supported"] is False
+    assert children["gemini"]["model_override_skipped"] is True
+    assert (
+        children["gemini"]["model_override_skip_reason"]
+        == "unsupported_agent_model_flag"
+    )
+
+
 def test_research_runtime_writes_canonical_named_lane_artifacts(
     monkeypatch, tmp_path: Path
 ) -> None:

@@ -395,6 +395,7 @@ def test_approve_honors_operator_stage_casting(
     state_file = Path(state["state_path"])
     payload = json.loads(state_file.read_text(encoding="utf-8"))
     payload["spec"]["stage_agents"] = {"implement": "junie"}
+    payload["spec"]["stage_models"] = {"implement": "gpt-5.5"}
     state_file.write_text(json.dumps(payload), encoding="utf-8")
 
     launched: list[LifecycleRunSpec] = []
@@ -417,6 +418,7 @@ def test_approve_honors_operator_stage_casting(
     # stage it names, and the map rides into the continuation spec.
     assert launched[0].agent == "junie"
     assert launched[0].stage_agents == {"implement": "junie"}
+    assert launched[0].stage_models == {"implement": "gpt-5.5"}
     capsys.readouterr()
 
 

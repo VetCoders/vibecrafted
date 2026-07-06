@@ -181,6 +181,18 @@
           "items": {
             "type": "string"
           }
+        },
+        "stage_agents": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "stage_models": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     },
@@ -273,6 +285,9 @@
           ]
         },
         "agent": {
+          "type": "string"
+        },
+        "model_requested": {
           "type": "string"
         },
         "status": {

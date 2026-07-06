@@ -143,6 +143,42 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     assert any(json.loads(line).get("event") == "spawned" for line in log_lines)
 
 
+def test_launch_workflow_records_skipped_model_override_for_unknown_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    source = _source_dir(tmp_path)
+    spec = workflow.WorkflowLaunchSpec(
+        agent="gemini",
+        mode="implement",
+        skill="implement",
+        prompt="go",
+        file="",
+        runtime="headless",
+        root=str(source),
+        model="gemini-pro",
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import os; "
+            "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
+        ],
+    )
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is True
+    assert payload["model_requested"] == "gemini-pro"
+    assert payload["model_override_supported"] is False
+    assert payload["model_override_skipped"] is True
+    assert payload["model_override_skip_reason"] == "unsupported_agent_model_flag"
+    assert "gemini-pro" not in payload["worker_command"]
+
+
 def test_launch_workflow_records_failure_event_when_spawn_errors(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -275,6 +311,76 @@ def test_build_launch_command_never_delegates_to_legacy_shell_runtime() -> None:
     )
     assert marbles[0] == sys.executable
     assert "vibecrafted_core.workflow_runtime" in marbles
+
+
+def test_build_launch_command_applies_stage_model_flags_by_runner(
+    tmp_path: Path,
+) -> None:
+    claude = workflow.build_launch_command(
+        workflow.WorkflowLaunchSpec(
+            agent="claude",
+            mode="implement",
+            skill="implement",
+            prompt="x",
+            file="",
+            runtime="headless",
+            root=str(tmp_path),
+            model="opus",
+        ),
+        tmp_path,
+        prompt_file=tmp_path / "p.md",
+    )
+    assert claude[:3] == ["claude", "--model", "opus"]
+
+    codex = workflow.build_launch_command(
+        workflow.WorkflowLaunchSpec(
+            agent="codex",
+            mode="implement",
+            skill="implement",
+            prompt="x",
+            file="",
+            runtime="headless",
+            root=str(tmp_path),
+            model="gpt-5.5",
+        ),
+        tmp_path,
+        prompt_file=tmp_path / "p.md",
+    )
+    assert codex[:4] == ["codex", "exec", "-m", "gpt-5.5"]
+
+    gemini = workflow.build_launch_command(
+        workflow.WorkflowLaunchSpec(
+            agent="gemini",
+            mode="implement",
+            skill="implement",
+            prompt="x",
+            file="",
+            runtime="headless",
+            root=str(tmp_path),
+            model="gemini-pro",
+        ),
+        tmp_path,
+        prompt_file=tmp_path / "p.md",
+    )
+    assert "gemini-pro" not in gemini
+    assert "--model" not in gemini
+    assert "-m" not in gemini
+
+    marbles = workflow.build_launch_command(
+        workflow.WorkflowLaunchSpec(
+            agent="codex",
+            mode="marbles",
+            skill="marbles",
+            prompt="x",
+            file="",
+            runtime="headless",
+            root=str(tmp_path),
+            model="gpt-5.5",
+        ),
+        tmp_path,
+        prompt_file=tmp_path / "p.md",
+    )
+    assert marbles[marbles.index("--model") + 1] == "gpt-5.5"
 
 
 def test_terminal_runtime_launches_worker_in_vc_frame_tab(

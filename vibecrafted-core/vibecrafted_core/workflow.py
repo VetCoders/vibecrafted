@@ -28,6 +28,7 @@ from .control_plane import (
 )
 from .package_resources import deck_path as package_deck_path
 from .events import append_event
+from .model_overrides import _model_override_receipt, _with_model_override
 from .spawn import _stdin_command
 from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE, research_agent_selection
 from .workflows import registry as workflow_registry
@@ -61,6 +62,7 @@ class WorkflowLaunchSpec:
     root: str
     count: int | None = None
     depth: int | None = None
+    model: str = ""
     # Push-side report-on-death (docs/runtime/AGENT_OPS.md, Class 2): when the
     # launch belongs to a lifecycle run, this carries the lifecycle state.json
     # path so the dispatcher can write the worker's terminal truth into it.
@@ -964,6 +966,7 @@ def normalize_launch_spec(
     depth = _coerce_positive_int(
         payload.get("depth"), 3 if definition.supports_depth else None
     )
+    model = str(payload.get("model") or payload.get("model_requested") or "").strip()
 
     if definition.requires_input and not prompt and not file_path:
         raise ValueError("Launch requires either --prompt text or --file path.")
@@ -978,6 +981,7 @@ def normalize_launch_spec(
         root=root,
         count=count,
         depth=depth,
+        model=model,
     )
 
 
@@ -1053,7 +1057,7 @@ def build_launch_command(
             if spec.runtime in {"terminal", "visible"}
             else "research"
         )
-        return [
+        launch_command = [
             sys.executable,
             "-m",
             "vibecrafted_core.workflow_runtime",
@@ -1063,8 +1067,11 @@ def build_launch_command(
             "--prompt-file",
             prompt_path,
         ]
+        if spec.model:
+            launch_command.extend(["--model", spec.model])
+        return launch_command
     if runtime_kind == "supervised_marbles":
-        return [
+        launch_command = [
             sys.executable,
             "-m",
             "vibecrafted_core.workflow_runtime",
@@ -1082,9 +1089,12 @@ def build_launch_command(
             "--depth",
             str(spec.depth or 3),
         ]
+        if spec.model:
+            launch_command.extend(["--model", spec.model])
+        return launch_command
 
     worker_agent = spec.agent
-    return _stdin_command(worker_agent)
+    return _with_model_override(worker_agent, _stdin_command(worker_agent), spec.model)
 
 
 def launch_workflow(
@@ -1121,6 +1131,9 @@ def launch_workflow(
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
     safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
     worker_command = build_launch_command(spec, source_dir, prompt_file=prompt_path)
+    model_receipt = _model_override_receipt(spec.agent, spec.model)
+    if spec.model and runtime_kind == "supervised_research":
+        model_receipt = {"model_requested": spec.model}
     dispatch_command = _dispatcher_command(
         run_id=run_id,
         root=spec.root,
@@ -1152,6 +1165,20 @@ def launch_workflow(
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
+    if spec.model:
+        merged_env["VIBECRAFTED_MODEL_REQUESTED"] = spec.model
+    if "model_override_supported" in model_receipt:
+        merged_env["VIBECRAFTED_MODEL_OVERRIDE_SUPPORTED"] = str(
+            bool(model_receipt["model_override_supported"])
+        ).lower()
+    if "model_override_skipped" in model_receipt:
+        merged_env["VIBECRAFTED_MODEL_OVERRIDE_SKIPPED"] = str(
+            bool(model_receipt["model_override_skipped"])
+        ).lower()
+    if model_receipt.get("model_override_skip_reason"):
+        merged_env["VIBECRAFTED_MODEL_OVERRIDE_SKIP_REASON"] = str(
+            model_receipt["model_override_skip_reason"]
+        )
     merged_env["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)
     merged_env["VIBECRAFTED_ARTIFACT_SLUG"] = artifact_slug
     merged_env["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
@@ -1201,6 +1228,7 @@ def launch_workflow(
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
             "workflow": _workflow_metadata(spec.skill),
+            **model_receipt,
             "worker_command": worker_command,
             "dispatch_command": dispatch_command,
             "command": command,
@@ -1217,6 +1245,7 @@ def launch_workflow(
                     "run_id": run_id,
                     "spec": safe_spec,
                     "workflow": _workflow_metadata(spec.skill),
+                    **model_receipt,
                     "worker_command": worker_command,
                     "dispatch_command": dispatch_command,
                     "command": command,
@@ -1225,6 +1254,7 @@ def launch_workflow(
                     "retry_of": retry_of,
                     "session_id": session_id,
                     "operator_session": operator_session,
+                    **model_receipt,
                 }
             )
             + "\n"
@@ -1269,6 +1299,7 @@ def launch_workflow(
                     "session_id": session_id,
                     "error": f"{type(exc).__name__}: {exc}",
                     "retry_of": retry_of,
+                    **model_receipt,
                 },
             )
             return {
@@ -1284,6 +1315,7 @@ def launch_workflow(
                 "error": f"{type(exc).__name__}: {exc}",
                 "run_id": run_id,
                 "retry_of": retry_of,
+                **model_receipt,
                 "control_plane": sync_state(),
             }
         append_event(
@@ -1309,6 +1341,7 @@ def launch_workflow(
                 "transcript": str(artifacts["transcript"]),
                 "meta": str(artifacts["meta"]),
                 "workflow": _workflow_metadata(spec.skill),
+                **model_receipt,
                 "worker_command": worker_command,
                 "dispatch_command": dispatch_command,
                 "command": command,
@@ -1350,6 +1383,7 @@ def launch_workflow(
             "operator_session": operator_session,
         },
         "workflow": _workflow_metadata(spec.skill),
+        **model_receipt,
         "retry_of": retry_of,
         "launch_log": str(launch_log),
         "spec": safe_spec,
@@ -1514,6 +1548,9 @@ def retry_run(
     mode = str(run.get("mode") or "").strip()
     if mode:
         payload["mode"] = mode
+    model_requested = str(run.get("model_requested") or "").strip()
+    if model_requested:
+        payload["model_requested"] = model_requested
 
     try:
         spec = normalize_launch_spec(payload, source_dir)

@@ -315,6 +315,7 @@ def test_lifecycle_runner_stage_agent_pin_overrides_baton_holder(
                 phase="write",
                 order=2,
                 agent="gemini",
+                model="worker-tier",
             ),
         ),
         entry_stage="review",
@@ -328,9 +329,11 @@ def test_lifecycle_runner_stage_agent_pin_overrides_baton_holder(
         lambda _id: {"id": manifest.id},
     )
     agents: list[str] = []
+    models: list[str] = []
 
     def fake_launcher(spec, _source_dir):
         agents.append(spec.agent)
+        models.append(spec.model)
         report = tmp_path / f"{spec.skill}-{len(agents)}.md"
         report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
         return {
@@ -352,7 +355,7 @@ def test_lifecycle_runner_stage_agent_pin_overrides_baton_holder(
             LifecycleRunSpec(
                 workflow_id="vc-pinned",
                 agent="codex",
-                prompt="pin the writer",
+                prompt="---\nstage_models:\n  review: frontier\n---\npin the writer",
                 root=str(tmp_path),
                 await_stages=True,
             )
@@ -360,6 +363,7 @@ def test_lifecycle_runner_stage_agent_pin_overrides_baton_holder(
     )
 
     assert agents == ["codex", "gemini"]
+    assert models == ["frontier", "worker-tier"]
     assert state["status"] == "completed"
     # The pin runs its own stage only; the baton holder stays with the launch agent.
     assert state["baton"]["next_agent"] == "codex"
@@ -1230,6 +1234,45 @@ def test_mission_stage_agents_parses_inline_and_nested() -> None:
     assert _mission_stage_agents("plain mission, no frontmatter") == {}
 
 
+def test_mission_stage_models_parses_and_manifest_filters() -> None:
+    from vibecrafted_core.lifecycle_runner import (
+        _mission_stage_models,
+        _validated_stage_models,
+    )
+    from vibecrafted_core.workflows.registry import workflow_manifest
+
+    inline = "---\nstage_models: scaffold=opus, implement=gpt-5.5\n---\nmission"
+    assert _mission_stage_models(inline) == {
+        "scaffold": "opus",
+        "implement": "gpt-5.5",
+    }
+
+    nested = (
+        "---\n"
+        "doc_id: x\n"
+        "stage_models:\n"
+        "  marbles: opus\n"
+        "  audit: sonnet\n"
+        "  nosuch: cheap\n"
+        "---\n"
+        "mission body\n"
+    )
+    assert _mission_stage_models(nested) == {
+        "marbles": "opus",
+        "audit": "sonnet",
+        "nosuch": "cheap",
+    }
+
+    manifest = workflow_manifest("vc-marbles")
+    assert manifest is not None
+    assert _validated_stage_models(_mission_stage_models(nested), manifest) == {
+        "marbles": "opus",
+        "audit": "sonnet",
+    }
+    assert _mission_stage_models("plain mission, no frontmatter") == {}
+    assert _validated_stage_models({}, manifest) == {}
+
+
 def test_lifecycle_run_casts_stage_agents_from_mission_frontmatter(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1284,6 +1327,72 @@ def test_lifecycle_run_casts_stage_agents_from_mission_frontmatter(
     # run-level agent; the map is persisted for continuations and readers.
     assert casting == [("marbles", "codex"), ("audit", "claude")]
     assert state["spec"]["stage_agents"] == {"marbles": "codex", "audit": "claude"}
+
+
+def test_lifecycle_run_casts_stage_models_from_mission_frontmatter(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    casting: list[tuple[str, str, str]] = []
+
+    def fake_launcher(spec, _source_dir):
+        casting.append((spec.skill, spec.agent, spec.model))
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+            "model_requested": spec.model,
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    mission = (
+        "---\n"
+        "stage_agents:\n"
+        "  marbles: codex\n"
+        "  audit: claude\n"
+        "stage_models:\n"
+        "  marbles: opus\n"
+        "  audit: sonnet\n"
+        "  nosuch: ignored\n"
+        "---\n"
+        "# Mission: cast models A-to-Z\n"
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-marbles",
+                agent="gemini",
+                prompt=mission,
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert casting == [("marbles", "codex", "opus"), ("audit", "claude", "sonnet")]
+    assert state["spec"]["stage_models"] == {"marbles": "opus", "audit": "sonnet"}
+    assert [stage["model_requested"] for stage in state["stages"]] == [
+        "opus",
+        "sonnet",
+    ]
+    report = Path(state["report_path"]).read_text(encoding="utf-8")
+    assert "model_requested: opus" in report
+    assert "model_requested: sonnet" in report
 
 
 def test_lifecycle_run_rejects_invalid_stage_casting(

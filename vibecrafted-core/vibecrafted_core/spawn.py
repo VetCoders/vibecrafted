@@ -443,6 +443,7 @@ def write_meta(
     transcript: str,
     launcher: str,
     model: str = "",
+    model_requested: str = "",
     prompt_id: str = "",
     run_id: str = "",
     loop_nr: str | int = 0,
@@ -481,6 +482,8 @@ def write_meta(
         "liveness": "pid_pending",
         "model": model,
     }
+    if str(model_requested or "").strip():
+        payload["model_requested"] = str(model_requested).strip()
 
     _write_meta(meta, payload)
     if run_id:
@@ -498,6 +501,11 @@ def write_meta(
                 "transcript": transcript,
                 "launcher": launcher,
                 "model": model,
+                **(
+                    {"model_requested": str(model_requested).strip()}
+                    if str(model_requested or "").strip()
+                    else {}
+                ),
                 "prompt_id": prompt_id,
                 "started_at": now_iso,
                 "liveness": "active",
@@ -579,6 +587,7 @@ def _render_frontmatter(data: dict[str, object]) -> str:
         "agent",
         "skill",
         "model",
+        "model_requested",
         "status",
         "date",
         "session_id",
@@ -715,6 +724,8 @@ def _footer(marker: str, payload: dict[str, object]) -> str:
     )
     if payload.get("cost_source"):
         lines.append(f"  cost_source: {payload.get('cost_source')}")
+    if payload.get("model_requested"):
+        lines.append(f"  model_requested: {payload.get('model_requested')}")
     lines.extend(
         [
             f"  status: {payload.get('status', 'unknown')}",
@@ -757,6 +768,10 @@ def _normalize_markdown_artifact(
         if payload.get("cost_usd") is not None
         else "unknown",
     }
+    if payload.get("model_requested"):
+        frontmatter_update["model_requested"] = payload.get("model_requested")
+    else:
+        frontmatter.pop("model_requested", None)
     if payload.get("tokens_cache_write") is not None:
         frontmatter_update["tokens_cache_write"] = payload.get("tokens_cache_write")
     else:
@@ -899,6 +914,8 @@ def finalize_artifacts(
         "cost_usd": cost,
         "resume_hint": resume_hint,
     }
+    if payload.get("model_requested"):
+        payload["artifact_footer"]["model_requested"] = payload.get("model_requested")
     if tokens_cache_write is not None:
         payload["artifact_footer"]["tokens_cache_write"] = tokens_cache_write
     if payload.get("cost_source"):
@@ -1276,6 +1293,7 @@ def _build_parser() -> argparse.ArgumentParser:
     write.add_argument("transcript")
     write.add_argument("launcher")
     write.add_argument("--model", default="")
+    write.add_argument("--model-requested", default="")
     write.add_argument("--prompt-id", default="")
     write.add_argument("--run-id", default="")
     write.add_argument("--loop-nr", default="0")
@@ -1313,6 +1331,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.transcript,
             args.launcher,
             model=args.model,
+            model_requested=args.model_requested,
             prompt_id=args.prompt_id,
             run_id=args.run_id,
             loop_nr=args.loop_nr,
