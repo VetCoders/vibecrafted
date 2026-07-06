@@ -168,6 +168,28 @@ else
   ssh -n "$host" "mkdir -p $remote_tools_target/skills && ln -sfn $remote_tools_target $remote_current_link" \
     || die "Could not prepare staged tools store on $host"
 fi
+
+rule_files=()
+localized_rule_dirs=(pl)
+for rule_name in VERIFICATION_RULE.md LIVING_TREE_RULE.md; do
+  [[ -f "$skills_root/$rule_name" ]] && rule_files+=("$rule_name")
+done
+for localized_dir in "${localized_rule_dirs[@]}"; do
+  for rule_name in VERIFICATION_RULE.md LIVING_TREE_RULE.md; do
+    rule_path="$localized_dir/$rule_name"
+    [[ -f "$skills_root/$rule_path" ]] && rule_files+=("$rule_path")
+  done
+done
+for rule_path in "${rule_files[@]}"; do
+  remote_rule_dir="$(dirname "$remote_tools_target/skills/$rule_path")"
+  if (( dry_run )); then
+    printf '  ssh %s mkdir -p %s\n' "$host" "$remote_rule_dir"
+  else
+    ssh -n "$host" "mkdir -p $remote_rule_dir" \
+      || die "Could not create $remote_rule_dir on $host"
+  fi
+  rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_tools_target/skills/$rule_path"
+done
 for skill in "${skills[@]}"; do
   name="$(basename "$skill")"
   if (( ! dry_run )); then
@@ -187,6 +209,16 @@ for tool in "${tools[@]}"; do
   else
     ssh -n "$host" "mkdir -p $remote_target" || die "Could not prepare $remote_target on $host"
   fi
+  for rule_path in "${rule_files[@]}"; do
+    remote_rule_dir="$(dirname "$remote_target/$rule_path")"
+    if (( dry_run )); then
+      printf '  ssh %s mkdir -p %s\n' "$host" "$remote_rule_dir"
+    else
+      ssh -n "$host" "mkdir -p $remote_rule_dir" \
+        || die "Could not create $remote_rule_dir on $host"
+    fi
+    rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_target/$rule_path"
+  done
   for skill in "${skills[@]}"; do
     name="$(basename "$skill")"
     if (( dry_run )); then

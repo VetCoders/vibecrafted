@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts import vetcoders_install as installer
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -112,6 +114,51 @@ def test_install_manifest_post_install_uses_mirror_sync() -> None:
         "--compact --non-interactive --mirror"
     ) in text
     assert "make --no-print-directory install-python-tools" in text
+
+
+def test_installer_copies_skill_rules_to_fresh_skills_root(tmp_path: Path) -> None:
+    source_skills = tmp_path / "source" / "skills"
+    install_skills = tmp_path / "install" / "skills"
+    runtime_skills = tmp_path / "home" / ".claude" / "skills"
+    installed_skill = install_skills / "vc-implement"
+    runtime_skill = runtime_skills / "vc-implement"
+
+    (source_skills / "vc-implement").mkdir(parents=True)
+    (source_skills / "vc-implement" / "SKILL.md").write_text(
+        "See [Verification Rule](../VERIFICATION_RULE.md).\n"
+        "See [Living Tree Rule](../LIVING_TREE_RULE.md).\n",
+        encoding="utf-8",
+    )
+    (source_skills / "VERIFICATION_RULE.md").write_text(
+        "# Verification\n", encoding="utf-8"
+    )
+    (source_skills / "LIVING_TREE_RULE.md").write_text(
+        "# Living Tree\n", encoding="utf-8"
+    )
+    (source_skills / "pl").mkdir()
+    (source_skills / "pl" / "LIVING_TREE_RULE.md").write_text(
+        "# Zywe Drzewo\n", encoding="utf-8"
+    )
+    installed_skill.mkdir(parents=True)
+    runtime_skill.mkdir(parents=True)
+
+    copied = installer.sync_skill_root_rules(source_skills, install_skills)
+    copied_again = installer.sync_skill_root_rules(source_skills, install_skills)
+    runtime_copied = installer.sync_skill_root_rules(source_skills, runtime_skills)
+
+    assert copied == copied_again
+    assert runtime_copied == copied
+    assert Path("VERIFICATION_RULE.md") in copied
+    assert Path("LIVING_TREE_RULE.md") in copied
+    assert Path("pl/LIVING_TREE_RULE.md") in copied
+    assert (installed_skill / ".." / "VERIFICATION_RULE.md").is_file()
+    assert (installed_skill / ".." / "LIVING_TREE_RULE.md").is_file()
+    assert (runtime_skills / "VERIFICATION_RULE.md").is_file()
+    assert (runtime_skills / "LIVING_TREE_RULE.md").is_file()
+    assert (runtime_skill / ".." / "VERIFICATION_RULE.md").is_file()
+    assert (install_skills / "pl" / "LIVING_TREE_RULE.md").is_file()
+    assert (runtime_skills / "pl" / "LIVING_TREE_RULE.md").is_file()
+    assert not (install_skills / "pl" / "VERIFICATION_RULE.md").exists()
 
 
 def test_install_all_paths_do_not_install_shell_helpers_by_default() -> None:

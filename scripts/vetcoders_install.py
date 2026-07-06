@@ -550,6 +550,8 @@ OPTIONAL_DEPS = [
 
 OLD_SKILL_PREFIX = "vetcoders-"
 OLD_HELPER_NAME = "vetcoders-skills.zsh"
+SKILL_ROOT_RULE_FILES = ("VERIFICATION_RULE.md", "LIVING_TREE_RULE.md")
+LOCALIZED_SKILL_RULE_DIRS = ("pl",)
 
 
 def _is_writable(path: Path) -> bool:
@@ -796,6 +798,18 @@ def detect_cargo() -> Optional[str]:
     return shutil.which("cargo")
 
 
+def source_skills_root(repo_root: Path) -> Path:
+    skills_dir = repo_root / "skills"
+    if skills_dir.is_dir():
+        return skills_dir
+
+    packaged_skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
+    if packaged_skills_dir.is_dir():
+        return packaged_skills_dir
+
+    return repo_root
+
+
 def get_framework_version(repo_root: Path) -> str:
     return read_version_file(repo_root)
 
@@ -830,9 +844,7 @@ def get_repo_url(repo_root: Path) -> str:
 def discover_skills(repo_root: Path) -> List[Path]:
     """Find all default 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skill directories."""
     skills: List[Path] = []
-    skills_dir = repo_root / "skills"
-    if not skills_dir.is_dir():
-        skills_dir = repo_root / "vibecrafted-core" / "vibecrafted_core" / "skills"
+    skills_dir = source_skills_root(repo_root)
     if not skills_dir.exists() or not skills_dir.is_dir():
         return skills
 
@@ -848,6 +860,40 @@ def discover_skills(repo_root: Path) -> List[Path]:
         if (entry / "SKILL.md").exists():
             skills.append(entry)
     return skills
+
+
+def iter_skill_root_rule_files(skills_root: Path) -> List[Tuple[Path, Path]]:
+    rule_files: List[Tuple[Path, Path]] = []
+
+    for filename in SKILL_ROOT_RULE_FILES:
+        source = skills_root / filename
+        if source.is_file():
+            rule_files.append((source, Path(filename)))
+
+    for localized_dir in LOCALIZED_SKILL_RULE_DIRS:
+        localized_root = skills_root / localized_dir
+        if not localized_root.is_dir():
+            continue
+        for filename in SKILL_ROOT_RULE_FILES:
+            source = localized_root / filename
+            if source.is_file():
+                rule_files.append((source, Path(localized_dir) / filename))
+
+    return rule_files
+
+
+def sync_skill_root_rules(
+    skills_root: Path, store_path: Path, dry_run: bool = False
+) -> List[Path]:
+    """Copy rule files that skill directories link to via ../RULE.md."""
+    copied: List[Path] = []
+    for source, relative_target in iter_skill_root_rule_files(skills_root):
+        target = store_path / relative_target
+        if not dry_run:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        copied.append(relative_target)
+    return copied
 
 
 def categorize_skill(name: str) -> str:
@@ -4491,12 +4537,14 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     if not dry_run:
         store_path.mkdir(parents=True, exist_ok=True)
 
-    skills_dir = repo_root / "skills" if (repo_root / "skills").is_dir() else repo_root
+    skills_dir = source_skills_root(repo_root)
     for name in selected_skills:
         src = skills_dir / name
         dst = store_path / name
         print(f"  {dim('->')} {name}")
         rsync_skill(src, dst, dry_run=dry_run, mirror=mirror)
+    for rule in sync_skill_root_rules(skills_dir, store_path, dry_run=dry_run):
+        print(f"  {dim('->')} {rule}")
     print()
 
     # --- Execute: staged control plane ---
@@ -4524,6 +4572,8 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
         if not dry_run:
             rt_skills.mkdir(parents=True, exist_ok=True)
         print(f"  {cyan(rt)} -> {rt_skills}")
+        for rule in sync_skill_root_rules(skills_dir, rt_skills, dry_run=dry_run):
+            print(f"    {dim('->')} {rule}")
         for name in selected_skills:
             default = store_path / name
             link = rt_skills / name
@@ -4921,9 +4971,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
         print("Installing skills:")
         if not dry_run:
             store_path.mkdir(parents=True, exist_ok=True)
-        skills_dir = (
-            repo_root / "skills" if (repo_root / "skills").is_dir() else repo_root
-        )
+        skills_dir = source_skills_root(repo_root)
         # One live counter line (§6.6), per-skill detail stays in the log.
         total_skills = len(selected_skills)
         for idx, name in enumerate(selected_skills, 1):
@@ -4936,6 +4984,8 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                     out, dim(frame), "Skills", f"installing {idx}/{total_skills}"
                 )
             rsync_skill(src, dst, dry_run=dry_run, mirror=mirror)
+        for rule in sync_skill_root_rules(skills_dir, store_path, dry_run=dry_run):
+            print(f"  -> {rule}")
         print()
 
         print("Refreshing staged control plane:")
@@ -4975,6 +5025,8 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             if not dry_run:
                 rt_skills.mkdir(parents=True, exist_ok=True)
             print(f"  {rt} -> {rt_skills}")
+            for rule in sync_skill_root_rules(skills_dir, rt_skills, dry_run=dry_run):
+                print(f"    -> {rule}")
             for name in selected_skills:
                 default = store_path / name
                 link = rt_skills / name
