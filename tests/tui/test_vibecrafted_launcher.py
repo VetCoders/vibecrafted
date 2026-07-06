@@ -1953,6 +1953,83 @@ def test_resume_wrapper_symlink_forwards_session_and_prompt_to_agent(
     ]
 
 
+def test_resume_wrapper_accepts_positional_session_id(tmp_path: Path) -> None:
+    """`vc-resume <agent> <session_id> [prompt...]` works without --session."""
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "codex-args.txt"
+    wrapper = tmp_path / "vc-resume"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    wrapper.symlink_to(LAUNCHER)
+    _write_fake_agent(fake_bin, "codex", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    subprocess.run(
+        [
+            "bash",
+            str(wrapper),
+            "codex",
+            "resume-session-456",
+            "Continue from wrapper",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert payload == [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "resume",
+        "resume-session-456",
+        "Continue from wrapper",
+    ]
+
+
+def test_resume_wrapper_accepts_bare_positional_session_id(tmp_path: Path) -> None:
+    """`vc-resume <agent> <session_id>` with no prompt resumes that session."""
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "codex-args.txt"
+    wrapper = tmp_path / "vc-resume"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    wrapper.symlink_to(LAUNCHER)
+    _write_fake_agent(fake_bin, "codex", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    subprocess.run(
+        ["bash", str(wrapper), "codex", "resume-session-789"],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert payload == [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "resume",
+        "resume-session-789",
+    ]
+
+
 def test_vc_dashboard_wrapper_dispatches_to_dashboard(tmp_path: Path) -> None:
     """vc-dashboard wrapper (symlink) reaches cmd_dashboard, not run_skill."""
     home = tmp_path / "home"

@@ -144,8 +144,22 @@ _vetcoders_resume_agent() {
   local tool="$1"
   shift
   _vetcoders_parse_contract "$@" || return 1
+  # Positional form: `vc-resume <agent> <session_id> [prompt words...]`.
+  # Without --session the shared parser routes positionals into tail/prompt,
+  # but a resume cannot run without a session — promote the first tail token.
+  if [[ -z "$_vetcoders_contract_session" && -n "$_vetcoders_contract_tail" ]]; then
+    local -a _resume_positional=()
+    read -r -a _resume_positional <<<"$_vetcoders_contract_tail"
+    _vetcoders_contract_session="${_resume_positional[0]}"
+    local _resume_rest="${_vetcoders_contract_tail#"${_resume_positional[0]}"}"
+    _resume_rest="${_resume_rest# }"
+    if [[ "$_vetcoders_contract_prompt" == "$_vetcoders_contract_tail" ]]; then
+      _vetcoders_contract_prompt="$_resume_rest"
+    fi
+    _vetcoders_contract_tail="$_resume_rest"
+  fi
   [[ -n "$_vetcoders_contract_session" ]] || {
-    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
     return 1
   }
   [[ -z "$_vetcoders_contract_count" ]] || {
@@ -326,7 +340,7 @@ PY
 vc-resume() {
   local tool="${1:-}"
   [[ -n "$tool" ]] || {
-    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
     return 1
   }
   if [[ "$tool" == "--session" ]]; then
