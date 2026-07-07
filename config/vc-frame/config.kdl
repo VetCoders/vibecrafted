@@ -48,7 +48,8 @@ theme "pastel"
 
 // ─── Shell & Display ────────────────────────────────────────────────────────────
 default_shell "zsh"
-default_layout "compact"
+// compact chowal rail SESSIONS z nowego default.kdl (2026-07-07)
+default_layout "default"
 copy_command "pbcopy"
 mouse_mode true
 pane_frames true
