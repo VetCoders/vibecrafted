@@ -37,7 +37,7 @@ def test_discover_bundle_skills_tracks_live_skill_surface() -> None:
     assert "vc-implement" in skill_names
     assert "vc-justdo" in skill_names  # alias kept in bundle
     assert "vc-marbles" in skill_names
-    assert "vc-ship" not in skill_names
+    assert "vc-ship" in skill_names  # lifecycle umbrella kept in bundle
     assert "vc-ownership" in skill_names
     assert "vc-screenscribe" in skill_names
 
@@ -77,7 +77,7 @@ def test_write_bundle_uses_current_metadata_and_skill_inventory(tmp_path: Path) 
     assert "skills/vc-implement/SKILL.md" in members
     assert "skills/vc-justdo/SKILL.md" in members  # alias kept in bundle
     assert "skills/vc-marbles/SKILL.md" in members
-    assert "skills/vc-ship/SKILL.md" not in members
+    assert "skills/vc-ship/SKILL.md" in members
     assert "skills/vc-ownership/SKILL.md" in members
     assert "skills/vc-screenscribe/SKILL.md" in members
     assert "docs/RELEASE_KICKOFF.md" in members
