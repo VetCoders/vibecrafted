@@ -1127,6 +1127,54 @@ def test_research_swarm_uses_core_codex_coordinator(
     assert "map the surface" not in command
 
 
+def test_research_agentless_form_uses_runtime_config_swarm(tmp_path: Path) -> None:
+    spec = workflow.normalize_launch_spec(
+        {"skill": "research", "prompt": "map the surface", "root": str(tmp_path)},
+        tmp_path,
+    )
+
+    assert spec.agent == "swarm"
+    assert spec.research_agents == ()
+    assert spec.research_synthesizer == ""
+
+
+def test_research_single_agent_form_keeps_synthesizer_pick(tmp_path: Path) -> None:
+    spec = workflow.normalize_launch_spec(
+        {
+            "skill": "research",
+            "agent": ["claude"],
+            "prompt": "map the surface",
+            "root": str(tmp_path),
+        },
+        tmp_path,
+    )
+
+    command = workflow.build_launch_command(spec, tmp_path)
+
+    assert spec.agent == "swarm"
+    assert spec.research_agents == ()
+    assert spec.research_synthesizer == "claude"
+    assert command[command.index("--synthesizer") + 1] == "claude"
+
+
+def test_research_multi_agent_form_overrides_lanes_and_first_synthesizes(
+    tmp_path: Path,
+) -> None:
+    spec = workflow.normalize_launch_spec(
+        {
+            "skill": "research",
+            "agent": ["codex", "gemini"],
+            "prompt": "map the surface",
+            "root": str(tmp_path),
+        },
+        tmp_path,
+    )
+
+    assert spec.agent == "swarm"
+    assert spec.research_agents == ("codex", "gemini")
+    assert spec.research_synthesizer == "codex"
+
+
 def test_marbles_uses_supervised_core_runtime(tmp_path: Path) -> None:
     spec = workflow.normalize_launch_spec(
         {

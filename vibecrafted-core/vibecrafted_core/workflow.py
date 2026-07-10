@@ -29,8 +29,9 @@ from .control_plane import (
 from .package_resources import deck_path as package_deck_path
 from .events import append_event
 from .model_overrides import _model_override_receipt, _with_model_override
+from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .spawn import _stdin_command
-from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE, research_agent_selection
+from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE
 from .workflows import registry as workflow_registry
 
 SUPPORTED_WORKFLOWS = workflow_registry.SUPPORTED_WORKFLOWS
@@ -63,6 +64,9 @@ class WorkflowLaunchSpec:
     count: int | None = None
     depth: int | None = None
     model: str = ""
+    research_agents: tuple[str, ...] = ()
+    research_synthesizer: str = ""
+    research_synthesizer_model: str = ""
     # Push-side report-on-death (docs/runtime/AGENT_OPS.md, Class 2): when the
     # launch belongs to a lifecycle run, this carries the lifecycle state.json
     # path so the dispatcher can write the worker's terminal truth into it.
@@ -377,9 +381,11 @@ def _write_research_lane_scripts(
     artifact_slug: str,
     artifact_ts: str,
     artifact_suffix: str,
+    research_selection: ResearchAgentSelection,
+    model_requested: str = "",
 ) -> dict[str, Path]:
     scripts: dict[str, Path] = {}
-    for agent in research_agent_selection().agents:
+    for agent in research_selection.agents:
         path = launch_dir / f"{run_id}-research-{agent}.sh"
         command = [
             sys.executable,
@@ -393,6 +399,9 @@ def _write_research_lane_scripts(
             "--prompt-file",
             str(prompt_path),
         ]
+        lane_model = research_selection.lane_model(agent, model_requested)
+        if lane_model:
+            command.extend(["--model", lane_model])
         exports = _runtime_script_exports(
             run_id=run_id,
             prompt_path=prompt_path,
@@ -513,6 +522,7 @@ def _launch_transport_command(
     artifact_slug: str,
     artifact_ts: str,
     artifact_suffix: str,
+    research_selection: ResearchAgentSelection | None = None,
 ) -> tuple[list[str], str, Path | None]:
     if spec.runtime not in {"terminal", "visible"}:
         return dispatch_command, "headless", None
@@ -546,6 +556,11 @@ def _launch_transport_command(
     )
     definition = workflow_registry.workflow_definition(spec.skill)
     if spec.skill == "research":
+        selection = research_selection or resolve_research_runtime_config(
+            override_agents=spec.research_agents,
+            synthesizer=spec.research_synthesizer,
+            synthesizer_model=spec.research_synthesizer_model,
+        )
         lane_scripts = _write_research_lane_scripts(
             launch_dir=launch_dir,
             run_id=run_id,
@@ -559,6 +574,8 @@ def _launch_transport_command(
             artifact_slug=artifact_slug,
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
+            research_selection=selection,
+            model_requested=spec.model,
         )
         layout_file = _write_research_layout(
             path=launch_dir / f"{run_id}-research.kdl",
@@ -959,8 +976,26 @@ def normalize_launch_spec(
     if definition is None:
         raise ValueError(f"Unsupported workflow: {skill}")
 
-    agent = str(payload.get("agent") or definition.default_agent).strip()
+    raw_agent = payload.get("agent")
+    raw_research_agents = payload.get("research_agents") or ()
+    if isinstance(raw_agent, (list, tuple)):
+        positional_agents = tuple(
+            str(item).strip() for item in raw_agent if str(item).strip()
+        )
+        agent = positional_agents[0] if positional_agents else definition.default_agent
+    else:
+        positional_agents = ()
+        agent = str(raw_agent or definition.default_agent).strip()
     if definition.runtime_kind == "supervised_research":
+        if not positional_agents and raw_research_agents:
+            positional_agents = tuple(
+                str(item).strip() for item in raw_research_agents if str(item).strip()
+            )
+        unsupported = [
+            item for item in positional_agents if item not in SUPPORTED_AGENTS
+        ]
+        if unsupported:
+            raise ValueError(f"Unsupported research agent: {unsupported[0]}")
         agent = "swarm"
     if agent not in SUPPORTED_AGENTS:
         raise ValueError(f"Unsupported agent: {agent}")
@@ -979,6 +1014,28 @@ def normalize_launch_spec(
         payload.get("depth"), 3 if definition.supports_depth else None
     )
     model = str(payload.get("model") or payload.get("model_requested") or "").strip()
+    research_agents: tuple[str, ...] = ()
+    research_synthesizer = ""
+    research_synthesizer_model = str(
+        payload.get("synthesizer_model")
+        or payload.get("research_synthesizer_model")
+        or ""
+    ).strip()
+    if definition.runtime_kind == "supervised_research":
+        explicit_synthesizer = str(
+            payload.get("synthesizer") or payload.get("research_synthesizer") or ""
+        ).strip()
+        if len(positional_agents) > 1:
+            research_agents = positional_agents
+            research_synthesizer = explicit_synthesizer or positional_agents[0]
+        elif positional_agents:
+            research_synthesizer = explicit_synthesizer or positional_agents[0]
+        elif explicit_synthesizer:
+            research_synthesizer = explicit_synthesizer
+        if research_synthesizer and research_synthesizer not in SUPPORTED_AGENTS:
+            raise ValueError(
+                f"Unsupported research synthesizer: {research_synthesizer}"
+            )
 
     if definition.requires_input and not prompt and not file_path:
         raise ValueError("Launch requires either --prompt text or --file path.")
@@ -994,6 +1051,9 @@ def normalize_launch_spec(
         count=count,
         depth=depth,
         model=model,
+        research_agents=research_agents,
+        research_synthesizer=research_synthesizer,
+        research_synthesizer_model=research_synthesizer_model,
     )
 
 
@@ -1081,6 +1141,12 @@ def build_launch_command(
         ]
         if spec.model:
             launch_command.extend(["--model", spec.model])
+        if spec.research_synthesizer:
+            launch_command.extend(["--synthesizer", spec.research_synthesizer])
+        if spec.research_synthesizer_model:
+            launch_command.extend(
+                ["--synthesizer-model", spec.research_synthesizer_model]
+            )
         return launch_command
     if runtime_kind == "supervised_marbles":
         launch_command = [
@@ -1119,6 +1185,15 @@ def launch_workflow(
     run_id = _run_id(spec.skill)
     artifacts = _run_artifact_paths(run_id)
     runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
+    research_selection = (
+        resolve_research_runtime_config(
+            override_agents=spec.research_agents,
+            synthesizer=spec.research_synthesizer,
+            synthesizer_model=spec.research_synthesizer_model,
+        )
+        if runtime_kind == "supervised_research"
+        else None
+    )
     source_prompt = _source_prompt(spec)
     prompt_body = (
         source_prompt
@@ -1179,6 +1254,19 @@ def launch_workflow(
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
     if spec.model:
         merged_env["VIBECRAFTED_MODEL_REQUESTED"] = spec.model
+    if research_selection is not None:
+        if spec.research_agents:
+            merged_env["VIBECRAFTED_RESEARCH_AGENTS"] = ",".join(
+                research_selection.agents
+            )
+        if research_selection.synthesizer:
+            merged_env["VIBECRAFTED_RESEARCH_SYNTHESIZER"] = (
+                research_selection.synthesizer
+            )
+        if research_selection.synthesizer_model:
+            merged_env["VIBECRAFTED_RESEARCH_SYNTHESIZER_MODEL"] = (
+                research_selection.synthesizer_model
+            )
     if "model_override_supported" in model_receipt:
         merged_env["VIBECRAFTED_MODEL_OVERRIDE_SUPPORTED"] = str(
             bool(model_receipt["model_override_supported"])
@@ -1215,6 +1303,7 @@ def launch_workflow(
         artifact_slug=artifact_slug,
         artifact_ts=artifact_ts,
         artifact_suffix=artifact_suffix,
+        research_selection=research_selection,
     )
     merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
 
@@ -1240,6 +1329,18 @@ def launch_workflow(
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
             "workflow": _workflow_metadata(spec.skill),
+            **(
+                {
+                    "research_agents": list(research_selection.agents),
+                    "research_agent_source": research_selection.source,
+                    "research_synthesizer": research_selection.synthesizer,
+                    "research_synthesizer_model": research_selection.synthesizer_model,
+                    "research_synthesizer_source": research_selection.synthesizer_source,
+                    "research_ignored_agents": list(research_selection.ignored),
+                }
+                if research_selection is not None
+                else {}
+            ),
             **model_receipt,
             "worker_command": worker_command,
             "dispatch_command": dispatch_command,

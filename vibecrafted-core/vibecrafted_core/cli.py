@@ -66,7 +66,10 @@ TERMINAL_STATES = {
 
 def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
     run = sub.add_parser(name, help=f"launch vc-{name} through core runtime")
-    run.add_argument("agent", nargs="?")
+    if name == "research":
+        run.add_argument("agent", nargs="*")
+    else:
+        run.add_argument("agent", nargs="?")
     if name == "paste":
         run.add_argument("--skill", default="workflow")
         run.add_argument("--root", default="")
@@ -81,6 +84,10 @@ def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
     run.add_argument("--mode", default="")
     run.add_argument("--count", type=int)
     run.add_argument("--depth", type=int)
+    run.add_argument("--model", default="")
+    if name == "research":
+        run.add_argument("--synthesizer", default="")
+        run.add_argument("--synthesizer-model", default="")
     run.add_argument("--source-dir", default="")
     run.add_argument("--json", action="store_true")
 
@@ -574,6 +581,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_namespace(args, source_dir=package_root())
 
     source_dir = args.source_dir or package_root()
+    agent_arg = args.agent
+    research_agents = ()
+    if args.command == "research" and isinstance(agent_arg, list):
+        research_agents = tuple(agent_arg) if len(agent_arg) > 1 else ()
     payload = {
         "skill": LAUNCH_ALIASES.get(args.command, args.command),
         "agent": args.agent,
@@ -584,6 +595,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "mode": args.mode or args.command,
         "count": args.count,
         "depth": args.depth,
+        "model": args.model,
+        "research_agents": research_agents,
+        "synthesizer": getattr(args, "synthesizer", ""),
+        "synthesizer_model": getattr(args, "synthesizer_model", ""),
     }
     try:
         spec = normalize_launch_spec(payload, source_dir)

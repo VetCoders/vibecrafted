@@ -6,7 +6,6 @@ import json
 import os
 import re
 import sys
-import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,11 +13,13 @@ from typing import Sequence
 
 from .model_overrides import _with_model_override
 from .package_resources import package_root
+from .research_config import (
+    SUPPORTED_RESEARCH_AGENTS,
+    ResearchAgentSelection,
+    resolve_research_runtime_config,
+)
 from .spawn import _stdin_command
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
-
-SUPPORTED_RESEARCH_AGENTS = ("claude", "codex", "gemini", "agy", "junie", "grok")
-DEFAULT_RESEARCH_AGENTS = ("claude", "codex", "gemini")
 
 
 @dataclass(frozen=True)
@@ -44,13 +45,6 @@ class ChildResult:
     cost_usd: float | None = None
     resume_command: str = ""
     completed_at: str = ""
-
-
-@dataclass(frozen=True)
-class ResearchAgentSelection:
-    agents: tuple[str, ...]
-    source: str
-    ignored: tuple[str, ...] = ()
 
 
 def _parent_run_id() -> str:
@@ -377,74 +371,8 @@ def _manifest_config_paths() -> tuple[Path, ...]:
     return tuple(paths)
 
 
-def _split_agent_tokens(raw: object) -> list[str]:
-    if isinstance(raw, str):
-        return [item.strip() for item in raw.replace(",", " ").split() if item.strip()]
-    if isinstance(raw, (list, tuple)):
-        return [str(item).strip() for item in raw if str(item).strip()]
-    return []
-
-
-def _select_supported_agents(
-    tokens: Sequence[str],
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    agents: list[str] = []
-    ignored: list[str] = []
-    seen: set[str] = set()
-    for token in tokens:
-        agent = token.strip()
-        if not agent:
-            continue
-        if agent not in SUPPORTED_RESEARCH_AGENTS:
-            ignored.append(agent)
-            continue
-        if agent in seen:
-            continue
-        seen.add(agent)
-        agents.append(agent)
-    return tuple(agents), tuple(ignored)
-
-
-def _read_research_agents_from_toml(path: Path) -> tuple[str, ...]:
-    if not path.is_file():
-        return ()
-    try:
-        with path.open("rb") as handle:
-            data = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        print(f"Failed to read research agent config: {path}: {exc}", file=sys.stderr)
-        return ()
-    raw = (
-        data.get("runtime", {})
-        .get("picking", {})
-        .get("research", {})
-        .get("default_agents", [])
-    )
-    return tuple(_split_agent_tokens(raw))
-
-
 def research_agent_selection() -> ResearchAgentSelection:
-    env_agents = os.environ.get("VIBECRAFTED_RESEARCH_AGENTS", "").strip()
-    if env_agents:
-        agents, ignored = _select_supported_agents(_split_agent_tokens(env_agents))
-        return ResearchAgentSelection(
-            agents, "env:VIBECRAFTED_RESEARCH_AGENTS", ignored
-        )
-
-    user_config = _user_config_path()
-    tokens = _read_research_agents_from_toml(user_config)
-    if tokens:
-        agents, ignored = _select_supported_agents(tokens)
-        return ResearchAgentSelection(agents, str(user_config), ignored)
-
-    for manifest in _manifest_config_paths():
-        tokens = _read_research_agents_from_toml(manifest)
-        if not tokens:
-            continue
-        agents, ignored = _select_supported_agents(tokens)
-        return ResearchAgentSelection(agents, str(manifest), ignored)
-
-    return ResearchAgentSelection(DEFAULT_RESEARCH_AGENTS, "builtin-default")
+    return resolve_research_runtime_config()
 
 
 # Gate-nap prevention (docs/runtime/AGENT_OPS.md, Class 1): dispatched workers
@@ -506,7 +434,7 @@ def _research_synthesis_prompt(
     reports = "\n".join(
         f"- {result.agent}: {result.report}" for result in results if result.report
     )
-    return f"""You are resuming the last completed vc-research lane to produce the objective synthesis.
+    return f"""You are producing the objective vc-research synthesis from completed lanes.
 
 Contract:
 - Work in repository root: {root}
@@ -871,11 +799,25 @@ def _failed_synthesis_result(last: ChildResult, reason: str) -> ChildResult:
 
 
 async def _run_research_synthesis(
-    root: str, prompt: str, results: Sequence[ChildResult]
+    root: str,
+    prompt: str,
+    results: Sequence[ChildResult],
+    selection: ResearchAgentSelection | None = None,
+    model_requested: str = "",
 ) -> ChildResult | None:
     survivors = _research_survivors(results)
     if not survivors or len(survivors) < _research_quorum(len(results)):
         return None
+    if selection is not None and selection.synthesizer:
+        return await _run_child(
+            kind="research",
+            label="research-synthesis",
+            agent=selection.synthesizer,
+            root=root,
+            prompt=prompt,
+            model_requested=selection.synthesis_model(model_requested),
+            prompt_body=_research_synthesis_prompt(root, prompt, survivors),
+        )
     last = max(survivors, key=lambda item: item.completed_at or "")
     if not last.agent_session_id:
         return _failed_synthesis_result(last, "missing_agent_session_id_for_resume")
@@ -900,6 +842,11 @@ def _write_parent_report(
     research_selection: ResearchAgentSelection | None = None,
 ) -> None:
     status = _research_run_status(results, synthesis, kind=kind)
+    lanes_failed = [
+        result.agent
+        for result in results
+        if result.exit_code != 0 or not result.artifact_ok
+    ]
     accounting_results = tuple(results) + (
         (synthesis,) if synthesis is not None else ()
     )
@@ -955,6 +902,10 @@ def _write_parent_report(
                 f"- source: {research_selection.source}",
                 f"- agents: {', '.join(research_selection.agents) or 'none'}",
                 f"- ignored: {', '.join(research_selection.ignored) or 'none'}",
+                f"- synthesizer: {research_selection.synthesizer or 'last-survivor'}",
+                f"- synthesizer_source: {research_selection.synthesizer_source or 'default'}",
+                f"- synthesizer_model: {research_selection.synthesizer_model or 'none'}",
+                f"- lanes_failed: {', '.join(lanes_failed) or 'none'}",
                 "",
             ]
         )
@@ -1061,6 +1012,16 @@ def _write_parent_report(
             "research_ignored_agents": list(research_selection.ignored)
             if research_selection is not None
             else [],
+            "research_synthesizer": research_selection.synthesizer
+            if research_selection is not None
+            else "",
+            "research_synthesizer_model": research_selection.synthesizer_model
+            if research_selection is not None
+            else "",
+            "research_synthesizer_source": research_selection.synthesizer_source
+            if research_selection is not None
+            else "",
+            "lanes_failed": lanes_failed,
             "synthesis": _result_meta(synthesis) if synthesis is not None else {},
             "children": [_result_meta(result) for result in results],
         },
@@ -1085,12 +1046,14 @@ async def run_research(root: str, prompt: str, model_requested: str = "") -> int
             agent=agent,
             root=root,
             prompt=prompt,
-            model_requested=model_requested,
+            model_requested=selection.lane_model(agent, model_requested),
         )
         for agent in selection.agents
     ]
     results = await asyncio.gather(*tasks)
-    synthesis = await _run_research_synthesis(root, prompt, results)
+    synthesis = await _run_research_synthesis(
+        root, prompt, results, selection, model_requested
+    )
     _write_parent_report(
         "research",
         root,
@@ -1114,18 +1077,22 @@ async def run_research_lane(
     if agent not in SUPPORTED_RESEARCH_AGENTS:
         print(f"vc-research: unsupported research agent: {agent}", file=sys.stderr)
         return 1
+    selection = research_agent_selection()
     result = await _run_child(
         kind="research",
         label=f"research-{agent}",
         agent=agent,
         root=root,
         prompt=prompt,
-        model_requested=model_requested,
+        model_requested=selection.lane_model(agent, model_requested),
     )
     return 0 if result.exit_code == 0 and result.artifact_ok else 1
 
 
-async def run_research_synthesis(root: str, prompt: str) -> int:
+async def run_research_synthesis(
+    root: str, prompt: str, model_requested: str = ""
+) -> int:
+    model_requested = _remember_runtime_model_request(model_requested)
     selection = research_agent_selection()
     for agent in selection.ignored:
         print(
@@ -1150,7 +1117,9 @@ async def run_research_synthesis(root: str, prompt: str) -> int:
             research_selection=selection,
         )
         return 1
-    synthesis = await _run_research_synthesis(root, prompt, results)
+    synthesis = await _run_research_synthesis(
+        root, prompt, results, selection, model_requested
+    )
     _write_parent_report(
         "research",
         root,
@@ -1211,6 +1180,8 @@ def _parser() -> argparse.ArgumentParser:
     research.add_argument("--prompt", default="")
     research.add_argument("--prompt-file", default="")
     research.add_argument("--model", default="")
+    research.add_argument("--synthesizer", default="")
+    research.add_argument("--synthesizer-model", default="")
     research_lane = sub.add_parser("research-lane")
     research_lane.add_argument("--agent", required=True)
     research_lane.add_argument("--root", required=True)
@@ -1222,6 +1193,8 @@ def _parser() -> argparse.ArgumentParser:
     research_synthesis.add_argument("--prompt", default="")
     research_synthesis.add_argument("--prompt-file", default="")
     research_synthesis.add_argument("--model", default="")
+    research_synthesis.add_argument("--synthesizer", default="")
+    research_synthesis.add_argument("--synthesizer-model", default="")
     marbles = sub.add_parser("marbles")
     marbles.add_argument("--workflow", default="marbles")
     marbles.add_argument("--agent", default="codex")
@@ -1241,6 +1214,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     ).strip()
     if model_requested:
         os.environ["VIBECRAFTED_MODEL_REQUESTED"] = model_requested
+    synthesizer = str(getattr(ns, "synthesizer", "") or "").strip()
+    if synthesizer:
+        os.environ["VIBECRAFTED_RESEARCH_SYNTHESIZER"] = synthesizer
+    synthesizer_model = str(getattr(ns, "synthesizer_model", "") or "").strip()
+    if synthesizer_model:
+        os.environ["VIBECRAFTED_RESEARCH_SYNTHESIZER_MODEL"] = synthesizer_model
     if ns.command == "research":
         prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
         return asyncio.run(run_research(ns.root, prompt, model_requested))
@@ -1251,7 +1230,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if ns.command == "research-synthesis":
         prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
-        return asyncio.run(run_research_synthesis(ns.root, prompt))
+        return asyncio.run(run_research_synthesis(ns.root, prompt, model_requested))
     if ns.command == "marbles":
         prompt = ns.prompt or _read_prompt_file(ns.prompt_file)
         return asyncio.run(

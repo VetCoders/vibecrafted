@@ -101,10 +101,81 @@ def test_research_runtime_uses_user_configured_agents(
     assert '"research_agents": [\n    "grok",\n    "codex",\n    "gemini"\n  ]' in meta
 
 
+def test_research_runtime_yaml_wins_over_legacy_toml_and_applies_lane_models(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-yaml")
+    legacy_dir = tmp_path / "xdg" / "vibecrafted"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["claude", "gemini"]\n',
+        encoding="utf-8",
+    )
+    config_dir = home / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "research.yaml").write_text(
+        "\n".join(
+            [
+                "lanes:",
+                "  - agent: codex",
+                "    model: gpt-yaml",
+                "    enabled: true",
+                "  - agent: gemini",
+                "    model: gemini-yaml",
+                "    enabled: true",
+                "  - agent: claude",
+                "    enabled: false",
+                "synthesizer:",
+                "  agent: codex",
+                "  model: gpt-synth",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    rc = workflow_runtime.main(
+        ["research", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 0
+    report = (home / "parent.md").read_text(encoding="utf-8")
+    meta = json.loads((home / "parent.meta.json").read_text(encoding="utf-8"))
+    assert f"source: {config_dir / 'research.yaml'}" in report
+    assert "agents: codex, gemini" in report
+    assert "synthesizer: codex" in report
+    assert "synthesizer_model: gpt-synth" in report
+    assert "research-claude" not in report
+    codex_transcript = (
+        home / "rsch-yaml-children" / "research-codex.transcript.log"
+    ).read_text(encoding="utf-8")
+    gemini_transcript = (
+        home / "rsch-yaml-children" / "research-gemini.transcript.log"
+    ).read_text(encoding="utf-8")
+    assert "exec\n-m\ngpt-yaml\n--json" in codex_transcript
+    assert "\ngemini-yaml\n" not in gemini_transcript
+    children = {child["agent"]: child for child in meta["children"]}
+    assert children["codex"]["model_requested"] == "gpt-yaml"
+    assert children["codex"]["model_override_supported"] is True
+    assert children["gemini"]["model_requested"] == "gemini-yaml"
+    assert children["gemini"]["model_override_supported"] is False
+    assert children["gemini"]["model_override_skip_reason"] == (
+        "unsupported_agent_model_flag"
+    )
+    assert meta["research_synthesizer"] == "codex"
+    assert meta["research_synthesizer_model"] == "gpt-synth"
+
+
 def test_research_runtime_applies_model_request_per_child_runner(
     monkeypatch, tmp_path: Path
 ) -> None:
     home = _runtime_env(monkeypatch, tmp_path, "rsch-models")
+    config_dir = home / "config"
+    config_dir.mkdir(parents=True)
+    (config_dir / "research.yaml").write_text(
+        "lanes:\n  - agent: codex\n    model: yaml-codex\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("VIBECRAFTED_RESEARCH_AGENTS", "claude,codex,gemini")
 
     rc = workflow_runtime.main(
@@ -131,6 +202,7 @@ def test_research_runtime_applies_model_request_per_child_runner(
     ).read_text(encoding="utf-8")
     assert "--model\nfrontier\n-p" in claude_transcript
     assert "exec\n-m\nfrontier\n--json" in codex_transcript
+    assert "yaml-codex" not in codex_transcript
     assert "\nfrontier\n" not in gemini_transcript
 
     meta = json.loads((home / "parent.meta.json").read_text(encoding="utf-8"))
@@ -185,6 +257,12 @@ def test_research_runtime_env_agents_override_user_config(
     config_dir.mkdir(parents=True)
     (config_dir / "config.toml").write_text(
         '[runtime.picking.research]\ndefault_agents = ["claude", "codex", "gemini"]\n',
+        encoding="utf-8",
+    )
+    runtime_config_dir = home / "config"
+    runtime_config_dir.mkdir(parents=True)
+    (runtime_config_dir / "research.yaml").write_text(
+        "lanes:\n  - agent: claude\n  - agent: gemini\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("VIBECRAFTED_RESEARCH_AGENTS", "grok,codex")
@@ -409,6 +487,7 @@ def test_research_synthesis_degrades_to_partial_success_on_quorum(
     assert rc == 0
     report = (home / "parent.md").read_text(encoding="utf-8")
     assert "status: partial_success" in report
+    assert "lanes_failed: gemini" in report
     # synteza odpaliła z ostatniego ocalałego (codex), gemini odnotowany jako fail
     assert "research-synthesis (codex)" in report
     assert "research-gemini" in report

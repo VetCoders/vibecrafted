@@ -69,6 +69,27 @@ def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 
+def test_root_cli_research_agentless_and_positional_forms(monkeypatch, capsys) -> None:
+    seen = []
+
+    def fake_launch(spec, _source_dir):
+        seen.append(spec)
+        return _accepted_launch_payload()
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+
+    assert cli.main(["research", "--prompt", "map it"]) == 0
+    assert cli.main(["research", "codex", "gemini", "--prompt", "map it"]) == 0
+
+    assert seen[0].agent == "swarm"
+    assert seen[0].research_agents == ()
+    assert seen[0].research_synthesizer == ""
+    assert seen[1].agent == "swarm"
+    assert seen[1].research_agents == ("codex", "gemini")
+    assert seen[1].research_synthesizer == "codex"
+    assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
+
+
 def test_root_cli_launch_missing_work_prints_friendly_error(
     monkeypatch, capsys
 ) -> None:

@@ -1,0 +1,24 @@
+# Runtime-owned vc-research swarm config.
+# Copy to: ${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/config/research.yaml
+# This file is read at launch time; it is not install-owned.
+
+lanes:
+  - agent: claude
+    # model: claude-opus-4-6
+    enabled: true
+  - agent: codex
+    # model: gpt-5.5
+    enabled: true
+  - agent: gemini
+    # Gemini currently has no supported model flag in Vibecrafted.
+    # A configured model is reported as unsupported, not silently applied.
+    # model: gemini-pro
+    enabled: true
+
+# Optional cap after disabled lanes are removed.
+# lane_count: 3
+
+synthesizer:
+  # If omitted, synthesis resumes the last surviving lane.
+  agent: claude
+  # model: claude-sonnet-4-6
