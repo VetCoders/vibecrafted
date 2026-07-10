@@ -17,6 +17,7 @@ from .package_resources import package_root, runtime_path
 from .spawn import Supervisor
 
 AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
+SUCCESS_STATES = {"report_validated", "completed", "closed"}
 SKILL_PREFIX = {
     "agents": "agnt",
     "followup": "fwup",
@@ -150,9 +151,29 @@ def _print_completed(run_id: str, payload: dict[str, Any]) -> int:
             print(f"transcript={run['latest_transcript']}")
         if run.get("session_id"):
             print(f"session_id={run['session_id']}")
-        return int(run.get("exit_code") or 0)
+        state = str(run.get("state") or "")
+        errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
+        worker_alive = bool(payload.get("worker_alive"))
+        delivered = str(payload.get("reason") or "") == "report_delivered"
+        terminal = control_plane._run_is_terminal(run) and not worker_alive
+        succeeded = (
+            state in SUCCESS_STATES
+            and run.get("artifact_ok") is not False
+            and not errors
+        )
+        if terminal and succeeded:
+            return int(run.get("exit_code") or 0)
+        if delivered and not worker_alive:
+            return 0
+        print(
+            "run_id="
+            f"{run_id} non-terminal completion disagreement "
+            f"reason={payload.get('reason')}",
+            file=sys.stderr,
+        )
+        return 3
     print(f"run_id={run_id} completed without control-plane payload")
-    return 0
+    return 3
 
 
 def _await_run_forever(run_id: str, interval: float = 5.0) -> dict[str, Any]:

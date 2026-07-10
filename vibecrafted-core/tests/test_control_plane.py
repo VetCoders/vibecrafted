@@ -992,6 +992,51 @@ def test_await_run_report_alone_never_completes_a_live_worker(
     assert payload["worker_alive"] is True
 
 
+def test_await_run_terminal_looking_meta_never_completes_a_live_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """rc=0-on-live guard: stale terminal-looking metadata cannot beat OS liveness."""
+    import subprocess
+    import sys
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        _write_meta(
+            home,
+            {
+                "run_id": "impl-terminal-looking-live",
+                "status": "running",
+                "agent": "codex",
+                "mode": "implement",
+                "skill_code": "impl",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "worker_pid": worker.pid,
+                "worker_pgid": worker.pid,
+                "exit_code": 0,
+                "liveness": "terminal",
+            },
+        )
+
+        payload = control_plane.await_run(
+            "impl-terminal-looking-live",
+            timeout_seconds=0.2,
+            interval_seconds=0.05,
+            hard_cap_seconds=0.6,
+        )
+    finally:
+        worker.terminate()
+        worker.wait()
+
+    assert payload["completed"] is False
+    assert payload["timed_out"] is True
+    assert payload["reason"] == "hard_cap"
+    assert payload["worker_alive"] is True
+
+
 def test_await_run_live_child_keeps_loop_parent_open_past_idle_window(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -411,23 +411,24 @@ def _heartbeat_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | Non
 def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
     result = dict(run)
     state = str(result.get("state") or "")
+    launcher_pid = _coerce_int(result.get("launcher_pid"))
+    liveness = str(result.get("liveness") or "")
     if state in FINAL_STATES:
+        return result
+    # P0: a dead/absent launcher pid is NOT proof the run died. The launcher is an
+    # ephemeral spawn-shell that exits right after forking the detached dispatcher;
+    # for headless/detached dispatch it is gone within seconds while the dispatcher
+    # and worker keep running and DELIVER. If the worker (or its process group) is
+    # still alive, the run is live regardless of the launcher pid, exit_code, or
+    # stale terminal-looking metadata — reconciling it to success/stalled/recovery
+    # here makes await capable of rc=0 on a live worker.
+    if _worker_is_alive(result):
         return result
     if _has_success_evidence(result):
         return _reconcile_successful_terminal(result)
     if _run_is_terminal(result):
         return result
     if state not in ACTIVE_STATES - {"paused"}:
-        return result
-    launcher_pid = _coerce_int(result.get("launcher_pid"))
-    liveness = str(result.get("liveness") or "")
-    # P0: a dead/absent launcher pid is NOT proof the run died. The launcher is an
-    # ephemeral spawn-shell that exits right after forking the detached dispatcher;
-    # for headless/detached dispatch it is gone within seconds while the dispatcher
-    # and worker keep running and DELIVER. If the worker (or its process group) is
-    # still alive, the run is live regardless of the launcher pid — reconciling it
-    # to stalled/recovery here false-blocks live, delivering runs.
-    if _worker_is_alive(result):
         return result
     if liveness == "pid_alive":
         if launcher_pid is None or _pid_is_alive(launcher_pid):
@@ -1600,14 +1601,19 @@ def await_run(
         last_run = _select_run(snapshot, target)
         if on_poll is not None:
             on_poll(last_run)
-        if last_run is not None and _run_is_terminal(last_run):
+        children = _await_child_runs(snapshot, target)
+        worker_alive = bool(
+            (last_run is not None and _worker_is_alive(last_run))
+            or any(_worker_is_alive(child) for child in children)
+        )
+        if last_run is not None and _run_is_terminal(last_run) and not worker_alive:
             return {
                 "run_id": target,
                 "found": True,
                 "completed": True,
                 "timed_out": False,
                 "reason": "terminal",
-                "worker_alive": _worker_is_alive(last_run),
+                "worker_alive": False,
                 "attempts": attempts,
                 "run": last_run,
             }
@@ -1622,7 +1628,7 @@ def await_run(
         if (
             delivered_report
             and _report_file_written(delivered_report)
-            and not (last_run is not None and _worker_is_alive(last_run))
+            and not worker_alive
         ):
             return {
                 "run_id": target,
@@ -1636,11 +1642,6 @@ def await_run(
             }
 
         now = time.monotonic()
-        children = _await_child_runs(snapshot, target)
-        worker_alive = bool(
-            (last_run is not None and _worker_is_alive(last_run))
-            or any(_worker_is_alive(child) for child in children)
-        )
         fingerprint = (
             _await_progress_fingerprint(last_run),
             tuple(

@@ -129,6 +129,11 @@ READ stages must not write source (a violation is traced as
    exposes `stage_worker` with `worker_dead_without_report` — the actionable
    death signal; the dispatcher also writes `worker_exit` /
    `stage_worker_exit` into `state.json` push-side when a worker dies.
+   3-signal liveness: before declaring done, reconcile await verdict, terminal
+   run meta, and worker pid dead; if a report is promised, confirm it exists.
+   Two agreeing signals are enough to act, three to declare done; disagreement
+   means treat as live and re-arm await. Known skew: rc=0-on-live and meta stuck
+   `active`/`stalled` after real completion.
 4. **Verify before every button.** Read the report; for WRITE stages confirm
    the commits and gates actually exist; for READ stages confirm no
    `read_phase_violation`. Honor worker steering from report frontmatter

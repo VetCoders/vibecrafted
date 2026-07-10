@@ -15,6 +15,12 @@ scheduled wakeups are diagnostic only, not wake signals. Hedging await with
 ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
 do not normalize the hedge.
 
+Liveness is always 3-signal before declaring done: await verdict, terminal run
+meta, and worker pid dead; if a report is promised, confirm it exists. Two
+agreeing signals are enough to act, three to declare done; disagreement means
+treat as live and re-arm await. Known skew: rc=0-on-live and meta stuck
+`active`/`stalled` after real completion.
+
 See `docs/runtime/AGENT_OPS.md` for the Class 1/2/3 failure canon. The CLI
 await path is the supervisor's primary wake channel; background-task notify and
 scheduled heartbeat are diagnostic fallbacks for the operator chat loop, not
@@ -73,6 +79,8 @@ authorizes that step.
 
 5. Await returns:
           → vibecrafted <agent> await exits with terminal/report truth
+          → confirm worker pid dead and terminal run meta; if report promised,
+            confirm the report exists
           → read the worker's report file (NOT the /tmp output file —
             see "What the operator-agent reads")
           → verify commit landed on expected branch

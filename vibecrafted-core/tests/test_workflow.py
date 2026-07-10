@@ -791,7 +791,8 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
     )
 
     assert truth["completed"] is True
-    assert truth["terminal"] is True
+    assert truth["terminal_evidence"] is True
+    assert truth["worker_alive"] is False
     assert truth["artifact_ok"] is True
     assert truth["paths_exist"] == {
         "report": True,

@@ -427,7 +427,13 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
             hard_cap_seconds=args.hard_cap,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-        return 0 if result.get("completed") and result.get("artifact_ok") else 1
+        return (
+            0
+            if result.get("completed")
+            and result.get("artifact_ok")
+            and result.get("terminal_evidence")
+            else 1
+        )
 
     print("await: initial status")
     _print_run_status(run)
@@ -453,10 +459,23 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
     final_run = dict(result.get("run") or {})
     reason = str(result.get("reason") or "")
     if result.get("completed"):
-        if final_run and not _run_succeeded(final_run) and reason == "terminal":
+        worker_alive = bool(result.get("worker_alive"))
+        terminal_evidence = bool(
+            final_run and _run_terminal(final_run) and not worker_alive
+        )
+        delivered_evidence = reason == "report_delivered" and not worker_alive
+        if terminal_evidence and final_run and not _run_succeeded(final_run):
             print(f"await: terminal failure ({reason})")
             _print_run_status(final_run)
             return 1
+        if not (terminal_evidence or delivered_evidence):
+            print(
+                f"await: non-terminal completion disagreement ({reason})",
+                file=sys.stderr,
+            )
+            if final_run:
+                _print_run_status(final_run)
+            return 3
         print(f"await: completed ({reason})")
         if final_run:
             _print_run_status(final_run)

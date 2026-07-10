@@ -68,6 +68,11 @@ vibecrafted <workflow> <agent> --prompt '<inline intent>'
   scheduled wakeups are diagnostic only, not wake signals. Hedging await with
   ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
   do not normalize the hedge. See `docs/runtime/AGENT_OPS.md`.
+- Liveness is always 3-signal: await verdict, terminal run meta, worker pid
+  dead, plus promised report presence. Two agreeing signals are enough to act;
+  three are required to declare done. Any disagreement means treat as live and
+  re-arm await. Known skew: rc=0-on-live and meta stuck `active`/`stalled` after
+  real completion.
 - Durable artifacts (`*.meta.json`, `*.transcript.log`, report paths) are
   diagnostic drilldowns after await is armed. The fleet stays operable from
   artifacts even with no panes open, but artifact polling does not replace the

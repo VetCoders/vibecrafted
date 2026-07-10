@@ -822,12 +822,21 @@ def await_launch_truth(
         hard_cap_seconds=hard_cap_seconds,
     )
     run = dict(awaited.get("run") or {})
+    await_reason = str(awaited.get("reason") or "")
+    worker_alive = bool(awaited.get("worker_alive"))
     report_path = str(launch_payload.get("report") or run.get("latest_report") or "")
     transcript_path = str(
         launch_payload.get("transcript") or run.get("latest_transcript") or ""
     )
     meta_path = str(launch_payload.get("meta") or run.get("meta") or "")
-    terminal = bool(awaited.get("completed")) and _run_is_terminal(run)
+    terminal = (
+        bool(awaited.get("completed")) and _run_is_terminal(run) and not worker_alive
+    )
+    terminal_evidence = terminal or (
+        bool(awaited.get("completed"))
+        and await_reason == "report_delivered"
+        and not worker_alive
+    )
 
     meta_payload: dict[str, Any] = {}
     if terminal:
@@ -861,6 +870,9 @@ def await_launch_truth(
         "completed": bool(awaited.get("completed")),
         "timed_out": bool(awaited.get("timed_out")),
         "terminal": terminal,
+        "terminal_evidence": terminal_evidence,
+        "await_reason": await_reason,
+        "worker_alive": worker_alive,
         "attempts": awaited.get("attempts"),
         "run": run,
         "report": report_path,

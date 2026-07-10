@@ -267,6 +267,11 @@ scheduled wakeups are diagnostic only, not wake signals. Hedging await with
 ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
 do not normalize the hedge.
 
+3-signal liveness: await verdict, terminal run meta, worker pid dead, plus
+promised report presence. Two agreeing signals are enough to act, three to
+declare done; any disagreement means treat as live and re-arm await. Known skew:
+rc=0-on-live and meta stuck `active`/`stalled` after real completion.
+
 Observe progress through durable artifacts in
 `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`, but let the
 dedicated runtime helper own waiting and final summary:

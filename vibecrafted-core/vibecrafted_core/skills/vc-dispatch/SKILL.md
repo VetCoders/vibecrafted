@@ -105,6 +105,11 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
    are diagnostic only, not wake signals. Hedging await with ad-hoc
    pollers/watchers is a Class 3 violation; fix `control_plane.await_run`, do
    not normalize the hedge.
+   3-signal liveness: before declaring done, reconcile await verdict, terminal
+   run meta, and worker pid dead; if a report is promised, confirm it exists.
+   Two agreeing signals are enough to act, three to declare done; disagreement
+   means treat as live and re-arm await. Known skew: rc=0-on-live and meta stuck
+   `active`/`stalled` after real completion.
    `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>' --tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'`
    (framework cron heartbeat → control-plane await → verify → flip → baton),
    the lower-level `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next>'`,

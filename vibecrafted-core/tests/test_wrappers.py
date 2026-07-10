@@ -86,6 +86,26 @@ def test_supervised_skill_main_routes_runtime_launch_through_dispatcher(
     ]
 
 
+def test_print_completed_rejects_live_worker_completion_payload(capsys) -> None:
+    rc = wrappers._print_completed(
+        "impl-live",
+        {
+            "completed": True,
+            "reason": "report_delivered",
+            "worker_alive": True,
+            "run": {
+                "state": "running",
+                "exit_code": None,
+                "artifact_ok": True,
+                "latest_report": "/tmp/report.md",
+            },
+        },
+    )
+
+    assert rc == 3
+    assert "non-terminal completion disagreement" in capsys.readouterr().err
+
+
 def test_resume_main_routes_captured_session_through_vc_frame_aware_resume_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

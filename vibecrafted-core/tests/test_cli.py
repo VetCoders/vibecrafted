@@ -499,6 +499,46 @@ def test_root_cli_agent_await_fails_dead_stale_worker(
     assert "last useful line" in captured.out
 
 
+def test_root_cli_agent_await_rejects_completed_payload_when_worker_alive(
+    monkeypatch, capsys
+) -> None:
+    run = {
+        "run_id": "impl-live",
+        "agent": "codex",
+        "state": "running",
+        "liveness": "pid_alive",
+        "skill": "implement",
+        "root": "/repo",
+        "artifact_ok": True,
+        "latest_report": "/tmp/report.md",
+        "latest_transcript": "/tmp/transcript.log",
+    }
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+    monkeypatch.setattr(cli, "lookup_run", lambda _run_id: run)
+    monkeypatch.setattr(
+        cli,
+        "await_run",
+        lambda run_id, **_kwargs: {
+            "run_id": run_id,
+            "found": True,
+            "completed": True,
+            "timed_out": False,
+            "reason": "report_delivered",
+            "worker_alive": True,
+            "run": run,
+        },
+    )
+
+    rc = cli.main(["codex", "await", "--run-id", "impl-live", "--timeout", "0"])
+
+    assert rc == 3
+    captured = capsys.readouterr()
+    assert "non-terminal completion disagreement" in captured.err
+    assert "state:      running" in captured.out
+
+
 def test_root_cli_doctor_routes_to_installer_doctor(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         cli.doctor_module,

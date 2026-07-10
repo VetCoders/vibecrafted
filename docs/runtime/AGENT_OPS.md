@@ -13,6 +13,12 @@ scheduled wakeups are diagnostic only, not wake signals. Hedging await with
 ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
 do not normalize the hedge.
 
+Liveness is always a 3-signal decision before declaring a run done: confirm (1)
+the await verdict, (2) terminal state in run meta, and (3) worker pid dead; when
+a report path is promised, also confirm the report file exists and is non-empty.
+Two agreeing signals are enough to act cautiously, three are required to declare
+done. Any disagreement means "treat as live, re-arm await."
+
 Every class here earned its entry with at least two confirmed real-world
 cases. Speculative classes do not belong in this file.
 
@@ -174,7 +180,7 @@ background AND keep a manual sleep/ps/git monitor "because await can return
 early". Every hedge is a doctrine violation (ad-hoc watchers) caused by a real
 contract gap, not by agent paranoia.
 
-### Mechanism (three confirmed gaps, all fixed at the source)
+### Mechanism (four confirmed gaps, all fixed at the source)
 
 1. **A third private await loop**: `cli._agent_await`'s human path had its own
    inline loop treating `--timeout` as an ABSOLUTE wall clock — it abandoned
@@ -195,6 +201,14 @@ contract gap, not by agent paranoia.
    `timed_out: idle_stall` + `report_written: true`. Fixed: a non-empty
    report (`report_path` argument, else the run's `latest_report`) returns
    `completed` with `reason: report_delivered` on the first poll.
+4. **rc=0-on-live / inverse meta lag**: field evidence from 2026-07-10 showed
+   both directions of signal skew. `await` could return rc=0 while the worker
+   was still alive, and completed workers could leave run meta stuck
+   `active`/`stalled` with `exit_code: null` after writing the report and
+   exiting. Fixed: success requires worker-dead terminal evidence — terminal
+   meta state or delivered report — and live-worker disagreement keeps await
+   armed. Known failure mode if it recurs: rc=0-on-live or meta-active-after-
+   completion is a Class 3 bug; use the 3-signal rule and re-arm await.
 
 ### The rule
 
@@ -202,6 +216,12 @@ The runtime hands out a run id; `await`/`observe` on that id must ALWAYS be
 the whole answer. If an agent feels the need to double-guard await with a
 manual monitor, treat that as a Class 3 bug report against the runtime — fix
 the contract, do not normalize the hedge.
+
+The operational verdict is deliberately redundant: await verdict, terminal run
+meta, and worker pid death must converge before "done" leaves the supervisor.
+Report presence is a fourth promised-artifact check, not a replacement for
+liveness. Two agreeing signals can justify recovery or cautious next action;
+three signals are the bar for done.
 
 ---
 
