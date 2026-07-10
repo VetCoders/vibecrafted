@@ -256,7 +256,7 @@ Bug faktycznie istnieje tylko w **trybie dev operatora** (`git clone` +
 ### Cykl 3 — dispatch bez wahania
 
 Instrukcja operatora: _„dispatchuj to ziom a się nie zastanawiasz.
-confidence high? Maciej nie odpowiada? -> dispatch"_ — jawna
+confidence high? operator nie odpowiada? -> dispatch"_ — jawna
 zasada „bez odbioru" zastosowana do pracy nad aktualizacją skilla, plus wskazanie,
 że agent-operator zapomniał wejść w `/loop`:
 

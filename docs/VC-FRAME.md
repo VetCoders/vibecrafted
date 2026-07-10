@@ -39,9 +39,9 @@ machine they are looking at through screen-share or browser-mirrored vc-frame:
 | host    | theme               | accent | role                             |
 | ------- | ------------------- | ------ | -------------------------------- |
 | dragon  | `vetcoders-dragon`  | red    | LibraxisAI server, central hub   |
-| sztudio | `vetcoders-sztudio` | purple | Monika's desktop                 |
-| silver  | `vetcoders-silver`  | cyan   | Monika's laptop                  |
-| div0    | `vetcoders-div0`    | green  | Maciej's laptop, primary dev     |
+| sztudio | `vetcoders-sztudio` | purple | operator desktop                 |
+| silver  | `vetcoders-silver`  | cyan   | operator laptop                  |
+| div0    | `vetcoders-div0`    | green  | primary dev laptop               |
 | \*      | `vibecrafted`       | amber  | neutral default (fleet baseline) |
 
 The themes live in `config/vc-frame/themes/vetcoders-mesh.kdl`. vc-frame auto-loads
@@ -60,7 +60,7 @@ Detection order:
 
 The result is normalized (lowercase + strip `.local`/`.lan`) before matching,
 and `mgbook16` is wired as an alias for `div0` because that is what the
-LocalHostName actually returns on Maciej's laptop.
+LocalHostName actually returns on the div0 laptop.
 
 The `VIBECRAFTED_THEME` env var bypasses host detection outright, so an
 operator can pin a fleet baseline theme even when running on a mesh host.
