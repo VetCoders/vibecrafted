@@ -24,6 +24,12 @@ flowchart TD
 | `vc-marbles <agent>`                                                | same                                                                  | same                                                                      | `0` on launch          |
 | `vibecrafted marbles pause\|stop\|resume\|session\|inspect\|delete` | control args                                                          | marbles runtime control actions                                           | `0` on control success |
 
+After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+do not normalize the hedge. See `docs/runtime/AGENT_OPS.md`.
+
 ### Escalation edges
 
 - Same blocker persists after repeated loops -> `vibecrafted partner <agent>`

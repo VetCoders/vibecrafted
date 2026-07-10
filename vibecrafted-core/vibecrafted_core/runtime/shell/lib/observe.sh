@@ -58,7 +58,7 @@ _vetcoders_print_launch_receipt() {
   [[ -z "$transcript" ]] || printf 'transcript: %s\n' "$transcript"
   [[ -z "$launcher" ]] || printf 'launcher:   %s\n' "$launcher"
   printf 'observe:    vibecrafted %s observe --run-id %s\n' "$tool" "$run_id"
-  printf 'await:      vibecrafted %s await --run-id %s\n' "$tool" "$run_id"
+  printf 'await (ARM NOW, supervisor-side): vibecrafted %s await --run-id %s\n' "$tool" "$run_id"
   printf '=====================================================================\n'
 }
 
@@ -94,4 +94,3 @@ _vetcoders_loop() {
   }
   bash "$script" "$@"
 }
-

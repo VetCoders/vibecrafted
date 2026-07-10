@@ -98,14 +98,20 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
    explicitly, or use the CLI. Headless is the unattended/cron lane only. Record
    the receipt (run_id, report, transcript, meta) in the tracker.
 3. **Spanko**: await through artifacts, never by staring at a pane. Use the
-   dedicated command as the standard dispatcher loop:
+   dedicated command as the standard dispatcher loop. Canonical supervisor
+   contract (see `docs/runtime/AGENT_OPS.md`): After dispatch, arm
+   `vibecrafted <agent> await --run-id <id>` immediately, supervisor-side.
+   Control-plane JSON, report files, transcripts, panes, and scheduled wakeups
+   are diagnostic only, not wake signals. Hedging await with ad-hoc
+   pollers/watchers is a Class 3 violation; fix `control_plane.await_run`, do
+   not normalize the hedge.
    `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>' --tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'`
    (framework cron heartbeat → control-plane await → verify → flip → baton),
    the lower-level `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next>'`,
-   the await-watch probe
-   (`vibecrafted-await-watch.sh --meta <meta.json>` — tail-await-die), or a
-   plain backgrounded `vibecrafted <agent> await --run-id`. A living worker
-   gets ZERO interference; interrupting during its gate phase is pure loss.
+   or the await-watch probe
+   (`vibecrafted-await-watch.sh --meta <meta.json>` — tail-await-die) as a
+   visibility aid subordinate to the canonical await. A living worker gets ZERO
+   interference; interrupting during its gate phase is pure loss.
 4. **Sprawdzenie** (on worker exit): commit SHA exists → diff essence matches
    the brief → worker report's gate results and acceptance read. **Do NOT
    re-run the worker's lints/tests** — workers run their own gates and commit

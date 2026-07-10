@@ -19,6 +19,13 @@ vibecrafted ships the heartbeat — reach for it before hand-rolling timers:
 | resume after idle window       | `vibecrafted cron tick --after-idle-minutes 10 --then-cmd <cmd>`                                                                                                                                                |
 | per-dispatch auto-await pane   | `vibecrafted-await-watch.sh --meta <meta.json>` — tails transcript, watches meta status + size delta + process liveness, self-terminates (tunables: `VIBECRAFTED_AWAIT_IDLE_TIMEOUT`, `VIBECRAFTED_AWAIT_POLL`) |
 
+Canonical supervisor contract (see `docs/runtime/AGENT_OPS.md`): After
+dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+do not normalize the hedge.
+
 Drive the await with the dedicated command (OUR vc-loop / cron) as the
 STANDARD even from an interactive session — a dispatched run HAS the CLI. A
 harness-level loop (Claude `/loop 15m <watch prompt>`) is a true last-resort,

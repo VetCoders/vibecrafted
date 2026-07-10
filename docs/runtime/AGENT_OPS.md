@@ -5,6 +5,14 @@ anger, with confirmed remediations. This is runtime mechanics, not identity or
 naming — it documents how agents fail _inside this machinery_ (dispatcher,
 no-await lifecycle, subagents, watchers) and what actually fixes it.
 
+## Supervisor Quickstart
+
+After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+do not normalize the hedge.
+
 Every class here earned its entry with at least two confirmed real-world
 cases. Speculative classes do not belong in this file.
 

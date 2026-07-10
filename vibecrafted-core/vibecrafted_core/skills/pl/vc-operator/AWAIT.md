@@ -9,18 +9,25 @@ Czytaj razem z [`SKILL.md`](SKILL.md), [`GUIDE.md`](GUIDE.md), [`DISPATCH.md`](D
 
 ## Doktryna
 
-Runnery zadań w tle powiadamiają o ukończeniu automatycznie przez payloady
-`<task-notification>`. Nie polluj.
+After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+do not normalize the hedge.
+
+Zobacz `docs/runtime/AGENT_OPS.md` dla kanonu awarii Class 1/2/3. CLI await jest
+podstawowym kanałem wybudzenia supervisora; notify taska i heartbeat są
+diagnostycznym fallbackiem pętli czatu operatora, nie zamiennikiem uzbrojenia
+await.
 
 Dla trybu operatora przekłada się to na:
 
-- **Sygnał podstawowy**: payload `<task-notification>`, który budzi cię, gdy
-  działająca w tle pętla await `vc-implement` / `vc-agents` / dispatch
-  zakończy się. To jest kontrakt.
-- **Sygnał zapasowy**: zaplanowany heartbeat (długointerwałowy `ScheduleWakeup`
-  albo ponowne wejście w `/loop`), który odpala się tylko wtedy, gdy
-  podstawowe powiadomienie nigdy nie przyjdzie. Heartbeat to siatka
-  bezpieczeństwa, a nie puls stanu ustalonego.
+- **Sygnał podstawowy**: foreground/supervisor-side
+  `vibecrafted <agent> await --run-id <id>`, albo komenda framework loop, która
+  deleguje do tego await.
+- **Sygnał diagnostyczny**: payload `<task-notification>`, ścieżka raportu,
+  JSON control-plane, transcript, widoczna karta albo zaplanowany heartbeat.
+  One wyjaśniają stan; nie zastępują kanonicznego await.
 - **Antywzorzec**: krótkointerwałowy polling. Ponowne sprawdzanie statusu
   zadania co 60 sekund spala prompt cache i sygnalizuje operatorowi, że nie
   ufasz własnej infrastrukturze.
@@ -52,19 +59,20 @@ autoryzuje ten krok.
 2. Potwierdź start (~30s po odpaleniu):
           → sprawdź, że tracker zadania żyje
           → potwierdź, że operator widzi obserwowaną kartę
-          → napisz do operatora „Fala B-1 odpalona, czekam na notify"
+          → arm: vibecrafted claude await --run-id impl-181153-86836
+          → napisz do operatora „Fala B-1 odpalona, canonical await armed"
 
 3. Zaplanuj zapasowy heartbeat:
           → ScheduleWakeup delaySeconds=1800 (30 min)
-          → reason: „Wave B-1 await fallback if notify lost"
+          → reason: „Wave B-1 diagnostic heartbeat for impl-181153-86836"
 
 4. Bezczynność:
           → odpowiadaj na czat operatora, jeśli pinguje
           → trzymaj treść promptu dla Fali B-2 w gotowości, na wypadek gdybyśmy musieli szybko odpalić
           → nie polluj, nie tailuj logów, nie czytaj /tmp/.../tasks/*.output
 
-5. Przychodzi notify:
-          → <task-notification status=completed> budzi cię
+5. Await wraca:
+          → vibecrafted <agent> await wychodzi z prawdą terminal/report
           → przeczytaj plik raportu workera (NIE plik /tmp output —
             zobacz „Co czyta agent operatora")
           → zweryfikuj, że commit wylądował na oczekiwanej gałęzi
@@ -79,9 +87,11 @@ autoryzuje ten krok.
 
 ---
 
-## Konfiguracja heartbeat
+## Konfiguracja diagnostycznego heartbeat
 
-Zapasowy heartbeat ustawia się per długodziałający dispatch.
+Zapasowy heartbeat jest tylko diagnostyczny. Ustawia się go per długo działający
+dispatch, żeby supervisor mógł sprawdzić, dlaczego kanoniczny await jeszcze nie
+wrócił.
 
 | Kontekst fali                     | Opóźnienie heartbeat | Uzasadnienie                                                |
 | --------------------------------- | -------------------- | ----------------------------------------------------------- |
@@ -90,11 +100,12 @@ Zapasowy heartbeat ustawia się per długodziałający dispatch.
 | Fala C równolegle (~15–25 min)    | 1800s (30 min)       | Trzy równoległe; jeden heartbeat pokrywa wszystkie.         |
 | Fala D finalna (~20–30 min każda) | 2400s (40 min)       | Najcięższe dispatche; daj margines.                         |
 
-Pole reason w heartbeat powinno zawsze zawierać run_id:
+Pole reason heartbeat powinno zawsze zawierać run_id i nie może sugerować, że
+jest sygnałem wybudzenia:
 
 ```text
 ScheduleWakeup delaySeconds=1800
-  reason: "Wave B-1 await fallback for impl-181153-86836 — verify completion if notify lost"
+  reason: "Wave B-1 diagnostic heartbeat for impl-181153-86836 — inspect if canonical await has not returned"
 ```
 
 Heartbeat jest zmarnowany (no-op), jeśli notify przyszedł pierwszy. To

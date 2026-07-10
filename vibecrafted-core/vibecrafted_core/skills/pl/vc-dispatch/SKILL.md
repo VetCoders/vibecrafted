@@ -91,14 +91,20 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
    (shelle mogą nieść miękki `ulimit -f` → SIGXFSZ/exit 153). Zapisz receipt
    (run_id, report, transcript, meta) w trackerze.
 3. **Spanko**: czekaj przez artefakty, nigdy przez gapienie się w pane. Użyj
-   dedykowanej komendy jako standardowej pętli dyspozytora:
+   dedykowanej komendy jako standardowej pętli dyspozytora. Canonical supervisor
+   contract (see `docs/runtime/AGENT_OPS.md`): After dispatch, arm
+   `vibecrafted <agent> await --run-id <id>` immediately, supervisor-side.
+   Control-plane JSON, report files, transcripts, panes, and scheduled wakeups
+   are diagnostic only, not wake signals. Hedging await with ad-hoc
+   pollers/watchers is a Class 3 violation; fix `control_plane.await_run`, do
+   not normalize the hedge.
    `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>' --tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'`
    (heartbeat cron frameworka → control-plane await → sprawdzenie → flip → baton),
    niższopoziomowego `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next>'`,
-   probe await-watch
-   (`vibecrafted-await-watch.sh --meta <meta.json>` — tail-await-die), albo
-   zwykły zbackgroundowany `vibecrafted <agent> await --run-id`. Żywy worker
-   dostaje ZERO ingerencji; przerywanie mu w fazie bramki to czysta strata.
+   albo probe await-watch
+   (`vibecrafted-await-watch.sh --meta <meta.json>` — tail-await-die) jako
+   warstwy widoczności podporządkowanej kanonicznemu await. Żywy worker dostaje
+   ZERO ingerencji; przerywanie mu w fazie bramki to czysta strata.
 4. **Sprawdzenie** (przy wyjściu workera): SHA commita istnieje → esencja diffa zgadza się
    z briefem → odczytane wyniki bramek i acceptance z raportu workera. **NIE
    uruchamiaj ponownie lintów/testów workera** — workerzy uruchamiają własne bramki, a commit

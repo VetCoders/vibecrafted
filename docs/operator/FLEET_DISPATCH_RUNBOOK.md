@@ -63,9 +63,15 @@ vibecrafted <workflow> <agent> --prompt '<inline intent>'
 
 ## 5. Observe (metadata-first, not pane-first)
 
-- `vibecrafted <agent> await --run-id <id>` (or `--last`) waits on completion + prints the summary.
-- Poll durable artifacts: `~/.vibecrafted/artifacts/<org>/<repo>/<date>/reports/*.meta.json` (status)
-  - `*.transcript.log` (live work). The fleet stays operable from artifacts even with no panes open.
+- After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+  supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+  scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+  ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+  do not normalize the hedge. See `docs/runtime/AGENT_OPS.md`.
+- Durable artifacts (`*.meta.json`, `*.transcript.log`, report paths) are
+  diagnostic drilldowns after await is armed. The fleet stays operable from
+  artifacts even with no panes open, but artifact polling does not replace the
+  canonical await.
 - **Verify each cut** against its brief acceptance + run its gates (tests / clippy -D warnings /
   `make check`). Confirm the agent **committed its round**; if it left work uncommitted, flag the
   doctrine regression. **STOP is recovery, not surrender** — on stall/fail, issue a focused

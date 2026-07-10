@@ -238,7 +238,9 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
     print(f"report:     {_field(payload, 'report')}")
     print(f"transcript: {_field(payload, 'transcript')}")
     print(f"observe:    vibecrafted {agent} observe --run-id {run_id}")
-    print(f"await:      vibecrafted {agent} await --run-id {run_id}")
+    print(
+        f"await (ARM NOW, supervisor-side): vibecrafted {agent} await --run-id {run_id}"
+    )
     print("=====================================================================")
 
 

@@ -504,7 +504,7 @@ def test_skill_dispatch_prints_launch_receipt(tmp_path: Path) -> None:
         in result.stdout
     )
     assert (
-        "await:      vibecrafted claude await --run-id prun-010203-44444"
+        "await (ARM NOW, supervisor-side): vibecrafted claude await --run-id prun-010203-44444"
         in result.stdout
     )
 

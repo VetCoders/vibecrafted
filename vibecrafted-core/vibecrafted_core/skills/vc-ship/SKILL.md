@@ -118,12 +118,17 @@ READ stages must not write source (a violation is traced as
    every stage worker.
 2. **Launch** with the standard launcher above. Verify the launch receipt:
    run_id (`life-ship-…`), context atlas loaded, stage 1 accepted.
-3. **Watch each stage supervisor-side** (never inside a subagent — see
-   `docs/runtime/AGENT_OPS.md`): poll the stage report file paired with the
-   run's terminal-state truth. `ship status --json` exposes `stage_worker`
-   with `worker_dead_without_report` — the actionable death signal; the
-   dispatcher also writes `worker_exit` / `stage_worker_exit` into
-   `state.json` push-side when a worker dies.
+3. **Arm await immediately, supervisor-side** (never inside a subagent — see
+   `docs/runtime/AGENT_OPS.md`): After dispatch, arm
+   `vibecrafted <agent> await --run-id <id>` immediately, supervisor-side.
+   Control-plane JSON, report files, transcripts, panes, and scheduled wakeups
+   are diagnostic only, not wake signals. Hedging await with ad-hoc
+   pollers/watchers is a Class 3 violation; fix `control_plane.await_run`, do
+   not normalize the hedge. Stage report checks and `ship status --json` are
+   diagnostics subordinate to that canonical await; `ship status --json`
+   exposes `stage_worker` with `worker_dead_without_report` — the actionable
+   death signal; the dispatcher also writes `worker_exit` /
+   `stage_worker_exit` into `state.json` push-side when a worker dies.
 4. **Verify before every button.** Read the report; for WRITE stages confirm
    the commits and gates actually exist; for READ stages confirm no
    `read_phase_violation`. Honor worker steering from report frontmatter

@@ -9,17 +9,25 @@ Read alongside [`SKILL.md`](SKILL.md), [`GUIDE.md`](GUIDE.md), [`DISPATCH.md`](D
 
 ## The doctrine
 
-Background-task runners notify completion automatically via
-`<task-notification>` payloads. Do not poll.
+After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+do not normalize the hedge.
+
+See `docs/runtime/AGENT_OPS.md` for the Class 1/2/3 failure canon. The CLI
+await path is the supervisor's primary wake channel; background-task notify and
+scheduled heartbeat are diagnostic fallbacks for the operator chat loop, not
+substitutes for arming await.
 
 For operator mode that translates into:
 
-- **Primary signal**: the `<task-notification>` payload that wakes you when
-  the background `vc-implement` / `vc-agents` / dispatch await loop
-  exits. This is the contract.
-- **Fallback signal**: a scheduled heartbeat (long-interval `ScheduleWakeup`
-  or `/loop` re-entry) that triggers only if the primary notify never
-  arrives. The heartbeat is a safety net, not the steady-state pulse.
+- **Primary signal**: the foreground/supervisor-side
+  `vibecrafted <agent> await --run-id <id>` command, or the framework loop
+  command that delegates to it.
+- **Diagnostic signal**: the `<task-notification>` payload, report path,
+  control-plane JSON, transcript, visible pane, or scheduled heartbeat.
+  These can explain state; they do not replace the canonical await.
 - **Anti-pattern**: short-interval polling. Re-checking task status every
   60 seconds burns the prompt cache and signals to the operator that you
   don't trust your own infrastructure.
@@ -51,19 +59,20 @@ authorizes that step.
 2. Confirm start (~30s after fire):
           → check task tracker is alive
           → confirm operator sees the watched tab
-          → write "Wave B-1 fired, awaiting notify" to operator
+          → arm: vibecrafted claude await --run-id impl-181153-86836
+          → write "Wave B-1 fired, canonical await armed" to operator
 
 3. Schedule fallback heartbeat:
           → ScheduleWakeup delaySeconds=1800 (30 min)
-          → reason: "Wave B-1 await fallback if notify lost"
+          → reason: "Wave B-1 diagnostic heartbeat for impl-181153-86836"
 
 4. Idle:
           → answer operator chat if they ping
           → keep prompt body for Wave B-2 ready in case we need to fire fast
           → do not poll, do not tail logs, do not read /tmp/.../tasks/*.output
 
-5. Notify arrives:
-          → <task-notification status=completed> wakes you
+5. Await returns:
+          → vibecrafted <agent> await exits with terminal/report truth
           → read the worker's report file (NOT the /tmp output file —
             see "What the operator-agent reads")
           → verify commit landed on expected branch
@@ -78,9 +87,10 @@ authorizes that step.
 
 ---
 
-## Heartbeat configuration
+## Diagnostic Heartbeat Configuration
 
-The fallback heartbeat is set per long-running dispatch.
+The fallback heartbeat is diagnostic only. It is set per long-running dispatch
+so the supervisor can inspect why the canonical await has not returned yet.
 
 | Wave context                    | Heartbeat delay | Rationale                                              |
 | ------------------------------- | --------------- | ------------------------------------------------------ |
@@ -89,11 +99,12 @@ The fallback heartbeat is set per long-running dispatch.
 | Wave C parallel (~15–25 min)    | 1800s (30 min)  | Three parallels; one heartbeat covers all.             |
 | Wave D final (~20–30 min each)  | 2400s (40 min)  | Heaviest dispatches; allow margin.                     |
 
-Heartbeat reason field should always include the run_id:
+Heartbeat reason field should always include the run_id and must not imply it
+is the wake signal:
 
 ```text
 ScheduleWakeup delaySeconds=1800
-  reason: "Wave B-1 await fallback for impl-181153-86836 — verify completion if notify lost"
+  reason: "Wave B-1 diagnostic heartbeat for impl-181153-86836 — inspect if canonical await has not returned"
 ```
 
 A heartbeat is wasted (no-op) if the notify arrived first. That's the
@@ -187,7 +198,7 @@ operator can't intervene. That violates the autonomy contract.
 When in doubt, prefer:
 
 1. `vibecrafted implement <agent> --file <path>` in a foreground watched tab.
-2. Background background-task await for completion signals via notify.
+2. Supervisor-side `vibecrafted <agent> await --run-id <id>` armed immediately.
 3. Operator can pull focus to the tab at any time and see the worker's
    live output.
 

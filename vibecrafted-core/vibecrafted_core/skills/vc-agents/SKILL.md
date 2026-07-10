@@ -253,17 +253,23 @@ That card should expose at least:
 - report path
 - transcript path
 - metadata path
+- exact await command
 
 If the operator cannot see those paths, observability is incomplete even if the
 agent is technically running.
 
 ## Observation
 
-Observe progress through durable artifacts in `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`.
+Canonical supervisor contract (see `docs/runtime/AGENT_OPS.md`): After
+dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+do not normalize the hedge.
 
-The default check is metadata-first, not pane-first.
-Use the dedicated runtime helper to wait on metadata completion and print the
-final summary:
+Observe progress through durable artifacts in
+`$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/`, but let the
+dedicated runtime helper own waiting and final summary:
 
 ```bash
 vibecrafted codex await --run-id <run_id>
