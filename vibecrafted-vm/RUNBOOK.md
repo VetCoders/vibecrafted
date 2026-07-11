@@ -180,12 +180,12 @@ docker system df                    # disk usage per image/container/volume
 
 ## Common workflows / Typowe użycie
 
-### Z operatorem (non-dev perspective)
+### Z użytkownikiem (non-dev perspective)
 
-Operator nie potrzebuje znać Docker'a żeby z tego korzystać:
+Użytkownik nie potrzebuje znać Docker'a żeby z tego korzystać:
 
 1. **Operator raz uruchamia wizard** + ustawia container na dragon (tailnet-accessible)
-2. **Operator z silver odpali:**
+2. **Użytkownik z `silver` odpali:**
    ```bash
    ssh root@vc-workspace-dragon
    # ← dropujesz do zsh w container, masz pełen framework
