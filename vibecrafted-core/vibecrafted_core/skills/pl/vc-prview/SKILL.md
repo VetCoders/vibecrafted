@@ -35,7 +35,7 @@ zaudytowania żądanego diffa lub artifact packa względem tej aktualnej struktu
 
 Binarka: `prview` (zainstalowana w `~/.cargo/bin/prview`)
 Źródło: `https://github.com/LibraxisAI/prview-rs`
-Autorka: Vetcoders
+Autor: Vetcoders
 
 ---
 
