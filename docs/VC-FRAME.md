@@ -39,10 +39,10 @@ machine they are looking at through screen-share or browser-mirrored vc-frame:
 | host    | theme               | accent | role                             |
 | ------- | ------------------- | ------ | -------------------------------- |
 | dragon  | `vetcoders-dragon`  | red    | LibraxisAI server, central hub   |
-| sztudio | `vetcoders-sztudio` | purple | operator desktop                 |
-| silver  | `vetcoders-silver`  | cyan   | operator laptop                  |
-| div0    | `vetcoders-div0`    | green  | primary dev laptop               |
-| \*      | `vibecrafted`       | amber  | neutral default (fleet baseline) |
+| sztudio | `vetcoders-sztudio` | purple | Operator desktop                 |
+| silver  | `vetcoders-silver`  | cyan   | Operator laptop                  |
+| div0    | `vetcoders-div0`    | green  | Primary dev laptop               |
+| \*      | `vibecrafted`       | amber  | Neutral default (fleet baseline) |
 
 The themes live in `config/vc-frame/themes/vetcoders-mesh.kdl`. vc-frame auto-loads
 nested theme blocks from the same config dir, so no extra wiring is needed at
