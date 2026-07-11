@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from vibecrafted_core import cli
 
 
@@ -22,12 +24,60 @@ def _accepted_launch_payload() -> dict[str, object]:
     }
 
 
-def test_root_cli_vc_help_alias_returns_help_success(monkeypatch, capsys) -> None:
-    monkeypatch.setattr("sys.argv", ["vc-help"])
-
-    assert cli.main() == 0
+def test_root_cli_without_command_returns_help_error(capsys) -> None:
+    assert cli.main([]) == 2
 
     assert "Vibecrafted core command surface" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "verb"),
+    [
+        ("telemetry", "telemetry"),
+        ("vc-dashboard", "dashboard"),
+        ("vc-dispatch", "dispatch"),
+        ("vc-help", "help"),
+        ("vc-init", "init"),
+        ("vc-justdo", "justdo"),
+        ("vc-resume", "resume"),
+        ("vc-start", "start"),
+    ],
+)
+def test_shell_wrapper_entrypoints_preserve_their_deck_verb(
+    monkeypatch, tmp_path: Path, wrapper: str, verb: str
+) -> None:
+    tools_home = tmp_path / "tools"
+    deck = tools_home / "vibecrafted-current" / "scripts" / "vibecrafted"
+    deck.parent.mkdir(parents=True)
+    deck.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_run(argv):
+        seen["argv"] = argv
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.setattr("sys.argv", [wrapper, "sentinel"])
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    assert cli.main() == 0
+    assert seen["argv"] == [str(deck), verb, "sentinel"]
+
+
+def test_shell_wrapper_missing_deck_fails_loudly(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    tools_home = tmp_path / "tools"
+    missing_deck = tmp_path / "missing" / "vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.setattr("sys.argv", ["vc-init", "codex"])
+    monkeypatch.setattr(cli, "deck_path", lambda: missing_deck)
+
+    assert cli.main() == 1
+    assert (
+        f"error: vc-init cannot find the runtime deck at {missing_deck}"
+        in capsys.readouterr().err
+    )
 
 
 def test_version_reads_installed_package_never_delegates_to_deck(

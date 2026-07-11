@@ -48,6 +48,20 @@ LAUNCHERS = (
 LAUNCH_ALIASES = {
     "justdo": "implement",
 }
+# These installed names are symlinks to the ``vibecrafted`` Python entrypoint,
+# but their behavior is still owned by the shell deck. Preserve the invoked
+# name as an explicit deck verb instead of silently treating the first user
+# argument as the command.
+SHELL_WRAPPER_VERBS = {
+    "telemetry": "telemetry",
+    "vc-dashboard": "dashboard",
+    "vc-dispatch": "dispatch",
+    "vc-help": "help",
+    "vc-init": "init",
+    "vc-justdo": "justdo",
+    "vc-resume": "resume",
+    "vc-start": "start",
+}
 SUCCESS_STATES = {"report_validated", "completed", "closed"}
 TERMINAL_STATES = {
     "blocked",
@@ -497,8 +511,12 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    raw_args = _normalize_raw_args(list(sys.argv[1:] if argv is None else argv))
+    raw_args = list(sys.argv[1:] if argv is None else argv)
     invoked_as = Path(sys.argv[0]).name if argv is None else "vibecrafted"
+    shell_wrapper_verb = SHELL_WRAPPER_VERBS.get(invoked_as) if argv is None else None
+    if shell_wrapper_verb:
+        raw_args = [shell_wrapper_verb, *raw_args]
+    raw_args = _normalize_raw_args(raw_args)
 
     # `--version` / `-v` / `version` report the INSTALLED runtime version — the
     # one `vibecrafted start` / `vc-start` actually runs — read straight from the
@@ -514,8 +532,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     python_commands = {"dispatch", "doctor", "paste", "stop"} | set(LAUNCHERS)
     agent_python_verbs = {"observe", "await", "stop"}
-    is_lifecycle = False
-    if raw_args:
+    is_lifecycle = shell_wrapper_verb is not None
+    if raw_args and shell_wrapper_verb is None:
         first = raw_args[0]
         second = raw_args[1] if len(raw_args) > 1 else ""
         if first in AGENTS and second in agent_python_verbs:
@@ -537,6 +555,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if deck.is_file():
             res = subprocess.run([str(deck), *raw_args])
             return res.returncode
+        if shell_wrapper_verb is not None:
+            print(
+                f"error: {invoked_as} cannot find the runtime deck at {deck}",
+                file=sys.stderr,
+            )
+            return 1
 
     if raw_args and raw_args[0] == "dispatch":
         from .dispatch.cli import main as dispatch_main

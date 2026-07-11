@@ -424,6 +424,8 @@ _vetcoders_spawn_into_operator_session() {
   local layout_file state
   local cmd_script
   local vc_frame_bin=""
+  local run_id="${VIBECRAFTED_RUN_ID:-interactive}"
+  local status=0
 
   _vetcoders_require_vc_frame || return 1
   vc_frame_bin="$(_vetcoders_vc_frame_bin)" || return 1
@@ -444,8 +446,18 @@ _vetcoders_spawn_into_operator_session() {
   # readable trail for debugging.
   cmd_script="$(_vetcoders_tmp_script_path "vc-spawn-cmd" "$root_dir")"
   _vetcoders_write_command_script "$cmd_script" "$command_text" || return 1
-  "$vc_frame_bin" --session "$session_name" action new-tab \
+  if "$vc_frame_bin" --session "$session_name" action new-tab \
     --name "$tab_name" \
     --cwd "$root_dir" \
-    -- "$cmd_script" >/dev/null
+    -- "$cmd_script" >/dev/null; then
+    printf 'launch accepted: run_id=%s target=%s/%s watch=vc-frame attach %s\n' \
+      "$run_id" "$session_name" "$tab_name" "$session_name"
+    return 0
+  else
+    status=$?
+  fi
+
+  printf 'launch failed: run_id=%s target=%s/%s status=%s\n' \
+    "$run_id" "$session_name" "$tab_name" "$status" >&2
+  return "$status"
 }
