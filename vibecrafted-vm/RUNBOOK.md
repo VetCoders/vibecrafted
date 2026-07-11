@@ -192,7 +192,7 @@ Monika nie potrzebuje znać Docker'a żeby z tego korzystać:
    ```
 3. **Standard workflow:**
    - `aicx all -H 8` — pull last 8h conversation history
-   - `aicx search "vista pricing"` — semantic search po wszystkich sessions
+   - `aicx search "example-app pricing"` — semantic search po wszystkich sessions
    - `vibecrafted decorate claude --prompt "review the landing page"` — agent dispatch
    - `loct context --full` — structural map repo
 

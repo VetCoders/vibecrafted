@@ -23,7 +23,7 @@ token = ""
 
 # Default namespace used when search() is called without an explicit
 # `namespace=` argument. Typical pattern: per-project (e.g. "vibecrafted",
-# "vista-portal") or per-machine ("silver", "sztudio").
+# "sample-portal") or per-machine ("host-a", "host-b").
 default_namespace = "local"
 
 # HTTP request timeout. Memex lives on your private network so latency is low;

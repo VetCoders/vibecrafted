@@ -77,7 +77,7 @@ Nie mieszaj fal. Domknij i zatwierdź Falę 1, zanim ruszysz drugą.
 - **DoU / dou** — nigdy nie tłumacz. „Definition of Undone" zawsze po angielsku.
 - **Nazwy bloków Unicode** (Box Drawing, Dingbats, Enclosed Alphanumerics, Braille Patterns…).
 - **Stopka brandingowa** (wordmark `𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍.` + linia `… LibraxisAI`) — verbatim.
-- **Nazwy własne / org**: Vetcoders, LibraxisAI, Loctree, Vista.
+- **Nazwy własne / org**: Vetcoders, LibraxisAI, Loctree.
 
 ---
 

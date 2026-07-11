@@ -71,7 +71,7 @@ Scan per-file patches and `full.patch` for:
 `@ts-ignore`, `@ts-expect-error`, `eslint-disable`,
 `// TODO|FIXME|HACK`, empty `catch {}` without log/rethrow, non-null
 assertion `!` on uncertain values, `console.log|warn|error` (should
-use secureLogger in Vista)
+use secureLogger in example-app)
 
 **Security / PII** — logging tokens / emails / passwords / personal
 IDs, new telemetry without privacy review, new endpoints / command

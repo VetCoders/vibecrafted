@@ -204,8 +204,8 @@ Wynikiem Fali 5 **nie** jest mniejsze repo — to pisemny raport. Zapisz do
 `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_forgotten-gems.md`.
 
 > Zobacz [references/case-studies.md](references/case-studies.md), gdzie znajdziesz pełny szablon Raportu Zapomnianych Perełek, szablon
-> raportu teatru testów oraz konkretne realne/hipotetyczne studia przypadków (Vista 0.67.3 silencer-strip, odpowiednik
-> billing-service w vista-portal, katalog zaskakujących findingów).
+> raportu teatru testów oraz konkretne realne/hipotetyczne studia przypadków (example-app 0.67.3 silencer-strip, odpowiednik
+> billing-service w sample-portal, katalog zaskakujących findingów).
 
 Teatr testów to dług, nie perełka. Zawsze dostaje plan followupu zapisany do `<timestamp>_test-theater.md`. Nigdy przywrócenia
 silencera.
