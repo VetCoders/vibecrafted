@@ -39,7 +39,11 @@ def test_version_reads_installed_package_never_delegates_to_deck(
     # inside a checkout it reports that checkout's version, not the installed one).
     # Make any deck subprocess fail loudly so a regression that re-delegates
     # `--version` cannot pass silently.
-    from vibecrafted_core import __version__
+    expected = (
+        (Path(__file__).resolve().parents[2] / "VERSION")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
 
     def _no_deck(*_args, **_kwargs):
         raise AssertionError("--version must not shell out to the deck")
@@ -48,7 +52,7 @@ def test_version_reads_installed_package_never_delegates_to_deck(
 
     for flag in ("--version", "-v", "version"):
         assert cli.main([flag]) == 0
-        assert capsys.readouterr().out.strip() == f"vibecrafted {__version__}"
+        assert capsys.readouterr().out.strip() == f"vibecrafted {expected}"
 
 
 def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
