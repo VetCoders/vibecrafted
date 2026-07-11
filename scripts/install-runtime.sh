@@ -80,13 +80,22 @@ workspace_root() {
     printf '%s\n' "$parent"
     return
   fi
-  default_root="$HOME/.vibecrafted/vc-runtime"
+  default_root="$(vibecrafted_home)/vc-runtime"
   legacy_root="$HOME/Libraxis/vc-runtime"
   # Migration/fallback: honor a pre-existing legacy checkout so upgrades keep
-  # resolving, but prefer the new default. Idempotent and non-destructive — it
-  # only reads paths, never moves them (the warning goes to stderr so the
-  # captured stdout stays a clean path).
-  if [[ ! -e "$default_root" && -d "$legacy_root" ]]; then
+  # resolving, but prefer the new default once it actually holds runtime
+  # content. The new root counts as "populated" only when it is a directory
+  # with at least one entry — an absent path, a stray file, or an empty
+  # directory (e.g. one pre-created by the VM compose mount) all fall back to
+  # the legacy checkout so the runtime sources stay resolvable. Idempotent and
+  # non-destructive: reads paths only, never moves them (the warning goes to
+  # stderr so the captured stdout stays a clean path).
+  local default_populated=0
+  if [[ -d "$default_root" ]] \
+    && [[ -n "$(find "$default_root" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+    default_populated=1
+  fi
+  if (( ! default_populated )) && [[ -d "$legacy_root" ]]; then
     warn "Using legacy runtime workspace $legacy_root; new default is $default_root."
     printf '%s\n' "$legacy_root"
     return
