@@ -7,7 +7,7 @@ Read alongside [`SKILL.md`](SKILL.md) and [`FINDINGS.md`](FINDINGS.md).
 
 - Binary: `prview` (resolve via `command -v prview`; do not assume cargo path)
 - Source: `https://github.com/vetcoders/prview-rs`
-- Author: Monika (@m-szymanska) — Vetcoders
+- Author: Vetcoders
 
 ---
 

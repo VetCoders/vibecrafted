@@ -35,7 +35,7 @@ audit the requested diff or artifact pack against that current structure.
 
 Binary: `prview` (installed at `~/.cargo/bin/prview`)
 Source: `https://github.com/LibraxisAI/prview-rs`
-Author: Monika (@m-szymanska) — LibraxisAI
+Author: Vetcoders
 
 ---
 
