@@ -106,6 +106,32 @@ def test_bundle_check_uses_portable_mktemp_template() -> None:
     assert 'mktemp "$$tmp_root/vibecrafted-bundle.XXXXXX.plugin"' not in text
 
 
+def test_control_plane_staging_delegates_to_distribution_manifest(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    seen: dict[str, object] = {}
+
+    def fake_stage(src: Path, dst: Path, *, mirror: bool) -> None:
+        seen.update(source=src, destination=dst, mirror=mirror)
+
+    monkeypatch.setattr(installer, "stage_distribution_payload", fake_stage)
+
+    installer.sync_control_plane_tree(source, destination, mirror=True)
+
+    assert seen == {
+        "source": source,
+        "destination": destination,
+        "mirror": True,
+    }
+    source_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_CONTROL_PLANE_EXCLUDES" not in source_text
+
+
 def test_install_manifest_post_install_uses_mirror_sync() -> None:
     text = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
 

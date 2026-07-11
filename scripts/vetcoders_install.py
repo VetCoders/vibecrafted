@@ -33,9 +33,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 try:
+    _distribution_manifest = importlib.import_module("distribution_manifest")
     _installer_brand = importlib.import_module("installer_brand")
     _runtime_paths = importlib.import_module("runtime_paths")
 except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypoint
+    _distribution_manifest = importlib.import_module("scripts.distribution_manifest")
     _installer_brand = importlib.import_module("scripts.installer_brand")
     _runtime_paths = importlib.import_module("scripts.runtime_paths")
 
@@ -53,6 +55,8 @@ vibecrafted_runtime_bin = getattr(_runtime_paths, "vibecrafted_runtime_bin")
 vibecrafted_tools_home = getattr(_runtime_paths, "vibecrafted_tools_home")
 vibecrafted_home = getattr(_runtime_paths, "vibecrafted_home")
 xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
+stage_distribution_payload = getattr(_distribution_manifest, "stage_payload")
+distribution_path_is_included = getattr(_distribution_manifest, "path_is_included")
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -2170,29 +2174,6 @@ def report_helper_conflicts(
 
 
 _RSYNC_EXCLUDES = {".DS_Store", ".backup", ".loctree"}
-_CONTROL_PLANE_EXCLUDES = {
-    ".DS_Store",
-    ".git",
-    ".legacy-state-agency",
-    ".loctree",
-    ".pytest_cache",
-    ".venv",
-    "__pycache__",
-    # Regenerable build artifacts — never belong in the staged control-plane
-    # mirror. Without these the mirror balloons (a Swift-app DerivedData/build
-    # tree took vibecrafted-local to 47G and filled the disk, which surfaced as
-    # rsync "No space left on device" during install).
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    "DerivedData",
-    ".build",
-    ".next",
-    ".air",
-    ".mypy_cache",
-    ".ruff_cache",
-}
 
 
 def _copytree_skill(src: Path, dst: Path, mirror: bool = False) -> None:
@@ -2253,71 +2234,13 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def _clear_dir_contents(path: Path) -> None:
-    if not path.exists():
-        return
-    for child in path.iterdir():
-        _remove_path(child)
-
-
-def _copy_control_plane_contents(src: Path, dst: Path, mirror: bool = False) -> None:
-    """Pure-Python fallback for staged control-plane sync."""
-    if mirror:
-        _clear_dir_contents(dst)
-    dst.mkdir(parents=True, exist_ok=True)
-
-    for item in src.iterdir():
-        if item.name in _CONTROL_PLANE_EXCLUDES:
-            continue
-
-        target = dst / item.name
-        if item.is_symlink():
-            if target.exists() or target.is_symlink():
-                _remove_path(target)
-            target.symlink_to(os.readlink(item))
-        elif item.is_dir():
-            if target.exists() and not target.is_dir():
-                _remove_path(target)
-            _copy_control_plane_contents(item, target, mirror=False)
-        elif item.is_file():
-            if target.exists() and target.is_dir():
-                _remove_path(target)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, target)
-
-
 def sync_control_plane_tree(
     src: Path, dst: Path, dry_run: bool = False, mirror: bool = False
 ) -> None:
     """Sync the staged source tree used by installed launchers and helpers."""
     if dry_run:
         return
-    dst.mkdir(parents=True, exist_ok=True)
-    if shutil.which("rsync"):
-        # --copy-dirlinks: materialise dir-symlinks (the dev compat-shims at
-        # top-level runtime/ and skills/ that point into the packaged tree) as
-        # real directories in the staged mirror. Without it, rsync tries to
-        # replace the destination's existing real dirs with symlinks and fails
-        # with exit 23 ("could not make way for new symlink: runtime/skills").
-        cmd = ["rsync", "-a", "--copy-dirlinks"]
-        for name in sorted(_CONTROL_PLANE_EXCLUDES):
-            cmd += ["--exclude", name]
-        if mirror:
-            cmd.append("--delete")
-        cmd += [str(src) + "/", str(dst) + "/"]
-        # Capture rsync stderr — do NOT discard it. When this sync fails the
-        # operator needs the real reason (exit 23 "could not make way", exit
-        # 11/12 "No space left on device", a dangling symlink, a permission
-        # error), not an opaque "could not refresh staged tools".
-        subprocess.run(
-            cmd,
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    else:
-        _copy_control_plane_contents(src, dst, mirror=mirror)
+    stage_distribution_payload(src, dst, mirror=mirror)
 
 
 def _staged_sync_failure_detail(exc: Exception) -> str:
@@ -2417,9 +2340,7 @@ def _transfer_relative_files(root: Path) -> List[Path]:
         return []
     files: List[Path] = []
     for item in sorted(root.rglob("*")):
-        if any(
-            part in _CONTROL_PLANE_EXCLUDES for part in item.relative_to(root).parts
-        ):
+        if not distribution_path_is_included(item.relative_to(root)):
             continue
         if item.is_file() or item.is_symlink():
             files.append(item.relative_to(root))
