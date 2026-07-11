@@ -164,8 +164,8 @@ def test_ftcs_command_lifecycle() -> None:
 
 def test_remote_host_format() -> None:
     assert (
-        osc.remote_host("polyversai", "dragon")
-        == "\x1b]1337;RemoteHost=polyversai@dragon\x07"
+        osc.remote_host("tester", "host-a")
+        == "\x1b]1337;RemoteHost=tester@host-a\x07"
     )
 
 

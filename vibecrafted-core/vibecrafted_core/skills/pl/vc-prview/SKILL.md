@@ -35,7 +35,7 @@ zaudytowania żądanego diffa lub artifact packa względem tej aktualnej struktu
 
 Binarka: `prview` (zainstalowana w `~/.cargo/bin/prview`)
 Źródło: `https://github.com/LibraxisAI/prview-rs`
-Autorka: Monika (@m-szymanska) — LibraxisAI
+Autor: Vetcoders
 
 ---
 
@@ -281,7 +281,7 @@ W patchach per plik i/lub w `full.patch` przeskanuj te wzorce:
 - `// TODO`, `// FIXME`, `// HACK` — odłożona robota
 - Puste `catch {}` lub `catch (e) {}` bez logu/rethrow
 - Asercja non-null `!` na niepewnych wartościach
-- `console.log`, `console.warn`, `console.error` — powinno używać secureLogger (Vista)
+- `console.log`, `console.warn`, `console.error` — powinno używać secureLogger (example-app)
 
 ### Security / PII
 

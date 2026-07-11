@@ -84,11 +84,11 @@ ssh root@vc-workspace-<hostname>
 ## Mount strategy
 
 The container expects these host paths (mounted automatically by
-`docker-compose.yml`):
+`compose.yaml`):
 
 | Host path                | Container path             | Purpose                                     |
 | ------------------------ | -------------------------- | ------------------------------------------- |
-| `~/Libraxis/vc-runtime/` | `/workspace/`              | Operator repos — the multiroot (read-write) |
+| `~/.vibecrafted/vc-runtime/` | `/workspace/`          | Operator repos — the multiroot (read-write) |
 | `~/.aicx/`               | `/root/.aicx/`             | Canonical corpus (persistent)               |
 | `~/.keys/`               | `/root/.keys/` (ro)        | GPG passphrase, notary creds — read-only    |
 | `~/.claude/`             | `/root/.claude/`           | Claude sessions (persistent)                |

@@ -62,7 +62,7 @@ accessed via SSH or `docker exec`, feels like a local shell.
 
 ```bash
 # 1. Wejdź do folderu kontenera (multiroot/vc-workspace)
-cd ~/Libraxis/vc-runtime/vc-workspace/   # na share: /Volumes/LibraxisShare/vc-runtime/vc-workspace/
+cd ~/.vibecrafted/vc-runtime/vc-workspace/   # na share: /Volumes/shared-vol/vc-runtime/vc-workspace/
 
 # 2. Odpal wizard
 cd wizard
@@ -91,7 +91,7 @@ Po `Welcome` screen, wizard zadaje pytania w wybranym języku. Defaults są bezp
 
 ```bash
 # Start (działa w tle)
-cd ~/Libraxis/vc-runtime/vc-workspace/
+cd ~/.vibecrafted/vc-runtime/vc-workspace/
 docker compose up -d
 
 # Wejdź do containera
@@ -192,7 +192,7 @@ Użytkownik nie potrzebuje znać Docker'a żeby z tego korzystać:
    ```
 3. **Standard workflow:**
    - `aicx all -H 8` — pull last 8h conversation history
-   - `aicx search "vista pricing"` — semantic search po wszystkich sessions
+   - `aicx search "example-app pricing"` — semantic search po wszystkich sessions
    - `vibecrafted decorate claude --prompt "review the landing page"` — agent dispatch
    - `loct context --full` — structural map repo
 
@@ -275,8 +275,8 @@ docker rmi vetcoders/vc-workspace:trixie
 docker compose down -v
 docker rmi vetcoders/vc-workspace:trixie
 docker builder prune -af
-rm ~/Libraxis/vc-runtime/vc-workspace/docker-compose.yml
-rm ~/Libraxis/vc-runtime/vc-workspace/.env
+rm ~/.vibecrafted/vc-runtime/vc-workspace/docker-compose.yml
+rm ~/.vibecrafted/vc-runtime/vc-workspace/.env
 ```
 
 ---
@@ -329,8 +329,7 @@ EN: Your persistent volumes are host-side. If host dies, data lives on host disk
 
 ## Kontakt / Contact
 
-- Operator: Maciej Gad <m.gad@amlt.ai>
-- Co-Founder: Monika Szymańska <hello@vetcoders.io>
+- Team: hello@vetcoders.io
 - Issues / bugs: w `vetcoders/vc-workspace` repo lub Slack
 
 ---

@@ -120,7 +120,7 @@ fi
 
 # ── Final note ────────────────────────────────────────────────────────────
 log ""
-log "Workspace: /workspace (mount the multiroot via -v ~/Libraxis/vc-runtime:/workspace)"
+log "Workspace: /workspace (mount the multiroot via -v ~/.vibecrafted/vc-runtime:/workspace)"
 log "Quick start: cd /workspace && aicx all -H 4   # canonical corpus build"
 log ""
 

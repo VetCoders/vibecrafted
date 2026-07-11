@@ -393,7 +393,7 @@ def render_env_file(state: WizardState, target: Path) -> None:
         f"TAILSCALE_TAGS={state.tailscale_tags}",
         "",
         "# Host path to the multiroot repo tree mounted at /workspace.",
-        "# Leave blank to use the compose default (~/Libraxis/vc-runtime).",
+        "# Leave blank to use the compose default (~/.vibecrafted/vc-runtime).",
         f"VC_RUNTIME_DIR={os.environ.get('VC_RUNTIME_DIR', '')}",
         "",
         "# GPG (operator-supplied via host env)",
@@ -414,8 +414,8 @@ def render_env_file(state: WizardState, target: Path) -> None:
 MOUNT_SPEC: dict[str, tuple[str, str, str]] = {
     # key → (host_path, container_path, mode)
     # vc-runtime = the multiroot repo tree (NOT this container folder).
-    # Override host path with VC_RUNTIME_DIR (e.g. /Volumes/LibraxisShare/vc-runtime).
-    "workspace": ("${VC_RUNTIME_DIR:-${HOME}/Libraxis/vc-runtime}", "/workspace", "rw"),
+    # Override host path with VC_RUNTIME_DIR (e.g. /Volumes/shared-vol/vc-runtime).
+    "workspace": ("${VC_RUNTIME_DIR:-${HOME}/.vibecrafted/vc-runtime}", "/workspace", "rw"),
     "aicx_store": ("${HOME}/.aicx", "/root/.aicx", "rw"),
     "keys": ("${HOME}/.keys", "/root/.keys", "ro"),
     "gnupg": ("${HOME}/.gnupg", "/root/.gnupg", "ro"),

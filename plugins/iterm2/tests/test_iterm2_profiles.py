@@ -48,7 +48,7 @@ def test_stable_guid_is_deterministic() -> None:
 
 def test_stable_guid_distinguishes_inputs() -> None:
     a = profiles.stable_guid("repo", "vibecrafted")
-    b = profiles.stable_guid("repo", "vista")
+    b = profiles.stable_guid("repo", "sample")
     c = profiles.stable_guid("mesh", "vibecrafted")
     assert a != b
     assert a != c

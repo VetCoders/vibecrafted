@@ -2,7 +2,7 @@
 
 Real prune sweeps showing the silencer-strip pattern across languages and toolchains.
 
-## Vista 0.67.3 (Rust + TypeScript), 2026-04-28
+## example-app 0.67.3 (Rust + TypeScript), 2026-04-28
 
 A late-evening sweep stripped:
 
@@ -17,14 +17,14 @@ The bigger lesson: none of those 13 e2e tests had ever actually run without manu
 
 The follow-up — a real `dotenvy::from_path("src-tauri/.env")` loader — was the **prize** of running Wave 5.
 
-## Hypothetical Python equivalent (vista-portal billing service)
+## Hypothetical Python equivalent (sample-portal billing service)
 
 A sweep of `# type: ignore` and `@pytest.mark.skipif(not stripe_keys_present(), reason="...")` reveals:
 
 - 11 `# type: ignore[attr-defined]` on the `stripe.Customer` object — every one was added before the `stripe-python` 11.x upgrade landed proper types in 2025-Q1. None still needed.
 - 3 `@pytest.mark.skipif` decorators on webhook idempotency tests that **always skipped in CI** because nobody had wired Stripe test keys into GitHub Actions secrets.
 
-Same pattern as Vista, different ecosystem: silencers outliving the bug they hid, plus tests that never ran.
+Same pattern as example-app, different ecosystem: silencers outliving the bug they hid, plus tests that never ran.
 
 The forgotten gem in the same sweep: a 380-line `app/billing/archived_invoice_export.py` with `# noqa: F401` on every import — turns out it was a complete invoice CSV exporter someone built for a customer who churned, never wired into a CLI command, and tested coverage was 87%. Reported up to operator: revive as `vc-export-invoices` CLI, or archive in `docs/archive/billing-archive.md` and delete.
 

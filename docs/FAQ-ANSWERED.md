@@ -212,8 +212,8 @@ Answers from the trenches. This is the truth as of April 2026.
   rigorous iterative methodology (marbles). A prompt wrapper doesn't know your dependency graph; 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. does.
 
 - **Can two veterinarians really build enterprise software with AI?**
-  We don't know yet. We're building. What we do know: Vista has 300k LOC, a real licensing system, real patients, real
-  data. Whether that's "enterprise" is for someone else to decide. We just needed it to work.
+  We don't know yet. We're building. What we do know: our production app has 300k LOC, a real licensing system, real
+  users, real data. Whether that's "enterprise" is for someone else to decide. We just needed it to work.
 
 - **Why should I trust a framework built by people who aren't professional programmers?**
   We started the same way everyone starts — playing with AI toys, pasting prompts, hoping. The framework exists because
@@ -229,7 +229,7 @@ Answers from the trenches. This is the truth as of April 2026.
 - **Does 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. actually work on large codebases or only small projects?**
   In a small project, you can fit the whole thing in context and an agent can manage. The challenge starts when you
   approach or go beyond 100k LOC — dead code, circular imports, invisible dependencies. That's where `loctree` and
-  `aicx` provide real leverage. Vista has 300k LOC. That's where we live.
+  `aicx` provide real leverage. Our production app has 300k LOC. That's where we live.
 
 - **Why is the marble metaphor useful and not just marketing?**
   It's about **entropy**. In 2026, we've accepted that AI output is "noisy." The marble metaphor (filling the circle)

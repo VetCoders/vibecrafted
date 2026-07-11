@@ -17,7 +17,7 @@ mission root: /fixture/repo  |  active runs: 0  |  scope: live  |  focus: Missio
 │  root vibecrafted · age 12m ago · 3m since heartbeat ·   ││⏳  intents-zero-W2        2/3  ✓2 ✗1 ⏳ 0                  │
 │wave W3-C                                                 ││⏳  intents-zero-W3        0/2  ✓0 ✗0 ⏳ 2                  │
 │▶ marb-090000-22222 codex / marbles                       ││! legacy-recovery        0/1  ✓0 ✗1 ⏳ 0                   │
-│  root vista · age 2m ago · fresh                         ││· parked-wave            0/1  ✓0 ✗0 ⏳ 0                   │
+│  root example-app · age 2m ago · fresh                   ││· parked-wave            0/1  ✓0 ✗0 ⏳ 0                   │
 └──────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────┘
 ┌ Per-agent stats (30d, 3 agents) ───────────────────────────────┐┌ Per-skill stats (3) ───────────────────────────────┐
 │agent      runs    ✓    ✗   ✓%    ⌀dur model%                   ││skill         inv   ✓    ✗   ⌀dur                   │

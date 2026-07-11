@@ -35,7 +35,7 @@ audit the requested diff or artifact pack against that current structure.
 
 Binary: `prview` (installed at `~/.cargo/bin/prview`)
 Source: `https://github.com/LibraxisAI/prview-rs`
-Author: Monika (@m-szymanska) — LibraxisAI
+Author: Vetcoders
 
 ---
 
@@ -278,7 +278,7 @@ In per-file patches and/or `full.patch`, scan for these patterns:
 - `// TODO`, `// FIXME`, `// HACK` — deferred work
 - Empty `catch {}` or `catch (e) {}` without log/rethrow
 - Non-null assertion `!` on uncertain values
-- `console.log`, `console.warn`, `console.error` — should use secureLogger (Vista)
+- `console.log`, `console.warn`, `console.error` — should use secureLogger (example-app)
 
 ### Security / PII
 
