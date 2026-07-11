@@ -4,7 +4,7 @@
 > across every language — TypeScript, Rust, Python, Shell.
 
 Modular shell hooks unified from the four legacy snowflakes we accumulated
-(`sample-app`, `sample-portal`, `vetcoders-tools`, `unicode-puzzles-portal`).
+(`example-app`, `sample-portal`, `vetcoders-tools`, `unicode-puzzles-portal`).
 Single source of truth for pre-commit / pre-push gates with **pluggable
 activators** so each repo can stay native to its language ecosystem.
 
@@ -20,7 +20,7 @@ activators** so each repo can stay native to its language ecosystem.
 - **Opt-in steps** — each gate (secrets, lint-staged, tsc, semgrep, loctree,
   cargo, vitest, …) is a flag in `.husky/config.env`. Repos turn on what
   they have; the rest are no-ops.
-- **WARN mode** (sample-app pattern) — feature branches default to non-blocking
+- **WARN mode** (example-app pattern) — feature branches default to non-blocking
   with `warns/` retention. Protected branches (main / develop / release/\*)
   stay strict.
 - **Secret-redaction in hook logs** — anything matching the secret regex is
