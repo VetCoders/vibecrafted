@@ -62,7 +62,7 @@ accessed via SSH or `docker exec`, feels like a local shell.
 
 ```bash
 # 1. Wejdź do folderu kontenera (multiroot/vc-workspace)
-cd ~/.vibecrafted/vc-runtime/vc-workspace/   # na share: /Volumes/LibraxisShare/vc-runtime/vc-workspace/
+cd ~/.vibecrafted/vc-runtime/vc-workspace/   # na share: /Volumes/shared-vol/vc-runtime/vc-workspace/
 
 # 2. Odpal wizard
 cd wizard
