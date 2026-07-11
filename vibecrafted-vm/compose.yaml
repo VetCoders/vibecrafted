@@ -40,7 +40,9 @@ services:
       - TERM=${TERM:-xterm-256color}
       - COLORTERM=${COLORTERM:-truecolor}
     volumes:
-      # The multiroot repo tree → /workspace (override path via VC_RUNTIME_DIR)
+      # The multiroot repo tree → /workspace (override path via VC_RUNTIME_DIR).
+      # Upgrading from the older ~/Libraxis/vc-runtime layout? This static mount
+      # cannot auto-detect the legacy path — set VC_RUNTIME_DIR to it in .env.
       - ${VC_RUNTIME_DIR:-${HOME}/.vibecrafted/vc-runtime}:/workspace:rw
       # Persistent Vetcoders state
       - ${HOME}/.aicx:/root/.aicx:rw
