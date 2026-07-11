@@ -458,8 +458,7 @@ class InstallController:
         )
         if root.name == "vibecrafted" or (root / "VERSION").is_file():
             candidates.append(
-                Path.home()
-                / ".vibecrafted"
+                vibecrafted_home()
                 / "vc-runtime"
                 / "vibecrafted-io"
                 / "site"
