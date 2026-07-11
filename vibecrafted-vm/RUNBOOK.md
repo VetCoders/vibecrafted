@@ -329,8 +329,7 @@ EN: Your persistent volumes are host-side. If host dies, data lives on host disk
 
 ## Kontakt / Contact
 
-- Operator: Maciej Gad <m.gad@amlt.ai>
-- Co-Founder: Monika Szymańska <hello@vetcoders.io>
+- Team: hello@vetcoders.io
 - Issues / bugs: w `vetcoders/vc-workspace` repo lub Slack
 
 ---
