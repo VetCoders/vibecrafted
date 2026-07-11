@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -137,3 +138,47 @@ def test_manifest_cli_check_is_loud_and_nonzero_for_junk(tmp_path: Path) -> None
 
     assert result.returncode == 2
     assert "forbidden path: package-lock.json" in result.stderr
+
+
+def test_archive_has_one_safe_root_and_validated_payload(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    archive_path = tmp_path / "vibecrafted-9.8.7.tar.gz"
+    extracted = tmp_path / "extracted"
+    _minimal_payload(source)
+    (source / "scripts" / "keep.py").write_text("keep\n", encoding="utf-8")
+    (source / "scripts" / ".DS_Store").write_text("junk\n", encoding="utf-8")
+
+    manifest.create_archive(
+        source,
+        archive_path,
+        root_name="vibecrafted-9.8.7",
+    )
+
+    with tarfile.open(archive_path, "r:gz") as archive:
+        names = archive.getnames()
+        assert names
+        assert all(
+            name == "vibecrafted-9.8.7" or name.startswith("vibecrafted-9.8.7/")
+            for name in names
+        )
+        assert all(
+            not name.startswith("/") and ".." not in Path(name).parts for name in names
+        )
+        assert not any(name.endswith(".DS_Store") for name in names)
+        archive.extractall(extracted, filter="data")
+
+    payload = extracted / "vibecrafted-9.8.7"
+    manifest.validate_payload(payload)
+    assert (payload / "scripts" / "keep.py").is_file()
+
+
+def test_archive_is_deterministic(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    first = tmp_path / "first.tar.gz"
+    second = tmp_path / "second.tar.gz"
+    _minimal_payload(source)
+
+    manifest.create_archive(source, first, root_name="vibecrafted-test")
+    manifest.create_archive(source, second, root_name="vibecrafted-test")
+
+    assert first.read_bytes() == second.read_bytes()

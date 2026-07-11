@@ -62,6 +62,8 @@ tui-installer: init-hooks
 # control plane matches the branded install surface; otherwise it falls
 # back to the built-in inline HTML.
 BUNDLE_DIR ?=
+BUNDLE_VERSION := $(shell sed -n '1p' "$(VERSION_FILE)" 2>/dev/null | tr -d '[:space:]')
+BUNDLE_ARCHIVE ?= $(SOURCE)/dist/vibecrafted-$(BUNDLE_VERSION).tar.gz
 
 wizard: init-hooks
 	@if [ -n "$(BUNDLE_DIR)" ]; then \
@@ -246,18 +248,27 @@ list:
 
 bundle:
 	@$(PYTHON) scripts/build_marketplace_bundle.py --output "$(SOURCE)/vibecrafted-framework.plugin"
+	@mkdir -p "$(dir $(BUNDLE_ARCHIVE))"
+	@$(PYTHON) scripts/distribution_manifest.py archive --source "$(SOURCE)" --output "$(BUNDLE_ARCHIVE)" --root-name "vibecrafted-$(BUNDLE_VERSION)"
 
 bundle-check:
 	@tmp_root="$${TMPDIR:-/tmp}"; \
 	tmp_bundle="$$(mktemp "$$tmp_root/vibecrafted-bundle.XXXXXX")"; \
-	trap 'rm -f "$$tmp_bundle"' EXIT; \
+	tmp_runtime="$$(mktemp -d "$$tmp_root/vibecrafted-runtime.XXXXXX")"; \
+	tmp_archive="$$tmp_runtime/vibecrafted-$(BUNDLE_VERSION).tar.gz"; \
+	trap 'rm -f "$$tmp_bundle"; rm -rf "$$tmp_runtime"' EXIT; \
 	$(PYTHON) scripts/build_marketplace_bundle.py --output "$$tmp_bundle"; \
 	if cmp -s "$$tmp_bundle" "$(SOURCE)/vibecrafted-framework.plugin"; then \
-		echo "Bundle is current."; \
+		:; \
 	else \
 		echo "Bundle drift detected. Run 'make bundle'."; \
 		exit 1; \
-	fi
+	fi; \
+	$(PYTHON) scripts/distribution_manifest.py archive --source "$(SOURCE)" --output "$$tmp_archive" --root-name "vibecrafted-$(BUNDLE_VERSION)"; \
+	mkdir -p "$$tmp_runtime/extracted"; \
+	tar -xzf "$$tmp_archive" -C "$$tmp_runtime/extracted"; \
+	$(PYTHON) scripts/distribution_manifest.py check --root "$$tmp_runtime/extracted/vibecrafted-$(BUNDLE_VERSION)"; \
+	echo "Bundle is current and runtime payload is valid."
 
 version version-show:
 	@version="$$(sed -n '1p' "$(VERSION_FILE)" 2>/dev/null | tr -d '[:space:]')"; \

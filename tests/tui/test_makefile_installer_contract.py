@@ -106,6 +106,24 @@ def test_bundle_check_uses_portable_mktemp_template() -> None:
     assert 'mktemp "$$tmp_root/vibecrafted-bundle.XXXXXX.plugin"' not in text
 
 
+def test_bundle_targets_use_distribution_manifest_for_runtime_archive() -> None:
+    text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    bundle_block = text.split("\nbundle:\n", 1)[1].split("\nbundle-check:\n", 1)[0]
+    check_block = text.split("\nbundle-check:\n", 1)[1].split(
+        "\nversion version-show:", 1
+    )[0]
+
+    for block in (bundle_block, check_block):
+        assert "scripts/distribution_manifest.py archive" in block
+        assert "scripts/distribution_manifest.py check" in check_block
+    assert (
+        "BUNDLE_ARCHIVE ?= $(SOURCE)/dist/vibecrafted-$(BUNDLE_VERSION).tar.gz" in text
+    )
+    assert '--root-name "vibecrafted-$(BUNDLE_VERSION)"' in bundle_block
+    assert "build_marketplace_bundle.py" in bundle_block
+    assert "build_marketplace_bundle.py" in check_block
+
+
 def test_control_plane_staging_delegates_to_distribution_manifest(
     monkeypatch, tmp_path: Path
 ) -> None:

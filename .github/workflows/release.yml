@@ -46,25 +46,7 @@ jobs:
         run: |
           archive_name="vibecrafted-${{ steps.version.outputs.version }}"
           mkdir -p dist
-          tar -czf "dist/${archive_name}.tar.gz" \
-            --exclude='./dist' \
-            --exclude='./vibecrafted-framework.plugin' \
-            --exclude='./.pytest_cache' \
-            --exclude='./presence' \
-            --exclude='./.github' \
-            --exclude='./.git' \
-            --exclude='./node_modules' \
-            --exclude='./output' \
-            --exclude='./.vibecrafted' \
-            --exclude='./.DS_Store' \
-            --exclude='./docs/index.html' \
-            --exclude='./docs/pl' \
-            --exclude='./docs/presence' \
-            --exclude='./docs/CNAME' \
-            --exclude='./docs/foundation' \
-            --exclude='./docs/playground' \
-            --exclude='./docs/install.sh' \
-            -C . .
+          uv run python3 scripts/distribution_manifest.py archive --source . --output "dist/${archive_name}.tar.gz" --root-name "$archive_name"
           echo "archive=${archive_name}.tar.gz" >> "$GITHUB_OUTPUT"
 
       - name: Sign release artifacts
