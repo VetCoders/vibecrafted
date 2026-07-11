@@ -84,7 +84,7 @@ ssh root@vc-workspace-<hostname>
 ## Mount strategy
 
 The container expects these host paths (mounted automatically by
-`docker-compose.yml`):
+`compose.yaml`):
 
 | Host path                | Container path             | Purpose                                     |
 | ------------------------ | -------------------------- | ------------------------------------------- |
