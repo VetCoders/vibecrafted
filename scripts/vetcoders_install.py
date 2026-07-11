@@ -49,11 +49,13 @@ VAPOR_HEADER = getattr(_installer_brand, "VAPOR_HEADER")
 brand_separator = getattr(_installer_brand, "separator")
 brand_version_line = getattr(_installer_brand, "version_line")
 read_version_file = getattr(_runtime_paths, "read_version_file")
+vibecrafted_backups_home = getattr(_runtime_paths, "vibecrafted_backups_home")
 vibecrafted_launcher_bin = getattr(_runtime_paths, "vibecrafted_launcher_bin")
 vibecrafted_runtime_home = getattr(_runtime_paths, "vibecrafted_runtime_home")
 vibecrafted_runtime_bin = getattr(_runtime_paths, "vibecrafted_runtime_bin")
 vibecrafted_tools_home = getattr(_runtime_paths, "vibecrafted_tools_home")
 vibecrafted_home = getattr(_runtime_paths, "vibecrafted_home")
+xdg_data_home = getattr(_runtime_paths, "xdg_data_home")
 xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
 stage_distribution_payload = getattr(_distribution_manifest, "stage_payload")
 distribution_path_is_included = getattr(_distribution_manifest, "path_is_included")
@@ -1163,11 +1165,12 @@ def ask_multi(prompt: str, options: List[str], defaults: List[bool]) -> List[boo
 # Backup
 # ---------------------------------------------------------------------------
 
-BACKUP_DIR = ".backup"
+BACKUP_DIR = "backups/installer"
 
 
 def _backup_root(store_path: Path) -> Path:
-    return store_path / BACKUP_DIR
+    _ = store_path
+    return vibecrafted_backups_home()
 
 
 def _copy_path_to_backup(src: Path, dst: Path) -> None:
@@ -1194,6 +1197,139 @@ def _restore_path_from_backup(src: Path, dst: Path) -> None:
         shutil.copytree(src, dst, symlinks=True)
     elif src.is_file():
         shutil.copy2(src, dst)
+
+
+@dataclass(frozen=True)
+class ManagedPath:
+    kind: str
+    path: Path
+    action: str = "remove"
+    reason: str = ""
+
+
+RESTORE_MANIFEST_FILE = "restore-manifest.json"
+RESTORE_SCRIPT_FILE = "restore.py"
+
+_SELF_CONTAINED_RESTORE_SCRIPT = """#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import os
+import shutil
+from pathlib import Path
+
+
+def remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+
+
+def restore_path(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists() or destination.is_symlink():
+        remove_path(destination)
+    if source.is_symlink():
+        destination.symlink_to(os.readlink(source))
+    elif source.is_dir():
+        shutil.copytree(source, destination, symlinks=True)
+    elif source.is_file():
+        shutil.copy2(source, destination)
+
+
+backup_dir = Path(__file__).resolve().parent
+manifest = json.loads((backup_dir / "restore-manifest.json").read_text(encoding="utf-8"))
+restored = 0
+for item in manifest["items"]:
+    source = backup_dir / item["backup"]
+    destination = Path(item["path"])
+    if source.exists() or source.is_symlink():
+        restore_path(source, destination)
+        restored += 1
+print(f"Restored {restored} managed paths from {backup_dir}")
+"""
+
+
+def _path_present(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def _teardown_backup_records(inventory: Sequence[ManagedPath]) -> List[ManagedPath]:
+    candidates = [
+        record
+        for record in inventory
+        if record.action in {"remove", "edit"} and _path_present(record.path)
+    ]
+    selected: List[ManagedPath] = []
+    selected_roots: List[Path] = []
+    for record in sorted(candidates, key=lambda item: len(item.path.parts)):
+        if record.path.is_symlink():
+            selected.append(record)
+            continue
+        resolved = record.path.resolve(strict=False)
+        if any(resolved == root or root in resolved.parents for root in selected_roots):
+            continue
+        selected.append(record)
+        selected_roots.append(resolved)
+    return selected
+
+
+def create_teardown_backup(
+    inventory: Sequence[ManagedPath], *, dry_run: bool = False
+) -> Optional[str]:
+    records = _teardown_backup_records(inventory)
+    if not records:
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    if dry_run:
+        return timestamp
+
+    backup_root = vibecrafted_backups_home()
+    backup_dir = backup_root / timestamp
+    items_dir = backup_dir / "items"
+    items_dir.mkdir(parents=True, exist_ok=False)
+    manifest_items: List[Dict[str, str]] = []
+    for index, record in enumerate(records):
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", record.path.name) or "root"
+        relative_backup = Path("items") / f"{index:04d}-{safe_name}"
+        _copy_path_to_backup(record.path, backup_dir / relative_backup)
+        manifest_items.append(
+            {
+                "kind": record.kind,
+                "path": str(record.path),
+                "backup": str(relative_backup),
+            }
+        )
+
+    manifest = {
+        "version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "items": manifest_items,
+    }
+    (backup_dir / RESTORE_MANIFEST_FILE).write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    restore_script = backup_dir / RESTORE_SCRIPT_FILE
+    restore_script.write_text(_SELF_CONTAINED_RESTORE_SCRIPT, encoding="utf-8")
+    restore_script.chmod(0o755)
+    backup_root.mkdir(parents=True, exist_ok=True)
+    (backup_root / "latest").write_text(timestamp + "\n", encoding="utf-8")
+    return timestamp
+
+
+def _restore_command(backup_timestamp: str) -> str:
+    script = vibecrafted_backups_home() / backup_timestamp / RESTORE_SCRIPT_FILE
+    return f"python3 {shlex_quote(str(script))}"
+
+
+def shlex_quote(value: str) -> str:
+    """Shell-quote one path without adding a runtime dependency."""
+    if not value:
+        return "''"
+    if re.fullmatch(r"[A-Za-z0-9_@%+=:,./-]+", value):
+        return value
+    return "'" + value.replace("'", "'\\''") + "'"
 
 
 def collect_orphaned_skills(
@@ -5392,6 +5528,229 @@ def cmd_layout(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _managed_tools_entry(path: Path) -> bool:
+    return (
+        path.name == "vibecrafted-current"
+        or path.name.startswith("vibecrafted-")
+        or path.name.startswith(".incoming-")
+    )
+
+
+def _build_uninstall_inventory(
+    *,
+    shared_home: Path,
+    store_path: Path,
+    state_file: Path,
+    skill_names: Sequence[str],
+    runtimes: Sequence[str],
+    helper_paths: Sequence[Path],
+    launchers: Sequence[Tuple[Path, Path]],
+    rc_cleanup_targets: Sequence[Path],
+) -> List[ManagedPath]:
+    records: List[ManagedPath] = []
+    seen: Dict[str, int] = {}
+
+    def add(kind: str, path: Path, action: str = "remove", reason: str = "") -> None:
+        normalized = path.expanduser()
+        if action != "remove-if-empty" and not _path_present(normalized):
+            return
+        key = str(normalized)
+        existing = seen.get(key)
+        if existing is not None:
+            if records[existing].action == "preserve" and action != "preserve":
+                records[existing] = ManagedPath(kind, normalized, action, reason)
+            return
+        seen[key] = len(records)
+        records.append(ManagedPath(kind, normalized, action, reason))
+
+    resolved_store = store_path.resolve(strict=False)
+    managed_tools_root = vibecrafted_tools_home().resolve(strict=False)
+    legacy_store_root = (shared_home / "skills").resolve(strict=False)
+    store_is_managed = _is_subpath(resolved_store, managed_tools_root) or _is_subpath(
+        resolved_store, legacy_store_root
+    )
+    if store_is_managed:
+        for name in skill_names:
+            add("shared-skill", store_path / name)
+        add("install-state", state_file)
+    elif _path_present(store_path):
+        add(
+            "external-store",
+            resolved_store,
+            "preserve",
+            "current link resolves outside the managed tools root",
+        )
+    for runtime in runtimes:
+        runtime_skills = Path.home() / f".{runtime}" / "skills"
+        for name in skill_names:
+            add("agent-view", runtime_skills / name)
+    for helper in helper_paths:
+        add("shell-helper", helper)
+    for _launcher_dir, launcher in launchers:
+        add("launcher", launcher)
+    for rcfile in rc_cleanup_targets:
+        add("shell-rc", rcfile, "edit", "remove Vibecrafted-managed lines only")
+
+    add("install-log", shared_home / "install.log")
+    add("start-guide", start_here_path())
+
+    tools_roots = [vibecrafted_tools_home(), shared_home / "tools"]
+    unique_tools_roots: List[Path] = []
+    for tools_root in tools_roots:
+        if tools_root in unique_tools_roots:
+            continue
+        unique_tools_roots.append(tools_root)
+        if tools_root.is_dir():
+            for entry in sorted(tools_root.iterdir(), key=lambda item: item.name):
+                if _managed_tools_entry(entry):
+                    add("staged-payload", entry)
+                else:
+                    add(
+                        "tools-sibling",
+                        entry,
+                        "preserve",
+                        "not a Vibecrafted-managed payload name",
+                    )
+            add(
+                "tools-root",
+                tools_root,
+                "remove-if-empty",
+                "shared parent remains when unrelated entries exist",
+            )
+
+    runtime_bin = vibecrafted_runtime_bin()
+    if runtime_bin.is_dir():
+        children = sorted(runtime_bin.iterdir(), key=lambda item: item.name)
+        if children:
+            for child in children:
+                add(
+                    "runtime-bin",
+                    child,
+                    "preserve",
+                    "binary ownership is product-managed outside installer state",
+                )
+        else:
+            add("runtime-bin", runtime_bin, "preserve", "empty runtime binary root")
+
+    runtime_home = vibecrafted_runtime_home()
+    if runtime_home.is_dir():
+        for child in sorted(runtime_home.iterdir(), key=lambda item: item.name):
+            if child in {vibecrafted_tools_home(), runtime_bin}:
+                continue
+            add(
+                "runtime-data",
+                child,
+                "preserve",
+                "runtime data is not proven installer-owned",
+            )
+
+    uv_tools_root = Path(
+        os.environ.get("UV_TOOL_DIR", str(xdg_data_home() / "uv" / "tools"))
+    ).expanduser()
+    for name in ("vibecrafted", "vibecrafted-core", "vibecrafted-mcp"):
+        add(
+            "uv-tool",
+            uv_tools_root / name,
+            "preserve",
+            "uv owns this environment; remove it with `uv tool uninstall`",
+        )
+
+    for name in ("artifacts", "control_plane", "logs"):
+        add(
+            "operator-data",
+            shared_home / name,
+            "preserve",
+            "operator history/data is retained intentionally",
+        )
+    return records
+
+
+def _print_uninstall_inventory(inventory: Sequence[ManagedPath]) -> None:
+    print(bold("Managed teardown inventory:"))
+    for record in inventory:
+        verb = {
+            "remove": "remove",
+            "edit": "edit",
+            "remove-if-empty": "remove if empty",
+            "preserve": "preserve",
+        }[record.action]
+        suffix = f" — {record.reason}" if record.reason else ""
+        print(f"  {verb:15} {record.kind}: {record.path}{suffix}")
+    print()
+
+
+def _edit_rc_file(record: ManagedPath, *, dry_run: bool) -> Tuple[bool, str]:
+    rcfile = record.path
+    if not _is_writable(rcfile):
+        return False, "locked; launcher/source hints remain"
+    content = rcfile.read_text(encoding="utf-8")
+    changed = False
+    for line, comment in _uninstall_rc_entries():
+        content, removed = _strip_rc_entry(content, line, comment)
+        changed = changed or removed > 0
+    if changed and not dry_run:
+        rcfile.write_text(content, encoding="utf-8")
+    return changed, ""
+
+
+def _apply_uninstall_inventory(
+    inventory: Sequence[ManagedPath], *, dry_run: bool
+) -> Tuple[List[ManagedPath], List[ManagedPath], List[str]]:
+    applied: List[ManagedPath] = []
+    preserved = [record for record in inventory if record.action == "preserve"]
+    failures: List[str] = []
+
+    removals = sorted(
+        (record for record in inventory if record.action == "remove"),
+        key=lambda item: (-len(item.path.parts), str(item.path)),
+    )
+    for record in removals:
+        if not _path_present(record.path):
+            continue
+        if dry_run:
+            applied.append(record)
+            continue
+        try:
+            _remove_path(record.path)
+            applied.append(record)
+        except OSError as exc:
+            failures.append(f"{record.path}: {exc}")
+
+    for record in (item for item in inventory if item.action == "edit"):
+        try:
+            changed, reason = _edit_rc_file(record, dry_run=dry_run)
+        except OSError as exc:
+            failures.append(f"{record.path}: {exc}")
+            continue
+        if changed:
+            applied.append(record)
+        elif reason:
+            preserved.append(ManagedPath(record.kind, record.path, "preserve", reason))
+
+    for record in (item for item in inventory if item.action == "remove-if-empty"):
+        if not record.path.is_dir():
+            continue
+        try:
+            is_empty = not any(record.path.iterdir())
+            if not is_empty:
+                preserved.append(
+                    ManagedPath(
+                        record.kind,
+                        record.path,
+                        "preserve",
+                        "contains intentionally preserved or unrelated entries",
+                    )
+                )
+            elif dry_run:
+                applied.append(record)
+            else:
+                record.path.rmdir()
+                applied.append(record)
+        except OSError as exc:
+            failures.append(f"{record.path}: {exc}")
+    return applied, preserved, failures
+
+
 def cmd_uninstall(args: argparse.Namespace) -> int:
     shared_home = vibecrafted_home()
     store_path = _canonical_store_path(shared_home)
@@ -5407,20 +5766,15 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     # fall back to discovery heuristics only when we don't have installer state.
     if state.helper_files:
         helper_paths = [Path(p) for p in state.helper_files if Path(p).exists()]
-        backup_helper_entries = state.helper_files
     elif has_state and not (state.skills or state.runtimes or state.launcher_entries):
         helper_paths = []
-        backup_helper_entries = None
     else:
         helper_paths = [hf for hf in (helper_file, legacy_file) if hf.exists()]
-        backup_helper_entries = None
 
     if state.launcher_entries:
         launchers = _parse_manifest_launchers(state.launcher_entries)
-        backup_launcher_entries = state.launcher_entries
     else:
         launchers = collect_installed_launchers()
-        backup_launcher_entries = None
 
     rc_cleanup_targets = [
         Path.home() / rcname
@@ -5436,34 +5790,43 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         else [rt for rt in SYMLINK_TARGET_CHOICES if runtime_skills_dir(rt).exists()]
     )
 
+    inventory = _build_uninstall_inventory(
+        shared_home=shared_home,
+        store_path=store_path,
+        state_file=state_file,
+        skill_names=skill_names,
+        runtimes=runtimes,
+        helper_paths=helper_paths,
+        launchers=launchers,
+        rc_cleanup_targets=rc_cleanup_targets,
+    )
+    has_work = any(
+        record.action in {"remove", "edit"}
+        or (
+            record.action == "remove-if-empty"
+            and record.path.is_dir()
+            and not any(record.path.iterdir())
+        )
+        for record in inventory
+    )
+
     print(f"\n{bold('𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Uninstall')}\n")
 
-    if not (skill_names or launchers or helper_paths or rc_cleanup_targets):
+    if not has_work:
         print(
             dim(
-                "Nothing to uninstall — no tracked skills, launchers, helpers, or shell hooks found."
+                "Nothing to uninstall — no managed payloads, skills, launchers, helpers, or shell hooks found."
             )
         )
+        preserved = [record for record in inventory if record.action == "preserve"]
+        if preserved:
+            print("  Preserved intentionally:")
+            for record in preserved:
+                print(f"    {record.path} — {record.reason}")
+        print()
         return 0
 
-    if skill_names:
-        print(f"  Will remove {len(skill_names)} skills from:")
-        print(f"    Store: {store_path}")
-        for rt in runtimes:
-            print(f"    Symlinks: $VIBECRAFTED_ROOT/.{rt}/skills/")
-    if launchers:
-        print("  Will remove launcher commands from:")
-        for launcher_bin_dir in _launcher_bin_dirs():
-            print(f"    Launchers: {launcher_bin_dir}")
-    if helper_paths:
-        print("  Will remove helper files:")
-        for hf in helper_paths:
-            print(f"    Helper: {hf}")
-    if rc_cleanup_targets:
-        print("  Will clean shell startup files:")
-        for rcfile in rc_cleanup_targets:
-            print(f"    RC: {rcfile}")
-    print()
+    _print_uninstall_inventory(inventory)
 
     if _IS_TTY and not dry_run:
         if not ask_yn("Remove the installed 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. bundle?", default=False):
@@ -5471,164 +5834,50 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
             return 0
         print()
 
-    # Backup before removing
-    print(bold("Saving current state..."))
-    backup_ts = create_backup(
-        store_path,
-        runtimes,
-        skill_names,
-        launcher_entries=backup_launcher_entries,
-        helper_entries=backup_helper_entries,
-        dry_run=dry_run,
-    )
-    if backup_ts:
-        print(f"  {OK} Backup saved: {_backup_root(store_path) / backup_ts}")
-        print(f"  {dim('Use `make restore` to undo this uninstall.')}")
-    print()
-
-    # Remove symlinks from per-runtime dirs
-    print(bold("Removing agent views..."))
-    for rt in runtimes:
-        rt_skills = Path.home() / f".{rt}" / "skills"
-        if not rt_skills.exists():
-            continue
-        for name in skill_names:
-            link = rt_skills / name
-            if link.exists() or link.is_symlink():
-                if dry_run:
-                    print(f"  {dim('rm')} {link}")
-                else:
-                    if link.is_symlink():
-                        link.unlink()
-                    elif link.is_dir():
-                        shutil.rmtree(link)
-                    print(f"  {dim('-')} {rt}/{name}")
-    print()
-
-    # Remove skills from shared store
-    print(bold("Removing shared skills..."))
-    for name in skill_names:
-        skill_path = store_path / name
-        if skill_path.exists():
-            if dry_run:
-                print(f"  {dim('rm -rf')} {skill_path}")
-            else:
-                shutil.rmtree(skill_path)
-                print(f"  {dim('-')} {name}")
-    print()
-
-    # Remove shell helpers
-    any_helper = bool(helper_paths)
-    if any_helper:
-        print(bold("Removing shell helpers..."))
-        for hf in helper_paths:
-            if dry_run:
-                print(f"  {dim('rm')} {hf}")
-            else:
-                hf.unlink()
-                print(f"  {dim('-')} {hf}")
-        print()
-
-    if launchers:
-        print(bold("Removing launcher commands..."))
-        for _launcher_bin_dir, entry in launchers:
-            if dry_run:
-                print(f"  {dim('rm')} {entry}")
-            else:
-                if entry.is_symlink() or entry.is_file():
-                    entry.unlink(missing_ok=True)
-                elif entry.is_dir():
-                    shutil.rmtree(entry)
-                print(f"  {dim('-')} {entry}")
-
-        if not dry_run:
-            for launcher_bin_dir in _launcher_bin_dirs():
-                if launcher_bin_dir.exists() and not any(launcher_bin_dir.iterdir()):
-                    try:
-                        launcher_bin_dir.rmdir()
-                        print(f"  {dim('-')} {launcher_bin_dir} (empty)")
-                    except OSError:
-                        pass
-        print()
-
-    # Remove framework artifacts
-    artifacts_to_remove = [
-        shared_home / "install.log",
-        start_here_path(),
-        vibecrafted_tools_home() / "vibecrafted-current",
-    ]
-    removed_artifacts = False
-    for art in artifacts_to_remove:
-        if art.exists() or art.is_symlink():
-            if not removed_artifacts:
-                print(bold("Removing framework artifacts..."))
-                removed_artifacts = True
-            if dry_run:
-                print(f"  {dim('rm')} {art}")
-            else:
-                if art.is_symlink() or art.is_file():
-                    art.unlink(missing_ok=True)
-                elif art.is_dir():
-                    shutil.rmtree(art)
-                print(f"  {dim('-')} {art}")
-
+    backup_ts = None
     if not dry_run:
-        tools_dir = shared_home / "tools"
-        if tools_dir.exists() and not any(tools_dir.iterdir()):
-            try:
-                tools_dir.rmdir()
-                if not removed_artifacts:
-                    print(bold("Removing framework artifacts..."))
-                    removed_artifacts = True
-                print(f"  {dim('-')} {tools_dir} (empty)")
-            except OSError:
-                pass
-    if removed_artifacts:
+        print(bold("Saving external restore kit..."))
+        backup_ts = create_teardown_backup(inventory)
+        if backup_ts:
+            print(f"  {OK} {_backup_root(store_path) / backup_ts}")
         print()
 
-    # Always scrub launcher PATH/source hints even if the helper files were already gone.
-    cleaned_rc_files = 0
-    for rcname in (".zshrc", ".bashrc"):
-        rcfile = Path.home() / rcname
-        if not rcfile.exists():
-            continue
-        content = rcfile.read_text()
-        changed = False
-        for line, comment in _uninstall_rc_entries():
-            if line not in content and (not comment or f"# {comment}" not in content):
-                continue
-            if not _is_writable(rcfile):
-                print(
-                    f"  {WARN} {rcfile} is locked — cannot remove launcher/source hints"
-                )
-                break
-            if dry_run:
-                print(f"  {dim('remove source line from')} {rcfile}")
-                changed = True
-                continue
-            content, removed = _strip_rc_entry(content, line, comment)
-            changed = changed or removed > 0
-        if changed and not dry_run:
-            rcfile.write_text(content)
-            print(f"  {dim('-')} source line from {rcfile}")
-            cleaned_rc_files += 1
-        elif changed:
-            cleaned_rc_files += 1
-    if cleaned_rc_files:
+    applied, preserved, failures = _apply_uninstall_inventory(
+        inventory, dry_run=dry_run
+    )
+    if dry_run:
+        print("Would remove or edit:")
+        for record in applied:
+            print(f"  {record.kind}: {record.path}")
+        if preserved:
+            print("Preserved intentionally:")
+            for record in preserved:
+                print(f"  {record.kind}: {record.path} — {record.reason}")
         print()
+        return 0
 
-    # Remove manifest
-    state_file = store_path / STATE_FILE
-    if state_file.exists():
-        if dry_run:
-            print(f"  {dim('rm')} {state_file}")
-        else:
-            state_file.unlink()
+    if failures:
+        print(red(bold("Uninstall incomplete.")))
+        for failure in failures:
+            print(f"  {failure}")
+        if backup_ts:
+            print(f"  Restore with: {_restore_command(backup_ts)}")
+        print()
+        return 1
 
-    print(green(bold("Removed.")))
+    print(green(bold("Removed managed paths:")))
+    for record in applied:
+        print(f"  {record.kind}: {record.path}")
+    if preserved:
+        print("Preserved intentionally:")
+        for record in preserved:
+            print(f"  {record.kind}: {record.path} — {record.reason}")
     if backup_ts:
-        print(dim(f"  Backup at: {_backup_root(store_path) / backup_ts}"))
-        print(dim("  Run 'make restore' to undo."))
+        backup_path = _backup_root(store_path) / backup_ts
+        print(f"Backup preserved: {backup_path}")
+        print("Restore:")
+        print(f"  {_restore_command(backup_ts)}")
+    print(green(bold("Uninstall complete.")))
     print()
     return 0
 
@@ -5660,6 +5909,18 @@ def cmd_restore(args: argparse.Namespace) -> int:
 
     print(f"  Restoring from backup: {bold(ts)}")
     print()
+
+    teardown_manifest = backup_dir / RESTORE_MANIFEST_FILE
+    teardown_restore = backup_dir / RESTORE_SCRIPT_FILE
+    if teardown_manifest.is_file() and teardown_restore.is_file():
+        manifest = json.loads(teardown_manifest.read_text(encoding="utf-8"))
+        if dry_run:
+            for item in manifest.get("items", []):
+                print(f"  {dim('restore')} {item.get('path', '')}")
+            print()
+            return 0
+        result = subprocess.run([sys.executable, str(teardown_restore)], check=False)
+        return result.returncode
 
     restored = 0
 

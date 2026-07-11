@@ -294,12 +294,27 @@ See [`docs/DOCKER.md`](DOCKER.md) for the full container workflow.
 ## Uninstall
 
 ```bash
-make uninstall              # remove skills + shell helpers
-make restore                # undo last install/uninstall step
-rm -rf "$HOME/.vibecrafted" # nuclear option (removes EVERYTHING)
+vibecrafted uninstall
 ```
 
-The installer leaves a transaction log at `~/.vibecrafted/install.log`.
+Before consent, uninstall prints one inventory of every managed path it will
+remove or edit and every path it will intentionally preserve. It removes staged
+`vibecrafted-*` payloads, the `vibecrafted-current` link, launchers, managed
+skills/views, helpers, shell lines, the start guide, and the installer log.
+Unknown siblings in the runtime tools directory are retained.
+
+The restore kit survives teardown under
+`~/.vibecrafted/backups/installer/<timestamp>/`. The final receipt prints its
+exact self-contained command, for example:
+
+```bash
+python3 ~/.vibecrafted/backups/installer/<timestamp>/restore.py
+```
+
+Runtime binaries and uv-owned tool environments are reported as preserved when
+the installer cannot prove ownership; remove those separately with their named
+owner if desired. Operator artifacts, control-plane history, and logs under
+`~/.vibecrafted/` are retained intentionally and listed in the receipt.
 
 ---
 

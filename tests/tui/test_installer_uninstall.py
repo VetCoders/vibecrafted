@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from argparse import Namespace
 from pathlib import Path
 
@@ -91,10 +92,13 @@ def test_cmd_uninstall_removes_launchers_and_compat_pack_wrappers(
     assert not (store_path / "vc-init").exists()
     assert not (home / ".codex" / "skills" / "vc-init").exists()
 
-    backup_root = store_path / installer.BACKUP_DIR
+    backup_root = installer._backup_root(store_path)
     latest = (backup_root / "latest").read_text(encoding="utf-8").strip()
-    assert (backup_root / latest / "launchers" / "local-bin" / "marble-pack").exists()
-    assert (backup_root / latest / "launchers" / "local-bin" / "aicx-pack").exists()
+    manifest = json.loads(
+        (backup_root / latest / "restore-manifest.json").read_text(encoding="utf-8")
+    )
+    backed_paths = {Path(item["path"]).name for item in manifest["items"]}
+    assert {"marble-pack", "aicx-pack"} <= backed_paths
 
     for launcher_bin_dir in installer._launcher_bin_dirs():
         for removed_name in (
@@ -179,10 +183,14 @@ def test_cmd_uninstall_prefers_manifest_tracked_launchers_and_helpers(
     assert not (runtime_skills / "vc-init").exists()
     assert (local_bin / "unrelated-tool").exists()
 
-    backup_root = store_path / installer.BACKUP_DIR
+    backup_root = installer._backup_root(store_path)
     latest = (backup_root / "latest").read_text(encoding="utf-8").strip()
-    assert (backup_root / latest / "helpers" / "vc-skills.sh").exists()
-    assert not (backup_root / latest / "launchers" / "local-bin" / "vc-help").exists()
+    manifest = json.loads(
+        (backup_root / latest / "restore-manifest.json").read_text(encoding="utf-8")
+    )
+    backed_paths = {Path(item["path"]).name for item in manifest["items"]}
+    assert "vc-skills.sh" in backed_paths
+    assert "vc-help" not in backed_paths
 
 
 def test_restore_roundtrip_recovers_launchers_and_runtime_symlinks(
@@ -260,9 +268,12 @@ def test_cmd_uninstall_cleans_launcher_only_surface_without_manifest(
         assert not (launcher_bin_dir / "vc-workflow").exists()
     assert installer._launcher_path_line() not in zshrc.read_text(encoding="utf-8")
 
-    backup_root = store_path / installer.BACKUP_DIR
+    backup_root = installer._backup_root(store_path)
     latest = (backup_root / "latest").read_text(encoding="utf-8").strip()
-    assert (backup_root / latest / "launchers" / "local-bin" / "vibecrafted").exists()
+    manifest = json.loads(
+        (backup_root / latest / "restore-manifest.json").read_text(encoding="utf-8")
+    )
+    assert any(Path(item["path"]).name == "vibecrafted" for item in manifest["items"])
 
 
 def collect_names(entries: list[tuple[Path, Path]]) -> set[str]:
