@@ -41,7 +41,7 @@ services:
       - COLORTERM=${COLORTERM:-truecolor}
     volumes:
       # The multiroot repo tree → /workspace (override path via VC_RUNTIME_DIR)
-      - ${VC_RUNTIME_DIR:-${HOME}/Libraxis/vc-runtime}:/workspace:rw
+      - ${VC_RUNTIME_DIR:-${HOME}/.vibecrafted/vc-runtime}:/workspace:rw
       # Persistent Vetcoders state
       - ${HOME}/.aicx:/root/.aicx:rw
       - ${HOME}/.claude:/root/.claude:rw

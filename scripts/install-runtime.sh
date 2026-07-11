@@ -74,13 +74,24 @@ detect_platform() {
 }
 
 workspace_root() {
-  local parent
+  local parent default_root legacy_root
   parent="$(cd "$SOURCE_DIR/.." && pwd)"
   if [[ -d "$parent/labs" ]]; then
     printf '%s\n' "$parent"
     return
   fi
-  printf '%s\n' "$HOME/Libraxis/vc-runtime"
+  default_root="$HOME/.vibecrafted/vc-runtime"
+  legacy_root="$HOME/Libraxis/vc-runtime"
+  # Migration/fallback: honor a pre-existing legacy checkout so upgrades keep
+  # resolving, but prefer the new default. Idempotent and non-destructive — it
+  # only reads paths, never moves them (the warning goes to stderr so the
+  # captured stdout stays a clean path).
+  if [[ ! -e "$default_root" && -d "$legacy_root" ]]; then
+    warn "Using legacy runtime workspace $legacy_root; new default is $default_root."
+    printf '%s\n' "$legacy_root"
+    return
+  fi
+  printf '%s\n' "$default_root"
 }
 
 runtime_source() {
