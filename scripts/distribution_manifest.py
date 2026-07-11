@@ -152,15 +152,22 @@ def _relative_path(value: str | Path) -> Path:
     return relative
 
 
-def path_is_included(relative: str | Path) -> bool:
+def path_is_forbidden(relative: str | Path) -> bool:
     relative_path = _relative_path(relative)
     if not relative_path.parts:
-        return False
-    if relative_path.parts[0] not in ALLOWED_TOP_LEVEL:
-        return False
-    if any(part in FORBIDDEN_COMPONENTS for part in relative_path.parts):
-        return False
-    return not relative_path.name.endswith(FORBIDDEN_SUFFIXES)
+        return True
+    return any(part in FORBIDDEN_COMPONENTS for part in relative_path.parts) or (
+        relative_path.name.endswith(FORBIDDEN_SUFFIXES)
+    )
+
+
+def path_is_included(relative: str | Path) -> bool:
+    relative_path = _relative_path(relative)
+    return bool(
+        relative_path.parts
+        and relative_path.parts[0] in ALLOWED_TOP_LEVEL
+        and not path_is_forbidden(relative_path)
+    )
 
 
 def _symlink_error(root: Path, path: Path) -> str | None:
@@ -212,9 +219,7 @@ def validate_payload(root: str | Path) -> None:
     errors = _required_errors(payload_root)
     for path in _walk_entries(payload_root):
         relative = path.relative_to(payload_root)
-        if any(part in FORBIDDEN_COMPONENTS for part in relative.parts) or (
-            path.name.endswith(FORBIDDEN_SUFFIXES)
-        ):
+        if path_is_forbidden(relative):
             errors.append(f"forbidden path: {relative}")
             continue
         if relative.parts[0] not in ALLOWED_TOP_LEVEL:

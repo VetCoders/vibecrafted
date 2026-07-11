@@ -58,7 +58,7 @@ vibecrafted_home = getattr(_runtime_paths, "vibecrafted_home")
 xdg_data_home = getattr(_runtime_paths, "xdg_data_home")
 xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
 stage_distribution_payload = getattr(_distribution_manifest, "stage_payload")
-distribution_path_is_included = getattr(_distribution_manifest, "path_is_included")
+distribution_path_is_forbidden = getattr(_distribution_manifest, "path_is_forbidden")
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -2476,7 +2476,7 @@ def _transfer_relative_files(root: Path) -> List[Path]:
         return []
     files: List[Path] = []
     for item in sorted(root.rglob("*")):
-        if not distribution_path_is_included(item.relative_to(root)):
+        if distribution_path_is_forbidden(item.relative_to(root)):
             continue
         if item.is_file() or item.is_symlink():
             files.append(item.relative_to(root))

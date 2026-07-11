@@ -66,6 +66,16 @@ def test_manifest_names_complete_runtime_and_forbidden_junk() -> None:
     } <= manifest.FORBIDDEN_COMPONENTS
 
 
+def test_forbidden_artifact_filter_is_safe_for_runtime_subtrees() -> None:
+    assert not manifest.path_is_forbidden("SKILL.md")
+    assert not manifest.path_is_forbidden("scripts/codex_spawn.sh")
+    assert manifest.path_is_forbidden("tests/test_spawn.py")
+    assert manifest.path_is_forbidden("scripts/__pycache__/helper.pyc")
+
+    assert not manifest.path_is_included("SKILL.md")
+    assert manifest.path_is_included("skills/vc-init/SKILL.md")
+
+
 def test_stage_payload_filters_junk_and_mirrors_destination(tmp_path: Path) -> None:
     source = tmp_path / "source"
     destination = tmp_path / "payload"

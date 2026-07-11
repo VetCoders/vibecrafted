@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from argparse import Namespace
 import io
-import shutil
+from argparse import Namespace
 from pathlib import Path
 
 from scripts import vetcoders_install as installer
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -14,27 +15,10 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
-def _write_minimal_source(root: Path, *, helper: str, launcher: str) -> None:
-    (root / "runtime" / "shell").mkdir(parents=True)
-    (root / "skills" / "vc-agents").mkdir(parents=True)
-    (root / "skills" / "vc-agents" / "SKILL.md").write_text(
-        "# vc-agents\n", encoding="utf-8"
-    )
+def _write_complete_source(root: Path, *, helper: str, launcher: str) -> None:
+    installer.stage_distribution_payload(REPO_ROOT, root, mirror=True)
     (root / "runtime" / "shell" / "vetcoders.sh").write_text(helper, encoding="utf-8")
-    (root / "scripts").mkdir(parents=True)
     _write_executable(root / "scripts" / "vibecrafted", launcher)
-    (root / "VERSION").write_text("1.5.0-test\n", encoding="utf-8")
-
-
-def _hide_rsync(monkeypatch) -> None:
-    real_which = shutil.which
-
-    def fake_which(name: str) -> str | None:
-        if name == "rsync":
-            return None
-        return real_which(name)
-
-    monkeypatch.setattr(installer.shutil, "which", fake_which)
 
 
 class _TtyBuffer:
@@ -112,7 +96,7 @@ def test_refresh_current_tools_mirrors_shadowing_files(
     old_target = runtime_tools / "vibecrafted-main"
     current_link = runtime_tools / "vibecrafted-current"
 
-    _write_minimal_source(
+    _write_complete_source(
         source,
         helper='printf "fresh helper\\n"\n',
         launcher='#!/usr/bin/env bash\nprintf "fresh launcher\\n"\n',
@@ -128,7 +112,6 @@ def test_refresh_current_tools_mirrors_shadowing_files(
     (old_target / "obsolete.txt").write_text("delete me\n", encoding="utf-8")
     current_link.parent.mkdir(parents=True, exist_ok=True)
     current_link.symlink_to(old_target)
-    _hide_rsync(monkeypatch)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
 
@@ -157,7 +140,7 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
     old_target = runtime_tools / "vibecrafted-main"
     current_link = runtime_tools / "vibecrafted-current"
 
-    _write_minimal_source(
+    _write_complete_source(
         source,
         helper='printf "fresh installed helper\\n"\n',
         launcher='#!/usr/bin/env bash\nprintf "fresh installed launcher\\n"\n',
@@ -204,8 +187,6 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
     monkeypatch.setattr(
         installer, "_install_python_entrypoint_launchers", fail_runtime_entrypoints
     )
-    _hide_rsync(monkeypatch)
-
     exit_code = installer._cmd_install_compact(
         Namespace(dry_run=False, mirror=True, with_shell=False),
         source,
