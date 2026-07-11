@@ -84,15 +84,18 @@ workspace_root() {
   legacy_root="$HOME/Libraxis/vc-runtime"
   # Migration/fallback: honor a pre-existing legacy checkout so upgrades keep
   # resolving, but prefer the new default once it actually holds runtime
-  # content. The new root counts as "populated" only when it is a directory
-  # with at least one entry — an absent path, a stray file, or an empty
-  # directory (e.g. one pre-created by the VM compose mount) all fall back to
-  # the legacy checkout so the runtime sources stay resolvable. Idempotent and
+  # content. "Populated" means the root carries a real runtime workspace — the
+  # labs/ tree or one of the known runtime source checkouts (wezterm, vc_,
+  # locterm, experimental). An absent path, a stray file, an empty directory
+  # (e.g. one pre-created by the VM compose mount), or a root with only
+  # unrelated content (.DS_Store, a README, a helper dir) all fall back to the
+  # legacy checkout so the runtime sources stay resolvable. Idempotent and
   # non-destructive: reads paths only, never moves them (the warning goes to
   # stderr so the captured stdout stays a clean path).
   local default_populated=0
-  if [[ -d "$default_root" ]] \
-    && [[ -n "$(find "$default_root" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
+  if [[ -d "$default_root/labs" || -d "$default_root/wezterm" \
+    || -d "$default_root/vc_" || -d "$default_root/locterm" \
+    || -d "$default_root/experimental" ]]; then
     default_populated=1
   fi
   if (( ! default_populated )) && [[ -d "$legacy_root" ]]; then
