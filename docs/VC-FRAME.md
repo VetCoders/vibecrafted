@@ -39,10 +39,10 @@ machine they are looking at through screen-share or browser-mirrored vc-frame:
 | host    | theme               | accent | role                             |
 | ------- | ------------------- | ------ | -------------------------------- |
 | dragon  | `vetcoders-dragon`  | red    | LibraxisAI server, central hub   |
-| sztudio | `vetcoders-sztudio` | purple | Monika's desktop                 |
-| silver  | `vetcoders-silver`  | cyan   | Monika's laptop                  |
-| div0    | `vetcoders-div0`    | green  | Maciej's laptop, primary dev     |
-| \*      | `vibecrafted`       | amber  | neutral default (fleet baseline) |
+| sztudio | `vetcoders-sztudio` | purple | Operator desktop                 |
+| silver  | `vetcoders-silver`  | cyan   | Operator laptop                  |
+| div0    | `vetcoders-div0`    | green  | Primary dev laptop               |
+| \*      | `vibecrafted`       | amber  | Neutral default (fleet baseline) |
 
 The themes live in `config/vc-frame/themes/vetcoders-mesh.kdl`. vc-frame auto-loads
 nested theme blocks from the same config dir, so no extra wiring is needed at
@@ -59,8 +59,8 @@ Detection order:
 4. `hostname -s` / `hostname` (Linux fallback)
 
 The result is normalized (lowercase + strip `.local`/`.lan`) before matching,
-and `mgbook16` is wired as an alias for `div0` because that is what the
-LocalHostName actually returns on Maciej's laptop.
+and `mgbook16` is wired as an alias for `div0` because that is the value
+`scutil --get LocalHostName` actually returns on that laptop.
 
 The `VIBECRAFTED_THEME` env var bypasses host detection outright, so an
 operator can pin a fleet baseline theme even when running on a mesh host.

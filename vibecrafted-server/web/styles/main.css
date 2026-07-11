@@ -378,7 +378,7 @@ button:hover > .icon-box {
     border: none;
 }
 
-/* Buttons — migrated to new Vibecrafted tokens (per Monika feedback). */
+/* Buttons — migrated to new Vibecrafted tokens (per operator feedback). */
 .btn-primary {
     background: transparent;
     color: var(--bone);
@@ -1163,7 +1163,7 @@ button:hover > .icon-box {
 /* ============================================
    Pricing Section (buyer layer above License)
    ============================================ */
-/* Pricing — migrated to new Vibecrafted tokens (per Monika feedback:
+/* Pricing — migrated to new Vibecrafted tokens (per operator feedback:
  * solid black tła, kontrast tylko border, brak gray fallbacks). */
 .pricing-section {
     padding: var(--section-padding) 0;
