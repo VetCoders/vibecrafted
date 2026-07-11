@@ -59,8 +59,8 @@ Detection order:
 4. `hostname -s` / `hostname` (Linux fallback)
 
 The result is normalized (lowercase + strip `.local`/`.lan`) before matching,
-and `mgbook16` is wired as an alias for `div0` because that is what the
-LocalHostName actually returns on the div0 laptop.
+and `mgbook16` is wired as an alias for `div0` because that is the value
+`scutil --get LocalHostName` actually returns on that laptop.
 
 The `VIBECRAFTED_THEME` env var bypasses host detection outright, so an
 operator can pin a fleet baseline theme even when running on a mesh host.
