@@ -913,14 +913,17 @@ prompt = "fails normally"
         policy="repair_rounds = 0\nrequire_commit = true",
     )
 
-    result = run_dispatch(
-        dispatch,
-        launcher=FakeCells(reports_dir=reports_dir),
-        artifacts_dir=artifacts_dir,
+    marker = repo_dir / "uncommitted.txt"
+    launcher = FakeCells(reports_dir=reports_dir)
+    launcher.cells[("ordinary-failure", "initial")] = FakeCell(
+        bash=f"printf dirty > {shlex.quote(str(marker))}"
     )
+
+    result = run_dispatch(dispatch, launcher=launcher, artifacts_dir=artifacts_dir)
 
     assert result.line_broken is False
     assert result.states == {"ordinary-failure": STATE_FAILED}
+    assert marker.read_text(encoding="utf-8") == "dirty"
 
 
 def test_empty_report_cannot_false_green(tmp_path: Path) -> None:

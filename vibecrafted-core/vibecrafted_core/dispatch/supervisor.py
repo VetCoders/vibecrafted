@@ -384,7 +384,7 @@ class DispatchSupervisor:
         if cut.mode != "read" and self.policy.require_commit:
             head_before = git_before[0]
             head_after, status_after = self._git_state()
-            if status_after:
+            if verdict.ok and status_after:
                 raise CellContractError(
                     f"[{cut.id}] WRITE cut left uncommitted changes after verification:"
                     f" {status_after}"
