@@ -425,7 +425,8 @@ chmod +x "$fake_bin/rsync"
 
 sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/runtime/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
 grep -q "Syncing skills from" <<<"$sync_output" || die "Sync dry-run failed to start"
-grep -q "rsync .* --dry-run" <<<"$sync_output" || die "Sync dry-run didn't pass dry-run to rsync"
+grep -q '^  rsync ' <<<"$sync_output" || die "Sync dry-run didn't print planned rsync commands"
+! grep -q '^rsync ' <<<"$sync_output" || die "Sync dry-run executed rsync instead of printing it"
 # shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
 grep -q '\$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills' <<<"$sync_output" || die "Sync dry-run didn't target the staged canonical skill store"
 # shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
