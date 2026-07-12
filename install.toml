@@ -151,7 +151,7 @@ available = ["wezterm", "vc-apprt", "locterm", "microsandbox"]
 [runtime.picking.research]
 default_agents = ["claude", "codex", "agy"]
 fallback_agents = ["grok", "junie", "agy"]
-reason = "Research needs three reliable independent workers. Claude, Codex, and Gemini are the mainstream packaged defaults; per-user runtime picks can override this in ~/.config/vibecrafted/config.toml without reinstalling."
+reason = "Research needs three reliable independent workers. Claude, Codex, and Agy are the packaged defaults; per-user runtime picks can override this in ~/.config/vibecrafted/config.toml without reinstalling."
 
 [runtime.horses.wezterm]
 label = "WezTerm"
