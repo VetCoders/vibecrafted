@@ -10,9 +10,9 @@ lanes:
     # model: gpt-5.5
     enabled: true
   - agent: agy
-    # Gemini currently has no supported model flag in Vibecrafted.
+    # Agy currently has no supported model flag in Vibecrafted.
     # A configured model is reported as unsupported, not silently applied.
-    # model: gemini-pro
+    # model: unsupported-example
     enabled: true
 
 # Optional cap after disabled lanes are removed.

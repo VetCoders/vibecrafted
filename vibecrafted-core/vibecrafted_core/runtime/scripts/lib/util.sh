@@ -176,7 +176,7 @@ spawn_validate_runtime() {
 # Normalize a model frontmatter value: empty string for placeholders
 # (`pending`, `unknown`, `null`), pass-through otherwise. Used by every
 # marbles dispatch site so a single point of truth gates which model values
-# reach `claude_spawn.sh --model` / `agy_spawn.sh --model` (gemini deprecated). Adding a new
+# reach `claude_spawn.sh --model` / `codex_spawn.sh --model`. Adding a new
 # placeholder token here propagates to every consumer automatically.
 spawn_clean_model() {
   local raw="${1:-}"
