@@ -815,7 +815,7 @@ cmd_init_help() {
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted init [claude|codex|agy|junie|grok]\n'
-  printf '  vc-init [claude|codex|gemini|agy|junie|grok]\n'
+  printf '  vc-init [claude|codex|agy|junie|grok]\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted init claude\n'
@@ -1961,11 +1961,6 @@ cmd_init() {
   case "$agent" in
     claude) command -v claude >/dev/null 2>&1 || return 1 ;;
     codex) command -v codex >/dev/null 2>&1 || return 1 ;;
-    gemini)
-      printf '%b✗ gemini CLI is deprecated.%b Use agy (Google Antigravity CLI) instead.\n' "$_red" "$_reset" >&2
-      printf '  Example: vibecrafted workflow agy --prompt "..." \n' >&2
-      return 1
-      ;;
     agy) command -v agy >/dev/null 2>&1 || return 1 ;;
     junie) command -v junie >/dev/null 2>&1 || return 1 ;;
     grok) command -v grok >/dev/null 2>&1 || return 1 ;;

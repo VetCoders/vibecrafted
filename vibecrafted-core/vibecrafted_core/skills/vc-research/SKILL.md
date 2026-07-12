@@ -57,7 +57,7 @@ If invoked outside vc-frame, the framework attaches/creates the operator session
 
 **Critical swarm semantics:** one invocation launches the research swarm. Do not call the command once per agent. `vibecrafted research <agent>` is the backward-compatible synthesizer-pick form; it does not mean "research only with this agent." `vc-research <agent1> [agent2 agent3] --prompt/--file ...` is the explicit lane override form for one to three lanes; the first listed agent synthesizes unless `--synthesizer <agent>` is provided.
 
-Runtime lane defaults are read at launch time from `${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/config/research.yaml`. Missing file means built-in defaults: `claude`, `codex`, `gemini`, with no model pins and last-survivor synthesis. The packaged commented example lives at `runtime/vc-research/research.yaml.example`; copy it into the runtime config dir to edit operator policy without touching the repo or reinstalling.
+Runtime lane defaults are read at launch time from `${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/config/research.yaml`. Missing file means built-in defaults: `claude`, `codex`, `agy`, with no model pins and last-survivor synthesis. The packaged commented example lives at `runtime/vc-research/research.yaml.example`; copy it into the runtime config dir to edit operator policy without touching the repo or reinstalling.
 
 <details>
 <summary>Foundation Dependencies</summary>
