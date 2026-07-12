@@ -341,6 +341,16 @@ def _runtime_script_exports(
     artifact_ts: str = "",
     artifact_suffix: str = "",
 ) -> dict[str, str]:
+    pythonpath = os.pathsep.join(
+        dict.fromkeys(
+            [str(_core_package_root())]
+            + [
+                item
+                for item in os.environ.get("PYTHONPATH", "").split(os.pathsep)
+                if item
+            ]
+        )
+    )
     exports = {
         "VIBECRAFTED_RUN_ID": run_id,
         "VIBECRAFTED_REPORT_PATH": str(report_path),
@@ -350,6 +360,11 @@ def _runtime_script_exports(
         "VIBECRAFTED_AGENT": agent,
         "VIBECRAFTED_SKILL": skill,
         "VIBECRAFTED_RUNTIME": runtime,
+        # vc-frame starts this script from its long-lived server environment,
+        # not from launch_workflow's Popen(env=...). Keep the generated
+        # dispatcher self-contained and keep installed payloads bytecode-clean.
+        "PYTHONPATH": pythonpath,
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
     if canonical_report_dir is not None:
         exports["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)

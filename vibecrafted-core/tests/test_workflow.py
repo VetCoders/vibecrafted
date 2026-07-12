@@ -453,6 +453,8 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert script.is_file()
     script_body = script.read_text(encoding="utf-8")
     assert "vibecrafted_core.dispatcher" in script_body
+    assert f"export PYTHONPATH={workflow._core_package_root()}" in script_body
+    assert "export PYTHONDONTWRITEBYTECODE=1" in script_body
     assert "--tee-output" in script_body
     assert "--quiet" in script_body
     assert "--json" not in script_body

@@ -110,6 +110,9 @@ def test_refresh_current_tools_mirrors_shadowing_files(
         'printf "stale launcher\\n"\n', encoding="utf-8"
     )
     (old_target / "obsolete.txt").write_text("delete me\n", encoding="utf-8")
+    stale_cache = old_target / "vibecrafted-core" / "vibecrafted_core" / "__pycache__"
+    stale_cache.mkdir(parents=True)
+    (stale_cache / "dispatcher.cpython-314.pyc").write_bytes(b"stale")
     current_link.parent.mkdir(parents=True, exist_ok=True)
     current_link.symlink_to(old_target)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
@@ -128,6 +131,9 @@ def test_refresh_current_tools_mirrors_shadowing_files(
         encoding="utf-8"
     ) == '#!/usr/bin/env bash\nprintf "fresh launcher\\n"\n'
     assert not (old_target / "obsolete.txt").exists()
+    assert not (
+        old_target / "vibecrafted-core" / "vibecrafted_core" / "__pycache__"
+    ).exists()
 
 
 def test_compact_install_refreshes_current_tools_from_local_checkout(

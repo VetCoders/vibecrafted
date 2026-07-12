@@ -137,16 +137,18 @@ def test_control_plane_staging_delegates_to_distribution_manifest(
 
     def fake_stage(src: Path, dst: Path, *, mirror: bool) -> None:
         seen.update(source=src, destination=dst, mirror=mirror)
+        dst.mkdir(parents=True)
+        (dst / "payload.txt").write_text("validated\n", encoding="utf-8")
 
     monkeypatch.setattr(installer, "stage_distribution_payload", fake_stage)
 
     installer.sync_control_plane_tree(source, destination, mirror=True)
 
-    assert seen == {
-        "source": source,
-        "destination": destination,
-        "mirror": True,
-    }
+    assert seen["source"] == source
+    assert seen["destination"] != destination
+    assert Path(seen["destination"]).parent == destination.parent
+    assert seen["mirror"] is True
+    assert (destination / "payload.txt").read_text(encoding="utf-8") == "validated\n"
     source_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
         encoding="utf-8"
     )

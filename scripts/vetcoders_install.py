@@ -59,6 +59,7 @@ xdg_data_home = getattr(_runtime_paths, "xdg_data_home")
 xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
 stage_distribution_payload = getattr(_distribution_manifest, "stage_payload")
 distribution_path_is_forbidden = getattr(_distribution_manifest, "path_is_forbidden")
+DistributionManifestError = getattr(_distribution_manifest, "ManifestError")
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -2385,10 +2386,29 @@ def _remove_path(path: Path) -> None:
 def sync_control_plane_tree(
     src: Path, dst: Path, dry_run: bool = False, mirror: bool = False
 ) -> None:
-    """Sync the staged source tree used by installed launchers and helpers."""
+    """Atomically replace the staged source tree used by installed launchers."""
     if dry_run:
         return
-    stage_distribution_payload(src, dst, mirror=mirror)
+    _ = mirror  # staged runtime is always an exact distribution payload
+    staging = dst.parent / f".{dst.name}.staging-{os.getpid()}"
+    previous = dst.parent / f".{dst.name}.previous-{os.getpid()}"
+    if staging.exists() or staging.is_symlink():
+        _remove_path(staging)
+    if previous.exists() or previous.is_symlink():
+        _remove_path(previous)
+    try:
+        stage_distribution_payload(src, staging, mirror=True)
+        if dst.exists() or dst.is_symlink():
+            dst.rename(previous)
+        staging.rename(dst)
+        if previous.exists() or previous.is_symlink():
+            _remove_path(previous)
+    except Exception:
+        if staging.exists() or staging.is_symlink():
+            _remove_path(staging)
+        if not dst.exists() and previous.exists():
+            previous.rename(dst)
+        raise
 
 
 def _staged_sync_failure_detail(exc: Exception) -> str:
@@ -5062,7 +5082,11 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
             current_tools = refresh_current_tools(
                 repo_root, shared_home, dry_run=dry_run, mirror=mirror
             )
-        except (OSError, subprocess.CalledProcessError) as exc:
+        except (
+            OSError,
+            subprocess.CalledProcessError,
+            DistributionManifestError,
+        ) as exc:
             print(f"  FAILED: {_staged_sync_failure_detail(exc)}")
             _clear_compact_status(out)
             err_line(
