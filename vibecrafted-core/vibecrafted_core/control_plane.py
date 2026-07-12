@@ -175,11 +175,17 @@ def _sync_lock(
     """Bounded, non-blocking exclusive lock over the shared control-plane files.
 
     Never blocks indefinitely: acquires with ``LOCK_NB`` in a short poll loop up
-    to ``timeout`` seconds, then raises :class:`ControlPlaneLockBusy`. This lock
-    only guards genuinely shared writes (the board rebuild in ``sync_state`` and
-    the ``events.jsonl`` append). Per-run reads/writes are lockless and atomic
-    (``_write_json`` uses tmp + ``os.replace``), so a live run records its own
-    state without waiting on any other run.
+    to ``timeout`` seconds, then raises :class:`ControlPlaneLockBusy`.
+
+    DOCTRINE (enforced by ``tests/test_control_plane_lock_doctrine.py`` — do not
+    weaken): this lock guards ONLY the full (unscoped) board rebuild in
+    ``sync_state``. It must NEVER wrap a per-run path or the append/emit path.
+    Per-run snapshots are single-writer atomic (``_write_json`` = tmp +
+    ``os.replace``) and event appends are atomic ``O_APPEND`` writes; neither
+    needs this mutex. Re-serializing them "for safety" is the exact regression
+    that caused the 2026-07-12 flock migraine (empty dispatchers, false
+    stalled/pid_gone). If a change wants the lock on a hot path, the change is
+    wrong.
     """
     control_plane_home().mkdir(parents=True, exist_ok=True)
     lock_path = _sync_lock_path()
