@@ -142,12 +142,64 @@ def _sync_lock_path() -> Path:
     return control_plane_home() / ".sync.lock"
 
 
+class ControlPlaneLockBusy(RuntimeError):
+    """The shared control-plane lock could not be acquired inside the budget.
+
+    Raised instead of blocking forever. A single global ``flock(LOCK_EX)`` with
+    no timeout was the root cause of the "empty dispatcher, 2-minute wait, false
+    stalled/pid_gone" migraine: under many concurrent runs every mutation queued
+    on one mutex and a lock-starved-but-live worker could not even record that it
+    was alive. Failing loud here turns an invisible infinite hang into a
+    diagnosable error the operator can act on.
+    """
+
+
+_SYNC_LOCK_POLL_SECONDS = 0.05
+_DEFAULT_SYNC_LOCK_TIMEOUT_SECONDS = 15.0
+
+
+def _sync_lock_timeout_seconds() -> float:
+    raw = os.environ.get("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S")
+    if raw:
+        try:
+            return max(float(raw), 0.0)
+        except ValueError:
+            pass
+    return _DEFAULT_SYNC_LOCK_TIMEOUT_SECONDS
+
+
 @contextlib.contextmanager
-def _sync_lock() -> Iterator[None]:
+def _sync_lock(
+    *, timeout: float | None = None, purpose: str = "sync"
+) -> Iterator[None]:
+    """Bounded, non-blocking exclusive lock over the shared control-plane files.
+
+    Never blocks indefinitely: acquires with ``LOCK_NB`` in a short poll loop up
+    to ``timeout`` seconds, then raises :class:`ControlPlaneLockBusy`. This lock
+    only guards genuinely shared writes (the board rebuild in ``sync_state`` and
+    the ``events.jsonl`` append). Per-run reads/writes are lockless and atomic
+    (``_write_json`` uses tmp + ``os.replace``), so a live run records its own
+    state without waiting on any other run.
+    """
     control_plane_home().mkdir(parents=True, exist_ok=True)
     lock_path = _sync_lock_path()
+    budget = _sync_lock_timeout_seconds() if timeout is None else max(timeout, 0.0)
+    deadline = time.monotonic() + budget
     with lock_path.open("a+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EAGAIN, errno.EACCES, errno.EWOULDBLOCK):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise ControlPlaneLockBusy(
+                        f"control-plane {purpose} lock busy for > {budget:.0f}s "
+                        f"({lock_path}). Another process is holding it — look for "
+                        f"a stuck run instead of waiting on a silent hang."
+                    ) from exc
+                time.sleep(_SYNC_LOCK_POLL_SECONDS)
         try:
             yield
         finally:
@@ -779,10 +831,15 @@ def _normalize_marbles_state(path: Path) -> RunStatus | None:
     )
 
 
-def _merge_event_stream(merged: dict[str, RunStatus]) -> dict[str, RunStatus]:
+def _merge_event_stream(
+    merged: dict[str, RunStatus], *, only_run_id: str | None = None
+) -> dict[str, RunStatus]:
     stream = event_stream_path()
     if not stream.exists():
         return merged
+
+    scope = str(only_run_id or "").strip()
+    child_prefix = f"{scope}-" if scope else ""
 
     for line in _read_lines(stream):
         try:
@@ -791,6 +848,12 @@ def _merge_event_stream(merged: dict[str, RunStatus]) -> dict[str, RunStatus]:
             continue
         run_id = str(event.get("run_id") or "").strip()
         if not run_id:
+            continue
+        # Scoped projection: process only the target run and its child rounds
+        # (marbles/polarize L2/L3 live in "<parent>-…-L<n>" records). Skipping
+        # every other run's events is what keeps a per-run await/lookup off the
+        # O(all-runs) board rebuild that caused the lock herd.
+        if scope and run_id != scope and not run_id.startswith(child_prefix):
             continue
 
         payload = dict(event.get("payload") or {})
@@ -1301,50 +1364,91 @@ def subscribe_events(
         time.sleep(1.0)
 
 
-def sync_state() -> dict[str, Any]:
-    with _sync_lock():
+def _project_run_payload(
+    run_id: str, status: RunStatus, previous: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Project one run's status to its snapshot payload (single-run, lockless)."""
+    payload = _artifact_projection(_status_to_payload(status), previous)
+    payload = _reconcile_dead_launcher(payload)
+    payload["failure_card"] = _failure_card(payload)
+    payload["health"] = _state_health(
+        str(payload.get("state") or ""), str(payload.get("updated_at") or "")
+    )
+    if not payload.get("liveness"):
+        payload["liveness"] = "terminal" if _run_is_terminal(payload) else "heartbeat"
+    payload["lifecycle"] = _lifecycle_controls(payload)
+    return payload
+
+
+def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
+    """Project on-disk run artifacts into control-plane snapshots.
+
+    ``only_run_id`` scopes the whole pass to one run and its child rounds. The
+    scoped path is the hot path (``lookup_run`` / ``await_run`` poll it every few
+    seconds): it takes NO global lock, skips the ``artifacts/`` meta rglob, and
+    writes only the target run's snapshot atomically. That removes the O(runs²)
+    lock herd where every per-run poll used to rebuild the whole board under one
+    exclusive ``flock``. The full board rebuild (``only_run_id is None``) stays
+    behind the bounded ``_sync_lock`` and is used by dashboards/status-all.
+    """
+    scope = str(only_run_id or "").strip()
+    scoped = bool(scope)
+    child_prefix = f"{scope}-" if scope else ""
+
+    def _in_scope(run_id: str) -> bool:
+        return not scoped or run_id == scope or run_id.startswith(child_prefix)
+
+    lock_ctx = contextlib.nullcontext() if scoped else _sync_lock(purpose="board-sync")
+    with lock_ctx:
         previous_snapshots = _load_existing_snapshots()
         merged: dict[str, RunStatus] = {}
 
+        # The migraine was the exclusive GLOBAL LOCK, not the file walk: every
+        # per-run poll serialised on one flock while rebuilding the whole board.
+        # Scoped mode keeps the same on-disk reads (so a run seeded only via its
+        # meta/lock is still resolved) but folds ONLY the target + child rounds,
+        # holds no lock, and writes only their snapshots — so concurrent per-run
+        # polls run in parallel instead of queueing.
         for path in _iter_meta_files():
             status = _normalize_agent_meta(path)
-            if status is None:
+            if status is None or not _in_scope(status.run_id):
                 continue
             merged[status.run_id] = _merge_status(merged.get(status.run_id), status)
 
         for path in _iter_lock_files():
             status = _normalize_lock(path)
-            if status is None:
+            if status is None or not _in_scope(status.run_id):
                 continue
             merged[status.run_id] = _merge_status(merged.get(status.run_id), status)
 
         for path in _iter_marbles_state_files():
             status = _normalize_marbles_state(path)
-            if status is None:
+            if status is None or not _in_scope(status.run_id):
                 continue
             merged[status.run_id] = _merge_status(merged.get(status.run_id), status)
 
-        merged = _merge_event_stream(merged)
+        merged = _merge_event_stream(merged, only_run_id=scope if scoped else None)
 
         payload_runs = []
         run_snapshot_dir().mkdir(parents=True, exist_ok=True)
         for run_id, status in merged.items():
+            if not _in_scope(run_id):
+                continue
             previous = previous_snapshots.get(run_id)
-            payload = _artifact_projection(_status_to_payload(status), previous)
-            payload = _reconcile_dead_launcher(payload)
-            payload["failure_card"] = _failure_card(payload)
-            payload["health"] = _state_health(
-                str(payload.get("state") or ""), str(payload.get("updated_at") or "")
-            )
-            if not payload.get("liveness"):
-                payload["liveness"] = (
-                    "terminal" if _run_is_terminal(payload) else "heartbeat"
-                )
-            payload["lifecycle"] = _lifecycle_controls(payload)
+            payload = _project_run_payload(run_id, status, previous)
             _record_transition(previous, payload)
             _write_json(_snapshot_path(run_id), payload)
             payload_runs.append(payload)
-        _archive_expired_snapshots()
+        if not scoped:
+            _archive_expired_snapshots()
+
+    # A scoped pass only re-projects runs that had fresh events; quiet target/
+    # child runs keep their last snapshot, which _select_run reads directly.
+    if scoped:
+        seen = {str(run.get("run_id") or "") for run in payload_runs}
+        for run_id, prev in previous_snapshots.items():
+            if _in_scope(run_id) and run_id not in seen:
+                payload_runs.append(prev)
 
     payload_runs.sort(
         key=lambda item: (
@@ -1370,8 +1474,14 @@ def sync_state() -> dict[str, Any]:
 
 
 def lookup_run(run_id: str) -> dict[str, Any] | None:
-    """Return the current control-plane projection for one run id."""
-    snapshot = sync_state()
+    """Return the current control-plane projection for one run id.
+
+    Lockless single-run path: never triggers the global board rebuild, so a
+    per-run lookup no longer serialises behind every other run on the shared
+    control-plane lock.
+    """
+    target = str(run_id or "").strip()
+    snapshot = sync_state(only_run_id=target or None)
     return _select_run(snapshot, run_id)
 
 
@@ -1597,7 +1707,9 @@ def await_run(
 
     while True:
         attempts += 1
-        snapshot = sync_state()
+        # Scoped to the awaited run (+ its child rounds): a 5s await poll must
+        # not rebuild the whole board under the shared lock every tick.
+        snapshot = sync_state(only_run_id=target)
         last_run = _select_run(snapshot, target)
         if on_poll is not None:
             on_poll(last_run)

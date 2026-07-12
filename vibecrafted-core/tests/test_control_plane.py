@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -295,6 +297,57 @@ def test_lookup_run_uses_synced_snapshot(
     assert run["agent"] == "claude"
     assert run["launcher_pid"] == os.getpid()
     assert run["liveness"] == "pid_alive"
+
+
+def test_scoped_lookup_is_lockless_while_global_lock_is_held(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A per-run lookup must not queue behind the shared control-plane lock.
+
+    Regression for the flock migraine: one held global lock used to freeze every
+    per-run await/lookup for the full heartbeat window, mislabeling live workers
+    as stalled/pid_gone. The scoped path takes no lock, so it returns promptly
+    even while another holder owns the lock.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    _write_meta(
+        home,
+        {
+            "run_id": "work-030303-99",
+            "status": "running",
+            "agent": "codex",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "work",
+            "launcher_pid": os.getpid(),
+            "liveness": "pid_alive",
+        },
+    )
+    control_plane.control_plane_home().mkdir(parents=True, exist_ok=True)
+
+    holder = control_plane._sync_lock_path().open("a+", encoding="utf-8")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    try:
+        started = time.monotonic()
+        run = control_plane.lookup_run("work-030303-99")
+        elapsed = time.monotonic() - started
+
+        # Lockless: returns without waiting out any lock budget.
+        assert elapsed < 1.0
+        assert run is not None
+        assert run["agent"] == "codex"
+        assert run["launcher_pid"] == os.getpid()
+
+        # The board rebuild DOES take the lock — and now fails loud with a
+        # bounded budget instead of hanging forever.
+        monkeypatch.setenv("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S", "0.2")
+        with pytest.raises(control_plane.ControlPlaneLockBusy):
+            control_plane.sync_state()
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
 
 
 def test_sync_state_reconciles_dead_launcher_to_stalled(
