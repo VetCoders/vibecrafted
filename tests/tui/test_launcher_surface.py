@@ -27,6 +27,37 @@ def _run_launcher_help(tmp_path: Path, *args: str) -> str:
     return ANSI_RE.sub("", result.stdout)
 
 
+def _run_launcher_update_with_stubs(tmp_path: Path, *args: str) -> tuple[str, str]:
+    home = tmp_path / "home"
+    bin_dir = tmp_path / "bin"
+    make_log = tmp_path / "make.log"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "curl").write_text("#!/usr/bin/env bash\nexit 22\n", encoding="utf-8")
+    (bin_dir / "make").write_text(
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" > "$MAKE_LOG"\nexit 0\n',
+        encoding="utf-8",
+    )
+    (bin_dir / "curl").chmod(0o755)
+    (bin_dir / "make").chmod(0o755)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    env["XDG_DATA_HOME"] = str(home / ".local" / "share")
+    env["MAKE_LOG"] = str(make_log)
+    env["PATH"] = f"{bin_dir}:{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", "scripts/vibecrafted", "update", *args],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return ANSI_RE.sub("", result.stdout), make_log.read_text(encoding="utf-8")
+
+
 def test_compact_help_uses_release_engine_contract(tmp_path: Path) -> None:
     output = _run_launcher_help(tmp_path, "help")
 
@@ -75,6 +106,16 @@ def test_implement_help_is_canonical_and_names_alias(tmp_path: Path) -> None:
         in output
     )
     assert 'vibecrafted implement codex --prompt "Ship the feature"' in output
+
+
+def test_update_ref_pair_reaches_make_branch(tmp_path: Path) -> None:
+    output, make_invocation = _run_launcher_update_with_stubs(
+        tmp_path, "--ref", "preview"
+    )
+
+    assert "Vibecrafted Update" in output
+    assert "update" in make_invocation
+    assert "BRANCH=preview" in make_invocation
 
 
 def test_review_and_followup_help_stay_semantically_separate(tmp_path: Path) -> None:
