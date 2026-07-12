@@ -81,9 +81,9 @@ wc -l prompt.md                                              # sanity: full brie
 ```
 
 - **Model pin present and consistent with the cut's class**: the cut carries a
-  `model` pin (sonnet tier for a mechanical, fully-briefed cut; opus tier for a
-  surgical or decision-bearing one). A missing pin means the account default —
-  a non-decision — so resolve it before launch.
+  `model` pin (a cheaper, faster tier for a mechanical, fully-briefed cut; a
+  stronger tier for a surgical or decision-bearing one). A missing pin means
+  the account default — a non-decision — so resolve it before launch.
 
 Launch only via file:
 
