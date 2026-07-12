@@ -513,7 +513,9 @@ class DispatchSupervisor:
         if not self.policy.allow_idempotent_existing:
             return ""
         match = re.search(
-            r"(?mi)^commit:\s*['\"]?([0-9a-f]{7,40})['\"]?\s*$", report_text
+            r"(?mi)^(?:commit|commit_sha|sha|head_sha):"
+            r"\s*['\"]?([0-9a-f]{7,40})['\"]?\s*$",
+            report_text,
         )
         if match is None:
             return ""

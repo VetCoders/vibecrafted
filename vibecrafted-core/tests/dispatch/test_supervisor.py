@@ -838,7 +838,10 @@ prompt = "repair and commit"
     )
 
 
-def test_idempotent_existing_commit_proof_allows_noop_resume(tmp_path: Path) -> None:
+@pytest.mark.parametrize("commit_key", ["commit", "commit_sha", "sha", "head_sha"])
+def test_idempotent_existing_commit_proof_allows_noop_resume(
+    tmp_path: Path, commit_key: str
+) -> None:
     repo_dir = tmp_path / "repo"
     init_git_repo(repo_dir)
     (repo_dir / "delivered.txt").write_text("done\n", encoding="utf-8")
@@ -878,7 +881,7 @@ prompt = "verify existing delivery"
     )
     launcher = FakeCells(reports_dir=reports_dir)
     launcher.cells[("c1", "initial")] = FakeCell(
-        report=f"---\ncommit: {delivered}\n---\nalready delivered"
+        report=f"---\n{commit_key}: {delivered}\n---\nalready delivered"
     )
 
     result = run_dispatch(dispatch, launcher=launcher, artifacts_dir=artifacts_dir)
