@@ -50,6 +50,24 @@ def test_stage0_maximum_fixture_is_accepted() -> None:
     assert dispatch.cuts[6].mutation == ""
 
 
+def test_cut_model_pin_parses_and_defaults_empty_when_absent() -> None:
+    dispatch = load_dispatch(FIXTURES / "model-pin.dispatch.toml")
+
+    assert dispatch.cuts[0].id == "d1-pinned"
+    assert dispatch.cuts[0].model == "gpt-5-codex"
+    # An unpinned cut carries no pin: empty string, plan still valid.
+    assert dispatch.cuts[1].id == "d2-unpinned"
+    assert dispatch.cuts[1].model == ""
+
+
+def test_plan_without_any_model_pin_stays_valid() -> None:
+    # Backward-compatibility regression: the minimal fixture predates the
+    # `model` key; it must parse unchanged with an empty pin on every cut.
+    dispatch = load_dispatch(FIXTURES / "minimal.dispatch.toml")
+
+    assert all(cut.model == "" for cut in dispatch.cuts)
+
+
 def test_prompt_rendering_substitutes_common_body_extra_and_empty_baton() -> None:
     dispatch = load_dispatch(FIXTURES / "minimal.dispatch.toml")
     prompt = render_cell_prompt(dispatch, dispatch.cuts[0])

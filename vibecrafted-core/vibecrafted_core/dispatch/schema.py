@@ -350,6 +350,7 @@ def _parse_cuts(
                 resolved_workflow=resolved_workflow,
                 critical=bool(item.get("critical")),
                 mode=mode,
+                model=_string(item.get("model")),
                 prompt=prompt,
                 brief=_resolve_brief(brief, base_dir),
                 extra=_string(item.get("extra")),

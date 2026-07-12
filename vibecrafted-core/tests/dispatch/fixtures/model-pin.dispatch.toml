@@ -1,0 +1,33 @@
+schema = "vibecrafted.dispatch.v1"
+
+[meta]
+name = "dispatch-model-pin"
+repo = "/tmp/vibecrafted-dispatch-fixture"
+reports_dir = "/tmp/vibecrafted-dispatch-fixture/reports"
+
+[[phases]]
+title = "Foundation"
+detail = "per-cut model pin smoke"
+
+[[cuts]]
+id = "d1-pinned"
+phase = "Foundation"
+agent = "codex"
+workflow = "implement"
+model = "gpt-5-codex"
+prompt = "Implement pinned cut {id} in {repo}."
+
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok", exit_code = 0 }
+
+[[cuts]]
+id = "d2-unpinned"
+phase = "Foundation"
+agent = "claude"
+workflow = "implement"
+prompt = "Implement unpinned cut {id} in {repo}."
+
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok", exit_code = 0 }
