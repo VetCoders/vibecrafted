@@ -22,7 +22,7 @@ Read alongside [`SKILL.md`](SKILL.md) and [`FINDINGS.md`](FINDINGS.md).
 | Fast triage                      | `prview --quick`                                | Explicit fast triage only — NOT default    |
 | Refresh after amend / force-push | `prview --update`                               | Avoid duplicate artifact sets              |
 | Ambiguous origin                 | add `--gh-repo owner/repo`                      | When the working tree has multiple remotes |
-| JSON-only mode                   | `prview --json --quiet &#124; jq ...`            | Pipeline integration                       |
+| JSON-only mode                   | `prview --json --quiet &#124; jq ...`           | Pipeline integration                       |
 
 Default for vc-review: **do not use `--quick`**. Use `--with-tests
 --with-lint` as the baseline. Save `--deep` for merge gate / high-risk.
