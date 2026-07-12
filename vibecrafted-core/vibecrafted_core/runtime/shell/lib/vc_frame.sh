@@ -5,6 +5,7 @@ _vetcoders_vc_frame_missing_message() {
   local xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
   local runtime_bin="${VIBECRAFTED_RUNTIME_BIN:-${VIBECRAFTED_RUNTIME_HOME:-$xdg_data_home/vibecrafted}/bin}"
   echo "vc-frame is required for the Vibecrafted operator runtime." >&2
+  echo "Run 'vc-start' first to create or attach the operator vc-frame session, then retry." >&2
   echo "Expected vc-frame on PATH or bundled at: $runtime_bin/vc-frame" >&2
 }
 

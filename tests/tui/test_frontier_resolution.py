@@ -189,6 +189,9 @@ def test_vc_dashboard_mixes_companion_vc_frame_config_with_repo_layout(
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("VC_FRAME_SESSION_NAME", None)
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-dashboard vc-marbles'],
@@ -235,6 +238,9 @@ def test_vc_dashboard_uses_base_run_id_session_without_layout_suffix(
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("VC_FRAME_SESSION_NAME", None)
+    env.pop("ZELLIJ", None)
+    env.pop("ZELLIJ_PANE_ID", None)
+    env.pop("ZELLIJ_SESSION_NAME", None)
     # Scrub any operator-session context leaked from a running operator shell so
     # the dashboard resolves the run-id session rather than the ambient one.
     env.pop("VIBECRAFTED_OPERATOR_SESSION", None)

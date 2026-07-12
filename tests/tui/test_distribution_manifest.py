@@ -141,6 +141,30 @@ def test_validate_payload_reports_missing_and_forbidden_paths(tmp_path: Path) ->
     assert "forbidden path: scripts/nested/.DS_Store" in message
 
 
+def test_walk_entries_prunes_forbidden_directories_before_descending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    descended: list[str] = []
+
+    def fake_walk(root: Path, *, followlinks: bool):
+        assert root == payload
+        assert followlinks is False
+        directory_names = ["scripts", ".git", "node_modules"]
+        yield str(payload), directory_names, []
+        descended.extend(directory_names)
+
+    monkeypatch.setattr(manifest.os, "walk", fake_walk)
+
+    assert list(manifest._walk_entries(payload)) == [
+        payload / ".git",
+        payload / "node_modules",
+        payload / "scripts",
+    ]
+    assert descended == ["scripts"]
+
+
 def test_stage_payload_rejects_symlink_that_escapes_source(tmp_path: Path) -> None:
     source = tmp_path / "source"
     _minimal_payload(source)
