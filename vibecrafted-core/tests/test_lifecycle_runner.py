@@ -94,6 +94,54 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
     )
 
 
+def test_lifecycle_runner_propagates_polarize_loop_options(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    loop_options: list[tuple[str, int | None, int | None]] = []
+
+    def fake_launcher(spec, _source_dir):
+        loop_options.append((spec.skill, spec.count, spec.depth))
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-polarize",
+                agent="codex",
+                prompt="cut excess",
+                root=str(tmp_path),
+                await_stages=True,
+                count=2,
+                depth=4,
+            )
+        )
+    )
+
+    assert loop_options == [("polarize", 2, 4)]
+    assert state["status"] == "completed"
+
+
 def test_lifecycle_runner_stamps_packaged_schema_contract(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -943,6 +991,32 @@ def test_vc_marbles_wrapper_uses_lifecycle_runner_with_loop_options(
 
     assert rc == 0
     assert captured[0].workflow_id == "vc-marbles"
+    assert captured[0].count == 5
+    assert captured[0].depth == 7
+
+
+def test_vc_polarize_wrapper_uses_lifecycle_runner_with_loop_options(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec):
+        captured.append(spec)
+        return {
+            "run_id": "life-polarize-test",
+            "workflow": spec.workflow_id,
+            "status": "launching",
+            "state_path": str(tmp_path / "state.json"),
+            "report_path": str(tmp_path / "report.md"),
+        }
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.run_lifecycle", fake_run_lifecycle
+    )
+    rc = wrappers.polarize_main(["codex", "--count", "5", "--depth", "7"])
+
+    assert rc == 0
+    assert captured[0].workflow_id == "vc-polarize"
     assert captured[0].count == 5
     assert captured[0].depth == 7
 

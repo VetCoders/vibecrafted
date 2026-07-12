@@ -20,7 +20,11 @@ from .workflow import (
     launch_workflow,
     report_dou_index,
 )
-from .workflows.registry import workflow_manifest, workflow_manifest_payload
+from .workflows.registry import (
+    workflow_definition,
+    workflow_manifest,
+    workflow_manifest_payload,
+)
 from .workflows.model import WorkflowManifest, WorkflowStage
 
 LaunchWorkflow = Callable[[WorkflowLaunchSpec, str | Path], dict[str, Any]]
@@ -710,6 +714,7 @@ class LifecycleRunner:
             previous_reports=previous_reports,
             context=context,
         )
+        stage_definition = workflow_definition(stage.workflow)
         launch_spec = WorkflowLaunchSpec(
             agent=agent,
             mode=stage.workflow,
@@ -718,8 +723,16 @@ class LifecycleRunner:
             file="",
             runtime=spec.runtime,
             root=str(root),
-            count=spec.count if stage.workflow == "marbles" else None,
-            depth=spec.depth if stage.workflow == "marbles" else None,
+            count=(
+                spec.count
+                if stage_definition is not None and stage_definition.supports_count
+                else None
+            ),
+            depth=(
+                spec.depth
+                if stage_definition is not None and stage_definition.supports_depth
+                else None
+            ),
             model=model,
             lifecycle_state_path=str(state_path or ""),
         )
@@ -1076,8 +1089,8 @@ def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
         from .lifecycle_control import lifecycle_control_main
 
         return lifecycle_control_main(args_list, workflow_id=manifest.id)
-    supports_loop_options = any(
-        stage.workflow == "marbles" for stage in manifest.stages
+    stage_definitions = tuple(
+        workflow_definition(stage.workflow) for stage in manifest.stages
     )
 
     parser = argparse.ArgumentParser(prog=workflow_id)
@@ -1091,8 +1104,15 @@ def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--start-stage", default="")
     parser.add_argument("--checkpoint", dest="start_stage", default="")
     parser.add_argument("--await-stages", action="store_true")
-    if supports_loop_options:
+    if any(
+        definition is not None and definition.supports_count
+        for definition in stage_definitions
+    ):
         parser.add_argument("--count", type=int)
+    if any(
+        definition is not None and definition.supports_depth
+        for definition in stage_definitions
+    ):
         parser.add_argument("--depth", type=int)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(args_list)
