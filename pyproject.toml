@@ -25,3 +25,4 @@ follow_imports = "skip"
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
+pythonpath = ["vibecrafted-core"]
