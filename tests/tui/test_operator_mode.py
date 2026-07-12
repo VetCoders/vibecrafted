@@ -302,7 +302,116 @@ def test_vc_init_finds_bundled_vc_frame_and_creates_missing_operator_session(
     expected_session = _expected_operator_session()
     assert f"--session {expected_session} --new-session-with-layout" in payload
     assert f"--session {expected_session} action new-tab" in payload
+    assert f"run_id=interactive target={expected_session}/claude-init" in result.stdout
+    assert f"watch=vc-frame attach {expected_session}" in result.stdout
     assert "There is no active session!" not in result.stderr
+
+
+def test_operator_spawn_success_prints_actionable_receipt(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "vc_frame-args.txt"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_capture_command(fake_bin, "vc-frame", capture_file)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "CAPTURE_FILE": str(capture_file),
+            "VIBECRAFTED_OPERATOR_SESSION": "receipt-session",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "VIBECRAFTED_RUN_ID": "impl-receipt-1",
+        }
+    )
+    for name in (
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ",
+        "ZELLIJ_SESSION_NAME",
+        "ZELLIJ_PANE_ID",
+    ):
+        env.pop(name, None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                '_vetcoders_spawn_into_operator_session "codex-init" "true"'
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "launch accepted: run_id=impl-receipt-1 "
+        "target=receipt-session/codex-init "
+        "watch=vc-frame attach receipt-session"
+    ) in result.stdout
+    assert "action\nnew-tab" in capture_file.read_text(encoding="utf-8")
+
+
+def test_operator_spawn_failure_is_loud_and_preserves_status(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    home.mkdir()
+    fake_bin.mkdir()
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text("#!/usr/bin/env bash\nexit 37\n", encoding="utf-8")
+    vc_frame.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "VIBECRAFTED_OPERATOR_SESSION": "receipt-session",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "VIBECRAFTED_RUN_ID": "impl-receipt-2",
+        }
+    )
+    for name in (
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ",
+        "ZELLIJ_SESSION_NAME",
+        "ZELLIJ_PANE_ID",
+    ):
+        env.pop(name, None)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                '_vetcoders_spawn_into_operator_session "marbles" "true"'
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 37
+    assert (
+        "launch failed: run_id=impl-receipt-2 target=receipt-session/marbles status=37"
+    ) in result.stderr
 
 
 def test_vc_init_missing_vc_frame_message_has_fresh_install_path_hint(
@@ -336,6 +445,10 @@ def test_vc_init_missing_vc_frame_message_has_fresh_install_path_hint(
 
     assert result.returncode != 0
     assert "vc-frame is required for the Vibecrafted operator runtime." in result.stderr
+    assert (
+        "Run 'vc-start' first to create or attach the operator vc-frame session, then retry."
+        in result.stderr
+    )
     assert (
         f"Expected vc-frame on PATH or bundled at: {home}/.local/share/vibecrafted/bin/vc-frame"
         in result.stderr

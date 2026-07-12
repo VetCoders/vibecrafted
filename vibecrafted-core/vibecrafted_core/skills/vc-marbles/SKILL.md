@@ -84,6 +84,17 @@ vibecrafted marbles codex --count 10 --depth n
 vc-marbles claude --depth 12 --prompt 'Focus on "vc-followup assumptions from the last 12 plans'
 ```
 
+After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+do not normalize the hedge. See `docs/runtime/AGENT_OPS.md`.
+
+3-signal liveness: await verdict, terminal run meta, worker pid dead, plus
+promised report presence. Two agreeing signals are enough to act, three to
+declare done; any disagreement means treat as live and re-arm await. Known skew:
+rc=0-on-live and meta stuck `active`/`stalled` after real completion.
+
 **Not the same as `vibecrafted codex implement <plan>`.** `implement`
 is how code appears. `marbles` is what happens after code exists but
 still needs to be made truthful and shippable. Each round wraps a

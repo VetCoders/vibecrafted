@@ -114,6 +114,7 @@ class Cut:
     resolved_workflow: str
     critical: bool = False
     mode: str = "write"
+    model: str = ""
     prompt: str = ""
     brief: str = ""
     extra: str = ""

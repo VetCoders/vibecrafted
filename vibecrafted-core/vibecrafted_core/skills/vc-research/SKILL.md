@@ -3,7 +3,7 @@ name: vc-research
 version: 1.3.0
 description: >
   Standalone triple-agent research skill. Co-define the problem with the user,
-  write a research plan, then spawn claude + codex + gemini simultaneously on the
+  write a research plan, then spawn claude + codex + agy simultaneously on the
   same questions. Three independent reports come back. Synthesize into one
   gap-free research document ready for implementation. Use whenever the team
   needs ground truth before coding: unknown APIs, architecture decisions, library
@@ -50,9 +50,14 @@ Enter the framework session via `vibecrafted start` (or `vc-start`). Then launch
 vibecrafted research --prompt 'Compare auth libraries for Tauri desktop'
 vc-research --prompt 'State of the art for MCP streaming transports'
 vibecrafted research --file /path/to/research-plan.md
+vc-research codex agy --prompt 'Override lanes for this run'
 ```
 
 If invoked outside vc-frame, the framework attaches/creates the operator session and runs in a new tab. Prefer `--file` for an existing plan, `--prompt` for inline intent.
+
+**Critical swarm semantics:** one invocation launches the research swarm. Do not call the command once per agent. `vibecrafted research <agent>` is the backward-compatible synthesizer-pick form; it does not mean "research only with this agent." `vc-research <agent1> [agent2 agent3] --prompt/--file ...` is the explicit lane override form for one to three lanes; the first listed agent synthesizes unless `--synthesizer <agent>` is provided.
+
+Runtime lane defaults are read at launch time from `${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/config/research.yaml`. Missing file means built-in defaults: `claude`, `codex`, `agy`, with no model pins and last-survivor synthesis. The packaged commented example lives at `runtime/vc-research/research.yaml.example`; copy it into the runtime config dir to edit operator policy without touching the repo or reinstalling.
 
 <details>
 <summary>Foundation Dependencies</summary>
@@ -72,7 +77,7 @@ or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`
 
 ## Purpose
 
-Research a problem from three independent angles before writing code. The orchestrating agent co-defines the problem with the user, writes a plan, spawns claude + codex + gemini on the same questions, then synthesizes findings into one gap-free document. This is the Research phase from `vc-workflow`, extracted as a standalone skill and upgraded with triple-agent triangulation.
+Research a problem from three independent angles before writing code. The orchestrating agent co-defines the problem with the user, writes a plan, spawns claude + codex + agy on the same questions, then synthesizes findings into one gap-free document. This is the Research phase from `vc-workflow`, extracted as a standalone skill and upgraded with triple-agent triangulation.
 
 ## When To Use
 
@@ -119,7 +124,7 @@ Create one plan file. Every agent receives this plan:
 ```markdown
 ---
 run_id: <generated-unique-id>
-agent: <claude|codex|gemini>
+agent: <claude|codex|agy>
 skill: vc-research
 project: <repo-name>
 status: in-progress
@@ -162,7 +167,7 @@ Conclude with **Synthesis**: recommended approach, alternatives, open questions,
 
 `vc-research` records the effective plan under `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/research/<run_id>/plans/<ts>_<slug>_research-plan.md`. Plans can be split for separable domains, but each agent gets ALL plans — they are independent researchers, not specialists.
 
-### Step 3 — Spawn triple research swarm
+### Step 3 — Spawn the research swarm
 
 ```bash
 PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>_research-plan.md"
@@ -171,7 +176,46 @@ vc-research --file "$PLAN"
 
 Repo-owned spawn scripts remain the internal engine. Do not document raw `bash skills/...spawn.sh` paths as the operator entrypoint.
 
-The launcher opens one shared vc-frame research tab using `research.kdl`, keeps a common `run_id`, and starts claude + codex + gemini against the same plan. Divergence between reports reveals blind spots.
+The launcher opens one shared vc-frame research tab using `research.kdl`, keeps a common `run_id`, and starts the configured lanes against the same plan. Defaults are claude + codex + agy. Divergence between reports reveals blind spots.
+
+Supported invocation forms:
+
+```bash
+# Canonical agentless form: full configured swarm.
+vibecrafted research --prompt "State of the art for MCP streaming"
+vibecrafted research --file "$PLAN"
+
+# Backward-compatible core form: full configured swarm, claude synthesizes.
+vibecrafted research claude --file "$PLAN"
+
+# Shell override form: exactly these lanes for this run; codex synthesizes.
+vc-research codex agy --prompt "Compare two toolchains"
+
+# Explicit synthesizer override.
+vc-research claude codex agy --synthesizer claude --file "$PLAN"
+```
+
+Runtime YAML schema:
+
+```yaml
+lanes:
+  - agent: claude
+    model: claude-opus-4-6
+    enabled: true
+  - agent: codex
+    model: gpt-5.5
+    enabled: true
+  - agent: agy
+    # Unsupported model flags are reported honestly in receipts.
+    model: gemini-pro
+    enabled: true
+lane_count: 3
+synthesizer:
+  agent: claude
+  model: claude-sonnet-4-6
+```
+
+Precedence is: built-in defaults < legacy TOML fallback < runtime YAML < env/positional override < per-run `--model` flags. Unsupported model flags are not silently dropped; the receipt records `model_override_supported: false`, `model_override_skipped: true`, and `model_override_skip_reason: unsupported_agent_model_flag`.
 
 Immediately after spawn, the operator gets a launch card with shared `run_id`, run directory, reports directory, summary path, and the exact await command. **The launch card is the default surface.** `observe --last` is a drilldown tool, not the primary source of truth.
 
@@ -180,7 +224,7 @@ Immediately after spawn, the operator gets a launch card with shared `run_id`, r
 Reports land in:
 
 ```
-$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/research/<run_id>/reports/{claude,codex,gemini}.md
+$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/research/<run_id>/reports/{claude,codex,agy}.md
 ```
 
 Launch card lives at `research/<run_id>/summary.md`. Metadata, transcripts, raw streams, prompts, launchers, vc-frame layout stay inside `research/<run_id>/logs/` and `research/<run_id>/tmp/`.
@@ -197,7 +241,7 @@ For transcript-level inspection while the swarm is running:
 ```bash
 vibecrafted claude observe --last
 vibecrafted codex observe --last
-vibecrafted gemini observe --last
+vibecrafted agy observe --last
 ```
 
 Do not treat manual `observe --last` calls as sufficient observability. Workflow state goes through launch metadata, the await helper, and durable report paths by default.
@@ -249,13 +293,14 @@ vc-research can be used:
 research │                         │
   plan ──├─── codex  ──→ report ───├──→ synthesis.md
          │                         │
-         └─── gemini ──→ report ───┘
+         └────── agy ──→ report ───┘
 ```
 
 ## Anti-Patterns
 
-- Passing `claude|codex|gemini` to `vc-research` (defeats the purpose — the launcher is the swarm)
+- Passing `claude|codex|agy` to `vc-research` (defeats the purpose — the launcher is the swarm)
 - Giving each agent different questions (they must answer the SAME questions for triangulation)
+- Running `vc-research` three times for claude/codex/agy; one invocation already launches the swarm
 - Skipping synthesis and concatenating reports (the value is in the delta)
 - Researching things you can verify by reading one file (use loctree slice)
 - Writing the research plan without the user (Step 1 is collaborative)

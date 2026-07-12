@@ -2316,12 +2316,22 @@ _post_update_banner() {
 cmd_update() {
   local makefile="" repo_source="" installed_ver="" channel_ref="main"
   local force=0
-  for _u_arg in "$@"; do
+  local _u_arg=""
+  while (( $# )); do
+    _u_arg="$1"
     case "$_u_arg" in
       --force|-f) force=1 ;;
-      --ref) : ;;  # consumed below
+      --ref)
+        shift
+        if [[ $# -eq 0 || "${1:-}" == --* ]]; then
+          printf '%b✗%b --ref requires a channel value.\n' "$_red" "$_reset" >&2
+          return 2
+        fi
+        channel_ref="$1"
+        ;;
       --ref=*) channel_ref="${_u_arg#--ref=}" ;;
     esac
+    shift
   done
   repo_source="$(_repo_source_root 2>/dev/null || true)"
 
@@ -2353,7 +2363,7 @@ cmd_update() {
   done
 
   if [[ -n "$makefile" ]]; then
-    make -C "$(dirname "$makefile")" update
+    make -C "$(dirname "$makefile")" update BRANCH="$channel_ref"
     update_status=$?
     _post_update_banner "$installed_ver"
     return "$update_status"

@@ -80,6 +80,15 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
                 └── refire ←┘  (partial delivery / convergence pressure)
 ```
 
+**Pin modelu per cut (pre-flight):** każdy cut deklaruje pin `model` zgodny ze
+swoją klasą — cut mechaniczny, w pełni rozpisany, jedzie na tańszym,
+szybszym tierze; cut chirurgiczny albo niosący decyzje — na mocniejszym
+tierze. Pin jedzie z planem do launchera (`Cut.model` →
+`WorkflowLaunchSpec.model` → flaga modelu agenta: `--model` dla claude, `-m`
+dla codex). Cut bez pinu leci na defaulcie
+konta — a to NIE-decyzja, nie bezpieczny default: pinuj świadomie, a brak
+pinu traktuj jako smell do rozwiązania przed startem.
+
 1. **Pre-flight (raz na linię)**: przetestuj komendy weryfikujące z briefów,
    zanim linia ruszy — bramka, która matchuje 0 testów, jest trywialnie zielona;
    żądaj ≥1 nowego nietrywialnego testu w EXTRA. `grep -c` wychodzi z kodem 1 przy 0 trafień
@@ -91,14 +100,25 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
    (shelle mogą nieść miękki `ulimit -f` → SIGXFSZ/exit 153). Zapisz receipt
    (run_id, report, transcript, meta) w trackerze.
 3. **Spanko**: czekaj przez artefakty, nigdy przez gapienie się w pane. Użyj
-   dedykowanej komendy jako standardowej pętli dyspozytora:
+   dedykowanej komendy jako standardowej pętli dyspozytora. Kanoniczny kontrakt
+   supervisora (zobacz `docs/runtime/AGENT_OPS.md`): po dispatchu uzbrój
+   `vibecrafted <agent> await --run-id <id>` natychmiast, po stronie supervisora.
+   JSON control-plane, pliki raportów, transkrypty, karty terminala i
+   zaplanowane wybudzenia są wyłącznie diagnostyczne, nie są sygnałem
+   wybudzenia. Hedge'owanie await ad-hoc pollerami/watcherami to naruszenie
+   Class 3; napraw `control_plane.await_run`, nie normalizuj hedge'u.
+   Liveness jest zawsze 3-sygnałowy: przed "done" pogódź await verdict,
+   terminalny stan w run meta i martwy worker pid; gdy raport jest obiecany,
+   sprawdź obecność raportu. Dwa zgodne sygnały wystarczą do działania, trzy do
+   deklaracji done; rozjazd = traktuj jako live i uzbrój await ponownie. Znany
+   skew: rc=0-on-live oraz meta `active`/`stalled` po realnym zakończeniu.
    `vibecrafted loop spanko --run-id <id> --agent <a> --verify '<cmd>' --tracker <tracker.md> --cut-id <cut> --then '<next dispatch>'`
    (heartbeat cron frameworka → control-plane await → sprawdzenie → flip → baton),
    niższopoziomowego `vibecrafted loop await-run --run-id <id> --agent <a> --then-cmd '<next>'`,
-   probe await-watch
-   (`vibecrafted-await-watch.sh --meta <meta.json>` — tail-await-die), albo
-   zwykły zbackgroundowany `vibecrafted <agent> await --run-id`. Żywy worker
-   dostaje ZERO ingerencji; przerywanie mu w fazie bramki to czysta strata.
+   albo probe await-watch
+   (`vibecrafted-await-watch.sh --meta <meta.json>` — tail-await-die) jako
+   warstwy widoczności podporządkowanej kanonicznemu await. Żywy worker dostaje
+   ZERO ingerencji; przerywanie mu w fazie bramki to czysta strata.
 4. **Sprawdzenie** (przy wyjściu workera): SHA commita istnieje → esencja diffa zgadza się
    z briefem → odczytane wyniki bramek i acceptance z raportu workera. **NIE
    uruchamiaj ponownie lintów/testów workera** — workerzy uruchamiają własne bramki, a commit

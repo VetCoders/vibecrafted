@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from vibecrafted_core.agent_stream import AgentStreamParser, resolve_default_model
+from vibecrafted_core.telemetry import estimate_cost_usd
 
 
 def test_agent_stream_parser_extracts_claude_session_usage_cost_and_text() -> None:
@@ -17,7 +18,8 @@ def test_agent_stream_parser_extracts_claude_session_usage_cost_and_text() -> No
         ),
         parser.feed_line(
             b'{"type":"result","result":"done","usage":{"input_tokens":10,'
-            b'"cache_read_input_tokens":3,"output_tokens":5},'
+            b'"cache_read_input_tokens":3,"cache_creation_input_tokens":2,'
+            b'"output_tokens":5},'
             b'"total_cost_usd":0.0123}\n'
         ),
     ]
@@ -29,6 +31,7 @@ def test_agent_stream_parser_extracts_claude_session_usage_cost_and_text() -> No
     assert parser.model_id == "claude-opus-4-8"
     assert parser.tokens_input == 10
     assert parser.tokens_cached_input == 3
+    assert parser.tokens_cache_write == 2
     assert parser.tokens_output == 5
     assert parser.cost_usd == 0.0123
 
@@ -57,6 +60,7 @@ def test_agent_stream_parser_extracts_codex_thread_usage_and_text() -> None:
     assert parser.model_id == "gpt-5.3-codex"
     assert parser.tokens_input == 11
     assert parser.tokens_cached_input == 4
+    assert parser.tokens_cache_write is None
     assert parser.tokens_output == 6
 
 
@@ -121,6 +125,24 @@ def test_agent_stream_parser_renders_grok_thought_text_and_session() -> None:
     assert parser.session_id == "019ec430-9888-78e3-8ca0-b29387444fdb"
 
 
+def test_agent_stream_parser_maps_real_grok_end_telemetry() -> None:
+    parser = AgentStreamParser("grok")
+    parser.feed_line(
+        b'{"type":"end","sessionId":"grok-session","usage":'
+        b'{"input_tokens":34113,"cache_read_input_tokens":2752,'
+        b'"output_tokens":151,"total_tokens":37016},"modelUsage":'
+        b'{"grok-build":{"inputTokens":34113,"outputTokens":151,'
+        b'"cacheReadInputTokens":2752,"modelCalls":1}}}\n'
+    )
+
+    assert parser.model_id == "grok-build"
+    assert parser.tokens_input == 34113
+    assert parser.tokens_cached_input == 2752
+    assert parser.tokens_output == 151
+    assert parser.cost_usd == 0.034965
+    assert parser.cost_source == "estimated:xai-api-2026-07"
+
+
 def test_agent_stream_parser_renders_junie_steps_without_none_noise() -> None:
     parser = AgentStreamParser("junie")
 
@@ -140,6 +162,25 @@ def test_agent_stream_parser_renders_junie_steps_without_none_noise() -> None:
     assert "Read skill: vc-audit" in text
     assert "None" not in text
     assert parser.session_id == "session-junie-1"
+
+
+def test_agent_stream_parser_maps_real_junie_nested_model_usage() -> None:
+    parser = AgentStreamParser("junie")
+    parser.feed_line(
+        b'{"kind":"SessionA2uxEvent","event":{"state":"IN_PROGRESS",'
+        b'"agentEvent":{"kind":"LlmResponseMetadataEvent","modelUsage":['
+        b'{"model":"gpt-5.5","cost":0.045821,"inputTokens":807,'
+        b'"cacheInputTokens":49792,"cacheCreateTokens":0,'
+        b'"outputTokens":563,"time":0}]}}}\n'
+    )
+
+    assert parser.model_id == "gpt-5.5"
+    assert parser.tokens_input == 807
+    assert parser.tokens_cached_input == 49792
+    assert parser.tokens_cache_write == 0
+    assert parser.tokens_output == 563
+    assert parser.cost_usd == 0.045821
+    assert parser.cost_source == "provider_reported"
 
 
 def test_agent_stream_parser_treats_agy_as_claude_family_text_stream() -> None:
@@ -179,3 +220,18 @@ def test_resolve_default_model_reads_codex_config(tmp_path, monkeypatch) -> None
         )
         == "gpt-5.3-codex"
     )
+
+
+def test_cost_estimates_lock_user_reported_grok_and_codex_regressions() -> None:
+    assert estimate_cost_usd(
+        "grok-build",
+        tokens_input=123064,
+        tokens_cached_input=4200256,
+        tokens_output=21463,
+    ) == (1.006041, "estimated:xai-api-2026-07")
+    assert estimate_cost_usd(
+        "gpt-5.6-sol",
+        tokens_input=20901518,
+        tokens_cached_input=20536960,
+        tokens_output=48906,
+    ) == (116.24325, "estimated:openai-api-2026-07")

@@ -93,8 +93,8 @@ def test_vc_research_terminal_without_session_degrades_to_headless(
 
 
 def test_launcher_paths_recognise_every_supported_agent() -> None:
-    # The old regex matched only claude|codex|gemini while the default swarm
-    # is claude+codex+junie — the venv vc-research entrypoint could never
+    # The old regex matched only a subset of agents while the configured swarm
+    # can include every supported lane — the venv vc-research entrypoint could never
     # collect its own launchers and always exited 1 before spawning.
     output = "\n".join(
         [
@@ -104,9 +104,8 @@ def test_launcher_paths_recognise_every_supported_agent() -> None:
             "  junie: /tmp/junie_launch.sh",
             "  agy: /tmp/agy_launch.sh",
             "  grok: /tmp/grok_launch.sh",
-            "  gemini: /tmp/gemini_launch.sh",
         ]
     )
     launchers = _launcher_paths(output)
-    assert sorted(launchers) == ["agy", "claude", "codex", "gemini", "grok", "junie"]
+    assert sorted(launchers) == ["agy", "claude", "codex", "grok", "junie"]
     assert launchers["junie"] == Path("/tmp/junie_launch.sh")

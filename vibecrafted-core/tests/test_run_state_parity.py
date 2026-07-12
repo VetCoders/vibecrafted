@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import shlex
@@ -109,8 +110,12 @@ def _write_async_worker(tmp_path: Path, *, sleep_seconds: float = 2.0) -> Path:
 def _append_lifecycle_event(home: Path, payload: dict[str, Any]) -> None:
     events = home / "control_plane" / "events.jsonl"
     events.parent.mkdir(parents=True, exist_ok=True)
+    # A fresh timestamp is load-bearing: with a hardcoded past ts, terminal-run
+    # cases become time bombs — once the event ages past the snapshot retention
+    # horizon, sync_state archives the projection in the same pass the test
+    # reads it (went red by itself on 2026-07-06 with ts=2026-06-29).
     event = {
-        "ts": "2026-06-29T00:00:00+00:00",
+        "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
         "run_id": payload["run_id"],
         "kind": f"lifecycle:{payload['state']}",
         "message": f"test {payload['state']}",
@@ -193,7 +198,7 @@ def _launch_shell_meta_path(
     meta = (
         home
         / "artifacts"
-        / "VetCoders"
+        / "Vetcoders"
         / "vibecrafted"
         / "2026_0629"
         / "reports"

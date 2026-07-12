@@ -135,6 +135,19 @@ vibecrafted tui
 vibecrafted dispatch path/to/run.dispatch.toml --doctor
 ```
 
+Inside a dispatch plan, pin a model per cut to match its class — the pin rides
+the plan into the launcher, and an unpinned cut falls back to the account
+default:
+
+```toml
+[[cuts]]
+id = "refactor-parser"
+agent = "codex"
+workflow = "implement"
+model = "gpt-5-codex"   # pin the model to the cut's class; unset = account default
+prompt = "..."
+```
+
 `gui`, `tui`, `dashboard`, `dispatch`, and telemetry commands are real runtime
 surfaces. They are second-visit tools, not the first thing a new operator needs
 to memorize.

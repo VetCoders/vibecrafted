@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
 import os
 import shutil
@@ -13,11 +12,17 @@ from typing import Any, Sequence
 
 from . import doctor as doctor_module
 from .agent_stream import ANSI_PATTERN, AgentStreamParser, resolve_default_model
-from .control_plane import RunNotResolved, lookup_run, resolve_run, sync_state
+from .control_plane import (
+    RunNotResolved,
+    await_run,
+    lookup_run,
+    resolve_run,
+    sync_state,
+)
 from .package_resources import deck_path, package_root
 from .workflow import await_launch_truth, launch_workflow, normalize_launch_spec
 
-AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "swarm"}
+AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
 LAUNCHERS = (
     "audit",
     "decorate",
@@ -43,6 +48,20 @@ LAUNCHERS = (
 LAUNCH_ALIASES = {
     "justdo": "implement",
 }
+# These installed names are symlinks to the ``vibecrafted`` Python entrypoint,
+# but their behavior is still owned by the shell deck. Preserve the invoked
+# name as an explicit deck verb instead of silently treating the first user
+# argument as the command.
+SHELL_WRAPPER_VERBS = {
+    "telemetry": "telemetry",
+    "vc-dashboard": "dashboard",
+    "vc-dispatch": "dispatch",
+    "vc-help": "help",
+    "vc-init": "init",
+    "vc-justdo": "justdo",
+    "vc-resume": "resume",
+    "vc-start": "start",
+}
 SUCCESS_STATES = {"report_validated", "completed", "closed"}
 TERMINAL_STATES = {
     "blocked",
@@ -61,7 +80,10 @@ TERMINAL_STATES = {
 
 def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
     run = sub.add_parser(name, help=f"launch vc-{name} through core runtime")
-    run.add_argument("agent", nargs="?")
+    if name == "research":
+        run.add_argument("agent", nargs="*")
+    else:
+        run.add_argument("agent", nargs="?")
     if name == "paste":
         run.add_argument("--skill", default="workflow")
         run.add_argument("--root", default="")
@@ -76,6 +98,10 @@ def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
     run.add_argument("--mode", default="")
     run.add_argument("--count", type=int)
     run.add_argument("--depth", type=int)
+    run.add_argument("--model", default="")
+    if name == "research":
+        run.add_argument("--synthesizer", default="")
+        run.add_argument("--synthesizer-model", default="")
     run.add_argument("--source-dir", default="")
     run.add_argument("--json", action="store_true")
 
@@ -203,26 +229,6 @@ def _tail_lines(
     return [_clip_line(line) for line in tail], ""
 
 
-def _parse_iso(raw: object) -> dt.datetime | None:
-    text = str(raw or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed
-
-
-def _run_age_seconds(run: dict[str, Any]) -> float | None:
-    timestamp = _parse_iso(run.get("heartbeat_at") or run.get("updated_at"))
-    if timestamp is None:
-        return None
-    return (dt.datetime.now(dt.timezone.utc) - timestamp).total_seconds()
-
-
 def _run_succeeded(run: dict[str, Any]) -> bool:
     state = str(run.get("state") or "")
     errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
@@ -239,15 +245,6 @@ def _run_terminal(run: dict[str, Any]) -> bool:
     return run.get("exit_code") is not None
 
 
-def _run_dead_or_stale(run: dict[str, Any], stale_after_seconds: float) -> bool:
-    liveness = str(run.get("liveness") or "")
-    state = str(run.get("state") or "")
-    if liveness not in {"pid_gone", "missing_signal_target"} and state != "stalled":
-        return False
-    age = _run_age_seconds(run)
-    return age is None or age >= stale_after_seconds
-
-
 def _print_launch_receipt(payload: dict[str, Any]) -> None:
     run_id = _field(payload, "run_id")
     agent = _field(payload, "agent")
@@ -262,7 +259,9 @@ def _print_launch_receipt(payload: dict[str, Any]) -> None:
     print(f"report:     {_field(payload, 'report')}")
     print(f"transcript: {_field(payload, 'transcript')}")
     print(f"observe:    vibecrafted {agent} observe --run-id {run_id}")
-    print(f"await:      vibecrafted {agent} await --run-id {run_id}")
+    print(
+        f"await (ARM NOW, supervisor-side): vibecrafted {agent} await --run-id {run_id}"
+    )
     print("=====================================================================")
 
 
@@ -411,13 +410,29 @@ def _observe_resolved(run_id: str, *, json_output: bool) -> int:
 
 
 def _agent_await(agent: str, argv: Sequence[str]) -> int:
+    # ONE await loop lives in control_plane.await_run — this verb must never
+    # grow a private wall-clock loop again. The old inline loop here treated
+    # --timeout as an absolute deadline and abandoned demonstrably-working
+    # runs at 300s, which taught supervising agents to distrust await and
+    # hedge with manual sleep/ps monitors.
     parser = argparse.ArgumentParser(prog=f"vibecrafted {agent} await")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--last", action="store_true")
-    parser.add_argument("--timeout", type=float, default=300)
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=300,
+        help="idle window in seconds — resets on movement or a live worker",
+    )
     parser.add_argument("--interval", type=float, default=5)
     parser.add_argument("--status-interval", type=float, default=60)
-    parser.add_argument("--stale-after", type=float, default=600)
+    parser.add_argument(
+        "--stale-after",
+        type=float,
+        default=600,
+        help="deprecated: superseded by the liveness-aware idle window",
+    )
+    parser.add_argument("--hard-cap", type=float, default=None)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(list(argv))
     run = _run_for_agent(agent, args.run_id, last=args.last)
@@ -430,61 +445,78 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
             run_id,
             timeout_seconds=args.timeout,
             interval_seconds=args.interval,
+            hard_cap_seconds=args.hard_cap,
         )
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-        return 0 if result.get("completed") and result.get("artifact_ok") else 1
+        return (
+            0
+            if result.get("completed")
+            and result.get("artifact_ok")
+            and result.get("terminal_evidence")
+            else 1
+        )
 
     print("await: initial status")
     _print_run_status(run)
-    last_status_printed_at = time.monotonic()
 
-    timeout = max(float(args.timeout), 0.0)
     interval = max(float(args.interval), 0.1)
     status_interval = max(float(args.status_interval), interval)
-    stale_after = max(float(args.stale_after), 0.0)
-    deadline = time.monotonic() + timeout
-    next_status = time.monotonic() + status_interval
+    next_status = {"at": time.monotonic() + status_interval}
 
-    while True:
-        run = lookup_run(run_id)
-        if run is None:
-            print(f"await: run disappeared: {run_id}", file=sys.stderr)
-            return 1
-        if _run_succeeded(run):
-            print("await: completed")
-            if time.monotonic() - last_status_printed_at > 1:
-                _print_run_status(run)
-            return 0
-        if _run_terminal(run):
-            print("await: terminal failure")
-            if time.monotonic() - last_status_printed_at > 1:
-                _print_run_status(run)
-            return 1
-        if _run_dead_or_stale(run, stale_after):
-            print(
-                f"await: worker dead or stale for >= {int(stale_after)}s",
-            )
-            if time.monotonic() - last_status_printed_at > 1:
-                _print_run_status(run)
-            return 1
-
+    def _print_progress(current: dict[str, Any] | None) -> None:
         now = time.monotonic()
-        if now >= deadline:
-            print("await: timed out")
-            if time.monotonic() - last_status_printed_at > 1:
-                _print_run_status(run)
-            return 1
-        if now >= next_status:
+        if current is not None and now >= next_status["at"]:
             print("await: still running")
-            _print_run_status(run)
-            last_status_printed_at = now
-            next_status = now + status_interval
-        time.sleep(min(interval, max(deadline - now, 0.0)))
+            _print_run_status(current)
+            next_status["at"] = now + status_interval
+
+    result = await_run(
+        run_id,
+        timeout_seconds=args.timeout,
+        interval_seconds=interval,
+        hard_cap_seconds=args.hard_cap,
+        on_poll=_print_progress,
+    )
+    final_run = dict(result.get("run") or {})
+    reason = str(result.get("reason") or "")
+    if result.get("completed"):
+        worker_alive = bool(result.get("worker_alive"))
+        terminal_evidence = bool(
+            final_run and _run_terminal(final_run) and not worker_alive
+        )
+        delivered_evidence = reason == "report_delivered" and not worker_alive
+        if terminal_evidence and final_run and not _run_succeeded(final_run):
+            print(f"await: terminal failure ({reason})")
+            _print_run_status(final_run)
+            return 1
+        if not (terminal_evidence or delivered_evidence):
+            print(
+                f"await: non-terminal completion disagreement ({reason})",
+                file=sys.stderr,
+            )
+            if final_run:
+                _print_run_status(final_run)
+            return 3
+        print(f"await: completed ({reason})")
+        if final_run:
+            _print_run_status(final_run)
+        return 0
+    if not result.get("found"):
+        print(f"await: run disappeared: {run_id}", file=sys.stderr)
+        return 1
+    print(f"await: timed out ({reason})")
+    if final_run:
+        _print_run_status(final_run)
+    return 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    raw_args = _normalize_raw_args(list(sys.argv[1:] if argv is None else argv))
+    raw_args = list(sys.argv[1:] if argv is None else argv)
     invoked_as = Path(sys.argv[0]).name if argv is None else "vibecrafted"
+    shell_wrapper_verb = SHELL_WRAPPER_VERBS.get(invoked_as) if argv is None else None
+    if shell_wrapper_verb:
+        raw_args = [shell_wrapper_verb, *raw_args]
+    raw_args = _normalize_raw_args(raw_args)
 
     # `--version` / `-v` / `version` report the INSTALLED runtime version — the
     # one `vibecrafted start` / `vc-start` actually runs — read straight from the
@@ -500,8 +532,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     python_commands = {"dispatch", "doctor", "paste", "stop"} | set(LAUNCHERS)
     agent_python_verbs = {"observe", "await", "stop"}
-    is_lifecycle = False
-    if raw_args:
+    is_lifecycle = shell_wrapper_verb is not None
+    if raw_args and shell_wrapper_verb is None:
         first = raw_args[0]
         second = raw_args[1] if len(raw_args) > 1 else ""
         if first in AGENTS and second in agent_python_verbs:
@@ -523,6 +555,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if deck.is_file():
             res = subprocess.run([str(deck), *raw_args])
             return res.returncode
+        if shell_wrapper_verb is not None:
+            print(
+                f"error: {invoked_as} cannot find the runtime deck at {deck}",
+                file=sys.stderr,
+            )
+            return 1
 
     if raw_args and raw_args[0] == "dispatch":
         from .dispatch.cli import main as dispatch_main
@@ -567,6 +605,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_namespace(args, source_dir=package_root())
 
     source_dir = args.source_dir or package_root()
+    agent_arg = args.agent
+    research_agents = ()
+    if args.command == "research" and isinstance(agent_arg, list):
+        research_agents = tuple(agent_arg) if len(agent_arg) > 1 else ()
     payload = {
         "skill": LAUNCH_ALIASES.get(args.command, args.command),
         "agent": args.agent,
@@ -577,6 +619,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "mode": args.mode or args.command,
         "count": args.count,
         "depth": args.depth,
+        "model": args.model,
+        "research_agents": research_agents,
+        "synthesizer": getattr(args, "synthesizer", ""),
+        "synthesizer_model": getattr(args, "synthesizer_model", ""),
     }
     try:
         spec = normalize_launch_spec(payload, source_dir)

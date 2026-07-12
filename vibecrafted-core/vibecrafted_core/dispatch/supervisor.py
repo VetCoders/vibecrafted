@@ -114,6 +114,7 @@ def workflow_cell_launcher(
             file="",
             runtime="headless",
             root=dispatch.meta.repo,
+            model=cut.model,
         )
         result = launch_workflow(spec, base_dir)
         return CellRun(

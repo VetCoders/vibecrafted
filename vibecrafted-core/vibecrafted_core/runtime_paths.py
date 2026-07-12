@@ -32,6 +32,10 @@ def vibecrafted_home() -> Path:
     return Path.home() / ".vibecrafted"
 
 
+def vibecrafted_backups_home() -> Path:
+    return vibecrafted_home() / "backups" / "installer"
+
+
 def vibecrafted_runtime_home() -> Path:
     return resolve_env_path("VIBECRAFTED_RUNTIME_HOME", xdg_data_home() / "vibecrafted")
 

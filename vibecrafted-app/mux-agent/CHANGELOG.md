@@ -146,7 +146,7 @@ args.contains("rmcp-mux")` was a copy/paste; the second clause now
 
 ### Added
 
-- Package metadata: `description`, `repository`, `homepage`, `documentation`, `readme`, `keywords`, `categories`, `license = "MIT OR Apache-2.0"`, and `authors = ["Maciej Gad <void@div0.space>", "Monika Szymanska <hello@vetcoders.io>"]` in `Cargo.toml` for proper crates.io listing and discovery.
+- Package metadata: `description`, `repository`, `homepage`, `documentation`, `readme`, `keywords`, `categories`, `license = "MIT OR Apache-2.0"`, and `authors = ["Vetcoders <hello@vetcoders.io>"]` in `Cargo.toml` for proper crates.io listing and discovery.
 
 ## 0.2.0 - 2025-11-24
 

@@ -2,7 +2,7 @@
 name = "rmcp-mux"
 version = "0.4.0"
 edition.workspace = true
-authors = ["Maciej Gad <void@div0.space>", "Monika Szymanska <hello@vetcoders.io>"]
+authors = ["Vetcoders <hello@vetcoders.io>"]
 description = "Transport multiplexer for Rust MCP servers — tray, proxy, and runtime supervisor"
 license.workspace = true
 repository = "https://github.com/Loctree/rmcp-mux"

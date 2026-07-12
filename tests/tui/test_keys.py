@@ -227,6 +227,26 @@ def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
         assert wrapper_path.readlink() == Path("vibecrafted")
 
 
+def test_non_python_launcher_wrappers_have_explicit_deck_verbs() -> None:
+    from vibecrafted_core import cli
+
+    shell_wrappers = set(vetcoders_install.LAUNCHER_WRAPPERS) - set(
+        vetcoders_install.PYTHON_ENTRYPOINT_LAUNCHERS
+    )
+
+    assert set(cli.SHELL_WRAPPER_VERBS) == shell_wrappers
+    assert cli.SHELL_WRAPPER_VERBS == {
+        "telemetry": "telemetry",
+        "vc-dashboard": "dashboard",
+        "vc-dispatch": "dispatch",
+        "vc-help": "help",
+        "vc-init": "init",
+        "vc-justdo": "justdo",
+        "vc-resume": "resume",
+        "vc-start": "start",
+    }
+
+
 def test_install_launcher_replaces_old_blind_local_bin_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

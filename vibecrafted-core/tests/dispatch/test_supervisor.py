@@ -16,6 +16,7 @@ from vibecrafted_core.dispatch.model import (
     STATE_VERIFIED,
     Dispatch,
 )
+from vibecrafted_core.dispatch import supervisor as supervisor_module
 from vibecrafted_core.dispatch.schema import parse_dispatch
 from vibecrafted_core.dispatch.supervisor import (
     CellRun,
@@ -168,6 +169,50 @@ prompt = "canonical dispatch report prompt"
     assert "/control_plane/runtime_runs/" not in run.report_path
     assert "/control_plane/runtime_runs/" in env["VIBECRAFTED_TRANSCRIPT_PATH"]
     assert "/control_plane/runtime_runs/" in env["VIBECRAFTED_META_PATH"]
+
+
+def test_workflow_cell_launcher_carries_cut_model_pin_into_spec(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dispatch, _reports_dir, _artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+model = "gpt-5-codex"
+prompt = "pinned cut"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+
+[[cuts]]
+id = "c2"
+agent = "claude"
+workflow = "implement"
+prompt = "unpinned cut"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+    )
+    captured: dict[str, str] = {}
+
+    def fake_launch_workflow(spec, _base_dir):
+        captured[spec.agent] = spec.model
+        return {"accepted": True, "run_id": "r", "pid": 1, "report": ""}
+
+    monkeypatch.setattr(supervisor_module, "launch_workflow", fake_launch_workflow)
+
+    launch = workflow_cell_launcher(dispatch, source_dir=tmp_path)
+    launch(dispatch.cuts[0], "pinned cut", "initial")
+    launch(dispatch.cuts[1], "unpinned cut", "initial")
+
+    # The pinned cut forwards its model into the launch spec; the unpinned
+    # cut forwards an empty pin (account default is a deliberate non-decision).
+    assert captured["codex"] == "gpt-5-codex"
+    assert captured["claude"] == ""
 
 
 def test_passing_cuts_flip_to_verified_and_emit_artifacts(tmp_path: Path) -> None:

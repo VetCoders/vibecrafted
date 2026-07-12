@@ -28,6 +28,13 @@ def write_research_config(config_home: Path, agents: list[str]) -> None:
     )
 
 
+def write_runtime_research_yaml(vibecrafted_home: Path, agents: list[str]) -> None:
+    config_dir = vibecrafted_home / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    lanes = "\n".join(f"  - agent: {agent}" for agent in agents)
+    (config_dir / "research.yaml").write_text(f"lanes:\n{lanes}\n", encoding="utf-8")
+
+
 def test_vc_research_help_is_pure_help() -> None:
     result = subprocess.run(
         ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-research --help'],
@@ -38,27 +45,41 @@ def test_vc_research_help_is_pure_help() -> None:
 
     assert result.returncode == 0
     assert "Configurable triple-agent research swarm launcher" in result.stdout
-    assert "Do not pass an agent directly to vc-research." in result.stdout
-    assert "vc-research uno <agent>" in result.stdout
+    assert "Positional agents override the YAML lane set" in result.stdout
+    assert "uno <agent>" in result.stdout
     assert "Research swarm launched" not in result.stdout
     assert "command not found" not in result.stdout
     assert "command not found" not in result.stderr
 
 
-def test_vc_research_rejects_agent_argument_without_helper_crash() -> None:
+def test_vc_research_positional_agent_launches_one_lane(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    crafted_home = tmp_path / "home" / ".vibecrafted"
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
     result = subprocess.run(
         [
             "bash",
             "-lc",
-            f'source "{HELPER_SCRIPT}"; vc-research codex --prompt "Check auth providers"',
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                f'vc-research codex --runtime headless --root "{root}" '
+                '--prompt "Check auth providers"'
+            ),
         ],
-        cwd=REPO_ROOT,
+        cwd=root,
+        env=env,
         capture_output=True,
         text=True,
     )
 
-    assert result.returncode != 0
-    assert "vc-research is a triple-agent swarm launcher" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert "Research override (codex) prepared" in result.stdout
     assert "command not found" not in result.stdout
     assert "command not found" not in result.stderr
 
@@ -91,7 +112,7 @@ def test_vc_research_uno_launches_one_requested_agent(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Research uno (codex) prepared" in result.stdout
+    assert "Research override (codex) prepared" in result.stdout
     assert "Research swarm prepared" not in result.stdout
 
     run_id_match = re.search(r"run_id=(rsch-[^)]+)", result.stdout)
@@ -120,6 +141,43 @@ def test_vc_research_uno_launches_one_requested_agent(tmp_path: Path) -> None:
     assert "- Codex:" in summary
     assert "- Claude:" not in summary
     assert "- Junie:" not in summary
+
+
+def test_vc_research_reads_runtime_owned_yaml(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    crafted_home = tmp_path / "home" / ".vibecrafted"
+    write_runtime_research_yaml(crafted_home, ["codex", "agy"])
+
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                f'vc-research --runtime headless --root "{root}" --prompt "yaml lanes"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    run_dir_match = re.search(r"Run directory: (.+)", result.stdout)
+    assert run_dir_match is not None, result.stdout
+    run_dir = Path(run_dir_match.group(1))
+    assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
+        "agy.meta.json",
+        "codex.meta.json",
+    ]
 
 
 def test_vc_research_generated_worker_prompts_do_not_leak_launcher_semantics(
@@ -225,7 +283,7 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
     root.mkdir()
     crafted_home = tmp_path / "home" / ".vibecrafted"
     config_home = tmp_path / "xdg"
-    write_research_config(config_home, ["grok", "codex", "gemini"])
+    write_research_config(config_home, ["grok", "codex", "agy"])
 
     env = os.environ.copy()
     env["VIBECRAFTED_HOME"] = str(crafted_home)
@@ -268,19 +326,19 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
     assert run_dir.parent.name == "research"
     assert (run_dir / "summary.md").is_file()
     assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
+        "agy.meta.json",
         "codex.meta.json",
-        "gemini.meta.json",
         "grok.meta.json",
     ]
     assert sorted(p.name for p in (run_dir / "tmp").glob("*_launch.sh")) == [
+        "agy_launch.sh",
         "codex_launch.sh",
-        "gemini_launch.sh",
         "grok_launch.sh",
     ]
     assert not list(run_dir.parent.parent.glob("reports/*rsch*.meta.json"))
     assert not list(run_dir.parent.parent.glob("tmp/vc-research-*"))
 
-    for agent in ("grok", "codex", "gemini"):
+    for agent in ("grok", "codex", "agy"):
         meta = json.loads((run_dir / "logs" / f"{agent}.meta.json").read_text())
         assert meta["run_id"] == run_id
         assert meta["skill_code"] == "rsch"
@@ -324,7 +382,7 @@ def test_runtime_picking_manifest_keeps_mainstream_default_researchers() -> None
     assert manifest["runtime"]["picking"]["research"]["default_agents"] == [
         "claude",
         "codex",
-        "gemini",
+        "agy",
     ]
     assert "grok" in manifest["runtime"]["picking"]["research"]["fallback_agents"]
 

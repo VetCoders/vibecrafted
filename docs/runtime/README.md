@@ -10,6 +10,10 @@ For the canonical product lifecycle — the read/write cadence of the
 `vc-ship` pipeline, the component architecture, and the async supervision
 model — see [`LIFECYCLE.md`](./LIFECYCLE.md).
 
+For the agent-ops canon — runtime failure classes of the multi-agent
+machinery (gate-nap, report-on-death) with confirmed remediations and
+supervisor watcher patterns — see [`AGENT_OPS.md`](./AGENT_OPS.md).
+
 ---
 
 ## Runtime Today

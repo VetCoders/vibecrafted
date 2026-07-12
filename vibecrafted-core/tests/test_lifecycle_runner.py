@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 from pathlib import Path
 
@@ -8,11 +9,17 @@ import pytest
 
 from vibecrafted_core import ship, wrappers
 from vibecrafted_core.lifecycle_runner import (
+    LIFECYCLE_SCHEMA_ID,
     LifecycleRunSpec,
     LifecycleRunner,
     LifecycleSupervisor,
 )
 from vibecrafted_core.workflows.model import WorkflowManifest, WorkflowStage
+from .lifecycle_schema_assertions import (
+    assert_lifecycle_state_matches_packaged_schema,
+    assert_worker_report_frontmatter_matches_packaged_schema,
+    packaged_lifecycle_schema,
+)
 
 
 def test_lifecycle_runner_triggers_audit_after_marbles(
@@ -63,6 +70,7 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
     )
 
     assert calls == ["marbles", "audit"]
+    assert state["schema"] == LIFECYCLE_SCHEMA_ID
     assert loop_options == [(2, 4)]
     assert state["status"] == "completed"
     assert (
@@ -84,6 +92,130 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
         len(Path(state["transcript_path"]).read_text(encoding="utf-8").splitlines())
         == 2
     )
+
+
+def test_lifecycle_runner_propagates_polarize_loop_options(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    loop_options: list[tuple[str, int | None, int | None]] = []
+
+    def fake_launcher(spec, _source_dir):
+        loop_options.append((spec.skill, spec.count, spec.depth))
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-polarize",
+                agent="codex",
+                prompt="cut excess",
+                root=str(tmp_path),
+                await_stages=True,
+                count=2,
+                depth=4,
+            )
+        )
+    )
+
+    assert loop_options == [("polarize", 2, 4)]
+    assert state["status"] == "completed"
+
+
+def test_lifecycle_runner_stamps_packaged_schema_contract(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+
+    def fake_launcher(spec, _source_dir):
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    def fake_awaiter(payload):
+        return {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        }
+
+    runner = LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter)
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-dou",
+                agent="codex",
+                prompt="validate contract",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+    written_state = json.loads(Path(state["state_path"]).read_text(encoding="utf-8"))
+    schema = packaged_lifecycle_schema()
+
+    assert written_state["schema"] == LIFECYCLE_SCHEMA_ID
+    assert LifecycleSupervisor().status(written_state)["schema"] == LIFECYCLE_SCHEMA_ID
+    assert_lifecycle_state_matches_packaged_schema(written_state)
+    frontmatter = schema["$defs"]["worker_report_frontmatter"]["properties"]
+    assert set(frontmatter) == {"next_stage", "next_agent", "dou_index", "status"}
+    assert_worker_report_frontmatter_matches_packaged_schema(
+        {
+            "next_stage": "audit",
+            "next_agent": "codex",
+            "dou_index": 0,
+            "status": "completed",
+        }
+    )
+    assert_worker_report_frontmatter_matches_packaged_schema({"dou_index": "0"})
+
+    wrong_action_shape = json.loads(json.dumps(written_state))
+    wrong_action_shape["operator_actions"] = {}
+    with pytest.raises(AssertionError, match="operator_actions"):
+        assert_lifecycle_state_matches_packaged_schema(wrong_action_shape)
+
+    wrong_stage_phase = json.loads(json.dumps(written_state))
+    wrong_stage_phase["stages"][0]["phase"] = "execute"
+    with pytest.raises(AssertionError, match="phase"):
+        assert_lifecycle_state_matches_packaged_schema(wrong_stage_phase)
+
+    missing_baton_cargo = json.loads(json.dumps(written_state))
+    del missing_baton_cargo["baton"]["previous_reports"]
+    with pytest.raises(AssertionError, match="previous_reports"):
+        assert_lifecycle_state_matches_packaged_schema(missing_baton_cargo)
+
+    with pytest.raises(AssertionError, match="dou_index"):
+        assert_worker_report_frontmatter_matches_packaged_schema({"dou_index": []})
 
 
 def test_lifecycle_runner_honours_worker_requested_next_stage(
@@ -231,6 +363,7 @@ def test_lifecycle_runner_stage_agent_pin_overrides_baton_holder(
                 phase="write",
                 order=2,
                 agent="gemini",
+                model="worker-tier",
             ),
         ),
         entry_stage="review",
@@ -244,9 +377,11 @@ def test_lifecycle_runner_stage_agent_pin_overrides_baton_holder(
         lambda _id: {"id": manifest.id},
     )
     agents: list[str] = []
+    models: list[str] = []
 
     def fake_launcher(spec, _source_dir):
         agents.append(spec.agent)
+        models.append(spec.model)
         report = tmp_path / f"{spec.skill}-{len(agents)}.md"
         report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
         return {
@@ -268,7 +403,7 @@ def test_lifecycle_runner_stage_agent_pin_overrides_baton_holder(
             LifecycleRunSpec(
                 workflow_id="vc-pinned",
                 agent="codex",
-                prompt="pin the writer",
+                prompt="---\nstage_models:\n  review: frontier\n---\npin the writer",
                 root=str(tmp_path),
                 await_stages=True,
             )
@@ -276,6 +411,7 @@ def test_lifecycle_runner_stage_agent_pin_overrides_baton_holder(
     )
 
     assert agents == ["codex", "gemini"]
+    assert models == ["frontier", "worker-tier"]
     assert state["status"] == "completed"
     # The pin runs its own stage only; the baton holder stays with the launch agent.
     assert state["baton"]["next_agent"] == "codex"
@@ -726,6 +862,7 @@ def test_lifecycle_supervisor_reports_status(monkeypatch, tmp_path: Path) -> Non
     status = supervisor.status(loaded)
 
     assert loaded["run_id"] == state["run_id"]
+    assert status["schema"] == LIFECYCLE_SCHEMA_ID
     assert status["workflow"] == "vc-dou"
     assert status["status"] == "launching"
     assert status["current_stage"] == "dou"
@@ -858,6 +995,32 @@ def test_vc_marbles_wrapper_uses_lifecycle_runner_with_loop_options(
     assert captured[0].depth == 7
 
 
+def test_vc_polarize_wrapper_uses_lifecycle_runner_with_loop_options(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec):
+        captured.append(spec)
+        return {
+            "run_id": "life-polarize-test",
+            "workflow": spec.workflow_id,
+            "status": "launching",
+            "state_path": str(tmp_path / "state.json"),
+            "report_path": str(tmp_path / "report.md"),
+        }
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.run_lifecycle", fake_run_lifecycle
+    )
+    rc = wrappers.polarize_main(["codex", "--count", "5", "--depth", "7"])
+
+    assert rc == 0
+    assert captured[0].workflow_id == "vc-polarize"
+    assert captured[0].count == 5
+    assert captured[0].depth == 7
+
+
 @pytest.mark.parametrize(
     ("wrapper_name", "workflow_id"),
     [
@@ -916,3 +1079,425 @@ def test_lifecycle_console_scripts_are_packaged() -> None:
         "vc-workflow",
     ):
         assert f"{name} = " in pyproject
+
+
+def test_status_surfaces_stage_worker_death_without_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from vibecrafted_core import lifecycle_runner
+
+    calls: list[str] = []
+
+    def fake_liveness(run_id: str) -> dict[str, object]:
+        calls.append(run_id)
+        return {
+            "run_id": run_id,
+            "found": True,
+            "state": "running",
+            "liveness": "pid_alive",
+            "worker_alive": False,
+            "recovery_required": False,
+        }
+
+    monkeypatch.setattr(lifecycle_runner, "run_liveness", fake_liveness)
+
+    report_path = tmp_path / "never-written.md"
+    state = {
+        "status": "launching",
+        "stages": [
+            {
+                "id": "implement",
+                "launch": {"run_id": "impl-dead-1", "report": str(report_path)},
+            }
+        ],
+        "baton": {},
+    }
+
+    stage_worker = LifecycleSupervisor().status(state)["stage_worker"]
+
+    assert calls == ["impl-dead-1"]
+    assert stage_worker["worker_alive"] is False
+    assert stage_worker["report_written"] is False
+    # The actionable report-on-death signal: this stage will never deliver on
+    # its own — recover with interrupt/fallback/approve.
+    assert stage_worker["worker_dead_without_report"] is True
+
+    # A dead worker that DID deliver its report is not a death signal — the
+    # normal no-await handoff looks exactly like this.
+    report_path.write_text("---\nstatus: completed\n---\ndone\n", encoding="utf-8")
+    stage_worker = LifecycleSupervisor().status(state)["stage_worker"]
+    assert stage_worker["report_written"] is True
+    assert stage_worker["worker_dead_without_report"] is False
+
+
+def test_status_skips_stage_worker_liveness_when_run_is_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecrafted_core import lifecycle_runner
+
+    def explode(_run_id: str) -> dict[str, object]:
+        raise AssertionError("terminal runs must not pay for a liveness sync")
+
+    monkeypatch.setattr(lifecycle_runner, "run_liveness", explode)
+
+    state = {
+        "status": "completed",
+        "stages": [{"id": "release", "launch": {"run_id": "rel-1"}}],
+        "baton": {},
+    }
+
+    assert LifecycleSupervisor().status(state)["stage_worker"] == {}
+
+
+def test_record_stage_worker_exit_writes_push_side_death(tmp_path: Path) -> None:
+    from vibecrafted_core.lifecycle_runner import record_stage_worker_exit
+
+    state_path = tmp_path / "state.json"
+    state = {
+        "status": "launching",
+        "stages": [
+            {"id": "scaffold", "launch": {"run_id": "scaf-1"}},
+            {"id": "implement", "launch": {"run_id": "impl-1"}},
+        ],
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    ok = record_stage_worker_exit(
+        state_path,
+        "impl-1",
+        {"state": "process_dead", "exit_code": 3, "artifact_ok": False},
+    )
+
+    assert ok is True
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    worker_exit = reloaded["stages"][1]["worker_exit"]
+    assert worker_exit["state"] == "process_dead"
+    assert worker_exit["exit_code"] == 3
+    assert worker_exit["recorded_at"]
+    # The passive-reader alarm: current stage of a still-waiting run.
+    assert reloaded["stage_worker_exit"]["stage"] == "implement"
+    assert reloaded["stage_worker_exit"]["run_id"] == "impl-1"
+
+
+def test_record_stage_worker_exit_keeps_history_quiet(tmp_path: Path) -> None:
+    from vibecrafted_core.lifecycle_runner import record_stage_worker_exit
+
+    state_path = tmp_path / "state.json"
+    state = {
+        "status": "launching",
+        "stages": [
+            {"id": "scaffold", "launch": {"run_id": "scaf-1"}},
+            {"id": "implement", "launch": {"run_id": "impl-1"}},
+        ],
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    # A superseded stage (fallback/approve relaunched past it) is history:
+    # annotate the stage, do NOT raise the top-level alarm.
+    assert record_stage_worker_exit(state_path, "scaf-1", {"state": "failed"})
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reloaded["stages"][0]["worker_exit"]["state"] == "failed"
+    assert "stage_worker_exit" not in reloaded
+
+    # Unknown run and corrupt state must fail closed, never raise.
+    assert record_stage_worker_exit(state_path, "no-such-run", {}) is False
+    assert record_stage_worker_exit(state_path, "", {}) is False
+    assert record_stage_worker_exit(tmp_path / "missing.json", "impl-1", {}) is False
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert record_stage_worker_exit(broken, "impl-1", {}) is False
+
+
+def test_start_stage_carries_lifecycle_state_path_to_launch_spec(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    seen_state_paths: list[str] = []
+
+    def fake_launcher(spec, _source_dir):
+        seen_state_paths.append(spec.lifecycle_state_path)
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-marbles",
+                agent="codex",
+                prompt="close the gaps",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    # Every stage launch tells the dispatcher which lifecycle state.json it
+    # belongs to — the push-side report-on-death write-back address.
+    assert seen_state_paths
+    assert all(path == state["state_path"] for path in seen_state_paths)
+
+
+def test_vc_ship_default_runtime_prefers_visible_tabs(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec):
+        captured.append(spec)
+        return {
+            "run_id": "life-ship-test",
+            "workflow": spec.workflow_id,
+            "status": "launching",
+            "state_path": str(tmp_path / "state.json"),
+            "report_path": str(tmp_path / "report.md"),
+        }
+
+    monkeypatch.setattr(ship, "run_lifecycle", fake_run_lifecycle)
+    # Operator invariant: workers fly visibly in vc-frame tabs. Ship must route
+    # through the fleet-wide resolution instead of hardcoding headless.
+    monkeypatch.setattr(
+        "vibecrafted_core.cli._default_runtime",
+        lambda explicit, root="": explicit or "terminal",
+    )
+
+    assert ship.main(["codex", "--prompt", "ship it"]) == 0
+    assert captured[0].runtime == "terminal"
+
+    # An explicit --runtime always wins over the resolved default.
+    assert ship.main(["codex", "--prompt", "quiet", "--runtime", "headless"]) == 0
+    assert captured[1].runtime == "headless"
+
+
+def test_mission_stage_agents_parses_inline_and_nested() -> None:
+    from vibecrafted_core.lifecycle_runner import _mission_stage_agents
+
+    inline = "---\nstage_agents: scaffold=claude, review=codex\n---\nmission"
+    assert _mission_stage_agents(inline) == {"scaffold": "claude", "review": "codex"}
+
+    nested = (
+        "---\n"
+        "doc_id: x\n"
+        "stage_agents:\n"
+        "  marbles: codex\n"
+        "  audit: claude\n"
+        "other: y\n"
+        "---\n"
+        "mission body\n"
+    )
+    assert _mission_stage_agents(nested) == {"marbles": "codex", "audit": "claude"}
+
+    assert _mission_stage_agents("plain mission, no frontmatter") == {}
+
+
+def test_mission_stage_models_parses_and_manifest_filters() -> None:
+    from vibecrafted_core.lifecycle_runner import (
+        _mission_stage_models,
+        _validated_stage_models,
+    )
+    from vibecrafted_core.workflows.registry import workflow_manifest
+
+    inline = "---\nstage_models: scaffold=opus, implement=gpt-5.5\n---\nmission"
+    assert _mission_stage_models(inline) == {
+        "scaffold": "opus",
+        "implement": "gpt-5.5",
+    }
+
+    nested = (
+        "---\n"
+        "doc_id: x\n"
+        "stage_models:\n"
+        "  marbles: opus\n"
+        "  audit: sonnet\n"
+        "  nosuch: cheap\n"
+        "---\n"
+        "mission body\n"
+    )
+    assert _mission_stage_models(nested) == {
+        "marbles": "opus",
+        "audit": "sonnet",
+        "nosuch": "cheap",
+    }
+
+    manifest = workflow_manifest("vc-marbles")
+    assert manifest is not None
+    assert _validated_stage_models(_mission_stage_models(nested), manifest) == {
+        "marbles": "opus",
+        "audit": "sonnet",
+    }
+    assert _mission_stage_models("plain mission, no frontmatter") == {}
+    assert _validated_stage_models({}, manifest) == {}
+
+
+def test_lifecycle_run_casts_stage_agents_from_mission_frontmatter(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    casting: list[tuple[str, str]] = []
+
+    def fake_launcher(spec, _source_dir):
+        casting.append((spec.skill, spec.agent))
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    mission = (
+        "---\n"
+        "stage_agents:\n"
+        "  marbles: codex\n"
+        "  audit: claude\n"
+        "---\n"
+        "# Mission: cast the relay A-to-Z\n"
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-marbles",
+                agent="gemini",
+                prompt=mission,
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    # The operator's A-to-Z casting drives every stage launch, overriding the
+    # run-level agent; the map is persisted for continuations and readers.
+    assert casting == [("marbles", "codex"), ("audit", "claude")]
+    assert state["spec"]["stage_agents"] == {"marbles": "codex", "audit": "claude"}
+
+
+def test_lifecycle_run_casts_stage_models_from_mission_frontmatter(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    casting: list[tuple[str, str, str]] = []
+
+    def fake_launcher(spec, _source_dir):
+        casting.append((spec.skill, spec.agent, spec.model))
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": f"{spec.skill}-run",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+            "model_requested": spec.model,
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    mission = (
+        "---\n"
+        "stage_agents:\n"
+        "  marbles: codex\n"
+        "  audit: claude\n"
+        "stage_models:\n"
+        "  marbles: opus\n"
+        "  audit: sonnet\n"
+        "  nosuch: ignored\n"
+        "---\n"
+        "# Mission: cast models A-to-Z\n"
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-marbles",
+                agent="gemini",
+                prompt=mission,
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert casting == [("marbles", "codex", "opus"), ("audit", "claude", "sonnet")]
+    assert state["spec"]["stage_models"] == {"marbles": "opus", "audit": "sonnet"}
+    assert [stage["model_requested"] for stage in state["stages"]] == [
+        "opus",
+        "sonnet",
+    ]
+    report = Path(state["report_path"]).read_text(encoding="utf-8")
+    assert "model_requested: opus" in report
+    assert "model_requested: sonnet" in report
+
+
+def test_lifecycle_run_rejects_invalid_stage_casting(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    runner = LifecycleRunner(
+        launcher=lambda spec, _src: {"accepted": True},
+        awaiter=lambda payload: {"completed": True},
+    )
+
+    with pytest.raises(ValueError, match="unknown stage 'nosuch'"):
+        asyncio.run(
+            runner.run(
+                LifecycleRunSpec(
+                    workflow_id="vc-marbles",
+                    agent="codex",
+                    prompt="---\nstage_agents: nosuch=claude\n---\nmission",
+                    root=str(tmp_path),
+                )
+            )
+        )
+
+    with pytest.raises(ValueError, match="unsupported agent 'hal9000'"):
+        asyncio.run(
+            runner.run(
+                LifecycleRunSpec(
+                    workflow_id="vc-marbles",
+                    agent="codex",
+                    prompt="---\nstage_agents: marbles=hal9000\n---\nmission",
+                    root=str(tmp_path),
+                )
+            )
+        )

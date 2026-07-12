@@ -46,7 +46,7 @@ _vetcoders_init_command_text() {
       printf 'gemini -y -i %s' "$quoted_prompt"
       ;;
     agy)
-      printf 'agy --prompt-interactive --dangerously-skip-permissions --add-dir . %s' "$quoted_prompt"
+      printf 'agy --dangerously-skip-permissions --add-dir . --prompt-interactive %s' "$quoted_prompt"
       ;;
     junie)
       printf 'junie --task=%s --project=. --skip-update-check --use-local-cache' "$quoted_prompt"
@@ -112,7 +112,7 @@ _vetcoders_operator_command_text() {
       printf 'gemini -y -i %s' "$quoted_prompt"
       ;;
     agy)
-      printf 'agy --prompt-interactive --dangerously-skip-permissions --add-dir . %s' "$quoted_prompt"
+      printf 'agy --dangerously-skip-permissions --add-dir . --prompt-interactive %s' "$quoted_prompt"
       ;;
     junie)
       printf 'junie --task=%s --project=. --skip-update-check --use-local-cache' "$quoted_prompt"

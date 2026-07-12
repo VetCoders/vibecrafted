@@ -86,17 +86,17 @@ ssh root@vc-workspace-<hostname>
 The container expects these host paths (mounted automatically by
 `compose.yaml`):
 
-| Host path                | Container path             | Purpose                                     |
-| ------------------------ | -------------------------- | ------------------------------------------- |
-| `~/.vibecrafted/vc-runtime/` | `/workspace/`          | Operator repos — the multiroot (read-write) |
-| `~/.aicx/`               | `/root/.aicx/`             | Canonical corpus (persistent)               |
-| `~/.keys/`               | `/root/.keys/` (ro)        | GPG passphrase, notary creds — read-only    |
-| `~/.claude/`             | `/root/.claude/`           | Claude sessions (persistent)                |
-| `~/.codex/`              | `/root/.codex/`            | Codex sessions (persistent)                 |
-| `~/.gemini/`             | `/root/.gemini/`           | Gemini sessions (persistent)                |
-| `~/.vibecrafted/`        | `/root/.vibecrafted/`      | vibecrafted artifacts (plans, reports)      |
-| `~/.config/vetcoders/`   | `/root/.config/vetcoders/` | Frontier config (starship, atuin, vc_frame) |
-| `~/.gnupg/`              | `/root/.gnupg/` (ro)       | GPG keyring for release-tag signing         |
+| Host path                    | Container path             | Purpose                                     |
+| ---------------------------- | -------------------------- | ------------------------------------------- |
+| `~/.vibecrafted/vc-runtime/` | `/workspace/`              | Operator repos — the multiroot (read-write) |
+| `~/.aicx/`                   | `/root/.aicx/`             | Canonical corpus (persistent)               |
+| `~/.keys/`                   | `/root/.keys/` (ro)        | GPG passphrase, notary creds — read-only    |
+| `~/.claude/`                 | `/root/.claude/`           | Claude sessions (persistent)                |
+| `~/.codex/`                  | `/root/.codex/`            | Codex sessions (persistent)                 |
+| `~/.gemini/`                 | `/root/.gemini/`           | Gemini sessions (persistent)                |
+| `~/.vibecrafted/`            | `/root/.vibecrafted/`      | vibecrafted artifacts (plans, reports)      |
+| `~/.config/vetcoders/`       | `/root/.config/vetcoders/` | Frontier config (starship, atuin, vc_frame) |
+| `~/.gnupg/`                  | `/root/.gnupg/` (ro)       | GPG keyring for release-tag signing         |
 
 ## Tailnet integration
 

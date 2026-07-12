@@ -144,8 +144,22 @@ _vetcoders_resume_agent() {
   local tool="$1"
   shift
   _vetcoders_parse_contract "$@" || return 1
+  # Positional form: `vc-resume <agent> <session_id> [prompt words...]`.
+  # Without --session the shared parser routes positionals into tail/prompt,
+  # but a resume cannot run without a session — promote the first tail token.
+  if [[ -z "$_vetcoders_contract_session" && -n "$_vetcoders_contract_tail" ]]; then
+    local -a _resume_positional=()
+    read -r -a _resume_positional <<<"$_vetcoders_contract_tail"
+    _vetcoders_contract_session="${_resume_positional[0]}"
+    local _resume_rest="${_vetcoders_contract_tail#"${_resume_positional[0]}"}"
+    _resume_rest="${_resume_rest# }"
+    if [[ "$_vetcoders_contract_prompt" == "$_vetcoders_contract_tail" ]]; then
+      _vetcoders_contract_prompt="$_resume_rest"
+    fi
+    _vetcoders_contract_tail="$_resume_rest"
+  fi
   [[ -n "$_vetcoders_contract_session" ]] || {
-    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
     return 1
   }
   [[ -z "$_vetcoders_contract_count" ]] || {
@@ -249,13 +263,14 @@ _vetcoders_resume_command() {
       fi
       ;;
     agy)
-      # agy resumes by --conversation <id>; headless needs --print
-      # (--prompt-interactive is, as the name says, interactive).
+      # agy resumes by --conversation <id>; headless needs --print <prompt>.
+      # Since agy 1.1 --print takes the prompt as its VALUE (Go flags) and
+      # print mode reads no stdin — flags first, prompt as the flag value.
       if [[ "$mode" == headless ]]; then
         if [[ -n "$resume_prompt" ]]; then
-          printf 'agy --print --dangerously-skip-permissions --conversation %s %s\n' "$quoted_session" "$quoted_prompt"
+          printf 'agy --dangerously-skip-permissions --conversation %s --print %s\n' "$quoted_session" "$quoted_prompt"
         else
-          printf 'agy --print --dangerously-skip-permissions --conversation %s\n' "$quoted_session"
+          printf 'agy --dangerously-skip-permissions --conversation %s --print "Continue."\n' "$quoted_session"
         fi
       elif [[ -n "$resume_prompt" ]]; then
         printf 'agy --conversation %s --prompt-interactive %s\n' "$quoted_session" "$quoted_prompt"
@@ -275,10 +290,12 @@ _vetcoders_resume_command() {
     grok)
       # grok --single is one-shot non-interactive. NEVER pass --restore-code: it
       # checks out the original session's commit and would clobber the working tree.
+      # Use streaming-json (matching verified python lane + grok 0.2.97 headless)
+      # so session/usage parse via JSON_TOKEN_PATTERNS works from transcript.
       if [[ -n "$resume_prompt" ]]; then
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format plain --single %s\n' "$quoted_session" "$quoted_prompt"
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json --single %s\n' "$quoted_session" "$quoted_prompt"
       else
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format plain\n' "$quoted_session"
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json\n' "$quoted_session"
       fi
       ;;
     *)
@@ -326,7 +343,7 @@ PY
 vc-resume() {
   local tool="${1:-}"
   [[ -n "$tool" ]] || {
-    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
     return 1
   }
   if [[ "$tool" == "--session" ]]; then

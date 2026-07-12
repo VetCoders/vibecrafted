@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import json
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -295,6 +297,69 @@ def test_lookup_run_uses_synced_snapshot(
     assert run["agent"] == "claude"
     assert run["launcher_pid"] == os.getpid()
     assert run["liveness"] == "pid_alive"
+
+
+def test_scoped_lookup_is_lockless_while_global_lock_is_held(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A per-run lookup must not queue behind the shared control-plane lock.
+
+    Regression for the flock migraine: one held global lock used to freeze every
+    per-run await/lookup for the full heartbeat window, mislabeling live workers
+    as stalled/pid_gone. The scoped path takes no lock, so it returns promptly
+    even while another holder owns the lock.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    _write_meta(
+        home,
+        {
+            "run_id": "work-030303-99",
+            "status": "running",
+            "agent": "codex",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "work",
+            "launcher_pid": os.getpid(),
+            "liveness": "pid_alive",
+        },
+    )
+    control_plane.control_plane_home().mkdir(parents=True, exist_ok=True)
+
+    holder = control_plane._sync_lock_path().open("a+", encoding="utf-8")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    try:
+        started = time.monotonic()
+        run = control_plane.lookup_run("work-030303-99")
+        elapsed = time.monotonic() - started
+
+        # Lockless: returns without waiting out any lock budget.
+        assert elapsed < 1.0
+        assert run is not None
+        assert run["agent"] == "codex"
+        assert run["launcher_pid"] == os.getpid()
+
+        # The hot emit path (append_event / _append_event) must NOT take the
+        # global lock: a spawn/stop event lands even while the lock is held.
+        from vibecrafted_core import events
+
+        events.append_event("lifecycle:active", "work-030303-99", "still moving")
+        control_plane.record_stop_transition(
+            "work-030303-99", accepted=False, reason="probe"
+        )
+        stream = control_plane.event_stream_path().read_text(encoding="utf-8")
+        assert "still moving" in stream
+        assert "stop rejected" in stream
+
+        # The board rebuild DOES take the lock — and now fails loud with a
+        # bounded budget instead of hanging forever.
+        monkeypatch.setenv("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S", "0.2")
+        with pytest.raises(control_plane.ControlPlaneLockBusy):
+            control_plane.sync_state()
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
 
 
 def test_sync_state_reconciles_dead_launcher_to_stalled(
@@ -900,6 +965,210 @@ def test_await_run_idle_stall_fires_when_worker_is_dead(
     assert payload["worker_alive"] is False
 
 
+def test_await_run_returns_report_delivered_when_worker_is_gone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dead worker + non-empty report is the sealed no-await handoff. Await
+    must return ``report_delivered`` on the first poll instead of idling out a
+    full window on the corpse and answering with a misleading ``idle_stall``
+    (which taught agents to distrust await and hedge with manual monitors)."""
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "100000")
+    report = tmp_path / "stage-report.md"
+    report.write_text("### Summary\ndelivered\n", encoding="utf-8")
+    _write_meta(
+        home,
+        {
+            "run_id": "revi-delivered-42",
+            "status": "running",
+            "agent": "junie",
+            "mode": "review",
+            "skill_code": "revi",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "worker_pid": 999999999,
+            "worker_pgid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    payload = control_plane.await_run(
+        "revi-delivered-42",
+        timeout_seconds=5,
+        interval_seconds=0.05,
+        hard_cap_seconds=5,
+        report_path=str(report),
+    )
+
+    assert payload["completed"] is True
+    assert payload["timed_out"] is False
+    assert payload["reason"] == "report_delivered"
+    assert payload["attempts"] == 1
+
+
+def test_await_run_report_alone_never_completes_a_live_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The inverse guard (fleet bug: `codex await` exited 0 on a still-live
+    run): while the worker is ALIVE, a non-empty report never completes the
+    wait — it may be mid-write, or a stale leftover from a previous attempt on
+    the same announced path. Liveness holds the window until the hard cap."""
+    import subprocess
+    import sys
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "stage-report.md"
+    report.write_text("### Summary\nstale or mid-write\n", encoding="utf-8")
+
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        _write_meta(
+            home,
+            {
+                "run_id": "revi-live-writer-42",
+                "status": "running",
+                "agent": "junie",
+                "mode": "review",
+                "skill_code": "revi",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "worker_pid": worker.pid,
+                "worker_pgid": worker.pid,
+                "liveness": "pid_alive",
+            },
+        )
+
+        payload = control_plane.await_run(
+            "revi-live-writer-42",
+            timeout_seconds=0.2,
+            interval_seconds=0.05,
+            hard_cap_seconds=0.6,
+            report_path=str(report),
+        )
+    finally:
+        worker.terminate()
+        worker.wait()
+
+    assert payload["completed"] is False
+    assert payload["timed_out"] is True
+    assert payload["reason"] == "hard_cap"
+    assert payload["worker_alive"] is True
+
+
+def test_await_run_terminal_looking_meta_never_completes_a_live_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """rc=0-on-live guard: stale terminal-looking metadata cannot beat OS liveness."""
+    import subprocess
+    import sys
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+
+    worker = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        _write_meta(
+            home,
+            {
+                "run_id": "impl-terminal-looking-live",
+                "status": "running",
+                "agent": "codex",
+                "mode": "implement",
+                "skill_code": "impl",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "worker_pid": worker.pid,
+                "worker_pgid": worker.pid,
+                "exit_code": 0,
+                "liveness": "terminal",
+            },
+        )
+
+        payload = control_plane.await_run(
+            "impl-terminal-looking-live",
+            timeout_seconds=0.2,
+            interval_seconds=0.05,
+            hard_cap_seconds=0.6,
+        )
+    finally:
+        worker.terminate()
+        worker.wait()
+
+    assert payload["completed"] is False
+    assert payload["timed_out"] is True
+    assert payload["reason"] == "hard_cap"
+    assert payload["worker_alive"] is True
+
+
+def test_await_run_live_child_keeps_loop_parent_open_past_idle_window(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Marbles/polarize loop parents freeze between rounds — no transcript of
+    their own, sometimes no live pid — while the children do the real work in
+    separate ``<parent>-…-L<n>`` records linked only by id prefix. A live
+    child must keep the parent's await open: the run stops only at the hard
+    cap, never on a false ``idle_stall`` mid-loop (the premature return that
+    made supervising agents double-guard await with manual monitors)."""
+    import subprocess
+    import sys
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "100000")
+    _write_meta(
+        home,
+        {
+            "run_id": "marb-loop-parent",
+            "status": "running",
+            "agent": "codex",
+            "mode": "marbles",
+            "skill_code": "marb",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "worker_pid": 999999999,
+            "worker_pgid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        _write_meta(
+            home,
+            {
+                "run_id": "marb-loop-parent-marbles-L2",
+                "status": "running",
+                "agent": "codex",
+                "mode": "marbles",
+                "skill_code": "marb",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "worker_pid": child.pid,
+                "worker_pgid": child.pid,
+                "liveness": "pid_alive",
+            },
+        )
+
+        payload = control_plane.await_run(
+            "marb-loop-parent",
+            timeout_seconds=0.2,
+            interval_seconds=0.05,
+            hard_cap_seconds=0.8,
+        )
+    finally:
+        child.terminate()
+        child.wait()
+
+    # Stopped only by the absolute ceiling: the dead-pid parent survived many
+    # idle-window lengths because its live child kept resetting the deadline.
+    assert payload["timed_out"] is True
+    assert payload["reason"] == "hard_cap"
+    assert payload["worker_alive"] is True
+    assert payload["attempts"] >= 3
+
+
 def test_sync_state_projects_event_stream_lifecycle(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1040,3 +1309,46 @@ def test_block_run_lever_pins_terminal_blocked_state(
     assert run["operator_state"] == "blocked"
     assert run["health"] == "final"
     assert run["failure_card"] is not None
+
+
+def test_run_liveness_projects_reconciled_worker_truth(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+    import sys
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    _write_meta(
+        home,
+        {
+            "run_id": "impl-dead-worker",
+            "status": "running",
+            "agent": "codex",
+            "mode": "workflow",
+            "skill_code": "impl",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "worker_pid": dead.pid,
+            "worker_pgid": dead.pid,
+            "liveness": "pid_alive",
+        },
+    )
+
+    payload = control_plane.run_liveness("impl-dead-worker")
+
+    # The report-on-death gap: a startup corpse must be tellable from slow
+    # work by OS liveness, not inferred from an eternally-"running" status.
+    assert payload["found"] is True
+    assert payload["worker_alive"] is False
+    assert isinstance(payload["state"], str)
+    assert isinstance(payload["recovery_required"], bool)
+
+    assert control_plane.run_liveness("no-such-run") == {
+        "run_id": "no-such-run",
+        "found": False,
+    }
+    assert control_plane.run_liveness("")["found"] is False

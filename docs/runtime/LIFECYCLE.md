@@ -145,6 +145,153 @@ Stage workers steer the lifecycle through their report YAML frontmatter
   operator-accepted gaps) and reads the live report frontmatter in no-await
   mode. Absent or invalid values read as unknown, never as a fake zero.
 
+## Lifecycle contract: `vibecrafted.lifecycle.v1`
+
+Lifecycle `state.json` is now a versioned external contract, not an internal
+accident. Every fresh state document carries:
+
+```json
+{ "schema": "vibecrafted.lifecycle.v1" }
+```
+
+The machine-readable JSON Schema ships inside the core package at
+`vibecrafted_core/schemas/lifecycle.schema.v1.json` and is exposed to MCP
+clients as the `vibecrafted://lifecycle/schema` resource.
+
+Within v1, changes are additive only: existing keys keep their names, types,
+and semantics. A breaking lifecycle state or worker-report frontmatter change
+requires a `vibecrafted.lifecycle.v2` schema and a parallel compatibility
+period. The single writer remains Python
+(`vibecrafted_core.lifecycle_runner` / `lifecycle_control`); Rust
+`control-core`, HTTP endpoints, MCP, Codescribe, and Pensieve are readers or
+operator-command surfaces only.
+
+The v1 state contract covers:
+
+- top-level run identity and paths: `schema`, `run_id`, `workflow`, `agent`,
+  `root`, `status`, `state_path`, `report_path`, `transcript_path`;
+- execution shape: `await_stages`, `parent_run_id`, `spec`, `manifest`,
+  `context_atlas`, `supervisor`, `human_controls`;
+- lifecycle state: `operator_actions`, `baton`, `stages`, `next_stage`,
+  `error`;
+- DoU state: `dou_index`, `accepted_dou`, `accepted_dou_findings`.
+
+Worker report frontmatter is the steering side of the same contract:
+
+- `next_stage: <stage-id>` — requested next manifest stage;
+- `next_agent: <agent-id>` — requested baton holder;
+- `dou_index: <int>` — open DoU findings, where `0` is launch-ready;
+- `status: <string>` — worker report metadata. Current runtime steering reads
+  `next_stage`, `next_agent`, and `dou_index`; do not treat `status` as a
+  transition control until the runtime explicitly does.
+
+### Codescribe consumer recipe
+
+Codescribe drives lifecycle runs through the umbrella MCP verbs:
+`vc_lifecycle_runs`, `vc_lifecycle_status`, `vc_lifecycle_approve`,
+`vc_lifecycle_interrupt`, `vc_lifecycle_force_audit`,
+`vc_lifecycle_accept_dou`, and `vc_lifecycle_fallback`. Read
+`vc_lifecycle_status.result.schema` before relying on fields, and fetch
+`vibecrafted://lifecycle/schema` when the client needs the full contract.
+Use the operator verbs for mutation; never write `state.json` directly.
+
+### Pensieve consumer recipe
+
+Pensieve reads lifecycle truth through the Rust read-model and HTTP endpoints:
+`/api/control/lifecycle` for summaries and
+`/api/control/lifecycle/{run_id}` for the full nested state. Branch on
+`schema == "vibecrafted.lifecycle.v1"` before interpreting lifecycle-specific
+fields. The server is a reader/projection layer; it must not become a second
+lifecycle writer.
+
+### Consumer proof packet
+
+Use this packet when handing the v1 contract to Codescribe, Pensieve, or another
+reader. It is repo-local proof, not live external acceptance: release still
+needs one captured read from each real consumer environment.
+
+Contract identifiers:
+
+- State schema id: `vibecrafted.lifecycle.v1`
+- Packaged schema path: `vibecrafted_core/schemas/lifecycle.schema.v1.json`
+- MCP schema resource: `vibecrafted://lifecycle/schema`
+- HTTP summaries: `GET /api/control/lifecycle`
+- HTTP detail: `GET /api/control/lifecycle/{run_id}`
+
+MCP status payload shape:
+
+```json
+{
+  "result": {
+    "run_id": "smoke-life",
+    "schema": "vibecrafted.lifecycle.v1",
+    "workflow": "vc-ship",
+    "status": "completed",
+    "next_stage": "release"
+  }
+}
+```
+
+HTTP summary payload shape:
+
+```json
+{
+  "count": 1,
+  "lifecycle_runs": [
+    {
+      "run_id": "smoke-life",
+      "schema": "vibecrafted.lifecycle.v1",
+      "workflow": "vc-ship",
+      "current_stage": "hydrate",
+      "next_stage": "release",
+      "dou_readiness": "zero"
+    }
+  ]
+}
+```
+
+HTTP detail payload shape:
+
+```json
+{
+  "run_id": "smoke-life",
+  "schema": "vibecrafted.lifecycle.v1",
+  "baton": {
+    "next_stage": "release"
+  },
+  "stages": [
+    {
+      "id": "hydrate",
+      "status": "completed"
+    }
+  ],
+  "dou_index": {
+    "value": 0
+  }
+}
+```
+
+Repo gates that currently prove the contract surface:
+
+```bash
+.venv/bin/pytest vibecrafted-core/tests -q
+.venv/bin/pytest vibecrafted-mcp/tests -q
+make server-check
+make server-test
+make server-smoke
+```
+
+Release-time live acceptance checklist:
+
+- Codescribe reads `vibecrafted://lifecycle/schema` and records
+  `vc_lifecycle_status.result.schema == "vibecrafted.lifecycle.v1"` from its
+  own MCP client runtime.
+- Pensieve reads `/api/control/lifecycle` and
+  `/api/control/lifecycle/{run_id}` from its own control-core or HTTP runtime
+  and records `schema == "vibecrafted.lifecycle.v1"` in both payloads.
+- Neither consumer writes `state.json`; all mutations go through lifecycle
+  operator verbs.
+
 Boundaries:
 
 - do not edit `state.json` by hand without recording why in the report or

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts import vetcoders_install as installer
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -104,6 +106,55 @@ def test_bundle_check_uses_portable_mktemp_template() -> None:
     assert 'mktemp "$$tmp_root/vibecrafted-bundle.XXXXXX.plugin"' not in text
 
 
+def test_bundle_targets_use_distribution_manifest_for_runtime_archive() -> None:
+    text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    bundle_block = text.split("\nbundle:\n", 1)[1].split("\nbundle-check:\n", 1)[0]
+    check_block = text.split("\nbundle-check:\n", 1)[1].split(
+        "\nversion version-show:", 1
+    )[0]
+
+    for block in (bundle_block, check_block):
+        assert "scripts/distribution_manifest.py archive" in block
+        assert "scripts/distribution_manifest.py check" in check_block
+    assert (
+        "BUNDLE_ARCHIVE ?= $(SOURCE)/dist/vibecrafted-$(BUNDLE_VERSION).tar.gz" in text
+    )
+    assert '--root-name "vibecrafted-$(BUNDLE_VERSION)"' in bundle_block
+    assert "build_marketplace_bundle.py" in bundle_block
+    assert "build_marketplace_bundle.py" in check_block
+    assert "cmp -s" not in check_block
+    assert 'test -s "$$tmp_bundle"' in check_block
+    assert check_block.lstrip().startswith("@set -e;")
+
+
+def test_control_plane_staging_delegates_to_distribution_manifest(
+    monkeypatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    seen: dict[str, object] = {}
+
+    def fake_stage(src: Path, dst: Path, *, mirror: bool) -> None:
+        seen.update(source=src, destination=dst, mirror=mirror)
+        dst.mkdir(parents=True)
+        (dst / "payload.txt").write_text("validated\n", encoding="utf-8")
+
+    monkeypatch.setattr(installer, "stage_distribution_payload", fake_stage)
+
+    installer.sync_control_plane_tree(source, destination, mirror=True)
+
+    assert seen["source"] == source
+    assert seen["destination"] != destination
+    assert Path(seen["destination"]).parent == destination.parent
+    assert seen["mirror"] is True
+    assert (destination / "payload.txt").read_text(encoding="utf-8") == "validated\n"
+    source_text = (REPO_ROOT / "scripts" / "vetcoders_install.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_CONTROL_PLANE_EXCLUDES" not in source_text
+
+
 def test_install_manifest_post_install_uses_mirror_sync() -> None:
     text = (REPO_ROOT / "install.toml").read_text(encoding="utf-8")
 
@@ -112,6 +163,51 @@ def test_install_manifest_post_install_uses_mirror_sync() -> None:
         "--compact --non-interactive --mirror"
     ) in text
     assert "make --no-print-directory install-python-tools" in text
+
+
+def test_installer_copies_skill_rules_to_fresh_skills_root(tmp_path: Path) -> None:
+    source_skills = tmp_path / "source" / "skills"
+    install_skills = tmp_path / "install" / "skills"
+    runtime_skills = tmp_path / "home" / ".claude" / "skills"
+    installed_skill = install_skills / "vc-implement"
+    runtime_skill = runtime_skills / "vc-implement"
+
+    (source_skills / "vc-implement").mkdir(parents=True)
+    (source_skills / "vc-implement" / "SKILL.md").write_text(
+        "See [Verification Rule](../VERIFICATION_RULE.md).\n"
+        "See [Living Tree Rule](../LIVING_TREE_RULE.md).\n",
+        encoding="utf-8",
+    )
+    (source_skills / "VERIFICATION_RULE.md").write_text(
+        "# Verification\n", encoding="utf-8"
+    )
+    (source_skills / "LIVING_TREE_RULE.md").write_text(
+        "# Living Tree\n", encoding="utf-8"
+    )
+    (source_skills / "pl").mkdir()
+    (source_skills / "pl" / "LIVING_TREE_RULE.md").write_text(
+        "# Zywe Drzewo\n", encoding="utf-8"
+    )
+    installed_skill.mkdir(parents=True)
+    runtime_skill.mkdir(parents=True)
+
+    copied = installer.sync_skill_root_rules(source_skills, install_skills)
+    copied_again = installer.sync_skill_root_rules(source_skills, install_skills)
+    runtime_copied = installer.sync_skill_root_rules(source_skills, runtime_skills)
+
+    assert copied == copied_again
+    assert runtime_copied == copied
+    assert Path("VERIFICATION_RULE.md") in copied
+    assert Path("LIVING_TREE_RULE.md") in copied
+    assert Path("pl/LIVING_TREE_RULE.md") in copied
+    assert (installed_skill / ".." / "VERIFICATION_RULE.md").is_file()
+    assert (installed_skill / ".." / "LIVING_TREE_RULE.md").is_file()
+    assert (runtime_skills / "VERIFICATION_RULE.md").is_file()
+    assert (runtime_skills / "LIVING_TREE_RULE.md").is_file()
+    assert (runtime_skill / ".." / "VERIFICATION_RULE.md").is_file()
+    assert (install_skills / "pl" / "LIVING_TREE_RULE.md").is_file()
+    assert (runtime_skills / "pl" / "LIVING_TREE_RULE.md").is_file()
+    assert not (install_skills / "pl" / "VERIFICATION_RULE.md").exists()
 
 
 def test_install_all_paths_do_not_install_shell_helpers_by_default() -> None:

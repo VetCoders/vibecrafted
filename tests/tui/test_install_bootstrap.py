@@ -7,6 +7,7 @@ import select
 import shlex
 import signal
 import subprocess
+import sys
 import tarfile
 import time
 from pathlib import Path
@@ -18,6 +19,28 @@ INSTALL_SH = REPO_ROOT / "install.sh"
 def _write_executable(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
+
+
+def _write_distribution_manifest_stub(source_dir: Path) -> None:
+    path = source_dir / "scripts" / "distribution_manifest.py"
+    path.write_text(
+        """#!/usr/bin/env python3
+from pathlib import Path
+import shutil
+import sys
+
+if sys.argv[1] == "check":
+    raise SystemExit(0)
+if sys.argv[1] != "stage":
+    raise SystemExit(2)
+source = Path(sys.argv[sys.argv.index("--source") + 1])
+destination = Path(sys.argv[sys.argv.index("--destination") + 1])
+if destination.exists():
+    shutil.rmtree(destination)
+shutil.copytree(source, destination, symlinks=True)
+""",
+        encoding="utf-8",
+    )
 
 
 def _run_with_tty(
@@ -113,6 +136,16 @@ def test_install_sh_quiets_tar_xattr_noise_and_hides_make_directory_trace() -> N
     assert "make --no-print-directory -C" in text
 
 
+def test_install_sh_stages_archives_through_distribution_manifest() -> None:
+    text = INSTALL_SH.read_text(encoding="utf-8")
+
+    assert 'manifest_helper="$source_dir/scripts/distribution_manifest.py"' in text
+    assert '"$manifest_helper" stage' in text
+    assert '--source "$source_dir"' in text
+    assert '--destination "$incoming_dir"' in text
+    assert 'mv "$source_dir" "$incoming_dir"' not in text
+
+
 def test_install_sh_attended_pipe_requires_explicit_yes_before_staging(
     tmp_path: Path,
 ) -> None:
@@ -126,6 +159,7 @@ def test_install_sh_attended_pipe_requires_explicit_yes_before_staging(
 
     (source_dir / "Makefile").write_text("install:\n\t@echo ok\n", encoding="utf-8")
     (scripts_dir / "placeholder").write_text("", encoding="utf-8")
+    _write_distribution_manifest_stub(source_dir)
 
     with tarfile.open(archive_path, "w:gz") as archive:
         archive.add(source_dir, arcname="vibecrafted-main")
@@ -176,6 +210,7 @@ def test_install_sh_yes_skips_attended_prompt_for_pipe_bootstrap(
     )
     (scripts_dir / "placeholder").write_text("", encoding="utf-8")
     (scripts_dir / "vetcoders_install.py").write_text("# compact\n", encoding="utf-8")
+    _write_distribution_manifest_stub(source_dir)
 
     with tarfile.open(archive_path, "w:gz") as archive:
         archive.add(source_dir, arcname="vibecrafted-main")
@@ -234,6 +269,7 @@ def test_install_sh_runtime_flag_dispatches_staged_runtime_helper(
         'printf "%s\\n" "$@" > "$RUNTIME_CAPTURE"\n',
         encoding="utf-8",
     )
+    _write_distribution_manifest_stub(source_dir)
 
     with tarfile.open(archive_path, "w:gz") as archive:
         archive.add(source_dir, arcname="vibecrafted-main")
@@ -282,6 +318,7 @@ def test_install_sh_archive_install_runs_local_make_target(tmp_path: Path) -> No
 
     (source_dir / "Makefile").write_text("install:\n\t@echo ok\n", encoding="utf-8")
     (scripts_dir / "placeholder").write_text("", encoding="utf-8")
+    _write_distribution_manifest_stub(source_dir)
 
     with tarfile.open(archive_path, "w:gz") as archive:
         archive.add(source_dir, arcname="vibecrafted-main")
@@ -303,6 +340,7 @@ def test_install_sh_archive_install_runs_local_make_target(tmp_path: Path) -> No
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                f'if [[ "$1" == */distribution_manifest.py ]]; then exec {shlex.quote(sys.executable)} "$@"; fi',
                 'printf "unexpected\\n" > "$PYTHON_CAPTURE"',
                 "exit 97",
             ]
@@ -354,6 +392,7 @@ def test_install_sh_gui_bootstrap_runs_local_guided_installer(tmp_path: Path) ->
     (source_dir / "Makefile").write_text("install:\n\t@echo ok\n", encoding="utf-8")
     (scripts_dir / "installer_gui.py").write_text("# gui\n", encoding="utf-8")
     (scripts_dir / "placeholder").write_text("", encoding="utf-8")
+    _write_distribution_manifest_stub(source_dir)
 
     with tarfile.open(archive_path, "w:gz") as archive:
         archive.add(source_dir, arcname="vibecrafted-main")
@@ -375,6 +414,7 @@ def test_install_sh_gui_bootstrap_runs_local_guided_installer(tmp_path: Path) ->
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
+                f'if [[ "$1" == */distribution_manifest.py ]]; then exec {shlex.quote(sys.executable)} "$@"; fi',
                 'printf "%s\\n" "$@" > "$PYTHON_CAPTURE"',
             ]
         )
@@ -435,6 +475,7 @@ def _run_storytelling_bootstrap(
         (source_dir / "Makefile").write_text("install:\n\t@echo ok\n", encoding="utf-8")
         (source_dir / "VERSION").write_text("9.9.9-test\n", encoding="utf-8")
         (scripts_dir / "placeholder").write_text("", encoding="utf-8")
+        _write_distribution_manifest_stub(source_dir)
         with tarfile.open(archive_path, "w:gz") as archive:
             archive.add(source_dir, arcname="vibecrafted-main")
         _write_executable(

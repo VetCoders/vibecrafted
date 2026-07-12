@@ -55,7 +55,7 @@ Standard launcher (`vibecrafted start` / `vc-start`, then `vc-<workflow> <agent>
 ```bash
 vibecrafted workflow claude --prompt 'Examine auth surface and implement fixes'
 vc-workflow codex --prompt 'Research SSO options then implement the best fit'
-vibecrafted workflow gemini --file /path/to/research-plan.md
+vibecrafted workflow agy --file /path/to/research-plan.md   # gemini deprecated; agy is Google replacement
 ```
 
 Foundation deps (loaded with framework): `vc-loctree`, `vc-aicx`.
@@ -124,7 +124,7 @@ Write to `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>
 ```markdown
 ---
 run_id: <id>
-agent: <claude|codex|gemini>
+agent: <claude|codex|agy>
 skill: vc-workflow
 project: <repo>
 status: completed
@@ -179,7 +179,7 @@ WebFetch directly: query `"<API> usage example <year>"`, fetch standard docs.
 ```markdown
 ---
 run_id: <id>
-agent: <claude|codex|gemini>
+agent: <claude|codex|agy>
 skill: vc-workflow
 project: <repo>
 status: completed
@@ -243,6 +243,17 @@ Follow `vc-agents` for spawn commands (portable scripts preferred). Plans →
 default `plans/`, reports → default `reports/` under
 `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/`. Repo-local
 `.vibecrafted/plans` and `.vibecrafted/reports` are convenience symlinks only.
+
+After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+do not normalize the hedge. See `docs/runtime/AGENT_OPS.md`.
+
+3-signal liveness: await verdict, terminal run meta, worker pid dead, plus
+promised report presence. Two agreeing signals are enough to act, three to
+declare done; any disagreement means treat as live and re-arm await. Known skew:
+rc=0-on-live and meta stuck `active`/`stalled` after real completion.
 
 ### Phase 4 — CONVERGE (Marbles & Polarize)
 

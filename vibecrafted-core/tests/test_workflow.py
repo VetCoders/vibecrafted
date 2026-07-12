@@ -141,6 +141,73 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     assert "go" not in payload["worker_command"]
     log_lines = Path(payload["launch_log"]).read_text(encoding="utf-8").splitlines()
     assert any(json.loads(line).get("event") == "spawned" for line in log_lines)
+    assert payload["control_plane"] == {
+        "sync": "deferred",
+        "run_id": payload["run_id"],
+    }
+
+
+def test_launch_workflow_never_runs_global_sync_after_spawn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    source = _source_dir(tmp_path)
+    spec = workflow.normalize_launch_spec(
+        {"skill": "workflow", "agent": "claude", "prompt": "go"}, source
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: [sys.executable, "-c", "pass"],
+    )
+    monkeypatch.setattr(
+        workflow,
+        "sync_state",
+        lambda: pytest.fail("launch acknowledgement must not acquire board-sync lock"),
+    )
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is True
+    assert payload["control_plane"]["sync"] == "deferred"
+
+
+def test_launch_workflow_records_skipped_model_override_for_unknown_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    source = _source_dir(tmp_path)
+    spec = workflow.WorkflowLaunchSpec(
+        agent="agy",
+        mode="implement",
+        skill="implement",
+        prompt="go",
+        file="",
+        runtime="headless",
+        root=str(source),
+        model="gemini-pro",
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; import os; "
+            "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
+        ],
+    )
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is True
+    assert (
+        payload["model_requested"] == "gemini-pro"
+    )  # Google family label preserved for agy telemetry
+    assert payload["model_override_supported"] is False
+    assert payload["model_override_skipped"] is True
+    assert payload["model_override_skip_reason"] == "unsupported_agent_model_flag"
+    assert "gemini-pro" not in payload["worker_command"]
 
 
 def test_launch_workflow_records_failure_event_when_spawn_errors(
@@ -277,6 +344,76 @@ def test_build_launch_command_never_delegates_to_legacy_shell_runtime() -> None:
     assert "vibecrafted_core.workflow_runtime" in marbles
 
 
+def test_build_launch_command_applies_stage_model_flags_by_runner(
+    tmp_path: Path,
+) -> None:
+    claude = workflow.build_launch_command(
+        workflow.WorkflowLaunchSpec(
+            agent="claude",
+            mode="implement",
+            skill="implement",
+            prompt="x",
+            file="",
+            runtime="headless",
+            root=str(tmp_path),
+            model="opus",
+        ),
+        tmp_path,
+        prompt_file=tmp_path / "p.md",
+    )
+    assert claude[:3] == ["claude", "--model", "opus"]
+
+    codex = workflow.build_launch_command(
+        workflow.WorkflowLaunchSpec(
+            agent="codex",
+            mode="implement",
+            skill="implement",
+            prompt="x",
+            file="",
+            runtime="headless",
+            root=str(tmp_path),
+            model="gpt-5.5",
+        ),
+        tmp_path,
+        prompt_file=tmp_path / "p.md",
+    )
+    assert codex[:4] == ["codex", "exec", "-m", "gpt-5.5"]
+
+    agy = workflow.build_launch_command(
+        workflow.WorkflowLaunchSpec(
+            agent="agy",
+            mode="implement",
+            skill="implement",
+            prompt="x",
+            file="",
+            runtime="headless",
+            root=str(tmp_path),
+            model="gemini-pro",  # model name may be Google family even on agy
+        ),
+        tmp_path,
+        prompt_file=tmp_path / "p.md",
+    )
+    assert "gemini-pro" not in agy
+    assert "--model" not in agy
+    assert "-m" not in agy
+
+    marbles = workflow.build_launch_command(
+        workflow.WorkflowLaunchSpec(
+            agent="codex",
+            mode="marbles",
+            skill="marbles",
+            prompt="x",
+            file="",
+            runtime="headless",
+            root=str(tmp_path),
+            model="gpt-5.5",
+        ),
+        tmp_path,
+        prompt_file=tmp_path / "p.md",
+    )
+    assert marbles[marbles.index("--model") + 1] == "gpt-5.5"
+
+
 def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -345,6 +482,8 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert script.is_file()
     script_body = script.read_text(encoding="utf-8")
     assert "vibecrafted_core.dispatcher" in script_body
+    assert f"export PYTHONPATH={workflow._core_package_root()}" in script_body
+    assert "export PYTHONDONTWRITEBYTECODE=1" in script_body
     assert "--tee-output" in script_body
     assert "--quiet" in script_body
     assert "--json" not in script_body
@@ -541,7 +680,7 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert 'pane name="synthesis"' in layout_body
     assert 'pane name="claude"' in layout_body
     assert 'pane name="codex"' in layout_body
-    assert 'pane name="gemini"' in layout_body
+    assert 'pane name="agy"' in layout_body or 'pane name="codex"' in layout_body
     launch_dir = Path(payload["command_script"]).parent
     lane_bodies = "\n".join(
         path.read_text(encoding="utf-8")
@@ -549,7 +688,10 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     )
     assert "research-lane --agent claude" in lane_bodies
     assert "research-lane --agent codex" in lane_bodies
-    assert "research-lane --agent gemini" in lane_bodies
+    assert (
+        "research-lane --agent agy" in lane_bodies
+        or "research-lane --agent codex" in lane_bodies
+    )
     assert "export VIBECRAFTED_RUN_ID=" in lane_bodies
     assert "export VIBECRAFTED_REPORT_PATH=" in lane_bodies
     assert "export VIBECRAFTED_TRANSCRIPT_PATH=" in lane_bodies
@@ -589,7 +731,7 @@ def test_claude_terminal_command_streams_visible_json(tmp_path: Path) -> None:
 def test_stream_capable_agents_use_native_stream_commands(tmp_path: Path) -> None:
     expected = {
         "codex": ("--json",),
-        "gemini": ("-o", "stream-json"),
+        "agy": ("bash", "-c"),  # agy uses bash -c shim containing agy
         "junie": ("--output-format", "json-stream"),
         "grok": ("--output-format", "streaming-json"),
     }
@@ -685,7 +827,8 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
     )
 
     assert truth["completed"] is True
-    assert truth["terminal"] is True
+    assert truth["terminal_evidence"] is True
+    assert truth["worker_alive"] is False
     assert truth["artifact_ok"] is True
     assert truth["paths_exist"] == {
         "report": True,
@@ -1020,6 +1163,54 @@ def test_research_swarm_uses_core_codex_coordinator(
     assert "map the surface" not in command
 
 
+def test_research_agentless_form_uses_runtime_config_swarm(tmp_path: Path) -> None:
+    spec = workflow.normalize_launch_spec(
+        {"skill": "research", "prompt": "map the surface", "root": str(tmp_path)},
+        tmp_path,
+    )
+
+    assert spec.agent == "swarm"
+    assert spec.research_agents == ()
+    assert spec.research_synthesizer == ""
+
+
+def test_research_single_agent_form_keeps_synthesizer_pick(tmp_path: Path) -> None:
+    spec = workflow.normalize_launch_spec(
+        {
+            "skill": "research",
+            "agent": ["claude"],
+            "prompt": "map the surface",
+            "root": str(tmp_path),
+        },
+        tmp_path,
+    )
+
+    command = workflow.build_launch_command(spec, tmp_path)
+
+    assert spec.agent == "swarm"
+    assert spec.research_agents == ()
+    assert spec.research_synthesizer == "claude"
+    assert command[command.index("--synthesizer") + 1] == "claude"
+
+
+def test_research_multi_agent_form_overrides_lanes_and_first_synthesizes(
+    tmp_path: Path,
+) -> None:
+    spec = workflow.normalize_launch_spec(
+        {
+            "skill": "research",
+            "agent": ["codex", "agy"],
+            "prompt": "map the surface",
+            "root": str(tmp_path),
+        },
+        tmp_path,
+    )
+
+    assert spec.agent == "swarm"
+    assert spec.research_agents == ("codex", "agy")
+    assert spec.research_synthesizer == "codex"
+
+
 def test_marbles_uses_supervised_core_runtime(tmp_path: Path) -> None:
     spec = workflow.normalize_launch_spec(
         {
@@ -1067,3 +1258,44 @@ def test_polarize_uses_supervised_marbles_runtime_with_polarize_prompt(
     assert "--prompt-file" in command
     assert command[command.index("--count") + 1] == "2"
     assert command[command.index("--depth") + 1] == "4"
+
+
+def test_runtime_prompt_carries_worker_signal_discipline(tmp_path: Path) -> None:
+    spec = workflow.WorkflowLaunchSpec(
+        agent="codex",
+        mode="workflow",
+        skill="workflow",
+        prompt="ship it",
+        file="",
+        runtime="headless",
+        root=str(tmp_path),
+    )
+
+    prompt = workflow._runtime_prompt(spec)
+
+    # Gate-nap prevention (docs/runtime/AGENT_OPS.md, Class 1): every dispatched
+    # worker is told WHY waiting is futile, not merely forbidden from doing it —
+    # the bare prohibition was broken in the wild.
+    assert "background-task completions will NEVER wake" in prompt
+    assert "Never end your turn waiting" in prompt
+
+
+def test_dispatcher_command_carries_lifecycle_state_flag() -> None:
+    base = dict(
+        run_id="impl-1",
+        root="/repo",
+        meta_path=Path("/tmp/m.json"),
+        report_path=Path("/tmp/r.md"),
+        transcript_path=Path("/tmp/t.log"),
+        worker_command=["codex", "exec"],
+    )
+
+    with_state = workflow._dispatcher_command(
+        **base, lifecycle_state_path="/cp/lifecycle_runs/x/state.json"
+    )
+    assert "--lifecycle-state" in with_state
+    flag_index = with_state.index("--lifecycle-state")
+    assert with_state[flag_index + 1] == "/cp/lifecycle_runs/x/state.json"
+
+    without_state = workflow._dispatcher_command(**base)
+    assert "--lifecycle-state" not in without_state

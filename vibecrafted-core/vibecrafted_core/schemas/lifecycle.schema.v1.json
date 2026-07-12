@@ -1,0 +1,414 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vibecrafted.lifecycle.v1",
+  "title": "Vibecrafted Lifecycle State v1",
+  "description": "Machine-readable contract for lifecycle state.json and worker report steering frontmatter.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "run_id",
+    "workflow",
+    "agent",
+    "root",
+    "status",
+    "await_stages",
+    "parent_run_id",
+    "operator_actions",
+    "spec",
+    "supervisor",
+    "human_controls",
+    "state_path",
+    "report_path",
+    "transcript_path",
+    "context_atlas",
+    "manifest",
+    "baton",
+    "stages",
+    "accepted_dou_findings"
+  ],
+  "properties": {
+    "schema": {
+      "const": "vibecrafted.lifecycle.v1",
+      "description": "Versioned lifecycle contract identifier."
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "workflow": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "string"
+    },
+    "root": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string"
+    },
+    "await_stages": {
+      "type": "boolean"
+    },
+    "parent_run_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "operator_actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/operator_action"
+      }
+    },
+    "spec": {
+      "$ref": "#/$defs/spec"
+    },
+    "supervisor": {
+      "type": "string"
+    },
+    "human_controls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "state_path": {
+      "type": "string"
+    },
+    "report_path": {
+      "type": "string"
+    },
+    "transcript_path": {
+      "type": "string"
+    },
+    "context_atlas": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "baton": {
+      "$ref": "#/$defs/baton"
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/stage"
+      }
+    },
+    "dou_index": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/dou_index"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "accepted_dou": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "accepted_dou_findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "next_stage": {
+      "type": "string"
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "spec": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "workflow_id",
+        "agent"
+      ],
+      "properties": {
+        "workflow_id": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "file": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        },
+        "runtime": {
+          "type": "string"
+        },
+        "await_stages": {
+          "type": "boolean"
+        },
+        "start_stage": {
+          "type": "string"
+        },
+        "count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "depth": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "previous_reports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stage_agents": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "stage_models": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "operator_action": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "baton": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "from_stage",
+        "next_stage",
+        "next_agent",
+        "reason",
+        "previous_reports",
+        "dou_index"
+      ],
+      "properties": {
+        "from_stage": {
+          "type": "string"
+        },
+        "from_phase": {
+          "type": "string"
+        },
+        "next_stage": {
+          "type": "string"
+        },
+        "next_agent": {
+          "type": "string"
+        },
+        "fallback_stage": {
+          "type": "string"
+        },
+        "audit_after": {
+          "type": "string"
+        },
+        "dou_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        },
+        "previous_reports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "read",
+            "write",
+            ""
+          ]
+        },
+        "agent": {
+          "type": "string"
+        },
+        "model_requested": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "launch": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "await": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "commit_before": {
+          "type": "string"
+        },
+        "commit_after": {
+          "type": "string"
+        },
+        "changed_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "new_commits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transition": {
+          "$ref": "#/$defs/transition"
+        },
+        "dou_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "next_stage": {
+          "type": "string"
+        },
+        "requested_next_stage": {
+          "type": "string"
+        },
+        "next_agent": {
+          "type": "string"
+        },
+        "requested_next_agent": {
+          "type": "string"
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fallback_stage": {
+          "type": "string"
+        },
+        "audit_after": {
+          "type": "string"
+        }
+      }
+    },
+    "dou_index": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "value",
+        "stage",
+        "report"
+      ],
+      "properties": {
+        "value": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "stage": {
+          "type": "string"
+        },
+        "report": {
+          "type": "string"
+        }
+      }
+    },
+    "worker_report_frontmatter": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "next_stage": {
+          "type": "string",
+          "description": "Manifest stage id requested by the worker."
+        },
+        "next_agent": {
+          "type": "string",
+          "description": "Supported agent id requested by the worker."
+        },
+        "dou_index": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "description": "Open Definition-of-Undone finding count; 0 means launch-ready."
+        },
+        "status": {
+          "type": "string",
+          "description": "Worker-reported status metadata. Current steering consumes next_stage, next_agent, and dou_index."
+        }
+      }
+    }
+  }
+}

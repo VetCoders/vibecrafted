@@ -48,7 +48,7 @@ repo". W przeciwnym razie brak dowodów z `vc-init`/Loctree to błąd procesu.
 Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<workflow> <agent> [--prompt|--file ...]`).
 
 ```bash
-vibecrafted decorate gemini --prompt 'Polish the landing page'
+vibecrafted decorate agy --prompt 'Polish the landing page'
 vc-decorate claude --prompt 'Coherence audit on the CLI output surface'
 vibecrafted decorate codex --file /path/to/decorate-plan.md
 ```
@@ -212,4 +212,4 @@ Zachowuj tożsamość. Redukuj dryf.
 
 _Faza 3 — Ship (dou → decorate → hydrate → release)_
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_

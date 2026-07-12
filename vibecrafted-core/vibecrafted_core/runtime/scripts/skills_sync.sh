@@ -150,9 +150,6 @@ rsync_args=(-az --exclude '.DS_Store' --exclude '.backup' --exclude '.loctree' -
 if (( mirror )); then
   rsync_args+=(--delete)
 fi
-if (( dry_run )); then
-  rsync_args+=(--dry-run --itemize-changes)
-fi
 
 printf 'Syncing skills from %s to %s\n' "$repo_root" "$host"
 # shellcheck disable=SC2088,SC2016
@@ -168,6 +165,32 @@ else
   ssh -n "$host" "mkdir -p $remote_tools_target/skills && ln -sfn $remote_tools_target $remote_current_link" \
     || die "Could not prepare staged tools store on $host"
 fi
+
+rule_files=()
+localized_rule_dirs=(pl)
+for rule_name in VERIFICATION_RULE.md LIVING_TREE_RULE.md; do
+  [[ -f "$skills_root/$rule_name" ]] && rule_files+=("$rule_name")
+done
+for localized_dir in "${localized_rule_dirs[@]}"; do
+  for rule_name in VERIFICATION_RULE.md LIVING_TREE_RULE.md; do
+    rule_path="$localized_dir/$rule_name"
+    [[ -f "$skills_root/$rule_path" ]] && rule_files+=("$rule_path")
+  done
+done
+for rule_path in "${rule_files[@]}"; do
+  remote_rule_dir="$(dirname "$remote_tools_target/skills/$rule_path")"
+  if (( dry_run )); then
+    printf '  ssh %s mkdir -p %s\n' "$host" "$remote_rule_dir"
+  else
+    ssh -n "$host" "mkdir -p $remote_rule_dir" \
+      || die "Could not create $remote_rule_dir on $host"
+  fi
+  if (( dry_run )); then
+    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skills_root/$rule_path" "$host" "$remote_tools_target/skills/$rule_path"
+  else
+    rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_tools_target/skills/$rule_path"
+  fi
+done
 for skill in "${skills[@]}"; do
   name="$(basename "$skill")"
   if (( ! dry_run )); then
@@ -175,7 +198,11 @@ for skill in "${skills[@]}"; do
   else
     printf '  ssh %s mkdir -p %s/skills/%s\n' "$host" "$remote_tools_target" "$name"
   fi
-  rsync "${rsync_args[@]}" "$skill/" "$host:$remote_tools_target/skills/$name/"
+  if (( dry_run )); then
+    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skill/" "$host" "$remote_tools_target/skills/$name/"
+  else
+    rsync "${rsync_args[@]}" "$skill/" "$host:$remote_tools_target/skills/$name/"
+  fi
 done
 printf '\n'
 
@@ -187,6 +214,20 @@ for tool in "${tools[@]}"; do
   else
     ssh -n "$host" "mkdir -p $remote_target" || die "Could not prepare $remote_target on $host"
   fi
+  for rule_path in "${rule_files[@]}"; do
+    remote_rule_dir="$(dirname "$remote_target/$rule_path")"
+    if (( dry_run )); then
+      printf '  ssh %s mkdir -p %s\n' "$host" "$remote_rule_dir"
+    else
+      ssh -n "$host" "mkdir -p $remote_rule_dir" \
+        || die "Could not create $remote_rule_dir on $host"
+    fi
+    if (( dry_run )); then
+      printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skills_root/$rule_path" "$host" "$remote_target/$rule_path"
+    else
+      rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_target/$rule_path"
+    fi
+  done
   for skill in "${skills[@]}"; do
     name="$(basename "$skill")"
     if (( dry_run )); then
@@ -213,8 +254,16 @@ if (( with_shell )); then
   remote_legacy_target="$remote_legacy_dir/vc-skills.zsh"
 
   printf 'Syncing optional shell helper layer to %s\n' "$host"
-  ssh -n "$host" "mkdir -p $remote_helper_dir $remote_legacy_dir" || die "Could not prepare helper dirs on $host"
-  rsync "${rsync_args[@]}" "$shell_source" "$host:$remote_shell_target"
+  if (( dry_run )); then
+    printf '  ssh %s mkdir -p %s %s\n' "$host" "$remote_helper_dir" "$remote_legacy_dir"
+  else
+    ssh -n "$host" "mkdir -p $remote_helper_dir $remote_legacy_dir" || die "Could not prepare helper dirs on $host"
+  fi
+  if (( dry_run )); then
+    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$shell_source" "$host" "$remote_shell_target"
+  else
+    rsync "${rsync_args[@]}" "$shell_source" "$host:$remote_shell_target"
+  fi
   if (( dry_run )); then
     printf '  ssh %s ln -sfn %s %s\n' "$host" "$remote_shell_target" "$remote_legacy_target"
   else
@@ -227,8 +276,12 @@ if (( with_shell )); then
     printf 'Skipping remote $HOME/.zshrc update (--no-zshrc).\n'
   else
     remote_zshrc="\$HOME/.zshrc"
-    ssh -n "$host" "touch ${remote_zshrc} && if ! grep -Fqx '$source_line' ${remote_zshrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_zshrc}; fi" \
-      || die "Could not update $HOME/.zshrc on $host"
+    if (( dry_run )); then
+      printf '  ssh %s touch %s && if ! grep -Fqx '"'"'%s'"'"' %s; then printf ... >> %s; fi\n' "$host" "$remote_zshrc" "$source_line" "$remote_zshrc" "$remote_zshrc"
+    else
+      ssh -n "$host" "touch ${remote_zshrc} && if ! grep -Fqx '$source_line' ${remote_zshrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_zshrc}; fi" \
+        || die "Could not update $HOME/.zshrc on $host"
+    fi
   fi
 
   if (( shell_no_bashrc )); then
@@ -236,8 +289,12 @@ if (( with_shell )); then
     printf 'Skipping remote $HOME/.bashrc update (--no-bashrc).\n'
   else
     remote_bashrc="\$HOME/.bashrc"
-    ssh -n "$host" "touch ${remote_bashrc} && if ! grep -Fqx '$source_line' ${remote_bashrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_bashrc}; fi" \
-      || die "Could not update $HOME/.bashrc on $host"
+    if (( dry_run )); then
+      printf '  ssh %s touch %s && if ! grep -Fqx '"'"'%s'"'"' %s; then printf ... >> %s; fi\n' "$host" "$remote_bashrc" "$source_line" "$remote_bashrc" "$remote_bashrc"
+    else
+      ssh -n "$host" "touch ${remote_bashrc} && if ! grep -Fqx '$source_line' ${remote_bashrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_bashrc}; fi" \
+        || die "Could not update $HOME/.bashrc on $host"
+    fi
   fi
 
   printf '\n'

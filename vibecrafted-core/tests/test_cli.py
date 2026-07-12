@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from vibecrafted_core import cli
 
 
@@ -22,12 +24,60 @@ def _accepted_launch_payload() -> dict[str, object]:
     }
 
 
-def test_root_cli_vc_help_alias_returns_help_success(monkeypatch, capsys) -> None:
-    monkeypatch.setattr("sys.argv", ["vc-help"])
-
-    assert cli.main() == 0
+def test_root_cli_without_command_returns_help_error(capsys) -> None:
+    assert cli.main([]) == 2
 
     assert "Vibecrafted core command surface" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "verb"),
+    [
+        ("telemetry", "telemetry"),
+        ("vc-dashboard", "dashboard"),
+        ("vc-dispatch", "dispatch"),
+        ("vc-help", "help"),
+        ("vc-init", "init"),
+        ("vc-justdo", "justdo"),
+        ("vc-resume", "resume"),
+        ("vc-start", "start"),
+    ],
+)
+def test_shell_wrapper_entrypoints_preserve_their_deck_verb(
+    monkeypatch, tmp_path: Path, wrapper: str, verb: str
+) -> None:
+    tools_home = tmp_path / "tools"
+    deck = tools_home / "vibecrafted-current" / "scripts" / "vibecrafted"
+    deck.parent.mkdir(parents=True)
+    deck.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    seen: dict[str, object] = {}
+
+    def fake_run(argv):
+        seen["argv"] = argv
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.setattr("sys.argv", [wrapper, "sentinel"])
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    assert cli.main() == 0
+    assert seen["argv"] == [str(deck), verb, "sentinel"]
+
+
+def test_shell_wrapper_missing_deck_fails_loudly(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    tools_home = tmp_path / "tools"
+    missing_deck = tmp_path / "missing" / "vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.setattr("sys.argv", ["vc-init", "codex"])
+    monkeypatch.setattr(cli, "deck_path", lambda: missing_deck)
+
+    assert cli.main() == 1
+    assert (
+        f"error: vc-init cannot find the runtime deck at {missing_deck}"
+        in capsys.readouterr().err
+    )
 
 
 def test_version_reads_installed_package_never_delegates_to_deck(
@@ -39,7 +89,11 @@ def test_version_reads_installed_package_never_delegates_to_deck(
     # inside a checkout it reports that checkout's version, not the installed one).
     # Make any deck subprocess fail loudly so a regression that re-delegates
     # `--version` cannot pass silently.
-    from vibecrafted_core import __version__
+    expected = (
+        (Path(__file__).resolve().parents[2] / "VERSION")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
 
     def _no_deck(*_args, **_kwargs):
         raise AssertionError("--version must not shell out to the deck")
@@ -48,7 +102,7 @@ def test_version_reads_installed_package_never_delegates_to_deck(
 
     for flag in ("--version", "-v", "version"):
         assert cli.main([flag]) == 0
-        assert capsys.readouterr().out.strip() == f"vibecrafted {__version__}"
+        assert capsys.readouterr().out.strip() == f"vibecrafted {expected}"
 
 
 def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
@@ -66,6 +120,27 @@ def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
 
     assert seen["skill"] == "implement"
     assert seen["agent"] == "codex"
+    assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
+
+
+def test_root_cli_research_agentless_and_positional_forms(monkeypatch, capsys) -> None:
+    seen = []
+
+    def fake_launch(spec, _source_dir):
+        seen.append(spec)
+        return _accepted_launch_payload()
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+
+    assert cli.main(["research", "--prompt", "map it"]) == 0
+    assert cli.main(["research", "codex", "agy", "--prompt", "map it"]) == 0
+
+    assert seen[0].agent == "swarm"
+    assert seen[0].research_agents == ()
+    assert seen[0].research_synthesizer == ""
+    assert seen[1].agent == "swarm"
+    assert seen[1].research_agents == ("codex", "agy")
+    assert seen[1].research_synthesizer == "codex"
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 
@@ -163,7 +238,8 @@ def test_root_cli_prints_full_launch_receipt(monkeypatch, capsys) -> None:
         "observe:    vibecrafted codex observe --run-id impl-260613-145127-33000" in out
     )
     assert (
-        "await:      vibecrafted codex await --run-id impl-260613-145127-33000" in out
+        "await (ARM NOW, supervisor-side): vibecrafted codex await --run-id impl-260613-145127-33000"
+        in out
     )
 
 
@@ -404,21 +480,33 @@ def test_root_cli_agent_observe_uses_codex_config_model(
 
 
 def test_root_cli_agent_await_accepts_receipt_command(monkeypatch, capsys) -> None:
+    run = {
+        "run_id": "impl-1",
+        "agent": "codex",
+        "state": "report_validated",
+        "skill": "implement",
+        "root": "/repo",
+        "artifact_ok": True,
+        "latest_report": "/tmp/report.md",
+        "latest_transcript": "/tmp/transcript.log",
+    }
     monkeypatch.setattr(
         cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
     )
+    monkeypatch.setattr(cli, "lookup_run", lambda _run_id: run)
+    # The verb must block through the ONE canonical loop — the CLI's own job
+    # is only the exit-code/print mapping of its verdict.
     monkeypatch.setattr(
         cli,
-        "lookup_run",
-        lambda run_id: {
+        "await_run",
+        lambda run_id, **_kwargs: {
             "run_id": run_id,
-            "agent": "codex",
-            "state": "report_validated",
-            "skill": "implement",
-            "root": "/repo",
-            "artifact_ok": True,
-            "latest_report": "/tmp/report.md",
-            "latest_transcript": "/tmp/transcript.log",
+            "found": True,
+            "completed": True,
+            "timed_out": False,
+            "reason": "terminal",
+            "worker_alive": False,
+            "run": run,
         },
     )
 
@@ -450,6 +538,21 @@ def test_root_cli_agent_await_fails_dead_stale_worker(
         cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
     )
     monkeypatch.setattr(cli, "lookup_run", lambda _run_id: run)
+    # Dead + no movement is the canonical loop's idle_stall verdict — the CLI
+    # maps it to a nonzero exit with the final run status printed.
+    monkeypatch.setattr(
+        cli,
+        "await_run",
+        lambda run_id, **_kwargs: {
+            "run_id": run_id,
+            "found": True,
+            "completed": False,
+            "timed_out": True,
+            "reason": "idle_stall",
+            "worker_alive": False,
+            "run": run,
+        },
+    )
 
     rc = cli.main(
         [
@@ -466,9 +569,49 @@ def test_root_cli_agent_await_fails_dead_stale_worker(
 
     assert rc == 1
     captured = capsys.readouterr()
-    assert "await: worker dead or stale" in captured.out
+    assert "await: timed out (idle_stall)" in captured.out
     assert "state:      stalled" in captured.out
     assert "last useful line" in captured.out
+
+
+def test_root_cli_agent_await_rejects_completed_payload_when_worker_alive(
+    monkeypatch, capsys
+) -> None:
+    run = {
+        "run_id": "impl-live",
+        "agent": "codex",
+        "state": "running",
+        "liveness": "pid_alive",
+        "skill": "implement",
+        "root": "/repo",
+        "artifact_ok": True,
+        "latest_report": "/tmp/report.md",
+        "latest_transcript": "/tmp/transcript.log",
+    }
+    monkeypatch.setattr(
+        cli, "sync_state", lambda: {"active_runs": [], "recent_runs": []}
+    )
+    monkeypatch.setattr(cli, "lookup_run", lambda _run_id: run)
+    monkeypatch.setattr(
+        cli,
+        "await_run",
+        lambda run_id, **_kwargs: {
+            "run_id": run_id,
+            "found": True,
+            "completed": True,
+            "timed_out": False,
+            "reason": "report_delivered",
+            "worker_alive": True,
+            "run": run,
+        },
+    )
+
+    rc = cli.main(["codex", "await", "--run-id", "impl-live", "--timeout", "0"])
+
+    assert rc == 3
+    captured = capsys.readouterr()
+    assert "non-terminal completion disagreement" in captured.err
+    assert "state:      running" in captured.out
 
 
 def test_root_cli_doctor_routes_to_installer_doctor(monkeypatch, capsys) -> None:

@@ -8,11 +8,11 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from .control_plane import control_plane_home, normalize_run_root
+from .control_plane import control_plane_home, normalize_run_root, run_liveness
 from .workflow import (
     SUPPORTED_AGENTS,
     WorkflowLaunchSpec,
@@ -20,11 +20,16 @@ from .workflow import (
     launch_workflow,
     report_dou_index,
 )
-from .workflows.registry import workflow_manifest, workflow_manifest_payload
+from .workflows.registry import (
+    workflow_definition,
+    workflow_manifest,
+    workflow_manifest_payload,
+)
 from .workflows.model import WorkflowManifest, WorkflowStage
 
 LaunchWorkflow = Callable[[WorkflowLaunchSpec, str | Path], dict[str, Any]]
 AwaitWorkflow = Callable[[dict[str, Any]], dict[str, Any]]
+LIFECYCLE_SCHEMA_ID = "vibecrafted.lifecycle.v1"
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,14 @@ class LifecycleRunSpec:
     # Continuation runs (approve / force-audit) seed these so the next stage
     # prompt keeps consuming what the previous Read/Write stages produced.
     previous_reports: tuple[str, ...] = ()
+    # Operator-declared per-stage casting: {stage_id: agent}. Usually parsed
+    # from the mission file's frontmatter (stage_agents:) so one plan file
+    # carries the whole relay's crew. An explicit entry for a stage wins over
+    # worker-requested next_agent steering.
+    stage_agents: dict[str, str] = field(default_factory=dict)
+    # Operator-declared per-stage model requests: {stage_id: model}. Explicit
+    # mission frontmatter wins over manifest defaults; empty = runner default.
+    stage_models: dict[str, str] = field(default_factory=dict)
 
 
 def _lifecycle_run_id(workflow_id: str) -> str:
@@ -274,6 +287,160 @@ def _state_dou_value(state: dict[str, Any]) -> int | None:
     return value
 
 
+def _stage_worker_liveness(
+    state: dict[str, Any],
+    stage_launch: dict[str, Any],
+    liveness_reader: Callable[[str], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Reconciled liveness of the current stage's worker run.
+
+    Closes the report-on-death gap at the lifecycle surface: in no-await mode
+    a worker that dies at startup leaves the lifecycle run in ``launching``
+    forever, and only OS-level liveness tells a corpse apart from slow work.
+    ``worker_dead_without_report`` is the actionable signal — the stage will
+    never deliver on its own; recover with interrupt/fallback/approve.
+    """
+    stage_run_id = str(stage_launch.get("run_id") or "").strip()
+    if not stage_run_id or state.get("status") != "launching":
+        return {}
+    reader = liveness_reader or run_liveness
+    liveness = reader(stage_run_id)
+    report_path = str(stage_launch.get("report") or "").strip()
+    report_written = bool(report_path) and Path(report_path).is_file()
+    liveness["report_written"] = report_written
+    liveness["worker_dead_without_report"] = (
+        bool(liveness.get("found"))
+        and not liveness.get("worker_alive")
+        and not report_written
+    )
+    return liveness
+
+
+def _mission_stage_agents(mission_text: str) -> dict[str, str]:
+    """Per-stage casting declared in the mission file's YAML frontmatter.
+
+    Two accepted shapes, so an operator plan file can carry the whole relay's
+    crew A-to-Z:
+
+        ---
+        stage_agents: scaffold=claude, review=codex
+        ---
+
+        ---
+        stage_agents:
+          scaffold: claude
+          review: codex
+        ---
+    """
+    lines = str(mission_text or "").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    agents: dict[str, str] = {}
+    in_block = False
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if not in_block:
+            if not stripped.startswith("stage_agents:"):
+                continue
+            inline = stripped.split(":", 1)[1].strip()
+            if inline:
+                for pair in inline.split(","):
+                    separator = "=" if "=" in pair else ":"
+                    if separator not in pair:
+                        continue
+                    key, value = pair.split(separator, 1)
+                    agents[key.strip()] = value.strip().strip('"')
+                break
+            in_block = True
+            continue
+        if not line.startswith((" ", "\t")) or ":" not in stripped:
+            break
+        key, value = stripped.split(":", 1)
+        agents[key.strip()] = value.strip().strip('"')
+    return agents
+
+
+def _mission_stage_models(mission_text: str) -> dict[str, str]:
+    """Per-stage model pins declared in mission YAML frontmatter.
+
+    Accepted shapes mirror stage_agents. Model names are passed through
+    verbatim; the runtime only knows whether a runner has a model flag.
+    """
+
+    lines = str(mission_text or "").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    models: dict[str, str] = {}
+    in_block = False
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == "---":
+            break
+        if not in_block:
+            if not stripped.startswith("stage_models:"):
+                continue
+            inline = stripped.split(":", 1)[1].strip()
+            if inline:
+                for pair in inline.split(","):
+                    separator = "=" if "=" in pair else ":"
+                    if separator not in pair:
+                        continue
+                    key, value = pair.split(separator, 1)
+                    models[key.strip()] = value.strip().strip('"')
+                break
+            in_block = True
+            continue
+        if not line.startswith((" ", "\t")) or ":" not in stripped:
+            break
+        key, value = stripped.split(":", 1)
+        models[key.strip()] = value.strip().strip('"')
+    return models
+
+
+def _validated_stage_agents(
+    raw: dict[str, str], manifest: WorkflowManifest
+) -> dict[str, str]:
+    """Fail fast at launch: an A-to-Z casting with a typo must not fly."""
+    stage_ids = {stage.id for stage in manifest.stages}
+    resolved: dict[str, str] = {}
+    for stage_id, agent in dict(raw or {}).items():
+        stage_key = str(stage_id).strip()
+        agent_name = str(agent).strip()
+        if not stage_key or not agent_name:
+            continue
+        if stage_key not in stage_ids:
+            raise ValueError(
+                f"stage_agents names unknown stage '{stage_key}' "
+                f"for workflow {manifest.id}"
+            )
+        if agent_name not in SUPPORTED_AGENTS:
+            raise ValueError(
+                f"stage_agents names unsupported agent '{agent_name}' "
+                f"for stage '{stage_key}' (supported: "
+                + ", ".join(sorted(SUPPORTED_AGENTS))
+                + ")"
+            )
+        resolved[stage_key] = agent_name
+    return resolved
+
+
+def _validated_stage_models(
+    raw: dict[str, str], manifest: WorkflowManifest
+) -> dict[str, str]:
+    """Manifest-gate optional model pins without whitelisting model names."""
+    stage_ids = {stage.id for stage in manifest.stages}
+    resolved: dict[str, str] = {}
+    for stage_id, model in dict(raw or {}).items():
+        stage_key = str(stage_id).strip()
+        model_name = str(model).strip()
+        if not stage_key or not model_name or stage_key not in stage_ids:
+            continue
+        resolved[stage_key] = model_name
+    return resolved
+
+
 def _lifecycle_max_stage_launches(manifest: WorkflowManifest) -> int:
     """Ceiling on stage launches per lifecycle run.
 
@@ -318,6 +485,14 @@ class LifecycleRunner:
 
         root = Path(normalize_run_root(spec.root, Path.cwd()))
         source_prompt = spec.prompt or _read_file(spec.file)
+        stage_agents = _validated_stage_agents(
+            dict(spec.stage_agents or {}) or _mission_stage_agents(source_prompt),
+            manifest,
+        )
+        stage_models = _validated_stage_models(
+            dict(spec.stage_models or {}) or _mission_stage_models(source_prompt),
+            manifest,
+        )
         run_id = _lifecycle_run_id(manifest.id)
         run_dir = control_plane_home() / "lifecycle_runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -334,6 +509,7 @@ class LifecycleRunner:
             str(path).strip() for path in spec.previous_reports if str(path).strip()
         ]
         state: dict[str, Any] = {
+            "schema": LIFECYCLE_SCHEMA_ID,
             "run_id": run_id,
             "workflow": manifest.id,
             "agent": spec.agent,
@@ -354,6 +530,8 @@ class LifecycleRunner:
                 "count": spec.count,
                 "depth": spec.depth,
                 "previous_reports": list(previous_reports),
+                "stage_agents": dict(stage_agents),
+                "stage_models": dict(stage_models),
             },
             "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
             "human_controls": list(manifest.human_controls),
@@ -377,6 +555,7 @@ class LifecycleRunner:
                 "dou_index": None,
             },
             "stages": [],
+            "accepted_dou_findings": [],
         }
         self._write_state(state_path, state)
 
@@ -400,11 +579,15 @@ class LifecycleRunner:
                 manifest=manifest,
                 stage=stage,
                 spec=spec,
-                agent=stage.agent or current_agent,
+                # Operator-declared casting wins for a stage it names; then
+                # manifest defaults; then the baton's current agent.
+                agent=stage_agents.get(current) or stage.agent or current_agent,
+                model=stage_models.get(current) or stage.model,
                 source_prompt=source_prompt,
                 root=root,
                 previous_reports=previous_reports,
                 context=context,
+                state_path=state_path,
             )
             state["stages"].append(record)
             self._write_state(state_path, state)
@@ -517,10 +700,12 @@ class LifecycleRunner:
         stage: WorkflowStage,
         spec: LifecycleRunSpec,
         agent: str,
+        model: str,
         source_prompt: str,
         root: Path,
         previous_reports: list[str],
         context: dict[str, Any],
+        state_path: Path | None = None,
     ) -> dict[str, Any]:
         prompt = self._stage_prompt(
             manifest=manifest,
@@ -529,6 +714,7 @@ class LifecycleRunner:
             previous_reports=previous_reports,
             context=context,
         )
+        stage_definition = workflow_definition(stage.workflow)
         launch_spec = WorkflowLaunchSpec(
             agent=agent,
             mode=stage.workflow,
@@ -537,8 +723,18 @@ class LifecycleRunner:
             file="",
             runtime=spec.runtime,
             root=str(root),
-            count=spec.count if stage.workflow == "marbles" else None,
-            depth=spec.depth if stage.workflow == "marbles" else None,
+            count=(
+                spec.count
+                if stage_definition is not None and stage_definition.supports_count
+                else None
+            ),
+            depth=(
+                spec.depth
+                if stage_definition is not None and stage_definition.supports_depth
+                else None
+            ),
+            model=model,
+            lifecycle_state_path=str(state_path or ""),
         )
         commit_before = _git_head(root)
         git_before = _git_status(root)
@@ -549,6 +745,7 @@ class LifecycleRunner:
             "name": stage.name,
             "workflow": stage.workflow,
             "agent": agent,
+            "model_requested": model,
             "phase": stage.phase,
             "can_modify_code": stage.can_modify_code,
             "tooling": list(stage.tooling),
@@ -687,6 +884,66 @@ def write_lifecycle_state(path: Path, state: dict[str, Any]) -> None:
     )
 
 
+def record_stage_worker_exit(
+    state_path: str | Path,
+    stage_run_id: str,
+    exit_payload: dict[str, Any],
+) -> bool:
+    """Push-side report-on-death: write the worker's terminal truth into the
+    lifecycle state itself (docs/runtime/AGENT_OPS.md, Class 2).
+
+    Called by the dispatcher when a lifecycle stage worker exits in failure,
+    so purely passive readers of ``state.json`` (the Rust server, dashboards)
+    see the death without anyone running a status verb. Additive within
+    lifecycle.schema.v1: annotates the matching stage with ``worker_exit`` and
+    mirrors it top-level as ``stage_worker_exit`` while the run still waits in
+    ``launching``. Never raises — a corrupt or missing state file returns
+    ``False``; poisoning the dispatch exit path would trade one blind spot for
+    another.
+    """
+    target = str(stage_run_id or "").strip()
+    path = Path(state_path).expanduser()
+    if not target:
+        return False
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(state, dict):
+        return False
+    stages = state.get("stages")
+    if not isinstance(stages, list) or not stages:
+        return False
+    matched_index: int | None = None
+    for index in range(len(stages) - 1, -1, -1):
+        stage = stages[index]
+        if not isinstance(stage, dict):
+            continue
+        launch = stage.get("launch") or {}
+        if str(launch.get("run_id") or "") == target:
+            matched_index = index
+            break
+    if matched_index is None:
+        return False
+    payload = dict(exit_payload)
+    payload.setdefault("recorded_at", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+    stages[matched_index]["worker_exit"] = payload
+    # Top-level mirror only for the CURRENT stage of a still-waiting run: a
+    # stage that was already superseded (fallback/approve relaunch) is
+    # history, not an alarm.
+    if matched_index == len(stages) - 1 and state.get("status") == "launching":
+        state["stage_worker_exit"] = {
+            **payload,
+            "stage": str(stages[matched_index].get("id") or ""),
+            "run_id": target,
+        }
+    try:
+        write_lifecycle_state(path, state)
+    except OSError:
+        return False
+    return True
+
+
 def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
     stages = state.get("stages") or []
     lines = [
@@ -715,6 +972,12 @@ def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
                 "",
                 f"- {stage.get('id')} ({stage.get('phase')}): {stage.get('status')}",
                 f"  - agent: {stage.get('agent', '')}",
+                "  - model_requested: "
+                + str(
+                    stage.get("model_requested")
+                    or stage.get("launch", {}).get("model_requested")
+                    or ""
+                ),
                 f"  - run_id: {stage.get('launch', {}).get('run_id', '')}",
                 f"  - report: {stage.get('launch', {}).get('report', '')}",
                 f"  - commit_before: {stage.get('commit_before', '')}",
@@ -772,14 +1035,14 @@ class LifecycleSupervisor:
     def status(self, state: dict[str, Any]) -> dict[str, Any]:
         stages = list(state.get("stages") or [])
         last_stage = stages[-1] if stages else {}
+        stage_launch = dict(last_stage.get("launch") or {})
         dou_value = _state_dou_value(state)
         if dou_value is None:
             # Primary no-await mode: the runner exits before the worker writes
             # its report, so the DoU index only exists in the live frontmatter.
-            dou_value = report_dou_index(
-                str((last_stage.get("launch") or {}).get("report") or "")
-            )
+            dou_value = report_dou_index(str(stage_launch.get("report") or ""))
         return {
+            "schema": state.get("schema"),
             "run_id": state.get("run_id"),
             "workflow": state.get("workflow"),
             "status": state.get("status"),
@@ -791,6 +1054,7 @@ class LifecycleSupervisor:
             "accepted_dou": len(state.get("accepted_dou_findings") or []),
             "state_path": state.get("state_path"),
             "report_path": state.get("report_path"),
+            "stage_worker": _stage_worker_liveness(state, stage_launch),
         }
 
 
@@ -825,8 +1089,8 @@ def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
         from .lifecycle_control import lifecycle_control_main
 
         return lifecycle_control_main(args_list, workflow_id=manifest.id)
-    supports_loop_options = any(
-        stage.workflow == "marbles" for stage in manifest.stages
+    stage_definitions = tuple(
+        workflow_definition(stage.workflow) for stage in manifest.stages
     )
 
     parser = argparse.ArgumentParser(prog=workflow_id)
@@ -840,8 +1104,15 @@ def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--start-stage", default="")
     parser.add_argument("--checkpoint", dest="start_stage", default="")
     parser.add_argument("--await-stages", action="store_true")
-    if supports_loop_options:
+    if any(
+        definition is not None and definition.supports_count
+        for definition in stage_definitions
+    ):
         parser.add_argument("--count", type=int)
+    if any(
+        definition is not None and definition.supports_depth
+        for definition in stage_definitions
+    ):
         parser.add_argument("--depth", type=int)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(args_list)

@@ -62,7 +62,7 @@ cut is still bounded, and when the operator should escalate into `vc-agents`.
 ```bash
 vibecrafted partner codex --prompt 'Split this into one small native cut'
 vibecrafted implement claude --file /path/to/plan.md
-vibecrafted workflow gemini --prompt 'Keep this local unless it clearly wants the external fleet'
+vibecrafted workflow agy --prompt 'Keep this local unless it clearly wants the external fleet'  # gemini deprecated
 ```
 
 ## Repository Work Doctrine

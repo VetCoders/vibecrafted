@@ -572,9 +572,14 @@ fi
 [[ -n "$source_dir" ]] || die "Could not find extracted source directory"
 
 incoming_dir="$tools_dir/.incoming-$safe_ref-$$"
+manifest_helper="$source_dir/scripts/distribution_manifest.py"
+[[ -f "$manifest_helper" ]] || die "Distribution manifest missing: $manifest_helper"
 
 rm -rf "$incoming_dir"
-mv "$source_dir" "$incoming_dir"
+python3 "$manifest_helper" stage \
+  --source "$source_dir" \
+  --destination "$incoming_dir" \
+  --mirror >/dev/null
 rm -rf "$staged_dir"
 mv "$incoming_dir" "$staged_dir"
 ln -sfn "$staged_dir" "$current_link"

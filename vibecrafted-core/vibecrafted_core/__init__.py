@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.metadata
+from pathlib import Path
 from typing import Any
 
 from .control_plane import (
@@ -48,7 +50,18 @@ from .runtime_paths import (
 )
 from .supervisor_async import AsyncRunHandle, AsyncSupervisor
 
-__version__ = "3.3.0"
+
+def _resolve_installed_version() -> str:
+    packaged_version = read_version_file(Path(__file__).resolve().parent)
+    if packaged_version != "unknown":
+        return packaged_version
+    try:
+        return importlib.metadata.version("vibecrafted")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+__version__ = _resolve_installed_version()
 
 _LAZY_EXPORTS = {
     "WorkflowLaunchSpec": ".workflow",

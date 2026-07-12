@@ -234,6 +234,7 @@ def test_build_server_registers_tools_and_resources() -> None:
         "vc_lifecycle_fallback",
     } <= tool_names
     assert any("vibecrafted://board/runs" in uri for uri in resource_uris)
+    assert any("vibecrafted://lifecycle/schema" in uri for uri in resource_uris)
     assert any("vibecrafted://control-plane/events" in uri for uri in resource_uris)
     assert any("vibecrafted://runs/{run_id}/transcript" in uri for uri in resource_uris)
     assert any("vibecrafted://runs/{run_id}/events" in uri for uri in resource_uris)
@@ -851,6 +852,7 @@ def _seed_lifecycle_run(home: Path, run_id: str, report: Path) -> Path:
     run_dir.mkdir(parents=True)
     state_path = run_dir / "state.json"
     state = {
+        "schema": "vibecrafted.lifecycle.v1",
         "run_id": run_id,
         "workflow": "vc-ship",
         "agent": "codex",
@@ -933,6 +935,7 @@ def test_lifecycle_tools_status_and_approve_roundtrip(
 
     status = _run(_call("vc_lifecycle_status", {"home": str(home)})).data
     assert status["ok"] is True
+    assert status["result"]["schema"] == "vibecrafted.lifecycle.v1"
     assert status["result"]["next_stage"] == "implement"
     assert status["result"]["human_controls"] == [
         "approve_transition",
@@ -954,3 +957,19 @@ def test_lifecycle_tools_status_and_approve_roundtrip(
     ).data
     assert fallback["ok"] is False
     assert "choose_fallback_stage" in fallback["error"]
+
+
+def test_lifecycle_schema_resource_returns_packaged_contract() -> None:
+    from fastmcp import Client
+
+    mcp = server.build_server()
+
+    async def _call() -> Any:
+        async with Client(mcp) as client:
+            return await client.read_resource("vibecrafted://lifecycle/schema")
+
+    result = _run(_call())
+    payload = json.loads(result[0].text)
+    assert payload["$id"] == "vibecrafted.lifecycle.v1"
+    assert payload["properties"]["schema"]["const"] == "vibecrafted.lifecycle.v1"
+    assert "worker_report_frontmatter" in payload["$defs"]

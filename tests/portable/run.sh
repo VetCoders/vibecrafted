@@ -95,7 +95,7 @@ bash -n \
   "$repo_root/runtime/scripts/common.sh" \
   "$repo_root/runtime/scripts/codex_spawn.sh" \
   "$repo_root/runtime/scripts/claude_spawn.sh" \
-  "$repo_root/runtime/scripts/gemini_spawn.sh"
+  "$repo_root/runtime/scripts/agy_spawn.sh"
 # Shell helpers are bash-compatible; verify with bash -n
 bash -n "$repo_root/runtime/shell/vetcoders.sh"
 # If zsh is available, also verify zsh syntax
@@ -148,7 +148,7 @@ log "install smoke into clean HOME"
 HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
   bash "$repo_root/runtime/scripts/install.sh" \
   --source "$repo_root" \
-  --tool codex --tool claude --tool gemini \
+  --tool codex --tool claude --tool agy \
   --with-shell --write-shell-rc
 
 # Stage the uv-tool launcher shim. The granular installer wires
@@ -164,19 +164,17 @@ HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" \
 
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/gemini_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/agy_spawn.sh"
 require_file "$home_dir/.local/bin/vibecrafted"
 require_symlink "$home_dir/.local/bin/vc-help"
 require_symlink "$home_dir/.local/bin/vc-marbles"
-# Skill-symlink fan-out follows SYMLINK_TARGETS (agents, claude, codex). Gemini
-# is a first-class spawn runtime (gemini_spawn.sh above) but an opt-in skill
-# target (SYMLINK_TARGET_CHOICES), so the default install does not wire
-# .gemini/skills/vc-agents — only codex and claude are asserted here.
+# Skill-symlink fan-out follows SYMLINK_TARGETS (agents, claude, codex, agy).
+# gemini is deprecated; no gemini_spawn.sh is shipped.
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh"
-require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/gemini_spawn.sh"
+require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/agy_spawn.sh"
 # Canonical + compat helper locations
 require_file "$config_dir/vetcoders/vc-skills.sh"
 require_file "$config_dir/zsh/vc-skills.zsh"
@@ -254,47 +252,40 @@ echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool
 echo '{"type":"result","result":"Fake Claude final handoff"}'
 EOF_CLAUDE
 
-cat > "$fake_bin/gemini" <<'EOF_GEMINI'
+cat > "$fake_bin/agy" <<'EOF_AGY'
 #!/usr/bin/env bash
 set -euo pipefail
-output_format="text"
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -o|--output-format) shift; output_format="${1:-text}" ;;
-  esac
-  shift || true
-done
-if [[ "$output_format" == "stream-json" ]]; then
-  printf '{"type":"init","session_id":"fake-gemini-001","model":"fake-model"}\n'
-  printf '{"type":"tool_use","tool_name":"Read","tool_id":"read_1"}\n'
-  printf '{"type":"tool_result","tool_id":"read_1","status":"success","output":"file content"}\n'
-  printf '{"type":"message","role":"assistant","content":"fake gemini stdout","delta":true}\n'
-  printf '{"type":"result","status":"success","stats":{"input_tokens":50,"output_tokens":5,"duration_ms":100,"tool_calls":1}}\n'
-else
-  echo 'fake gemini stdout'
-fi
-EOF_GEMINI
+echo 'fake agy stdout'
+# minimal model line for telemetry smoke if transcript present
+printf 'model: agy-test-model\n' >> "${SPAWN_TRANSCRIPT:-/dev/null}" 2>/dev/null || true
+EOF_AGY
 
-chmod +x "$fake_bin/codex" "$fake_bin/claude" "$fake_bin/gemini"
+chmod +x "$fake_bin/codex" "$fake_bin/claude" "$fake_bin/agy"
 
-common_env=(HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH")
+common_env=(
+  HOME="$home_dir"
+  XDG_CONFIG_HOME="$config_dir"
+  PATH="$fake_bin:$PATH"
+  VIBECRAFTED_RUN_ID=""
+  VIBECRAFTED_PROMPT_ID=""
+)
 
 log "headless spawn smoke"
 env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
 env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/claude_spawn.sh" --mode review --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
-env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/gemini_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
+env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/agy_spawn.sh" --mode implement --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
 
 codex_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_codex.meta.json' | sort | tail -n 1)"
 claude_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_claude.meta.json' | sort | tail -n 1)"
-gemini_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_gemini.meta.json' | sort | tail -n 1)"
+agy_meta="$(find "$work_repo/.vibecrafted/reports" -maxdepth 1 -type f -name '*_agy.meta.json' | sort | tail -n 1)"
 
 require_file "$codex_meta"
 require_file "$claude_meta"
-require_file "$gemini_meta"
+require_file "$agy_meta"
 
 [[ "$(wait_for_meta "$codex_meta")" == "completed" ]] || die "codex spawn did not complete"
 [[ "$(wait_for_meta "$claude_meta")" == "completed" ]] || die "claude spawn did not complete"
-[[ "$(wait_for_meta "$gemini_meta")" == "completed" ]] || die "gemini spawn did not complete"
+[[ "$(wait_for_meta "$agy_meta")" == "completed" ]] || die "agy spawn did not complete"
 
 codex_report="$(python3 - "$codex_meta" <<'PY'
 import json, sys
@@ -308,7 +299,7 @@ with open(sys.argv[1], 'r', encoding='utf-8') as fh:
     print(json.load(fh)['report'])
 PY
 )"
-gemini_report="$(python3 - "$gemini_meta" <<'PY'
+agy_report="$(python3 - "$agy_meta" <<'PY'
 import json, sys
 with open(sys.argv[1], 'r', encoding='utf-8') as fh:
     print(json.load(fh)['report'])
@@ -326,7 +317,7 @@ with open(sys.argv[1], 'r', encoding='utf-8') as fh:
     print(json.load(fh)['transcript'])
 PY
 )"
-gemini_transcript="$(python3 - "$gemini_meta" <<'PY'
+agy_transcript="$(python3 - "$agy_meta" <<'PY'
 import json, sys
 with open(sys.argv[1], 'r', encoding='utf-8') as fh:
     print(json.load(fh)['transcript'])
@@ -335,10 +326,10 @@ PY
 
 require_file "$codex_report"
 require_file "$claude_report"
-require_file "$gemini_report"
+require_file "$agy_report"
 require_file "$codex_transcript"
 require_file "$claude_transcript"
-require_file "$gemini_transcript"
+require_file "$agy_transcript"
 assert_contains "$codex_report" 'Fake Codex Report'
 assert_matches "$codex_report" 'run_id: plan-[0-9]{6}'
 assert_contains "$codex_report" 'prompt_id: test_'
@@ -347,18 +338,17 @@ assert_contains "$codex_report" 'prompt_id: test_'
 # of the old "completed without writing a standalone report file" placeholder.
 # The fake claude emits that final handoff above, so assert it was salvaged.
 assert_contains "$claude_report" 'Fake Claude final handoff'
-assert_contains "$gemini_report" 'fake gemini'
+assert_contains "$agy_report" 'fake agy'
 assert_matches "$codex_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} \$ ls\]'
 assert_matches "$codex_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] tokens: 100 in / 10 out'
 assert_matches "$claude_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] session: fake-claude-001'
 assert_matches "$claude_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} Read\]'
-assert_matches "$gemini_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2}\] session: fake-gemini-001'
-assert_matches "$gemini_transcript" '\[[0-9]{2}:[0-9]{2}:[0-9]{2} Read\]'
+assert_matches "$agy_transcript" 'agy-test-model'
 
 jq -e '.prompt_id != null and (.prompt_id | startswith("test_"))' "$codex_meta" >/dev/null || die "codex meta missing prompt_id"
 jq -e '.run_id | test("^plan-[0-9]{6}-[0-9]+$")' "$codex_meta" >/dev/null || die "codex meta missing plan run_id"
 jq -e '.run_id | test("^rvew-[0-9]{6}-[0-9]+$")' "$claude_meta" >/dev/null || die "claude meta missing review run_id"
-jq -e '.run_id | test("^impl-[0-9]{6}-[0-9]+$")' "$gemini_meta" >/dev/null || die "gemini meta missing implement run_id"
+jq -e '.run_id | test("^impl-[0-9]{6}-[0-9]+$")' "$agy_meta" >/dev/null || die "agy meta missing implement run_id"
 jq -e '.loop_nr == 0' "$codex_meta" >/dev/null || die "codex meta missing loop_nr"
 jq -e '.framework_version != null and .framework_version != ""' "$codex_meta" >/dev/null || die "codex meta missing framework_version"
 jq -e '.completed_at != null and .duration_s != null' "$codex_meta" >/dev/null || die "codex meta missing completion telemetry"
@@ -366,7 +356,10 @@ jq -e '.liveness == "terminal"' "$codex_meta" >/dev/null || die "codex meta miss
 
 log "launcher resume smoke"
 resume_capture="$workspace/resume-codex.txt"
-env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" FAKE_CODEX_CAPTURE="$resume_capture" \
+env -u VIBECRAFTED_RUN_ID -u VIBECRAFTED_OPERATOR_SESSION \
+  -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME \
+  -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
+  HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" FAKE_CODEX_CAPTURE="$resume_capture" \
   "$home_dir/.local/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
 require_file "$resume_capture"
 assert_contains "$resume_capture" 'resume'
@@ -376,7 +369,7 @@ assert_contains "$resume_capture" 'resume smoke'
 log "helper bash smoke"
 # shellcheck disable=SC2016
 env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.local/bin:$fake_bin:$PATH" \
-  bash -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
+  bash -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v agy-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
   | grep -Fq 'helper-ok' || die 'bash helper layer not loaded'
 log "skill helper telemetry smoke"
 # shellcheck disable=SC2016
@@ -403,7 +396,7 @@ if command -v zsh >/dev/null 2>&1; then
   log "helper zsh smoke (bonus)"
   # shellcheck disable=SC2016
   env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$home_dir/.local/bin:$fake_bin:$PATH" \
-    zsh -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v gemini-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
+    zsh -c 'source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"; command -v codex-implement >/dev/null && command -v claude-implement >/dev/null && command -v agy-implement >/dev/null && command -v vc-marbles >/dev/null && command -v skills-sync >/dev/null && echo helper-ok' \
     | grep -Fq 'helper-ok' || die 'zsh helper layer not loaded'
 fi
 
@@ -425,7 +418,8 @@ chmod +x "$fake_bin/rsync"
 
 sync_output="$(env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" bash "$repo_root/runtime/scripts/skills_sync.sh" fakehost --source "$repo_root" --dry-run)"
 grep -q "Syncing skills from" <<<"$sync_output" || die "Sync dry-run failed to start"
-grep -q "rsync .* --dry-run" <<<"$sync_output" || die "Sync dry-run didn't pass dry-run to rsync"
+grep -q '^  rsync ' <<<"$sync_output" || die "Sync dry-run didn't print planned rsync commands"
+! grep -q '^rsync ' <<<"$sync_output" || die "Sync dry-run executed rsync instead of printing it"
 # shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding
 grep -q '\$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills' <<<"$sync_output" || die "Sync dry-run didn't target the staged canonical skill store"
 # shellcheck disable=SC2016 # matching literal $HOME in sync output, not expanding

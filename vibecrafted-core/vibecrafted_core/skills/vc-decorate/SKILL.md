@@ -48,7 +48,7 @@ If the task is explicitly non-repo or no-code, state the no-repo exception in th
 Standard launcher (`vibecrafted start` / `vc-start`, then `vc-<workflow> <agent> [--prompt|--file ...]`).
 
 ```bash
-vibecrafted decorate gemini --prompt 'Polish the landing page'
+vibecrafted decorate agy --prompt 'Polish the landing page'
 vc-decorate claude --prompt 'Coherence audit on the CLI output surface'
 vibecrafted decorate codex --file /path/to/decorate-plan.md
 ```

@@ -5,7 +5,7 @@ import asyncio
 import json
 import os
 import sys
-from typing import Sequence
+from typing import Any, Sequence
 
 from .supervisor_async import AsyncSupervisor
 
@@ -25,6 +25,15 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--prompt-file",
         help="deliver this prompt file to the worker on stdin and VIBECRAFTED_PROMPT_PATH",
+    )
+    run.add_argument(
+        "--lifecycle-state",
+        default="",
+        help=(
+            "lifecycle state.json this run belongs to; on worker failure the "
+            "dispatcher records the terminal truth there (push-side "
+            "report-on-death)"
+        ),
     )
     run.add_argument("--timeout", type=float)
     run.add_argument(
@@ -65,6 +74,36 @@ def _normalize_worker(argv: Sequence[str]) -> list[str]:
     return worker
 
 
+def _maybe_record_lifecycle_worker_exit(
+    state_path: str, summary: dict[str, Any]
+) -> None:
+    """Push-side report-on-death (docs/runtime/AGENT_OPS.md, Class 2).
+
+    Only failures are written back: a healthy no-await handoff already leaves
+    its truth in the report file, and keeping the write rare keeps the window
+    for racing an operator verb on state.json effectively closed.
+    """
+    exit_code = summary.get("exit_code")
+    failed = (isinstance(exit_code, int) and exit_code != 0) or not summary.get(
+        "artifact_ok"
+    )
+    if not failed:
+        return
+    from .lifecycle_runner import record_stage_worker_exit
+
+    record_stage_worker_exit(
+        state_path,
+        str(summary.get("run_id") or ""),
+        {
+            "state": summary.get("state"),
+            "exit_code": exit_code,
+            "artifact_ok": bool(summary.get("artifact_ok")),
+            "artifact_errors": list(summary.get("artifact_errors") or []),
+            "transcript": str(summary.get("transcript") or ""),
+        },
+    )
+
+
 async def _run(args: argparse.Namespace) -> int:
     worker = _normalize_worker(args.worker)
     handle = await AsyncSupervisor().run(
@@ -93,6 +132,10 @@ async def _run(args: argparse.Namespace) -> int:
         "artifact_ok": bool(validation.ok if validation is not None else False),
         "artifact_errors": artifact_errors,
     }
+
+    lifecycle_state = str(getattr(args, "lifecycle_state", "") or "")
+    if lifecycle_state:
+        _maybe_record_lifecycle_worker_exit(lifecycle_state, summary)
 
     if args.quiet:
         pass

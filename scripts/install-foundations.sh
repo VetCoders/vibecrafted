@@ -29,7 +29,6 @@ VCFRAME_INSTALL_URL="${VCFRAME_INSTALL_URL:-https://vibecrafted.io/install.sh}"
 AGENT_PACKAGES=(
   "claude:@anthropic-ai/claude-code"
   "codex:@openai/codex"
-  "gemini:@google/gemini-cli"
   "junie:@jetbrains/junie"
   "grok:@xai-official/grok"
 )

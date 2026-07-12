@@ -62,6 +62,9 @@ _vetcoders_user_config_path() {
 _vetcoders_research_config_paths() {
   local config_path manifest
 
+  [[ -n "${VIBECRAFTED_RESEARCH_CONFIG:-}" && -f "${VIBECRAFTED_RESEARCH_CONFIG}" ]] && printf '%s\n' "${VIBECRAFTED_RESEARCH_CONFIG}"
+  [[ -f "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/config/research.yaml" ]] && printf '%s\n' "${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/config/research.yaml"
+
   config_path="$(_vetcoders_user_config_path 2>/dev/null || true)"
   [[ -n "$config_path" ]] && printf '%s\n' "$config_path"
 
@@ -102,23 +105,61 @@ import sys
 import tomllib
 
 path = sys.argv[1]
-with open(path, "rb") as handle:
-    data = tomllib.load(handle)
+if path.endswith((".yaml", ".yml")):
+    agents = []
+    in_lanes = False
+    current = None
+    with open(path, "r", encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.split("#", 1)[0].rstrip()
+            if not line.strip():
+                continue
+            stripped = line.strip()
+            if not raw.startswith((" ", "\t")):
+                in_lanes = stripped == "lanes:"
+                current = None
+                if stripped.startswith("agents:") and "[" in stripped and "]" in stripped:
+                    inner = stripped.split("[", 1)[1].rsplit("]", 1)[0]
+                    agents.extend(part.strip().strip("\"'\''") for part in inner.split(","))
+                continue
+            if in_lanes and stripped.startswith("-"):
+                current = {"enabled": "true"}
+                body = stripped[1:].strip()
+                if body.startswith("agent:"):
+                    current["agent"] = body.split(":", 1)[1].strip().strip("\"'\''")
+                agents.append(current)
+                continue
+            if in_lanes and current is not None and ":" in stripped:
+                key, value = stripped.split(":", 1)
+                current[key.strip()] = value.strip().strip("\"'\''")
+    for item in agents:
+        if isinstance(item, dict):
+            if item.get("enabled", "true").lower() in {"false", "no", "off"}:
+                continue
+            agent = item.get("agent", "")
+        else:
+            agent = item
+        if agent:
+            print(agent)
+    sys.exit(0 if agents else 3)
+else:
+    with open(path, "rb") as handle:
+        data = tomllib.load(handle)
 
-agents = (
-    data.get("runtime", {})
-    .get("picking", {})
-    .get("research", {})
-    .get("default_agents", [])
-)
+    agents = (
+        data.get("runtime", {})
+        .get("picking", {})
+        .get("research", {})
+        .get("default_agents", [])
+    )
 
-printed = False
-for agent in agents:
-    if isinstance(agent, str) and agent.strip():
-        print(agent.strip())
-        printed = True
+    printed = False
+    for agent in agents:
+        if isinstance(agent, str) and agent.strip():
+            print(agent.strip())
+            printed = True
 
-sys.exit(0 if printed else 3)
+    sys.exit(0 if printed else 3)
 ' "$config_path")"
   parse_status=$?
   if (( parse_status == 0 )); then
@@ -227,26 +268,30 @@ _vetcoders_research_help() {
 ─────────────────────────────────────────
 Configurable triple-agent research swarm launcher.
 
-Usage:
-  vc-research --prompt "Question to research"
-  vc-research --file /path/to/plan.md
-  vc-research uno <claude|codex|gemini|agy|junie|grok> --prompt "Question to research"
-  vc-research uno <claude|codex|gemini|agy|junie|grok> --file /path/to/plan.md
+  Usage:
+    vc-research --prompt "Question to research"
+    vc-research --file /path/to/plan.md
+    vc-research <agent1> [agent2 agent3] --prompt "Question to research"
+    vc-research <agent1> [agent2 agent3] --file /path/to/plan.md
+    vc-research uno <claude|codex|gemini|agy|junie|grok> --prompt "Question to research"
+    vc-research uno <claude|codex|gemini|agy|junie|grok> --file /path/to/plan.md
 
 Common flags:
   -p, --prompt <text>            Inline prompt
   -f, --file <path.md>           Input file as prompt context
-  --runtime <runtime>             Runtime backend (terminal|headless|visible)
-  --root <path>                   Root workspace for this research run
+    --runtime <runtime>             Runtime backend (terminal|headless|visible)
+    --root <path>                   Root workspace for this research run
+    --synthesizer <agent>           Override synthesis agent (default: first positional agent, or YAML/default behavior)
 
 Examples:
-  vc-research --prompt "Compare API alternatives for oauth libraries"
-  vc-research uno codex --prompt "Probe just one research lane"
-  vc-research --file /path/to/research-plan.md
-  vibecrafted research --prompt "State of the art for MCP streaming"
+    vc-research --prompt "Compare API alternatives for oauth libraries"
+    vc-research codex --prompt "Probe just one research lane"
+    vc-research claude codex gemini --synthesizer claude --file /path/to/research-plan.md
+    vc-research --file /path/to/research-plan.md
+    vibecrafted research --prompt "State of the art for MCP streaming"
 
-Do not pass an agent directly to vc-research.
-Use `vc-research uno <agent> ...` if you intentionally need single-agent mode.
+One invocation is one full swarm. Positional agents override the YAML lane set for this run.
+`uno <agent>` is kept as an alias for the one-lane override form.
 HELP
 }
 
@@ -254,8 +299,8 @@ _vetcoders_research() {
   local first_arg="${1:-}"
   local inherited_run_id inherited_run_lock
   local prompt root run_id run_lock runtime run_dir prompt_file layout_file summary_file
-  local session_name agent launcher cmd_file research_mode requested_research_agent lock_actor launch_label
-  local -a research_agents launchers launcher_entries command_entries
+  local session_name agent launcher cmd_file research_mode requested_research_agent lock_actor launch_label research_synthesizer
+  local -a research_agents launchers launcher_entries command_entries positional_research_agents contract_args
 
   for _arg in "$@"; do
     case "$_arg" in
@@ -268,6 +313,7 @@ _vetcoders_research() {
 
   research_mode="swarm"
   requested_research_agent=""
+  positional_research_agents=()
   if [[ "$first_arg" == "uno" ]]; then
     shift || true
     requested_research_agent="${1:-}"
@@ -277,20 +323,52 @@ _vetcoders_research() {
       return 1
     }
     shift || true
-    research_mode="uno"
+    positional_research_agents=("$requested_research_agent")
+    research_mode="override"
     first_arg="${1:-}"
   fi
 
-  case "$first_arg" in
-    claude|codex|gemini|agy|junie|grok)
-    printf 'vc-research is a triple-agent swarm launcher. Do not pass %s.\n' "$first_arg" >&2
-    printf 'Use vc-research --prompt "..." or vc-research --file /path/to/plan.md.\n' >&2
-    printf 'If you intentionally want one researcher, use vc-research uno %s --prompt "...".\n' "$first_arg" >&2
-    return 1
-      ;;
-  esac
+  while [[ $# -gt 0 ]]; do
+    case "${1:-}" in
+      claude|codex|gemini|agy|junie|grok)
+        positional_research_agents+=("$1")
+        research_mode="override"
+        shift || true
+        ;;
+      *)
+        break
+        ;;
+    esac
+    if (( ${#positional_research_agents[@]} >= 3 )); then
+      break
+    fi
+  done
 
-  _vetcoders_parse_contract "$@" || return 1
+  research_synthesizer=""
+  contract_args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --synthesizer)
+        shift
+        [[ $# -gt 0 ]] || { echo "Missing value for --synthesizer" >&2; return 1; }
+        _vetcoders_has_agent "$1" || {
+          printf 'vc-research --synthesizer expects <claude|codex|gemini|agy|junie|grok>.\n' >&2
+          return 1
+        }
+        research_synthesizer="$1"
+        ;;
+      -p|--prompt)
+        contract_args+=("$@")
+        break
+        ;;
+      *)
+        contract_args+=("$1")
+        ;;
+    esac
+    shift || true
+  done
+
+  _vetcoders_parse_contract "${contract_args[@]}" || return 1
   [[ -z "$_vetcoders_contract_count" ]] || {
     echo "--count is only supported by vibecrafted marbles." >&2
     return 1
@@ -325,7 +403,7 @@ _vetcoders_research() {
   run_lock="$inherited_run_lock"
   if [[ -z "$run_lock" || ! -f "$run_lock" ]]; then
     lock_actor="swarm"
-    [[ "$research_mode" == "uno" ]] && lock_actor="$requested_research_agent"
+    [[ "$research_mode" == "override" && ${#positional_research_agents[@]} -gt 0 ]] && lock_actor="${positional_research_agents[0]}"
     run_lock="$(_vetcoders_create_run_lock "$run_id" "$lock_actor" "research" "$root")" || return 1
   fi
 
@@ -334,8 +412,9 @@ _vetcoders_research() {
   prompt_file="$(_vetcoders_research_prompt_file "$run_dir" "$prompt")" || return 1
 
   research_agents=()
-  if [[ "$research_mode" == "uno" ]]; then
-    research_agents=("$requested_research_agent")
+  if [[ "$research_mode" == "override" ]]; then
+    research_agents=("${positional_research_agents[@]}")
+    [[ -n "$research_synthesizer" ]] || research_synthesizer="${research_agents[0]:-}"
   else
     local agents_output
     agents_output="$(_vetcoders_research_agents)" || return 1
@@ -350,6 +429,9 @@ _vetcoders_research() {
       printf 'vc-research: no supported research agents configured.\n' >&2
       return 1
     fi
+  fi
+  if [[ -n "$research_synthesizer" ]]; then
+    export VIBECRAFTED_RESEARCH_SYNTHESIZER="$research_synthesizer"
   fi
 
   launchers=()
@@ -404,7 +486,7 @@ _vetcoders_research() {
     export VIBECRAFTED_RESEARCH_RUN_DIR="$run_dir"
     "$vc_frame_bin" --session "$session_name" action new-tab --layout "$layout_file" >/dev/null
     launch_label="Research swarm"
-    [[ "$research_mode" == "uno" ]] && launch_label="Research uno ($requested_research_agent)"
+    [[ "$research_mode" == "override" ]] && launch_label="Research override (${research_agents[*]})"
     printf '%s launched in shared tab (run_id=%s).\n' "$launch_label" "$run_id"
     printf '  run dir: %s\n' "$run_dir"
     printf '  reports: %s\n' "$run_dir/reports"
@@ -416,7 +498,7 @@ _vetcoders_research() {
   fi
 
   launch_label="Research swarm"
-  [[ "$research_mode" == "uno" ]] && launch_label="Research uno ($requested_research_agent)"
+  [[ "$research_mode" == "override" ]] && launch_label="Research override (${research_agents[*]})"
   printf '%s prepared (run_id=%s), but runtime %s does not use the shared vc_frame layout.\n' "$launch_label" "$run_id" "$runtime"
   printf 'Run directory: %s\n' "$run_dir"
   printf 'Reports: %s\n' "$run_dir/reports"

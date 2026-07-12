@@ -82,8 +82,14 @@ def test_release_archive_preserves_bundled_tool_slot() -> None:
         encoding="utf-8"
     )
 
-    assert "tar -czf" in release_workflow
-    assert "--exclude='./tools/bin'" not in release_workflow
+    archive_step = release_workflow.split("- name: Build release archive", 1)[1].split(
+        "- name: Sign release artifacts", 1
+    )[0]
+    assert "scripts/distribution_manifest.py archive" in archive_step
+    assert '--source . --output "dist/${archive_name}.tar.gz"' in archive_step
+    assert '--root-name "$archive_name"' in archive_step
+    assert "tar -czf" not in archive_step
+    assert "--exclude" not in archive_step
     assert "$SOURCE/tools/bin/<os>-<arch>" in tools_readme
 
 

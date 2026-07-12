@@ -258,7 +258,11 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
         "'model': 'claude-opus-4-8'}))\n"
         "print(json.dumps({'type': 'assistant', 'message': {'content': ["
         "{'type': 'text', 'text': 'visible text from claude'}"
-        "]}}))\n",
+        "]}}))\n"
+        "print(json.dumps({'type': 'result', 'result': 'done', 'usage': {"
+        "'input_tokens': 10, 'cache_read_input_tokens': 3, "
+        "'cache_creation_input_tokens': 2, 'output_tokens': 5}, "
+        "'total_cost_usd': 0.02}))\n",
         encoding="utf-8",
     )
     claude.chmod(0o755)
@@ -286,6 +290,8 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     assert "session: sess-123" in out
     assert "model: claude-opus-4-8" in out
     assert "visible text from claude" in out
+    assert "tokens_cache_write: 2" in out
+    assert "tokens_total: 18" in out
     assert '"type": "assistant"' not in out
     transcript_text = transcript.read_text(encoding="utf-8")
     assert '"type": "assistant"' in transcript_text
@@ -295,6 +301,9 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     meta_payload = json.loads(meta.read_text(encoding="utf-8"))
     assert meta_payload["agent_session_id"] == "sess-123"
     assert meta_payload["agent_model"] == "claude-opus-4-8"
+    assert meta_payload["tokens_cached_input"] == 3
+    assert meta_payload["tokens_cache_write"] == 2
+    assert meta_payload["tokens_total"] == 18
     assert meta_payload["resume_command"].endswith("claude --resume sess-123")
 
 
@@ -339,6 +348,55 @@ def test_async_supervisor_uses_env_model_for_codex_thread_banner(
     assert handle.agent_model == "gpt-5.3-codex"
     meta_payload = json.loads(meta.read_text(encoding="utf-8"))
     assert meta_payload["agent_model"] == "gpt-5.3-codex"
+
+
+def test_async_supervisor_records_requested_model_next_to_reported_model(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_AGENT", "gemini")
+    monkeypatch.setenv("VIBECRAFTED_MODEL_REQUESTED", "gemini-pro")
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    meta = tmp_path / "dispatch.meta.json"
+    worker = tmp_path / "gemini"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        ")\n"
+        "print('model: gemini-real')\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="asup-gemini-model-requested",
+            command=[str(worker)],
+            root=tmp_path,
+            meta_path=meta,
+            report_path=report,
+            transcript_path=transcript,
+            tee_output=True,
+        )
+    )
+
+    assert handle.exit_code == 0
+    assert handle.agent_model == "gemini-real"
+    assert handle.model_requested == "gemini-pro"
+    assert handle.model_override_skipped is True
+    out = capsys.readouterr().out
+    assert "model: gemini-real" in out
+    assert "model_requested: gemini-pro" in out
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload["agent_model"] == "gemini-real"
+    assert meta_payload["model_requested"] == "gemini-pro"
+    assert meta_payload["model_override_supported"] is False
+    assert meta_payload["model_override_skipped"] is True
+    assert meta_payload["model_override_skip_reason"] == "unsupported_agent_model_flag"
 
 
 def test_async_supervisor_salvages_grok_report_from_streaming_json(
@@ -478,3 +536,52 @@ def test_dispatcher_cli_fails_missing_report_contract(
     assert payload["artifact_ok"] is False
     assert payload["artifact_errors"] == ["report_missing"]
     assert payload["state"] == "report_missing"
+
+
+def test_dispatcher_cli_records_lifecycle_worker_death(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    state_path = tmp_path / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "status": "launching",
+                "stages": [{"id": "implement", "launch": {"run_id": "disp-death-1"}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = tmp_path / "worker.py"
+    script.write_text("import sys\nsys.exit(3)\n", encoding="utf-8")
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-death-1",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(tmp_path / "never-written.md"),
+            "--transcript",
+            str(tmp_path / "dispatch.log"),
+            "--lifecycle-state",
+            str(state_path),
+            "--json",
+            "--",
+            sys.executable,
+            str(script),
+        ]
+    )
+
+    assert rc == 3
+    # Push-side report-on-death: the death landed in the lifecycle state
+    # itself, readable by purely passive consumers with no status verb.
+    reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+    worker_exit = reloaded["stages"][0]["worker_exit"]
+    assert worker_exit["exit_code"] == 3
+    assert worker_exit["artifact_ok"] is False
+    assert reloaded["stage_worker_exit"]["stage"] == "implement"
+    assert reloaded["stage_worker_exit"]["run_id"] == "disp-death-1"
+    capsys.readouterr()

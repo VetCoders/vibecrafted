@@ -173,6 +173,7 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
                 "agent": "codex",
                 "skill": "implement",
                 "model": "unknown",
+                "model_requested": "gpt-5.5",
                 "status": "completed",
                 "root": str(tmp_path),
                 "report": str(report),
@@ -193,11 +194,13 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     payload = json.loads(final_meta.read_text(encoding="utf-8"))
     assert payload["session_id"] == "codex-finalize-001"
     assert payload["model"] == "gpt-5.3-codex"
+    assert payload["model_requested"] == "gpt-5.5"
     assert payload["duration_s"] == 5.0
     assert payload["tokens_input"] == 12
     assert payload["tokens_cached_input"] == 3
     assert payload["tokens_output"] == 7
-    assert payload["tokens_total"] == 19
+    assert payload["tokens_total"] == 22
+    assert "tokens_cache_write" not in payload
     assert payload["cost_usd"] == 0.045
     assert payload["artifact_contract"] == "vibecrafted.agent-artifact.v1"
 
@@ -206,6 +209,8 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     assert final_report.name.endswith("-report.md")
     assert final_report.is_file()
     assert final_transcript.is_file()
+    report_text = final_report.read_text(encoding="utf-8")
+    assert "model_requested: gpt-5.5" in report_text
     assert report.exists()
     assert transcript.exists()
     assert meta.exists()
@@ -249,6 +254,67 @@ def test_finish_meta_python_owns_terminal_state(tmp_path: Path) -> None:
     assert payload["completed_at"] == payload["updated_at"]
 
 
+def test_finalize_artifacts_maps_junie_json_stream_receipt(tmp_path: Path) -> None:
+    report = tmp_path / "junie.md"
+    transcript = tmp_path / "junie.transcript.log"
+    meta = tmp_path / "junie.meta.json"
+
+    report.write_text("# Junie report\n\nDone.\n", encoding="utf-8")
+    transcript.write_text(
+        json.dumps({"type": "session", "session_id": "junie-session-123"})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "result",
+                "session_id": "junie-session-123",
+                "usage": {
+                    "prompt_tokens": 1200,
+                    "cached_prompt_tokens": 300,
+                    "completion_tokens": 125,
+                    "total_tokens": 1625,
+                },
+                "cost_usd": 0.01925,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "junie-json-001",
+                "prompt_id": "prompt-junie-json",
+                "agent": "junie",
+                "skill": "implement",
+                "model": "junie-cli-default",
+                "status": "completed",
+                "root": str(tmp_path),
+                "report": str(report),
+                "transcript": str(transcript),
+                "meta": str(meta),
+                "created_at": "2026-07-12T03:50:39+00:00",
+                "completed_at": "2026-07-12T03:50:42+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    final_meta = finalize_artifacts(meta, report, transcript)
+
+    assert final_meta == meta
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["session_id"] == "junie-session-123"
+    assert payload["tokens_input"] == 1200
+    assert payload["tokens_cached_input"] == 300
+    assert payload["tokens_output"] == 125
+    assert payload["tokens_total"] == 1625
+    assert payload["cost_usd"] == 0.01925
+    report_text = report.read_text(encoding="utf-8")
+    assert "session_id: junie-session-123" in report_text
+    assert "tokens_input: 1200" in report_text
+
+
 def test_subscribe_events_reads_appended_events(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -276,11 +342,21 @@ def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
         "runner: vibecrafted\n"
         "model: gemini-3.1-pro-preview\n"
         "tokens_input: 648618\n"
-        "tokens_cached_input: 0\n"
+        "tokens_cached_input: 50\n"
         "tokens_output: 1680\n"
-        "tokens_total: 650298\n"
+        "tokens_total: 650348\n"
     )
-    assert _extract_tokens(gemini_transcript)["total"] == 650298
+    assert _extract_tokens(gemini_transcript)["total"] == 650348
+
+    claude_footer = (
+        "tokens_input: 100\n"
+        "tokens_cached_input: 400\n"
+        "tokens_cache_write: 25\n"
+        "tokens_output: 30\n"
+    )
+    claude_tokens = _extract_tokens(claude_footer)
+    assert claude_tokens["total"] == 530
+    assert claude_tokens["cache_write"] == 25
 
     # junie-style footer, no per-event render line either.
     junie_transcript = "tokens_input: 5000\ntokens_output: 200\ntokens_total: 5200\n"
@@ -293,3 +369,32 @@ def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
     # No footer: fall back to the per-event line (backward compatible).
     legacy = "[12:00] tokens: 12 in / 7 out\n"
     assert _extract_tokens(legacy)["total"] == 19
+
+
+def test_extract_tokens_does_not_let_zero_footer_mask_junie_json() -> None:
+    from vibecrafted_core.spawn import _extract_tokens
+
+    transcript = (
+        '{"modelUsage":[{"model":"gpt-5.5","inputTokens":807,'
+        '"cacheInputTokens":49792,"outputTokens":563,"cost":0.045821}]}\n'
+        "tokens_input: 0\ntokens_cached_input: 0\ntokens_output: 0\n"
+    )
+    tokens = _extract_tokens(transcript)
+    assert tokens == {
+        "input": 807,
+        "cached_input": 49792,
+        "cache_write": None,
+        "output": 563,
+        "total": 51162,
+    }
+
+
+def test_extract_cost_sums_junie_per_call_model_usage() -> None:
+    from vibecrafted_core.spawn import _extract_cost
+
+    transcript = (
+        '{"modelUsage":[{"model":"gpt-5.5","cost":0.045821}]}\n'
+        '{"modelUsage":[{"model":"gpt-4.1-mini","cost":0.0002904}]}\n'
+        "cost_usd: unknown\n"
+    )
+    assert _extract_cost(transcript) == 0.046111

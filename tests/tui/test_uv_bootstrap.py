@@ -29,6 +29,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -43,6 +44,28 @@ VERSION_FILE = REPO_ROOT / "VERSION"
 def _write_executable(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
+
+
+def _write_distribution_manifest_stub(source_dir: Path) -> None:
+    path = source_dir / "scripts" / "distribution_manifest.py"
+    path.write_text(
+        """#!/usr/bin/env python3
+from pathlib import Path
+import shutil
+import sys
+
+if sys.argv[1] == "check":
+    raise SystemExit(0)
+if sys.argv[1] != "stage":
+    raise SystemExit(2)
+source = Path(sys.argv[sys.argv.index("--source") + 1])
+destination = Path(sys.argv[sys.argv.index("--destination") + 1])
+if destination.exists():
+    shutil.rmtree(destination)
+shutil.copytree(source, destination, symlinks=True)
+""",
+        encoding="utf-8",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +296,6 @@ def test_install_sh_reports_version_from_staged_tree(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     home = tmp_path / "home"
     make_capture = tmp_path / "make-args.txt"
-    python_capture = tmp_path / "python-called.txt"
 
     scripts_dir.mkdir(parents=True)
     fake_bin.mkdir()
@@ -285,6 +307,7 @@ def test_install_sh_reports_version_from_staged_tree(tmp_path: Path) -> None:
     )
     (source_dir / "VERSION").write_text("9.9.9-test\n", encoding="utf-8")
     (scripts_dir / "placeholder").write_text("", encoding="utf-8")
+    _write_distribution_manifest_stub(source_dir)
 
     with tarfile.open(archive_path, "w:gz") as archive:
         archive.add(source_dir, arcname="vibecrafted-main")
@@ -296,8 +319,7 @@ def test_install_sh_reports_version_from_staged_tree(tmp_path: Path) -> None:
     )
     _write_executable(
         fake_bin / "python3",
-        "#!/usr/bin/env bash\nset -euo pipefail\n"
-        'printf "unexpected\\n" > "$PYTHON_CAPTURE"\nexit 97\n',
+        f'#!/usr/bin/env bash\nset -euo pipefail\nexec "{sys.executable}" "$@"\n',
     )
 
     env = os.environ.copy()
@@ -306,7 +328,6 @@ def test_install_sh_reports_version_from_staged_tree(tmp_path: Path) -> None:
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
     env["MAKE_CAPTURE"] = str(make_capture)
-    env["PYTHON_CAPTURE"] = str(python_capture)
 
     result = subprocess.run(
         ["bash", str(INSTALL_SH), "--archive-file", str(archive_path), "install"],
@@ -336,7 +357,6 @@ def test_install_sh_banner_falls_back_when_version_absent(tmp_path: Path) -> Non
     fake_bin = tmp_path / "bin"
     home = tmp_path / "home"
     make_capture = tmp_path / "make-args.txt"
-    python_capture = tmp_path / "python-called.txt"
 
     scripts_dir.mkdir(parents=True)
     fake_bin.mkdir()
@@ -348,6 +368,7 @@ def test_install_sh_banner_falls_back_when_version_absent(tmp_path: Path) -> Non
     )
     # No VERSION file on purpose.
     (scripts_dir / "placeholder").write_text("", encoding="utf-8")
+    _write_distribution_manifest_stub(source_dir)
 
     with tarfile.open(archive_path, "w:gz") as archive:
         archive.add(source_dir, arcname="vibecrafted-exotic")
@@ -359,8 +380,7 @@ def test_install_sh_banner_falls_back_when_version_absent(tmp_path: Path) -> Non
     )
     _write_executable(
         fake_bin / "python3",
-        "#!/usr/bin/env bash\nset -euo pipefail\n"
-        'printf "unexpected\\n" > "$PYTHON_CAPTURE"\nexit 97\n',
+        f'#!/usr/bin/env bash\nset -euo pipefail\nexec "{sys.executable}" "$@"\n',
     )
 
     env = os.environ.copy()
@@ -369,7 +389,6 @@ def test_install_sh_banner_falls_back_when_version_absent(tmp_path: Path) -> Non
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
     env["MAKE_CAPTURE"] = str(make_capture)
-    env["PYTHON_CAPTURE"] = str(python_capture)
 
     result = subprocess.run(
         ["bash", str(INSTALL_SH), "--archive-file", str(archive_path), "install"],

@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from dataclasses import dataclass
 from typing import Optional
 
 __all__ = [
@@ -37,7 +38,17 @@ __all__ = [
     "sandbox_supported",
     "require_parity",
     "ParityError",
+    "DispatchGranularity",
+    "dispatch_granularity",
 ]
+
+
+@dataclass(frozen=True)
+class DispatchGranularity:
+    shape: str
+    max_files_per_cut: int
+    max_parallel_cuts: int
+    rationale: str
 
 
 class ParityError(RuntimeError):
@@ -66,13 +77,12 @@ _SESSION_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
             re.IGNORECASE,
         ),
     )
-    for agent in ("claude", "codex", "gemini", "agy", "junie", "grok")
+    for agent in ("claude", "codex", "agy", "junie", "grok")
 }
 
 _SANDBOX_SUPPORTED_AGENTS = {
     "claude",
     "codex",
-    "gemini",
     "agy",
     "junie",
     "grok",
@@ -139,6 +149,10 @@ def normalize_model(raw: str) -> tuple[str, bool]:
         return "spark", True
     if "gpt-5.3" in lower or "gpt-5-3" in lower:
         return "gpt-5.3", True
+    if "gpt-5.6" in lower or "gpt-5-6" in lower:
+        return "gpt-5.6", True
+    if "gpt-5.5" in lower or "gpt-5-5" in lower:
+        return "gpt-5.5", True
     if "gpt-5" in lower:
         return "gpt-5", True
     if "gpt-4" in lower:
@@ -157,6 +171,8 @@ def normalize_model(raw: str) -> tuple[str, bool]:
         return "gemini-3-flash", True
     if "gemini" in lower:
         return "gemini", True
+    if "grok-build" in lower or "grok-code-fast" in lower:
+        return "grok-build", True
 
     return lower, False
 
@@ -168,6 +184,8 @@ _TIER_RANK: dict[str, int] = {
     "haiku": 100,
     # Codex
     "gpt-5.3": 530,
+    "gpt-5.6": 560,
+    "gpt-5.5": 550,
     "gpt-5": 500,
     "spark": 450,
     "gpt-4": 400,
@@ -176,6 +194,7 @@ _TIER_RANK: dict[str, int] = {
     "gemini-3-auto": 720,
     "gemini-3-flash": 710,
     "gemini": 700,
+    "grok-build": 600,
 }
 
 _TIER_FAMILY: dict[str, str] = {
@@ -190,7 +209,39 @@ _TIER_FAMILY: dict[str, str] = {
     "gemini-3-auto": "gemini",
     "gemini-3-flash": "gemini",
     "gemini": "gemini",
+    "grok-build": "xai",
 }
+
+
+def dispatch_granularity(model: str) -> DispatchGranularity:
+    """Choose cut size from measured model capability/cost, conservatively.
+
+    Frontier models get fewer, coherent cuts to avoid repeatedly paying for the
+    same large context. Economy and unknown models get smaller sequential cuts;
+    this never weakens the existing model-parity floor.
+    """
+    tier, recognized = normalize_model(model)
+    if not recognized:
+        return DispatchGranularity(
+            "surgical", 1, 1, "unknown model: smallest sequential proof surface"
+        )
+    if tier in {"opus", "gpt-5.6", "gpt-5.5", "gpt-5.3", "gemini-3-pro", "grok-build"}:
+        return DispatchGranularity(
+            "coherent",
+            8,
+            3,
+            "frontier model: amortize repeated context across coherent cuts",
+        )
+    if tier in {"sonnet", "gpt-5", "gemini-3-auto", "gemini"}:
+        return DispatchGranularity(
+            "bounded",
+            4,
+            2,
+            "standard model: bounded cuts with explicit integration seams",
+        )
+    return DispatchGranularity(
+        "surgical", 2, 1, "economy model: small sequential cuts with tight verification"
+    )
 
 
 def tier_rank(token: str) -> int:

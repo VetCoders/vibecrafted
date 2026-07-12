@@ -44,7 +44,7 @@ Enter the framework session, then launch through the command deck (not raw `skil
 ```bash
 vibecrafted start            # or: vc-start
 vibecrafted scaffold claude --prompt 'Design the payment system'
-vc-scaffold gemini --prompt 'Plan migration from NextAuth to custom auth'
+vc-scaffold agy --prompt 'Plan migration from NextAuth to custom auth'
 vibecrafted scaffold codex --file /path/to/idea-brief.md
 ```
 

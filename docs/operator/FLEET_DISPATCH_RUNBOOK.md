@@ -46,9 +46,9 @@ vibecrafted <workflow> <agent> --file briefs/<N>-<cut>_<slug>.md   # e.g. vibecr
 vibecrafted <workflow> <agent> --prompt '<inline intent>'
 ```
 
-- `agent` ∈ {codex, claude, gemini, junie, agy, grok}. Pick via the **why-matrix**:
+- `agent` ∈ {codex, claude, agy, junie, grok}. Pick via the **why-matrix** (gemini deprecated; agy for Google-family)
   **codex = precision/surgery** (contract-gated refactors, exact edits), **claude = forensics/audit**
-  (deep unknowns, bug hunts), **gemini = radical reframing** (architecture leaps, simplification).
+  (deep unknowns, bug hunts), **agy = Google-family (antigravity rewire; gemini deprecated)** (architecture leaps, simplification).
 - Headless (non-TTY agent bash) **degrades to in-repo dispatch automatically**. A launch receipt
   prints `run_id` + report/transcript/meta paths — capture them.
 - **Disjoint file-domains → safe parallel dispatch** (Living Tree). Overlapping domains → sequence them.
@@ -63,9 +63,20 @@ vibecrafted <workflow> <agent> --prompt '<inline intent>'
 
 ## 5. Observe (metadata-first, not pane-first)
 
-- `vibecrafted <agent> await --run-id <id>` (or `--last`) waits on completion + prints the summary.
-- Poll durable artifacts: `~/.vibecrafted/artifacts/<org>/<repo>/<date>/reports/*.meta.json` (status)
-  - `*.transcript.log` (live work). The fleet stays operable from artifacts even with no panes open.
+- After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
+  supervisor-side. Control-plane JSON, report files, transcripts, panes, and
+  scheduled wakeups are diagnostic only, not wake signals. Hedging await with
+  ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
+  do not normalize the hedge. See `docs/runtime/AGENT_OPS.md`.
+- Liveness is always 3-signal: await verdict, terminal run meta, worker pid
+  dead, plus promised report presence. Two agreeing signals are enough to act;
+  three are required to declare done. Any disagreement means treat as live and
+  re-arm await. Known skew: rc=0-on-live and meta stuck `active`/`stalled` after
+  real completion.
+- Durable artifacts (`*.meta.json`, `*.transcript.log`, report paths) are
+  diagnostic drilldowns after await is armed. The fleet stays operable from
+  artifacts even with no panes open, but artifact polling does not replace the
+  canonical await.
 - **Verify each cut** against its brief acceptance + run its gates (tests / clippy -D warnings /
   `make check`). Confirm the agent **committed its round**; if it left work uncommitted, flag the
   doctrine regression. **STOP is recovery, not surrender** — on stall/fail, issue a focused

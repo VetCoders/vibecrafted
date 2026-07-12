@@ -15,6 +15,7 @@ from typing import Any, Callable, Sequence
 from .agent_dispatch import extract_session_id, sandbox_supported
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
+from .telemetry import estimate_cost_usd
 
 EventCallback = Callable[[dict[str, Any]], None]
 
@@ -42,12 +43,30 @@ FOOTER_TOKEN_PATTERNS = {
     "cached_input": re.compile(
         r"^\s*tokens_cached_input:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
     ),
+    "cache_write": re.compile(
+        r"^\s*tokens_cache_write:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
+    ),
     "output": re.compile(
         r"^\s*tokens_output:\s*([0-9]+)", re.IGNORECASE | re.MULTILINE
     ),
 }
+JSON_TOKEN_PATTERNS = {
+    "input": re.compile(r'"(?:input_tokens|inputTokens|prompt_tokens)"\s*:\s*([0-9]+)'),
+    "cached_input": re.compile(
+        r'"(?:cached_input_tokens|cached_prompt_tokens|cache_read_input_tokens|cacheReadInputTokens|cacheInputTokens)"\s*:\s*([0-9]+)'
+    ),
+    "cache_write": re.compile(
+        r'"(?:cache_creation_input_tokens|cacheCreateTokens)"\s*:\s*([0-9]+)'
+    ),
+    "output": re.compile(
+        r'"(?:output_tokens|outputTokens|completion_tokens)"\s*:\s*([0-9]+)'
+    ),
+}
 COST_PATTERNS = (
-    re.compile(r"cost(?:_usd)?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
+    re.compile(
+        r"cost(?:_usd)?['\"]?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)",
+        re.IGNORECASE,
+    ),
     re.compile(r"\$([0-9]+\.[0-9]+)\s*(?:usd)?", re.IGNORECASE),
 )
 MODEL_ENV_VARS = (
@@ -109,6 +128,12 @@ def _set_child_pgid() -> None:
 
 
 def _default_command(agent: str, prompt: str) -> list[str]:
+    if agent == "gemini":
+        raise ValueError(
+            "gemini CLI is deprecated. Google Antigravity CLI (agy) is the replacement. "
+            "Use 'vibecrafted workflow agy --prompt ...' (or agy in other launchers). "
+            "No execution path may launch the gemini binary."
+        )
     if agent == "claude":
         return [
             "claude",
@@ -119,14 +144,17 @@ def _default_command(agent: str, prompt: str) -> list[str]:
         ]
     if agent == "codex":
         return ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt]
-    if agent == "gemini":
-        return ["gemini", "--yolo", "--prompt", prompt]
     if agent == "agy":
+        # agy >= 1.1: --print takes the prompt as its value (Go flags) and
+        # print mode does not read stdin; flags must precede it.
         return [
-            "bash",
-            "-lc",
-            "agy --print --dangerously-skip-permissions --add-dir . --print-timeout 30m '' <<< \"$1\"",
             "agy",
+            "--dangerously-skip-permissions",
+            "--add-dir",
+            ".",
+            "--print-timeout",
+            "30m",
+            "--print",
             prompt,
         ]
     if agent == "junie":
@@ -170,17 +198,20 @@ def _stdin_command(agent: str) -> list[str]:
             "-",
         ]
     if agent == "gemini":
-        return ["gemini", "-p", "", "--approval-mode", "yolo", "-o", "stream-json"]
+        raise ValueError(
+            "gemini CLI is deprecated. Google Antigravity CLI (agy) is the replacement. "
+            "Use 'vibecrafted workflow agy --prompt ...' (or agy in other launchers). "
+            "No execution path may launch the gemini binary."
+        )
     if agent == "agy":
+        # agy >= 1.1 print mode reads no stdin and --print requires a value;
+        # a shell shim folds stdin into the flag. The prompt lands on the
+        # inner argv (ARG_MAX-bound) because agy has no file/stdin lane.
         return [
-            "agy",
-            "--print",
-            "--dangerously-skip-permissions",
-            "--add-dir",
-            ".",
-            "--print-timeout",
-            "30m",
-            "",
+            "bash",
+            "-c",
+            "agy --dangerously-skip-permissions --add-dir . "
+            '--print-timeout 30m --print "$(cat)"',
         ]
     if agent == "junie":
         return [
@@ -265,9 +296,19 @@ def _extract_session(text: str) -> str:
     return ""
 
 
-def _extract_tokens(text: str) -> dict[str, int]:
+def _tokens_total(
+    input_tokens: int, cached_input_tokens: int, output_tokens: int
+) -> int:
+    return input_tokens + cached_input_tokens + output_tokens
+
+
+def _extract_tokens(text: str) -> dict[str, int | None]:
     clean = _clean_text(text)
     found = TOKEN_PATTERN.findall(clean)
+    json_tokens = {
+        key: sum(int(match) for match in pattern.findall(clean))
+        for key, pattern in JSON_TOKEN_PATTERNS.items()
+    }
     # Prefer the authoritative run-closure footer totals when present: they are
     # written for every agent and carry the final per-run usage, so they work
     # uniformly across providers and never sum partial streaming deltas.
@@ -275,19 +316,42 @@ def _extract_tokens(text: str) -> dict[str, int]:
     footer_out = FOOTER_TOKEN_PATTERNS["output"].findall(clean)
     if footer_in or footer_out:
         footer_cached = FOOTER_TOKEN_PATTERNS["cached_input"].findall(clean)
+        footer_cache_write = FOOTER_TOKEN_PATTERNS["cache_write"].findall(clean)
         input_tokens = int(footer_in[-1]) if footer_in else 0
         cached_tokens = int(footer_cached[-1]) if footer_cached else 0
+        cache_write_tokens = int(footer_cache_write[-1]) if footer_cache_write else None
         output_tokens = int(footer_out[-1]) if footer_out else 0
-        total_tokens = input_tokens + output_tokens
-        if total_tokens or not found:
+        total_tokens = _tokens_total(input_tokens, cached_tokens, output_tokens)
+        if total_tokens or (not found and not any(json_tokens.values())):
             return {
                 "input": input_tokens,
                 "cached_input": cached_tokens,
+                "cache_write": cache_write_tokens,
                 "output": output_tokens,
                 "total": total_tokens,
             }
+    if any(json_tokens.values()):
+        return {
+            "input": json_tokens["input"],
+            "cached_input": json_tokens["cached_input"],
+            "cache_write": json_tokens["cache_write"]
+            if json_tokens["cache_write"]
+            else None,
+            "output": json_tokens["output"],
+            "total": _tokens_total(
+                json_tokens["input"],
+                json_tokens["cached_input"],
+                json_tokens["output"],
+            ),
+        }
     if not found:
-        return {"input": 0, "cached_input": 0, "output": 0, "total": 0}
+        return {
+            "input": 0,
+            "cached_input": 0,
+            "cache_write": None,
+            "output": 0,
+            "total": 0,
+        }
     input_tokens = cached_tokens = output_tokens = 0
     for raw_in, raw_cached, raw_out in found:
         input_tokens += int(raw_in)
@@ -296,13 +360,31 @@ def _extract_tokens(text: str) -> dict[str, int]:
     return {
         "input": input_tokens,
         "cached_input": cached_tokens,
+        "cache_write": None,
         "output": output_tokens,
-        "total": input_tokens + output_tokens,
+        "total": _tokens_total(input_tokens, cached_tokens, output_tokens),
     }
 
 
 def _extract_cost(text: str) -> float | None:
     clean = _clean_text(text)
+    footer = re.findall(
+        r"^\s*cost_usd:\s*\$?([0-9]+(?:\.[0-9]+)?)\s*$",
+        clean,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if footer:
+        return round(float(footer[-1]), 6)
+    totals = re.findall(
+        r'"(?:total_cost_usd|totalCostUsd|total_cost)"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+        clean,
+        re.IGNORECASE,
+    )
+    if totals:
+        return round(float(totals[-1]), 6)
+    item_costs = re.findall(r'"cost"\s*:\s*([0-9]+(?:\.[0-9]+)?)', clean, re.IGNORECASE)
+    if item_costs:
+        return round(sum(float(value) for value in item_costs), 6)
     for pattern in COST_PATTERNS:
         matches = pattern.findall(clean)
         if not matches:
@@ -332,6 +414,17 @@ def _extract_model_from_text(text: str) -> str:
         model = _clean_model(match)
         if model:
             return model
+    json_models = re.findall(
+        r'"(?:model|model_id|modelId|model_name|modelName)"\s*:\s*"([^"]+)"',
+        clean,
+    )
+    for match in json_models:
+        model = _clean_model(match)
+        if model:
+            return model
+    model_usage_maps = re.findall(r'"modelUsage"\s*:\s*\{\s*"([^"]+)"', clean)
+    if model_usage_maps:
+        return _clean_model(model_usage_maps[-1])
     return ""
 
 
@@ -398,6 +491,7 @@ def write_meta(
     transcript: str,
     launcher: str,
     model: str = "",
+    model_requested: str = "",
     prompt_id: str = "",
     run_id: str = "",
     loop_nr: str | int = 0,
@@ -436,6 +530,8 @@ def write_meta(
         "liveness": "pid_pending",
         "model": model,
     }
+    if str(model_requested or "").strip():
+        payload["model_requested"] = str(model_requested).strip()
 
     _write_meta(meta, payload)
     if run_id:
@@ -453,6 +549,11 @@ def write_meta(
                 "transcript": transcript,
                 "launcher": launcher,
                 "model": model,
+                **(
+                    {"model_requested": str(model_requested).strip()}
+                    if str(model_requested or "").strip()
+                    else {}
+                ),
                 "prompt_id": prompt_id,
                 "started_at": now_iso,
                 "liveness": "active",
@@ -534,6 +635,7 @@ def _render_frontmatter(data: dict[str, object]) -> str:
         "agent",
         "skill",
         "model",
+        "model_requested",
         "status",
         "date",
         "session_id",
@@ -541,9 +643,12 @@ def _render_frontmatter(data: dict[str, object]) -> str:
         "artifact_kind",
         "repo_path",
         "tokens_input",
+        "tokens_cached_input",
+        "tokens_cache_write",
         "tokens_output",
         "tokens_total",
         "cost_usd",
+        "cost_source",
     ]
     lines = ["---"]
     emitted = set()
@@ -646,18 +751,31 @@ def _leave_compat_link(announced: Path, final: Path) -> None:
 
 
 def _footer(marker: str, payload: dict[str, object]) -> str:
-    return "\n".join(
+    lines = [
+        "",
+        f"<!-- vibecrafted-artifact-footer:{marker} -->",
+        "---",
+        "run_closure:",
+        f"  run_id: {payload.get('run_id', 'unknown')}",
+        f"  session_id: {payload.get('session_id') or 'unknown'}",
+        f"  tokens_input: {payload.get('tokens_input', 0)}",
+        f"  tokens_cached_input: {payload.get('tokens_cached_input', 0)}",
+    ]
+    if payload.get("tokens_cache_write") is not None:
+        lines.append(f"  tokens_cache_write: {payload.get('tokens_cache_write')}")
+    lines.extend(
         [
-            "",
-            f"<!-- vibecrafted-artifact-footer:{marker} -->",
-            "---",
-            "run_closure:",
-            f"  run_id: {payload.get('run_id', 'unknown')}",
-            f"  session_id: {payload.get('session_id') or 'unknown'}",
-            f"  tokens_input: {payload.get('tokens_input', 0)}",
             f"  tokens_output: {payload.get('tokens_output', 0)}",
             f"  tokens_total: {payload.get('tokens_total', 0)}",
             f"  cost_usd: {payload.get('cost_usd') if payload.get('cost_usd') is not None else 'unknown'}",
+        ]
+    )
+    if payload.get("cost_source"):
+        lines.append(f"  cost_source: {payload.get('cost_source')}")
+    if payload.get("model_requested"):
+        lines.append(f"  model_requested: {payload.get('model_requested')}")
+    lines.extend(
+        [
             f"  status: {payload.get('status', 'unknown')}",
             f"  completed_at: {payload.get('completed_at', 'unknown')}",
             f'  resume_hint: "{payload.get("resume_hint", "")}"',
@@ -665,6 +783,7 @@ def _footer(marker: str, payload: dict[str, object]) -> str:
             "",
         ]
     )
+    return "\n".join(lines)
 
 
 def _normalize_markdown_artifact(
@@ -677,27 +796,39 @@ def _normalize_markdown_artifact(
         return
     fm, body = _parse_frontmatter(text)
     frontmatter: dict[str, object] = dict(fm)
-    frontmatter.update(
-        {
-            "run_id": payload.get("run_id", "unknown"),
-            "prompt_id": payload.get("prompt_id", "unknown"),
-            "agent": payload.get("agent", "unknown"),
-            "skill": payload.get("skill_code") or payload.get("skill") or "unknown",
-            "model": payload.get("model", "unknown"),
-            "status": payload.get("status", "unknown"),
-            "date": payload.get("date", "unknown"),
-            "session_id": payload.get("session_id") or "unknown",
-            "artifact_stem": payload.get("artifact_stem", "unknown"),
-            "artifact_kind": payload.get("artifact_kind", "unknown"),
-            "repo_path": payload.get("root", "unknown"),
-            "tokens_input": payload.get("tokens_input", 0),
-            "tokens_output": payload.get("tokens_output", 0),
-            "tokens_total": payload.get("tokens_total", 0),
-            "cost_usd": payload.get("cost_usd")
-            if payload.get("cost_usd") is not None
-            else "unknown",
-        }
-    )
+    frontmatter_update = {
+        "run_id": payload.get("run_id", "unknown"),
+        "prompt_id": payload.get("prompt_id", "unknown"),
+        "agent": payload.get("agent", "unknown"),
+        "skill": payload.get("skill_code") or payload.get("skill") or "unknown",
+        "model": payload.get("model", "unknown"),
+        "status": payload.get("status", "unknown"),
+        "date": payload.get("date", "unknown"),
+        "session_id": payload.get("session_id") or "unknown",
+        "artifact_stem": payload.get("artifact_stem", "unknown"),
+        "artifact_kind": payload.get("artifact_kind", "unknown"),
+        "repo_path": payload.get("root", "unknown"),
+        "tokens_input": payload.get("tokens_input", 0),
+        "tokens_cached_input": payload.get("tokens_cached_input", 0),
+        "tokens_output": payload.get("tokens_output", 0),
+        "tokens_total": payload.get("tokens_total", 0),
+        "cost_usd": payload.get("cost_usd")
+        if payload.get("cost_usd") is not None
+        else "unknown",
+    }
+    if payload.get("model_requested"):
+        frontmatter_update["model_requested"] = payload.get("model_requested")
+    else:
+        frontmatter.pop("model_requested", None)
+    if payload.get("tokens_cache_write") is not None:
+        frontmatter_update["tokens_cache_write"] = payload.get("tokens_cache_write")
+    else:
+        frontmatter.pop("tokens_cache_write", None)
+    if payload.get("cost_source"):
+        frontmatter_update["cost_source"] = payload.get("cost_source")
+    else:
+        frontmatter.pop("cost_source", None)
+    frontmatter.update(frontmatter_update)
     marker = str(payload.get("run_id") or "unknown")
     new_text = _render_frontmatter(frontmatter) + body.rstrip() + "\n"
     if f"vibecrafted-artifact-footer:{marker}" not in new_text:
@@ -730,6 +861,11 @@ def finalize_artifacts(
 
     session_id = payload.get("session_id") or _extract_session(combined_text)
     tokens = _extract_tokens(combined_text)
+    tokens_input = int(tokens["input"] or 0)
+    tokens_cached_input = int(tokens["cached_input"] or 0)
+    tokens_cache_write = tokens["cache_write"]
+    tokens_output = int(tokens["output"] or 0)
+    tokens_total = int(tokens["total"] or 0)
     cost = _extract_cost(combined_text)
     completed_at = (
         payload.get("completed_at") or dt.datetime.now(dt.timezone.utc).isoformat()
@@ -744,13 +880,35 @@ def finalize_artifacts(
 
     payload["session_id"] = session_id or payload.get("session_id") or ""
     payload["model"] = _resolve_model(payload, combined_text)
+    cost_source = "provider_reported" if cost is not None else None
+    if cost is None:
+        cost, cost_source = estimate_cost_usd(
+            payload["model"],
+            tokens_input=tokens_input,
+            tokens_cached_input=tokens_cached_input,
+            tokens_output=tokens_output,
+        )
     payload["duration_s"] = _resolve_duration(payload, str(completed_at))
-    payload["tokens_input"] = tokens["input"]
-    payload["tokens_cached_input"] = tokens["cached_input"]
-    payload["tokens_output"] = tokens["output"]
-    payload["tokens_total"] = tokens["total"]
-    payload["token_usage"] = tokens
+    payload["tokens_input"] = tokens_input
+    payload["tokens_cached_input"] = tokens_cached_input
+    if tokens_cache_write is not None:
+        payload["tokens_cache_write"] = tokens_cache_write
+    else:
+        payload.pop("tokens_cache_write", None)
+    payload["tokens_output"] = tokens_output
+    payload["tokens_total"] = tokens_total
+    token_usage: dict[str, int] = {
+        "input": tokens_input,
+        "cached_input": tokens_cached_input,
+        "output": tokens_output,
+        "total": tokens_total,
+    }
+    if tokens_cache_write is not None:
+        token_usage["cache_write"] = int(tokens_cache_write)
+    payload["token_usage"] = token_usage
     payload["cost_usd"] = cost
+    if cost_source:
+        payload["cost_source"] = cost_source
     payload["resume_hint"] = resume_hint
     payload["artifact_contract"] = "vibecrafted.agent-artifact.v1"
     payload["date"] = payload.get("date") or artifact_time
@@ -807,10 +965,19 @@ def finalize_artifacts(
     payload["artifact_footer"] = {
         "run_id": payload.get("run_id", "unknown"),
         "session_id": payload.get("session_id") or "",
-        "tokens_total": tokens["total"],
+        "tokens_input": tokens_input,
+        "tokens_cached_input": tokens_cached_input,
+        "tokens_output": tokens_output,
+        "tokens_total": tokens_total,
         "cost_usd": cost,
         "resume_hint": resume_hint,
     }
+    if payload.get("model_requested"):
+        payload["artifact_footer"]["model_requested"] = payload.get("model_requested")
+    if tokens_cache_write is not None:
+        payload["artifact_footer"]["tokens_cache_write"] = tokens_cache_write
+    if payload.get("cost_source"):
+        payload["artifact_footer"]["cost_source"] = payload.get("cost_source")
     payload.setdefault("completed_at", completed_at)
     payload["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 
@@ -825,11 +992,16 @@ def finalize_artifacts(
 
     footer_payload = {
         **payload,
-        "tokens_input": tokens["input"],
-        "tokens_output": tokens["output"],
-        "tokens_total": tokens["total"],
+        "tokens_input": tokens_input,
+        "tokens_cached_input": tokens_cached_input,
+        "tokens_output": tokens_output,
+        "tokens_total": tokens_total,
         "cost_usd": cost,
     }
+    if tokens_cache_write is not None:
+        footer_payload["tokens_cache_write"] = tokens_cache_write
+    else:
+        footer_payload.pop("tokens_cache_write", None)
 
     if str(transcript):
         _normalize_markdown_artifact(transcript, footer_payload)
@@ -1179,6 +1351,7 @@ def _build_parser() -> argparse.ArgumentParser:
     write.add_argument("transcript")
     write.add_argument("launcher")
     write.add_argument("--model", default="")
+    write.add_argument("--model-requested", default="")
     write.add_argument("--prompt-id", default="")
     write.add_argument("--run-id", default="")
     write.add_argument("--loop-nr", default="0")
@@ -1216,6 +1389,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.transcript,
             args.launcher,
             model=args.model,
+            model_requested=args.model_requested,
             prompt_id=args.prompt_id,
             run_id=args.run_id,
             loop_nr=args.loop_nr,

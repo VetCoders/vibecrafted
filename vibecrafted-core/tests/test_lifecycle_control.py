@@ -11,6 +11,9 @@ from vibecrafted_core.lifecycle_runner import (
     LifecycleRunner,
     lifecycle_main,
 )
+from .lifecycle_schema_assertions import (
+    assert_lifecycle_state_matches_packaged_schema,
+)
 
 
 def _fake_launcher(tmp_path: Path):
@@ -46,7 +49,7 @@ def _make_lifecycle_run(
         lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
     )
     runner = LifecycleRunner(launcher=_fake_launcher(tmp_path), awaiter=_fake_awaiter)
-    return asyncio.run(
+    state = asyncio.run(
         runner.run(
             LifecycleRunSpec(
                 workflow_id=workflow_id,
@@ -57,10 +60,18 @@ def _make_lifecycle_run(
             )
         )
     )
+    assert_lifecycle_state_matches_packaged_schema(state)
+    return state
 
 
 def _reload_state(state: dict) -> dict:
     return json.loads(Path(state["state_path"]).read_text(encoding="utf-8"))
+
+
+def _reload_contract_state(state: dict) -> dict:
+    reloaded = _reload_state(state)
+    assert_lifecycle_state_matches_packaged_schema(reloaded)
+    return reloaded
 
 
 def test_status_and_runs_surface_lifecycle_state(
@@ -115,7 +126,7 @@ def test_approve_launches_continuation_from_baton(
     # The baton cargo: the scaffold report rides into the implement continuation.
     assert spec.previous_reports == (str(tmp_path / "scaffold.md"),)
 
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     actions = reloaded["operator_actions"]
     assert [action["action"] for action in actions] == ["approve_transition"]
     assert actions[0]["details"]["continuation_run_id"] == "life-cont-1"
@@ -171,7 +182,7 @@ def test_approve_gates_on_missing_baton_report_until_forced(
         == 0
     )
     assert len(launched) == 1
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     details = reloaded["operator_actions"][0]["details"]
     assert details["forced_missing_reports"] == [str(scaffold_report)]
 
@@ -210,7 +221,7 @@ def test_interrupt_stops_stage_and_marks_state(
         == 0
     )
     assert stopped == ["marbles-run"]
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     assert reloaded["status"] == "interrupted"
     assert [action["action"] for action in reloaded["operator_actions"]] == [
         "interrupt_workflow"
@@ -255,7 +266,7 @@ def test_force_audit_steers_baton_when_manifest_has_audit_stage(
         )
         == 0
     )
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     assert reloaded["baton"]["next_stage"] == "audit"
     assert reloaded["baton"]["reason"] == "operator_forced_audit"
     details = reloaded["operator_actions"][0]["details"]
@@ -286,7 +297,7 @@ def test_force_audit_dispatches_vc_audit_for_single_stage_manifest(
     assert len(launched) == 1
     assert launched[0].workflow_id == "vc-audit"
     assert launched[0].parent_run_id == state["run_id"]
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     details = reloaded["operator_actions"][0]["details"]
     assert details["mode"] == "dispatched_vc_audit"
     assert details["continuation_run_id"] == "life-audi-1"
@@ -312,7 +323,7 @@ def test_fallback_validates_stage_and_steers_backwards(
         )
         == 0
     )
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     assert reloaded["baton"]["next_stage"] == "polarize"
     assert reloaded["baton"]["reason"] == "operator_chose_fallback"
 
@@ -332,7 +343,7 @@ def test_accept_dou_records_finding(monkeypatch, tmp_path: Path, capsys) -> None
         )
         == 0
     )
-    reloaded = _reload_state(state)
+    reloaded = _reload_contract_state(state)
     assert reloaded["accepted_dou_findings"][0]["finding"].startswith(
         "install path unverified"
     )
@@ -375,3 +386,92 @@ def test_ship_and_wrapper_clis_route_control_verbs(
     assert lifecycle_main("vc-dou", ["runs", "--all", "--json"]) == 0
     listed = json.loads(capsys.readouterr().out)
     assert {entry["workflow"] for entry in listed} == {"vc-dou", "vc-ship"}
+
+
+def test_approve_honors_operator_stage_casting(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    state = _make_lifecycle_run(tmp_path, monkeypatch, workflow_id="vc-ship")
+    state_file = Path(state["state_path"])
+    payload = json.loads(state_file.read_text(encoding="utf-8"))
+    payload["spec"]["stage_agents"] = {"implement": "junie"}
+    payload["spec"]["stage_models"] = {"implement": "gpt-5.5"}
+    state_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    launched: list[LifecycleRunSpec] = []
+
+    def fake_run_lifecycle(spec: LifecycleRunSpec) -> dict:
+        launched.append(spec)
+        return {"run_id": "life-cast-1", "status": "launching"}
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_control.run_lifecycle", fake_run_lifecycle
+    )
+
+    assert (
+        lifecycle_control_main(
+            ["approve", state["run_id"], "--json"], workflow_id="vc-ship"
+        )
+        == 0
+    )
+    # The operator's A-to-Z casting wins over the baton's next_agent for a
+    # stage it names, and the map rides into the continuation spec.
+    assert launched[0].agent == "junie"
+    assert launched[0].stage_agents == {"implement": "junie"}
+    assert launched[0].stage_models == {"implement": "gpt-5.5"}
+    capsys.readouterr()
+
+
+def test_await_stage_reports_delivery_and_death(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    state = _make_lifecycle_run(tmp_path, monkeypatch, workflow_id="vc-ship")
+
+    awaited: list[str] = []
+    forwarded_report_paths: list[str] = []
+
+    def fake_await_run(run_id: str, **kwargs) -> dict:
+        awaited.append(run_id)
+        forwarded_report_paths.append(str(kwargs.get("report_path") or ""))
+        return {
+            "completed": True,
+            "timed_out": False,
+            "reason": "terminal",
+            "worker_alive": False,
+        }
+
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_control.control_plane_await_run", fake_await_run
+    )
+
+    # The seeded run's scaffold report exists -> a dead worker with a written
+    # report is the normal no-await handoff, not a death signal.
+    assert (
+        lifecycle_control_main(
+            ["await", state["run_id"], "--idle", "1", "--json"],
+            workflow_id="vc-ship",
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert awaited  # went through the runtime contract, not a sleep loop
+    # The stage report is the handoff: forwarding it lets await_run return
+    # `report_delivered` on the first poll instead of idling on the corpse.
+    assert forwarded_report_paths[0] == payload["report"]
+    assert payload["stage"] == "scaffold"
+    assert payload["report_written"] is True
+    assert payload["worker_dead_without_report"] is False
+    assert payload["next_stage"] == "implement"
+
+    # Erase the report: same terminal await now means death-without-delivery.
+    Path(payload["report"]).unlink()
+    assert (
+        lifecycle_control_main(
+            ["await", state["run_id"], "--idle", "1", "--json"],
+            workflow_id="vc-ship",
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["report_written"] is False
+    assert payload["worker_dead_without_report"] is True

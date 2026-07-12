@@ -48,7 +48,7 @@ gdy niepotrzebne. Uruchamia się w natywnym trybie interaktywnym, nie w headless
 ```bash
 vibecrafted init claude
 vc-init codex
-vibecrafted init gemini --prompt 'Bootstrap context for the payments module'
+vibecrafted init agy --prompt 'Bootstrap context for the payments module'
 ```
 
 Zależności fundamentowe (ładowane wraz z frameworkiem): `vc-loctree`, `vc-aicx`.

@@ -451,6 +451,21 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
     assert "codex exec" not in script_body
 
 
+def test_init_gemini_returns_actionable_agy_migration() -> None:
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "init", "gemini"],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "gemini CLI is deprecated" in result.stderr
+    assert "Use agy" in result.stderr
+    assert "Unknown agent" not in result.stderr
+
+
 def test_vc_help_wrapper_symlink_renders_main_help(tmp_path: Path) -> None:
     wrapper = tmp_path / "vc-help"
     wrapper.symlink_to(LAUNCHER)
@@ -486,7 +501,7 @@ def test_vc_help_wrapper_forwards_topic_help(tmp_path: Path) -> None:
     )
 
     assert "Start an interactive repository orientation session" in result.stdout
-    assert "vc-init [claude|codex|gemini|agy|junie|grok]" in result.stdout
+    assert "vc-init [claude|codex|agy|junie|grok]" in result.stdout
     assert "Ship cycle:" not in result.stdout
 
 
@@ -1113,8 +1128,8 @@ def test_gui_help_exposes_local_server_flags() -> None:
 @pytest.mark.parametrize(
     ("topic", "expected"),
     [
-        ("init", "vc-init [claude|codex|gemini|agy|junie|grok]"),
-        ("vc-init", "vc-init [claude|codex|gemini|agy|junie|grok]"),
+        ("init", "vc-init [claude|codex|agy|junie|grok]"),
+        ("vc-init", "vc-init [claude|codex|agy|junie|grok]"),
         ("vc-review", 'vibecrafted review codex --prompt "Review PR #14"'),
         ("status", "vibecrafted stats"),
     ],
@@ -1201,12 +1216,11 @@ def test_implement_help_is_the_canonical_autonomous_delivery_surface() -> None:
     assert "implement" in result.stdout
     assert "Autonomous end-to-end implementation" in result.stdout
     assert (
-        "vibecrafted implement <claude|codex|gemini|agy|junie|grok> [flags]"
-        in result.stdout
+        "vibecrafted implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
     )
-    assert "vc-implement <claude|codex|gemini|agy|junie|grok> [flags]" in result.stdout
+    assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
     assert (
-        "Alias: vibecrafted justdo <claude|codex|gemini|agy|junie|grok> [flags]"
+        "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]"
         in result.stdout
     )
 
@@ -1223,12 +1237,11 @@ def test_justdo_help_points_back_to_implement() -> None:
     assert "justdo" in result.stdout
     assert "Convenient alias for vc-implement" in result.stdout
     assert (
-        "vibecrafted implement <claude|codex|gemini|agy|junie|grok> [flags]"
-        in result.stdout
+        "vibecrafted implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
     )
-    assert "vc-implement <claude|codex|gemini|agy|junie|grok> [flags]" in result.stdout
+    assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
     assert (
-        "Alias: vibecrafted justdo <claude|codex|gemini|agy|junie|grok> [flags]"
+        "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]"
         in result.stdout
     )
 
@@ -1344,9 +1357,7 @@ def test_skill_wrapper_help_is_human_readable_without_agent(
 
     assert skill in result.stdout
     assert description in result.stdout
-    assert (
-        f"{wrapper_name} <claude|codex|gemini|agy|junie|grok> [flags]" in result.stdout
-    )
+    assert f"{wrapper_name} <claude|codex|agy|junie|grok> [flags]" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -1953,6 +1964,83 @@ def test_resume_wrapper_symlink_forwards_session_and_prompt_to_agent(
     ]
 
 
+def test_resume_wrapper_accepts_positional_session_id(tmp_path: Path) -> None:
+    """`vc-resume <agent> <session_id> [prompt...]` works without --session."""
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "codex-args.txt"
+    wrapper = tmp_path / "vc-resume"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    wrapper.symlink_to(LAUNCHER)
+    _write_fake_agent(fake_bin, "codex", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    subprocess.run(
+        [
+            "bash",
+            str(wrapper),
+            "codex",
+            "resume-session-456",
+            "Continue from wrapper",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert payload == [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "resume",
+        "resume-session-456",
+        "Continue from wrapper",
+    ]
+
+
+def test_resume_wrapper_accepts_bare_positional_session_id(tmp_path: Path) -> None:
+    """`vc-resume <agent> <session_id>` with no prompt resumes that session."""
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "codex-args.txt"
+    wrapper = tmp_path / "vc-resume"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    wrapper.symlink_to(LAUNCHER)
+    _write_fake_agent(fake_bin, "codex", capture_file)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["CAPTURE_FILE"] = str(capture_file)
+
+    subprocess.run(
+        ["bash", str(wrapper), "codex", "resume-session-789"],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert payload == [
+        "exec",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "resume",
+        "resume-session-789",
+    ]
+
+
 def test_vc_dashboard_wrapper_dispatches_to_dashboard(tmp_path: Path) -> None:
     """vc-dashboard wrapper (symlink) reaches cmd_dashboard, not run_skill."""
     home = tmp_path / "home"
@@ -2482,6 +2570,15 @@ def _fake_agent_script(agent: str, final_message: str, stream_json: bool) -> str
         "      shift",
         '      task_text="${1:-}"',
         "      ;;",
+        # agy >= 1.1 delivers the prompt as the value of --print (no stdin),
+        # so the fake agent must read it from there like the real CLI.
+        "    --print)",
+        "      shift",
+        '      task_text="${1:-}"',
+        "      ;;",
+        "    --print=*)",
+        '      task_text="${1#--print=}"',
+        "      ;;",
         "  esac",
         "  shift || true",
         "done",
@@ -2556,7 +2653,6 @@ def _fleet_salvage_env(tmp_path: Path, fake_bin: Path) -> dict[str, str]:
 @pytest.mark.parametrize(
     ("agent", "stream_json"),
     [
-        ("gemini", True),
         ("agy", False),
         ("grok", False),
         ("junie", False),
@@ -2595,7 +2691,6 @@ def test_remaining_launchers_salvage_final_message_on_missing_report_success(
 @pytest.mark.parametrize(
     ("agent", "stream_json", "exit_code"),
     [
-        ("gemini", True, "11"),
         ("agy", False, "12"),
         ("grok", False, "13"),
         ("junie", False, "14"),
@@ -2636,7 +2731,6 @@ def test_remaining_launchers_salvage_final_message_on_missing_report_failure(
 @pytest.mark.parametrize(
     ("agent", "stream_json"),
     [
-        ("gemini", True),
         ("agy", False),
         ("grok", False),
         ("junie", False),

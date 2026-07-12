@@ -82,6 +82,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             ]
         )
 
+    # Operator invariant: stage workers fly VISIBLY, in vc-frame tabs, whenever
+    # a live operator session can host them. Route through the same resolution
+    # the rest of the fleet uses (cli._default_runtime → "terminal" on live
+    # session/TTY, "headless" only as the degrade-not-die fallback) instead of
+    # hardcoding headless. Continuations inherit spec.runtime via the baton.
+    from .cli import _default_runtime
+
+    root = args.root or str(Path.cwd())
     state = run_lifecycle(
         LifecycleRunSpec(
             workflow_id="vc-ship",
@@ -91,8 +99,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             # empty prompt to actually reach the stage workers.
             prompt=args.prompt or ("" if args.file else DEFAULT_SHIP_PROMPT),
             file=args.file,
-            root=args.root or str(Path.cwd()),
-            runtime=args.runtime or "headless",
+            root=root,
+            runtime=_default_runtime(args.runtime, root),
             await_stages=args.await_stages,
             start_stage=args.start_stage or args.checkpoint or "scaffold",
         )

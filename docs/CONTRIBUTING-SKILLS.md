@@ -91,7 +91,7 @@ Optional but encouraged:
 | Key             | When to use                                                                        |
 | --------------- | ---------------------------------------------------------------------------------- |
 | `requires:`     | Foundation tools or sibling skills this depends on.                                |
-| `agent_target:` | If the skill is biased toward one agent (claude / codex / gemini).                 |
+| `agent_target:` | If the skill is biased toward one agent (claude / codex / agy).                    |
 | `triggers:`     | Explicit operator phrases as a YAML list, when the description prose is too dense. |
 
 The smoke gate at `tests/skill_loader_smoke.sh` only checks structural

@@ -415,7 +415,11 @@ MOUNT_SPEC: dict[str, tuple[str, str, str]] = {
     # key → (host_path, container_path, mode)
     # vc-runtime = the multiroot repo tree (NOT this container folder).
     # Override host path with VC_RUNTIME_DIR (e.g. /Volumes/shared-vol/vc-runtime).
-    "workspace": ("${VC_RUNTIME_DIR:-${HOME}/.vibecrafted/vc-runtime}", "/workspace", "rw"),
+    "workspace": (
+        "${VC_RUNTIME_DIR:-${HOME}/.vibecrafted/vc-runtime}",
+        "/workspace",
+        "rw",
+    ),
     "aicx_store": ("${HOME}/.aicx", "/root/.aicx", "rw"),
     "keys": ("${HOME}/.keys", "/root/.keys", "ro"),
     "gnupg": ("${HOME}/.gnupg", "/root/.gnupg", "ro"),

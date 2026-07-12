@@ -44,6 +44,23 @@ kontekstu (fokus operatora, worker poprzedniej fali, bieżące obciążenie). AG
 to nie kwota rotacji — to uczciwe przypisanie autorstwa i równa godność.
 Nie dispatchuj round-robinem; dispatchuj wg dopasowania.
 
+## Granulacja dispatchy zależna od modelu
+
+Model parity jest podłogą, a granulacja określa ilość spójnej pracy należącej
+do jednego dispatchu. Używaj `agent_dispatch.dispatch_granularity(model)`
+zamiast traktować każdy model jak anonimowego workera o identycznym rozmiarze.
+
+| klasa modelu                                           | kształt cuta | pliki na cut |                    równoległe cuty | powód                                                                      |
+| ------------------------------------------------------ | ------------ | -----------: | ---------------------------------: | -------------------------------------------------------------------------- |
+| frontier (`opus`, GPT-5.5/5.6, Gemini Pro, Grok Build) | coherent     |         do 8 | do 3 przy rozłącznych scope plików | Amortyzuj powtarzany kontekst i zachowaj rozumowanie nad całym kontraktem. |
+| standard (`sonnet`, GPT-5, Gemini auto/default)        | bounded      |         do 4 |                               do 2 | Utrzymuj jawne szwy integracyjne bez nadmiernej fragmentacji.              |
+| economy (`haiku`, Spark, Flash)                        | surgical     |         do 2 |                                  1 | Małe sekwencyjne powierzchnie dowodu ograniczają drift i koszt retry.      |
+| nieznany model                                         | surgical     |            1 |                                  1 | Brak telemetrii nie jest zgodą na szeroki dispatch.                        |
+
+Koszt zgłoszony przez providera wygrywa. Gdy go nie ma, akceptuj tylko jawny
+estimate z `cost_source: estimated:<rate-card>`; nigdy po cichu nie zamieniaj
+nieznanego kosztu na zero. Koszt wpływa na cut, ale nie pozwala obniżyć tieru.
+
 ## Noty ze stopki
 
 - AGENT PEER PARITY: Claude, Codex i Gemini to peerowi frontierowi workerzy. Routuj

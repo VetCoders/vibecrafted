@@ -28,13 +28,15 @@ from .control_plane import (
 )
 from .package_resources import deck_path as package_deck_path
 from .events import append_event
+from .model_overrides import _model_override_receipt, _with_model_override
+from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .spawn import _stdin_command
-from .workflow_runtime import research_agent_selection
+from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE
 from .workflows import registry as workflow_registry
 
 SUPPORTED_WORKFLOWS = workflow_registry.SUPPORTED_WORKFLOWS
 WORKFLOW_ALIASES = workflow_registry.WORKFLOW_ALIASES
-SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "swarm"}
+SUPPORTED_AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
 SUPPORTED_RUNTIMES = {"headless", "terminal", "visible"}
 TERMINAL_STATES = {
     "completed",
@@ -61,6 +63,14 @@ class WorkflowLaunchSpec:
     root: str
     count: int | None = None
     depth: int | None = None
+    model: str = ""
+    research_agents: tuple[str, ...] = ()
+    research_synthesizer: str = ""
+    research_synthesizer_model: str = ""
+    # Push-side report-on-death (docs/runtime/AGENT_OPS.md, Class 2): when the
+    # launch belongs to a lifecycle run, this carries the lifecycle state.json
+    # path so the dispatcher can write the worker's terminal truth into it.
+    lifecycle_state_path: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -260,6 +270,7 @@ def _dispatcher_command(
     tee_output: bool = False,
     emit_json: bool = True,
     quiet: bool = False,
+    lifecycle_state_path: str = "",
 ) -> list[str]:
     command = [
         sys.executable,
@@ -284,6 +295,8 @@ def _dispatcher_command(
                 str(prompt_path),
             ]
         )
+    if lifecycle_state_path:
+        command.extend(["--lifecycle-state", lifecycle_state_path])
     if tee_output:
         command.append("--tee-output")
     if quiet:
@@ -328,6 +341,16 @@ def _runtime_script_exports(
     artifact_ts: str = "",
     artifact_suffix: str = "",
 ) -> dict[str, str]:
+    pythonpath = os.pathsep.join(
+        dict.fromkeys(
+            [str(_core_package_root())]
+            + [
+                item
+                for item in os.environ.get("PYTHONPATH", "").split(os.pathsep)
+                if item
+            ]
+        )
+    )
     exports = {
         "VIBECRAFTED_RUN_ID": run_id,
         "VIBECRAFTED_REPORT_PATH": str(report_path),
@@ -337,6 +360,11 @@ def _runtime_script_exports(
         "VIBECRAFTED_AGENT": agent,
         "VIBECRAFTED_SKILL": skill,
         "VIBECRAFTED_RUNTIME": runtime,
+        # vc-frame starts this script from its long-lived server environment,
+        # not from launch_workflow's Popen(env=...). Keep the generated
+        # dispatcher self-contained and keep installed payloads bytecode-clean.
+        "PYTHONPATH": pythonpath,
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
     if canonical_report_dir is not None:
         exports["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)
@@ -368,9 +396,11 @@ def _write_research_lane_scripts(
     artifact_slug: str,
     artifact_ts: str,
     artifact_suffix: str,
+    research_selection: ResearchAgentSelection,
+    model_requested: str = "",
 ) -> dict[str, Path]:
     scripts: dict[str, Path] = {}
-    for agent in research_agent_selection().agents:
+    for agent in research_selection.agents:
         path = launch_dir / f"{run_id}-research-{agent}.sh"
         command = [
             sys.executable,
@@ -384,6 +414,9 @@ def _write_research_lane_scripts(
             "--prompt-file",
             str(prompt_path),
         ]
+        lane_model = research_selection.lane_model(agent, model_requested)
+        if lane_model:
+            command.extend(["--model", lane_model])
         exports = _runtime_script_exports(
             run_id=run_id,
             prompt_path=prompt_path,
@@ -504,6 +537,7 @@ def _launch_transport_command(
     artifact_slug: str,
     artifact_ts: str,
     artifact_suffix: str,
+    research_selection: ResearchAgentSelection | None = None,
 ) -> tuple[list[str], str, Path | None]:
     if spec.runtime not in {"terminal", "visible"}:
         return dispatch_command, "headless", None
@@ -537,6 +571,11 @@ def _launch_transport_command(
     )
     definition = workflow_registry.workflow_definition(spec.skill)
     if spec.skill == "research":
+        selection = research_selection or resolve_research_runtime_config(
+            override_agents=spec.research_agents,
+            synthesizer=spec.research_synthesizer,
+            synthesizer_model=spec.research_synthesizer_model,
+        )
         lane_scripts = _write_research_lane_scripts(
             launch_dir=launch_dir,
             run_id=run_id,
@@ -550,6 +589,8 @@ def _launch_transport_command(
             artifact_slug=artifact_slug,
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
+            research_selection=selection,
+            model_requested=spec.model,
         )
         layout_file = _write_research_layout(
             path=launch_dir / f"{run_id}-research.kdl",
@@ -813,12 +854,21 @@ def await_launch_truth(
         hard_cap_seconds=hard_cap_seconds,
     )
     run = dict(awaited.get("run") or {})
+    await_reason = str(awaited.get("reason") or "")
+    worker_alive = bool(awaited.get("worker_alive"))
     report_path = str(launch_payload.get("report") or run.get("latest_report") or "")
     transcript_path = str(
         launch_payload.get("transcript") or run.get("latest_transcript") or ""
     )
     meta_path = str(launch_payload.get("meta") or run.get("meta") or "")
-    terminal = bool(awaited.get("completed")) and _run_is_terminal(run)
+    terminal = (
+        bool(awaited.get("completed")) and _run_is_terminal(run) and not worker_alive
+    )
+    terminal_evidence = terminal or (
+        bool(awaited.get("completed"))
+        and await_reason == "report_delivered"
+        and not worker_alive
+    )
 
     meta_payload: dict[str, Any] = {}
     if terminal:
@@ -852,6 +902,9 @@ def await_launch_truth(
         "completed": bool(awaited.get("completed")),
         "timed_out": bool(awaited.get("timed_out")),
         "terminal": terminal,
+        "terminal_evidence": terminal_evidence,
+        "await_reason": await_reason,
+        "worker_alive": worker_alive,
         "attempts": awaited.get("attempts"),
         "run": run,
         "report": report_path,
@@ -938,8 +991,26 @@ def normalize_launch_spec(
     if definition is None:
         raise ValueError(f"Unsupported workflow: {skill}")
 
-    agent = str(payload.get("agent") or definition.default_agent).strip()
+    raw_agent = payload.get("agent")
+    raw_research_agents = payload.get("research_agents") or ()
+    if isinstance(raw_agent, (list, tuple)):
+        positional_agents = tuple(
+            str(item).strip() for item in raw_agent if str(item).strip()
+        )
+        agent = positional_agents[0] if positional_agents else definition.default_agent
+    else:
+        positional_agents = ()
+        agent = str(raw_agent or definition.default_agent).strip()
     if definition.runtime_kind == "supervised_research":
+        if not positional_agents and raw_research_agents:
+            positional_agents = tuple(
+                str(item).strip() for item in raw_research_agents if str(item).strip()
+            )
+        unsupported = [
+            item for item in positional_agents if item not in SUPPORTED_AGENTS
+        ]
+        if unsupported:
+            raise ValueError(f"Unsupported research agent: {unsupported[0]}")
         agent = "swarm"
     if agent not in SUPPORTED_AGENTS:
         raise ValueError(f"Unsupported agent: {agent}")
@@ -957,6 +1028,29 @@ def normalize_launch_spec(
     depth = _coerce_positive_int(
         payload.get("depth"), 3 if definition.supports_depth else None
     )
+    model = str(payload.get("model") or payload.get("model_requested") or "").strip()
+    research_agents: tuple[str, ...] = ()
+    research_synthesizer = ""
+    research_synthesizer_model = str(
+        payload.get("synthesizer_model")
+        or payload.get("research_synthesizer_model")
+        or ""
+    ).strip()
+    if definition.runtime_kind == "supervised_research":
+        explicit_synthesizer = str(
+            payload.get("synthesizer") or payload.get("research_synthesizer") or ""
+        ).strip()
+        if len(positional_agents) > 1:
+            research_agents = positional_agents
+            research_synthesizer = explicit_synthesizer or positional_agents[0]
+        elif positional_agents:
+            research_synthesizer = explicit_synthesizer or positional_agents[0]
+        elif explicit_synthesizer:
+            research_synthesizer = explicit_synthesizer
+        if research_synthesizer and research_synthesizer not in SUPPORTED_AGENTS:
+            raise ValueError(
+                f"Unsupported research synthesizer: {research_synthesizer}"
+            )
 
     if definition.requires_input and not prompt and not file_path:
         raise ValueError("Launch requires either --prompt text or --file path.")
@@ -971,6 +1065,10 @@ def normalize_launch_spec(
         root=root,
         count=count,
         depth=depth,
+        model=model,
+        research_agents=research_agents,
+        research_synthesizer=research_synthesizer,
+        research_synthesizer_model=research_synthesizer_model,
     )
 
 
@@ -1006,6 +1104,7 @@ Contract:
 - Write your final report to the path in VIBECRAFTED_REPORT_PATH ({report_hint}).
 - Let stdout/stderr form the transcript captured at VIBECRAFTED_TRANSCRIPT_PATH ({transcript_hint}).
 - Do not create, overwrite, or summarize run metadata yourself. The runtime owns VIBECRAFTED_META_PATH.
+{WORKER_SIGNAL_DISCIPLINE.rstrip()}
 
 Step 0 — orient before you touch (the vc-init pass).
 The operator prompt below is one framing — a hypothesis, not the ground truth. Reading a
@@ -1045,7 +1144,7 @@ def build_launch_command(
             if spec.runtime in {"terminal", "visible"}
             else "research"
         )
-        return [
+        launch_command = [
             sys.executable,
             "-m",
             "vibecrafted_core.workflow_runtime",
@@ -1055,8 +1154,17 @@ def build_launch_command(
             "--prompt-file",
             prompt_path,
         ]
+        if spec.model:
+            launch_command.extend(["--model", spec.model])
+        if spec.research_synthesizer:
+            launch_command.extend(["--synthesizer", spec.research_synthesizer])
+        if spec.research_synthesizer_model:
+            launch_command.extend(
+                ["--synthesizer-model", spec.research_synthesizer_model]
+            )
+        return launch_command
     if runtime_kind == "supervised_marbles":
-        return [
+        launch_command = [
             sys.executable,
             "-m",
             "vibecrafted_core.workflow_runtime",
@@ -1074,9 +1182,12 @@ def build_launch_command(
             "--depth",
             str(spec.depth or 3),
         ]
+        if spec.model:
+            launch_command.extend(["--model", spec.model])
+        return launch_command
 
     worker_agent = spec.agent
-    return _stdin_command(worker_agent)
+    return _with_model_override(worker_agent, _stdin_command(worker_agent), spec.model)
 
 
 def launch_workflow(
@@ -1089,6 +1200,15 @@ def launch_workflow(
     run_id = _run_id(spec.skill)
     artifacts = _run_artifact_paths(run_id)
     runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
+    research_selection = (
+        resolve_research_runtime_config(
+            override_agents=spec.research_agents,
+            synthesizer=spec.research_synthesizer,
+            synthesizer_model=spec.research_synthesizer_model,
+        )
+        if runtime_kind == "supervised_research"
+        else None
+    )
     source_prompt = _source_prompt(spec)
     prompt_body = (
         source_prompt
@@ -1113,6 +1233,9 @@ def launch_workflow(
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
     safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
     worker_command = build_launch_command(spec, source_dir, prompt_file=prompt_path)
+    model_receipt = _model_override_receipt(spec.agent, spec.model)
+    if spec.model and runtime_kind == "supervised_research":
+        model_receipt = {"model_requested": spec.model}
     dispatch_command = _dispatcher_command(
         run_id=run_id,
         root=spec.root,
@@ -1124,6 +1247,7 @@ def launch_workflow(
         tee_output=spec.runtime in {"terminal", "visible"},
         emit_json=spec.runtime not in {"terminal", "visible"},
         quiet=spec.runtime in {"terminal", "visible"},
+        lifecycle_state_path=spec.lifecycle_state_path,
     )
     launch_dir = control_plane_home() / "launches"
     launch_dir.mkdir(parents=True, exist_ok=True)
@@ -1143,6 +1267,33 @@ def launch_workflow(
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
+    if spec.model:
+        merged_env["VIBECRAFTED_MODEL_REQUESTED"] = spec.model
+    if research_selection is not None:
+        if spec.research_agents:
+            merged_env["VIBECRAFTED_RESEARCH_AGENTS"] = ",".join(
+                research_selection.agents
+            )
+        if research_selection.synthesizer:
+            merged_env["VIBECRAFTED_RESEARCH_SYNTHESIZER"] = (
+                research_selection.synthesizer
+            )
+        if research_selection.synthesizer_model:
+            merged_env["VIBECRAFTED_RESEARCH_SYNTHESIZER_MODEL"] = (
+                research_selection.synthesizer_model
+            )
+    if "model_override_supported" in model_receipt:
+        merged_env["VIBECRAFTED_MODEL_OVERRIDE_SUPPORTED"] = str(
+            bool(model_receipt["model_override_supported"])
+        ).lower()
+    if "model_override_skipped" in model_receipt:
+        merged_env["VIBECRAFTED_MODEL_OVERRIDE_SKIPPED"] = str(
+            bool(model_receipt["model_override_skipped"])
+        ).lower()
+    if model_receipt.get("model_override_skip_reason"):
+        merged_env["VIBECRAFTED_MODEL_OVERRIDE_SKIP_REASON"] = str(
+            model_receipt["model_override_skip_reason"]
+        )
     merged_env["VIBECRAFTED_CANONICAL_REPORT_DIR"] = str(canonical_report_dir)
     merged_env["VIBECRAFTED_ARTIFACT_SLUG"] = artifact_slug
     merged_env["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
@@ -1167,6 +1318,7 @@ def launch_workflow(
         artifact_slug=artifact_slug,
         artifact_ts=artifact_ts,
         artifact_suffix=artifact_suffix,
+        research_selection=research_selection,
     )
     merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
 
@@ -1192,6 +1344,19 @@ def launch_workflow(
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
             "workflow": _workflow_metadata(spec.skill),
+            **(
+                {
+                    "research_agents": list(research_selection.agents),
+                    "research_agent_source": research_selection.source,
+                    "research_synthesizer": research_selection.synthesizer,
+                    "research_synthesizer_model": research_selection.synthesizer_model,
+                    "research_synthesizer_source": research_selection.synthesizer_source,
+                    "research_ignored_agents": list(research_selection.ignored),
+                }
+                if research_selection is not None
+                else {}
+            ),
+            **model_receipt,
             "worker_command": worker_command,
             "dispatch_command": dispatch_command,
             "command": command,
@@ -1208,6 +1373,7 @@ def launch_workflow(
                     "run_id": run_id,
                     "spec": safe_spec,
                     "workflow": _workflow_metadata(spec.skill),
+                    **model_receipt,
                     "worker_command": worker_command,
                     "dispatch_command": dispatch_command,
                     "command": command,
@@ -1216,6 +1382,7 @@ def launch_workflow(
                     "retry_of": retry_of,
                     "session_id": session_id,
                     "operator_session": operator_session,
+                    **model_receipt,
                 }
             )
             + "\n"
@@ -1260,6 +1427,7 @@ def launch_workflow(
                     "session_id": session_id,
                     "error": f"{type(exc).__name__}: {exc}",
                     "retry_of": retry_of,
+                    **model_receipt,
                 },
             )
             return {
@@ -1275,6 +1443,7 @@ def launch_workflow(
                 "error": f"{type(exc).__name__}: {exc}",
                 "run_id": run_id,
                 "retry_of": retry_of,
+                **model_receipt,
                 "control_plane": sync_state(),
             }
         append_event(
@@ -1300,6 +1469,7 @@ def launch_workflow(
                 "transcript": str(artifacts["transcript"]),
                 "meta": str(artifacts["meta"]),
                 "workflow": _workflow_metadata(spec.skill),
+                **model_receipt,
                 "worker_command": worker_command,
                 "dispatch_command": dispatch_command,
                 "command": command,
@@ -1312,7 +1482,6 @@ def launch_workflow(
             json.dumps({"ts": stamp, "event": "spawned", "pid": proc.pid}) + "\n"
         )
 
-    snapshot = sync_state()
     return {
         "accepted": True,
         "message": f"Launched {spec.skill} via Vibecrafted core runtime.",
@@ -1341,10 +1510,16 @@ def launch_workflow(
             "operator_session": operator_session,
         },
         "workflow": _workflow_metadata(spec.skill),
+        **model_receipt,
         "retry_of": retry_of,
         "launch_log": str(launch_log),
         "spec": safe_spec,
-        "control_plane": snapshot,
+        # Launch acceptance is already durable in the event stream, run meta,
+        # and dispatcher process. A global board reconciliation here can block
+        # on an unrelated run and turn a successful launch into a traceback.
+        # Reconciliation belongs to observe/await/board readers, never the
+        # launch acknowledgement path.
+        "control_plane": {"sync": "deferred", "run_id": run_id},
     }
 
 
@@ -1505,6 +1680,9 @@ def retry_run(
     mode = str(run.get("mode") or "").strip()
     if mode:
         payload["mode"] = mode
+    model_requested = str(run.get("model_requested") or "").strip()
+    if model_requested:
+        payload["model_requested"] = model_requested
 
     try:
         spec = normalize_launch_spec(payload, source_dir)

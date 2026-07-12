@@ -26,10 +26,10 @@ const GOLDEN_RUN_FINAL: &str = r#"{
   "agent": "codex",
   "skill": "marbles",
   "mode": "implement",
-  "root": "/Users/tester/hosted/vetcoders/example-app",
+  "root": "/Users/you/hosted/vetcoders/example-app",
   "operator_session": "example-app-marb-000",
-  "latest_report": "/Users/tester/.vibecrafted/artifacts/vetcoders/example-app/2026_0329/reports/report.md",
-  "latest_transcript": "/Users/tester/.vibecrafted/artifacts/vetcoders/example-app/2026_0329/reports/report.transcript.log",
+  "latest_report": "/Users/you/.vibecrafted/artifacts/vetcoders/example-app/2026_0329/reports/report.md",
+  "latest_transcript": "/Users/you/.vibecrafted/artifacts/vetcoders/example-app/2026_0329/reports/report.transcript.log",
   "last_error": "",
   "updated_at": "2026-03-29T09:21:15.681613+00:00",
   "started_at": "2026-03-29T09:21:15.681613+00:00",
@@ -101,6 +101,7 @@ const GOLDEN_EVENT_LINE: &str = r#"{"ts": "2026-04-18T14:52:42.135162+00:00", "r
 /// on 2026-07-02. Lifecycle state is intentionally nested and must not be folded
 /// into the flat `RunStatus` golden schema above.
 const GOLDEN_LIFECYCLE_STATE: &str = r#"{
+  "schema": "vibecrafted.lifecycle.v1",
   "run_id": "life-ship-260702-123238-24000",
   "workflow": "vc-ship",
   "agent": "codex",
@@ -294,6 +295,11 @@ fn lifecycle_state_parses_and_projects_without_runstatus_schema_drift() {
     let summary = lifecycle.summary("2026-07-02T19:32:38Z".to_string(), None);
 
     assert_eq!(lifecycle.run_id, "life-ship-260702-123238-24000");
+    assert_eq!(
+        lifecycle.schema.as_deref(),
+        Some("vibecrafted.lifecycle.v1")
+    );
+    assert_eq!(summary.schema.as_deref(), Some("vibecrafted.lifecycle.v1"));
     assert_eq!(summary.workflow, "vc-ship");
     assert_eq!(summary.current_stage, "scaffold");
     assert_eq!(summary.next_stage, "implement");
