@@ -80,6 +80,14 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
                 └── refire ←┘  (partial delivery / convergence pressure)
 ```
 
+**Model pin per cut (pre-flight):** every cut declares a `model` pin that
+matches its class — a mechanical, fully-briefed cut runs on a sonnet-tier
+model, a surgical or decision-bearing cut on an opus-tier model. The pin
+rides the plan into the launcher (`Cut.model` → `WorkflowLaunchSpec.model` →
+the agent's model flag: `--model` for claude, `-m` for codex). An unpinned
+cut runs on the account default — which is a non-decision, not a safe default:
+pin deliberately, and treat a missing pin as a smell to resolve before launch.
+
 1. **Pre-flight (once per line)**: test the verify commands from the briefs
    before the line moves — a gate that matches 0 tests is trivially green;
    demand ≥1 new non-trivial test in EXTRA. `grep -c` exits 1 on 0 hits

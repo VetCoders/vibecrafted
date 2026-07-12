@@ -80,6 +80,11 @@ grep -c '{repo}\|{id}\|{reports_dir}\|{[a-z_]*}' prompt.md   # MUST be 0
 wc -l prompt.md                                              # sanity: full brief present
 ```
 
+- **Model pin present and consistent with the cut's class**: the cut carries a
+  `model` pin (sonnet tier for a mechanical, fully-briefed cut; opus tier for a
+  surgical or decision-bearing one). A missing pin means the account default —
+  a non-decision — so resolve it before launch.
+
 Launch only via file:
 
 ```bash
