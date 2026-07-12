@@ -79,6 +79,11 @@ grep -c '{repo}\|{id}\|{reports_dir}\|{[a-z_]*}' prompt.md   # MUST be 0
 wc -l prompt.md                                              # sanity: full brief present
 ```
 
+- **Pin modelu obecny i zgodny z klasą cuta**: cut niesie pin `model` (tier
+  sonnet dla mechanicznego, w pełni rozpisanego cuta; tier opus dla
+  chirurgicznego lub niosącego decyzje). Brak pinu = default konta, czyli
+  NIE-decyzja — rozwiąż przed startem.
+
 Launch tylko przez plik:
 
 ```bash

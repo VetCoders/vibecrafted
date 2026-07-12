@@ -80,6 +80,14 @@ pre-flight → DISPATCH → SPANKO → SPRAWDZENIE → FLIP → BATON → next c
                 └── refire ←┘  (partial delivery / convergence pressure)
 ```
 
+**Pin modelu per cut (pre-flight):** każdy cut deklaruje pin `model` zgodny ze
+swoją klasą — cut mechaniczny, w pełni rozpisany, jedzie na modelu tieru
+sonnet; cut chirurgiczny albo niosący decyzje — na tierze opus. Pin jedzie z
+planem do launchera (`Cut.model` → `WorkflowLaunchSpec.model` → flaga modelu
+agenta: `--model` dla claude, `-m` dla codex). Cut bez pinu leci na defaulcie
+konta — a to NIE-decyzja, nie bezpieczny default: pinuj świadomie, a brak
+pinu traktuj jako smell do rozwiązania przed startem.
+
 1. **Pre-flight (raz na linię)**: przetestuj komendy weryfikujące z briefów,
    zanim linia ruszy — bramka, która matchuje 0 testów, jest trywialnie zielona;
    żądaj ≥1 nowego nietrywialnego testu w EXTRA. `grep -c` wychodzi z kodem 1 przy 0 trafień
