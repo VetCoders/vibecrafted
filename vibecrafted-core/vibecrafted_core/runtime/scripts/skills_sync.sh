@@ -150,9 +150,6 @@ rsync_args=(-az --exclude '.DS_Store' --exclude '.backup' --exclude '.loctree' -
 if (( mirror )); then
   rsync_args+=(--delete)
 fi
-if (( dry_run )); then
-  rsync_args+=(--dry-run --itemize-changes)
-fi
 
 printf 'Syncing skills from %s to %s\n' "$repo_root" "$host"
 # shellcheck disable=SC2088,SC2016
@@ -188,7 +185,11 @@ for rule_path in "${rule_files[@]}"; do
     ssh -n "$host" "mkdir -p $remote_rule_dir" \
       || die "Could not create $remote_rule_dir on $host"
   fi
-  rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_tools_target/skills/$rule_path"
+  if (( dry_run )); then
+    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skills_root/$rule_path" "$host" "$remote_tools_target/skills/$rule_path"
+  else
+    rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_tools_target/skills/$rule_path"
+  fi
 done
 for skill in "${skills[@]}"; do
   name="$(basename "$skill")"
@@ -197,7 +198,11 @@ for skill in "${skills[@]}"; do
   else
     printf '  ssh %s mkdir -p %s/skills/%s\n' "$host" "$remote_tools_target" "$name"
   fi
-  rsync "${rsync_args[@]}" "$skill/" "$host:$remote_tools_target/skills/$name/"
+  if (( dry_run )); then
+    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skill/" "$host" "$remote_tools_target/skills/$name/"
+  else
+    rsync "${rsync_args[@]}" "$skill/" "$host:$remote_tools_target/skills/$name/"
+  fi
 done
 printf '\n'
 
@@ -217,7 +222,11 @@ for tool in "${tools[@]}"; do
       ssh -n "$host" "mkdir -p $remote_rule_dir" \
         || die "Could not create $remote_rule_dir on $host"
     fi
-    rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_target/$rule_path"
+    if (( dry_run )); then
+      printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$skills_root/$rule_path" "$host" "$remote_target/$rule_path"
+    else
+      rsync "${rsync_args[@]}" "$skills_root/$rule_path" "$host:$remote_target/$rule_path"
+    fi
   done
   for skill in "${skills[@]}"; do
     name="$(basename "$skill")"
@@ -246,7 +255,11 @@ if (( with_shell )); then
 
   printf 'Syncing optional shell helper layer to %s\n' "$host"
   ssh -n "$host" "mkdir -p $remote_helper_dir $remote_legacy_dir" || die "Could not prepare helper dirs on $host"
-  rsync "${rsync_args[@]}" "$shell_source" "$host:$remote_shell_target"
+  if (( dry_run )); then
+    printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$shell_source" "$host" "$remote_shell_target"
+  else
+    rsync "${rsync_args[@]}" "$shell_source" "$host:$remote_shell_target"
+  fi
   if (( dry_run )); then
     printf '  ssh %s ln -sfn %s %s\n' "$host" "$remote_shell_target" "$remote_legacy_target"
   else
