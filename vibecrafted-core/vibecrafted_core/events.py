@@ -9,7 +9,7 @@ def append_event(
     message: str,
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Append one control-plane event under the shared sync lock."""
+    """Append one control-plane event via an atomic, lockless O_APPEND write."""
     from . import control_plane
 
     event = {
@@ -19,6 +19,7 @@ def append_event(
         "message": str(message or ""),
         "payload": payload or {},
     }
-    with control_plane._sync_lock():
-        control_plane._append_event(event)
+    # No global lock: _append_event is a single atomic O_APPEND write, so the
+    # hot emit path never serializes on the shared control-plane mutex.
+    control_plane._append_event(event)
     return event

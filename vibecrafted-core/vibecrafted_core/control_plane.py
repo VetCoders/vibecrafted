@@ -674,10 +674,24 @@ def _skill_from_code(skill_code: str) -> str:
 
 
 def _append_event(event: dict[str, Any]) -> None:
+    """Append one event line to the stream — atomically, WITHOUT the sync lock.
+
+    Appending to events.jsonl is the hottest control-plane path (every spawn /
+    emit / stop of every run). It must never serialize on the global lock: a
+    single ``O_APPEND`` ``os.write`` of one already-encoded line is atomic on a
+    local filesystem (the kernel appends at the current end without a
+    read-modify-write), so concurrent writers interleave cleanly by whole lines.
+    This is the last piece of the flock migraine — the emit path used to take the
+    global lock and, under a herd, raise ControlPlaneLockBusy after the timeout.
+    """
     stream_path = event_stream_path()
     stream_path.parent.mkdir(parents=True, exist_ok=True)
-    with stream_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    line = (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(stream_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
 
 
 def _iter_meta_files() -> Iterator[Path]:
@@ -1281,8 +1295,9 @@ def record_stop_transition(
         ),
         "payload": payload,
     }
-    with _sync_lock():
-        _append_event(event)
+    # Lockless atomic append (see _append_event) — the stop path never blocks
+    # on the shared mutex.
+    _append_event(event)
     return event
 
 

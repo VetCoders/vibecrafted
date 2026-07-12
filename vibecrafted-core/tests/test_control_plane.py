@@ -340,6 +340,18 @@ def test_scoped_lookup_is_lockless_while_global_lock_is_held(
         assert run["agent"] == "codex"
         assert run["launcher_pid"] == os.getpid()
 
+        # The hot emit path (append_event / _append_event) must NOT take the
+        # global lock: a spawn/stop event lands even while the lock is held.
+        from vibecrafted_core import events
+
+        events.append_event("lifecycle:active", "work-030303-99", "still moving")
+        control_plane.record_stop_transition(
+            "work-030303-99", accepted=False, reason="probe"
+        )
+        stream = control_plane.event_stream_path().read_text(encoding="utf-8")
+        assert "still moving" in stream
+        assert "stop rejected" in stream
+
         # The board rebuild DOES take the lock — and now fails loud with a
         # bounded budget instead of hanging forever.
         monkeypatch.setenv("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S", "0.2")
