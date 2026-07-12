@@ -147,7 +147,7 @@ def test_vc_research_reads_runtime_owned_yaml(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     crafted_home = tmp_path / "home" / ".vibecrafted"
-    write_runtime_research_yaml(crafted_home, ["codex", "gemini"])
+    write_runtime_research_yaml(crafted_home, ["codex", "agy"])
 
     env = os.environ.copy()
     env["VIBECRAFTED_HOME"] = str(crafted_home)
@@ -175,8 +175,8 @@ def test_vc_research_reads_runtime_owned_yaml(tmp_path: Path) -> None:
     assert run_dir_match is not None, result.stdout
     run_dir = Path(run_dir_match.group(1))
     assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
+        "agy.meta.json",
         "codex.meta.json",
-        "gemini.meta.json",
     ]
 
 
@@ -283,7 +283,7 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
     root.mkdir()
     crafted_home = tmp_path / "home" / ".vibecrafted"
     config_home = tmp_path / "xdg"
-    write_research_config(config_home, ["grok", "codex", "gemini"])
+    write_research_config(config_home, ["grok", "codex", "agy"])
 
     env = os.environ.copy()
     env["VIBECRAFTED_HOME"] = str(crafted_home)
@@ -326,19 +326,19 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
     assert run_dir.parent.name == "research"
     assert (run_dir / "summary.md").is_file()
     assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
+        "agy.meta.json",
         "codex.meta.json",
-        "gemini.meta.json",
         "grok.meta.json",
     ]
     assert sorted(p.name for p in (run_dir / "tmp").glob("*_launch.sh")) == [
+        "agy_launch.sh",
         "codex_launch.sh",
-        "gemini_launch.sh",
         "grok_launch.sh",
     ]
     assert not list(run_dir.parent.parent.glob("reports/*rsch*.meta.json"))
     assert not list(run_dir.parent.parent.glob("tmp/vc-research-*"))
 
-    for agent in ("grok", "codex", "gemini"):
+    for agent in ("grok", "codex", "agy"):
         meta = json.loads((run_dir / "logs" / f"{agent}.meta.json").read_text())
         assert meta["run_id"] == run_id
         assert meta["skill_code"] == "rsch"
@@ -382,7 +382,7 @@ def test_runtime_picking_manifest_keeps_mainstream_default_researchers() -> None
     assert manifest["runtime"]["picking"]["research"]["default_agents"] == [
         "claude",
         "codex",
-        "gemini",
+        "agy",
     ]
     assert "grok" in manifest["runtime"]["picking"]["research"]["fallback_agents"]
 
