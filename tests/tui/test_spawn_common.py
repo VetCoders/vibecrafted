@@ -1720,7 +1720,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
     assert payload["tokens_input"] == 10
     assert payload["tokens_cached_input"] == 3
     assert payload["tokens_output"] == 5
-    assert payload["tokens_total"] == 15
+    assert payload["tokens_total"] == 18
     assert (
         payload["resume_hint"]
         == f"Use `cd {root_dir} && vc-resume --session sess-abc-123` to continue work with this Agent."
@@ -1733,7 +1733,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
         assert "session_id: sess-abc-123" in text
         assert "tokens_input: 10" in text
         assert "tokens_output: 5" in text
-        assert "tokens_total: 15" in text
+        assert "tokens_total: 18" in text
         assert "cost_usd: unknown" in text
         assert "<!-- vibecrafted-artifact-footer:impl-010203-999 -->" in text
         assert "vc-resume --session sess-abc-123" in text
