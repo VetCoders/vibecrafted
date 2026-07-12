@@ -66,6 +66,50 @@ def test_skills_sync_with_shell_targets_canonical_helper_and_both_shells(
     assert not log_file.exists(), "dry-run must not execute ssh or rsync"
 
 
+def test_skills_sync_with_shell_real_run_targets_canonical_helper_and_both_shells(
+    tmp_path: Path,
+) -> None:
+    # Real run (no --dry-run) actually invokes the ssh/rsync shims; the shim log
+    # captures the exact commands, proving canonical targeting and that both
+    # shells are hit. Complements the dry-run test above, which only inspects
+    # the printed plan and asserts zero execution.
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    log_file = tmp_path / "sync.log"
+
+    _write_stub_command(fake_bin, "ssh", f'printf "ssh:%s\\n" "$*" >> "{log_file}"')
+    _write_stub_command(fake_bin, "rsync", f'printf "rsync:%s\\n" "$*" >> "{log_file}"')
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+
+    subprocess.run(
+        [
+            "bash",
+            str(SKILLS_SYNC),
+            "fakehost",
+            "--source",
+            str(REPO_ROOT),
+            "--with-shell",
+            "--no-verify",
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    log = log_file.read_text(encoding="utf-8")
+
+    assert "$HOME/.local/share/vibecrafted/tools/vibecrafted-local/skills" in log
+    assert "$HOME/.vibecrafted/skills" not in log
+    assert "_template" not in log
+    assert "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" in log
+    assert ".bashrc" in log
+    assert ".zshrc" in log
+
+
 def test_install_shell_shim_prefers_current_control_plane_before_home_store(
     tmp_path: Path,
 ) -> None:
