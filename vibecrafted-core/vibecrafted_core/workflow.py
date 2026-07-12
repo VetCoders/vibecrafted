@@ -1482,7 +1482,6 @@ def launch_workflow(
             json.dumps({"ts": stamp, "event": "spawned", "pid": proc.pid}) + "\n"
         )
 
-    snapshot = sync_state()
     return {
         "accepted": True,
         "message": f"Launched {spec.skill} via Vibecrafted core runtime.",
@@ -1515,7 +1514,12 @@ def launch_workflow(
         "retry_of": retry_of,
         "launch_log": str(launch_log),
         "spec": safe_spec,
-        "control_plane": snapshot,
+        # Launch acceptance is already durable in the event stream, run meta,
+        # and dispatcher process. A global board reconciliation here can block
+        # on an unrelated run and turn a successful launch into a traceback.
+        # Reconciliation belongs to observe/await/board readers, never the
+        # launch acknowledgement path.
+        "control_plane": {"sync": "deferred", "run_id": run_id},
     }
 
 

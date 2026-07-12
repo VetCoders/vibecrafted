@@ -141,6 +141,35 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     assert "go" not in payload["worker_command"]
     log_lines = Path(payload["launch_log"]).read_text(encoding="utf-8").splitlines()
     assert any(json.loads(line).get("event") == "spawned" for line in log_lines)
+    assert payload["control_plane"] == {
+        "sync": "deferred",
+        "run_id": payload["run_id"],
+    }
+
+
+def test_launch_workflow_never_runs_global_sync_after_spawn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    source = _source_dir(tmp_path)
+    spec = workflow.normalize_launch_spec(
+        {"skill": "workflow", "agent": "claude", "prompt": "go"}, source
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: [sys.executable, "-c", "pass"],
+    )
+    monkeypatch.setattr(
+        workflow,
+        "sync_state",
+        lambda: pytest.fail("launch acknowledgement must not acquire board-sync lock"),
+    )
+
+    payload = workflow.launch_workflow(spec, source)
+
+    assert payload["accepted"] is True
+    assert payload["control_plane"]["sync"] == "deferred"
 
 
 def test_launch_workflow_records_skipped_model_override_for_unknown_flag(
