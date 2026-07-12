@@ -133,11 +133,16 @@ def _default_command(agent: str, prompt: str) -> list[str]:
     if agent == "gemini":
         return ["gemini", "--yolo", "--prompt", prompt]
     if agent == "agy":
+        # agy >= 1.1: --print takes the prompt as its value (Go flags) and
+        # print mode does not read stdin; flags must precede it.
         return [
-            "bash",
-            "-lc",
-            "agy --print --dangerously-skip-permissions --add-dir . --print-timeout 30m '' <<< \"$1\"",
             "agy",
+            "--dangerously-skip-permissions",
+            "--add-dir",
+            ".",
+            "--print-timeout",
+            "30m",
+            "--print",
             prompt,
         ]
     if agent == "junie":
@@ -183,15 +188,14 @@ def _stdin_command(agent: str) -> list[str]:
     if agent == "gemini":
         return ["gemini", "-p", "", "--approval-mode", "yolo", "-o", "stream-json"]
     if agent == "agy":
+        # agy >= 1.1 print mode reads no stdin and --print requires a value;
+        # a shell shim folds stdin into the flag. The prompt lands on the
+        # inner argv (ARG_MAX-bound) because agy has no file/stdin lane.
         return [
-            "agy",
-            "--print",
-            "--dangerously-skip-permissions",
-            "--add-dir",
-            ".",
-            "--print-timeout",
-            "30m",
-            "",
+            "bash",
+            "-c",
+            "agy --dangerously-skip-permissions --add-dir . "
+            '--print-timeout 30m --print "$(cat)"',
         ]
     if agent == "junie":
         return [

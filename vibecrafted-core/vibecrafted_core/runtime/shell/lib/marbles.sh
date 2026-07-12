@@ -263,13 +263,14 @@ _vetcoders_resume_command() {
       fi
       ;;
     agy)
-      # agy resumes by --conversation <id>; headless needs --print
-      # (--prompt-interactive is, as the name says, interactive).
+      # agy resumes by --conversation <id>; headless needs --print <prompt>.
+      # Since agy 1.1 --print takes the prompt as its VALUE (Go flags) and
+      # print mode reads no stdin — flags first, prompt as the flag value.
       if [[ "$mode" == headless ]]; then
         if [[ -n "$resume_prompt" ]]; then
-          printf 'agy --print --dangerously-skip-permissions --conversation %s %s\n' "$quoted_session" "$quoted_prompt"
+          printf 'agy --dangerously-skip-permissions --conversation %s --print %s\n' "$quoted_session" "$quoted_prompt"
         else
-          printf 'agy --print --dangerously-skip-permissions --conversation %s\n' "$quoted_session"
+          printf 'agy --dangerously-skip-permissions --conversation %s --print "Continue."\n' "$quoted_session"
         fi
       elif [[ -n "$resume_prompt" ]]; then
         printf 'agy --conversation %s --prompt-interactive %s\n' "$quoted_session" "$quoted_prompt"

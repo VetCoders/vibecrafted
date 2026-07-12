@@ -76,10 +76,10 @@ def test_agy_spawn_dry_run_uses_antigravity_print_contract(tmp_path: Path) -> No
     text = launcher.read_text(encoding="utf-8")
 
     assert "SPAWN_AGENT=agy" in text
-    assert "agy --print --dangerously-skip-permissions --add-dir" in text
+    assert "agy --dangerously-skip-permissions --add-dir" in text
     assert "--print-timeout 30m" in text
-    assert " < " in text
-    assert '"$(cat ' not in text
+    assert '--print "$(cat ' in text
+    assert "agy --print --dangerously-skip-permissions" not in text
     assert "Agy completed without writing a standalone report file" in text
     assert "Agy failed before writing a standalone report file" in text
     assert "pipeline_status=65" not in text

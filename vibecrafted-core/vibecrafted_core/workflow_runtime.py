@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -486,17 +487,14 @@ def _resume_stdin_command(agent: str, session_id: str) -> list[str]:
             "stream-json",
         ]
     if agent == "agy":
+        # agy >= 1.1: --print takes a value and reads no stdin; a shell shim
+        # folds the stdin prompt into the flag (see spawn._stdin_command).
         return [
-            "agy",
-            "--conversation",
-            session_id,
-            "--print",
-            "--dangerously-skip-permissions",
-            "--add-dir",
-            ".",
-            "--print-timeout",
-            "30m",
-            "",
+            "bash",
+            "-c",
+            "agy --dangerously-skip-permissions --conversation "
+            f"{shlex.quote(session_id)} --add-dir . "
+            '--print-timeout 30m --print "$(cat)"',
         ]
     if agent == "junie":
         return [
