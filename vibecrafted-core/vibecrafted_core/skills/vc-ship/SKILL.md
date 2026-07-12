@@ -58,6 +58,29 @@ continue safely.
 
 See [Living Tree Rule](../LIVING_TREE_RULE.md).
 
+## Canonical Orientation Gate
+
+Before this lifecycle umbrella launches its first stage — and before every
+WRITE stage it later supervises touches source — it MUST run or consume the
+`vc-init` procedure for the mission's repo. The mission file itself is only
+valid when grounded in a real `vc-init` pass; if fresh `vc-init` evidence is
+absent, perform the init pass first and treat the whole flight as blocked until
+repo truth exists. A prompt is a hypothesis, never the ground truth.
+
+`Loctree:loctree` is the default structural perception skill for that pass. Use
+Loctree before grep or docs-driven claims to produce or refresh the
+Code-Derived Application Map: repo-view, focus, slice, impact, find, and follow
+as relevant. Search for existing symbols and contracts before creating new
+ones; run impact before delete or major refactor; run slice before editing. As
+supervisor you carry this map as baton cargo, so each stage worker inherits the
+same structural truth instead of re-discovering the repo from zero.
+
+The point is to find the hooks before the eleven stages fly: load-bearing hubs,
+twins, dead code, drift, runtime entrypoints, and blast-radius traps. If the
+mission is explicitly non-repo or no-code, state the no-repo exception in the
+report. Otherwise, missing `vc-init`/Loctree evidence is a process failure and
+the flight has not honestly begun.
+
 ## Repository Work Doctrine
 
 For repository work, start with Loctree as the map: use `loct context`,
