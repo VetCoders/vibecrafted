@@ -50,15 +50,18 @@ FOOTER_TOKEN_PATTERNS = {
     ),
 }
 JSON_TOKEN_PATTERNS = {
-    "input": re.compile(r'"input_tokens"\s*:\s*([0-9]+)'),
+    "input": re.compile(r'"(?:input_tokens|prompt_tokens)"\s*:\s*([0-9]+)'),
     "cached_input": re.compile(
-        r'"(?:cached_input_tokens|cache_read_input_tokens)"\s*:\s*([0-9]+)'
+        r'"(?:cached_input_tokens|cached_prompt_tokens|cache_read_input_tokens)"\s*:\s*([0-9]+)'
     ),
     "cache_write": re.compile(r'"cache_creation_input_tokens"\s*:\s*([0-9]+)'),
-    "output": re.compile(r'"output_tokens"\s*:\s*([0-9]+)'),
+    "output": re.compile(r'"(?:output_tokens|completion_tokens)"\s*:\s*([0-9]+)'),
 }
 COST_PATTERNS = (
-    re.compile(r"cost(?:_usd)?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE),
+    re.compile(
+        r"cost(?:_usd)?['\"]?\s*[:=]\s*\$?([0-9]+(?:\.[0-9]+)?)",
+        re.IGNORECASE,
+    ),
     re.compile(r"\$([0-9]+\.[0-9]+)\s*(?:usd)?", re.IGNORECASE),
 )
 MODEL_ENV_VARS = (

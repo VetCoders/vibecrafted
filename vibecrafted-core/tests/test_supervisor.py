@@ -254,6 +254,67 @@ def test_finish_meta_python_owns_terminal_state(tmp_path: Path) -> None:
     assert payload["completed_at"] == payload["updated_at"]
 
 
+def test_finalize_artifacts_maps_junie_json_stream_receipt(tmp_path: Path) -> None:
+    report = tmp_path / "junie.md"
+    transcript = tmp_path / "junie.transcript.log"
+    meta = tmp_path / "junie.meta.json"
+
+    report.write_text("# Junie report\n\nDone.\n", encoding="utf-8")
+    transcript.write_text(
+        json.dumps({"type": "session", "session_id": "junie-session-123"})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "result",
+                "session_id": "junie-session-123",
+                "usage": {
+                    "prompt_tokens": 1200,
+                    "cached_prompt_tokens": 300,
+                    "completion_tokens": 125,
+                    "total_tokens": 1625,
+                },
+                "cost_usd": 0.01925,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "junie-json-001",
+                "prompt_id": "prompt-junie-json",
+                "agent": "junie",
+                "skill": "implement",
+                "model": "junie-cli-default",
+                "status": "completed",
+                "root": str(tmp_path),
+                "report": str(report),
+                "transcript": str(transcript),
+                "meta": str(meta),
+                "created_at": "2026-07-12T03:50:39+00:00",
+                "completed_at": "2026-07-12T03:50:42+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    final_meta = finalize_artifacts(meta, report, transcript)
+
+    assert final_meta == meta
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["session_id"] == "junie-session-123"
+    assert payload["tokens_input"] == 1200
+    assert payload["tokens_cached_input"] == 300
+    assert payload["tokens_output"] == 125
+    assert payload["tokens_total"] == 1625
+    assert payload["cost_usd"] == 0.01925
+    report_text = report.read_text(encoding="utf-8")
+    assert "session_id: junie-session-123" in report_text
+    assert "tokens_input: 1200" in report_text
+
+
 def test_subscribe_events_reads_appended_events(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
