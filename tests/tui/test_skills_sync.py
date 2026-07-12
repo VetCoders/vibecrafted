@@ -50,7 +50,6 @@ def test_skills_sync_with_shell_targets_canonical_helper_and_both_shells(
     )
 
     stdout = result.stdout
-    log = log_file.read_text(encoding="utf-8")
 
     assert "Syncing optional shell helper layer to fakehost" in stdout
     assert "$HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills" in stdout
@@ -60,12 +59,11 @@ def test_skills_sync_with_shell_targets_canonical_helper_and_both_shells(
     assert "ssh fakehost ln -sfn" in stdout
     assert "Skipping remote $HOME/.bashrc update" not in stdout
     assert "Skipping remote $HOME/.zshrc update" not in stdout
-    assert "$HOME/.local/share/vibecrafted/tools/vibecrafted-local/skills" in log
-    assert "$HOME/.vibecrafted/skills" not in log
-    assert "_template" not in log
-    assert "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh" in log
-    assert ".bashrc" in log
-    assert ".zshrc" in log
+    assert "$HOME/.local/share/vibecrafted/tools/vibecrafted-local/skills" in stdout
+    assert "rsync" in stdout
+    assert ".bashrc" in stdout
+    assert ".zshrc" in stdout
+    assert not log_file.exists(), "dry-run must not execute ssh or rsync"
 
 
 def test_install_shell_shim_prefers_current_control_plane_before_home_store(
