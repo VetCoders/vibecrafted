@@ -198,7 +198,7 @@ def _launch_shell_meta_path(
     meta = (
         home
         / "artifacts"
-        / "VetCoders"
+        / "Vetcoders"
         / "vibecrafted"
         / "2026_0629"
         / "reports"

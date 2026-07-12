@@ -74,13 +74,36 @@ detect_platform() {
 }
 
 workspace_root() {
-  local parent
+  local parent default_root legacy_root
   parent="$(cd "$SOURCE_DIR/.." && pwd)"
   if [[ -d "$parent/labs" ]]; then
     printf '%s\n' "$parent"
     return
   fi
-  printf '%s\n' "$HOME/Libraxis/vc-runtime"
+  default_root="$(vibecrafted_home)/vc-runtime"
+  legacy_root="$HOME/Libraxis/vc-runtime"
+  # Migration/fallback: honor a pre-existing legacy checkout so upgrades keep
+  # resolving, but prefer the new default once it actually holds runtime
+  # content. "Populated" means the root carries a real runtime workspace — the
+  # labs/ tree or one of the known runtime source checkouts (wezterm, vc_,
+  # locterm, experimental). An absent path, a stray file, an empty directory
+  # (e.g. one pre-created by the VM compose mount), or a root with only
+  # unrelated content (.DS_Store, a README, a helper dir) all fall back to the
+  # legacy checkout so the runtime sources stay resolvable. Idempotent and
+  # non-destructive: reads paths only, never moves them (the warning goes to
+  # stderr so the captured stdout stays a clean path).
+  local default_populated=0
+  if [[ -d "$default_root/labs" || -d "$default_root/wezterm" \
+    || -d "$default_root/vc_" || -d "$default_root/locterm" \
+    || -d "$default_root/experimental" ]]; then
+    default_populated=1
+  fi
+  if (( ! default_populated )) && [[ -d "$legacy_root" ]]; then
+    warn "Using legacy runtime workspace $legacy_root; new default is $default_root."
+    printf '%s\n' "$legacy_root"
+    return
+  fi
+  printf '%s\n' "$default_root"
 }
 
 runtime_source() {

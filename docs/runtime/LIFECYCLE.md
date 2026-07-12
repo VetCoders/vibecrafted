@@ -163,7 +163,7 @@ and semantics. A breaking lifecycle state or worker-report frontmatter change
 requires a `vibecrafted.lifecycle.v2` schema and a parallel compatibility
 period. The single writer remains Python
 (`vibecrafted_core.lifecycle_runner` / `lifecycle_control`); Rust
-`control-core`, HTTP endpoints, MCP, CodeScribe, and Pensieve are readers or
+`control-core`, HTTP endpoints, MCP, Codescribe, and Pensieve are readers or
 operator-command surfaces only.
 
 The v1 state contract covers:
@@ -185,9 +185,9 @@ Worker report frontmatter is the steering side of the same contract:
   `next_stage`, `next_agent`, and `dou_index`; do not treat `status` as a
   transition control until the runtime explicitly does.
 
-### CodeScribe consumer recipe
+### Codescribe consumer recipe
 
-CodeScribe drives lifecycle runs through the umbrella MCP verbs:
+Codescribe drives lifecycle runs through the umbrella MCP verbs:
 `vc_lifecycle_runs`, `vc_lifecycle_status`, `vc_lifecycle_approve`,
 `vc_lifecycle_interrupt`, `vc_lifecycle_force_audit`,
 `vc_lifecycle_accept_dou`, and `vc_lifecycle_fallback`. Read
@@ -206,7 +206,7 @@ lifecycle writer.
 
 ### Consumer proof packet
 
-Use this packet when handing the v1 contract to CodeScribe, Pensieve, or another
+Use this packet when handing the v1 contract to Codescribe, Pensieve, or another
 reader. It is repo-local proof, not live external acceptance: release still
 needs one captured read from each real consumer environment.
 
@@ -283,7 +283,7 @@ make server-smoke
 
 Release-time live acceptance checklist:
 
-- CodeScribe reads `vibecrafted://lifecycle/schema` and records
+- Codescribe reads `vibecrafted://lifecycle/schema` and records
   `vc_lifecycle_status.result.schema == "vibecrafted.lifecycle.v1"` from its
   own MCP client runtime.
 - Pensieve reads `/api/control/lifecycle` and

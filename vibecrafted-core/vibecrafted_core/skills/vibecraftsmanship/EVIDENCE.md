@@ -255,7 +255,7 @@ repo path, gets baked into shim, mid-rebase breaks other shells.
 ### Cycle 3 — dispatch without hesitation
 
 Operator's instruction: _"dispatchuj to ziom a się nie zastanawiasz.
-confidence high? Maciej nie odpowiada? -> dispatch"_ — explicit
+confidence high? operator nie odpowiada? -> dispatch"_ — explicit
 "bez odbioru" rule applied to skill-update work, plus pointed out
 operator-agent had forgotten to enter `/loop`:
 

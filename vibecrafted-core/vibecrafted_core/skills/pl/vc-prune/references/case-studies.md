@@ -2,7 +2,7 @@
 
 Realne przebiegi prune pokazujące wzorzec silencer-strip w różnych językach i toolchainach.
 
-## Vista 0.67.3 (Rust + TypeScript), 2026-04-28
+## example-app 0.67.3 (Rust + TypeScript), 2026-04-28
 
 Późnowieczorny przebieg zdjął:
 
@@ -17,14 +17,14 @@ Większa lekcja: żaden z tych 13 testów e2e nigdy realnie nie uruchomił się 
 
 Followup — realny loader `dotenvy::from_path("src-tauri/.env")` — był **nagrodą** za uruchomienie Fali 5.
 
-## Hipotetyczny odpowiednik w Pythonie (vista-portal, billing service)
+## Hipotetyczny odpowiednik w Pythonie (sample-portal, billing service)
 
 Przebieg po `# type: ignore` i `@pytest.mark.skipif(not stripe_keys_present(), reason="...")` ujawnia:
 
 - 11 `# type: ignore[attr-defined]` na obiekcie `stripe.Customer` — każdy dodany przed tym, jak upgrade `stripe-python` 11.x wprowadził porządne typy w 2025-Q1. Żaden już niepotrzebny.
 - 3 dekoratory `@pytest.mark.skipif` na testach idempotencji webhooków, które **zawsze skipowały się w CI**, bo nikt nie podpiął testowych kluczy Stripe'a do sekretów GitHub Actions.
 
-Ten sam wzorzec co w Vista, inny ekosystem: silencery przeżywające buga, który ukrywały, plus testy, które nigdy nie uruchomiły.
+Ten sam wzorzec co w example-app, inny ekosystem: silencery przeżywające buga, który ukrywały, plus testy, które nigdy nie uruchomiły.
 
 Zapomniana perełka w tym samym przebiegu: 380-liniowy `app/billing/archived_invoice_export.py` z `# noqa: F401` na każdym imporcie — okazało się, że to kompletny eksporter faktur do CSV, który ktoś zbudował dla klienta, który odszedł (churned), nigdy niepodpięty do komendy CLI, a testowe pokrycie wynosiło 87%. Zgłoszone do operatora: revive jako CLI `vc-export-invoices` albo archive w `docs/archive/billing-archive.md` i delete.
 

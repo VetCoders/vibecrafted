@@ -258,7 +258,7 @@ between now and dispatch.
 Wave 0 fires first against `vibecrafted/` (dispatcher patch). Waves
 A→D fire against `vc-operator/` (this repo).
 
-The operator (Maciej) presses every push / PR / merge button per
+The operator presses every push / PR / merge button per
 `vc-operator/AUTONOMY.md` hard-stop policy.
 
 ---

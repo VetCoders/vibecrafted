@@ -204,7 +204,7 @@ Output of Wave 5 is **not** a smaller repo — it's a written report. Save to
 `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/reports/<timestamp>_forgotten-gems.md`.
 
 > See [references/case-studies.md](references/case-studies.md) for the full Forgotten Gems Report template, the
-> test-theater report template, and concrete real/hypothetical case studies (Vista 0.67.3 silencer-strip, vista-portal
+> test-theater report template, and concrete real/hypothetical case studies (example-app 0.67.3 silencer-strip, sample-portal
 > billing-service equivalent, surprise-findings catalog).
 
 Test theater is debt, not gem. It always gets a follow-up plan saved to `<timestamp>_test-theater.md`. Never a silencer

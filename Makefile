@@ -77,7 +77,7 @@ wizard: init-hooks
 		exit 0; \
 	fi; \
 	site_repo=""; \
-	for p in "$(CURDIR)/../vc-runtime/vibecrafted-io" "$(CURDIR)/../vibecrafted-io" "$$HOME/Libraxis/vc-runtime/vibecrafted-io"; do \
+	for p in "$(CURDIR)/../vc-runtime/vibecrafted-io" "$(CURDIR)/../vibecrafted-io" "$$HOME/.vibecrafted/vc-runtime/vibecrafted-io" "$$HOME/Libraxis/vc-runtime/vibecrafted-io"; do \
 		if [ -d "$$p/site" ]; then site_repo="$$p"; break; fi; \
 	done; \
 	if [ -z "$$site_repo" ]; then \

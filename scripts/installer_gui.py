@@ -435,7 +435,8 @@ class InstallController:
         4. <source>/dist (release-tarball layout)
         5. sibling ../vibecrafted-io/site/dist
         6. sibling ../vc-runtime/vibecrafted-io/site/dist
-        7. ~/Libraxis/vc-runtime/vibecrafted-io/site/dist
+        7. ~/.vibecrafted/vc-runtime/vibecrafted-io/site/dist
+        8. ~/Libraxis/vc-runtime/vibecrafted-io/site/dist (legacy fallback)
 
         Returns None when no bundle is present; the request handler
         then falls back to the inline HTML.
@@ -456,6 +457,10 @@ class InstallController:
             ]
         )
         if root.name == "vibecrafted" or (root / "VERSION").is_file():
+            candidates.append(
+                vibecrafted_home() / "vc-runtime" / "vibecrafted-io" / "site" / "dist"
+            )
+            # Legacy fallback: honor a pre-existing $HOME/Libraxis checkout.
             candidates.append(
                 Path.home()
                 / "Libraxis"

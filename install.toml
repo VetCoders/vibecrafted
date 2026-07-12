@@ -155,30 +155,30 @@ reason = "Research needs three reliable independent workers. Claude, Codex, and 
 
 [runtime.horses.wezterm]
 label = "WezTerm"
-source = "$HOME/Libraxis/vc-runtime/wezterm"
-lab = "$HOME/Libraxis/vc-runtime/labs/wezterm-spine"
+source = "$HOME/.vibecrafted/vc-runtime/wezterm"
+lab = "$HOME/.vibecrafted/vc-runtime/labs/wezterm-spine"
 platforms = ["macos", "linux", "wsl"]
 artifacts = ["wezterm", "$XDG_CONFIG_HOME/wezterm/vibecrafted"]
 
 [runtime.horses.vc-apprt]
 label = "vc-apprt"
-source = "$HOME/Libraxis/vc-runtime/vc_"
-lab = "$HOME/Libraxis/vc-runtime/labs/vc-apprt-spine"
+source = "$HOME/.vibecrafted/vc-runtime/vc_"
+lab = "$HOME/.vibecrafted/vc-runtime/labs/vc-apprt-spine"
 platforms = ["macos", "linux"]
 artifacts = ["vc_"]
 requires = ["zig 0.16"]
 
 [runtime.horses.locterm]
 label = "locterm"
-source = "$HOME/Libraxis/vc-runtime/locterm"
-lab = "$HOME/Libraxis/vc-runtime/labs/locterm-spine"
+source = "$HOME/.vibecrafted/vc-runtime/locterm"
+lab = "$HOME/.vibecrafted/vc-runtime/labs/locterm-spine"
 platforms = ["macos"]
 artifacts = ["locterm.app", "iTerm2 AutoLaunch vc_launcher.py"]
 
 [runtime.horses.microsandbox]
 label = "microsandbox"
-source = "$HOME/Libraxis/vc-runtime/experimental/microsandbox"
-lab = "$HOME/Libraxis/vc-runtime/labs/microsandbox-execution"
+source = "$HOME/.vibecrafted/vc-runtime/experimental/microsandbox"
+lab = "$HOME/.vibecrafted/vc-runtime/labs/microsandbox-execution"
 platforms = ["macos", "linux"]
 artifacts = ["msb", "msbserver"]
 requires = ["krunvm", "libkrun"]
