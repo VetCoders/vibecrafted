@@ -290,10 +290,12 @@ _vetcoders_resume_command() {
     grok)
       # grok --single is one-shot non-interactive. NEVER pass --restore-code: it
       # checks out the original session's commit and would clobber the working tree.
+      # Use streaming-json (matching verified python lane + grok 0.2.97 headless)
+      # so session/usage parse via JSON_TOKEN_PATTERNS works from transcript.
       if [[ -n "$resume_prompt" ]]; then
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format plain --single %s\n' "$quoted_session" "$quoted_prompt"
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json --single %s\n' "$quoted_session" "$quoted_prompt"
       else
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format plain\n' "$quoted_session"
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json\n' "$quoted_session"
       fi
       ;;
     *)

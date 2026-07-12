@@ -93,16 +93,37 @@ def test_junie_spawn_dry_run_uses_project_task_contract(tmp_path: Path) -> None:
     assert "junie --project=" in text
     assert "--task=" in text
     assert "--skip-update-check" in text
+    assert "--input-format=text" in text
+    assert "--output-format=json-stream" in text
+    assert "--output-format=text" not in text
+
+
+def test_junie_spawn_dry_run_pipes_json_stream_to_transcript(tmp_path: Path) -> None:
+    launcher = _dry_run_launcher(tmp_path, "junie")
+    text = launcher.read_text(encoding="utf-8")
+
+    assert "junie --project=" in text
+    assert "--output-format=json-stream" in text
+    assert "2>&1 | tee -a $qtranscript" not in text
+    assert "tee -a" in text
 
 
 def test_grok_spawn_dry_run_uses_prompt_file_contract(tmp_path: Path) -> None:
     launcher = _dry_run_launcher(tmp_path, "grok")
     text = launcher.read_text(encoding="utf-8")
 
+    # Contract alignment (grok 0.2.97): --prompt-file delivery, permission, streaming-json
+    # for transcript capture (matches verified python _stdin_command lane), --cwd.
     assert "SPAWN_AGENT=grok" in text
     assert "grok --cwd" in text
     assert "--permission-mode bypassPermissions" in text
     assert "--prompt-file" in text
+    assert "--output-format streaming-json" in text
+    assert (
+        "tee -a " in text
+    )  # transcript capture (expanded path in generated SPAWN_CMD)
+    assert "--prompt-file " in text
+    # resume flag shape covered in dedicated grok test below (source contract)
 
 
 def test_dry_run_meta_records_new_agents(tmp_path: Path) -> None:
@@ -116,3 +137,61 @@ def test_dry_run_meta_records_new_agents(tmp_path: Path) -> None:
         meta_path = Path(meta_line.split("=", 1)[1].strip().strip("'\""))
         payload = json.loads(meta_path.read_text(encoding="utf-8"))
         assert payload["agent"] == agent
+
+
+def test_grok_resume_uses_resume_flag_not_session_id_and_streams_json() -> None:
+    """Regression on grok resume contract (grok 0.2.97):
+    - MUST use --resume (never -s/--session-id for resume per help)
+    - headless uses --output-format streaming-json for parseable transcript
+    - --single for prompt continuation; --permission-mode and --no-alt-screen
+    Source-of-truth is the grok case in marbles.sh (shell resume builder).
+    """
+    marbles_path = (
+        REPO_ROOT / "vibecrafted-core/vibecrafted_core/runtime/shell/lib/marbles.sh"
+    )
+    src = marbles_path.read_text(encoding="utf-8")
+
+    # Isolate the grok) case block
+    assert "    grok)" in src
+    grok_block = src.split("    grok)")[1].split(";;")[0]
+
+    # resume flag shape
+    assert "grok --resume " in grok_block
+    assert "--session-id" not in grok_block
+    assert "-s " not in grok_block and "--session-id=" not in grok_block
+
+    # output format for capture + prompt delivery via --single in resume context
+    assert "--output-format streaming-json" in grok_block
+    assert (
+        "--single " in grok_block
+        or "--single\n" in grok_block
+        or "--single " in grok_block
+    )
+
+    # other contract flags present in headless resume path
+    assert "--permission-mode bypassPermissions" in grok_block
+    assert "--no-alt-screen" in grok_block
+    assert "--cwd " in grok_block
+
+    # Fixture-based unit test for spawn.py extraction against grok 0.2.97 streaming-json shape
+    # (no real grok call). Covers session-id (sessionId in end event) + JSON_TOKEN_PATTERNS usage.
+    from vibecrafted_core.spawn import _extract_session, _extract_tokens, _extract_cost
+
+    # Realistic grok streaming-json transcript fragment (end event + usage if emitted; patterns are general)
+    grok_stream = (
+        '{"type":"thought","data":"..."}\n'
+        '{"type":"text","data":"done"}\n'
+        '{"type":"end","stopReason":"EndTurn",'
+        '"sessionId":"019ec430-9888-78e3-8ca0-b29387444fdb",'
+        '"usage":{"input_tokens":42,"output_tokens":17,"cache_read_input_tokens":5}}\n'
+    )
+    assert _extract_session(grok_stream) == "019ec430-9888-78e3-8ca0-b29387444fdb"
+    toks = _extract_tokens(grok_stream)
+    assert toks["input"] == 42
+    assert toks["output"] == 17
+    assert toks["cached_input"] == 5
+    assert toks["total"] == 64
+    # cost may be absent in raw stream (footer supplies); ensure no crash
+    assert _extract_cost(grok_stream) is None or isinstance(
+        _extract_cost(grok_stream), float
+    )
