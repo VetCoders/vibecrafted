@@ -262,7 +262,13 @@ EOF_AGY
 
 chmod +x "$fake_bin/codex" "$fake_bin/claude" "$fake_bin/agy"
 
-common_env=(HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH")
+common_env=(
+  HOME="$home_dir"
+  XDG_CONFIG_HOME="$config_dir"
+  PATH="$fake_bin:$PATH"
+  VIBECRAFTED_RUN_ID=""
+  VIBECRAFTED_PROMPT_ID=""
+)
 
 log "headless spawn smoke"
 env "${common_env[@]}" bash "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh" --mode plan --runtime headless --root "$work_repo" "$work_repo/.vibecrafted/plans/test.md"
@@ -350,7 +356,10 @@ jq -e '.liveness == "terminal"' "$codex_meta" >/dev/null || die "codex meta miss
 
 log "launcher resume smoke"
 resume_capture="$workspace/resume-codex.txt"
-env HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" FAKE_CODEX_CAPTURE="$resume_capture" \
+env -u VIBECRAFTED_RUN_ID -u VIBECRAFTED_OPERATOR_SESSION \
+  -u VC_FRAME -u VC_FRAME_PANE_ID -u VC_FRAME_SESSION_NAME \
+  -u ZELLIJ -u ZELLIJ_PANE_ID -u ZELLIJ_SESSION_NAME \
+  HOME="$home_dir" XDG_CONFIG_HOME="$config_dir" PATH="$fake_bin:$PATH" FAKE_CODEX_CAPTURE="$resume_capture" \
   "$home_dir/.local/bin/vibecrafted" resume codex --session fake-session-001 --prompt "resume smoke"
 require_file "$resume_capture"
 assert_contains "$resume_capture" 'resume'
