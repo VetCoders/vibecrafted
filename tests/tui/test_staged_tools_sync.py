@@ -199,3 +199,62 @@ def test_compact_install_refreshes_current_tools_from_local_checkout(
     assert (current_link / "scripts" / "vibecrafted").read_text(
         encoding="utf-8"
     ) == '#!/usr/bin/env bash\nprintf "fresh installed launcher\\n"\n'
+
+
+def _build_symlinked_skill_store(tmp_path: Path) -> tuple[Path, Path]:
+    """Wire vibecrafted-current -> vibecrafted-main so the skill store and the
+    install source resolve to the same inode (portable-CI staging shape)."""
+    main = tmp_path / "vibecrafted-main"
+    skills = main / "skills"
+    skills.mkdir(parents=True)
+    for filename in installer.SKILL_ROOT_RULE_FILES:
+        (skills / filename).write_text(f"{filename}\n", encoding="utf-8")
+    for localized in installer.LOCALIZED_SKILL_RULE_DIRS:
+        (skills / localized).mkdir(parents=True, exist_ok=True)
+        for filename in installer.SKILL_ROOT_RULE_FILES:
+            (skills / localized / filename).write_text(
+                f"{localized}/{filename}\n", encoding="utf-8"
+            )
+    current = tmp_path / "vibecrafted-current"
+    current.symlink_to(main)
+    # source_skills_root(...).resolve() is what the installer passes as the
+    # source; the store comes from the unresolved current-link path -> same
+    # inode via two different string paths.
+    source = (current / "skills").resolve()
+    store = current / "skills"
+    return source, store
+
+
+def test_sync_skill_root_rules_skips_same_inode_store(tmp_path: Path) -> None:
+    """Regression: a symlinked store (vibecrafted-current -> vibecrafted-main)
+    made copy2 raise shutil.SameFileError during the portable "skills and
+    launchers" phase. The sync must treat the self-copy as a no-op."""
+    source, store = _build_symlinked_skill_store(tmp_path)
+
+    copied = installer.sync_skill_root_rules(source, store, dry_run=False)
+
+    # All rule files are still reported as synced (they already exist in place).
+    expected = {p for _src, p in installer.iter_skill_root_rule_files(source)}
+    assert set(copied) == expected
+    for filename in installer.SKILL_ROOT_RULE_FILES:
+        assert (store / filename).read_text(encoding="utf-8") == f"{filename}\n"
+
+
+def test_rsync_skill_skips_same_inode_dir(tmp_path: Path, monkeypatch) -> None:
+    """Regression: the shutil fallback copied a skill dir onto itself (and under
+    --mirror rmtree'd the source) when the store symlinked back to the source."""
+    source, store = _build_symlinked_skill_store(tmp_path)
+    # A skill living inside the skills dir: source/vc-demo (real) and
+    # store/vc-demo (via the current-link symlink) are the same inode.
+    src_skill = source / "vc-demo"
+    src_skill.mkdir()
+    (src_skill / "SKILL.md").write_text("demo\n", encoding="utf-8")
+    dst_skill = store / "vc-demo"
+
+    # Force the pure-Python fallback path (no rsync) with mirror=True — the most
+    # destructive shape (rmtree of dst == the source) — and assert the source
+    # survives untouched.
+    monkeypatch.setattr(installer.shutil, "which", lambda _name: None)
+    installer.rsync_skill(src_skill, dst_skill, dry_run=False, mirror=True)
+
+    assert (src_skill / "SKILL.md").read_text(encoding="utf-8") == "demo\n"

@@ -897,7 +897,12 @@ def sync_skill_root_rules(
         target = store_path / relative_target
         if not dry_run:
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+            # When the skill store is a symlink back to the source checkout
+            # (portable CI wires vibecrafted-current -> vibecrafted-main),
+            # source and target resolve to the same inode; copy2 would raise
+            # shutil.SameFileError and the copy is a no-op, so skip it.
+            if not (target.exists() and source.resolve() == target.resolve()):
+                shutil.copy2(source, target)
         copied.append(relative_target)
     return copied
 
@@ -2332,6 +2337,12 @@ def rsync_skill(
 ) -> None:
     """Sync a single skill directory. Uses rsync when available, shutil otherwise."""
     if dry_run:
+        return
+    # A symlinked store (portable CI wires vibecrafted-current -> the source
+    # checkout) makes src and dst the same directory. rsync would churn, and the
+    # shutil fallback would copy a file onto itself (or rmtree the source under
+    # --mirror); skip the self-sync entirely.
+    if dst.exists() and src.resolve() == dst.resolve():
         return
     dst.mkdir(parents=True, exist_ok=True)
     if shutil.which("rsync"):
