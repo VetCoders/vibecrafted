@@ -475,17 +475,11 @@ def _resume_stdin_command(agent: str, session_id: str) -> list[str]:
             "-",
         ]
     if agent == "gemini":
-        return [
-            "gemini",
-            "--resume",
-            session_id,
-            "-p",
-            "",
-            "--approval-mode",
-            "yolo",
-            "-o",
-            "stream-json",
-        ]
+        raise ValueError(
+            "gemini CLI is deprecated. Google Antigravity CLI (agy) is the replacement. "
+            "Use 'vibecrafted workflow agy --prompt ...' (or agy in other launchers). "
+            "No execution path may launch the gemini binary."
+        )
     if agent == "agy":
         # agy >= 1.1: --print takes a value and reads no stdin; a shell shim
         # folds the stdin prompt into the flag (see spawn._stdin_command).

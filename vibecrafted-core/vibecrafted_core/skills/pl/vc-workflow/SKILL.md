@@ -38,7 +38,7 @@ Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<workflow
 ```bash
 vibecrafted workflow claude --prompt 'Examine auth surface and implement fixes'
 vc-workflow codex --prompt 'Research SSO options then implement the best fit'
-vibecrafted workflow gemini --file /path/to/research-plan.md
+vibecrafted workflow agy  # gemini deprecated --file /path/to/research-plan.md
 ```
 
 Zależności fundamentowe (ładowane wraz z frameworkiem): `vc-loctree`, `vc-aicx`.

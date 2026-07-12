@@ -22,7 +22,7 @@ from .control_plane import (
 from .package_resources import deck_path, package_root
 from .workflow import await_launch_truth, launch_workflow, normalize_launch_spec
 
-AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok", "swarm"}
+AGENTS = {"claude", "codex", "agy", "junie", "grok", "swarm"}
 LAUNCHERS = (
     "audit",
     "decorate",

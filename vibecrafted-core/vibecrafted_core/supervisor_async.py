@@ -32,7 +32,7 @@ def _infer_agent(command: Sequence[str]) -> str:
     if not command:
         return "agent"
     name = Path(str(command[0])).name
-    if name in {"claude", "codex", "gemini", "agy", "junie", "grok"}:
+    if name in {"claude", "codex", "agy", "junie", "grok"}:
         return name
     if name in {"python", "python3"}:
         return "python"

@@ -55,7 +55,7 @@ Standard launcher (`vibecrafted start` / `vc-start`, then `vc-<workflow> <agent>
 ```bash
 vibecrafted workflow claude --prompt 'Examine auth surface and implement fixes'
 vc-workflow codex --prompt 'Research SSO options then implement the best fit'
-vibecrafted workflow gemini --file /path/to/research-plan.md
+vibecrafted workflow agy --file /path/to/research-plan.md   # gemini deprecated; agy is Google replacement
 ```
 
 Foundation deps (loaded with framework): `vc-loctree`, `vc-aicx`.
@@ -124,7 +124,7 @@ Write to `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<ts>_<slug>
 ```markdown
 ---
 run_id: <id>
-agent: <claude|codex|gemini>
+agent: <claude|codex|agy>
 skill: vc-workflow
 project: <repo>
 status: completed
@@ -179,7 +179,7 @@ WebFetch directly: query `"<API> usage example <year>"`, fetch standard docs.
 ```markdown
 ---
 run_id: <id>
-agent: <claude|codex|gemini>
+agent: <claude|codex|agy>
 skill: vc-workflow
 project: <repo>
 status: completed

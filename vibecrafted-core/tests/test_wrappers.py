@@ -106,6 +106,36 @@ def test_print_completed_rejects_live_worker_completion_payload(capsys) -> None:
     assert "non-terminal completion disagreement" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("exit_code, expected", [(7, 7), (0, 3), (None, 3)])
+def test_print_completed_rejects_failed_delivered_artifact(
+    exit_code: int | None, expected: int
+) -> None:
+    rc = wrappers._print_completed(
+        "impl-failed",
+        {
+            "completed": True,
+            "reason": "report_delivered",
+            "worker_alive": False,
+            "run": {
+                "state": "failed",
+                "exit_code": exit_code,
+                "artifact_ok": False,
+                "artifact_errors": ["report_missing"],
+            },
+        },
+    )
+
+    assert rc == expected
+
+
+def test_print_completed_sends_missing_payload_error_to_stderr(capsys) -> None:
+    assert wrappers._print_completed("impl-missing", {}) == 3
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "completed without control-plane payload" in captured.err
+
+
 def test_resume_main_routes_captured_session_through_vc_frame_aware_resume_helper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

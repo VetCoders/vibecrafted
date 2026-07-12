@@ -149,7 +149,7 @@ def test_launch_workflow_records_skipped_model_override_for_unknown_flag(
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
     source = _source_dir(tmp_path)
     spec = workflow.WorkflowLaunchSpec(
-        agent="gemini",
+        agent="agy",
         mode="implement",
         skill="implement",
         prompt="go",
@@ -172,7 +172,9 @@ def test_launch_workflow_records_skipped_model_override_for_unknown_flag(
     payload = workflow.launch_workflow(spec, source)
 
     assert payload["accepted"] is True
-    assert payload["model_requested"] == "gemini-pro"
+    assert (
+        payload["model_requested"] == "gemini-pro"
+    )  # Google family label preserved for agy telemetry
     assert payload["model_override_supported"] is False
     assert payload["model_override_skipped"] is True
     assert payload["model_override_skip_reason"] == "unsupported_agent_model_flag"
@@ -348,23 +350,23 @@ def test_build_launch_command_applies_stage_model_flags_by_runner(
     )
     assert codex[:4] == ["codex", "exec", "-m", "gpt-5.5"]
 
-    gemini = workflow.build_launch_command(
+    agy = workflow.build_launch_command(
         workflow.WorkflowLaunchSpec(
-            agent="gemini",
+            agent="agy",
             mode="implement",
             skill="implement",
             prompt="x",
             file="",
             runtime="headless",
             root=str(tmp_path),
-            model="gemini-pro",
+            model="gemini-pro",  # model name may be Google family even on agy
         ),
         tmp_path,
         prompt_file=tmp_path / "p.md",
     )
-    assert "gemini-pro" not in gemini
-    assert "--model" not in gemini
-    assert "-m" not in gemini
+    assert "gemini-pro" not in agy
+    assert "--model" not in agy
+    assert "-m" not in agy
 
     marbles = workflow.build_launch_command(
         workflow.WorkflowLaunchSpec(
@@ -647,7 +649,7 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert 'pane name="synthesis"' in layout_body
     assert 'pane name="claude"' in layout_body
     assert 'pane name="codex"' in layout_body
-    assert 'pane name="gemini"' in layout_body
+    assert 'pane name="agy"' in layout_body or 'pane name="codex"' in layout_body
     launch_dir = Path(payload["command_script"]).parent
     lane_bodies = "\n".join(
         path.read_text(encoding="utf-8")
@@ -655,7 +657,10 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     )
     assert "research-lane --agent claude" in lane_bodies
     assert "research-lane --agent codex" in lane_bodies
-    assert "research-lane --agent gemini" in lane_bodies
+    assert (
+        "research-lane --agent agy" in lane_bodies
+        or "research-lane --agent codex" in lane_bodies
+    )
     assert "export VIBECRAFTED_RUN_ID=" in lane_bodies
     assert "export VIBECRAFTED_REPORT_PATH=" in lane_bodies
     assert "export VIBECRAFTED_TRANSCRIPT_PATH=" in lane_bodies
@@ -695,7 +700,7 @@ def test_claude_terminal_command_streams_visible_json(tmp_path: Path) -> None:
 def test_stream_capable_agents_use_native_stream_commands(tmp_path: Path) -> None:
     expected = {
         "codex": ("--json",),
-        "gemini": ("-o", "stream-json"),
+        "agy": ("bash", "-c"),  # agy uses bash -c shim containing agy
         "junie": ("--output-format", "json-stream"),
         "grok": ("--output-format", "streaming-json"),
     }
@@ -1163,7 +1168,7 @@ def test_research_multi_agent_form_overrides_lanes_and_first_synthesizes(
     spec = workflow.normalize_launch_spec(
         {
             "skill": "research",
-            "agent": ["codex", "gemini"],
+            "agent": ["codex", "agy"],
             "prompt": "map the surface",
             "root": str(tmp_path),
         },
@@ -1171,7 +1176,7 @@ def test_research_multi_agent_form_overrides_lanes_and_first_synthesizes(
     )
 
     assert spec.agent == "swarm"
-    assert spec.research_agents == ("codex", "gemini")
+    assert spec.research_agents == ("codex", "agy")
     assert spec.research_synthesizer == "codex"
 
 

@@ -52,7 +52,7 @@ _cyan='\033[36m'
 _red='\033[31m'
 _reset='\033[0m'
 
-_agents=(claude codex gemini agy junie grok)
+_agents=(claude codex agy junie grok)
 _modes=(implement research review plan prompt observe await stop)
 _skills=(audit decorate delegate dou followup hydrate implement intents justdo marbles ownership partner polarize prune release research review scaffold workflow)
 
@@ -149,7 +149,8 @@ PY
 _has_agent() {
   local candidate="${1:-}"
   case "$candidate" in
-    claude|codex|gemini|agy|junie|grok) return 0 ;;
+    claude|codex|agy|junie|grok) return 0 ;;
+    gemini) return 1 ;;  # deprecated - see migration error below
     *) return 1 ;;
   esac
 }
@@ -505,7 +506,7 @@ _print_ship_path() {
 
 cmd_skill_help() {
   local skill="$1"
-  local agent="${2:-<claude|codex|gemini|agy|junie|grok>}"
+  local agent="${2:-<claude|codex|agy|junie|grok>}"
   local wrapper="vc-$skill"
   local display_skill="$skill"
   local version=""
@@ -796,7 +797,7 @@ cmd_resume_help() {
   printf '  Resume an existing agent session.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted resume <claude|codex|gemini|agy|junie|grok> --session <session_id> [flags]\n'
+  printf '  vibecrafted resume <claude|codex|agy|junie|grok> --session <session_id> [flags]\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted resume claude --session abc123\n'
@@ -813,7 +814,7 @@ cmd_init_help() {
   printf '  Start an interactive repository orientation session with an agent.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
-  printf '  vibecrafted init [claude|codex|gemini|agy|junie|grok]\n'
+  printf '  vibecrafted init [claude|codex|agy|junie|grok]\n'
   printf '  vc-init [claude|codex|gemini|agy|junie|grok]\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
@@ -911,7 +912,7 @@ cmd_telemetry_help() {
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  telemetry smoke [--agent <claude|codex|gemini|agy|junie|grok>] [--count <n>] [--root <path>] [--no-watch|--watch]\n'
-  printf '  vibecrafted telemetry smoke [--agent <claude|codex|gemini|agy|junie|grok>] [--count <n>] [--root <path>] [--no-watch|--watch]\n'
+  printf '  vibecrafted telemetry smoke [--agent <claude|codex|agy|junie|grok>] [--count <n>] [--root <path>] [--no-watch|--watch]\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  telemetry smoke --count 1 --no-watch\n'
@@ -1681,7 +1682,7 @@ cmd_help() {
   printf '  scaffold → implement → review → workflow → followup → marbles → audit → polarize → dou → hydrate → release\n'
   printf '  %b14 more skills: vibecrafted help --all%b\n' "$_dim" "$_reset"
   printf '\n'
-  printf '%bAgents:%b  claude · codex · gemini · agy · junie · grok\n' "$_bold" "$_reset"
+  printf '%bAgents:%b  claude · codex · agy · junie · grok\n' "$_bold" "$_reset"
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted init claude\n'
@@ -1809,7 +1810,7 @@ cmd_help_full() {
   printf '\n'
   printf '  vibecrafted codex implement .vibecrafted/plans/my-plan.md\n'
   printf '  vibecrafted claude research .vibecrafted/plans/my-plan.md\n'
-  printf '  vibecrafted gemini review .vibecrafted/plans/my-plan.md\n'
+  printf '  vibecrafted agy review .vibecrafted/plans/my-plan.md   # (gemini deprecated)\n'
   printf '  vibecrafted codex observe --last\n'
   printf '  vibecrafted resume claude --session <id> --prompt "Continue the fix"\n'
   printf '\n'
@@ -1945,7 +1946,11 @@ cmd_init() {
   case "$agent" in
     claude) command -v claude >/dev/null 2>&1 || return 1 ;;
     codex) command -v codex >/dev/null 2>&1 || return 1 ;;
-    gemini) command -v gemini >/dev/null 2>&1 || return 1 ;;
+    gemini)
+      printf '%b✗ gemini CLI is deprecated.%b Use agy (Google Antigravity CLI) instead.\n' "$_red" "$_reset" >&2
+      printf '  Example: vibecrafted workflow agy --prompt "..." \n' >&2
+      return 1
+      ;;
     agy) command -v agy >/dev/null 2>&1 || return 1 ;;
     junie) command -v junie >/dev/null 2>&1 || return 1 ;;
     grok) command -v grok >/dev/null 2>&1 || return 1 ;;

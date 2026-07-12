@@ -9,8 +9,8 @@ from typing import Any, Iterable, Mapping
 
 from .runtime_paths import vibecrafted_home
 
-SUPPORTED_RESEARCH_AGENTS = ("claude", "codex", "gemini", "agy", "junie", "grok")
-DEFAULT_RESEARCH_AGENTS = ("claude", "codex", "gemini")
+SUPPORTED_RESEARCH_AGENTS = ("claude", "codex", "agy", "junie", "grok")
+DEFAULT_RESEARCH_AGENTS = ("claude", "codex", "agy")
 
 
 @dataclass(frozen=True)

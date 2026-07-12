@@ -62,7 +62,7 @@ cięcie jest wciąż bounded, i kiedy operator powinien eskalować do `vc-agents
 ```bash
 vibecrafted partner codex --prompt 'Split this into one small native cut'
 vibecrafted implement claude --file /path/to/plan.md
-vibecrafted workflow gemini --prompt 'Keep this local unless it clearly wants the external fleet'
+vibecrafted workflow agy --prompt 'Keep this local unless it clearly wants the external fleet'  # gemini deprecated
 ```
 
 ## Doktryna pracy z repozytorium

@@ -28,7 +28,7 @@ def _runtime_env(monkeypatch, tmp_path: Path, run_id: str) -> Path:
     home = tmp_path / "home"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name in ("claude", "codex", "gemini", "agy", "junie", "grok"):
+    for name in ("claude", "codex", "agy", "junie", "grok"):
         _fake_agent(bin_dir, name)
     for name in (
         "VIBECRAFTED_ARTIFACT_SLUG",
@@ -60,10 +60,10 @@ def test_research_runtime_supervises_three_tracks(monkeypatch, tmp_path: Path) -
     report = (home / "parent.md").read_text(encoding="utf-8")
     assert "vc-research supervised run" in report
     assert "Research Lane Selection" in report
-    assert "agents: claude, codex, gemini" in report
+    assert "agents: claude, codex, agy" in report
     assert "research-claude" in report
     assert "research-codex" in report
-    assert "research-gemini" in report
+    assert "research-agy" in report
     assert "research-synthesis" in report
     assert "agent_session_id: claude-session" in report
     assert "agent_model: claude-model" in report
@@ -71,7 +71,7 @@ def test_research_runtime_supervises_three_tracks(monkeypatch, tmp_path: Path) -
     assert "claude --resume claude-session" in report
     assert (home / "rsch-test-children" / "research-claude.md").is_file()
     assert (home / "rsch-test-children" / "research-codex.md").is_file()
-    assert (home / "rsch-test-children" / "research-gemini.md").is_file()
+    assert (home / "rsch-test-children" / "research-agy.md").is_file()
     assert (home / "rsch-test-children" / "research-synthesis.md").is_file()
 
 
@@ -82,7 +82,7 @@ def test_research_runtime_uses_user_configured_agents(
     config_dir = tmp_path / "xdg" / "vibecrafted"
     config_dir.mkdir(parents=True)
     (config_dir / "config.toml").write_text(
-        '[runtime.picking.research]\ndefault_agents = ["grok", "codex", "gemini"]\n',
+        '[runtime.picking.research]\ndefault_agents = ["grok", "codex", "agy"]\n',
         encoding="utf-8",
     )
 
@@ -93,12 +93,12 @@ def test_research_runtime_uses_user_configured_agents(
     assert rc == 0
     report = (home / "parent.md").read_text(encoding="utf-8")
     meta = (home / "parent.meta.json").read_text(encoding="utf-8")
-    assert "agents: grok, codex, gemini" in report
+    assert "agents: grok, codex, agy" in report
     assert "research-grok" in report
     assert "research-codex" in report
-    assert "research-gemini" in report
+    assert "research-agy" in report
     assert "research-claude" not in report
-    assert '"research_agents": [\n    "grok",\n    "codex",\n    "gemini"\n  ]' in meta
+    assert '"research_agents": [\n    "grok",\n    "codex",\n    "agy"\n  ]' in meta
 
 
 def test_research_runtime_yaml_wins_over_legacy_toml_and_applies_lane_models(
@@ -108,7 +108,7 @@ def test_research_runtime_yaml_wins_over_legacy_toml_and_applies_lane_models(
     legacy_dir = tmp_path / "xdg" / "vibecrafted"
     legacy_dir.mkdir(parents=True)
     (legacy_dir / "config.toml").write_text(
-        '[runtime.picking.research]\ndefault_agents = ["claude", "gemini"]\n',
+        '[runtime.picking.research]\ndefault_agents = ["claude", "agy"]\n',
         encoding="utf-8",
     )
     config_dir = home / "config"
@@ -120,8 +120,8 @@ def test_research_runtime_yaml_wins_over_legacy_toml_and_applies_lane_models(
                 "  - agent: codex",
                 "    model: gpt-yaml",
                 "    enabled: true",
-                "  - agent: gemini",
-                "    model: gemini-yaml",
+                "  - agent: agy",
+                "    model: agy-yaml",
                 "    enabled: true",
                 "  - agent: claude",
                 "    enabled: false",
@@ -142,24 +142,24 @@ def test_research_runtime_yaml_wins_over_legacy_toml_and_applies_lane_models(
     report = (home / "parent.md").read_text(encoding="utf-8")
     meta = json.loads((home / "parent.meta.json").read_text(encoding="utf-8"))
     assert f"source: {config_dir / 'research.yaml'}" in report
-    assert "agents: codex, gemini" in report
+    assert "agents: codex, agy" in report
     assert "synthesizer: codex" in report
     assert "synthesizer_model: gpt-synth" in report
     assert "research-claude" not in report
     codex_transcript = (
         home / "rsch-yaml-children" / "research-codex.transcript.log"
     ).read_text(encoding="utf-8")
-    gemini_transcript = (
-        home / "rsch-yaml-children" / "research-gemini.transcript.log"
+    agy_transcript = (
+        home / "rsch-yaml-children" / "research-agy.transcript.log"
     ).read_text(encoding="utf-8")
     assert "exec\n-m\ngpt-yaml\n--json" in codex_transcript
-    assert "\ngemini-yaml\n" not in gemini_transcript
+    assert "\nagy-yaml\n" not in agy_transcript
     children = {child["agent"]: child for child in meta["children"]}
     assert children["codex"]["model_requested"] == "gpt-yaml"
     assert children["codex"]["model_override_supported"] is True
-    assert children["gemini"]["model_requested"] == "gemini-yaml"
-    assert children["gemini"]["model_override_supported"] is False
-    assert children["gemini"]["model_override_skip_reason"] == (
+    assert children["agy"]["model_requested"] == "agy-yaml"
+    assert children["agy"]["model_override_supported"] is False
+    assert children["agy"]["model_override_skip_reason"] == (
         "unsupported_agent_model_flag"
     )
     assert meta["research_synthesizer"] == "codex"
@@ -176,7 +176,7 @@ def test_research_runtime_applies_model_request_per_child_runner(
         "lanes:\n  - agent: codex\n    model: yaml-codex\n",
         encoding="utf-8",
     )
-    monkeypatch.setenv("VIBECRAFTED_RESEARCH_AGENTS", "claude,codex,gemini")
+    monkeypatch.setenv("VIBECRAFTED_RESEARCH_AGENTS", "claude,codex,agy")
 
     rc = workflow_runtime.main(
         [
@@ -197,13 +197,13 @@ def test_research_runtime_applies_model_request_per_child_runner(
     codex_transcript = (
         home / "rsch-models-children" / "research-codex.transcript.log"
     ).read_text(encoding="utf-8")
-    gemini_transcript = (
-        home / "rsch-models-children" / "research-gemini.transcript.log"
+    agy_transcript = (
+        home / "rsch-models-children" / "research-agy.transcript.log"
     ).read_text(encoding="utf-8")
     assert "--model\nfrontier\n-p" in claude_transcript
     assert "exec\n-m\nfrontier\n--json" in codex_transcript
     assert "yaml-codex" not in codex_transcript
-    assert "\nfrontier\n" not in gemini_transcript
+    assert "\nfrontier\n" not in agy_transcript
 
     meta = json.loads((home / "parent.meta.json").read_text(encoding="utf-8"))
     assert meta["model_requested"] == "frontier"
@@ -212,11 +212,10 @@ def test_research_runtime_applies_model_request_per_child_runner(
     assert children["claude"]["model_override_supported"] is True
     assert children["claude"]["model_override_skipped"] is False
     assert children["codex"]["model_override_supported"] is True
-    assert children["gemini"]["model_override_supported"] is False
-    assert children["gemini"]["model_override_skipped"] is True
+    assert children["agy"]["model_override_supported"] is False
+    assert children["agy"]["model_override_skipped"] is True
     assert (
-        children["gemini"]["model_override_skip_reason"]
-        == "unsupported_agent_model_flag"
+        children["agy"]["model_override_skip_reason"] == "unsupported_agent_model_flag"
     )
 
 
@@ -256,13 +255,13 @@ def test_research_runtime_env_agents_override_user_config(
     config_dir = tmp_path / "xdg" / "vibecrafted"
     config_dir.mkdir(parents=True)
     (config_dir / "config.toml").write_text(
-        '[runtime.picking.research]\ndefault_agents = ["claude", "codex", "gemini"]\n',
+        '[runtime.picking.research]\ndefault_agents = ["claude", "codex", "agy"]\n',
         encoding="utf-8",
     )
     runtime_config_dir = home / "config"
     runtime_config_dir.mkdir(parents=True)
     (runtime_config_dir / "research.yaml").write_text(
-        "lanes:\n  - agent: claude\n  - agent: gemini\n",
+        "lanes:\n  - agent: claude\n  - agent: agy\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("VIBECRAFTED_RESEARCH_AGENTS", "grok,codex")
@@ -277,7 +276,7 @@ def test_research_runtime_env_agents_override_user_config(
     assert "agents: grok, codex" in report
     assert "research-grok" in report
     assert "research-codex" in report
-    assert "research-gemini" not in report
+    assert "research-agy" not in report
 
 
 def test_research_synthesis_waits_for_lane_meta_and_resumes_last_finisher(
@@ -428,7 +427,7 @@ def test_research_synthesis_degrades_to_partial_success_on_quorum(
     config_dir = tmp_path / "xdg" / "vibecrafted"
     config_dir.mkdir(parents=True)
     (config_dir / "config.toml").write_text(
-        '[runtime.picking.research]\ndefault_agents = ["grok", "codex", "gemini"]\n',
+        '[runtime.picking.research]\ndefault_agents = ["grok", "codex", "agy"]\n',
         encoding="utf-8",
     )
     child_dir = home / "rsch-partial-children"
@@ -460,18 +459,16 @@ def test_research_synthesis_degrades_to_partial_success_on_quorum(
             encoding="utf-8",
         )
 
-    failed_report = child_dir / "research-gemini.md"
+    failed_report = child_dir / "research-agy.md"
     failed_report.write_text("---\nstatus: failed\n---\n", encoding="utf-8")
-    (child_dir / "research-gemini.transcript.log").write_text(
-        "boom\n", encoding="utf-8"
-    )
-    (child_dir / "research-gemini.meta.json").write_text(
+    (child_dir / "research-agy.transcript.log").write_text("boom\n", encoding="utf-8")
+    (child_dir / "research-agy.meta.json").write_text(
         json.dumps(
             {
-                "run_id": "rsch-partial-research-gemini",
-                "agent": "gemini",
+                "run_id": "rsch-partial-research-agy",
+                "agent": "agy",
                 "report": str(failed_report),
-                "transcript": str(child_dir / "research-gemini.transcript.log"),
+                "transcript": str(child_dir / "research-agy.transcript.log"),
                 "exit_code": 1,
                 "artifact_errors": ["worker_failed"],
                 "completed_at": "2026-06-23T10:02:00+00:00",
@@ -487,10 +484,10 @@ def test_research_synthesis_degrades_to_partial_success_on_quorum(
     assert rc == 0
     report = (home / "parent.md").read_text(encoding="utf-8")
     assert "status: partial_success" in report
-    assert "lanes_failed: gemini" in report
-    # synteza odpaliła z ostatniego ocalałego (codex), gemini odnotowany jako fail
+    assert "lanes_failed: agy" in report
+    # synteza odpaliła z ostatniego ocalałego (codex), agy odnotowany jako fail
     assert "research-synthesis (codex)" in report
-    assert "research-gemini" in report
+    assert "research-agy" in report
     assert "artifact_errors: worker_failed" in report
     assert (child_dir / "research-synthesis.md").is_file()
 
@@ -509,7 +506,7 @@ def test_research_runtime_tees_child_output(
     out = capsys.readouterr().out
     assert "===== research:research-claude:claude =====" in out
     assert "===== research:research-codex:codex =====" in out
-    assert "===== research:research-gemini:gemini =====" in out
+    assert "===== research:research-agy:agy =====" in out
     assert "===== research:research-synthesis:" in out
     assert "fake worker ok" in out
 

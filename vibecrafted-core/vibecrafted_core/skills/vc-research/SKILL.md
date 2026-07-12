@@ -50,7 +50,7 @@ Enter the framework session via `vibecrafted start` (or `vc-start`). Then launch
 vibecrafted research --prompt 'Compare auth libraries for Tauri desktop'
 vc-research --prompt 'State of the art for MCP streaming transports'
 vibecrafted research --file /path/to/research-plan.md
-vc-research codex gemini --prompt 'Override lanes for this run'
+vc-research codex agy --prompt 'Override lanes for this run'
 ```
 
 If invoked outside vc-frame, the framework attaches/creates the operator session and runs in a new tab. Prefer `--file` for an existing plan, `--prompt` for inline intent.
@@ -189,7 +189,7 @@ vibecrafted research --file "$PLAN"
 vibecrafted research claude --file "$PLAN"
 
 # Shell override form: exactly these lanes for this run; codex synthesizes.
-vc-research codex gemini --prompt "Compare two toolchains"
+vc-research codex agy --prompt "Compare two toolchains"
 
 # Explicit synthesizer override.
 vc-research claude codex gemini --synthesizer claude --file "$PLAN"

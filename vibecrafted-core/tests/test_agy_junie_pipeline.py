@@ -40,7 +40,12 @@ def test_supervisor_defaults_and_sandbox_support_cover_agy_junie_grok() -> None:
     assert sandbox_supported("grok") is True
     assert _default_command("claude", "go")[:3] == ["claude", "--print", "--verbose"]
     assert _default_command("codex", "go")[:2] == ["codex", "exec"]
-    assert _default_command("gemini", "go")[:3] == ["gemini", "--yolo", "--prompt"]
+    # gemini deprecated: must raise actionable migration error, never launch
+    try:
+        _ = _default_command("gemini", "go")
+        assert False, "gemini must raise deprecation"
+    except ValueError as e:
+        assert "deprecated" in str(e).lower() or "agy" in str(e).lower()
     # agy >= 1.1: --print takes the prompt as its value; flags precede it.
     assert _default_command("agy", "go") == [
         "agy",

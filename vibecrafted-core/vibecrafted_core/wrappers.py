@@ -16,7 +16,7 @@ from .package_resources import deck_path as package_deck_path
 from .package_resources import package_root, runtime_path
 from .spawn import Supervisor
 
-AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
+AGENTS = {"claude", "codex", "agy", "junie", "grok"}
 SUCCESS_STATES = {"report_validated", "completed", "closed"}
 SKILL_PREFIX = {
     "agents": "agnt",
@@ -164,7 +164,10 @@ def _print_completed(run_id: str, payload: dict[str, Any]) -> int:
         if terminal and succeeded:
             return int(run.get("exit_code") or 0)
         if delivered and not worker_alive:
-            return 0
+            exit_code = int(run.get("exit_code") or 0)
+            if run.get("artifact_ok") is False or errors:
+                return exit_code or 3
+            return exit_code
         print(
             "run_id="
             f"{run_id} non-terminal completion disagreement "
@@ -172,7 +175,10 @@ def _print_completed(run_id: str, payload: dict[str, Any]) -> int:
             file=sys.stderr,
         )
         return 3
-    print(f"run_id={run_id} completed without control-plane payload")
+    print(
+        f"run_id={run_id} completed without control-plane payload",
+        file=sys.stderr,
+    )
     return 3
 
 
@@ -215,7 +221,7 @@ def supervised_skill_main(skill: str, argv: Sequence[str] | None = None) -> int:
         return handle.wait()
     if not args or args[0] not in AGENTS:
         print(
-            f"Usage: vc-{skill} <claude|codex|gemini|agy|junie|grok> [--prompt <text>|--file <path>]",
+            f"Usage: vc-{skill} <claude|codex|agy|junie|grok> [--prompt <text>|--file <path>]",
             file=sys.stderr,
         )
         return 2

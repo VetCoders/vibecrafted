@@ -63,7 +63,7 @@ Standard launcher:
 vibecrafted polarize codex --task 'marbles versus polarize skills: polarize them'
 vc-polarize codex --task 'installer public contract'
 vc-polarize claude --file /path/to/prism-pack.md
-vibecrafted polarize gemini --prompt 'Choose one launch thesis after marbles'
+vibecrafted polarize agy --prompt 'Choose one launch thesis after marbles'
 ```
 
 When `--task` is present, the runner executes a fresh prism preflight

@@ -11,7 +11,7 @@ from vibecrafted_core.lifecycle_runner import (
     LifecycleRunner,
     lifecycle_main,
 )
-from tests.lifecycle_schema_assertions import (
+from .lifecycle_schema_assertions import (
     assert_lifecycle_state_matches_packaged_schema,
 )
 

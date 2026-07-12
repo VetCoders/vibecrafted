@@ -128,6 +128,12 @@ def _set_child_pgid() -> None:
 
 
 def _default_command(agent: str, prompt: str) -> list[str]:
+    if agent == "gemini":
+        raise ValueError(
+            "gemini CLI is deprecated. Google Antigravity CLI (agy) is the replacement. "
+            "Use 'vibecrafted workflow agy --prompt ...' (or agy in other launchers). "
+            "No execution path may launch the gemini binary."
+        )
     if agent == "claude":
         return [
             "claude",
@@ -138,8 +144,6 @@ def _default_command(agent: str, prompt: str) -> list[str]:
         ]
     if agent == "codex":
         return ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt]
-    if agent == "gemini":
-        return ["gemini", "--yolo", "--prompt", prompt]
     if agent == "agy":
         # agy >= 1.1: --print takes the prompt as its value (Go flags) and
         # print mode does not read stdin; flags must precede it.
@@ -194,7 +198,11 @@ def _stdin_command(agent: str) -> list[str]:
             "-",
         ]
     if agent == "gemini":
-        return ["gemini", "-p", "", "--approval-mode", "yolo", "-o", "stream-json"]
+        raise ValueError(
+            "gemini CLI is deprecated. Google Antigravity CLI (agy) is the replacement. "
+            "Use 'vibecrafted workflow agy --prompt ...' (or agy in other launchers). "
+            "No execution path may launch the gemini binary."
+        )
     if agent == "agy":
         # agy >= 1.1 print mode reads no stdin and --print requires a value;
         # a shell shim folds stdin into the flag. The prompt lands on the
