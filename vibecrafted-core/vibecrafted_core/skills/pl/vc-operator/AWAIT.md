@@ -9,11 +9,11 @@ Czytaj razem z [`SKILL.md`](SKILL.md), [`GUIDE.md`](GUIDE.md), [`DISPATCH.md`](D
 
 ## Doktryna
 
-After dispatch, arm `vibecrafted <agent> await --run-id <id>` immediately,
-supervisor-side. Control-plane JSON, report files, transcripts, panes, and
-scheduled wakeups are diagnostic only, not wake signals. Hedging await with
-ad-hoc pollers/watchers is a Class 3 violation; fix `control_plane.await_run`,
-do not normalize the hedge.
+Po dispatchu uzbrój `vibecrafted <agent> await --run-id <id>` natychmiast,
+po stronie supervisora. JSON control-plane, pliki raportów, transkrypty, karty
+terminala i zaplanowane wybudzenia są wyłącznie diagnostyczne, nie są sygnałem
+wybudzenia. Hedge'owanie await ad-hoc pollerami/watcherami to naruszenie
+Class 3; napraw `control_plane.await_run`, nie normalizuj hedge'u.
 
 Liveness jest zawsze 3-sygnałowy przed deklaracją done: await verdict,
 terminalny stan w run meta i martwy worker pid; jeśli raport jest obiecany,
