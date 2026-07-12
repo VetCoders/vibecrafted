@@ -8,6 +8,8 @@ import tomllib
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .telemetry import estimate_cost_usd
+
 ANSI_PATTERN = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 SESSION_PATTERN = re.compile(
     r"(?:^|\[[0-9]{2}:[0-9]{2}:[0-9]{2}\]\s+)session:\s*([A-Za-z0-9][A-Za-z0-9._:-]*)",
@@ -165,6 +167,7 @@ class AgentStreamParser:
         self.tokens_cache_write: int | None = None
         self.tokens_output = 0
         self.cost_usd: float | None = None
+        self.cost_source: str | None = None
 
     def feed_line(self, chunk: bytes) -> str:
         text = chunk.decode("utf-8", errors="replace")
@@ -218,6 +221,8 @@ class AgentStreamParser:
                 self.cost_usd = _as_float(matches[-1])
 
     def _record_model(self, event: dict[str, Any]) -> None:
+        if self.model_id:
+            return
         for key in ("model", "model_id", "modelId", "model_name", "modelName"):
             value = event.get(key)
             if isinstance(value, str) and value.strip():
@@ -230,18 +235,51 @@ class AgentStreamParser:
                 if isinstance(value, str) and value.strip():
                     self.model_id = value.strip()
                     return
+        model_usage = event.get("modelUsage") or event.get("model_usage")
+        if isinstance(model_usage, dict) and model_usage:
+            self.model_id = str(next(iter(model_usage)))
+            return
+        if isinstance(model_usage, list):
+            for item in model_usage:
+                if isinstance(item, dict):
+                    value = item.get("model") or item.get("model_id")
+                    if isinstance(value, str) and value.strip():
+                        self.model_id = value.strip()
+                        return
+        for value in event.values():
+            if isinstance(value, dict):
+                self._record_model(value)
+                if self.model_id:
+                    return
 
     def _record_usage(self, usage: dict[str, Any]) -> None:
-        self.tokens_input += _as_int(usage.get("input_tokens"))
+        self.tokens_input += _as_int(
+            usage.get("input_tokens")
+            or usage.get("inputTokens")
+            or usage.get("prompt_tokens")
+        )
         cached_input = usage.get("cached_input_tokens")
         if cached_input is None:
             cached_input = usage.get("cache_read_input_tokens")
+        if cached_input is None:
+            cached_input = usage.get("cacheReadInputTokens")
+        if cached_input is None:
+            cached_input = usage.get("cacheInputTokens")
+        if cached_input is None:
+            cached_input = usage.get("cached_prompt_tokens")
         self.tokens_cached_input += _as_int(cached_input)
-        if "cache_creation_input_tokens" in usage:
+        cache_write = usage.get("cache_creation_input_tokens")
+        if cache_write is None:
+            cache_write = usage.get("cacheCreateTokens")
+        if cache_write is not None:
             self.tokens_cache_write = (self.tokens_cache_write or 0) + _as_int(
-                usage.get("cache_creation_input_tokens")
+                cache_write
             )
-        self.tokens_output += _as_int(usage.get("output_tokens"))
+        self.tokens_output += _as_int(
+            usage.get("output_tokens")
+            or usage.get("outputTokens")
+            or usage.get("completion_tokens")
+        )
 
     def _record_cost(self, event: dict[str, Any]) -> None:
         cost = _as_float(
@@ -252,6 +290,36 @@ class AgentStreamParser:
         )
         if cost is not None:
             self.cost_usd = cost
+            self.cost_source = "provider_reported"
+
+    def _record_nested_telemetry(self, event: dict[str, Any]) -> None:
+        self._record_model(event)
+        pending: list[dict[str, Any]] = [event]
+        while pending:
+            current = pending.pop()
+            model_usage = current.get("modelUsage") or current.get("model_usage")
+            if isinstance(model_usage, list):
+                for usage in model_usage:
+                    if isinstance(usage, dict):
+                        self._record_usage(usage)
+                        cost = _as_float(usage.get("cost") or usage.get("cost_usd"))
+                        if cost is not None:
+                            self.cost_usd = round((self.cost_usd or 0) + cost, 6)
+                            self.cost_source = "provider_reported"
+            usage = current.get("usage") or current.get("stats")
+            if isinstance(usage, dict):
+                self._record_usage(usage)
+            self._record_cost(current)
+            for value in current.values():
+                if isinstance(value, dict):
+                    pending.append(value)
+        if self.cost_usd is None or (self.cost_source or "").startswith("estimated:"):
+            self.cost_usd, self.cost_source = estimate_cost_usd(
+                self.model_id,
+                tokens_input=self.tokens_input,
+                tokens_cached_input=self.tokens_cached_input,
+                tokens_output=self.tokens_output,
+            )
 
     def _session_banner(self, session_id: str, suffix: str = "") -> str:
         if not session_id or session_id == "?":
@@ -459,7 +527,7 @@ class AgentStreamParser:
         return ""
 
     def _format_junie_event(self, event: dict[str, Any]) -> str:
-        self._record_model(event)
+        self._record_nested_telemetry(event)
         for key in ("session_id", "sessionId"):
             value = event.get(key)
             if isinstance(value, str) and value:
@@ -484,16 +552,12 @@ class AgentStreamParser:
         return text + "\n"
 
     def _format_grok_event(self, event: dict[str, Any]) -> str:
-        self._record_model(event)
+        self._record_nested_telemetry(event)
         for key in ("session_id", "sessionId", "conversation_id"):
             value = event.get(key)
             if isinstance(value, str) and value:
                 self.session_id = value
                 break
-        usage = event.get("usage") or event.get("stats")
-        if isinstance(usage, dict):
-            self._record_usage(usage)
-        self._record_cost(event)
         event_type = str(event.get("type") or "")
         if event_type == "end":
             value = event.get("sessionId") or event.get("session_id")

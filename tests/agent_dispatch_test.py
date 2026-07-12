@@ -113,6 +113,25 @@ def test_tier_family_buckets():
     assert agent_dispatch.tier_family("nope") == "unknown"
 
 
+@pytest.mark.parametrize(
+    "model,shape,max_files,max_parallel",
+    [
+        ("gpt-5.6-sol", "coherent", 8, 3),
+        ("grok-build", "coherent", 8, 3),
+        ("claude-sonnet-4-7", "bounded", 4, 2),
+        ("claude-haiku-4", "surgical", 2, 1),
+        ("unknown-model", "surgical", 1, 1),
+    ],
+)
+def test_dispatch_granularity_is_model_aware_and_conservative(
+    model, shape, max_files, max_parallel
+):
+    policy = agent_dispatch.dispatch_granularity(model)
+    assert policy.shape == shape
+    assert policy.max_files_per_cut == max_files
+    assert policy.max_parallel_cuts == max_parallel
+
+
 # ---------------------------------------------------------------------------
 # check_parity
 # ---------------------------------------------------------------------------

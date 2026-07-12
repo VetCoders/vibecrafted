@@ -157,6 +157,7 @@ def _terminal_footer(handle: AsyncRunHandle) -> str:
         if handle.model_requested
         else ""
     )
+    cost_source = f"cost_source: {handle.cost_source}\n" if handle.cost_source else ""
     return (
         "\n---\n"
         "runner: vibecrafted\n"
@@ -173,6 +174,7 @@ def _terminal_footer(handle: AsyncRunHandle) -> str:
         f"tokens_output: {handle.tokens_output}\n"
         f"tokens_total: {_handle_tokens_total(handle)}\n"
         f"cost_usd: {handle.cost_usd if handle.cost_usd is not None else 'unknown'}\n"
+        f"{cost_source}"
         f"resume: {handle.resume_command}\n"
         f"report: {handle.report_path or ''}\n"
         f"transcript: {handle.transcript_path or ''}\n"
@@ -214,6 +216,7 @@ class AsyncRunHandle:
     tokens_cache_write: int | None = None
     tokens_output: int = 0
     cost_usd: float | None = None
+    cost_source: str | None = None
     resume_command: str = ""
 
     @property
@@ -548,6 +551,7 @@ class AsyncSupervisor:
         handle.tokens_cache_write = parser.tokens_cache_write
         handle.tokens_output = parser.tokens_output
         handle.cost_usd = parser.cost_usd
+        handle.cost_source = parser.cost_source
         handle.resume_command = parser.resume_command(handle.root)
 
     def _write_meta_summary(self, handle: AsyncRunHandle) -> None:
@@ -576,6 +580,7 @@ class AsyncSupervisor:
             "tokens_output": handle.tokens_output,
             "tokens_total": _handle_tokens_total(handle),
             "cost_usd": handle.cost_usd if handle.cost_usd is not None else "unknown",
+            "cost_source": handle.cost_source or "unknown",
             "resume_command": handle.resume_command,
             "exit_code": handle.exit_code,
             "completed_at": handle.completed_at.isoformat()

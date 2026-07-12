@@ -15,6 +15,7 @@ from typing import Any, Callable, Sequence
 from .agent_dispatch import extract_session_id, sandbox_supported
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
+from .telemetry import estimate_cost_usd
 
 EventCallback = Callable[[dict[str, Any]], None]
 
@@ -50,12 +51,16 @@ FOOTER_TOKEN_PATTERNS = {
     ),
 }
 JSON_TOKEN_PATTERNS = {
-    "input": re.compile(r'"(?:input_tokens|prompt_tokens)"\s*:\s*([0-9]+)'),
+    "input": re.compile(r'"(?:input_tokens|inputTokens|prompt_tokens)"\s*:\s*([0-9]+)'),
     "cached_input": re.compile(
-        r'"(?:cached_input_tokens|cached_prompt_tokens|cache_read_input_tokens)"\s*:\s*([0-9]+)'
+        r'"(?:cached_input_tokens|cached_prompt_tokens|cache_read_input_tokens|cacheReadInputTokens|cacheInputTokens)"\s*:\s*([0-9]+)'
     ),
-    "cache_write": re.compile(r'"cache_creation_input_tokens"\s*:\s*([0-9]+)'),
-    "output": re.compile(r'"(?:output_tokens|completion_tokens)"\s*:\s*([0-9]+)'),
+    "cache_write": re.compile(
+        r'"(?:cache_creation_input_tokens|cacheCreateTokens)"\s*:\s*([0-9]+)'
+    ),
+    "output": re.compile(
+        r'"(?:output_tokens|outputTokens|completion_tokens)"\s*:\s*([0-9]+)'
+    ),
 }
 COST_PATTERNS = (
     re.compile(
@@ -292,6 +297,10 @@ def _tokens_total(
 def _extract_tokens(text: str) -> dict[str, int | None]:
     clean = _clean_text(text)
     found = TOKEN_PATTERN.findall(clean)
+    json_tokens = {
+        key: sum(int(match) for match in pattern.findall(clean))
+        for key, pattern in JSON_TOKEN_PATTERNS.items()
+    }
     # Prefer the authoritative run-closure footer totals when present: they are
     # written for every agent and carry the final per-run usage, so they work
     # uniformly across providers and never sum partial streaming deltas.
@@ -305,7 +314,7 @@ def _extract_tokens(text: str) -> dict[str, int | None]:
         cache_write_tokens = int(footer_cache_write[-1]) if footer_cache_write else None
         output_tokens = int(footer_out[-1]) if footer_out else 0
         total_tokens = _tokens_total(input_tokens, cached_tokens, output_tokens)
-        if total_tokens or not found:
+        if total_tokens or (not found and not any(json_tokens.values())):
             return {
                 "input": input_tokens,
                 "cached_input": cached_tokens,
@@ -313,10 +322,6 @@ def _extract_tokens(text: str) -> dict[str, int | None]:
                 "output": output_tokens,
                 "total": total_tokens,
             }
-    json_tokens = {
-        key: sum(int(match) for match in pattern.findall(clean))
-        for key, pattern in JSON_TOKEN_PATTERNS.items()
-    }
     if any(json_tokens.values()):
         return {
             "input": json_tokens["input"],
@@ -355,6 +360,23 @@ def _extract_tokens(text: str) -> dict[str, int | None]:
 
 def _extract_cost(text: str) -> float | None:
     clean = _clean_text(text)
+    footer = re.findall(
+        r"^\s*cost_usd:\s*\$?([0-9]+(?:\.[0-9]+)?)\s*$",
+        clean,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if footer:
+        return round(float(footer[-1]), 6)
+    totals = re.findall(
+        r'"(?:total_cost_usd|totalCostUsd|total_cost)"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+        clean,
+        re.IGNORECASE,
+    )
+    if totals:
+        return round(float(totals[-1]), 6)
+    item_costs = re.findall(r'"cost"\s*:\s*([0-9]+(?:\.[0-9]+)?)', clean, re.IGNORECASE)
+    if item_costs:
+        return round(sum(float(value) for value in item_costs), 6)
     for pattern in COST_PATTERNS:
         matches = pattern.findall(clean)
         if not matches:
@@ -384,6 +406,17 @@ def _extract_model_from_text(text: str) -> str:
         model = _clean_model(match)
         if model:
             return model
+    json_models = re.findall(
+        r'"(?:model|model_id|modelId|model_name|modelName)"\s*:\s*"([^"]+)"',
+        clean,
+    )
+    for match in json_models:
+        model = _clean_model(match)
+        if model:
+            return model
+    model_usage_maps = re.findall(r'"modelUsage"\s*:\s*\{\s*"([^"]+)"', clean)
+    if model_usage_maps:
+        return _clean_model(model_usage_maps[-1])
     return ""
 
 
@@ -839,6 +872,14 @@ def finalize_artifacts(
 
     payload["session_id"] = session_id or payload.get("session_id") or ""
     payload["model"] = _resolve_model(payload, combined_text)
+    cost_source = "provider_reported" if cost is not None else None
+    if cost is None:
+        cost, cost_source = estimate_cost_usd(
+            payload["model"],
+            tokens_input=tokens_input,
+            tokens_cached_input=tokens_cached_input,
+            tokens_output=tokens_output,
+        )
     payload["duration_s"] = _resolve_duration(payload, str(completed_at))
     payload["tokens_input"] = tokens_input
     payload["tokens_cached_input"] = tokens_cached_input
@@ -858,6 +899,8 @@ def finalize_artifacts(
         token_usage["cache_write"] = int(tokens_cache_write)
     payload["token_usage"] = token_usage
     payload["cost_usd"] = cost
+    if cost_source:
+        payload["cost_source"] = cost_source
     payload["resume_hint"] = resume_hint
     payload["artifact_contract"] = "vibecrafted.agent-artifact.v1"
     payload["date"] = payload.get("date") or artifact_time

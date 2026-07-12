@@ -44,6 +44,23 @@ context (operator focus, prior wave's worker, current load). AGENT FAIRNESS
 is not a rotation quota — it means honest attribution and equal dignity.
 Don't dispatch by round-robin; dispatch by fit.
 
+## Model-aware dispatch granularity
+
+Model parity is the floor; granularity controls how much coherent work one
+dispatch owns. Use `agent_dispatch.dispatch_granularity(model)` instead of
+treating every model as an equally sized anonymous worker.
+
+| model class                                            | cut shape | files per cut |                    parallel cuts | reason                                                           |
+| ------------------------------------------------------ | --------- | ------------: | -------------------------------: | ---------------------------------------------------------------- |
+| frontier (`opus`, GPT-5.5/5.6, Gemini Pro, Grok Build) | coherent  |       up to 8 | up to 3 for disjoint file scopes | Amortize repeated context and preserve whole-contract reasoning. |
+| standard (`sonnet`, GPT-5, Gemini auto/default)        | bounded   |       up to 4 |                          up to 2 | Keep integration seams explicit without over-fragmenting.        |
+| economy (`haiku`, Spark, Flash)                        | surgical  |       up to 2 |                                1 | Small sequential proof surfaces reduce drift and retry cost.     |
+| unknown model                                          | surgical  |             1 |                                1 | Unknown telemetry is not permission for broad dispatch.          |
+
+Provider-reported cost wins. Otherwise accept only a named
+`cost_source: estimated:<rate-card>` estimate; never silently convert unknown
+cost to zero. Cost informs cut shape but never authorizes a model downgrade.
+
 ## Footer Notes
 
 - AGENT PEER PARITY: Claude, Codex, and Gemini are peer frontier workers. Route

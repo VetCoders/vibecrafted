@@ -369,3 +369,32 @@ def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
     # No footer: fall back to the per-event line (backward compatible).
     legacy = "[12:00] tokens: 12 in / 7 out\n"
     assert _extract_tokens(legacy)["total"] == 19
+
+
+def test_extract_tokens_does_not_let_zero_footer_mask_junie_json() -> None:
+    from vibecrafted_core.spawn import _extract_tokens
+
+    transcript = (
+        '{"modelUsage":[{"model":"gpt-5.5","inputTokens":807,'
+        '"cacheInputTokens":49792,"outputTokens":563,"cost":0.045821}]}\n'
+        "tokens_input: 0\ntokens_cached_input: 0\ntokens_output: 0\n"
+    )
+    tokens = _extract_tokens(transcript)
+    assert tokens == {
+        "input": 807,
+        "cached_input": 49792,
+        "cache_write": None,
+        "output": 563,
+        "total": 51162,
+    }
+
+
+def test_extract_cost_sums_junie_per_call_model_usage() -> None:
+    from vibecrafted_core.spawn import _extract_cost
+
+    transcript = (
+        '{"modelUsage":[{"model":"gpt-5.5","cost":0.045821}]}\n'
+        '{"modelUsage":[{"model":"gpt-4.1-mini","cost":0.0002904}]}\n'
+        "cost_usd: unknown\n"
+    )
+    assert _extract_cost(transcript) == 0.046111

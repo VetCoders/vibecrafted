@@ -124,6 +124,24 @@ def test_agent_stream_parser_renders_grok_thought_text_and_session() -> None:
     assert parser.session_id == "019ec430-9888-78e3-8ca0-b29387444fdb"
 
 
+def test_agent_stream_parser_maps_real_grok_end_telemetry() -> None:
+    parser = AgentStreamParser("grok")
+    parser.feed_line(
+        b'{"type":"end","sessionId":"grok-session","usage":'
+        b'{"input_tokens":34113,"cache_read_input_tokens":2752,'
+        b'"output_tokens":151,"total_tokens":37016},"modelUsage":'
+        b'{"grok-build":{"inputTokens":34113,"outputTokens":151,'
+        b'"cacheReadInputTokens":2752,"modelCalls":1}}}\n'
+    )
+
+    assert parser.model_id == "grok-build"
+    assert parser.tokens_input == 34113
+    assert parser.tokens_cached_input == 2752
+    assert parser.tokens_output == 151
+    assert parser.cost_usd == 0.034965
+    assert parser.cost_source == "estimated:xai-api-2026-07"
+
+
 def test_agent_stream_parser_renders_junie_steps_without_none_noise() -> None:
     parser = AgentStreamParser("junie")
 
@@ -143,6 +161,25 @@ def test_agent_stream_parser_renders_junie_steps_without_none_noise() -> None:
     assert "Read skill: vc-audit" in text
     assert "None" not in text
     assert parser.session_id == "session-junie-1"
+
+
+def test_agent_stream_parser_maps_real_junie_nested_model_usage() -> None:
+    parser = AgentStreamParser("junie")
+    parser.feed_line(
+        b'{"kind":"SessionA2uxEvent","event":{"state":"IN_PROGRESS",'
+        b'"agentEvent":{"kind":"LlmResponseMetadataEvent","modelUsage":['
+        b'{"model":"gpt-5.5","cost":0.045821,"inputTokens":807,'
+        b'"cacheInputTokens":49792,"cacheCreateTokens":0,'
+        b'"outputTokens":563,"time":0}]}}}\n'
+    )
+
+    assert parser.model_id == "gpt-5.5"
+    assert parser.tokens_input == 807
+    assert parser.tokens_cached_input == 49792
+    assert parser.tokens_cache_write == 0
+    assert parser.tokens_output == 563
+    assert parser.cost_usd == 0.045821
+    assert parser.cost_source == "provider_reported"
 
 
 def test_agent_stream_parser_treats_agy_as_claude_family_text_stream() -> None:
