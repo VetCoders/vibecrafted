@@ -254,7 +254,11 @@ if (( with_shell )); then
   remote_legacy_target="$remote_legacy_dir/vc-skills.zsh"
 
   printf 'Syncing optional shell helper layer to %s\n' "$host"
-  ssh -n "$host" "mkdir -p $remote_helper_dir $remote_legacy_dir" || die "Could not prepare helper dirs on $host"
+  if (( dry_run )); then
+    printf '  ssh %s mkdir -p %s %s\n' "$host" "$remote_helper_dir" "$remote_legacy_dir"
+  else
+    ssh -n "$host" "mkdir -p $remote_helper_dir $remote_legacy_dir" || die "Could not prepare helper dirs on $host"
+  fi
   if (( dry_run )); then
     printf '  rsync %s %s %s:%s\n' "${rsync_args[*]}" "$shell_source" "$host" "$remote_shell_target"
   else
@@ -272,8 +276,12 @@ if (( with_shell )); then
     printf 'Skipping remote $HOME/.zshrc update (--no-zshrc).\n'
   else
     remote_zshrc="\$HOME/.zshrc"
-    ssh -n "$host" "touch ${remote_zshrc} && if ! grep -Fqx '$source_line' ${remote_zshrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_zshrc}; fi" \
-      || die "Could not update $HOME/.zshrc on $host"
+    if (( dry_run )); then
+      printf '  ssh %s touch %s && if ! grep -Fqx '"'"'%s'"'"' %s; then printf ... >> %s; fi\n' "$host" "$remote_zshrc" "$source_line" "$remote_zshrc" "$remote_zshrc"
+    else
+      ssh -n "$host" "touch ${remote_zshrc} && if ! grep -Fqx '$source_line' ${remote_zshrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_zshrc}; fi" \
+        || die "Could not update $HOME/.zshrc on $host"
+    fi
   fi
 
   if (( shell_no_bashrc )); then
@@ -281,8 +289,12 @@ if (( with_shell )); then
     printf 'Skipping remote $HOME/.bashrc update (--no-bashrc).\n'
   else
     remote_bashrc="\$HOME/.bashrc"
-    ssh -n "$host" "touch ${remote_bashrc} && if ! grep -Fqx '$source_line' ${remote_bashrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_bashrc}; fi" \
-      || die "Could not update $HOME/.bashrc on $host"
+    if (( dry_run )); then
+      printf '  ssh %s touch %s && if ! grep -Fqx '"'"'%s'"'"' %s; then printf ... >> %s; fi\n' "$host" "$remote_bashrc" "$source_line" "$remote_bashrc" "$remote_bashrc"
+    else
+      ssh -n "$host" "touch ${remote_bashrc} && if ! grep -Fqx '$source_line' ${remote_bashrc}; then printf '\n# Vetcoders shell helpers\n%s\n' '$source_line' >> ${remote_bashrc}; fi" \
+        || die "Could not update $HOME/.bashrc on $host"
+    fi
   fi
 
   printf '\n'
