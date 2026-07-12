@@ -233,6 +233,8 @@ def _parse_policy(value: Any, errors: list[str]) -> Policy:
             or raw.get("enable_concurrency")
             or raw.get("parallel_enabled")
         ),
+        require_commit=bool(raw.get("require_commit")),
+        allow_idempotent_existing=bool(raw.get("allow_idempotent_existing", True)),
     )
 
 
