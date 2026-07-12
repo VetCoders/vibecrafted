@@ -251,12 +251,14 @@ PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
 bash $VIBECRAFTED_ROOT/runtime/scripts/claude_spawn.sh "$PLAN" --mode implement
 ```
 
-### Gemini
+### Agy (Google Antigravity; gemini deprecated)
 
 ```bash
 PLAN="$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan>.md"
-bash $VIBECRAFTED_ROOT/runtime/scripts/gemini_spawn.sh "$PLAN" --mode implement
+bash $VIBECRAFTED_ROOT/runtime/scripts/agy_spawn.sh "$PLAN" --mode implement
 ```
+
+Gemini CLI paths are deprecated and removed from active launchers. Existing historical references preserved only in marked docs/audits.
 
 If these tools are unavailable, stop pretending spawn is correctly configured and say so explicitly.
 

@@ -539,7 +539,7 @@ class InstallController:
             "control_plane": control_plane,
             "launcher_defaults": {
                 "workflows": ["workflow", "research", "review", "marbles"],
-                "agents": ["claude", "codex", "gemini", "agy", "junie", "grok"],
+                "agents": ["claude", "codex", "agy", "junie", "grok"],
                 "runtimes": ["headless", "terminal", "visible"],
             },
             "status": self.status_payload(),

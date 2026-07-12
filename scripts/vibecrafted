@@ -911,7 +911,7 @@ cmd_telemetry_help() {
   printf '  Smoke the marbles telemetry path through the installed command deck.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
-  printf '  telemetry smoke [--agent <claude|codex|gemini|agy|junie|grok>] [--count <n>] [--root <path>] [--no-watch|--watch]\n'
+  printf '  telemetry smoke [--agent <claude|codex|agy|junie|grok>] [--count <n>] [--root <path>] [--no-watch|--watch]\n'
   printf '  vibecrafted telemetry smoke [--agent <claude|codex|agy|junie|grok>] [--count <n>] [--root <path>] [--no-watch|--watch]\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
@@ -1027,6 +1027,11 @@ cmd_telemetry_smoke() {
     shift
   done
 
+  if [[ "$agent" == "gemini" ]]; then
+    printf '%b✗ gemini CLI is deprecated.%b Use agy (Google Antigravity CLI) instead.\n' "$_red" "$_reset" >&2
+    printf '  Example: vibecrafted workflow agy --prompt "..." \n' >&2
+    return 1
+  fi
   _has_agent "$agent" || {
     printf '%b✗%b Unknown agent: %s\n' "$_red" "$_reset" "$agent" >&2
     return 1
@@ -1569,9 +1574,14 @@ cmd_help() {
   case "$topic" in
     ""|-h|--help)
       ;;
-    claude|codex|gemini|agy|junie|grok)
+    claude|codex|agy|junie|grok)
       cmd_agent_help "$topic"
       return
+      ;;
+    gemini)
+      printf '%b✗ gemini CLI is deprecated.%b Use agy (Google Antigravity CLI) instead.\n' "$_red" "$_reset" >&2
+      printf '  Example: vibecrafted workflow agy --prompt "..." \n' >&2
+      return 1
       ;;
     init)
       cmd_init_help
@@ -1758,7 +1768,7 @@ cmd_help_full() {
   printf '  %bvibecrafted tui%b                       Rust operator console over shared state\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted server%b <action>           Manage local control-plane viewer server\n' "$_cyan" "$_reset"
   printf '\n'
-  printf '  Agents: %bclaude%b · %bcodex%b · %bgemini%b · %bagy%b · %bjunie%b · %bgrok%b\n' "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset"
+  printf '%b  Agents: claude · codex · agy · junie · grok%b\n' "$_bold" "$_reset"
   printf '\n'
   printf '%b=== ADDITIONAL SKILLS ===%b\n' "$_bold" "$_reset"
   printf '\n'
@@ -1938,6 +1948,11 @@ cmd_core_workflow_skill() {
 cmd_init() {
   local agent="${1:-claude}"
   _prepend_repo_bin_path
+  if [[ "$agent" == "gemini" ]]; then
+    printf '%b✗ gemini CLI is deprecated.%b Use agy (Google Antigravity CLI) instead.\n' "$_red" "$_reset" >&2
+    printf '  Example: vibecrafted workflow agy --prompt "..." \n' >&2
+    return 1
+  fi
   _has_agent "$agent" || {
     printf '%b✗%b Unknown agent: %s\n' "$_red" "$_reset" "$agent" >&2
     return 1
@@ -2424,6 +2439,11 @@ cmd_resume() {
     return 1
   }
   shift || true
+  if [[ "$agent" == "gemini" ]]; then
+    printf '%b✗ gemini CLI is deprecated.%b Use agy (Google Antigravity CLI) instead.\n' "$_red" "$_reset" >&2
+    printf '  Example: vibecrafted workflow agy --prompt "..." \n' >&2
+    return 1
+  fi
   _has_agent "$agent" || {
     printf '%b✗%b Unknown agent: %s\n' "$_red" "$_reset" "$agent" >&2
     return 1

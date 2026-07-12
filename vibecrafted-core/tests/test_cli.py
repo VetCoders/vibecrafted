@@ -133,13 +133,13 @@ def test_root_cli_research_agentless_and_positional_forms(monkeypatch, capsys) -
     monkeypatch.setattr(cli, "launch_workflow", fake_launch)
 
     assert cli.main(["research", "--prompt", "map it"]) == 0
-    assert cli.main(["research", "codex", "gemini", "--prompt", "map it"]) == 0
+    assert cli.main(["research", "codex", "agy", "--prompt", "map it"]) == 0
 
     assert seen[0].agent == "swarm"
     assert seen[0].research_agents == ()
     assert seen[0].research_synthesizer == ""
     assert seen[1].agent == "swarm"
-    assert seen[1].research_agents == ("codex", "gemini")
+    assert seen[1].research_agents == ("codex", "agy")
     assert seen[1].research_synthesizer == "codex"
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 

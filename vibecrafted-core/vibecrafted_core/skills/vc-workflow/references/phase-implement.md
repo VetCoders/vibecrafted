@@ -153,7 +153,7 @@ bash agents//claude_spawn.sh "$PLAN" --mode review --runtime terminal
 ### Gemini
 
 ```bash
-bash agents//gemini_spawn.sh "$PLAN" --mode implement --runtime terminal
+bash agents//agy_spawn.sh "$PLAN" --mode implement --runtime terminal  # gemini deprecated; agy is the Google-family runtime
 ```
 
 > The scripts default to visible Terminal mode on macOS and fall back to headless

@@ -572,8 +572,9 @@ def _is_writable(path: Path) -> bool:
         return False
 
 
-AGENT_RUNTIMES = ["codex", "claude", "gemini", "agy", "junie", "grok"]
+AGENT_RUNTIMES = ["codex", "claude", "agy", "junie", "grok"]
 SYMLINK_TARGETS = ["agents", "claude", "codex"]
+# gemini kept in CHOICES only for legacy .gemini data dir compat (no active runtime)
 SYMLINK_TARGET_CHOICES = [*SYMLINK_TARGETS, "gemini", "agy", "junie", "grok"]
 
 # ---------------------------------------------------------------------------
@@ -2178,12 +2179,12 @@ KNOWN_HELPER_FUNCTIONS = [
     "claude-research",
     "claude-prompt",
     "claude-observe",
-    "gemini-implement",
-    "gemini-plan",
-    "gemini-review",
-    "gemini-research",
-    "gemini-prompt",
-    "gemini-observe",
+    "agy-implement",
+    "agy-plan",
+    "agy-review",
+    "agy-research",
+    "agy-prompt",
+    "agy-observe",
     "agy-implement",
     "agy-plan",
     "agy-review",
@@ -2197,9 +2198,9 @@ KNOWN_HELPER_FUNCTIONS = [
     "junie-prompt",
     "junie-observe",
     "skills-sync",
-    "gemini-keychain-set",
-    "gemini-keychain-get",
-    "gemini-keychain-clear",
+    "agy-keychain-set",
+    "agy-keychain-get",
+    "agy-keychain-clear",
 ]
 
 
@@ -3989,7 +3990,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
 
     # 7d. Agent CLI availability
-    for agent_name in ("claude", "codex", "gemini"):
+    for agent_name in ("claude", "codex", "agy"):
         agent_bin = shutil.which(agent_name)
         if agent_bin:
             findings.append(
