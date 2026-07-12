@@ -97,14 +97,9 @@ def test_implement_help_is_canonical_and_names_alias(tmp_path: Path) -> None:
         "Autonomous end-to-end implementation with followup and marbles built in."
         in output
     )
-    assert (
-        "vibecrafted implement <claude|codex|gemini|agy|junie|grok> [flags]" in output
-    )
-    assert "vc-implement <claude|codex|gemini|agy|junie|grok> [flags]" in output
-    assert (
-        "Alias: vibecrafted justdo <claude|codex|gemini|agy|junie|grok> [flags]"
-        in output
-    )
+    assert "vibecrafted implement <claude|codex|agy|junie|grok> [flags]" in output
+    assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in output
+    assert "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]" in output
     assert 'vibecrafted implement codex --prompt "Ship the feature"' in output
 
 
