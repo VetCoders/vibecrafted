@@ -13,16 +13,16 @@ Czytaj wraz z [`SKILL.md`](SKILL.md) i [`FINDINGS.md`](FINDINGS.md).
 
 ## Tabela dispatchu
 
-| Tryb | Komenda | Kiedy używać |
-| -------------------------------- | ----------------------------------------------- | ---------------------------------------------------- | --------------------- |
-| Local branch vs develop/main | `prview --pr <NUMBER>` | Domyślnie dla aktywnych PR-ów na lokalnym checkoucie |
-| Remote branch (no checkout) | `prview -R --remote-only <branch> <base>` | Review gałęzi kontrybutora na origin |
-| GitHub PR by number | `prview --pr <NUMBER> --with-tests --with-lint` | Domyślnie dla gruntownego review PR-a |
-| All gates | `prview --deep` | Merge gate / PR wysokiego ryzyka |
-| Fast triage | `prview --quick` | Tylko jawny szybki triage — NIE domyślnie |
-| Refresh after amend / force-push | `prview --update` | Unikanie zduplikowanych zestawów artefaktów |
-| Ambiguous origin | dodaj `--gh-repo owner/repo` | Gdy working tree ma wiele remote'ów |
-| JSON-only mode | `prview --json --quiet                          | jq ...` | Integracja pipeline'u |
+| Tryb                             | Komenda                                         | Kiedy używać                                         |
+| -------------------------------- | ----------------------------------------------- | ---------------------------------------------------- |
+| Local branch vs develop/main     | `prview --pr <NUMBER>`                          | Domyślnie dla aktywnych PR-ów na lokalnym checkoucie |
+| Remote branch (no checkout)      | `prview -R --remote-only <branch> <base>`       | Review gałęzi kontrybutora na origin                 |
+| GitHub PR by number              | `prview --pr <NUMBER> --with-tests --with-lint` | Domyślnie dla gruntownego review PR-a                |
+| All gates                        | `prview --deep`                                 | Merge gate / PR wysokiego ryzyka                     |
+| Fast triage                      | `prview --quick`                                | Tylko jawny szybki triage — NIE domyślnie            |
+| Refresh after amend / force-push | `prview --update`                               | Unikanie zduplikowanych zestawów artefaktów          |
+| Ambiguous origin                 | dodaj `--gh-repo owner/repo`                    | Gdy working tree ma wiele remote'ów                  |
+| JSON-only mode                   | `prview --json --quiet \| jq ...`               | Integracja pipeline'u                                |
 
 Domyślnie dla vc-review: **nie używaj `--quick`**. Używaj `--with-tests
 --with-lint` jako bazy. Zachowaj `--deep` na merge gate / wysokie ryzyko.

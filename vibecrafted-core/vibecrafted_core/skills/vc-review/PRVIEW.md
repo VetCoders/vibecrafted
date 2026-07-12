@@ -13,16 +13,16 @@ Read alongside [`SKILL.md`](SKILL.md) and [`FINDINGS.md`](FINDINGS.md).
 
 ## Dispatch table
 
-| Mode | Command | When to use |
-| -------------------------------- | ----------------------------------------------- | ------------------------------------------ | -------------------- |
-| Local branch vs develop/main | `prview --pr <NUMBER>` | Default for active PRs on local checkout |
-| Remote branch (no checkout) | `prview -R --remote-only <branch> <base>` | Reviewing a contributor branch on origin |
-| GitHub PR by number | `prview --pr <NUMBER> --with-tests --with-lint` | Default for thorough PR review |
-| All gates | `prview --deep` | Merge gate / high-risk PR |
-| Fast triage | `prview --quick` | Explicit fast triage only — NOT default |
-| Refresh after amend / force-push | `prview --update` | Avoid duplicate artifact sets |
-| Ambiguous origin | add `--gh-repo owner/repo` | When the working tree has multiple remotes |
-| JSON-only mode | `prview --json --quiet                          | jq ...` | Pipeline integration |
+| Mode                             | Command                                         | When to use                                |
+| -------------------------------- | ----------------------------------------------- | ------------------------------------------ |
+| Local branch vs develop/main     | `prview --pr <NUMBER>`                          | Default for active PRs on local checkout   |
+| Remote branch (no checkout)      | `prview -R --remote-only <branch> <base>`       | Reviewing a contributor branch on origin   |
+| GitHub PR by number              | `prview --pr <NUMBER> --with-tests --with-lint` | Default for thorough PR review             |
+| All gates                        | `prview --deep`                                 | Merge gate / high-risk PR                  |
+| Fast triage                      | `prview --quick`                                | Explicit fast triage only — NOT default    |
+| Refresh after amend / force-push | `prview --update`                               | Avoid duplicate artifact sets              |
+| Ambiguous origin                 | add `--gh-repo owner/repo`                      | When the working tree has multiple remotes |
+| JSON-only mode                   | `prview --json --quiet \| jq ...`               | Pipeline integration                       |
 
 Default for vc-review: **do not use `--quick`**. Use `--with-tests
 --with-lint` as the baseline. Save `--deep` for merge gate / high-risk.
