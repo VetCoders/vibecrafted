@@ -160,6 +160,7 @@ prompt = "canonical dispatch report prompt"
     assert isinstance(command, list)
     assert run.accepted is True
     assert run.report_path == env["VIBECRAFTED_REPORT_PATH"]
+    assert run.meta_path == env["VIBECRAFTED_META_PATH"]
     assert command[command.index("--report") + 1] == run.report_path
     assert "/artifacts/local/repo/" in run.report_path
     assert "/reports/implement/" in run.report_path
@@ -541,3 +542,440 @@ prompt = "noop"
     assert (plans_dir / "tracker.md").is_file()
     assert (plans_dir / "journal.md").is_file()
     assert (plans_dir / "dispatch-result.json").is_file()
+
+
+def test_failed_runtime_meta_halts_noncritical_line_before_verify(
+    tmp_path: Path,
+) -> None:
+    dispatch, _reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "quota-failed"
+agent = "codex"
+workflow = "implement"
+prompt = "must not false-green"
+  [[cuts.verify]]
+  run = "printf verifier-ran > verifier.txt"
+  expect = { exit_code = 0 }
+
+[[cuts]]
+id = "downstream"
+agent = "codex"
+workflow = "implement"
+prompt = "must remain pending"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+    )
+    meta_path = tmp_path / "failed-meta.json"
+    meta_path.write_text(
+        json.dumps({"status": "failed", "exit_code": 1}), encoding="utf-8"
+    )
+
+    def failed_launcher(cut, _prompt: str, kind: str) -> CellRun:
+        proc = subprocess.Popen(["bash", "-c", "true"])
+        return CellRun(
+            cut_id=cut.id,
+            kind=kind,
+            accepted=True,
+            run_id="failed-runtime",
+            pid=proc.pid,
+            report_path=str(tmp_path / "missing-report.md"),
+            meta_path=str(meta_path),
+            proc=proc,
+        )
+
+    result = run_dispatch(
+        dispatch, launcher=failed_launcher, artifacts_dir=artifacts_dir
+    )
+
+    assert result.line_broken is True
+    assert result.states == {
+        "quota-failed": STATE_FAILED,
+        "downstream": STATE_PENDING,
+    }
+    assert not (Path(dispatch.meta.repo) / "verifier.txt").exists()
+    journal = (artifacts_dir / "journal.md").read_text(encoding="utf-8")
+    assert "runtime contract failed" in journal
+
+
+def test_require_commit_blocks_green_verifier_on_unchanged_head(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    init_git_repo(repo_dir)
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "noop"
+agent = "codex"
+workflow = "implement"
+prompt = "must commit"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+        repo=repo_dir,
+        policy="repair_rounds = 0\nrequire_commit = true",
+    )
+
+    result = run_dispatch(
+        dispatch,
+        launcher=FakeCells(reports_dir=reports_dir),
+        artifacts_dir=artifacts_dir,
+    )
+
+    assert result.line_broken is True
+    assert result.states == {"noop": STATE_FAILED}
+    assert result.baton.last is not None
+    assert any("no new commit" in failure for failure in result.baton.last.failures)
+
+
+def test_process_exit_one_with_report_cannot_false_green(tmp_path: Path) -> None:
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "exit-one"
+agent = "codex"
+workflow = "implement"
+prompt = "must fail closed"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+    )
+    report_path = reports_dir / "exit-one.md"
+    report_path.write_text("worker report\n", encoding="utf-8")
+
+    def exit_one_launcher(cut, _prompt: str, kind: str) -> CellRun:
+        proc = subprocess.Popen(["bash", "-c", "exit 1"])
+        return CellRun(
+            cut_id=cut.id,
+            kind=kind,
+            accepted=True,
+            run_id="exit-one",
+            pid=proc.pid,
+            report_path=str(report_path),
+            proc=proc,
+        )
+
+    result = run_dispatch(
+        dispatch, launcher=exit_one_launcher, artifacts_dir=artifacts_dir
+    )
+
+    assert result.line_broken is True
+    assert result.states == {"exit-one": STATE_FAILED}
+    assert result.baton.last is not None
+    assert any("exit_code=1" in failure for failure in result.baton.last.failures)
+
+
+def test_production_envelope_fails_closed_when_meta_is_missing(tmp_path: Path) -> None:
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "missing-meta"
+agent = "codex"
+workflow = "implement"
+prompt = "must fail closed"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+    )
+    report_path = reports_dir / "present-report.md"
+    report_path.write_text("worker report\n", encoding="utf-8")
+
+    def missing_meta_launcher(cut, _prompt: str, kind: str) -> CellRun:
+        proc = subprocess.Popen(["bash", "-c", "true"])
+        return CellRun(
+            cut_id=cut.id,
+            kind=kind,
+            accepted=True,
+            run_id="missing-meta",
+            pid=proc.pid,
+            report_path=str(report_path),
+            meta_path=str(tmp_path / "missing-meta.json"),
+            proc=proc,
+        )
+
+    result = run_dispatch(
+        dispatch, launcher=missing_meta_launcher, artifacts_dir=artifacts_dir
+    )
+
+    assert result.line_broken is True
+    assert result.states == {"missing-meta": STATE_FAILED}
+    assert result.baton.last is not None
+    assert any("meta missing or unreadable" in f for f in result.baton.last.failures)
+
+
+def test_noncritical_launch_refusal_halts_downstream(tmp_path: Path) -> None:
+    dispatch, _reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "refused"
+agent = "codex"
+workflow = "implement"
+prompt = "refused"
+  [[cuts.verify]]
+  run = "echo should-not-run"
+  expect = { contains = "should-not-run" }
+
+[[cuts]]
+id = "downstream"
+agent = "codex"
+workflow = "implement"
+prompt = "must stay pending"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+    )
+    launches: list[str] = []
+
+    def refusing_launcher(cut, _prompt: str, kind: str) -> CellRun:
+        launches.append(cut.id)
+        return CellRun(
+            cut_id=cut.id,
+            kind=kind,
+            accepted=False,
+            error="quota unavailable",
+        )
+
+    result = run_dispatch(
+        dispatch, launcher=refusing_launcher, artifacts_dir=artifacts_dir
+    )
+
+    assert result.line_broken is True
+    assert result.states == {"refused": STATE_FAILED, "downstream": STATE_PENDING}
+    assert launches == ["refused"]
+
+
+def test_uncommitted_repair_cannot_verify_prior_broken_commit(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    init_git_repo(repo_dir)
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+prompt = "repair and commit"
+  [[cuts.verify]]
+  run = "grep -q fixed marker.txt"
+  expect = { exit_code = 0 }
+""",
+        repo=repo_dir,
+        policy="repair_rounds = 1\nrequire_commit = true",
+    )
+    marker = repo_dir / "marker.txt"
+    launcher = FakeCells(reports_dir=reports_dir)
+    launcher.cells[("c1", "initial")] = FakeCell(
+        bash=(
+            f"printf broken > {shlex.quote(str(marker))}\n"
+            f"git -C {shlex.quote(str(repo_dir))} add marker.txt\n"
+            f"git -C {shlex.quote(str(repo_dir))} commit -q -m '[c1] broken'"
+        )
+    )
+    launcher.cells[("c1", "repair1")] = FakeCell(
+        bash=f"printf fixed > {shlex.quote(str(marker))}"
+    )
+
+    result = run_dispatch(dispatch, launcher=launcher, artifacts_dir=artifacts_dir)
+
+    assert result.line_broken is True
+    assert result.states == {"c1": STATE_FAILED}
+    assert result.baton.last is not None
+    assert any("uncommitted changes" in f for f in result.baton.last.failures)
+
+
+def test_committed_repair_verifies_clean_final_head(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    init_git_repo(repo_dir)
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+prompt = "repair and commit"
+  [[cuts.verify]]
+  run = "grep -q fixed marker.txt"
+  expect = { exit_code = 0 }
+""",
+        repo=repo_dir,
+        policy="repair_rounds = 1\nrequire_commit = true",
+    )
+    marker = repo_dir / "marker.txt"
+    launcher = FakeCells(reports_dir=reports_dir)
+    launcher.cells[("c1", "initial")] = FakeCell(bash="true")
+    launcher.cells[("c1", "repair1")] = FakeCell(
+        bash=(
+            f"printf fixed > {shlex.quote(str(marker))}\n"
+            f"git -C {shlex.quote(str(repo_dir))} add marker.txt\n"
+            f"git -C {shlex.quote(str(repo_dir))} commit -q -m '[c1] fixed'"
+        )
+    )
+
+    result = run_dispatch(dispatch, launcher=launcher, artifacts_dir=artifacts_dir)
+
+    assert result.line_broken is False
+    assert result.states == {"c1": STATE_VERIFIED}
+    assert (
+        subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        == ""
+    )
+
+
+def test_idempotent_existing_commit_proof_allows_noop_resume(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    init_git_repo(repo_dir)
+    (repo_dir / "delivered.txt").write_text("done\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "delivered.txt"],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "fix: delivered [c1]"],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+    )
+    delivered = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo_dir,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+prompt = "verify existing delivery"
+  [[cuts.verify]]
+  run = "test -s delivered.txt"
+  expect = { exit_code = 0 }
+""",
+        repo=repo_dir,
+        policy="repair_rounds = 0\nrequire_commit = true",
+    )
+    launcher = FakeCells(reports_dir=reports_dir)
+    launcher.cells[("c1", "initial")] = FakeCell(
+        report=f"---\ncommit: {delivered}\n---\nalready delivered"
+    )
+
+    result = run_dispatch(dispatch, launcher=launcher, artifacts_dir=artifacts_dir)
+
+    assert result.line_broken is False
+    assert result.states == {"c1": STATE_VERIFIED}
+    assert result.baton.last is not None
+    assert result.baton.last.commit == delivered
+
+
+def test_failed_noncritical_verifier_without_commit_is_not_substrate_failure(
+    tmp_path: Path,
+) -> None:
+    repo_dir = tmp_path / "repo"
+    init_git_repo(repo_dir)
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "ordinary-failure"
+agent = "codex"
+workflow = "implement"
+prompt = "fails normally"
+  [[cuts.verify]]
+  run = "echo nope"
+  expect = { contains = "missing" }
+""",
+        repo=repo_dir,
+        policy="repair_rounds = 0\nrequire_commit = true",
+    )
+
+    result = run_dispatch(
+        dispatch,
+        launcher=FakeCells(reports_dir=reports_dir),
+        artifacts_dir=artifacts_dir,
+    )
+
+    assert result.line_broken is False
+    assert result.states == {"ordinary-failure": STATE_FAILED}
+
+
+def test_empty_report_cannot_false_green(tmp_path: Path) -> None:
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "empty-report"
+agent = "codex"
+workflow = "implement"
+prompt = "must report"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+    )
+    launcher = FakeCells(reports_dir=reports_dir)
+    launcher.cells[("empty-report", "initial")] = FakeCell(report="")
+
+    result = run_dispatch(dispatch, launcher=launcher, artifacts_dir=artifacts_dir)
+
+    assert result.line_broken is True
+    assert result.states == {"empty-report": STATE_FAILED}
+    assert result.baton.last is not None
+    assert any("report empty" in failure for failure in result.baton.last.failures)
+
+
+def test_unrelated_new_commit_cannot_satisfy_cut_commit_gate(tmp_path: Path) -> None:
+    repo_dir = tmp_path / "repo"
+    init_git_repo(repo_dir)
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "c1"
+agent = "codex"
+workflow = "implement"
+prompt = "must identify the cut"
+  [[cuts.verify]]
+  run = "test -s unrelated.txt"
+  expect = { exit_code = 0 }
+""",
+        repo=repo_dir,
+        policy="repair_rounds = 0\nrequire_commit = true",
+    )
+    unrelated = repo_dir / "unrelated.txt"
+    launcher = FakeCells(reports_dir=reports_dir)
+    launcher.cells[("c1", "initial")] = FakeCell(
+        bash=(
+            f"printf unrelated > {shlex.quote(str(unrelated))}\n"
+            f"git -C {shlex.quote(str(repo_dir))} add unrelated.txt\n"
+            f"git -C {shlex.quote(str(repo_dir))} commit -q -m 'chore: unrelated'"
+        )
+    )
+
+    result = run_dispatch(dispatch, launcher=launcher, artifacts_dir=artifacts_dir)
+
+    assert result.line_broken is True
+    assert result.states == {"c1": STATE_FAILED}
+    assert result.baton.last is not None
+    assert any("does not identify" in failure for failure in result.baton.last.failures)

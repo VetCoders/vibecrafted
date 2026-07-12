@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import time
@@ -36,6 +37,10 @@ RESULT_SCHEMA = "vibecrafted.dispatch-result.v1"
 _MTIME_TOLERANCE_S = 1.0
 
 
+class CellContractError(RuntimeError):
+    """The external runtime ended without a trustworthy delivery envelope."""
+
+
 @dataclass
 class CellRun:
     """Process handle for one launched work cell.
@@ -51,6 +56,8 @@ class CellRun:
     run_id: str = ""
     pid: int | None = None
     report_path: str = ""
+    meta_path: str = ""
+    exit_code: int | None = None
     error: str = ""
     proc: subprocess.Popen[Any] | None = None
 
@@ -116,6 +123,7 @@ def workflow_cell_launcher(
             run_id=str(result.get("run_id") or ""),
             pid=result.get("pid"),
             report_path=str(result.get("report") or ""),
+            meta_path=str(result.get("meta") or ""),
             error=str(result.get("error") or result.get("message") or ""),
         )
 
@@ -214,7 +222,12 @@ class DispatchSupervisor:
             result = self._build_result(baton, line_broken)
             return result
         except Exception as exc:
-            message = f"supervisor exception: {type(exc).__name__}: {exc}"
+            label = (
+                "dispatch substrate failure"
+                if isinstance(exc, CellContractError)
+                else "supervisor exception"
+            )
+            message = f"{label}: {type(exc).__name__}: {exc}"
             self._journal(message)
             if active_cut is not None:
                 self._set_state(active_cut.id, STATE_FAILED, message)
@@ -239,12 +252,18 @@ class DispatchSupervisor:
     def _run_cut(self, cut: Cut, baton: Baton) -> Verdict:
         prompt = render_cell_prompt(self.dispatch, cut, baton=baton)
         self._materialize_prompt(cut, "initial", prompt)
-        git_before = self._git_state() if cut.mode == "read" else None
+        git_before = self._git_state()
+        if cut.mode != "read" and self.policy.require_commit and git_before[1]:
+            raise CellContractError(
+                f"[{cut.id}] WRITE cut started from a dirty worktree: {git_before[1]}"
+            )
         repair_attempts = 0
 
         outcome, launch_failure = self._execute_cell(cut, prompt, "initial")
         if launch_failure is not None:
-            return launch_failure
+            raise CellContractError(
+                "; ".join(launch_failure.failures) or f"[{cut.id}] launch failed"
+            )
         assert outcome is not None
 
         if outcome.timed_out:
@@ -284,15 +303,14 @@ class DispatchSupervisor:
                 cut, repair_prompt, f"repair{repair_attempts}"
             )
             if launch_failure is not None:
-                return replace(launch_failure, repair_attempts=repair_attempts)
+                raise CellContractError(
+                    "; ".join(launch_failure.failures)
+                    or f"[{cut.id}] repair launch failed"
+                )
             assert outcome is not None
             if outcome.timed_out:
-                return Verdict(
-                    cut_id=cut.id,
-                    phase=cut.phase,
-                    state=STATE_UNKNOWN,
-                    failures=(f"{cut.id}: repair round also timed out",),
-                    repair_attempts=repair_attempts,
+                raise CellContractError(
+                    f"[{cut.id}] repair round {repair_attempts} also timed out"
                 )
 
         self._set_state(
@@ -303,9 +321,9 @@ class DispatchSupervisor:
 
         substrate = self._substrate_failure(cut, outcome)
         if substrate is not None:
-            return replace(substrate, repair_attempts=repair_attempts)
+            raise CellContractError("; ".join(substrate.failures))
 
-        if git_before is not None:
+        if cut.mode == "read":
             violation = self._read_violation(cut, git_before)
             if violation:
                 self._journal(f"[{cut.id}] {violation}")
@@ -335,15 +353,19 @@ class DispatchSupervisor:
                 cut, repair_prompt, f"repair{repair_attempts}"
             )
             if launch_failure is not None:
-                return replace(launch_failure, repair_attempts=repair_attempts)
+                raise CellContractError(
+                    "; ".join(launch_failure.failures)
+                    or f"[{cut.id}] repair launch failed"
+                )
             assert outcome2 is not None
             if outcome2.timed_out:
-                self._journal(f"[{cut.id}] repair round {repair_attempts} timed out")
-                break
+                raise CellContractError(
+                    f"[{cut.id}] repair round {repair_attempts} timed out"
+                )
             substrate = self._substrate_failure(cut, outcome2)
             if substrate is not None:
-                return replace(substrate, repair_attempts=repair_attempts)
-            if git_before is not None:
+                raise CellContractError("; ".join(substrate.failures))
+            if cut.mode == "read":
                 violation = self._read_violation(cut, git_before)
                 if violation:
                     self._journal(f"[{cut.id}] {violation}")
@@ -355,11 +377,41 @@ class DispatchSupervisor:
                         failures=(violation,),
                         repair_attempts=repair_attempts,
                     )
+            outcome = outcome2
             verdict = self._verify(cut)
+
+        delivery_commit = self._git_head()
+        if cut.mode != "read" and self.policy.require_commit:
+            head_before = git_before[0]
+            head_after, status_after = self._git_state()
+            if status_after:
+                raise CellContractError(
+                    f"[{cut.id}] WRITE cut left uncommitted changes after verification:"
+                    f" {status_after}"
+                )
+            if verdict.ok and (
+                not head_before or not head_after or head_after == head_before
+            ):
+                existing = self._existing_delivery_commit(cut, outcome.report_text)
+                if not existing:
+                    raise CellContractError(
+                        f"[{cut.id}] WRITE cut produced no new commit and supplied"
+                        " no valid idempotent existing-commit proof:"
+                        f" HEAD remained {head_after[:8] or '<unknown>'}"
+                    )
+                delivery_commit = existing
+                self._journal(
+                    f"[{cut.id}] accepted idempotent existing commit {existing[:8]}"
+                )
+            elif verdict.ok and not self._commit_matches_cut(cut, head_after):
+                raise CellContractError(
+                    f"[{cut.id}] new HEAD {head_after[:8]} does not identify"
+                    " the delivered cut"
+                )
 
         return replace(
             verdict,
-            commit=self._git_head(),
+            commit=delivery_commit,
             report=outcome.report_path,
             repair_attempts=repair_attempts,
         )
@@ -407,7 +459,77 @@ class DispatchSupervisor:
                 f"[{cut.id}] {kind} cell finished in {outcome.elapsed_s:.1f}s;"
                 f" report={outcome.report_path or 'MISSING'}{recovered}"
             )
+            failure = self._cell_contract_failure(cell, outcome)
+            if failure:
+                self._journal(f"[{cut.id}] {failure}")
+                raise CellContractError(f"[{cut.id}] {failure}")
         return outcome, None
+
+    def _cell_contract_failure(self, cell: CellRun, outcome: AwaitOutcome) -> str:
+        if cell.exit_code not in (None, 0):
+            return f"runtime process failed: exit_code={cell.exit_code}"
+
+        meta: dict[str, Any] = {}
+        if cell.meta_path:
+            try:
+                payload = json.loads(
+                    Path(cell.meta_path).expanduser().read_text(encoding="utf-8")
+                )
+                if isinstance(payload, dict):
+                    meta = payload
+            except (OSError, json.JSONDecodeError) as exc:
+                return (
+                    "runtime contract failed: meta missing or unreadable"
+                    f" ({type(exc).__name__}: {exc})"
+                )
+
+        if cell.meta_path:
+            status = str(meta.get("status") or "").strip().lower()
+            exit_code = meta.get("exit_code")
+            if status != "completed" or exit_code not in (0, "0"):
+                detail = str(meta.get("error") or meta.get("last_error") or "").strip()
+                suffix = f"; {detail}" if detail else ""
+                return (
+                    "runtime contract failed:"
+                    f" status={status or '<unknown>'}"
+                    f" exit_code={exit_code!r}{suffix}"
+                )
+        elif cell.proc is None and cell.exit_code is None:
+            return "runtime contract failed: exit status unavailable"
+
+        if not outcome.report_path:
+            return (
+                "runtime contract failed: report missing"
+                f" for run_id={cell.run_id or '<unknown>'}"
+            )
+        if not outcome.report_text.strip():
+            return (
+                "runtime contract failed: report empty"
+                f" for run_id={cell.run_id or '<unknown>'}"
+            )
+        return ""
+
+    def _existing_delivery_commit(self, cut: Cut, report_text: str) -> str:
+        if not self.policy.allow_idempotent_existing:
+            return ""
+        match = re.search(
+            r"(?mi)^commit:\s*['\"]?([0-9a-f]{7,40})['\"]?\s*$", report_text
+        )
+        if match is None:
+            return ""
+        resolved = self._git(["rev-parse", "--verify", f"{match.group(1)}^{{commit}}"])
+        if not resolved or not self._git_ok(
+            ["merge-base", "--is-ancestor", resolved, "HEAD"]
+        ):
+            return ""
+        if not self._commit_matches_cut(cut, resolved):
+            return ""
+        return resolved
+
+    def _commit_matches_cut(self, cut: Cut, commit: str) -> bool:
+        message = self._git(["show", "-s", "--format=%B", commit])
+        slot = cut.id.split("_", 1)[0]
+        return cut.id in message or f"[{slot}]" in message
 
     def _await(self, cell: CellRun) -> AwaitOutcome:
         """Await the cell through its process handle, never through meta.json
@@ -434,17 +556,24 @@ class DispatchSupervisor:
 
     def _cell_finished(self, cell: CellRun) -> bool:
         if cell.proc is not None:
-            return cell.proc.poll() is not None
+            exit_code = cell.proc.poll()
+            if exit_code is None:
+                return False
+            cell.exit_code = exit_code
+            return True
         if not cell.pid:
             return True
         try:
-            done, _ = os.waitpid(cell.pid, os.WNOHANG)
+            done, status = os.waitpid(cell.pid, os.WNOHANG)
         except ChildProcessError:
             pass  # not our child: fall through to the liveness probe
         except OSError:
             pass
         else:
-            return done == cell.pid
+            if done == cell.pid:
+                cell.exit_code = os.waitstatus_to_exitcode(status)
+                return True
+            return False
         try:
             os.kill(cell.pid, 0)
         except ProcessLookupError:
@@ -585,6 +714,19 @@ class DispatchSupervisor:
         except (OSError, subprocess.TimeoutExpired):
             return ""
         return proc.stdout.strip() if proc.returncode == 0 else ""
+
+    def _git_ok(self, args: list[str]) -> bool:
+        try:
+            proc = subprocess.run(
+                ["git", *args],
+                cwd=self.repo,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return proc.returncode == 0
 
     # --------------------------------------------------------- artifacts
 

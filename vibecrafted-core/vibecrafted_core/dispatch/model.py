@@ -38,6 +38,8 @@ class Policy:
     await_config: dict[str, Any] = field(default_factory=dict)
     verify_executor: str = "supervisor"
     allow_concurrency: bool = False
+    require_commit: bool = False
+    allow_idempotent_existing: bool = True
 
 
 @dataclass(frozen=True)
