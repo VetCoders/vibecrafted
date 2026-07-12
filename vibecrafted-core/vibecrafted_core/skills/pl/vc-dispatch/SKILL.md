@@ -100,13 +100,13 @@ pinu traktuj jako smell do rozwiązania przed startem.
    (shelle mogą nieść miękki `ulimit -f` → SIGXFSZ/exit 153). Zapisz receipt
    (run_id, report, transcript, meta) w trackerze.
 3. **Spanko**: czekaj przez artefakty, nigdy przez gapienie się w pane. Użyj
-   dedykowanej komendy jako standardowej pętli dyspozytora. Canonical supervisor
-   contract (see `docs/runtime/AGENT_OPS.md`): After dispatch, arm
-   `vibecrafted <agent> await --run-id <id>` immediately, supervisor-side.
-   Control-plane JSON, report files, transcripts, panes, and scheduled wakeups
-   are diagnostic only, not wake signals. Hedging await with ad-hoc
-   pollers/watchers is a Class 3 violation; fix `control_plane.await_run`, do
-   not normalize the hedge.
+   dedykowanej komendy jako standardowej pętli dyspozytora. Kanoniczny kontrakt
+   supervisora (zobacz `docs/runtime/AGENT_OPS.md`): po dispatchu uzbrój
+   `vibecrafted <agent> await --run-id <id>` natychmiast, po stronie supervisora.
+   JSON control-plane, pliki raportów, transkrypty, karty terminala i
+   zaplanowane wybudzenia są wyłącznie diagnostyczne, nie są sygnałem
+   wybudzenia. Hedge'owanie await ad-hoc pollerami/watcherami to naruszenie
+   Class 3; napraw `control_plane.await_run`, nie normalizuj hedge'u.
    Liveness jest zawsze 3-sygnałowy: przed "done" pogódź await verdict,
    terminalny stan w run meta i martwy worker pid; gdy raport jest obiecany,
    sprawdź obecność raportu. Dwa zgodne sygnały wystarczą do działania, trzy do
