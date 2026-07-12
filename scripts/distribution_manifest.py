@@ -239,6 +239,11 @@ def _walk_entries(root: Path) -> Iterable[Path]:
             yield current_path / name
         for name in file_names:
             yield current_path / name
+        directory_names[:] = [
+            name
+            for name in directory_names
+            if not path_is_forbidden((current_path / name).relative_to(root))
+        ]
 
 
 def validate_payload(root: str | Path) -> None:
