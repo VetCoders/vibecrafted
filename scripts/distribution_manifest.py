@@ -60,6 +60,33 @@ REQUIRED_DIRECTORIES = (
     "workflows",
 )
 
+# A directory name alone does not prove that its runtime survived packaging.
+# Keep one stable, executable-or-documenting sentinel for every required
+# surface so an empty subtree can never pass the complete-runtime gate.
+REQUIRED_SURFACE_FILES = {
+    "bin": "bin/vc-workflow",
+    "config": "config/README.md",
+    "docs": "docs/INSTALL.md",
+    "plugins": "plugins/iterm2/README.md",
+    "runtime/scripts": "runtime/scripts/README.md",
+    "runtime/shell/lib": "runtime/shell/lib/core.sh",
+    "scripts/installer": "scripts/installer/pyproject.toml",
+    "skills": "skills/vc-init/SKILL.md",
+    "templates": "templates/hooks/install.sh",
+    "tools": "tools/README.md",
+    "vibecrafted-app": "vibecrafted-app/Cargo.toml",
+    "vibecrafted-core/vibecrafted_core/runtime": (
+        "vibecrafted-core/vibecrafted_core/runtime/README.md"
+    ),
+    "vibecrafted-core/vibecrafted_core/skills": (
+        "vibecrafted-core/vibecrafted_core/skills/LIVING_TREE_RULE.md"
+    ),
+    "vibecrafted-mcp": "vibecrafted-mcp/pyproject.toml",
+    "vibecrafted-server": "vibecrafted-server/Cargo.toml",
+    "vibecrafted-vm": "vibecrafted-vm/Containerfile",
+    "workflows": "workflows/MARBLES.md",
+}
+
 ALLOWED_TOP_LEVEL = frozenset(
     {
         "VERSION",
@@ -197,6 +224,9 @@ def _required_errors(root: Path) -> list[str]:
     for relative in REQUIRED_DIRECTORIES:
         if not (root / relative).is_dir():
             errors.append(f"missing required path: {relative}")
+    for surface, relative in REQUIRED_SURFACE_FILES.items():
+        if not (root / relative).is_file():
+            errors.append(f"missing required runtime content: {surface} -> {relative}")
     return errors
 
 

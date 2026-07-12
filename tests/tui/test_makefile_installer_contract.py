@@ -122,6 +122,9 @@ def test_bundle_targets_use_distribution_manifest_for_runtime_archive() -> None:
     assert '--root-name "vibecrafted-$(BUNDLE_VERSION)"' in bundle_block
     assert "build_marketplace_bundle.py" in bundle_block
     assert "build_marketplace_bundle.py" in check_block
+    assert "cmp -s" not in check_block
+    assert 'test -s "$$tmp_bundle"' in check_block
+    assert check_block.lstrip().startswith("@set -e;")
 
 
 def test_control_plane_staging_delegates_to_distribution_manifest(

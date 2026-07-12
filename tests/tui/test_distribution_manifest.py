@@ -46,12 +46,17 @@ def _minimal_payload(root: Path) -> None:
         path.write_text(f"fixture for {relative}\n", encoding="utf-8")
     for relative in manifest.REQUIRED_DIRECTORIES:
         (root / relative).mkdir(parents=True, exist_ok=True)
+    for relative in manifest.REQUIRED_SURFACE_FILES.values():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"runtime sentinel for {relative}\n", encoding="utf-8")
 
 
 def test_manifest_names_complete_runtime_and_forbidden_junk() -> None:
     declared = set(manifest.REQUIRED_FILES) | set(manifest.REQUIRED_DIRECTORIES)
 
     assert EXPECTED_REQUIRED <= declared
+    assert set(manifest.REQUIRED_SURFACE_FILES) == set(manifest.REQUIRED_DIRECTORIES)
     assert {
         ".DS_Store",
         ".gitignore",
@@ -64,6 +69,25 @@ def test_manifest_names_complete_runtime_and_forbidden_junk() -> None:
         "tests",
         ".github",
     } <= manifest.FORBIDDEN_COMPONENTS
+
+
+@pytest.mark.parametrize(
+    ("surface", "sentinel"), manifest.REQUIRED_SURFACE_FILES.items()
+)
+def test_validate_payload_rejects_empty_required_runtime_surface(
+    tmp_path: Path, surface: str, sentinel: str
+) -> None:
+    payload = tmp_path / "payload"
+    _minimal_payload(payload)
+    sentinel_path = payload / sentinel
+    sentinel_path.unlink()
+
+    with pytest.raises(manifest.ManifestError) as exc_info:
+        manifest.validate_payload(payload)
+
+    assert f"missing required runtime content: {surface} -> {sentinel}" in str(
+        exc_info.value
+    )
 
 
 def test_forbidden_artifact_filter_is_safe_for_runtime_subtrees() -> None:
