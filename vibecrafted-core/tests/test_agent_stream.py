@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from vibecrafted_core.agent_stream import AgentStreamParser, resolve_default_model
+from vibecrafted_core.telemetry import estimate_cost_usd
 
 
 def test_agent_stream_parser_extracts_claude_session_usage_cost_and_text() -> None:
@@ -219,3 +220,18 @@ def test_resolve_default_model_reads_codex_config(tmp_path, monkeypatch) -> None
         )
         == "gpt-5.3-codex"
     )
+
+
+def test_cost_estimates_lock_user_reported_grok_and_codex_regressions() -> None:
+    assert estimate_cost_usd(
+        "grok-build",
+        tokens_input=123064,
+        tokens_cached_input=4200256,
+        tokens_output=21463,
+    ) == (1.006041, "estimated:xai-api-2026-07")
+    assert estimate_cost_usd(
+        "gpt-5.6-sol",
+        tokens_input=20901518,
+        tokens_cached_input=20536960,
+        tokens_output=48906,
+    ) == (116.24325, "estimated:openai-api-2026-07")
