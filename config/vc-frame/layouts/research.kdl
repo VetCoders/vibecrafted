@@ -18,7 +18,15 @@ layout {
         pane size=1 borderless=true {
             plugin location="compact-bar"
         }
-        children
+        pane split_direction="vertical" {
+            pane size=24 borderless=true {
+                plugin location="session-manager" {
+                    rail true
+                    pane_title "Sessions"
+                }
+            }
+            pane { children; }
+        }
         pane size=1 borderless=true {
             plugin location="status-bar"
         }
@@ -32,7 +40,7 @@ layout {
             pane split_direction="horizontal" size="45%" {
                 pane name="claude" command="zsh"
                 pane name="codex" command="zsh"
-                pane name="gemini" command="zsh"
+                pane name="agy" command="zsh"
             }
         }
     }
@@ -46,7 +54,7 @@ layout {
                     pane name="codex" command="zsh"
                 }
                 pane split_direction="vertical" size="50%" {
-                    pane name="gemini" command="zsh"
+                    pane name="agy" command="zsh"
                     pane name="synthesis" focus=true command="zsh"
                 }
             }
