@@ -46,7 +46,8 @@ def test_vc_research_help_is_pure_help() -> None:
     assert result.returncode == 0
     assert "Configurable triple-agent research swarm launcher" in result.stdout
     assert "Positional agents override the YAML lane set" in result.stdout
-    assert "uno <agent>" in result.stdout
+    assert "uno|duo|trio <agent...>" in result.stdout
+    assert "Agent picking policy (explicit, fail-closed):" in result.stdout
     assert "Research swarm launched" not in result.stdout
     assert "command not found" not in result.stdout
     assert "command not found" not in result.stderr
@@ -141,6 +142,182 @@ def test_vc_research_uno_launches_one_requested_agent(tmp_path: Path) -> None:
     assert "- Codex:" in summary
     assert "- Claude:" not in summary
     assert "- Junie:" not in summary
+
+
+def test_vc_research_trio_honors_operator_selection(tmp_path: Path) -> None:
+    """`trio claude agy junie` must launch EXACTLY those lanes, even when
+    config.toml declares different default_agents. This is the incident test:
+    the explicit operator selection was once silently replaced by the config
+    default swarm."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    crafted_home = tmp_path / "home" / ".vibecrafted"
+    config_home = tmp_path / "xdg"
+    write_research_config(config_home, ["agy", "codex", "claude"])
+
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(config_home)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "vc-research trio claude agy junie --runtime headless "
+                f'--root "{root}" --prompt "YC teaser brief"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "Research lanes: claude agy junie (source: positional-override)"
+        in result.stdout
+    )
+    run_dir_match = re.search(r"Run directory: (.+)", result.stdout)
+    assert run_dir_match is not None, result.stdout
+    run_dir = Path(run_dir_match.group(1))
+    assert sorted(p.name for p in (run_dir / "logs").glob("*.meta.json")) == [
+        "agy.meta.json",
+        "claude.meta.json",
+        "junie.meta.json",
+    ]
+
+
+def test_vc_research_unknown_token_fails_closed(tmp_path: Path) -> None:
+    """A stray token must abort the launch instead of being silently routed
+    into the prompt while the swarm falls back to config defaults."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "vc-research tris claude agy --runtime headless "
+                f'--root "{root}" --prompt "YC teaser brief"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "unknown agent or token" in result.stderr
+    assert "prepared" not in result.stdout
+    assert "launched" not in result.stdout
+
+
+def test_vc_research_arity_keyword_must_match_agent_count(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "vc-research duo claude --runtime headless "
+                f'--root "{root}" --prompt "one agent is not a duo"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "duo expects exactly 2 agent(s), got 1" in result.stderr
+    assert "prepared" not in result.stdout
+
+
+def test_vc_research_duplicate_agent_fails_closed(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "vc-research claude claude --runtime headless "
+                f'--root "{root}" --prompt "same lane twice"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "agent claude given twice" in result.stderr
+
+
+def test_vc_research_config_selection_announces_source(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    crafted_home = tmp_path / "home" / ".vibecrafted"
+    config_home = tmp_path / "xdg"
+    write_research_config(config_home, ["agy", "codex", "claude"])
+
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(config_home)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                "vc-research --runtime headless "
+                f'--root "{root}" --prompt "who picked these lanes"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    lanes_match = re.search(r"Research lanes: (.+) \(source: (.+)\)", result.stdout)
+    assert lanes_match is not None, result.stdout
+    assert lanes_match.group(1) == "agy codex claude"
+    assert lanes_match.group(2).endswith("config.toml")
 
 
 def test_vc_research_reads_runtime_owned_yaml(tmp_path: Path) -> None:

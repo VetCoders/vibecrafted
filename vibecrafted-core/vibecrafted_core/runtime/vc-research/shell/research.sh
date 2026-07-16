@@ -173,24 +173,35 @@ else:
   return "$parse_status"
 }
 
+# Output contract: first line is `__source:<origin>`, remaining lines are
+# agent names. The caller runs this in a subshell, so the origin of the
+# selection must travel in-band — a silent pick with no provenance is exactly
+# the failure mode this launcher is being civilized out of.
 _vetcoders_research_agents() {
   local config_path
   local parse_status
 
   if [[ -n "${VIBECRAFTED_RESEARCH_AGENTS:-}" ]]; then
+    printf '__source:env:VIBECRAFTED_RESEARCH_AGENTS\n'
     printf '%s\n' "${VIBECRAFTED_RESEARCH_AGENTS}" | tr ', ' '\n' | awk 'NF'
     return 0
   fi
 
   while IFS= read -r config_path; do
     [[ -n "$config_path" ]] || continue
-    _vetcoders_research_agents_from_config "$config_path" && return 0
+    local config_agents
+    if config_agents="$(_vetcoders_research_agents_from_config "$config_path")"; then
+      printf '__source:%s\n' "$config_path"
+      printf '%s\n' "$config_agents"
+      return 0
+    fi
     parse_status=$?
     if (( parse_status != 1 )); then
       return "$parse_status"
     fi
   done < <(_vetcoders_research_config_paths)
 
+  printf '__source:builtin-default\n'
   printf '%s\n' claude codex gemini
 }
 
@@ -273,8 +284,8 @@ Configurable triple-agent research swarm launcher.
     vc-research --file /path/to/plan.md
     vc-research <agent1> [agent2 agent3] --prompt "Question to research"
     vc-research <agent1> [agent2 agent3] --file /path/to/plan.md
-    vc-research uno <claude|codex|gemini|agy|junie|grok> --prompt "Question to research"
-    vc-research uno <claude|codex|gemini|agy|junie|grok> --file /path/to/plan.md
+    vc-research uno|duo|trio <agent...> --prompt "Question to research"
+    vc-research uno|duo|trio <agent...> --file /path/to/plan.md
 
 Common flags:
   -p, --prompt <text>            Inline prompt
@@ -291,7 +302,16 @@ Examples:
     vibecrafted research --prompt "State of the art for MCP streaming"
 
 One invocation is one full swarm. Positional agents override the YAML lane set for this run.
-`uno <agent>` is kept as an alias for the one-lane override form.
+
+Agent picking policy (explicit, fail-closed):
+  1. positional agents           highest priority, honored exactly as given
+  2. VIBECRAFTED_RESEARCH_AGENTS env override
+  3. research.yaml lanes         ~/.vibecrafted/config/research.yaml
+  4. config.toml default_agents  [runtime.picking.research]
+  5. builtin default             claude codex gemini
+The resolved lanes and their source are always printed at launch.
+`uno|duo|trio <agents>` declare arity and must match the agent count exactly.
+Unknown tokens abort the launch — nothing is silently rerouted to config defaults.
 HELP
 }
 
@@ -314,23 +334,25 @@ _vetcoders_research() {
   research_mode="swarm"
   requested_research_agent=""
   positional_research_agents=()
-  if [[ "$first_arg" == "uno" ]]; then
-    shift || true
-    requested_research_agent="${1:-}"
-    _vetcoders_has_agent "$requested_research_agent" || {
-      printf 'vc-research uno expects <claude|codex|gemini|agy|junie|grok> as the next argument.\n' >&2
-      printf 'Usage: vc-research uno <agent> --prompt "..." or --file /path/to/plan.md.\n' >&2
-      return 1
-    }
-    shift || true
-    positional_research_agents=("$requested_research_agent")
+  # Explicit arity keywords. They declare how many positional agents MUST
+  # follow — the operator's selection is a contract, never a hint.
+  local expected_lane_count=0
+  case "$first_arg" in
+    uno) expected_lane_count=1; shift || true ;;
+    duo) expected_lane_count=2; shift || true ;;
+    trio) expected_lane_count=3; shift || true ;;
+  esac
+  if (( expected_lane_count > 0 )); then
     research_mode="override"
-    first_arg="${1:-}"
   fi
 
   while [[ $# -gt 0 ]]; do
     case "${1:-}" in
       claude|codex|gemini|agy|junie|grok)
+        if [[ " ${positional_research_agents[*]:-} " == *" ${1} "* ]]; then
+          printf 'vc-research: agent %s given twice.\n' "${1}" >&2
+          return 1
+        fi
         positional_research_agents+=("$1")
         research_mode="override"
         shift || true
@@ -339,10 +361,30 @@ _vetcoders_research() {
         break
         ;;
     esac
-    if (( ${#positional_research_agents[@]} >= 3 )); then
-      break
-    fi
   done
+
+  # Fail closed on any stray non-flag token. Silently routing leftovers into
+  # the prompt/config-default swarm is how an explicit operator selection got
+  # silently replaced once — never again.
+  if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
+    printf 'vc-research: unknown agent or token %s.\n' "${1}" >&2
+    printf 'Supported agents: claude codex gemini agy junie grok.\n' >&2
+    printf 'Usage: vc-research [uno|duo|trio] [agent ...] --prompt "..." | --file /path/to/plan.md\n' >&2
+    return 1
+  fi
+  if (( expected_lane_count > 0 )) && (( ${#positional_research_agents[@]} != expected_lane_count )); then
+    printf 'vc-research: %s expects exactly %d agent(s), got %d (%s).\n' \
+      "$([[ $expected_lane_count == 1 ]] && echo uno || { [[ $expected_lane_count == 2 ]] && echo duo || echo trio; })" \
+      "$expected_lane_count" "${#positional_research_agents[@]}" "${positional_research_agents[*]:-none}" >&2
+    printf 'Supported agents: claude codex gemini agy junie grok.\n' >&2
+    return 1
+  fi
+  if (( ${#positional_research_agents[@]} > 3 )); then
+    printf 'vc-research: at most 3 research lanes per run, got %d (%s).\n' \
+      "${#positional_research_agents[@]}" "${positional_research_agents[*]}" >&2
+    return 1
+  fi
+  requested_research_agent="${positional_research_agents[0]:-}"
 
   research_synthesizer=""
   contract_args=()
@@ -412,14 +454,18 @@ _vetcoders_research() {
   prompt_file="$(_vetcoders_research_prompt_file "$run_dir" "$prompt")" || return 1
 
   research_agents=()
+  local research_agents_source
   if [[ "$research_mode" == "override" ]]; then
     research_agents=("${positional_research_agents[@]}")
+    research_agents_source="positional-override"
     [[ -n "$research_synthesizer" ]] || research_synthesizer="${research_agents[0]:-}"
   else
     local agents_output
     agents_output="$(_vetcoders_research_agents)" || return 1
+    research_agents_source="builtin-default"
     while IFS= read -r agent; do
       case "$agent" in
+        __source:*) research_agents_source="${agent#__source:}" ;;
         claude|codex|gemini|agy|junie|grok) research_agents+=("$agent") ;;
         "") ;;
         *) printf 'Ignoring unsupported research agent from runtime picking config: %s\n' "$agent" >&2 ;;
@@ -430,6 +476,9 @@ _vetcoders_research() {
       return 1
     fi
   fi
+  # The resolved selection is ALWAYS announced with its source. A swarm that
+  # launches without saying who picked its lanes is a wrong-assumption factory.
+  printf 'Research lanes: %s (source: %s)\n' "${research_agents[*]}" "$research_agents_source"
   if [[ -n "$research_synthesizer" ]]; then
     export VIBECRAFTED_RESEARCH_SYNTHESIZER="$research_synthesizer"
   fi
