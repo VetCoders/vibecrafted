@@ -570,7 +570,7 @@ cmd_skill_help() {
     polarize)
       printf '  vibecrafted polarize codex --task "marbles versus polarize skills: polarize them"\n'
       printf '  vc-polarize claude --task "installer public contract" --no-aicx\n'
-      printf '  vc-polarize gemini --prompt "Choose one launch thesis after marbles"\n'
+      printf '  vc-polarize agy --prompt "Choose one launch thesis after marbles"\n'
       ;;
     followup)
       printf '  vibecrafted followup codex --prompt "Audit post-implementation direction"\n'
@@ -582,7 +582,7 @@ cmd_skill_help() {
       ;;
     review)
       printf '  vibecrafted review codex --prompt "Review PR #14"\n'
-      printf '  vibecrafted review gemini --prompt "Review HEAD~10..HEAD"\n'
+      printf '  vibecrafted review agy --prompt "Review HEAD~10..HEAD"\n'
       printf '  vc-review claude --file /path/to/pr-brief.md\n'
       ;;
     research)

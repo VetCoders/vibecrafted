@@ -202,7 +202,7 @@ _vetcoders_research_agents() {
   done < <(_vetcoders_research_config_paths)
 
   printf '__source:builtin-default\n'
-  printf '%s\n' claude codex gemini
+  printf '%s\n' claude codex agy
 }
 
 _vetcoders_write_research_layout() {
@@ -297,7 +297,7 @@ Common flags:
 Examples:
     vc-research --prompt "Compare API alternatives for oauth libraries"
     vc-research codex --prompt "Probe just one research lane"
-    vc-research claude codex gemini --synthesizer claude --file /path/to/research-plan.md
+    vc-research claude codex agy --synthesizer claude --file /path/to/research-plan.md
     vc-research --file /path/to/research-plan.md
     vibecrafted research --prompt "State of the art for MCP streaming"
 
@@ -308,7 +308,7 @@ Agent picking policy (explicit, fail-closed):
   2. VIBECRAFTED_RESEARCH_AGENTS env override
   3. research.yaml lanes         ~/.vibecrafted/config/research.yaml
   4. config.toml default_agents  [runtime.picking.research]
-  5. builtin default             claude codex gemini
+  5. builtin default             claude codex agy
 The resolved lanes and their source are always printed at launch.
 `uno|duo|trio <agents>` declare arity and must match the agent count exactly.
 Unknown tokens abort the launch — nothing is silently rerouted to config defaults.
@@ -348,7 +348,11 @@ _vetcoders_research() {
 
   while [[ $# -gt 0 ]]; do
     case "${1:-}" in
-      claude|codex|gemini|agy|junie|grok)
+      gemini)
+        printf 'vc-research: gemini CLI is deprecated (dead upstream). Use agy (Google Antigravity CLI) instead.\n' >&2
+        return 1
+        ;;
+      claude|codex|agy|junie|grok)
         if [[ " ${positional_research_agents[*]:-} " == *" ${1} "* ]]; then
           printf 'vc-research: agent %s given twice.\n' "${1}" >&2
           return 1
@@ -368,7 +372,7 @@ _vetcoders_research() {
   # silently replaced once — never again.
   if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
     printf 'vc-research: unknown agent or token %s.\n' "${1}" >&2
-    printf 'Supported agents: claude codex gemini agy junie grok.\n' >&2
+    printf 'Supported agents: claude codex agy junie grok (gemini is deprecated - use agy).\n' >&2
     printf 'Usage: vc-research [uno|duo|trio] [agent ...] --prompt "..." | --file /path/to/plan.md\n' >&2
     return 1
   fi
@@ -376,7 +380,7 @@ _vetcoders_research() {
     printf 'vc-research: %s expects exactly %d agent(s), got %d (%s).\n' \
       "$([[ $expected_lane_count == 1 ]] && echo uno || { [[ $expected_lane_count == 2 ]] && echo duo || echo trio; })" \
       "$expected_lane_count" "${#positional_research_agents[@]}" "${positional_research_agents[*]:-none}" >&2
-    printf 'Supported agents: claude codex gemini agy junie grok.\n' >&2
+    printf 'Supported agents: claude codex agy junie grok (gemini is deprecated - use agy).\n' >&2
     return 1
   fi
   if (( ${#positional_research_agents[@]} > 3 )); then
@@ -394,7 +398,7 @@ _vetcoders_research() {
         shift
         [[ $# -gt 0 ]] || { echo "Missing value for --synthesizer" >&2; return 1; }
         _vetcoders_has_agent "$1" || {
-          printf 'vc-research --synthesizer expects <claude|codex|gemini|agy|junie|grok>.\n' >&2
+          printf 'vc-research --synthesizer expects <claude|codex|agy|junie|grok>.\n' >&2
           return 1
         }
         research_synthesizer="$1"
@@ -466,7 +470,12 @@ _vetcoders_research() {
     while IFS= read -r agent; do
       case "$agent" in
         __source:*) research_agents_source="${agent#__source:}" ;;
-        claude|codex|gemini|agy|junie|grok) research_agents+=("$agent") ;;
+        claude|codex|agy|junie|grok) research_agents+=("$agent") ;;
+        gemini)
+          printf 'vc-research: config selects gemini, but gemini CLI is deprecated (dead upstream).\n' >&2
+          printf 'Fix the picking config to use agy (Google Antigravity CLI) - refusing to silently shrink the swarm.\n' >&2
+          return 1
+          ;;
         "") ;;
         *) printf 'Ignoring unsupported research agent from runtime picking config: %s\n' "$agent" >&2 ;;
       esac

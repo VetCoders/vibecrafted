@@ -74,7 +74,7 @@ def _prepare_scripts(tmp_path: Path, capture_file: Path) -> Path:
         spawn_finish_meta "$SPAWN_META" completed 0
         [[ -z "$success_hook" ]] || bash -lc "$success_hook"
     """)
-    for a in ("claude", "codex", "gemini"):
+    for a in ("claude", "codex", "agy"):
         s = sd / f"{a}_spawn.sh"
         s.write_text(stub, encoding="utf-8")
         s.chmod(0o755)
@@ -437,10 +437,10 @@ def test_rotation_schedule_trio() -> None:
     assert result.stdout.splitlines() == [
         "codex",
         "claude",
-        "gemini",
+        "agy",
         "codex",
         "claude",
-        "gemini",
+        "agy",
     ]
 
 
@@ -455,7 +455,7 @@ def test_rotation_schedule_trio_respects_seed_agent() -> None:
                     "set -euo pipefail",
                     f'source "{SCRIPTS_DIR / "common.sh"}"',
                     "for loop_nr in 1 2 3 4; do",
-                    '  spawn_rotation_schedule_agent "trio" "gemini" "$loop_nr"',
+                    '  spawn_rotation_schedule_agent "trio" "agy" "$loop_nr"',
                     "done",
                 ]
             ),
@@ -467,10 +467,10 @@ def test_rotation_schedule_trio_respects_seed_agent() -> None:
     )
 
     assert result.stdout.splitlines() == [
-        "gemini",
+        "agy",
         "codex",
         "claude",
-        "gemini",
+        "agy",
     ]
 
 

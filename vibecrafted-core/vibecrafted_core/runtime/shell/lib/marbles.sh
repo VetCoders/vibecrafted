@@ -159,7 +159,7 @@ _vetcoders_resume_agent() {
     _vetcoders_contract_tail="$_resume_rest"
   fi
   [[ -n "$_vetcoders_contract_session" ]] || {
-    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "Usage: vc-resume [<claude|codex|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
     return 1
   }
   [[ -z "$_vetcoders_contract_count" ]] || {
@@ -343,14 +343,14 @@ PY
 vc-resume() {
   local tool="${1:-}"
   [[ -n "$tool" ]] || {
-    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "Usage: vc-resume [<claude|codex|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
     return 1
   }
   if [[ "$tool" == "--session" ]]; then
     _vetcoders_parse_contract "$@" || return 1
     tool="$(_vetcoders_agent_for_session "$_vetcoders_contract_session")" || {
       echo "Could not infer agent for session: $_vetcoders_contract_session" >&2
-      echo "Usage: vc-resume <claude|codex|gemini|agy|junie|grok> --session $_vetcoders_contract_session" >&2
+      echo "Usage: vc-resume <claude|codex|agy|junie|grok> --session $_vetcoders_contract_session" >&2
       return 1
     }
   else

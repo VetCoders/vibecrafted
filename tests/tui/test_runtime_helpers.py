@@ -456,7 +456,7 @@ def test_vc_skill_wrapper_help_after_agent_does_not_launch_worker() -> None:
     )
 
     assert result.returncode == 0
-    assert "Usage: vc-review <claude|codex|gemini|agy|junie|grok>" in result.stderr
+    assert "Usage: vc-review <claude|codex|agy|junie|grok>" in result.stderr
     assert "launched" not in result.stdout
 
 

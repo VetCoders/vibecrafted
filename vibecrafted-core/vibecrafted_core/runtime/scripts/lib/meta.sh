@@ -98,7 +98,7 @@ spawn_detect_model_identity() {
   case "$agent" in
     claude) printf 'claude-cli-default\n' ;;
     codex) printf 'codex-cli-default\n' ;;
-    gemini|agy) printf 'gemini-cli-default\n' ;;
+    agy) printf 'gemini-cli-default\n' ;;
     grok) printf 'grok-cli-default\n' ;;
     junie) printf 'junie-cli-default\n' ;;
     *) printf '%s-cli-default\n' "${agent:-agent}" ;;

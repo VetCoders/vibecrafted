@@ -3,150 +3,124 @@
 
 codex-decorate() { _vetcoders_skill codex decorate "$@"; }
 claude-decorate() { _vetcoders_skill claude decorate "$@"; }
-gemini-decorate() { _vetcoders_skill gemini decorate "$@"; }
 agy-decorate() { _vetcoders_skill agy decorate "$@"; }
 junie-decorate() { _vetcoders_skill junie decorate "$@"; }
 grok-decorate() { _vetcoders_skill grok decorate "$@"; }
 
 codex-followup() { _vetcoders_skill codex followup "$@"; }
 claude-followup() { _vetcoders_skill claude followup "$@"; }
-gemini-followup() { _vetcoders_skill gemini followup "$@"; }
 agy-followup() { _vetcoders_skill agy followup "$@"; }
 junie-followup() { _vetcoders_skill junie followup "$@"; }
 grok-followup() { _vetcoders_skill grok followup "$@"; }
 
 codex-prune() { _vetcoders_skill codex prune "$@"; }
 claude-prune() { _vetcoders_skill claude prune "$@"; }
-gemini-prune() { _vetcoders_skill gemini prune "$@"; }
 agy-prune() { _vetcoders_skill agy prune "$@"; }
 junie-prune() { _vetcoders_skill junie prune "$@"; }
 grok-prune() { _vetcoders_skill grok prune "$@"; }
 
 codex-scaffold() { _vetcoders_skill codex scaffold "$@"; }
 claude-scaffold() { _vetcoders_skill claude scaffold "$@"; }
-gemini-scaffold() { _vetcoders_skill gemini scaffold "$@"; }
 agy-scaffold() { _vetcoders_skill agy scaffold "$@"; }
 junie-scaffold() { _vetcoders_skill junie scaffold "$@"; }
 grok-scaffold() { _vetcoders_skill grok scaffold "$@"; }
 
 codex-release() { _vetcoders_skill codex release "$@"; }
 claude-release() { _vetcoders_skill claude release "$@"; }
-gemini-release() { _vetcoders_skill gemini release "$@"; }
 agy-release() { _vetcoders_skill agy release "$@"; }
 junie-release() { _vetcoders_skill junie release "$@"; }
 grok-release() { _vetcoders_skill grok release "$@"; }
 
 codex-justdo() { _vetcoders_skill codex justdo "$@"; }
 claude-justdo() { _vetcoders_skill claude justdo "$@"; }
-gemini-justdo() { _vetcoders_skill gemini justdo "$@"; }
 agy-justdo() { _vetcoders_skill agy justdo "$@"; }
 junie-justdo() { _vetcoders_skill junie justdo "$@"; }
 grok-justdo() { _vetcoders_skill grok justdo "$@"; }
 
 codex-partner() { _vetcoders_skill codex partner "$@"; }
 claude-partner() { _vetcoders_skill claude partner "$@"; }
-gemini-partner() { _vetcoders_skill gemini partner "$@"; }
 agy-partner() { _vetcoders_skill agy partner "$@"; }
 junie-partner() { _vetcoders_skill junie partner "$@"; }
 grok-partner() { _vetcoders_skill grok partner "$@"; }
 
 codex-skill-agents() { _vetcoders_skill_entry codex agents "$@"; }
 claude-skill-agents() { _vetcoders_skill_entry claude agents "$@"; }
-gemini-skill-agents() { _vetcoders_skill_entry gemini agents "$@"; }
 
 codex-skill-audit() { _vetcoders_skill_entry codex audit "$@"; }
 claude-skill-audit() { _vetcoders_skill_entry claude audit "$@"; }
-gemini-skill-audit() { _vetcoders_skill_entry gemini audit "$@"; }
 
 codex-skill-decorate() { _vetcoders_skill_entry codex decorate "$@"; }
 claude-skill-decorate() { _vetcoders_skill_entry claude decorate "$@"; }
-gemini-skill-decorate() { _vetcoders_skill_entry gemini decorate "$@"; }
 
 codex-skill-delegate() { _vetcoders_skill_entry codex delegate "$@"; }
 claude-skill-delegate() { _vetcoders_skill_entry claude delegate "$@"; }
-gemini-skill-delegate() { _vetcoders_skill_entry gemini delegate "$@"; }
 
 codex-skill-dou() { _vetcoders_skill_entry codex dou "$@"; }
 claude-skill-dou() { _vetcoders_skill_entry claude dou "$@"; }
-gemini-skill-dou() { _vetcoders_skill_entry gemini dou "$@"; }
 
 codex-skill-followup() { _vetcoders_skill_entry codex followup "$@"; }
 claude-skill-followup() { _vetcoders_skill_entry claude followup "$@"; }
-gemini-skill-followup() { _vetcoders_skill_entry gemini followup "$@"; }
 
 codex-skill-hydrate() { _vetcoders_skill_entry codex hydrate "$@"; }
 claude-skill-hydrate() { _vetcoders_skill_entry claude hydrate "$@"; }
-gemini-skill-hydrate() { _vetcoders_skill_entry gemini hydrate "$@"; }
 
 codex-skill-init() { _vetcoders_skill_init codex "$@"; }
 claude-skill-init() { _vetcoders_skill_init claude "$@"; }
-gemini-skill-init() { _vetcoders_skill_init gemini "$@"; }
 
 codex-skill-justdo() { _vetcoders_skill_entry codex justdo "$@"; }
 claude-skill-justdo() { _vetcoders_skill_entry claude justdo "$@"; }
-gemini-skill-justdo() { _vetcoders_skill_entry gemini justdo "$@"; }
 
 # vc-implement is the front-face brand for vc-justdo. Both helper families hit
 # the same dispatcher (skill id stays "justdo" so run_id prefix, locks, and
 # already-trained agents keep working unchanged).
 codex-skill-implement() { _vetcoders_skill_entry codex justdo "$@"; }
 claude-skill-implement() { _vetcoders_skill_entry claude justdo "$@"; }
-gemini-skill-implement() { _vetcoders_skill_entry gemini justdo "$@"; }
 
 codex-skill-marbles() { _vetcoders_marbles codex "$@"; }
 claude-skill-marbles() { _vetcoders_marbles claude "$@"; }
-gemini-skill-marbles() { _vetcoders_marbles gemini "$@"; }
 
 codex-skill-partner() { _vetcoders_skill_entry codex partner "$@"; }
 claude-skill-partner() { _vetcoders_skill_entry claude partner "$@"; }
-gemini-skill-partner() { _vetcoders_skill_entry gemini partner "$@"; }
 
 codex-skill-polarize() { _vetcoders_skill_entry codex polarize "$@"; }
 claude-skill-polarize() { _vetcoders_skill_entry claude polarize "$@"; }
-gemini-skill-polarize() { _vetcoders_skill_entry gemini polarize "$@"; }
 
 codex-skill-prune() { _vetcoders_skill_entry codex prune "$@"; }
 claude-skill-prune() { _vetcoders_skill_entry claude prune "$@"; }
-gemini-skill-prune() { _vetcoders_skill_entry gemini prune "$@"; }
 
 codex-skill-release() { _vetcoders_skill_entry codex release "$@"; }
 claude-skill-release() { _vetcoders_skill_entry claude release "$@"; }
-gemini-skill-release() { _vetcoders_skill_entry gemini release "$@"; }
 
 codex-skill-research() { _vetcoders_skill_entry codex research "$@"; }
 claude-skill-research() { _vetcoders_skill_entry claude research "$@"; }
-gemini-skill-research() { _vetcoders_skill_entry gemini research "$@"; }
 vc-research() { _vetcoders_research "$@"; }
 vc-research-await() { _vetcoders_await "" --research "$@"; }
 
 codex-skill-review() { _vetcoders_skill_entry codex review "$@"; }
 claude-skill-review() { _vetcoders_skill_entry claude review "$@"; }
-gemini-skill-review() { _vetcoders_skill_entry gemini review "$@"; }
 
 codex-skill-scaffold() { _vetcoders_skill_entry codex scaffold "$@"; }
 claude-skill-scaffold() { _vetcoders_skill_entry claude scaffold "$@"; }
-gemini-skill-scaffold() { _vetcoders_skill_entry gemini scaffold "$@"; }
 
 codex-skill-workflow() { _vetcoders_skill_entry codex workflow "$@"; }
 claude-skill-workflow() { _vetcoders_skill_entry claude workflow "$@"; }
-gemini-skill-workflow() { _vetcoders_skill_entry gemini workflow "$@"; }
 
 _vetcoders_skill_wrapper_usage() {
   local skill="$1"
   case "$skill" in
     init)
-      printf 'Usage: vc-init <claude|codex|gemini|agy|junie|grok> [--prompt <text>] [--file <path>]\n' >&2
+      printf 'Usage: vc-init <claude|codex|agy|junie|grok> [--prompt <text>] [--file <path>]\n' >&2
       ;;
     marbles)
-      printf 'Usage: vc-marbles <claude|codex|gemini|agy|junie|grok> [--prompt <text>|--file <path>|--depth <n>] [--count <n>]\n' >&2
+      printf 'Usage: vc-marbles <claude|codex|agy|junie|grok> [--prompt <text>|--file <path>|--depth <n>] [--count <n>]\n' >&2
       printf '       vc-marbles <pause|stop|resume|session|inspect|delete|gc> [args]\n' >&2
       ;;
     polarize)
-      printf 'Usage: vc-polarize <claude|codex|gemini|agy|junie|grok> --task <text> [--prompt <text>] [--file <path>] [--no-aicx] [--no-context-corpus]\n' >&2
-      printf '       vc-polarize <claude|codex|gemini|agy|junie|grok> [--count <n>] [--prompt <text>] [--file <path>]\n' >&2
+      printf 'Usage: vc-polarize <claude|codex|agy|junie|grok> --task <text> [--prompt <text>] [--file <path>] [--no-aicx] [--no-context-corpus]\n' >&2
+      printf '       vc-polarize <claude|codex|agy|junie|grok> [--count <n>] [--prompt <text>] [--file <path>]\n' >&2
       ;;
     *)
-      printf 'Usage: vc-%s <claude|codex|gemini|agy|junie|grok> [--prompt <text>] [--file <path>]\n' "$skill" >&2
+      printf 'Usage: vc-%s <claude|codex|agy|junie|grok> [--prompt <text>] [--file <path>]\n' "$skill" >&2
       ;;
   esac
 }
@@ -154,7 +128,8 @@ _vetcoders_skill_wrapper_usage() {
 _vetcoders_has_agent() {
   local candidate="${1:-}"
   case "$candidate" in
-    claude|codex|gemini|agy|junie|grok) return 0 ;;
+    claude|codex|agy|junie|grok) return 0 ;;
+    gemini) return 1 ;;  # deprecated - gemini CLI is dead upstream, use agy (Google Antigravity CLI)
     *) return 1 ;;
   esac
 }
@@ -184,7 +159,7 @@ _vetcoders_skill_wrapper() {
     return 1
   }
   _vetcoders_has_agent "$tool" || {
-    printf 'vc-%s expects <claude|codex|gemini|agy|junie|grok> as the first argument.\n' "$skill" >&2
+    printf 'vc-%s expects <claude|codex|agy|junie|grok> as the first argument.\n' "$skill" >&2
     _vetcoders_skill_wrapper_usage "$skill"
     return 1
   }
