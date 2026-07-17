@@ -189,6 +189,342 @@ def test_resume_headless_routes_codex_through_exec(tmp_path: Path) -> None:
     assert "carry on" in args
 
 
+def test_fork_session_terminal_routes_codex_through_native_fork_with_file(
+    tmp_path: Path,
+) -> None:
+    """A visible Codex fork must create a new lineage branch and seed its
+    first turn from --file. It must never degrade to a normal resume."""
+    fake_bin = tmp_path / "bin"
+    home = tmp_path / "home"
+    vc_frame_capture = tmp_path / "vc_frame.txt"
+    prompt_file = tmp_path / "handoff.md"
+    fake_bin.mkdir()
+    home.mkdir()
+    prompt_file.write_text("Build the crew dashboard from our shared history.\n")
+
+    _write_fake_command(
+        fake_bin / "vc-frame",
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "{",
+                '  printf "%s\\n" "--CALL--"',
+                '  printf "%s\\n" "$@"',
+                '} >> "$VC_FRAME_CAPTURE"',
+            ]
+        )
+        + "\n",
+    )
+
+    env = os.environ.copy()
+    for key in (
+        "VIBECRAFTED_RUN_ID",
+        "VIBECRAFTED_RUN_LOCK",
+        "VIBECRAFTED_SKILL_CODE",
+        "VIBECRAFTED_SKILL_NAME",
+        "VIBECRAFTED_LOOP_NR",
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+    ):
+        env.pop(key, None)
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-session"
+    env["VC_FRAME_CAPTURE"] = str(vc_frame_capture)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{SHELL_SH}"; '
+                "vc-resume codex --runtime terminal --fork-session "
+                f"--session parent-session-123 --file '{prompt_file}'"
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "Fork launched in operator session: operator-session" in result.stdout
+    lines = vc_frame_capture.read_text(encoding="utf-8").splitlines()
+    calls: list[list[str]] = []
+    current: list[str] = []
+    for line in lines:
+        if line == "--CALL--":
+            if current:
+                calls.append(current)
+            current = []
+        else:
+            current.append(line)
+    if current:
+        calls.append(current)
+    new_tab_call = next(call for call in calls if call[2:4] == ["action", "new-tab"])
+    assert "fork-codex" in new_tab_call
+    command_body = Path(new_tab_call[-1]).read_text(encoding="utf-8")
+    assert (
+        "codex --dangerously-bypass-approvals-and-sandbox fork parent-session-123"
+        in command_body
+    )
+    assert "Build the crew dashboard from our shared history." in command_body
+    assert "codex resume" not in command_body
+
+
+def test_fork_session_headless_codex_fails_closed(tmp_path: Path) -> None:
+    """Codex exposes fork only through the interactive TUI. A headless runner
+    must refuse instead of silently resuming the parent session."""
+    fake_bin = tmp_path / "bin"
+    home = tmp_path / "home"
+    codex_capture = tmp_path / "codex.txt"
+    fake_bin.mkdir()
+    home.mkdir()
+    _write_fake_command(
+        fake_bin / "codex",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'printf "%s\\n" "$@" > "$CODEX_CAPTURE"\n',
+    )
+
+    env = os.environ.copy()
+    for key in (
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+    ):
+        env.pop(key, None)
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["CODEX_CAPTURE"] = str(codex_capture)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{SHELL_SH}"; '
+                "vc-resume codex --fork-session --session parent-session-123 "
+                "--prompt 'start the branch'"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Codex --fork-session requires a visible terminal runtime" in result.stderr
+    assert not codex_capture.exists()
+
+
+def test_fork_session_headless_claude_uses_native_flag(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    home = tmp_path / "home"
+    claude_capture = tmp_path / "claude.txt"
+    fake_bin.mkdir()
+    home.mkdir()
+    _write_fake_command(
+        fake_bin / "claude",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'printf "%s\\n" "$@" > "$CLAUDE_CAPTURE"\n',
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["CLAUDE_CAPTURE"] = str(claude_capture)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+
+    subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{SHELL_SH}"; '
+                "vc-resume claude --fork-session --session parent-session-456 "
+                "--prompt 'start the branch'"
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert claude_capture.read_text(encoding="utf-8").splitlines() == [
+        "--print",
+        "--dangerously-skip-permissions",
+        "--fork-session",
+        "--resume",
+        "parent-session-456",
+        "start the branch",
+    ]
+
+
+def test_fork_session_headless_grok_uses_native_flag(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    home = tmp_path / "home"
+    grok_capture = tmp_path / "grok.txt"
+    fake_bin.mkdir()
+    home.mkdir()
+    _write_fake_command(
+        fake_bin / "grok",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'printf "%s\\n" "$@" > "$GROK_CAPTURE"\n',
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["GROK_CAPTURE"] = str(grok_capture)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+
+    subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{SHELL_SH}"; '
+                "vc-resume grok --fork-session --session parent-session-654 "
+                "--prompt 'start the branch'"
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    args = grok_capture.read_text(encoding="utf-8").splitlines()
+    assert args[:3] == ["--resume", "parent-session-654", "--fork-session"]
+    assert "--single" in args
+    assert "start the branch" in args
+
+
+def test_fork_session_rejects_agent_without_native_fork(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{SHELL_SH}"; '
+                "vc-resume agy --fork-session --session parent-session-789"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "agy does not support --fork-session" in result.stderr
+
+
+def test_resume_headless_agy_uses_conversation_contract(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    home = tmp_path / "home"
+    agy_capture = tmp_path / "agy.txt"
+    fake_bin.mkdir()
+    home.mkdir()
+    _write_fake_command(
+        fake_bin / "agy",
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'printf "%s\\n" "$@" > "$AGY_CAPTURE"\n',
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["AGY_CAPTURE"] = str(agy_capture)
+    env.pop("VIBECRAFTED_OPERATOR_SESSION", None)
+
+    subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{SHELL_SH}"; '
+                "vc-resume agy --session 334a67b1-56ae-448a-9a88-0668ff48262c "
+                "--prompt 'continue the runtime research'"
+            ),
+        ],
+        check=True,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert agy_capture.read_text(encoding="utf-8").splitlines() == [
+        "--dangerously-skip-permissions",
+        "--conversation",
+        "334a67b1-56ae-448a-9a88-0668ff48262c",
+        "--print",
+        "continue the runtime research",
+    ]
+
+
+def test_fork_session_is_rejected_outside_resume(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{SHELL_SH}"; '
+                "vc-implement codex --fork-session --prompt 'must not dispatch'"
+            ),
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "--fork-session is only supported by vibecrafted resume" in result.stderr
+
+
 def test_copy_managed_launcher_replaces_broken_framework_symlink(
     tmp_path: Path,
 ) -> None:

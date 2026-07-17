@@ -1865,6 +1865,19 @@ def test_resume_subcommand_forwards_session_and_prompt_to_agent(
     ]
 
 
+def test_resume_help_documents_first_class_fork_session() -> None:
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "resume", "--help"],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--fork-session" in result.stdout
+    assert "Create a new session from the parent's history" in result.stdout
+
+
 def test_resume_subcommand_wraps_terminal_runtime_in_vc_frame_operator_session(
     tmp_path: Path,
 ) -> None:

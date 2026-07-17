@@ -293,6 +293,7 @@ _vetcoders_polarize_loop() {
   shift
 
   _vetcoders_parse_contract "$@" || return 1
+  _vetcoders_reject_fork_session_outside_resume || return 1
   [[ -n "$_vetcoders_contract_count" ]] || {
     echo "vc-polarize loop runtime requires --count <n>." >&2
     return 1

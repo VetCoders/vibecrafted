@@ -180,6 +180,7 @@ _vetcoders_skill() {
   inherited_run_id="$(_vetcoders_effective_run_id 2>/dev/null || true)"
   inherited_run_lock="$(_vetcoders_effective_run_lock 2>/dev/null || true)"
   _vetcoders_parse_contract "$@" || return 1
+  _vetcoders_reject_fork_session_outside_resume || return 1
   if [[ "$skill" == "polarize" && -n "$_vetcoders_contract_count" ]]; then
     _vetcoders_polarize_loop "$tool" "$@"
     return

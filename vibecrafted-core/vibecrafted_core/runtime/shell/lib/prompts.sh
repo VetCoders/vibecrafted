@@ -27,6 +27,7 @@ _vetcoders_contract_reset() {
   _vetcoders_contract_file=""
   _vetcoders_contract_task=""
   _vetcoders_contract_session=""
+  _vetcoders_contract_fork_session=""
   _vetcoders_contract_count=""
   _vetcoders_contract_depth=""
   _vetcoders_contract_runtime=""
@@ -82,6 +83,9 @@ _vetcoders_parse_contract() {
         [[ $# -gt 0 ]] || { echo "Missing value for --session" >&2; return 1; }
         _vetcoders_contract_session="$1"
         ;;
+      --fork-session)
+        _vetcoders_contract_fork_session=1
+        ;;
       --count)
         shift
         [[ $# -gt 0 ]] || { echo "Missing value for --count" >&2; return 1; }
@@ -128,6 +132,13 @@ _vetcoders_effective_runtime() {
   else
     _vetcoders_default_runtime
   fi
+}
+
+_vetcoders_reject_fork_session_outside_resume() {
+  [[ -z "$_vetcoders_contract_fork_session" ]] || {
+    echo "--fork-session is only supported by vibecrafted resume." >&2
+    return 1
+  }
 }
 
 _vetcoders_require_positive_int() {

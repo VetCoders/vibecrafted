@@ -18,12 +18,13 @@ flowchart TD
 
 ## Routes
 
-| Entry                                                                           | Args                                         | Produces                                                           | Exit            |
-| ------------------------------------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------ | --------------- |
-| `vibecrafted agents`                                                            | none                                         | command-deck guidance for agent modes                              | `0` on help     |
-| `vibecrafted <agent> implement\|research\|review\|plan\|prompt\|observe\|await` | mode-specific args                           | launcher plus report, transcript, and meta under the artifact root | `0` on dispatch |
-| `vibecrafted resume <agent> --session <id>`                                     | `--session`, optional `--prompt` or `--file` | resumed agent session                                              | `0` on dispatch |
-| `vc-agents`                                                                     | same as `vibecrafted agents`                 | command-deck guidance                                              | `0` on help     |
+| Entry                                                                           | Args                                                                         | Produces                                                           | Exit            |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------- |
+| `vibecrafted agents`                                                            | none                                                                         | command-deck guidance for agent modes                              | `0` on help     |
+| `vibecrafted <agent> implement\|research\|review\|plan\|prompt\|observe\|await` | mode-specific args                                                           | launcher plus report, transcript, and meta under the artifact root | `0` on dispatch |
+| `vibecrafted resume <agent> --session <id>`                                     | `--session`, optional `--prompt` or `--file`                                 | resumed agent session                                              | `0` on dispatch |
+| `vibecrafted resume <agent> --session <id> --fork-session`                      | parent session plus optional `--prompt` or `--file`; native support required | new session inheriting the parent history                          | `0` on dispatch |
+| `vc-agents`                                                                     | same as `vibecrafted agents`                                                 | command-deck guidance                                              | `0` on help     |
 
 ### Escalation edges
 

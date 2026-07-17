@@ -52,7 +52,7 @@ Identity vs drift:
 | ----------------------------- | ------------------------------------------ |
 | `vibecrafted init [agent]`    | Orient an agent in this repo               |
 | `vibecrafted <skill> <agent>` | Run a workflow with an agent               |
-| `vibecrafted resume <agent>`  | Continue a previous session                |
+| `vibecrafted resume <agent>`  | Continue or fork a previous session        |
 | `vibecrafted status`          | Today's agent activity                     |
 | `vibecrafted doctor`          | Installation health — pass/fail            |
 | `vibecrafted update`          | Update to the latest release               |
@@ -111,7 +111,7 @@ Usage:
 Commands:
   init [agent]         Orient an agent in this repo
   <skill> <agent>      Run a workflow with an agent
-  resume <agent>       Continue a previous session
+  resume <agent>       Continue or fork a previous session
   status               Today's agent activity
   doctor               Installation health — pass/fail
   update               Update to the latest release

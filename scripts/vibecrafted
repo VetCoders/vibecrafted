@@ -490,6 +490,7 @@ _print_skill_specific_flags() {
     resume)
       printf '\n%bResume flags:%b\n' "$_bold" "$_reset"
       printf '  --session <id>                 Session ID to resume\n'
+      printf "  --fork-session                 Create a new session from the parent's history\n"
       printf '  -p, --prompt <text>            Continue with extra prompt text\n'
       printf '  -f, --file <path.md>           Continue with prompt context from file\n'
       ;;
@@ -794,7 +795,7 @@ cmd_resume_help() {
   printf '\n'
   printf '%b⚒%b  %bresume%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  Resume an existing agent session.\n'
+  printf '  Resume an existing session or fork its history into a new one.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted resume <claude|codex|agy|junie|grok> --session <session_id> [flags]\n'
@@ -802,8 +803,11 @@ cmd_resume_help() {
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted resume claude --session abc123\n'
   printf '  vibecrafted resume codex --session abc123 --prompt "Continue from the failing test"\n'
+  printf '  vibecrafted resume codex --session abc123 --fork-session --file handoff.md\n'
   printf '\n'
   _print_skill_specific_flags "resume"
+  printf '%bNative fork support:%b claude · grok · codex (visible terminal only)\n' "$_bold" "$_reset"
+  printf '%bResume only:%b agy · junie\n' "$_bold" "$_reset"
   printf '\n'
 }
 
@@ -1682,7 +1686,7 @@ cmd_help() {
   printf '%bCommands:%b\n' "$_bold" "$_reset"
   printf '  %binit%b [agent]         Orient an agent in this repo\n' "$_cyan" "$_reset"
   printf '  %b<skill> <agent>%b      Run a workflow with an agent\n' "$_cyan" "$_reset"
-  printf '  %bresume%b <agent>       Continue a previous session\n' "$_cyan" "$_reset"
+  printf '  %bresume%b <agent>       Continue or fork a previous session\n' "$_cyan" "$_reset"
   printf '  %bstatus%b               Today'"'"'s agent activity\n' "$_cyan" "$_reset"
   printf '  %bdoctor%b               Installation health — pass/fail\n' "$_cyan" "$_reset"
   printf '  %bupdate%b               Update to the latest release\n' "$_cyan" "$_reset"
@@ -1792,7 +1796,7 @@ cmd_help_full() {
   printf '  %bvibecrafted dispatch%b <file.toml>      Deterministic dispatch.v1 supervisor\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted dispatch%b run ...          Async lifecycle supervisor for one worker\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted telemetry smoke%b [flags]  Smoke the marbles telemetry path\n' "$_cyan" "$_reset"
-  printf '  %bvibecrafted resume%b <agent> [flags]    Resume an existing agent session\n' "$_cyan" "$_reset"
+  printf '  %bvibecrafted resume%b <agent> [flags]    Resume or fork an agent session\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted status%b                    Today'"'"'s agent activity\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted update%b                     Pull latest + reinstall\n' "$_cyan" "$_reset"
   printf '  %bvibecrafted doctor%b                    Installation health check\n' "$_cyan" "$_reset"
@@ -1811,6 +1815,7 @@ cmd_help_full() {
   printf '  --count <n>                    Marbles / Polarize loop count (default: 3)\n'
   printf '  --depth <n>                    Marbles plan crawl depth (default: 3)\n'
   printf '  --session <id>                 Session ID for vibecrafted resume\n'
+  printf '  --fork-session                 Fork parent history into a new session (native support only)\n'
   printf '\n'
   printf '%b=== GLOBAL OPTIONS ===%b\n' "$_bold" "$_reset"
   printf '\n'
@@ -1823,6 +1828,7 @@ cmd_help_full() {
   printf '  vibecrafted agy review .vibecrafted/plans/my-plan.md   # (gemini deprecated)\n'
   printf '  vibecrafted codex observe --last\n'
   printf '  vibecrafted resume claude --session <id> --prompt "Continue the fix"\n'
+  printf '  vibecrafted resume codex --session <id> --fork-session --file handoff.md\n'
   printf '\n'
   printf '%b=== EXAMPLES ===%b\n' "$_bold" "$_reset"
   printf '\n'

@@ -12,6 +12,7 @@ _vetcoders_marbles() {
   local -a marbles_env
   script="$(_vetcoders_spawn_script "$tool" "marbles_spawn.sh")" || return 1
   _vetcoders_parse_contract "$@" || return 1
+  _vetcoders_reject_fork_session_outside_resume || return 1
   [[ -z "$_vetcoders_contract_session" ]] || {
     echo "--session is only supported by vibecrafted resume." >&2
     return 1
@@ -159,7 +160,7 @@ _vetcoders_resume_agent() {
     _vetcoders_contract_tail="$_resume_rest"
   fi
   [[ -n "$_vetcoders_contract_session" ]] || {
-    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--fork-session] [--prompt <text>] [--file <path>]" >&2
     return 1
   }
   [[ -z "$_vetcoders_contract_count" ]] || {
@@ -174,9 +175,15 @@ _vetcoders_resume_agent() {
   local resume_prompt
   local runtime
   local resume_cmd
+  local action_label="Resume"
+  local tab_prefix="resume"
+  if [[ -n "$_vetcoders_contract_fork_session" ]]; then
+    action_label="Fork"
+    tab_prefix="fork"
+  fi
   resume_prompt="$(_vetcoders_compose_input_context "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1
   runtime="$(_vetcoders_effective_runtime)"
-  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt")" || return 1
+  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" interactive "$_vetcoders_contract_fork_session")" || return 1
 
   # prepare_operator_runtime can create or attach an operator surface only when
   # we are already in vc_frame, know an operator session, or have an interactive
@@ -186,10 +193,14 @@ _vetcoders_resume_agent() {
   }; then
     _vetcoders_prepare_operator_runtime "$runtime" || return 1
     if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
-      _vetcoders_spawn_into_operator_session "resume-${tool}" "$resume_cmd" || return 1
-      printf 'Resume launched in operator session: %s\n' "$VIBECRAFTED_OPERATOR_SESSION"
+      _vetcoders_spawn_into_operator_session "${tab_prefix}-${tool}" "$resume_cmd" || return 1
+      printf '%s launched in operator session: %s\n' "$action_label" "$VIBECRAFTED_OPERATOR_SESSION"
       printf '  agent:   %s\n' "$tool"
-      printf '  session: %s\n' "$_vetcoders_contract_session"
+      if [[ -n "$_vetcoders_contract_fork_session" ]]; then
+        printf '  parent:  %s\n' "$_vetcoders_contract_session"
+      else
+        printf '  session: %s\n' "$_vetcoders_contract_session"
+      fi
       return 0
     fi
   fi
@@ -197,7 +208,7 @@ _vetcoders_resume_agent() {
   # No operator surface (piped / async-supervisor baton-pass): run the agent's
   # NON-INTERACTIVE resume invocation directly. Recompute in headless mode so we
   # don't eval an interactive command that would hang without a tty.
-  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" headless)" || return 1
+  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" headless "$_vetcoders_contract_fork_session")" || return 1
   eval "$resume_cmd"
 }
 
@@ -209,10 +220,25 @@ _vetcoders_resume_command() {
   # (direct eval / async-supervisor baton-pass — no tty). Per-agent resume flags
   # differ; the headless invocations were verified against each agent's --help.
   local mode="${4:-interactive}"
+  local fork_session="${5:-}"
   local quoted_session quoted_prompt
   quoted_session="$(_vetcoders_shell_quote "$session_id")"
   if [[ -n "$resume_prompt" ]]; then
     quoted_prompt="$(_vetcoders_shell_quote "$resume_prompt")"
+  fi
+
+  if [[ -n "$fork_session" ]]; then
+    case "$tool" in
+      claude|codex|grok) ;;
+      *)
+        echo "$tool does not support --fork-session in the installed CLI contract." >&2
+        return 1
+        ;;
+    esac
+    if [[ "$tool" == codex && "$mode" == headless ]]; then
+      echo "Codex --fork-session requires a visible terminal runtime; codex exec has no fork command." >&2
+      return 1
+    fi
   fi
 
   case "$tool" in
@@ -221,20 +247,26 @@ _vetcoders_resume_command() {
       # an interactive session and would hang under eval with no tty.
       if [[ "$mode" == headless ]]; then
         if [[ -n "$resume_prompt" ]]; then
-          printf 'claude --print --dangerously-skip-permissions --resume %s %s\n' "$quoted_session" "$quoted_prompt"
+          printf 'claude --print --dangerously-skip-permissions%s --resume %s %s\n' "${fork_session:+ --fork-session}" "$quoted_session" "$quoted_prompt"
         else
-          printf 'claude --print --dangerously-skip-permissions --resume %s\n' "$quoted_session"
+          printf 'claude --print --dangerously-skip-permissions%s --resume %s\n' "${fork_session:+ --fork-session}" "$quoted_session"
         fi
       elif [[ -n "$resume_prompt" ]]; then
-        printf 'claude --resume %s %s\n' "$quoted_session" "$quoted_prompt"
+        printf 'claude%s --resume %s %s\n' "${fork_session:+ --fork-session}" "$quoted_session" "$quoted_prompt"
       else
-        printf 'claude --resume %s\n' "$quoted_session"
+        printf 'claude%s --resume %s\n' "${fork_session:+ --fork-session}" "$quoted_session"
       fi
       ;;
     codex)
       # headless = `codex exec resume` (non-interactive); `codex resume` is the
       # interactive picker and cannot run under a pipe.
-      if [[ "$mode" == headless ]]; then
+      if [[ -n "$fork_session" ]]; then
+        if [[ -n "$resume_prompt" ]]; then
+          printf 'codex --dangerously-bypass-approvals-and-sandbox fork %s %s\n' "$quoted_session" "$quoted_prompt"
+        else
+          printf 'codex --dangerously-bypass-approvals-and-sandbox fork %s\n' "$quoted_session"
+        fi
+      elif [[ "$mode" == headless ]]; then
         if [[ -n "$resume_prompt" ]]; then
           printf 'codex exec --dangerously-bypass-approvals-and-sandbox resume %s %s\n' "$quoted_session" "$quoted_prompt"
         else
@@ -293,9 +325,9 @@ _vetcoders_resume_command() {
       # Use streaming-json (matching verified python lane + grok 0.2.97 headless)
       # so session/usage parse via JSON_TOKEN_PATTERNS works from transcript.
       if [[ -n "$resume_prompt" ]]; then
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json --single %s\n' "$quoted_session" "$quoted_prompt"
+        printf 'grok --resume %s%s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json --single %s\n' "$quoted_session" "${fork_session:+ --fork-session}" "$quoted_prompt"
       else
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json\n' "$quoted_session"
+        printf 'grok --resume %s%s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json\n' "$quoted_session" "${fork_session:+ --fork-session}"
       fi
       ;;
     *)
@@ -343,7 +375,7 @@ PY
 vc-resume() {
   local tool="${1:-}"
   [[ -n "$tool" ]] || {
-    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "Usage: vc-resume [<claude|codex|gemini|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--fork-session] [--prompt <text>] [--file <path>]" >&2
     return 1
   }
   if [[ "$tool" == "--session" ]]; then

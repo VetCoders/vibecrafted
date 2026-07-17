@@ -7,6 +7,7 @@ _vetcoders_skill_init() {
   local runtime init_prompt command_text
 
   _vetcoders_parse_contract "$@" || return 1
+  _vetcoders_reject_fork_session_outside_resume || return 1
   [[ -z "$_vetcoders_contract_count" ]] || {
     echo "--count is not supported by vibecrafted init." >&2
     return 1
@@ -40,6 +41,7 @@ _vetcoders_skill_operator() {
   local runtime operator_prompt command_text
 
   _vetcoders_parse_contract "$@" || return 1
+  _vetcoders_reject_fork_session_outside_resume || return 1
   [[ -z "$_vetcoders_contract_count" ]] || {
     echo "--count is not supported by vibecrafted operator." >&2
     return 1
@@ -62,4 +64,3 @@ _vetcoders_skill_operator() {
   _vetcoders_prepare_operator_runtime "$runtime" || return 1
   _vetcoders_spawn_into_operator_session "${tool}-operator" "$command_text"
 }
-
