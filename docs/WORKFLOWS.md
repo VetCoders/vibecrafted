@@ -21,6 +21,11 @@ contracts in `skills/`.
   lifecycle passes.
 - `vibecrafted dispatch <file.toml>` is the deterministic supervisor lane for
   dispatch manifests and async lifecycle runs.
+- `vibecrafted capabilities --json` is the versioned machine-readable workflow
+  contract surface (`vibecrafted.workflow_capabilities.v1`): per-workflow
+  runtime kind, execution target (`single_agent|swarm`), requested-agent
+  policy, and the live research lane selection with its source and any
+  configured-but-unsupported agent tokens. Read-only; launches nothing.
 - `vibecrafted gui`, `tui`, and `dashboard` are operator surfaces for a second
   visit, not the front door.
 

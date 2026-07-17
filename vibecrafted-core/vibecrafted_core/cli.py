@@ -115,6 +115,11 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("dispatch", help="run or validate a dispatch plan")
     doctor = sub.add_parser("doctor", help="verify installed Vibecrafted runtime")
     doctor.add_argument("--json", action="store_true")
+    capabilities = sub.add_parser(
+        "capabilities",
+        help="describe workflow execution contracts (versioned, machine-readable)",
+    )
+    capabilities.add_argument("--json", action="store_true")
     for name in LAUNCHERS:
         _add_launch_parser(sub, name)
     return parser
@@ -530,7 +535,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"vibecrafted {__version__}")
         return 0
 
-    python_commands = {"dispatch", "doctor", "paste", "stop"} | set(LAUNCHERS)
+    python_commands = {"capabilities", "dispatch", "doctor", "paste", "stop"} | set(
+        LAUNCHERS
+    )
     agent_python_verbs = {"observe", "await", "stop"}
     is_lifecycle = shell_wrapper_verb is not None
     if raw_args and shell_wrapper_verb is None:
@@ -599,6 +606,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{summary['failures']} failures"
             )
         return 0 if summary["failures"] == 0 else 1
+    if args.command == "capabilities":
+        from .workflow_capabilities import (
+            render_capabilities_lines,
+            workflow_capabilities_payload,
+        )
+
+        capabilities_payload = workflow_capabilities_payload()
+        if args.json:
+            print(
+                json.dumps(
+                    capabilities_payload, ensure_ascii=False, indent=2, sort_keys=True
+                )
+            )
+        else:
+            for line in render_capabilities_lines(capabilities_payload):
+                print(line)
+        return 0
     if args.command == "paste":
         from .paste import run_namespace
 
