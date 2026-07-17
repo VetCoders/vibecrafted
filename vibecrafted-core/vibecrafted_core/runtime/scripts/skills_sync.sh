@@ -168,11 +168,11 @@ fi
 
 rule_files=()
 localized_rule_dirs=(pl)
-for rule_name in VERIFICATION_RULE.md LIVING_TREE_RULE.md; do
+for rule_name in FOUNDATION_RULE.md VERIFICATION_RULE.md LIVING_TREE_RULE.md; do
   [[ -f "$skills_root/$rule_name" ]] && rule_files+=("$rule_name")
 done
 for localized_dir in "${localized_rule_dirs[@]}"; do
-  for rule_name in VERIFICATION_RULE.md LIVING_TREE_RULE.md; do
+  for rule_name in FOUNDATION_RULE.md VERIFICATION_RULE.md LIVING_TREE_RULE.md; do
     rule_path="$localized_dir/$rule_name"
     [[ -f "$skills_root/$rule_path" ]] && rule_files+=("$rule_path")
   done

@@ -1864,8 +1864,13 @@ def cli(argv: list[str] | None = None) -> int:
         choices=("sync", "status"),
         help="sync writes snapshots and prints the aggregate payload; status is an alias.",
     )
-    parser.parse_args(argv)
-    payload = sync_state()
+    parser.add_argument(
+        "--run-id",
+        default="",
+        help="project only this run and child rounds without the global board lock",
+    )
+    args = parser.parse_args(argv)
+    payload = sync_state(only_run_id=args.run_id or None)
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 

@@ -48,17 +48,20 @@ def _require_git_root(path: Path) -> Path:
     return Path(result.stdout.strip()).resolve()
 
 
-def _ahead_behind(path: Path, upstream: str) -> tuple[int, int]:
+def _ahead_behind(path: Path, upstream: str) -> tuple[int | None, int | None]:
     if not upstream:
-        return (0, 0)
-    raw = _git_text(path, "rev-list", "--left-right", "--count", f"HEAD...{upstream}")
+        return (None, None)
+    result = _git(path, "rev-list", "--left-right", "--count", f"HEAD...{upstream}")
+    if result.returncode != 0:
+        return (None, None)
+    raw = result.stdout.strip()
     parts = raw.split()
     if len(parts) != 2:
-        return (0, 0)
+        return (None, None)
     try:
         return (int(parts[0]), int(parts[1]))
     except ValueError:
-        return (0, 0)
+        return (None, None)
 
 
 def _status_counts(path: Path) -> dict[str, int]:
@@ -138,8 +141,11 @@ def repo_full(path: str | Path = ".") -> dict[str, Any]:
     )
     ahead, behind = _ahead_behind(root, upstream)
     status_counts = _status_counts(root)
+    remote_names = _git_lines(root, "remote")
     default_remote = (
-        _git_text(root, "remote").splitlines()[0] if _git_text(root, "remote") else ""
+        "origin"
+        if "origin" in remote_names
+        else (remote_names[0] if len(remote_names) == 1 else "")
     )
     default_branch = ""
     if default_remote:
@@ -160,7 +166,12 @@ def repo_full(path: str | Path = ".") -> dict[str, Any]:
         "upstream": upstream,
         "ahead": ahead,
         "behind": behind,
+        "ahead_behind_state": "known"
+        if ahead is not None and behind is not None
+        else "unknown",
+        "ahead_behind_error": "" if upstream else "missing_upstream",
         "default_remote": default_remote,
+        "default_remote_state": "known" if default_remote else "unknown",
         "default_branch": default_branch,
         "remotes": _remotes(root),
         "status": status_counts,
@@ -179,7 +190,7 @@ def repo_full_summary(path: str | Path = ".") -> str:
         f"- Root: {state['root']}",
         f"- Branch: {state['branch']}",
         f"- Upstream: {state['upstream'] or 'none'}",
-        f"- Ahead / behind: {state['ahead']} / {state['behind']}",
+        f"- Ahead / behind: {state['ahead'] if state['ahead'] is not None else 'unknown'} / {state['behind'] if state['behind'] is not None else 'unknown'}",
         f"- HEAD: {state['head_short']}",
         f"- Dirt: staged {status['staged']}, unstaged {status['unstaged']}, untracked {status['untracked']}",
         f"- Stashes: {state['stashes']}",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
@@ -24,6 +24,7 @@ from vibecrafted_core.dispatch.supervisor import (
     run_dispatch,
     workflow_cell_launcher,
 )
+from vibecrafted_core.foundation.service import seal_repository
 
 FAST_AWAIT = "await = { poll_s = 0.02, timeout_min = 1.0 }"
 
@@ -94,7 +95,26 @@ reports_dir = "{reports_dir}"
 
 {cuts_toml}
 """
-    return parse_dispatch(text, base_dir=tmp_path), reports_dir, artifacts_dir
+    dispatch = parse_dispatch(text, base_dir=tmp_path)
+    config = repo_dir / "vibecrafted.toml"
+    if config.is_file():
+        receipt, receipt_path = seal_repository(
+            repo_dir,
+            output=tmp_path / "foundation-receipt.json",
+            run_id="dispatch-test",
+            created_by="test-supervisor",
+        )
+        assert receipt.status.value == "SEALED", receipt.decision_reasons
+        dispatch = replace(
+            dispatch,
+            cuts=tuple(
+                replace(cut, foundation_receipt_path=str(receipt_path))
+                if cut.mode != "read"
+                else cut
+                for cut in dispatch.cuts
+            ),
+        )
+    return dispatch, reports_dir, artifacts_dir
 
 
 def init_git_repo(path: Path) -> None:
@@ -105,10 +125,33 @@ def init_git_repo(path: Path) -> None:
         ["config", "user.name", "fake"],
     ):
         subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+    authority = path.with_name(f"{path.name}-authority.git")
+    subprocess.run(
+        ["git", "init", "-q", "--bare", str(authority)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(authority)],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
     (path / "seed.txt").write_text("seed\n", encoding="utf-8")
+    (path / "vibecrafted.toml").write_text(
+        '[vibecrafted.foundation]\nrequired = true\nauthority = "origin/main"\n'
+        "normative_sources = []\nnormative_discovery_globs = []\npremises = []\n",
+        encoding="utf-8",
+    )
     subprocess.run(["git", "add", "-A"], cwd=path, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-q", "-m", "seed"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "push", "-q", "-u", "origin", "HEAD:main"],
         cwd=path,
         check=True,
         capture_output=True,

@@ -28,6 +28,12 @@ def test_skills_path_points_at_bundled_skills_tree() -> None:
     skills = pr.skills_path()
     assert skills.is_dir()
     assert (skills / "vc-justdo" / "SKILL.md").is_file()
+    assert (skills / "FOUNDATION_RULE.md").is_file()
+
+
+def test_schemas_path_contains_foundation_contract() -> None:
+    schemas = pr.schemas_path()
+    assert (schemas / "foundation.schema.v1.json").is_file()
 
 
 def test_deck_path_points_at_the_command_deck_file() -> None:
@@ -45,5 +51,11 @@ def test_missing_resource_raises_with_the_requested_path() -> None:
 
 
 def test_resource_path_returns_path_instances() -> None:
-    for getter in (pr.package_root, pr.runtime_path, pr.skills_path, pr.deck_path):
+    for getter in (
+        pr.package_root,
+        pr.runtime_path,
+        pr.skills_path,
+        pr.schemas_path,
+        pr.deck_path,
+    ):
         assert isinstance(getter(), Path)

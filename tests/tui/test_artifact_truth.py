@@ -39,6 +39,8 @@ def _finalized_run(tmp_path: Path) -> tuple[Path, Path, Path]:
     _bash(
         f'''
         set -euo pipefail
+        export VIBECRAFTED_ROOT="{REPO_ROOT}"
+        export VIBECRAFTED_HOME="{tmp_path / "runtime-state"}"
         source "{COMMON_SH}"
         export SPAWN_RUN_ID=trth-test-001
         spawn_write_meta "{meta}" launching codex implement / plan.md "{report}" "{transcript}" l.sh

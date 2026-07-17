@@ -20,6 +20,7 @@ EXPECTED_REQUIRED = {
     "install.sh",
     "install.ps1",
     "install.toml",
+    "vibecrafted.toml",
     "scripts/distribution_manifest.py",
     "scripts/vetcoders_install.py",
     "scripts/runtime_paths.py",

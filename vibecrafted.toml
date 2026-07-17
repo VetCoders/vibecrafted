@@ -1,0 +1,6 @@
+[vibecrafted.foundation]
+required = true
+authority = "origin/main"
+normative_discovery_globs = []
+normative_sources = []
+premises = []

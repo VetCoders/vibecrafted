@@ -15,10 +15,27 @@ spawn_control_plane_script() {
 }
 
 spawn_sync_control_plane() {
-  local script_path
+  local meta_path="${1:-}"
+  local script_path run_id="${SPAWN_RUN_ID:-}"
   script_path="$(spawn_control_plane_script 2>/dev/null || true)"
   [[ -n "$script_path" ]] || return 0
-  python3 "$script_path" sync >/dev/null 2>&1 || true
+  if [[ -z "$run_id" && -f "$meta_path" ]]; then
+    run_id="$(python3 - "$meta_path" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    print(json.load(open(sys.argv[1], encoding="utf-8")).get("run_id", ""))
+except (OSError, json.JSONDecodeError):
+    pass
+PY
+)"
+  fi
+  if [[ -n "$run_id" ]]; then
+    python3 "$script_path" sync --run-id "$run_id" >/dev/null 2>&1 || true
+  else
+    python3 "$script_path" sync >/dev/null 2>&1 || true
+  fi
 }
 
 spawn_find_meta_for_run_id() {
@@ -141,7 +158,7 @@ spawn_write_meta() {
     --skill-code "$skill_code" \
     --framework-version "$framework_version"
 
-  spawn_sync_control_plane
+  spawn_sync_control_plane "$meta_path"
 }
 
 spawn_update_meta_pid() {
@@ -214,7 +231,7 @@ with open(tmp_path, "w", encoding="utf-8") as fh:
     fh.write("\n")
 os.replace(tmp_path, meta_path)
 PY
-  spawn_sync_control_plane
+  spawn_sync_control_plane "$meta_path"
 }
 
 spawn_pid_alive() {
@@ -269,7 +286,7 @@ if lock_path and os.path.isfile(lock_path):
     except OSError:
         pass
 PY
-  spawn_sync_control_plane
+  spawn_sync_control_plane "$meta_path"
 }
 
 spawn_mark_unknown_liveness() {
@@ -305,7 +322,7 @@ with open(meta_path, "w", encoding="utf-8") as fh:
     json.dump(payload, fh, indent=2, ensure_ascii=False)
     fh.write("\n")
 PY
-  spawn_sync_control_plane
+  spawn_sync_control_plane "$meta_path"
 }
 
 spawn_gc_dead_runs() {
@@ -405,7 +422,7 @@ spawn_finish_meta() {
 
   # Terminal meta state is Python-owned; this shell call is the stable wrapper.
   spawn_python_module vibecrafted_core.spawn finish-meta "$meta_path" "$status" "$exit_code"
-  spawn_sync_control_plane
+  spawn_sync_control_plane "$meta_path"
 }
 
 spawn_finalize_artifacts() {
@@ -416,5 +433,5 @@ spawn_finalize_artifacts() {
   [[ -f "$meta_path" ]] || return 0
 
   spawn_python_module vibecrafted_core.spawn finalize-artifacts "$meta_path" "$report_path" "$transcript_path"
-  spawn_sync_control_plane
+  spawn_sync_control_plane "$meta_path"
 }

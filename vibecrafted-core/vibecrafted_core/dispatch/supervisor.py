@@ -11,6 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from vibecrafted_core.foundation.lease import (
+    create_recovery_checkpoint,
+    dirty_snapshot_hash,
+    lease_budget_hash,
+    validate_delivery_commit,
+)
+from vibecrafted_core.foundation.model import DestructiveChangeLease
+from vibecrafted_core.foundation.service import preflight_launch
 from vibecrafted_core.workflow import WorkflowLaunchSpec, launch_workflow
 
 from .model import (
@@ -115,6 +123,7 @@ def workflow_cell_launcher(
             runtime="headless",
             root=dispatch.meta.repo,
             model=cut.model,
+            foundation_receipt_path=cut.foundation_receipt_path,
         )
         result = launch_workflow(spec, base_dir)
         return CellRun(
@@ -254,6 +263,75 @@ class DispatchSupervisor:
         prompt = render_cell_prompt(self.dispatch, cut, baton=baton)
         self._materialize_prompt(cut, "initial", prompt)
         git_before = self._git_state()
+        foundation = preflight_launch(
+            root=self.repo,
+            workflow=cut.resolved_workflow,
+            can_modify_code=cut.mode != "read",
+            receipt_path=cut.foundation_receipt_path or None,
+        )
+        if not foundation.get("allowed"):
+            return Verdict(
+                cut_id=cut.id,
+                phase=cut.phase,
+                state=STATE_FAILED,
+                failures=(
+                    f"{cut.id}: Foundation blocked before worker launch: "
+                    + "; ".join(str(item) for item in foundation.get("reasons", ())),
+                ),
+            )
+        active_lease: DestructiveChangeLease | None = None
+        if cut.mutation == "destructive":
+            raw_lease = cut.destructive_lease
+            if not raw_lease:
+                return Verdict(
+                    cut_id=cut.id,
+                    phase=cut.phase,
+                    state=STATE_FAILED,
+                    failures=(f"{cut.id}: destructive cut has no approved lease",),
+                )
+            allowed_paths = tuple(
+                str(item) for item in raw_lease.get("allowed_paths", ())
+            )
+            expected_symbols = tuple(
+                str(item) for item in raw_lease.get("expected_deleted_symbols", ())
+            )
+            approved_hash = str(raw_lease.get("approved_budget_hash") or "")
+            computed_hash = lease_budget_hash(
+                allowed_paths=allowed_paths,
+                max_deleted_files=int(raw_lease.get("max_deleted_files", 0)),
+                max_deleted_loc=int(raw_lease.get("max_deleted_loc", 0)),
+                expected_deleted_symbols=expected_symbols,
+                risk_class=str(raw_lease.get("risk_class") or "destructive"),
+                approved_by=str(raw_lease.get("approved_by") or ""),
+            )
+            if not approved_hash or approved_hash != computed_hash:
+                return Verdict(
+                    cut_id=cut.id,
+                    phase=cut.phase,
+                    state=STATE_FAILED,
+                    failures=(
+                        f"{cut.id}: destructive lease hash is missing or changed",
+                    ),
+                )
+            checkpoint = create_recovery_checkpoint(
+                self.repo,
+                run_id=str(self.dispatch.meta.name or "dispatch"),
+                cut_id=cut.id,
+            )
+            active_lease = DestructiveChangeLease(
+                allowed_paths=allowed_paths,
+                max_deleted_files=int(raw_lease.get("max_deleted_files", 0)),
+                max_deleted_loc=int(raw_lease.get("max_deleted_loc", 0)),
+                expected_deleted_symbols=expected_symbols,
+                risk_class=str(raw_lease.get("risk_class") or "destructive"),
+                approved_budget_hash=approved_hash,
+                approved_by=str(raw_lease.get("approved_by") or ""),
+                recovery_checkpoint_ref=checkpoint,
+                dirty_snapshot_hash=dirty_snapshot_hash(self.repo),
+            )
+            self._journal(
+                f"[{cut.id}] destructive lease accepted; checkpoint={checkpoint}"
+            )
         if cut.mode != "read" and self.policy.require_commit and git_before[1]:
             raise CellContractError(
                 f"[{cut.id}] WRITE cut started from a dirty worktree: {git_before[1]}"
@@ -408,6 +486,19 @@ class DispatchSupervisor:
                 raise CellContractError(
                     f"[{cut.id}] new HEAD {head_after[:8]} does not identify"
                     " the delivered cut"
+                )
+        if verdict.ok and active_lease is not None:
+            if not self.policy.require_commit:
+                raise CellContractError(
+                    f"[{cut.id}] destructive lease requires exact commit acceptance"
+                )
+            lease_result = validate_delivery_commit(
+                self.repo, active_lease, delivery_commit
+            )
+            if not lease_result.allowed:
+                raise CellContractError(
+                    f"[{cut.id}] exact delivery commit exceeded destructive lease: "
+                    + "; ".join(lease_result.violations)
                 )
 
         return replace(

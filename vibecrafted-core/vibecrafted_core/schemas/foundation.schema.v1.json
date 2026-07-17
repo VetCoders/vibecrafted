@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vibecrafted.foundation.v1",
+  "title": "Vibecrafted Foundation Receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_id", "receipt_id", "repo_id", "run_id", "created_at", "created_by",
+    "status", "repository", "normative_sources", "premises", "capability_delta",
+    "bindings", "supervisor_decision", "decision_reasons", "bootstrap", "receipt_hash"
+  ],
+  "properties": {
+    "schema_id": {"const": "vibecrafted.foundation.v1"},
+    "receipt_id": {"type": "string", "minLength": 1},
+    "repo_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string"},
+    "created_at": {"type": "string"},
+    "created_by": {"type": "string", "minLength": 1},
+    "status": {"enum": ["SEALED", "BLOCKED", "OPERATOR_WAIVER_REQUIRED"]},
+    "repository": {"$ref": "#/$defs/repository"},
+    "normative_sources": {"type": "array", "items": {"type": "object"}},
+    "premises": {"type": "array", "items": {"type": "object"}},
+    "capability_delta": {"type": "array", "items": {"type": "object"}},
+    "lease": {"type": ["object", "null"]},
+    "bindings": {"type": "object"},
+    "supervisor_decision": {"type": "object", "required": ["allowed", "decided_at"]},
+    "decision_reasons": {"type": "array", "items": {"type": "string"}},
+    "bootstrap": {"type": "object"},
+    "receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "evidence": {
+      "type": "object",
+      "required": ["state", "value", "error_kind", "error", "evidence", "observed_at"],
+      "properties": {
+        "state": {"enum": ["known", "unknown", "error"]},
+        "value": {},
+        "error_kind": {"type": "string"},
+        "error": {"type": "string"},
+        "evidence": {"type": "string"},
+        "observed_at": {"type": "string"}
+      }
+    },
+    "repository": {
+      "type": "object",
+      "required": [
+        "root", "authority_source", "authority_remote_raw", "authority_remote_normalized",
+        "authority_ref", "authority_sha", "fetch", "branch", "head", "upstream",
+        "merge_base", "dirty", "detached", "shallow", "submodules", "worktrees",
+        "ahead", "behind", "relation", "live_only_commits", "authority_only_commits",
+        "patch_equivalents", "snapshot_ref"
+      ],
+      "properties": {
+        "root": {"type": "string"},
+        "authority_source": {"enum": ["repo_config", "operator", "pr_base", "operator_bootstrap"]},
+        "authority_remote_raw": {"type": "string"},
+        "authority_remote_normalized": {"type": "string"},
+        "authority_ref": {"type": "string"},
+        "authority_sha": {"$ref": "#/$defs/evidence"},
+        "fetch": {"type": "object"},
+        "branch": {"$ref": "#/$defs/evidence"},
+        "head": {"$ref": "#/$defs/evidence"},
+        "upstream": {"$ref": "#/$defs/evidence"},
+        "merge_base": {"$ref": "#/$defs/evidence"},
+        "dirty": {"$ref": "#/$defs/evidence"},
+        "detached": {"$ref": "#/$defs/evidence"},
+        "shallow": {"$ref": "#/$defs/evidence"},
+        "submodules": {"$ref": "#/$defs/evidence"},
+        "worktrees": {"$ref": "#/$defs/evidence"},
+        "ahead": {"$ref": "#/$defs/evidence"},
+        "behind": {"$ref": "#/$defs/evidence"},
+        "relation": {"enum": ["exact", "descendant", "behind", "diverged", "unrelated", "unknown"]},
+        "live_only_commits": {"type": "array", "items": {"type": "string"}},
+        "authority_only_commits": {"type": "array", "items": {"type": "string"}},
+        "patch_equivalents": {"type": "array", "items": {"type": "string"}},
+        "snapshot_ref": {"type": "string"}
+      }
+    }
+  }
+}

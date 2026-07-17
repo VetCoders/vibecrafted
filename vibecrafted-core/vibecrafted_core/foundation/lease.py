@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+import fnmatch
+import hashlib
+import json
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable
+
+from .model import DestructiveChangeLease
+
+
+@dataclass(frozen=True)
+class LeaseValidation:
+    allowed: bool
+    deleted_files: int
+    deleted_loc: int
+    paths: tuple[str, ...]
+    violations: tuple[str, ...]
+
+
+def lease_budget_hash(
+    *,
+    allowed_paths: Iterable[str],
+    max_deleted_files: int,
+    max_deleted_loc: int,
+    expected_deleted_symbols: Iterable[str],
+    risk_class: str,
+    approved_by: str,
+) -> str:
+    payload = {
+        "allowed_paths": sorted(allowed_paths),
+        "max_deleted_files": max_deleted_files,
+        "max_deleted_loc": max_deleted_loc,
+        "expected_deleted_symbols": sorted(expected_deleted_symbols),
+        "risk_class": risk_class,
+        "approved_by": approved_by,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def dirty_snapshot_hash(root: str | Path) -> str:
+    repo = Path(root).resolve()
+    result = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout).strip())
+    return hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+
+
+def create_recovery_checkpoint(root: str | Path, *, run_id: str, cut_id: str) -> str:
+    repo = Path(root).resolve()
+    ref = f"refs/vibecrafted/checkpoints/{run_id}/{cut_id}"
+    result = subprocess.run(
+        ["git", "update-ref", ref, "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or result.stdout).strip())
+    return ref
+
+
+def _allowed(path: str, patterns: tuple[str, ...]) -> bool:
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+
+
+def validate_diff_text(
+    lease: DestructiveChangeLease,
+    *,
+    name_status: str,
+    numstat: str,
+    deleted_symbols: Iterable[str] = (),
+) -> LeaseValidation:
+    paths: list[str] = []
+    deleted_files = 0
+    for line in name_status.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        status = parts[0]
+        changed = parts[-1]
+        paths.append(changed)
+        if status.startswith("D"):
+            deleted_files += 1
+    deleted_loc = 0
+    for line in numstat.splitlines():
+        parts = line.split("\t")
+        if len(parts) >= 3 and parts[1].isdigit():
+            deleted_loc += int(parts[1])
+    violations: list[str] = []
+    outside = sorted(path for path in paths if not _allowed(path, lease.allowed_paths))
+    if outside:
+        violations.append("paths outside lease: " + ", ".join(outside))
+    if deleted_files > lease.max_deleted_files:
+        violations.append(
+            f"deleted files {deleted_files} exceeds {lease.max_deleted_files}"
+        )
+    if deleted_loc > lease.max_deleted_loc:
+        violations.append(f"deleted LOC {deleted_loc} exceeds {lease.max_deleted_loc}")
+    unexpected_symbols = sorted(
+        set(deleted_symbols) - set(lease.expected_deleted_symbols)
+    )
+    if unexpected_symbols:
+        violations.append(
+            "unexpected deleted symbols: " + ", ".join(unexpected_symbols)
+        )
+    return LeaseValidation(
+        allowed=not violations,
+        deleted_files=deleted_files,
+        deleted_loc=deleted_loc,
+        paths=tuple(paths),
+        violations=tuple(violations),
+    )
+
+
+def validate_delivery_commit(
+    root: str | Path, lease: DestructiveChangeLease, commit: str
+) -> LeaseValidation:
+    repo = Path(root).resolve()
+    parent = subprocess.run(
+        ["git", "rev-parse", f"{commit}^"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    base = parent.stdout.strip() if parent.returncode == 0 else f"{commit}^{{tree}}"
+    name = subprocess.run(
+        ["git", "diff-tree", "--no-commit-id", "--name-status", "-r", base, commit],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    num = subprocess.run(
+        ["git", "diff-tree", "--no-commit-id", "--numstat", "-r", base, commit],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if name.returncode != 0 or num.returncode != 0:
+        raise RuntimeError((name.stderr or num.stderr or "diff-tree failed").strip())
+    return validate_diff_text(lease, name_status=name.stdout, numstat=num.stdout)

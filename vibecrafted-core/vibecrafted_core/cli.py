@@ -99,6 +99,7 @@ def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
     run.add_argument("--count", type=int)
     run.add_argument("--depth", type=int)
     run.add_argument("--model", default="")
+    run.add_argument("--foundation-receipt", default="")
     if name == "research":
         run.add_argument("--synthesizer", default="")
         run.add_argument("--synthesizer-model", default="")
@@ -113,6 +114,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("dispatch", help="run or validate a dispatch plan")
+    sub.add_parser("foundation", help="seal or verify repository Foundation truth")
     doctor = sub.add_parser("doctor", help="verify installed Vibecrafted runtime")
     doctor.add_argument("--json", action="store_true")
     for name in LAUNCHERS:
@@ -530,7 +532,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"vibecrafted {__version__}")
         return 0
 
-    python_commands = {"dispatch", "doctor", "paste", "stop"} | set(LAUNCHERS)
+    python_commands = {"dispatch", "doctor", "foundation", "paste", "stop"} | set(
+        LAUNCHERS
+    )
     agent_python_verbs = {"observe", "await", "stop"}
     is_lifecycle = shell_wrapper_verb is not None
     if raw_args and shell_wrapper_verb is None:
@@ -566,6 +570,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .dispatch.cli import main as dispatch_main
 
         return dispatch_main(raw_args[1:])
+    if raw_args and raw_args[0] == "foundation":
+        from .foundation.cli import main as foundation_main
+
+        return foundation_main(raw_args[1:])
     if raw_args and raw_args[0] == "stop":
         from .wrappers import stop_main
 
@@ -623,6 +631,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "research_agents": research_agents,
         "synthesizer": getattr(args, "synthesizer", ""),
         "synthesizer_model": getattr(args, "synthesizer_model", ""),
+        "foundation_receipt_path": getattr(args, "foundation_receipt", ""),
     }
     try:
         spec = normalize_launch_spec(payload, source_dir)

@@ -28,6 +28,7 @@ from .control_plane import (
 )
 from .package_resources import deck_path as package_deck_path
 from .events import append_event
+from .foundation.service import preflight_launch
 from .model_overrides import _model_override_receipt, _with_model_override
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .spawn import _stdin_command
@@ -71,6 +72,7 @@ class WorkflowLaunchSpec:
     # launch belongs to a lifecycle run, this carries the lifecycle state.json
     # path so the dispatcher can write the worker's terminal truth into it.
     lifecycle_state_path: str = ""
+    foundation_receipt_path: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -1069,6 +1071,9 @@ def normalize_launch_spec(
         research_agents=research_agents,
         research_synthesizer=research_synthesizer,
         research_synthesizer_model=research_synthesizer_model,
+        foundation_receipt_path=str(
+            payload.get("foundation_receipt_path") or ""
+        ).strip(),
     )
 
 
@@ -1198,6 +1203,42 @@ def launch_workflow(
     retry_of: str = "",
 ) -> dict[str, Any]:
     run_id = _run_id(spec.skill)
+    definition = workflow_registry.workflow_definition(spec.skill)
+    foundation = preflight_launch(
+        root=spec.root,
+        workflow=spec.skill,
+        can_modify_code=bool(definition and definition.can_modify_code),
+        plan_path=spec.file or None,
+        receipt_path=spec.foundation_receipt_path or None,
+    )
+    if not foundation.get("allowed"):
+        append_event(
+            kind="foundation:block",
+            run_id=run_id,
+            message=f"Foundation blocked {spec.skill} before worker launch",
+            payload={
+                "state": "blocked",
+                "agent": spec.agent,
+                "skill": spec.skill,
+                "mode": spec.mode,
+                "runtime": spec.runtime,
+                "root": spec.root,
+                "foundation": foundation,
+                "worker_launches": 0,
+            },
+        )
+        return {
+            "accepted": False,
+            "message": "Foundation Seal blocked write launch before process creation.",
+            "run_id": run_id,
+            "agent": spec.agent,
+            "skill": spec.skill,
+            "root": spec.root,
+            "status": "blocked",
+            "foundation": foundation,
+            "worker_launches": 0,
+            "spec": {**spec.to_payload(), "prompt": ""},
+        }
     artifacts = _run_artifact_paths(run_id)
     runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
     research_selection = (
@@ -1267,6 +1308,15 @@ def launch_workflow(
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
+    merged_env["VIBECRAFTED_FOUNDATION_STATUS"] = str(foundation.get("status") or "")
+    if foundation.get("receipt_path"):
+        merged_env["VIBECRAFTED_FOUNDATION_RECEIPT_PATH"] = str(
+            foundation["receipt_path"]
+        )
+    if foundation.get("receipt_hash"):
+        merged_env["VIBECRAFTED_FOUNDATION_RECEIPT_HASH"] = str(
+            foundation["receipt_hash"]
+        )
     if spec.model:
         merged_env["VIBECRAFTED_MODEL_REQUESTED"] = spec.model
     if research_selection is not None:
@@ -1344,6 +1394,7 @@ def launch_workflow(
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
             "workflow": _workflow_metadata(spec.skill),
+            "foundation": foundation,
             **(
                 {
                     "research_agents": list(research_selection.agents),
@@ -1373,6 +1424,7 @@ def launch_workflow(
                     "run_id": run_id,
                     "spec": safe_spec,
                     "workflow": _workflow_metadata(spec.skill),
+                    "foundation": foundation,
                     **model_receipt,
                     "worker_command": worker_command,
                     "dispatch_command": dispatch_command,
@@ -1510,6 +1562,7 @@ def launch_workflow(
             "operator_session": operator_session,
         },
         "workflow": _workflow_metadata(spec.skill),
+        "foundation": foundation,
         **model_receipt,
         "retry_of": retry_of,
         "launch_log": str(launch_log),

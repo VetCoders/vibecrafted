@@ -122,6 +122,8 @@ class Cut:
     observational: bool = False
     verify: tuple[Verify, ...] = ()
     recovery: Recovery | None = None
+    foundation_receipt_path: str = ""
+    destructive_lease: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -32,5 +32,9 @@ def skills_path() -> Path:
     return resource_path("skills")
 
 
+def schemas_path() -> Path:
+    return resource_path("schemas")
+
+
 def deck_path() -> Path:
     return resource_path("deck", "vibecrafted")

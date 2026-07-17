@@ -181,6 +181,9 @@ def test_installer_copies_skill_rules_to_fresh_skills_root(tmp_path: Path) -> No
     (source_skills / "VERIFICATION_RULE.md").write_text(
         "# Verification\n", encoding="utf-8"
     )
+    (source_skills / "FOUNDATION_RULE.md").write_text(
+        "# Foundation\n", encoding="utf-8"
+    )
     (source_skills / "LIVING_TREE_RULE.md").write_text(
         "# Living Tree\n", encoding="utf-8"
     )
@@ -198,11 +201,14 @@ def test_installer_copies_skill_rules_to_fresh_skills_root(tmp_path: Path) -> No
     assert copied == copied_again
     assert runtime_copied == copied
     assert Path("VERIFICATION_RULE.md") in copied
+    assert Path("FOUNDATION_RULE.md") in copied
     assert Path("LIVING_TREE_RULE.md") in copied
     assert Path("pl/LIVING_TREE_RULE.md") in copied
     assert (installed_skill / ".." / "VERIFICATION_RULE.md").is_file()
+    assert (installed_skill / ".." / "FOUNDATION_RULE.md").is_file()
     assert (installed_skill / ".." / "LIVING_TREE_RULE.md").is_file()
     assert (runtime_skills / "VERIFICATION_RULE.md").is_file()
+    assert (runtime_skills / "FOUNDATION_RULE.md").is_file()
     assert (runtime_skills / "LIVING_TREE_RULE.md").is_file()
     assert (runtime_skill / ".." / "VERIFICATION_RULE.md").is_file()
     assert (install_skills / "pl" / "LIVING_TREE_RULE.md").is_file()

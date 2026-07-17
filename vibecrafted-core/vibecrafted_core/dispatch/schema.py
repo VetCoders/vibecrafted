@@ -360,6 +360,8 @@ def _parse_cuts(
                 observational=observational,
                 verify=tuple(verify),
                 recovery=_parse_recovery(item.get("recovery"), index, errors),
+                foundation_receipt_path=_string(item.get("foundation_receipt_path")),
+                destructive_lease=_dict(item.get("destructive_lease")),
             )
         )
     return cuts
