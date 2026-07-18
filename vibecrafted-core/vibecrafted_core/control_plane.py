@@ -87,6 +87,14 @@ RUN_SNAPSHOT_RETENTION_COUNT_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_COUNT"
 EVENT_TAIL_LIMIT = 16
 RECENT_RUN_LIMIT = 12
 MISSING_SESSION_IDS = {"", "pending", "none", "null", "unknown"}
+# events.jsonl is an append-only stream; every projection pass replays it.
+# Without a size ceiling the stream grows unbounded and each status lookup
+# degrades into a multi-GB scan (observed: 4.6 GB / 7.5M lines → >120 s
+# lookups at 100% CPU). Rotation archives the head; run snapshots stay the
+# durable projection, so archived events are only needed for forensics.
+EVENT_STREAM_MAX_BYTES = 64 * 1024 * 1024
+EVENT_STREAM_MAX_BYTES_ENV = "VIBECRAFTED_EVENTS_MAX_BYTES"
+EVENT_TAIL_MAX_BYTES = 256 * 1024
 
 
 @dataclass(frozen=True)
@@ -700,6 +708,45 @@ def _append_event(event: dict[str, Any]) -> None:
         os.close(fd)
 
 
+def _event_stream_max_bytes() -> int:
+    raw = os.environ.get(EVENT_STREAM_MAX_BYTES_ENV, "")
+    try:
+        value = int(raw)
+    except ValueError:
+        return EVENT_STREAM_MAX_BYTES
+    return value if value > 0 else EVENT_STREAM_MAX_BYTES
+
+
+def _rotate_event_stream() -> None:
+    """Rotate events.jsonl into events_archive/ when it outgrows the ceiling.
+
+    Called only from the full-board sync pass (behind ``_sync_lock``). Rename
+    is safe against the lockless ``O_APPEND`` writers: an already-open fd keeps
+    appending to the renamed file (those lines land in the archive), new
+    writers create a fresh stream. Run snapshots — not the stream — are the
+    durable projection, so rotating the head loses no truth.
+    """
+    stream = event_stream_path()
+    try:
+        size = stream.stat().st_size
+    except OSError:
+        return
+    if size < _event_stream_max_bytes():
+        return
+    archive_dir = stream.parent / "events_archive"
+    try:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        stamp = _now().strftime("%Y%m%dT%H%M%SZ")
+        target = archive_dir / f"events-{stamp}.jsonl"
+        counter = 1
+        while target.exists():
+            target = archive_dir / f"events-{stamp}-{counter}.jsonl"
+            counter += 1
+        stream.replace(target)
+    except OSError:
+        return
+
+
 def _iter_meta_files() -> Iterator[Path]:
     artifacts_root = vibecrafted_home() / "artifacts"
     if not artifacts_root.is_dir():
@@ -861,151 +908,168 @@ def _merge_event_stream(
     scope = str(only_run_id or "").strip()
     child_prefix = f"{scope}-" if scope else ""
 
-    for line in _read_lines(stream):
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        run_id = str(event.get("run_id") or "").strip()
-        if not run_id:
-            continue
-        # Scoped projection: process only the target run and its child rounds
-        # (marbles/polarize L2/L3 live in "<parent>-…-L<n>" records). Skipping
-        # every other run's events is what keeps a per-run await/lookup off the
-        # O(all-runs) board rebuild that caused the lock herd.
-        if scope and run_id != scope and not run_id.startswith(child_prefix):
-            continue
+    # Stream line-by-line — never materialize the whole file (it can be GBs).
+    # For scoped passes a cheap substring probe rejects foreign lines before
+    # paying for json.loads.
+    try:
+        handle = stream.open("r", encoding="utf-8", errors="replace")
+    except OSError:
+        return merged
+    with handle:
+        for line in handle:
+            if scope and scope not in line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            run_id = str(event.get("run_id") or "").strip()
+            if not run_id:
+                continue
+            # Scoped projection: process only the target run and its child
+            # rounds (marbles/polarize L2/L3 live in "<parent>-…-L<n>"
+            # records). Skipping every other run's events is what keeps a
+            # per-run await/lookup off the O(all-runs) board rebuild that
+            # caused the lock herd.
+            if scope and run_id != scope and not run_id.startswith(child_prefix):
+                continue
 
-        payload = dict(event.get("payload") or {})
-        kind = str(event.get("kind") or "")
-        message = str(event.get("message") or "")
-        ts = _safe_iso(str(event.get("ts") or ""))
-        existing = merged.get(run_id)
+            payload = dict(event.get("payload") or {})
+            kind = str(event.get("kind") or "")
+            message = str(event.get("message") or "")
+            ts = _safe_iso(str(event.get("ts") or ""))
+            existing = merged.get(run_id)
 
-        state = str(payload.get("state") or "")
-        if not state and kind.startswith("lifecycle:"):
-            state = kind.split(":", 1)[1]
-        if not state and kind == "launch":
-            state = "created"
-        if not state and kind == "audit:stop" and payload.get("accepted"):
-            state = "stopped"
-        if not state:
-            state = existing.state if existing is not None else "unknown"
+            state = str(payload.get("state") or "")
+            if not state and kind.startswith("lifecycle:"):
+                state = kind.split(":", 1)[1]
+            if not state and kind == "launch":
+                state = "created"
+            if not state and kind == "audit:stop" and payload.get("accepted"):
+                state = "stopped"
+            if not state:
+                state = existing.state if existing is not None else "unknown"
 
-        identity_required = bool(payload.get("identity_required"))
-        raw_root = payload.get("root") or (existing.root if existing else "")
-        root = (
-            normalize_run_root(str(raw_root or ""), Path.cwd())
-            if identity_required
-            else str(raw_root or "")
-        )
-        agent = str(payload.get("agent") or (existing.agent if existing else "unknown"))
-        skill = str(payload.get("skill") or (existing.skill if existing else "unknown"))
-        mode = str(payload.get("mode") or (existing.mode if existing else "unknown"))
-        report = str(
-            payload.get("report")
-            or (existing.latest_report if existing is not None else "")
-        )
-        transcript = str(
-            payload.get("transcript")
-            or (existing.latest_transcript if existing is not None else "")
-        )
-        updated_at = ts or (existing.updated_at if existing else "")
-        started_at = str(
-            payload.get("started_at")
-            or (existing.started_at if existing is not None else "")
-            or updated_at
-        )
-        exit_code = _coerce_int(payload.get("exit_code"))
-        if exit_code is None and existing is not None:
-            exit_code = existing.exit_code
-        liveness = str(
-            payload.get("liveness") or (existing.liveness if existing else "")
-        )
-        launcher_pid = _coerce_int(payload.get("launcher_pid"))
-        if launcher_pid is None and existing is not None:
-            launcher_pid = existing.launcher_pid
-        completed_at = str(
-            payload.get("completed_at")
-            or (existing.completed_at if existing is not None else "")
-        )
-        session_id = str(
-            payload.get("session_id")
-            or (existing.session_id if existing is not None else "")
-        )
-        if identity_required:
-            session_id = ensure_session_id(session_id)
-
-        extra = dict(existing.extra if existing is not None else {})
-        for key in (
-            "runtime",
-            "source_dir",
-            "prompt",
-            "file",
-            "retry_of",
-            "worker_command",
-            "worker_pid",
-            "worker_pgid",
-            "heartbeat_at",
-            "meta",
-            "artifact_ok",
-            "artifact_errors",
-            "recovery_required",
-            "stop_reason",
-            "stop_signal",
-            "stop_target",
-            "stop_target_pid",
-            "stop_target_pgid",
-            "stop_signal_sent",
-            "stop_already_dead",
-            "stop_alive_after_grace",
-            "stop_grace_seconds",
-        ):
-            if key in payload and payload.get(key) not in (None, ""):
-                extra[key] = payload[key]
-
-        payload_last_error = str(
-            payload.get("error") or payload.get("last_error") or ""
-        )
-        if kind == "state" and payload_last_error == message:
-            payload_last_error = ""
-        last_error = (
-            payload_last_error
-            or (existing.last_error if existing is not None else "")
-            or (
-                message
-                if kind != "state"
-                and (state in BLOCKED_STATES or state in {"failed", "ghost"})
-                else ""
+            identity_required = bool(payload.get("identity_required"))
+            raw_root = payload.get("root") or (existing.root if existing else "")
+            root = (
+                normalize_run_root(str(raw_root or ""), Path.cwd())
+                if identity_required
+                else str(raw_root or "")
             )
-        )
+            agent = str(
+                payload.get("agent") or (existing.agent if existing else "unknown")
+            )
+            skill = str(
+                payload.get("skill") or (existing.skill if existing else "unknown")
+            )
+            mode = str(
+                payload.get("mode") or (existing.mode if existing else "unknown")
+            )
+            report = str(
+                payload.get("report")
+                or (existing.latest_report if existing is not None else "")
+            )
+            transcript = str(
+                payload.get("transcript")
+                or (existing.latest_transcript if existing is not None else "")
+            )
+            updated_at = ts or (existing.updated_at if existing else "")
+            started_at = str(
+                payload.get("started_at")
+                or (existing.started_at if existing is not None else "")
+                or updated_at
+            )
+            exit_code = _coerce_int(payload.get("exit_code"))
+            if exit_code is None and existing is not None:
+                exit_code = existing.exit_code
+            liveness = str(
+                payload.get("liveness") or (existing.liveness if existing else "")
+            )
+            launcher_pid = _coerce_int(payload.get("launcher_pid"))
+            if launcher_pid is None and existing is not None:
+                launcher_pid = existing.launcher_pid
+            completed_at = str(
+                payload.get("completed_at")
+                or (existing.completed_at if existing is not None else "")
+            )
+            session_id = str(
+                payload.get("session_id")
+                or (existing.session_id if existing is not None else "")
+            )
+            if identity_required:
+                session_id = ensure_session_id(session_id)
 
-        incoming = RunStatus(
-            run_id=run_id,
-            state=state,
-            agent=agent,
-            skill=skill,
-            mode=mode,
-            root=root,
-            operator_session=operator_session_name(root, run_id),
-            latest_report=report,
-            latest_transcript=transcript,
-            last_error=last_error,
-            updated_at=updated_at,
-            started_at=started_at,
-            health=_state_health(state, updated_at),
-            source="event-stream",
-            lock_present=existing.lock_present if existing is not None else False,
-            exit_code=exit_code,
-            liveness=liveness,
-            launcher_pid=launcher_pid,
-            completed_at=completed_at,
-            session_id=session_id,
-            current_loop=existing.current_loop if existing is not None else None,
-            total_loops=existing.total_loops if existing is not None else None,
-            extra=extra,
-        )
-        merged[run_id] = _merge_status(existing, incoming)
+            extra = dict(existing.extra if existing is not None else {})
+            for key in (
+                "runtime",
+                "source_dir",
+                "prompt",
+                "file",
+                "retry_of",
+                "worker_command",
+                "worker_pid",
+                "worker_pgid",
+                "heartbeat_at",
+                "meta",
+                "artifact_ok",
+                "artifact_errors",
+                "recovery_required",
+                "stop_reason",
+                "stop_signal",
+                "stop_target",
+                "stop_target_pid",
+                "stop_target_pgid",
+                "stop_signal_sent",
+                "stop_already_dead",
+                "stop_alive_after_grace",
+                "stop_grace_seconds",
+            ):
+                if key in payload and payload.get(key) not in (None, ""):
+                    extra[key] = payload[key]
+
+            payload_last_error = str(
+                payload.get("error") or payload.get("last_error") or ""
+            )
+            if kind == "state" and payload_last_error == message:
+                payload_last_error = ""
+            last_error = (
+                payload_last_error
+                or (existing.last_error if existing is not None else "")
+                or (
+                    message
+                    if kind != "state"
+                    and (state in BLOCKED_STATES or state in {"failed", "ghost"})
+                    else ""
+                )
+            )
+
+            incoming = RunStatus(
+                run_id=run_id,
+                state=state,
+                agent=agent,
+                skill=skill,
+                mode=mode,
+                root=root,
+                operator_session=operator_session_name(root, run_id),
+                latest_report=report,
+                latest_transcript=transcript,
+                last_error=last_error,
+                updated_at=updated_at,
+                started_at=started_at,
+                health=_state_health(state, updated_at),
+                source="event-stream",
+                lock_present=existing.lock_present if existing is not None else False,
+                exit_code=exit_code,
+                liveness=liveness,
+                launcher_pid=launcher_pid,
+                completed_at=completed_at,
+                session_id=session_id,
+                current_loop=existing.current_loop if existing is not None else None,
+                total_loops=existing.total_loops if existing is not None else None,
+                extra=extra,
+            )
+            merged[run_id] = _merge_status(existing, incoming)
 
     return merged
 
@@ -1064,14 +1128,33 @@ def _snapshot_archive_dir() -> Path:
     return run_snapshot_dir() / "archive"
 
 
-def _load_existing_snapshots() -> dict[str, dict[str, Any]]:
+def _load_existing_snapshots() -> tuple[dict[str, dict[str, Any]], set[str]]:
+    """Load run snapshots — live dir first, then the GC archive.
+
+    The archive MUST be consulted: after GC moves a terminal run's snapshot to
+    ``archive/``, the next projection pass would otherwise see ``previous=None``
+    for that run, re-emit its terminal "entered <state>" transition, and
+    re-materialize the live snapshot — an event-stream growth loop (observed:
+    tens of thousands of duplicate "entered completed" events per hour).
+    Returns ``(snapshots, archived_ids)`` where ``archived_ids`` marks runs
+    whose snapshot lives only in the archive.
+    """
     snapshots: dict[str, dict[str, Any]] = {}
     for path in run_snapshot_dir().glob("*.json"):
         payload = _read_json(path)
         run_id = str(payload.get("run_id") or "").strip()
         if run_id:
             snapshots[run_id] = payload
-    return snapshots
+    archived_ids: set[str] = set()
+    archive_dir = _snapshot_archive_dir()
+    if archive_dir.is_dir():
+        for path in archive_dir.glob("*.json"):
+            payload = _read_json(path)
+            run_id = str(payload.get("run_id") or "").strip()
+            if run_id and run_id not in snapshots:
+                snapshots[run_id] = payload
+                archived_ids.add(run_id)
+    return snapshots, archived_ids
 
 
 def _status_to_payload(status: RunStatus) -> dict[str, Any]:
@@ -1328,12 +1411,39 @@ def _warnings_for_runs(runs: list[dict[str, Any]]) -> list[str]:
     return warnings[:6]
 
 
+def _tail_lines(path: Path, max_bytes: int = EVENT_TAIL_MAX_BYTES) -> list[str]:
+    """Return the last complete lines of ``path`` reading at most ``max_bytes``.
+
+    ``read_text()`` on the whole stream is forbidden here: the event stream can
+    be gigabytes and this helper sits on the hot status path.
+    """
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return []
+    if size <= 0:
+        return []
+    offset = max(0, size - max_bytes)
+    try:
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            chunk = handle.read(max_bytes)
+    except OSError:
+        return []
+    text = chunk.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    if offset > 0 and lines:
+        # First line is almost certainly truncated mid-record — drop it.
+        lines = lines[1:]
+    return lines
+
+
 def read_event_tail(limit: int = EVENT_TAIL_LIMIT) -> list[dict[str, Any]]:
     stream = event_stream_path()
     if not stream.exists():
         return []
     events = []
-    for line in stream.read_text(encoding="utf-8").splitlines()[-limit:]:
+    for line in _tail_lines(stream)[-limit:]:
         try:
             events.append(json.loads(line))
         except json.JSONDecodeError:
@@ -1421,7 +1531,9 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
 
     lock_ctx = contextlib.nullcontext() if scoped else _sync_lock(purpose="board-sync")
     with lock_ctx:
-        previous_snapshots = _load_existing_snapshots()
+        if not scoped:
+            _rotate_event_stream()
+        previous_snapshots, archived_ids = _load_existing_snapshots()
         merged: dict[str, RunStatus] = {}
 
         # The migraine was the exclusive GLOBAL LOCK, not the file walk: every
@@ -1458,6 +1570,14 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
             previous = previous_snapshots.get(run_id)
             payload = _project_run_payload(run_id, status, previous)
             _record_transition(previous, payload)
+            if run_id in archived_ids and _stable_transition_view(
+                previous
+            ) == _stable_transition_view(payload):
+                # Terminal run already archived by GC and nothing changed —
+                # re-writing the live snapshot would just make the next GC
+                # pass re-archive it (snapshot churn without information).
+                payload_runs.append(payload)
+                continue
             _write_json(_snapshot_path(run_id), payload)
             payload_runs.append(payload)
         if not scoped:
