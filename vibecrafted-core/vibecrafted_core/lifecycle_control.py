@@ -184,6 +184,7 @@ def _continuation_spec(
         count=spec_data.get("count"),
         depth=spec_data.get("depth"),
         parent_run_id=str(state.get("run_id") or ""),
+        foundation_receipt_path=str(spec_data.get("foundation_receipt_path") or ""),
         previous_reports=_baton_previous_reports(state),
         stage_agents=dict(spec_data.get("stage_agents") or {}),
         stage_models=dict(spec_data.get("stage_models") or {}),

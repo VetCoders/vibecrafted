@@ -27,6 +27,7 @@ class Meta:
     baseline: dict[str, Any] = field(default_factory=dict)
     reports_dir: str = ""
     tracker: str = ""
+    source_path: str = ""
 
 
 @dataclass(frozen=True)

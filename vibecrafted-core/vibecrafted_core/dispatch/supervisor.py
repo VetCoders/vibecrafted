@@ -268,6 +268,7 @@ class DispatchSupervisor:
             workflow=cut.resolved_workflow,
             can_modify_code=cut.mode != "read",
             receipt_path=cut.foundation_receipt_path or None,
+            plan_path=self.dispatch.meta.source_path or None,
         )
         if not foundation.get("allowed"):
             return Verdict(
@@ -289,20 +290,55 @@ class DispatchSupervisor:
                     state=STATE_FAILED,
                     failures=(f"{cut.id}: destructive cut has no approved lease",),
                 )
+            receipt_lease = foundation.get("lease")
+            if not isinstance(receipt_lease, dict):
+                return Verdict(
+                    cut_id=cut.id,
+                    phase=cut.phase,
+                    state=STATE_FAILED,
+                    failures=(
+                        f"{cut.id}: sealed receipt has no operator-approved lease",
+                    ),
+                )
+            approved_fields = {
+                "allowed_paths",
+                "max_deleted_files",
+                "max_deleted_loc",
+                "expected_deleted_symbols",
+                "risk_class",
+                "approved_budget_hash",
+                "approved_by",
+            }
+            normalized_raw = {key: raw_lease.get(key) for key in approved_fields}
+            normalized_receipt = {
+                key: receipt_lease.get(key) for key in approved_fields
+            }
+            for key in ("allowed_paths", "expected_deleted_symbols"):
+                normalized_raw[key] = list(normalized_raw.get(key) or ())
+                normalized_receipt[key] = list(normalized_receipt.get(key) or ())
+            if normalized_raw != normalized_receipt:
+                return Verdict(
+                    cut_id=cut.id,
+                    phase=cut.phase,
+                    state=STATE_FAILED,
+                    failures=(
+                        f"{cut.id}: plan-local destructive lease differs from signed receipt",
+                    ),
+                )
             allowed_paths = tuple(
-                str(item) for item in raw_lease.get("allowed_paths", ())
+                str(item) for item in receipt_lease.get("allowed_paths", ())
             )
             expected_symbols = tuple(
-                str(item) for item in raw_lease.get("expected_deleted_symbols", ())
+                str(item) for item in receipt_lease.get("expected_deleted_symbols", ())
             )
-            approved_hash = str(raw_lease.get("approved_budget_hash") or "")
+            approved_hash = str(receipt_lease.get("approved_budget_hash") or "")
             computed_hash = lease_budget_hash(
                 allowed_paths=allowed_paths,
-                max_deleted_files=int(raw_lease.get("max_deleted_files", 0)),
-                max_deleted_loc=int(raw_lease.get("max_deleted_loc", 0)),
+                max_deleted_files=int(receipt_lease.get("max_deleted_files", 0)),
+                max_deleted_loc=int(receipt_lease.get("max_deleted_loc", 0)),
                 expected_deleted_symbols=expected_symbols,
-                risk_class=str(raw_lease.get("risk_class") or "destructive"),
-                approved_by=str(raw_lease.get("approved_by") or ""),
+                risk_class=str(receipt_lease.get("risk_class") or "destructive"),
+                approved_by=str(receipt_lease.get("approved_by") or ""),
             )
             if not approved_hash or approved_hash != computed_hash:
                 return Verdict(
@@ -320,12 +356,12 @@ class DispatchSupervisor:
             )
             active_lease = DestructiveChangeLease(
                 allowed_paths=allowed_paths,
-                max_deleted_files=int(raw_lease.get("max_deleted_files", 0)),
-                max_deleted_loc=int(raw_lease.get("max_deleted_loc", 0)),
+                max_deleted_files=int(receipt_lease.get("max_deleted_files", 0)),
+                max_deleted_loc=int(receipt_lease.get("max_deleted_loc", 0)),
                 expected_deleted_symbols=expected_symbols,
-                risk_class=str(raw_lease.get("risk_class") or "destructive"),
+                risk_class=str(receipt_lease.get("risk_class") or "destructive"),
                 approved_budget_hash=approved_hash,
-                approved_by=str(raw_lease.get("approved_by") or ""),
+                approved_by=str(receipt_lease.get("approved_by") or ""),
                 recovery_checkpoint_ref=checkpoint,
                 dirty_snapshot_hash=dirty_snapshot_hash(self.repo),
             )

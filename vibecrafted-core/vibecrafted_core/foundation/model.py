@@ -182,5 +182,6 @@ class FoundationReceipt:
     supervisor_decision: dict[str, Any] = field(default_factory=dict)
     decision_reasons: tuple[str, ...] = ()
     bootstrap: dict[str, Any] = field(default_factory=dict)
+    issuer: dict[str, Any] = field(default_factory=dict)
     receipt_hash: str = ""
     schema_id: str = SCHEMA_ID

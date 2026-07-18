@@ -32,9 +32,11 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
     )
     calls: list[str] = []
     loop_options: list[tuple[int | None, int | None]] = []
+    foundation_paths: list[str] = []
 
     def fake_launcher(spec, _source_dir):
         calls.append(spec.skill)
+        foundation_paths.append(spec.foundation_receipt_path)
         if spec.skill == "marbles":
             loop_options.append((spec.count, spec.depth))
         report = tmp_path / f"{spec.skill}.md"
@@ -55,6 +57,11 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
         }
 
     runner = LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter)
+    monkeypatch.setattr(
+        runner,
+        "_foundation_boundary",
+        lambda **_kwargs: {"allowed": True, "status": "SEALED", "reasons": []},
+    )
     state = asyncio.run(
         runner.run(
             LifecycleRunSpec(
@@ -65,11 +72,17 @@ def test_lifecycle_runner_triggers_audit_after_marbles(
                 await_stages=True,
                 count=2,
                 depth=4,
+                foundation_receipt_path=str(tmp_path / "foundation.json"),
             )
         )
     )
 
     assert calls == ["marbles", "audit"]
+    assert foundation_paths == [
+        str(tmp_path / "foundation.json"),
+        str(tmp_path / "foundation.json"),
+    ]
+    assert state["spec"]["foundation_receipt_path"] == str(tmp_path / "foundation.json")
     assert state["schema"] == LIFECYCLE_SCHEMA_ID
     assert loop_options == [(2, 4)]
     assert state["status"] == "completed"

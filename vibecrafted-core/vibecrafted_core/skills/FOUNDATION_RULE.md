@@ -11,8 +11,9 @@ Verification proves that a delivered change matches its claim. Foundation proves
 - Normative sources are declared and hashed. Synthetic data cannot satisfy a requirement for live provenance, and discovered live sources cannot remain silently unbound.
 - Every critical premise has a bounded falsifying probe, expected and actual evidence, drift policy, expiry, and status.
 - Authority-only capability loss remains visible even when implementation and tests disappeared together. Missing or unknown classification blocks.
-- Executable plans bind the receipt hash, authority ref/SHA, and premise-set hash. Read-only drafts may remain `UNSEALED`; write dispatch may not.
-- Destructive work requires an immutable operator-approved lease, recovery checkpoint, dirty-state receipt, and exact delivery-commit validation.
+- Every receipt is schema-complete and carries a supervisor issuer proof. Rehashing a hand-written artifact is not authority and must fail before process creation.
+- Executable plans bind canonical plan path/content hash as well as the receipt hash, authority ref/SHA, and premise-set hash. Read-only drafts may remain `UNSEALED`; write dispatch may not.
+- Destructive work requires an immutable operator-approved lease signed inside the receipt, recovery checkpoint, dirty-state receipt, staged-diff validation, and exact delivery-commit validation including deleted symbols.
 - Revalidate before the first worker, destructive cuts, handoffs, wave boundaries, delivery acceptance, and completion claims. Drift emits durable evidence and stops the run.
 
 ## Terminal states

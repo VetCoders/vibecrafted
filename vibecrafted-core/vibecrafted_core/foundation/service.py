@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import re
+import secrets
 import tomllib
 import uuid
 from dataclasses import asdict, is_dataclass, replace
@@ -13,11 +15,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from vibecrafted_core.runtime_paths import vibecrafted_home
+from vibecrafted_core.package_resources import resource_path
 
 from .capabilities import capability_delta
 from .data_authority import inventory_sources
 from .model import (
     CapabilityClassification,
+    DestructiveChangeLease,
     EvidenceState,
     FoundationReceipt,
     FoundationStatus,
@@ -27,6 +31,7 @@ from .model import (
 )
 from .premises import evaluate_premises, premise_set_hash
 from .repository import collect_repository_authority
+from .lease import dirty_snapshot_hash, lease_budget_hash
 
 
 class FoundationError(RuntimeError):
@@ -54,6 +59,9 @@ def _jsonable(value: Any) -> Any:
 def canonical_payload(receipt: FoundationReceipt | dict[str, Any]) -> dict[str, Any]:
     payload = _jsonable(receipt)
     payload["receipt_hash"] = ""
+    issuer = payload.get("issuer")
+    if isinstance(issuer, dict):
+        issuer["signature"] = ""
     return payload
 
 
@@ -85,12 +93,158 @@ def foundation_state_dir(root: str | Path) -> Path:
     return vibecrafted_home() / "foundation" / repo_key
 
 
+def _issuer_key(root: str | Path, *, create: bool) -> bytes:
+    state_dir = foundation_state_dir(root)
+    key_path = state_dir / "issuer.key"
+    if create:
+        state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            # This directory contains the local issuer key; group/other access is forbidden.
+            # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
+            os.chmod(state_dir, 0o700)
+        except OSError:
+            pass
+        if not key_path.exists():
+            fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(secrets.token_bytes(32))
+        try:
+            os.chmod(key_path, 0o600)
+        except OSError:
+            pass
+    try:
+        key = key_path.read_bytes()
+    except OSError as exc:
+        raise FoundationError(
+            f"trusted Foundation issuer key unavailable: {exc}"
+        ) from exc
+    if len(key) < 32:
+        raise FoundationError("trusted Foundation issuer key is invalid")
+    return key
+
+
+def _signature_payload(payload: FoundationReceipt | dict[str, Any]) -> bytes:
+    value = _jsonable(payload)
+    issuer = value.get("issuer")
+    if isinstance(issuer, dict):
+        issuer["signature"] = ""
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
+
+def _plan_identity(path: str | Path) -> tuple[str, str]:
+    target = Path(path).expanduser().resolve()
+    try:
+        text = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise FoundationError(f"cannot bind executable plan {target}: {exc}") from exc
+    canonical = "\n".join(
+        line for line in text.splitlines() if _BINDING_PATTERN.fullmatch(line) is None
+    )
+    if text.endswith("\n"):
+        canonical += "\n"
+    return str(target), hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _schema_reasons(payload: dict[str, Any]) -> list[str]:
+    """Validate the receipt against the packaged v1 contract without a runtime dep."""
+    try:
+        schema = json.loads(
+            resource_path("schemas", "foundation.schema.v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"packaged Foundation schema unavailable: {exc}"]
+    reasons: list[str] = []
+    required = set(schema.get("required") or ())
+    missing = sorted(required - set(payload))
+    if missing:
+        reasons.append("receipt schema missing fields: " + ", ".join(missing))
+    if schema.get("additionalProperties") is False:
+        extras = sorted(set(payload) - set(schema.get("properties") or {}))
+        if extras:
+            reasons.append("receipt schema unknown fields: " + ", ".join(extras))
+    if payload.get("schema_id") != schema.get("$id"):
+        reasons.append("unsupported schema_id")
+    if payload.get("status") not in set(
+        schema.get("properties", {}).get("status", {}).get("enum", ())
+    ):
+        reasons.append("invalid receipt status")
+    repository = payload.get("repository")
+    repo_schema = schema.get("$defs", {}).get("repository", {})
+    if not isinstance(repository, dict):
+        reasons.append("receipt repository must be an object")
+    else:
+        repo_missing = sorted(set(repo_schema.get("required") or ()) - set(repository))
+        if repo_missing:
+            reasons.append(
+                "receipt repository missing fields: " + ", ".join(repo_missing)
+            )
+        evidence_required = set(
+            schema.get("$defs", {}).get("evidence", {}).get("required") or ()
+        )
+        for name in (
+            "authority_sha",
+            "branch",
+            "head",
+            "upstream",
+            "merge_base",
+            "dirty",
+            "detached",
+            "shallow",
+            "submodules",
+            "worktrees",
+            "ahead",
+            "behind",
+        ):
+            evidence = repository.get(name)
+            if not isinstance(evidence, dict) or evidence_required - set(evidence):
+                reasons.append(f"receipt repository evidence invalid: {name}")
+    for name in (
+        "normative_sources",
+        "premises",
+        "capability_delta",
+        "decision_reasons",
+    ):
+        if not isinstance(payload.get(name), list):
+            reasons.append(f"receipt schema field must be an array: {name}")
+    for name in ("bindings", "supervisor_decision", "bootstrap", "issuer"):
+        if not isinstance(payload.get(name), dict):
+            reasons.append(f"receipt schema field must be an object: {name}")
+    issuer = payload.get("issuer") or {}
+    if isinstance(issuer, dict):
+        if set(issuer) != {"algorithm", "key_id", "issued_by", "signature"}:
+            reasons.append("receipt issuer proof is incomplete")
+        if issuer.get("algorithm") != "hmac-sha256":
+            reasons.append("unsupported receipt issuer algorithm")
+        if not re.fullmatch(r"[0-9a-f]{16}", str(issuer.get("key_id") or "")):
+            reasons.append("invalid receipt issuer key_id")
+        if not re.fullmatch(r"[0-9a-f]{64}", str(issuer.get("signature") or "")):
+            reasons.append("invalid receipt issuer signature")
+    return reasons
+
+
 def latest_receipt_path(root: str | Path) -> Path:
     return foundation_state_dir(root) / "latest.json"
 
 
 def _write_receipt(receipt: FoundationReceipt, path: Path) -> FoundationReceipt:
-    sealed = replace(receipt, receipt_hash=receipt_hash(receipt))
+    key = _issuer_key(receipt.repository.root, create=True)
+    key_id = hashlib.sha256(key).hexdigest()[:16]
+    issued = replace(
+        receipt,
+        issuer={
+            "algorithm": "hmac-sha256",
+            "key_id": key_id,
+            "issued_by": receipt.created_by,
+            "signature": "",
+        },
+    )
+    hashed = replace(issued, receipt_hash=receipt_hash(issued))
+    signature = hmac.new(key, _signature_payload(hashed), hashlib.sha256).hexdigest()
+    sealed = replace(hashed, issuer={**hashed.issuer, "signature": signature})
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
     temporary.write_text(
@@ -111,6 +265,8 @@ def seal_repository(
     output: str | Path | None = None,
     fetch: bool = True,
     bootstrap: dict[str, Any] | None = None,
+    plan_path: str | Path | None = None,
+    lease: DestructiveChangeLease | dict[str, Any] | None = None,
 ) -> tuple[FoundationReceipt, Path]:
     repo = Path(root).resolve()
     config = load_config(repo)
@@ -202,6 +358,47 @@ def seal_repository(
 
     status = FoundationStatus.BLOCKED if reasons else FoundationStatus.SEALED
     premise_hash = premise_set_hash(premises)
+    bindings: dict[str, Any] = {
+        "authority_ref": selected_ref,
+        "authority_sha": repository.authority_sha.value
+        if repository.authority_sha.state is EvidenceState.KNOWN
+        else None,
+        "premise_set_hash": premise_hash,
+        "dirty_snapshot_hash": dirty_snapshot_hash(repo),
+    }
+    if plan_path:
+        bindings["plan_path"], bindings["plan_hash"] = _plan_identity(plan_path)
+    approved_lease: DestructiveChangeLease | None
+    if isinstance(lease, DestructiveChangeLease):
+        approved_lease = lease
+    elif isinstance(lease, dict):
+        allowed_paths = tuple(str(item) for item in lease.get("allowed_paths", ()))
+        expected_symbols = tuple(
+            str(item) for item in lease.get("expected_deleted_symbols", ())
+        )
+        approved_by = str(lease.get("approved_by") or created_by)
+        approved_hash = lease_budget_hash(
+            allowed_paths=allowed_paths,
+            max_deleted_files=int(lease.get("max_deleted_files", 0)),
+            max_deleted_loc=int(lease.get("max_deleted_loc", 0)),
+            expected_deleted_symbols=expected_symbols,
+            risk_class=str(lease.get("risk_class") or "destructive"),
+            approved_by=approved_by,
+        )
+        approved_lease = DestructiveChangeLease(
+            allowed_paths=allowed_paths,
+            max_deleted_files=int(lease.get("max_deleted_files", 0)),
+            max_deleted_loc=int(lease.get("max_deleted_loc", 0)),
+            expected_deleted_symbols=expected_symbols,
+            risk_class=str(lease.get("risk_class") or "destructive"),
+            approved_budget_hash=approved_hash,
+            approved_by=approved_by,
+            recovery_checkpoint_ref="",
+            dirty_snapshot_hash=bindings["dirty_snapshot_hash"],
+        )
+        bindings["lease_hash"] = approved_hash
+    else:
+        approved_lease = None
     receipt = FoundationReceipt(
         receipt_id=receipt_id,
         repo_id=repo.name,
@@ -213,13 +410,8 @@ def seal_repository(
         normative_sources=sources,
         premises=premises,
         capability_delta=losses,
-        bindings={
-            "authority_ref": selected_ref,
-            "authority_sha": repository.authority_sha.value
-            if repository.authority_sha.state is EvidenceState.KNOWN
-            else None,
-            "premise_set_hash": premise_hash,
-        },
+        lease=approved_lease,
+        bindings=bindings,
         supervisor_decision={
             "allowed": status is FoundationStatus.SEALED,
             "decided_at": _now(),
@@ -255,12 +447,30 @@ def verify_receipt(
 ) -> dict[str, Any]:
     target = Path(path).expanduser().resolve()
     payload = load_receipt(target)
-    reasons: list[str] = []
-    if payload.get("schema_id") != "vibecrafted.foundation.v1":
-        reasons.append("unsupported schema_id")
+    reasons: list[str] = _schema_reasons(payload)
     expected_hash = str(payload.get("receipt_hash") or "")
     if not expected_hash or receipt_hash(payload) != expected_hash:
         reasons.append("receipt hash mismatch")
+    issuer = payload.get("issuer") or {}
+    try:
+        issuer_key = _issuer_key(
+            root or (payload.get("repository") or {}).get("root") or ".",
+            create=False,
+        )
+    except FoundationError as exc:
+        reasons.append(str(exc))
+    else:
+        if hashlib.sha256(issuer_key).hexdigest()[:16] != str(
+            issuer.get("key_id") or ""
+        ):
+            reasons.append("receipt issuer key mismatch")
+        expected_signature = hmac.new(
+            issuer_key, _signature_payload(payload), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(
+            expected_signature, str(issuer.get("signature") or "")
+        ):
+            reasons.append("receipt issuer signature mismatch")
     if payload.get("status") != FoundationStatus.SEALED.value:
         reasons.append(f"receipt status is {payload.get('status') or 'unknown'}")
     repository = payload.get("repository") or {}
@@ -280,6 +490,14 @@ def verify_receipt(
     sealed_head = str((repository.get("head") or {}).get("value") or "")
     if not current_head or current_head != sealed_head:
         reasons.append("live HEAD drifted from receipt")
+    sealed_dirty = str((payload.get("bindings") or {}).get("dirty_snapshot_hash") or "")
+    try:
+        current_dirty = dirty_snapshot_hash(repo)
+    except RuntimeError as exc:
+        reasons.append(f"dirty state refresh failed: {exc}")
+    else:
+        if not sealed_dirty or current_dirty != sealed_dirty:
+            reasons.append("dirty Living Tree drifted from receipt")
     authority_ref = str(repository.get("authority_ref") or "")
     if refresh_authority and "/" in authority_ref:
         import subprocess
@@ -334,8 +552,47 @@ def verify_receipt(
             continue
         if actual != expected:
             reasons.append(f"normative source drifted: {source.get('identity')}")
+    premise_declarations: list[dict[str, Any]] = []
+    for premise in payload.get("premises") or []:
+        if not isinstance(premise, dict):
+            reasons.append("receipt premise is malformed")
+            continue
+        premise_declarations.append(
+            {
+                key: premise.get(key)
+                for key in (
+                    "id",
+                    "critical",
+                    "probe",
+                    "expected",
+                    "evidence_ref",
+                    "drift_policy",
+                    "expires_at",
+                )
+            }
+        )
+    refreshed_premises = evaluate_premises(repo, premise_declarations)
+    for premise in refreshed_premises:
+        if premise.critical and premise.status not in {
+            PremiseStatus.VERIFIED,
+            PremiseStatus.WAIVED,
+        }:
+            reasons.append(
+                f"critical premise drifted: {premise.id}: {premise.status.value}"
+            )
+    sealed_premise_hash = str(
+        (payload.get("bindings") or {}).get("premise_set_hash") or ""
+    )
+    if premise_set_hash(refreshed_premises) != sealed_premise_hash:
+        reasons.append("critical premise set drifted from receipt")
     if plan_path:
         bindings = parse_plan_bindings(plan_path)
+        actual_plan_path, actual_plan_hash = _plan_identity(plan_path)
+        receipt_bindings = payload.get("bindings") or {}
+        if receipt_bindings.get("plan_path") != actual_plan_path:
+            reasons.append("receipt plan path binding mismatch")
+        if receipt_bindings.get("plan_hash") != actual_plan_hash:
+            reasons.append("receipt plan content hash mismatch")
         required = {
             "foundation_receipt_hash": expected_hash,
             "foundation_authority_ref": authority_ref,
@@ -344,9 +601,9 @@ def verify_receipt(
                 (payload.get("bindings") or {}).get("premise_set_hash") or ""
             ),
         }
-        for key, expected in required.items():
-            if bindings.get(key) != expected:
-                reasons.append(f"plan binding mismatch: {key}")
+        for binding_key, expected_value in required.items():
+            if bindings.get(binding_key) != expected_value:
+                reasons.append(f"plan binding mismatch: {binding_key}")
     return {
         "allowed": not reasons,
         "status": FoundationStatus.SEALED.value
@@ -360,6 +617,8 @@ def verify_receipt(
         "premise_set_hash": str(
             (payload.get("bindings") or {}).get("premise_set_hash") or ""
         ),
+        "lease": payload.get("lease"),
+        "bindings": payload.get("bindings") or {},
     }
 
 

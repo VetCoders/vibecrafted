@@ -7,7 +7,7 @@
   "required": [
     "schema_id", "receipt_id", "repo_id", "run_id", "created_at", "created_by",
     "status", "repository", "normative_sources", "premises", "capability_delta",
-    "bindings", "supervisor_decision", "decision_reasons", "bootstrap", "receipt_hash"
+    "bindings", "supervisor_decision", "decision_reasons", "bootstrap", "issuer", "receipt_hash"
   ],
   "properties": {
     "schema_id": {"const": "vibecrafted.foundation.v1"},
@@ -26,6 +26,17 @@
     "supervisor_decision": {"type": "object", "required": ["allowed", "decided_at"]},
     "decision_reasons": {"type": "array", "items": {"type": "string"}},
     "bootstrap": {"type": "object"},
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "issued_by", "signature"],
+      "properties": {
+        "algorithm": {"const": "hmac-sha256"},
+        "key_id": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+        "issued_by": {"type": "string", "minLength": 1},
+        "signature": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
     "receipt_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
   "$defs": {

@@ -13,6 +13,12 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .control_plane import control_plane_home, normalize_run_root, run_liveness
+from .foundation.service import (
+    latest_receipt_path,
+    load_receipt,
+    seal_repository,
+    verify_receipt,
+)
 from .workflow import (
     SUPPORTED_AGENTS,
     WorkflowLaunchSpec,
@@ -45,6 +51,7 @@ class LifecycleRunSpec:
     count: int | None = None
     depth: int | None = None
     parent_run_id: str = ""
+    foundation_receipt_path: str = ""
     # Baton cargo: stage reports accumulated by earlier runs in the relay.
     # Continuation runs (approve / force-audit) seed these so the next stage
     # prompt keeps consuming what the previous Read/Write stages produced.
@@ -508,6 +515,11 @@ class LifecycleRunner:
         previous_reports: list[str] = [
             str(path).strip() for path in spec.previous_reports if str(path).strip()
         ]
+        foundation_receipt_path = str(spec.foundation_receipt_path or "").strip()
+        if not foundation_receipt_path:
+            candidate = latest_receipt_path(root)
+            if candidate.is_file():
+                foundation_receipt_path = str(candidate)
         state: dict[str, Any] = {
             "schema": LIFECYCLE_SCHEMA_ID,
             "run_id": run_id,
@@ -532,6 +544,7 @@ class LifecycleRunner:
                 "previous_reports": list(previous_reports),
                 "stage_agents": dict(stage_agents),
                 "stage_models": dict(stage_models),
+                "foundation_receipt_path": foundation_receipt_path,
             },
             "supervisor": "vibecrafted_core.lifecycle_runner.LifecycleSupervisor",
             "human_controls": list(manifest.human_controls),
@@ -588,6 +601,7 @@ class LifecycleRunner:
                 previous_reports=previous_reports,
                 context=context,
                 state_path=state_path,
+                foundation_receipt_path=foundation_receipt_path,
             )
             state["stages"].append(record)
             self._write_state(state_path, state)
@@ -652,6 +666,24 @@ class LifecycleRunner:
                 str(record.get("commit_before") or ""),
                 str(record.get("commit_after") or ""),
             )
+            if foundation_receipt_path:
+                boundary = self._foundation_boundary(
+                    root=root,
+                    receipt_path=foundation_receipt_path,
+                    plan_path=spec.file or None,
+                    run_id=run_id,
+                    reseal=bool(
+                        stage.can_modify_code and await_result.get("artifact_ok")
+                    ),
+                )
+                record["foundation_boundary"] = boundary
+                if not boundary.get("allowed"):
+                    state["status"] = "failed"
+                    state["error"] = (
+                        f"Foundation blocked at {stage.id} boundary: "
+                        + "; ".join(str(item) for item in boundary.get("reasons", ()))
+                    )
+                    break
             if record["phase"] == "read" and record["changed_files"]:
                 record["read_phase_violation"] = True
                 state["status"] = "failed"
@@ -706,6 +738,7 @@ class LifecycleRunner:
         previous_reports: list[str],
         context: dict[str, Any],
         state_path: Path | None = None,
+        foundation_receipt_path: str = "",
     ) -> dict[str, Any]:
         prompt = self._stage_prompt(
             manifest=manifest,
@@ -735,6 +768,7 @@ class LifecycleRunner:
             ),
             model=model,
             lifecycle_state_path=str(state_path or ""),
+            foundation_receipt_path=foundation_receipt_path,
         )
         commit_before = _git_head(root)
         git_before = _git_status(root)
@@ -759,6 +793,41 @@ class LifecycleRunner:
             "git_snapshot_before": git_snapshot_before,
             "launch": launch,
             "status": "launching",
+        }
+
+    def _foundation_boundary(
+        self,
+        *,
+        root: Path,
+        receipt_path: str,
+        plan_path: str | Path | None,
+        run_id: str,
+        reseal: bool,
+    ) -> dict[str, Any]:
+        if not reseal:
+            return verify_receipt(receipt_path, root=root, plan_path=plan_path)
+        previous = load_receipt(receipt_path)
+        repository = previous.get("repository") or {}
+        receipt, path = seal_repository(
+            root,
+            authority_ref=str(repository.get("authority_ref") or ""),
+            authority_source="operator",
+            run_id=run_id,
+            created_by="lifecycle-supervisor",
+            output=receipt_path,
+            plan_path=plan_path,
+            lease=previous.get("lease"),
+            bootstrap={
+                **dict(previous.get("bootstrap") or {}),
+                "resealed_from": str(previous.get("receipt_id") or ""),
+            },
+        )
+        return {
+            "allowed": receipt.status.value == "SEALED",
+            "status": receipt.status.value,
+            "reasons": list(receipt.decision_reasons),
+            "receipt_path": str(path),
+            "receipt_hash": receipt.receipt_hash,
         }
 
     def _stage_prompt(
@@ -1104,6 +1173,7 @@ def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--start-stage", default="")
     parser.add_argument("--checkpoint", dest="start_stage", default="")
     parser.add_argument("--await-stages", action="store_true")
+    parser.add_argument("--foundation-receipt", default="")
     if any(
         definition is not None and definition.supports_count
         for definition in stage_definitions
@@ -1129,6 +1199,7 @@ def lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
             start_stage=args.start_stage,
             count=getattr(args, "count", None),
             depth=getattr(args, "depth", None),
+            foundation_receipt_path=args.foundation_receipt,
         )
     )
     if args.json:

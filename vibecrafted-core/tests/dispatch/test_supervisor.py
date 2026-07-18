@@ -25,6 +25,7 @@ from vibecrafted_core.dispatch.supervisor import (
     workflow_cell_launcher,
 )
 from vibecrafted_core.foundation.service import seal_repository
+from vibecrafted_core.foundation.lease import lease_budget_hash
 
 FAST_AWAIT = "await = { poll_s = 0.02, timeout_min = 1.0 }"
 
@@ -156,6 +157,77 @@ def init_git_repo(path: Path) -> None:
         check=True,
         capture_output=True,
     )
+
+
+def test_destructive_cut_cannot_enlarge_receipt_bound_lease(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    dispatch, reports_dir, artifacts_dir = build_dispatch(
+        tmp_path,
+        """
+[[cuts]]
+id = "cut"
+agent = "codex"
+workflow = "implement"
+prompt = "delete parser"
+  [[cuts.verify]]
+  run = "echo ok"
+  expect = { contains = "ok" }
+""",
+        repo=repo,
+    )
+    approved = {
+        "allowed_paths": ["src/parser/**"],
+        "max_deleted_files": 1,
+        "max_deleted_loc": 100,
+        "expected_deleted_symbols": ["LegacyParser"],
+        "risk_class": "destructive",
+        "approved_by": "operator",
+    }
+    approved["approved_budget_hash"] = lease_budget_hash(
+        allowed_paths=approved["allowed_paths"],
+        max_deleted_files=1,
+        max_deleted_loc=100,
+        expected_deleted_symbols=approved["expected_deleted_symbols"],
+        risk_class="destructive",
+        approved_by="operator",
+    )
+    _receipt, receipt_path = seal_repository(
+        repo,
+        output=tmp_path / "approved-receipt.json",
+        lease=approved,
+        run_id="lease-approval",
+    )
+    enlarged = {**approved, "max_deleted_loc": 9200}
+    enlarged["approved_budget_hash"] = lease_budget_hash(
+        allowed_paths=enlarged["allowed_paths"],
+        max_deleted_files=1,
+        max_deleted_loc=9200,
+        expected_deleted_symbols=enlarged["expected_deleted_symbols"],
+        risk_class="destructive",
+        approved_by="operator",
+    )
+    dispatch = replace(
+        dispatch,
+        cuts=(
+            replace(
+                dispatch.cuts[0],
+                mutation="destructive",
+                foundation_receipt_path=str(receipt_path),
+                destructive_lease=enlarged,
+            ),
+        ),
+    )
+    launcher = FakeCells(reports_dir)
+
+    result = DispatchSupervisor(
+        dispatch, launcher=launcher, artifacts_dir=artifacts_dir
+    ).run()
+
+    assert launcher.launches == []
+    assert result.baton.last is not None
+    assert result.baton.last.state == STATE_FAILED
+    assert "differs from signed receipt" in result.baton.last.failures[0]
 
 
 def test_workflow_cell_launcher_uses_canonical_report_path(

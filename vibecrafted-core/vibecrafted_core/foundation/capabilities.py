@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
+import tomllib
 from pathlib import PurePosixPath, Path
 from typing import Mapping
 
@@ -36,6 +38,55 @@ def capability_kind(path: str) -> str | None:
     return None
 
 
+def _source_capabilities(path: str, source: str) -> dict[str, str]:
+    capabilities: dict[str, str] = {}
+    if path.endswith(".py"):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return {f"{path}::parse_error": "unknown"}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if isinstance(node, ast.ClassDef) or not node.name.startswith("_"):
+                    capabilities[f"{path}::public_symbol:{node.name}"] = "public_symbol"
+                if node.name.startswith("test_"):
+                    capabilities[f"{path}::test:{node.name}"] = "test"
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute
+            ):
+                continue
+            if node.func.attr != "add_parser" or not node.args:
+                continue
+            argument = node.args[0]
+            if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                capabilities[f"{path}::command:{argument.value}"] = "command"
+    if PurePosixPath(path).name == "Makefile":
+        for target in re.findall(r"^([A-Za-z0-9_.-]+)\s*:(?!=)", source, re.MULTILINE):
+            if not target.startswith("."):
+                capabilities[f"{path}::release:{target}"] = "release"
+    if path.endswith(".toml"):
+        try:
+            parsed = tomllib.loads(source)
+        except tomllib.TOMLDecodeError:
+            return {**capabilities, f"{path}::parse_error": "unknown"}
+
+        def walk(prefix: str, value: object) -> None:
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    walk(f"{prefix}.{key}" if prefix else str(key), child)
+            else:
+                capabilities[f"{path}::config:{prefix}"] = "config"
+
+        walk("", parsed)
+    if path.endswith((".sh", ".zsh")):
+        for name in re.findall(
+            r"^([A-Za-z_][A-Za-z0-9_-]*)\s*\(\)\s*\{", source, re.MULTILINE
+        ):
+            if not name.startswith("_"):
+                capabilities[f"{path}::command:{name}"] = "command"
+    return capabilities
+
+
 def inventory_tree(root: str | Path, ref: str) -> dict[str, str]:
     repo = Path(root).resolve()
     paths = _git_lines(repo, "ls-tree", "-r", "--name-only", ref)
@@ -43,9 +94,10 @@ def inventory_tree(root: str | Path, ref: str) -> dict[str, str]:
         path: kind for path in paths if (kind := capability_kind(path)) is not None
     }
     for path in paths:
-        if not path.startswith(
-            "vibecrafted-core/vibecrafted_core/"
-        ) or not path.endswith(".py"):
+        if (
+            not path.endswith((".py", ".toml", ".sh", ".zsh"))
+            and PurePosixPath(path).name != "Makefile"
+        ):
             continue
         result = subprocess.run(
             ["git", "show", f"{ref}:{path}"],
@@ -55,12 +107,7 @@ def inventory_tree(root: str | Path, ref: str) -> dict[str, str]:
             check=False,
         )
         if result.returncode == 0:
-            inventory.update(
-                {
-                    f"{path}::{symbol}": "public_symbol"
-                    for symbol in public_python_symbols(result.stdout)
-                }
-            )
+            inventory.update(_source_capabilities(path, result.stdout))
     return inventory
 
 
@@ -71,21 +118,17 @@ def inventory_live(root: str | Path) -> dict[str, str]:
         path: kind for path in paths if (kind := capability_kind(path)) is not None
     }
     for path in paths:
-        if not path.startswith(
-            "vibecrafted-core/vibecrafted_core/"
-        ) or not path.endswith(".py"):
+        if (
+            not path.endswith((".py", ".toml", ".sh", ".zsh"))
+            and PurePosixPath(path).name != "Makefile"
+        ):
             continue
         target = repo / path
         try:
             source = target.read_text(encoding="utf-8")
         except OSError:
             continue
-        inventory.update(
-            {
-                f"{path}::{symbol}": "public_symbol"
-                for symbol in public_python_symbols(source)
-            }
-        )
+        inventory.update(_source_capabilities(path, source))
     return inventory
 
 

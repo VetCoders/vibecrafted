@@ -23,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     seal.add_argument("--run-id", default="")
     seal.add_argument("--created-by", default="operator")
     seal.add_argument("--output", default="")
+    seal.add_argument("--plan", default="")
+    seal.add_argument("--lease", default="")
     seal.add_argument("--no-fetch", action="store_true")
     verify = sub.add_parser("verify")
     verify.add_argument("--root", default=".")
@@ -38,6 +40,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.action == "seal":
+            lease = None
+            if args.lease:
+                lease_payload = json.loads(
+                    Path(args.lease).expanduser().read_text(encoding="utf-8")
+                )
+                if not isinstance(lease_payload, dict):
+                    raise FoundationError("destructive lease must be a JSON object")
+                lease = lease_payload
             receipt, path = seal_repository(
                 args.root,
                 authority_ref=args.authority,
@@ -46,6 +56,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 created_by=args.created_by,
                 output=args.output or None,
                 fetch=not args.no_fetch,
+                plan_path=args.plan or None,
+                lease=lease,
             )
             payload = {
                 "status": receipt.status.value,

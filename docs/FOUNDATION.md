@@ -110,8 +110,8 @@ mutation (`vibecrafted_core/foundation/`, constitution in
 `FOUNDATION_RULE.md`, schema `vibecrafted.foundation.v1`).
 
 ```bash
-vibecrafted foundation seal     # generate + seal the repo receipt
-vibecrafted foundation verify   # re-validate the bound receipt
+vibecrafted foundation seal --plan ./plan.md  # sign receipt + exact plan identity
+vibecrafted foundation verify --plan ./plan.md # re-validate receipt, plan and drift
 vibecrafted foundation status   # current receipt state
 ```
 
@@ -120,6 +120,13 @@ launches bind them explicitly (`--foundation-receipt`), via plan frontmatter,
 or by fail-closed discovery of `latest.json` (drift/hash/root re-verified at
 every launch). Read-only workflows run `UNSEALED`. Continuity and lifecycle
 interplay: `docs/runtime/CONTINUITY.md`.
+
+Receipts are not bearer JSON: the canonical supervisor issuer signs each
+schema-complete receipt with a repo-scoped local issuer key. Executable plans
+are path/content-bound (Foundation frontmatter itself is normalized out to
+avoid a circular hash). Destructive leases are accepted only when their exact
+budget is already signed inside that receipt; a dispatch file cannot enlarge
+its own path, LOC, file, or symbol budget.
 
 ## Foundation vs Skills
 

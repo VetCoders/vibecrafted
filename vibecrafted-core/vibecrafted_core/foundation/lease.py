@@ -44,7 +44,7 @@ def lease_budget_hash(
 def dirty_snapshot_hash(root: str | Path) -> str:
     repo = Path(root).resolve()
     result = subprocess.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -52,7 +52,24 @@ def dirty_snapshot_hash(root: str | Path) -> str:
     )
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout).strip())
-    return hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(result.stdout.encode("utf-8", errors="surrogateescape"))
+    diff = subprocess.run(
+        ["git", "diff", "--binary", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    if diff.returncode != 0:
+        raise RuntimeError((diff.stderr or b"git diff failed").decode(errors="replace"))
+    digest.update(diff.stdout)
+    for record in result.stdout.split("\0"):
+        if not record.startswith("?? "):
+            continue
+        target = repo / record[3:]
+        if target.is_file():
+            digest.update(record[3:].encode("utf-8", errors="surrogateescape"))
+            digest.update(target.read_bytes())
+    return digest.hexdigest()
 
 
 def create_recovery_checkpoint(root: str | Path, *, run_id: str, cut_id: str) -> str:
@@ -134,7 +151,20 @@ def validate_delivery_commit(
         text=True,
         check=False,
     )
-    base = parent.stdout.strip() if parent.returncode == 0 else f"{commit}^{{tree}}"
+    if parent.returncode == 0:
+        base = parent.stdout.strip()
+    else:
+        empty = subprocess.run(
+            ["git", "hash-object", "-t", "tree", "--stdin"],
+            cwd=repo,
+            input="",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if empty.returncode != 0:
+            raise RuntimeError((empty.stderr or "cannot derive empty tree").strip())
+        base = empty.stdout.strip()
     name = subprocess.run(
         ["git", "diff-tree", "--no-commit-id", "--name-status", "-r", base, commit],
         cwd=repo,
@@ -151,4 +181,73 @@ def validate_delivery_commit(
     )
     if name.returncode != 0 or num.returncode != 0:
         raise RuntimeError((name.stderr or num.stderr or "diff-tree failed").strip())
+    return validate_diff_text(
+        lease,
+        name_status=name.stdout,
+        numstat=num.stdout,
+        deleted_symbols=_deleted_python_symbols(repo, base, commit, name.stdout),
+    )
+
+
+def validate_staged_diff(
+    root: str | Path, lease: DestructiveChangeLease
+) -> LeaseValidation:
+    repo = Path(root).resolve()
+    name = subprocess.run(
+        ["git", "diff", "--cached", "--name-status"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    num = subprocess.run(
+        ["git", "diff", "--cached", "--numstat"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if name.returncode != 0 or num.returncode != 0:
+        raise RuntimeError((name.stderr or num.stderr or "staged diff failed").strip())
     return validate_diff_text(lease, name_status=name.stdout, numstat=num.stdout)
+
+
+def _deleted_python_symbols(
+    repo: Path, base: str, commit: str, name_status: str
+) -> tuple[str, ...]:
+    import ast
+
+    deleted: set[str] = set()
+    for line in name_status.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        path = parts[-1]
+        if not path.endswith(".py"):
+            continue
+
+        def symbols(ref: str) -> set[str]:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{path}"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                return set()
+            try:
+                tree = ast.parse(result.stdout)
+            except SyntaxError:
+                return set()
+            return {
+                node.name
+                for node in tree.body
+                if isinstance(
+                    node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                )
+                and not node.name.startswith("_")
+            }
+
+        deleted.update(symbols(base) - symbols(commit))
+    return tuple(sorted(deleted))

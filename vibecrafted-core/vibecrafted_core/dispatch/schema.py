@@ -55,8 +55,11 @@ class DispatchSchemaError(ValueError):
 
 
 def load_dispatch(path: str | Path) -> Dispatch:
-    source = Path(path).expanduser()
-    return parse_dispatch(source.read_text(encoding="utf-8"), base_dir=source.parent)
+    source = Path(path).expanduser().resolve()
+    dispatch = parse_dispatch(
+        source.read_text(encoding="utf-8"), base_dir=source.parent
+    )
+    return replace(dispatch, meta=replace(dispatch.meta, source_path=str(source)))
 
 
 def doctor_dispatch(

@@ -51,6 +51,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("-p", "--prompt", default="")
     parser.add_argument("--runtime", default="")
     parser.add_argument("--root", default="")
+    parser.add_argument("--foundation-receipt", default="")
     parser.add_argument("--start-stage", default="")
     parser.add_argument("--await-stages", action="store_true")
     parser.add_argument("--max-iterations", type=int, default=0)
@@ -103,6 +104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             runtime=_default_runtime(args.runtime, root),
             await_stages=args.await_stages,
             start_stage=args.start_stage or args.checkpoint or "scaffold",
+            foundation_receipt_path=args.foundation_receipt,
         )
     )
     print("==================== VC-SHIP LIFECYCLE RECEIPT ====================")

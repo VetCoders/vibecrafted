@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -10,12 +11,21 @@ import pytest
 from vibecrafted_core import git as git_module
 from vibecrafted_core import workflow
 from vibecrafted_core.foundation.data_authority import inventory_sources
-from vibecrafted_core.foundation.lease import lease_budget_hash, validate_diff_text
+from vibecrafted_core.foundation import premises as premises_module
+from vibecrafted_core.foundation.capabilities import capability_delta
+from vibecrafted_core.foundation.lease import (
+    lease_budget_hash,
+    validate_delivery_commit,
+    validate_diff_text,
+    validate_staged_diff,
+)
 from vibecrafted_core.foundation.model import DestructiveChangeLease, FoundationStatus
+from vibecrafted_core.foundation.repository import collect_repository_authority
 from vibecrafted_core.foundation.service import (
     FoundationError,
     load_receipt,
     preflight_launch,
+    receipt_hash,
     seal_repository,
     verify_receipt,
 )
@@ -166,8 +176,11 @@ def test_legitimate_seal_plan_binding_and_normative_drift(tmp_path: Path) -> Non
     _git(seed, "push", "-q", "origin", "main")
     _git(live, "pull", "-q", "--ff-only")
 
-    receipt, path = seal_repository(live, output=tmp_path / "sealed.json")
     plan = tmp_path / "plan.md"
+    plan.write_text("---\n---\n\n# Safe bounded plan\n", encoding="utf-8")
+    receipt, path = seal_repository(
+        live, output=tmp_path / "sealed.json", plan_path=plan
+    )
     plan.write_text(
         "---\n"
         f"foundation_receipt_path: {path}\n"
@@ -175,12 +188,23 @@ def test_legitimate_seal_plan_binding_and_normative_drift(tmp_path: Path) -> Non
         f"foundation_authority_ref: {receipt.repository.authority_ref}\n"
         f"foundation_authority_sha: {receipt.repository.authority_sha.value}\n"
         f"foundation_premise_set_hash: {receipt.bindings['premise_set_hash']}\n"
-        "---\n",
+        "---\n\n# Safe bounded plan\n",
         encoding="utf-8",
     )
 
     assert receipt.status is FoundationStatus.SEALED
     assert verify_receipt(path, root=live, plan_path=plan)["allowed"] is True
+    plan.write_text(
+        plan.read_text(encoding="utf-8") + "\nDelete every source file.\n",
+        encoding="utf-8",
+    )
+    tampered = verify_receipt(path, root=live, plan_path=plan)
+    assert tampered["allowed"] is False
+    assert "receipt plan content hash mismatch" in tampered["reasons"]
+    plan.write_text(
+        plan.read_text(encoding="utf-8").replace("\nDelete every source file.\n", ""),
+        encoding="utf-8",
+    )
     (live / "oracle.json").write_text('{"schema": 2}\n', encoding="utf-8")
     drift = verify_receipt(path, root=live, plan_path=plan)
     assert drift["allowed"] is False
@@ -229,6 +253,160 @@ def test_receipt_hash_tampering_blocks(tmp_path: Path) -> None:
     assert verify_receipt(path, root=live)["allowed"] is False
 
 
+def test_schema_invalid_and_rehashed_forged_receipts_cannot_authorize(
+    tmp_path: Path,
+) -> None:
+    _bare, _seed, live = _authority_repo(tmp_path)
+    _receipt, path = seal_repository(live, output=tmp_path / "sealed.json")
+    forged = load_receipt(path)
+    forged.pop("premises")
+    forged["created_by"] = "artifact-writer"
+    forged["receipt_hash"] = receipt_hash(forged)
+    path.write_text(json.dumps(forged), encoding="utf-8")
+
+    decision = preflight_launch(
+        root=live,
+        workflow="implement",
+        can_modify_code=True,
+        receipt_path=path,
+    )
+
+    assert decision["allowed"] is False
+    assert any("schema missing fields" in reason for reason in decision["reasons"])
+    assert "receipt issuer signature mismatch" in decision["reasons"]
+
+
+def test_dirty_living_tree_and_expired_premise_invalidate_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _bare, seed, live = _authority_repo(tmp_path)
+    expires = datetime.now(UTC) + timedelta(hours=1)
+    config = seed / "vibecrafted.toml"
+    config.write_text(
+        '[vibecrafted.foundation]\nrequired = true\nauthority = "origin/main"\n'
+        "normative_sources = []\nnormative_discovery_globs = []\n"
+        '[[vibecrafted.foundation.premises]]\nid = "readme-exists"\ncritical = true\n'
+        'expected = true\ndrift_policy = "per_launch"\n'
+        f'expires_at = "{expires.isoformat()}"\n'
+        '[vibecrafted.foundation.premises.probe]\nkind = "path_exists"\npath = "README.md"\n',
+        encoding="utf-8",
+    )
+    _git(seed, "add", "vibecrafted.toml")
+    _git(seed, "commit", "-q", "-m", "bind premise")
+    _git(seed, "push", "-q", "origin", "main")
+    _git(live, "pull", "-q", "--ff-only")
+    _receipt, path = seal_repository(live, output=tmp_path / "sealed.json")
+
+    (live / "worker-mutation.txt").write_text("mutation\n", encoding="utf-8")
+    dirty = verify_receipt(path, root=live)
+    assert dirty["allowed"] is False
+    assert "dirty Living Tree drifted from receipt" in dirty["reasons"]
+    (live / "worker-mutation.txt").unlink()
+
+    class FutureDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return expires + timedelta(seconds=1)
+
+    monkeypatch.setattr(premises_module, "datetime", FutureDateTime)
+    expired = verify_receipt(path, root=live)
+    assert expired["allowed"] is False
+    assert any("critical premise drifted" in reason for reason in expired["reasons"])
+
+
+def test_same_file_command_removal_is_a_blocking_capability_loss(
+    tmp_path: Path,
+) -> None:
+    _bare, seed, live = _authority_repo(tmp_path)
+    command_file = "vibecrafted-core/vibecrafted_core/commands.py"
+    _commit(
+        seed,
+        command_file,
+        "def build_parser(sub):\n    sub.add_parser('danger')\n",
+    )
+    _git(seed, "push", "-q", "origin", "main")
+    _git(live, "pull", "-q", "--ff-only")
+    _commit(live, command_file, "def build_parser(sub):\n    return sub\n")
+
+    losses = capability_delta(live, "origin/main")
+    receipt, _path = seal_repository(live, output=tmp_path / "blocked.json")
+
+    assert any(item.identity.endswith("::command:danger") for item in losses)
+    assert receipt.status is FoundationStatus.BLOCKED
+
+
+def test_exact_delivery_commit_rejects_unapproved_deleted_symbol(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "tester")
+    _commit(repo, "parser.py", "class CriticalParser:\n    pass\n")
+    (repo / "parser.py").write_text("# removed\n", encoding="utf-8")
+    _git(repo, "add", "parser.py")
+    _git(repo, "commit", "-q", "-m", "remove parser")
+    commit = _git(repo, "rev-parse", "HEAD")
+    approved_hash = lease_budget_hash(
+        allowed_paths=("parser.py",),
+        max_deleted_files=1,
+        max_deleted_loc=20,
+        expected_deleted_symbols=(),
+        risk_class="destructive",
+        approved_by="operator",
+    )
+    lease = DestructiveChangeLease(
+        allowed_paths=("parser.py",),
+        max_deleted_files=1,
+        max_deleted_loc=20,
+        expected_deleted_symbols=(),
+        risk_class="destructive",
+        approved_budget_hash=approved_hash,
+        approved_by="operator",
+        recovery_checkpoint_ref="refs/vibecrafted/checkpoints/run/cut",
+        dirty_snapshot_hash="clean",
+    )
+
+    result = validate_delivery_commit(repo, lease, commit)
+
+    assert result.allowed is False
+    assert result.violations == ("unexpected deleted symbols: CriticalParser",)
+
+
+def test_staged_diff_is_checked_before_destructive_acceptance(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "tester")
+    _commit(repo, "allowed.txt", "allowed\n")
+    (repo / "outside.txt").write_text("outside\n", encoding="utf-8")
+    _git(repo, "add", "outside.txt")
+    approved_hash = lease_budget_hash(
+        allowed_paths=("allowed.txt",),
+        max_deleted_files=0,
+        max_deleted_loc=0,
+        expected_deleted_symbols=(),
+        risk_class="destructive",
+        approved_by="operator",
+    )
+    lease = DestructiveChangeLease(
+        allowed_paths=("allowed.txt",),
+        max_deleted_files=0,
+        max_deleted_loc=0,
+        expected_deleted_symbols=(),
+        risk_class="destructive",
+        approved_budget_hash=approved_hash,
+        approved_by="operator",
+        recovery_checkpoint_ref="refs/vibecrafted/checkpoints/run/cut",
+        dirty_snapshot_hash="clean",
+    )
+
+    result = validate_staged_diff(repo, lease)
+
+    assert result.allowed is False
+    assert result.violations == ("paths outside lease: outside.txt",)
+
+
 def test_remote_advance_and_offline_refresh_invalidate_seal(tmp_path: Path) -> None:
     bare, seed, live = _authority_repo(tmp_path)
     receipt, path = seal_repository(live, output=tmp_path / "sealed.json")
@@ -247,6 +425,22 @@ def test_remote_advance_and_offline_refresh_invalidate_seal(tmp_path: Path) -> N
         reason.startswith("authority refresh failed:")
         for reason in unavailable["reasons"]
     )
+
+
+def test_force_pushed_authority_invalidates_seal(tmp_path: Path) -> None:
+    _bare, seed, live = _authority_repo(tmp_path)
+    _commit(seed, "authority.txt", "first\n")
+    _git(seed, "push", "-q", "origin", "main")
+    _git(live, "pull", "-q", "--ff-only")
+    _receipt, path = seal_repository(live, output=tmp_path / "sealed.json")
+    _git(seed, "reset", "--hard", "HEAD~1")
+    _commit(seed, "authority.txt", "replacement\n")
+    _git(seed, "push", "-q", "--force", "origin", "main")
+
+    decision = verify_receipt(path, root=live)
+
+    assert decision["allowed"] is False
+    assert "authority ref drifted from receipt" in decision["reasons"]
 
 
 def test_detached_and_unrelated_histories_block(tmp_path: Path) -> None:
@@ -271,6 +465,60 @@ def test_detached_and_unrelated_histories_block(tmp_path: Path) -> None:
     )
     assert unrelated_receipt.status is FoundationStatus.BLOCKED
     assert unrelated_receipt.repository.relation.value == "unrelated"
+
+
+def test_malformed_git_count_and_shallow_clone_remain_unknown(
+    tmp_path: Path,
+) -> None:
+    bare, seed, live = _authority_repo(tmp_path)
+
+    def malformed_runner(root: Path, args: tuple[str, ...]):
+        if args[:3] == ("rev-list", "--left-right", "--count"):
+            return subprocess.CompletedProcess(["git", *args], 0, "not counts\n", "")
+        return subprocess.run(
+            ["git", *args], cwd=root, capture_output=True, text=True, check=False
+        )
+
+    authority = collect_repository_authority(
+        live,
+        authority_ref="origin/main",
+        authority_source="operator",
+        receipt_id="malformed",
+        fetch=False,
+        runner=malformed_runner,
+    )
+    assert authority.ahead.state.value == "error"
+    assert authority.ahead.error_kind == "malformed_ahead_behind"
+    assert authority.ahead.value is None
+
+    _commit(seed, "later.txt", "later\n")
+    _git(seed, "push", "-q", "origin", "main")
+    shallow = tmp_path / "shallow"
+    subprocess.run(
+        ["git", "clone", "-q", "--depth", "1", f"file://{bare}", str(shallow)],
+        check=True,
+    )
+    shallow_receipt, _ = seal_repository(
+        shallow, output=tmp_path / "shallow.json", fetch=False
+    )
+    assert shallow_receipt.repository.shallow.value is True
+    assert shallow_receipt.repository.relation.value == "unknown"
+    assert shallow_receipt.status is FoundationStatus.BLOCKED
+
+
+def test_equivalent_cherry_pick_is_evidence_not_safe_ancestry(tmp_path: Path) -> None:
+    _bare, seed, live = _authority_repo(tmp_path)
+    _commit(live, "local.txt", "local branch\n")
+    authority_commit = _commit(seed, "equivalent.txt", "same patch\n")
+    _git(seed, "push", "-q", "origin", "main")
+    _git(live, "fetch", "-q", "origin", "main")
+    _git(live, "cherry-pick", authority_commit)
+
+    receipt, _ = seal_repository(live, output=tmp_path / "cherry.json")
+
+    assert receipt.repository.patch_equivalents
+    assert receipt.repository.relation.value == "diverged"
+    assert receipt.status is FoundationStatus.BLOCKED
 
 
 def test_ambiguous_authority_is_never_guessed(tmp_path: Path) -> None:
