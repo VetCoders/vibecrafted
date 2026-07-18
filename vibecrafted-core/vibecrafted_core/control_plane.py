@@ -1531,8 +1531,6 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
 
     lock_ctx = contextlib.nullcontext() if scoped else _sync_lock(purpose="board-sync")
     with lock_ctx:
-        if not scoped:
-            _rotate_event_stream()
         previous_snapshots, archived_ids = _load_existing_snapshots()
         merged: dict[str, RunStatus] = {}
 
@@ -1582,6 +1580,10 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
             payload_runs.append(payload)
         if not scoped:
             _archive_expired_snapshots()
+            # Rotate only AFTER the projection pass has landed every
+            # event-derived run in a snapshot — rotating first would drop runs
+            # that live only in the event stream (no snapshot yet).
+            _rotate_event_stream()
 
     # A scoped pass only re-projects runs that had fresh events; quiet target/
     # child runs keep their last snapshot, which _select_run reads directly.
