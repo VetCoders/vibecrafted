@@ -491,6 +491,8 @@ _print_skill_specific_flags() {
       printf '\n%bResume flags:%b\n' "$_bold" "$_reset"
       printf '  --session <id>                 Session ID to resume\n'
       printf "  --fork-session                 Create a new session from the parent's history\n"
+      printf '  --run-id <id>                  Resume a terminal RUN in place (control-plane lane):\n'
+      printf '                                 same run id, meta, transcript, and canonical report\n'
       printf '  -p, --prompt <text>            Continue with extra prompt text\n'
       printf '  -f, --file <path.md>           Continue with prompt context from file\n'
       ;;
@@ -804,6 +806,7 @@ cmd_resume_help() {
   printf '  vibecrafted resume claude --session abc123\n'
   printf '  vibecrafted resume codex --session abc123 --prompt "Continue from the failing test"\n'
   printf '  vibecrafted resume codex --session abc123 --fork-session --file handoff.md\n'
+  printf '  vibecrafted resume codex --run-id revi-260717-201752-39000 --prompt "Finish the report"\n'
   printf '\n'
   _print_skill_specific_flags "resume"
   printf '%bNative fork support:%b claude · grok · codex (visible terminal only)\n' "$_bold" "$_reset"

@@ -144,6 +144,16 @@ _vetcoders_marbles() {
 _vetcoders_resume_agent() {
   local tool="$1"
   shift
+  # Control-plane resume lane (`--run-id`) is owned by the core CLI: same run
+  # id, meta, transcript, and canonical report, continued agent session. The
+  # shell lane only drives raw agent-session resume/fork.
+  local _resume_arg
+  for _resume_arg in "$@"; do
+    if [[ "$_resume_arg" == "--run-id" ]]; then
+      echo "--run-id resume is the control-plane lane: run 'vibecrafted resume ${tool} $*' through the installed deck (vibecrafted_core.cli)." >&2
+      return 1
+    fi
+  done
   _vetcoders_parse_contract "$@" || return 1
   # Positional form: `vc-resume <agent> <session_id> [prompt words...]`.
   # Without --session the shared parser routes positionals into tail/prompt,
