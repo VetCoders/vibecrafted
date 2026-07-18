@@ -102,6 +102,25 @@ The recommended install order:
 4. PRView (recommended for review workflows)
 5. Screenscribe (recommended for visual verification)
 
+## Foundation Seal — the write-launch gate
+
+Distinct from the foundation _binaries_ above: the **Foundation Seal** is the
+typed truth-of-authority gate that write workflows must pass before any worker
+mutation (`vibecrafted_core/foundation/`, constitution in
+`FOUNDATION_RULE.md`, schema `vibecrafted.foundation.v1`).
+
+```bash
+vibecrafted foundation seal     # generate + seal the repo receipt
+vibecrafted foundation verify   # re-validate the bound receipt
+vibecrafted foundation status   # current receipt state
+```
+
+Receipts live at `~/.vibecrafted/foundation/<repo-key>/latest.json`; write
+launches bind them explicitly (`--foundation-receipt`), via plan frontmatter,
+or by fail-closed discovery of `latest.json` (drift/hash/root re-verified at
+every launch). Read-only workflows run `UNSEALED`. Continuity and lifecycle
+interplay: `docs/runtime/CONTINUITY.md`.
+
 ## Foundation vs Skills
 
 |                | Foundation            | Skills                                   |

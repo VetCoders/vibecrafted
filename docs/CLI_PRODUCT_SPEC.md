@@ -48,15 +48,15 @@ Identity vs drift:
 
 ### Golden surface — the only things `vibecrafted help` shows
 
-| Command                       | One-line description                       |
-| ----------------------------- | ------------------------------------------ |
-| `vibecrafted init [agent]`    | Orient an agent in this repo               |
-| `vibecrafted <skill> <agent>` | Run a workflow with an agent               |
-| `vibecrafted resume <agent>`  | Continue or fork a previous session        |
-| `vibecrafted status`          | Today's agent activity                     |
-| `vibecrafted doctor`          | Installation health — pass/fail            |
-| `vibecrafted update`          | Update to the latest release               |
-| `vibecrafted help [topic]`    | Command deck · `help --all` for everything |
+| Command                       | One-line description                                            |
+| ----------------------------- | --------------------------------------------------------------- |
+| `vibecrafted init [agent]`    | Orient an agent in this repo                                    |
+| `vibecrafted <skill> <agent>` | Run a workflow with an agent                                    |
+| `vibecrafted resume <agent>`  | Continue/fork a session, or `--run-id` to resume a run in place |
+| `vibecrafted status`          | Today's agent activity                                          |
+| `vibecrafted doctor`          | Installation health — pass/fail                                 |
+| `vibecrafted update`          | Update to the latest release                                    |
+| `vibecrafted help [topic]`    | Command deck · `help --all` for everything                      |
 
 Seven entries. Skills shown in the main help are only the ship cycle:
 `scaffold → implement → review → workflow → followup → marbles → audit → polarize → dou → hydrate → release`.
@@ -111,7 +111,7 @@ Usage:
 Commands:
   init [agent]         Orient an agent in this repo
   <skill> <agent>      Run a workflow with an agent
-  resume <agent>       Continue or fork a previous session
+  resume <agent>       Continue or fork a session · --run-id resumes a run in place
   status               Today's agent activity
   doctor               Installation health — pass/fail
   update               Update to the latest release

@@ -143,6 +143,19 @@ vibecrafted ship approve <run_id> [--force]  # --force only when the cargo gate
 
 No baton cargo is lost; the stage relaunches with the full report trail.
 
+When the dead worker HAS a recorded agent session, prefer the continuity lane
+before rewinding the baton — it keeps the run identity and the canonical
+report path instead of relaunching the stage from zero:
+
+```
+vibecrafted resume <agent> --run-id <stage_run_id> [--prompt "..."]
+vibecrafted ship approve <lifecycle_run_id>   # once the report lands
+```
+
+On success the dispatcher heals the stage's recorded `worker_exit` failure in
+state.json (`report_missing` → `report_validated`), so the lifecycle and the
+report agree. Full contract: `docs/runtime/CONTINUITY.md`.
+
 ### Prevention
 
 1. **Supervisor-side watchers, never worker-side** (see patterns below) with
