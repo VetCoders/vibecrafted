@@ -15,7 +15,10 @@ gate.
    note: case-insensitive APFS may show two spellings of one directory).
 3. What does the repo contract demand? (CLAUDE.md: commit format, hooks,
    untouchable paths, config precedence, language/edition footguns.)
-4. What moved on the Living Tree since the briefs were written? (`git log`
+4. What is the `OPERATOR_CHOSEN_BASELINE` after `git fetch --all --prune`?
+   Record root, branch, full SHA, status, refresh result, and upstream relation
+   without moving the checkout (see `../../BASELINE_RULE.md`).
+5. What moved on the Living Tree since the briefs were written? (`git log`
    since baseline — this becomes EXTRA and BATON content.)
 
 ## The four layers (one .md file, in this order)
@@ -26,6 +29,8 @@ Must cover (assembled FROM context, not copied from a template):
 
 - [ ] repo path + branch; Living Tree rules (zero worktree, zero branch
       switching, re-read before edit, never stash/discard others' work)
+- [ ] the full `OPERATOR_CHOSEN_BASELINE` block; the operator's checkout remains
+      authoritative and "latest HEAD" is forbidden without a named ref + proof
 - [ ] structural-truth tool order (loctree-first; fallback report path for
       misses)
 - [ ] architecture invariants (e.g. presentation in app/ never core/) and
@@ -57,6 +62,9 @@ Must cover (assembled FROM context, not copied from a template):
 - [ ] safety bolts: DIVERGED-STOP, scope fences ("do not enter cut X's
       files"), idempotency clause for refire ("if already delivered on the
       tree: verify acceptance and stop — do not duplicate")
+- [ ] exact-or-reviewed-descendant decision: prove ancestry with
+      `git merge-base --is-ancestor <baseline_sha> HEAD`; root/branch mismatch,
+      non-descendant HEAD, or unreviewed scope drift is DIVERGED-STOP
 - [ ] phasing for big cuts: commit a working subset + honest report rather
       than a half-product across N files
 
@@ -65,10 +73,11 @@ Must cover (assembled FROM context, not copied from a template):
 - [ ] which cuts are [x], their commit SHAs, which files they touched
 - [ ] explicit "HEAD may advance while you work; operator tests the live
       app in parallel — re-read before editing"
-- [ ] pre-handoff baseline for the receiving worker: branch, HEAD SHA,
-      `git status --short`, changed files, gates already run, known failures,
-      unverified surfaces, current intent, scope fence, and exact next
-      instruction/report path
+- [ ] immutable `OPERATOR_CHOSEN_BASELINE`: absolute root, branch, full SHA,
+      exact status, remote refresh receipt, upstream relation, selection source
+- [ ] current receiving state: HEAD, status, descendant commits since baseline,
+      changed files, gates already run, known failures, unverified surfaces,
+      current intent, scope fence, and exact next instruction/report path
 - [ ] for recovery-dispatch: what the previous run did/did not leave behind
       ("you inherit nothing" or the exact WIP description), with evidence
 - [ ] what comes after this cut (so the worker fences its scope)
@@ -77,6 +86,7 @@ Must cover (assembled FROM context, not copied from a template):
 
 ```bash
 grep -c '{repo}\|{id}\|{reports_dir}\|{[a-z_]*}' prompt.md   # MUST be 0
+grep -c '^OPERATOR_CHOSEN_BASELINE$' prompt.md                # MUST be 1
 wc -l prompt.md                                              # sanity: full brief present
 ```
 

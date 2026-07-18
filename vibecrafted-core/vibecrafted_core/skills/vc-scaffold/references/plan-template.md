@@ -15,6 +15,18 @@ created: <ISO-8601 timestamp>
 
 # Architecture Plan: [Project Name]
 
+## OPERATOR_CHOSEN_BASELINE
+
+Record the absolute Git root, operator-selected branch, full 40-character SHA,
+exact status, `git fetch --all --prune` result with UTC timestamp, upstream ref
+and relation, and selection source. This record is immutable provenance.
+
+Before acting, every receiver re-checks root/branch/HEAD/status. Exact SHA passes.
+A descendant on the same root and branch passes only after
+`git merge-base --is-ancestor <baseline_sha> HEAD`, reviewed drift, and re-reading
+affected files. Any other relation is DIVERGED-STOP; never checkout/reset/rebase/
+stash to manufacture agreement.
+
 ## Problem Statement
 
 [1-2 sentences. What problem are we solving? Why does it matter?]
@@ -85,7 +97,7 @@ Each task is agent-ready. Agents execute in parallel when dependencies allow. Ea
 **Owner:** [Agent skill or human role]
 **Delivery-verifier:** [the non-fakeable test that flips [~]→[x]; without it the task ships as [?]]
 **Acceptance:** [intent vs baseline — what proves delivery ≈ claim, not just "agent said so"]
-**Pre-handoff baseline:** [branch + HEAD + git status + changed files + gates/known failures + exact next instruction]
+**Pre-handoff baseline:** [immutable OPERATOR_CHOSEN_BASELINE + current descendant HEAD/status + reviewed drift + gates/known failures + exact next instruction; mismatch = DIVERGED-STOP]
 
 Example:
 ```
@@ -97,7 +109,7 @@ Depends on: Infrastructure up, database schema
 Owner: Core backend agent
 Delivery-verifier: `pnpm test auth` green — rejects invalid tokens, passes valid; flips [~]→[x]
 Acceptance: intent (auth enforced on all routes) vs baseline (routes open); delivery proven by the verifier, not "agent said so"
-Pre-handoff baseline: branch, HEAD, git status, changed files, verifier output, known failures, next instruction
+Pre-handoff baseline: immutable OPERATOR_CHOSEN_BASELINE, current descendant HEAD/status, reviewed drift, verifier output, known failures, next instruction; mismatch = DIVERGED-STOP
 
 ```
 

@@ -8,7 +8,8 @@ description: >
   measurable, self-sufficient plan a fleet executes with the operator absent mid-flight.
   This skill should be used when the user asks to "scaffold", "plan this", "architect
   this", "break this down", "I have an idea", "design the system", "vc-scaffold",
-  "zaplanuj to", "rozrysuj architekturę", "mam pomysł".
+  "zaplanuj to", "rozrysuj architekturę", "mam pomysł", or asks for a plan that
+  must be anchored to the operator's chosen checkout and refreshed Git baseline.
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
@@ -36,6 +37,21 @@ to, or move execution into a git worktree unless the operator explicitly asks. G
 "isolate", "parallel", or "clean branch" are not enough. Re-read files before editing, adapt to
 concurrent changes, report a substrate failure if the tree is too poisoned to continue safely.
 See [Living Tree Rule](../LIVING_TREE_RULE.md).
+
+### Operator-chosen baseline (HARD-BLOCK)
+
+Before repo-specific research or planwriting, execute the
+[`OPERATOR_CHOSEN_BASELINE` rule](../BASELINE_RULE.md): capture the current root,
+branch, full SHA, status, and remote freshness after `git fetch --all --prune`.
+The operator's current checkout is the selected substrate. Never silently replace
+it with `origin/main`, another clone, or an invented "latest HEAD".
+
+Every master plan, `DRIVER.md`, and cut brief MUST carry the baseline block. A
+receiving worker may accept an exact SHA or a reviewed descendant on the same root
+and branch. Any non-descendant, path/branch mismatch, missing record, failed remote
+refresh without an explicit waiver, or unreviewed scope-changing drift is
+**DIVERGED-STOP**. Living Tree does not authorize checkout/reset/rebase/stash as a
+way to satisfy this gate.
 
 ### Dispatch
 
@@ -91,7 +107,7 @@ operator review — not narrated as prose and not gated on the agent's good inte
 
 ### 1. Orient (research-first)
 
-Pass the Canonical Orientation Gate above. Map the existing landscape: `repo-view` for size/health,
+Pass both the Canonical Orientation Gate and `OPERATOR_CHOSEN_BASELINE` gate above. Map the existing landscape: `repo-view` for size/health,
 `focus` on suspect modules, `slice` critical files, `tree` for hotspots, `follow` for dead/cycles.
 Capture the **constraint space** — tech (stack/versions/infra), team (who builds, which languages),
 business (time budget, deadline), scope (MVP vs full vision). Constraints shape everything.
@@ -125,7 +141,8 @@ rule that turns a plan from a shell (wydmuszka) into something a fleet can execu
 
 For each cut, write `briefs/<wave>-<slot>_<slug>.md` from the 12-section dispatch template
 (`references/output-shapes.md`): mission · context · files · acceptance · gates · out-of-scope ·
-Living Tree etiquette (verbatim) · Loctree-first · recovery hint · branch+commit · report path.
+Living Tree etiquette (verbatim) · Loctree-first · recovery hint · branch+commit ·
+`OPERATOR_CHOSEN_BASELINE` + receiver gate · report path.
 
 **Enforcement (ported from `/brainstorming`, the flow that leads the agent by the hand):**
 
@@ -161,7 +178,8 @@ It MUST contain all five:
    The rule lives IN the DRIVER on purpose — so that mid-dispatch nobody promotes a claim to done
    without re-running the verifier. That promotion-without-proof is the single failure mode that
    wrecks an operator run ("się zajebiemy"). Encode it where the dispatcher's eyes are.
-5. **Live status snapshot** + `dou-index = |[x]| / total`.
+5. **Live status snapshot** + `dou-index = |[x]| / total`, including the full
+   `OPERATOR_CHOSEN_BASELINE` block and receiver rule from `../BASELINE_RULE.md`.
 
 ### 6. Serve & review (editable artifacts via vibecrafted-server)
 
@@ -186,6 +204,9 @@ sections; acceptance bullets are atomic + verifier-backed; a design doc exists f
 ready commands · the `[ ]→[x]` rule verbatim · status snapshot)**. The gate is **machine-checked, not
 agent-promised** — it is the same artifact-as-truth gate the async runtime uses between every
 read-write cadence handoff.
+The doctor also refuses handoff when the baseline block is missing, remote
+freshness is unproven without an explicit operator waiver, or a cut omits the
+receiver's DIVERGED-STOP rule.
 
 ## Measurement (the armor)
 
@@ -199,6 +220,9 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
 ## Critical Rules
 
 - **Research-first is hard-block, not polish.** No plan from memory; derive from repo/runtime truth.
+- **Baseline-first is hard-block, not folklore.** Run `git fetch --all --prune`,
+  preserve the operator's checkout, record `OPERATOR_CHOSEN_BASELINE`, and make
+  every receiver prove exact-or-reviewed-descendant lineage or DIVERGED-STOP.
 - **A brief for every cut — no exceptions.** Per-cut briefs are the hard-gate (Phase 5). A plan
   whose cuts lack briefs is a shell; the scaffold-doctor refuses to hand it off.
 - **A DRIVER.md — no exceptions (Phase 5.5).** The operator hand-off driver (full paths · why-annotated
@@ -223,6 +247,8 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
 - A cold fleet (or human) executes the plan **without asking a question** mid-flight.
 - Every cut has a `Vector` and a `delivery-verifier`; the `state` column is machine-readable.
 - Scope boundaries are crystal clear; 3-5 architectural decisions explicit with trade-offs.
+- The chosen checkout has a remote-ref refresh receipt and an immutable baseline
+  record; later Living Tree movement is reviewed as descendant drift, never hidden.
 - The plan survives an absent operator: `[x]` is earned, `[?]` is honest, nothing is faked.
 
 ## Cross-References
@@ -236,6 +262,8 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
 ## Anti-Patterns
 
 - Planning before the orientation gate (composing architecture from memory = silent drift).
+- Saying "latest HEAD" without a named ref and proof, or silently replacing the
+  operator-chosen checkout with `origin/main`.
 - A 50-page design doc instead of a sharp, measurable plan.
 - Prose instead of a `state` column — the operator can't trigger/stop on prose.
 - Treating an agent's `[~]` claim as `[x]` without a verifier (the optimism trap).

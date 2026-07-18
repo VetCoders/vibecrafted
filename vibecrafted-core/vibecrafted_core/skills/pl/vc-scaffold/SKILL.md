@@ -8,7 +8,8 @@ description: >
   measurable, self-sufficient plan a fleet executes with the operator absent mid-flight.
   This skill should be used when the user asks to "scaffold", "plan this", "architect
   this", "break this down", "I have an idea", "design the system", "vc-scaffold",
-  "zaplanuj to", "rozrysuj architekturę", "mam pomysł".
+  "zaplanuj to", "rozrysuj architekturę", "mam pomysł", albo prosi o plan
+  zakotwiczony w wybranym `checkout` operatora i odświeżonym baseline Gita.
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
@@ -36,6 +37,21 @@ na niego ani nie przenoś do niego wykonania, chyba że operator wprost poprosi.
 „isolate", „parallel" czy „clean branch" to za mało. Czytaj pliki ponownie przed edycją, dostosowuj się do
 równoległych zmian i zgłoś awarię podłoża (substrate failure), jeśli drzewo jest zbyt zatrute, by bezpiecznie kontynuować.
 Zobacz [Reguła Living Tree](../LIVING_TREE_RULE.md).
+
+### Baseline wybranego checkoutu operatora (HARD-BLOCK)
+
+Przed researchem lub planowaniem repo wykonaj regułę
+[`OPERATOR_CHOSEN_BASELINE`](../../BASELINE_RULE.md): po
+`git fetch --all --prune` zapisz bieżący root, branch, pełny SHA, status i wynik
+odświeżenia remote'ów. Bieżący checkout operatora jest wybranym podłożem. Nie
+zastępuj go po cichu `origin/main`, innym klonem ani wymyślonym „latest HEAD”.
+
+Każdy master plan, `DRIVER.md` i brief cięcia MUSI nieść blok baseline. Worker
+może zaakceptować dokładny SHA albo przejrzanego potomka na tym samym root i
+branchu. Niepotomny HEAD, inny path/branch, brak rekordu, nieudany fetch bez
+jawnego waivera operatora lub nieprzejrzany dryf zmieniający scope oznacza
+**DIVERGED-STOP**. Living Tree nie pozwala użyć checkout/reset/rebase/stash do
+sfabrykowania zgodności.
 
 ### Dispatch
 
@@ -91,7 +107,7 @@ przeglądu przez operatora — nie narracja prozą i nie bramkowane na dobrych i
 
 ### 1. Orient (research-first)
 
-Przejdź Checkpoint orientacji powyżej. Zmapuj istniejący krajobraz: `repo-view` dla rozmiaru/zdrowia,
+Przejdź Checkpoint orientacji i checkpoint `OPERATOR_CHOSEN_BASELINE` powyżej. Zmapuj istniejący krajobraz: `repo-view` dla rozmiaru/zdrowia,
 `focus` na podejrzanych modułach, `slice` na krytycznych plikach, `tree` dla hotspotów, `follow` dla dead/cycles.
 Uchwyć **przestrzeń ograniczeń** — tech (stack/wersje/infra), zespół (kto buduje, w jakich językach),
 biznes (budżet czasu, deadline), scope (MVP vs pełna wizja). Ograniczenia kształtują wszystko.
@@ -126,7 +142,8 @@ Wyprodukuj plan z `references/plan-template.md` (master-dispatch: wave atlas + g
 
 Dla każdego cięcia napisz `briefs/<wave>-<slot>_<slug>.md` z 12-sekcyjnego szablonu dispatchu
 (`references/output-shapes.md`): mission · context · files · acceptance · gates · out-of-scope ·
-etykieta Living Tree (verbatim) · Loctree-first · podpowiedź recovery · branch+commit · ścieżka raportu.
+etykieta Living Tree (verbatim) · Loctree-first · podpowiedź recovery · branch+commit ·
+`OPERATOR_CHOSEN_BASELINE` + receiver gate · ścieżka raportu.
 
 **Egzekwowanie (przeniesione z `/brainstorming`, flow, który prowadzi agenta za rękę):**
 
@@ -162,7 +179,8 @@ MUSI zawierać wszystkie pięć:
    Reguła żyje W DRIVER-ze celowo — po to, żeby w trakcie dispatchu nikt nie promował twierdzenia do done
    bez ponownego uruchomienia verifiera. Ta promocja-bez-dowodu to jedyny tryb porażki, który
    wykłada przebieg operatora („się zajebiemy"). Zakoduj to tam, gdzie są oczy dispatchera.
-5. **Snapshot statusu na żywo** + `dou-index = |[x]| / total`.
+5. **Snapshot statusu na żywo** + `dou-index = |[x]| / total`, w tym pełny
+   blok `OPERATOR_CHOSEN_BASELINE` i receiver rule z `../../BASELINE_RULE.md`.
 
 ### 6. Serwuj i przeglądaj (edytowalne artefakty przez vibecrafted-server)
 
@@ -187,6 +205,9 @@ sekcjami; bullety acceptance nie są atomowe + poparte verifierem; nie istnieje 
 gotowe komendy · reguła `[ ]→[x]` verbatim · snapshot statusu)**. Bramka jest **sprawdzana maszynowo, nie
 obiecywana przez agenta** — to ta sama bramka artefakt-jako-prawda, której async runtime używa między każdym
 przekazaniem cadence read-write.
+Doctor odmawia też przekazania, gdy brakuje baseline, świeżość remote'ów nie
+została dowiedziona bez jawnego waivera operatora albo cut pomija receiver rule
+DIVERGED-STOP.
 
 ## Pomiar (pancerz)
 
@@ -200,6 +221,9 @@ to wyzwala recovery-vector** (fallback/failover/handsoff). Pełen alfabet + mark
 ## Reguły krytyczne
 
 - **Research-first to hard-block, nie poprawka.** Żadnego planu z pamięci; wyprowadź z prawdy repo/runtime.
+- **Baseline-first to hard-block, nie folklor.** Uruchom `git fetch --all --prune`,
+  zachowaj checkout operatora, zapisz `OPERATOR_CHOSEN_BASELINE` i każ receiverowi
+  dowieść exact-or-reviewed-descendant albo wykonać DIVERGED-STOP.
 - **Brief na każde cięcie — bez wyjątków.** Briefy per cięcie to hard-gate (Faza 5). Plan,
   którego cięcia nie mają briefów, to wydmuszka; scaffold-doctor odmawia przekazania.
 - **DRIVER.md — bez wyjątków (Faza 5.5).** Driver przekazania operatora (pełne ścieżki · graf z adnotacją
@@ -224,6 +248,8 @@ to wyzwala recovery-vector** (fallback/failover/handsoff). Pełen alfabet + mark
 - Zimna flota (albo człowiek) wykonuje plan **bez zadawania pytania** w locie.
 - Każde cięcie ma `Vector` i `delivery-verifier`; kolumna `state` jest czytelna maszynowo.
 - Granice scope'u są krystalicznie jasne; 3-5 decyzji architektonicznych jawnych z trade-offami.
+- Wybrany checkout ma receipt odświeżenia remote refs i niezmienny rekord baseline;
+  późniejszy ruch Living Tree jest przejrzanym dryfem potomnym, nigdy ukrytym.
 - Plan przetrwa nieobecnego operatora: `[x]` jest zasłużone, `[?]` jest uczciwe, nic nie jest fałszowane.
 
 ## Odniesienia
@@ -237,6 +263,8 @@ to wyzwala recovery-vector** (fallback/failover/handsoff). Pełen alfabet + mark
 ## Antywzorce
 
 - Planowanie przed checkpointem orientacji (komponowanie architektury z pamięci = cichy dryf).
+- Mówienie „latest HEAD” bez nazwanego refa i dowodu albo ciche zastąpienie
+  checkoutu operatora przez `origin/main`.
 - 50-stronicowy design doc zamiast ostrego, mierzalnego planu.
 - Proza zamiast kolumny `state` — operator nie odpali trigger/stop na prozie.
 - Traktowanie twierdzenia `[~]` agenta jak `[x]` bez verifiera (pułapka optymizmu).

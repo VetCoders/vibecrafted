@@ -1,6 +1,6 @@
 ---
 name: vc-dispatch
-description: "Operate external Vibecrafted fleet lines with prompt assembly, await/observe, reports, and recovery."
+description: "Operate external Vibecrafted fleet lines with prompt assembly, await/observe, reports, and recovery. Use when the operator asks to launch, dispatch, run the fleet, supplies a concrete vibecrafted command, or needs execution anchored to an operator-chosen Git checkout and refreshed baseline."
 ---
 
 <!-- fleet-imperative: v2 -->
@@ -64,6 +64,22 @@ before building wave order, composing worker briefs, judging file overlap, or
 accepting a baton from a previous cut. Missing Loctree evidence means the line
 is blind, not merely under-documented.
 
+## Operator-chosen baseline gate (HARD-BLOCK)
+
+Every concrete fleet launch is a trigger for the
+[`OPERATOR_CHOSEN_BASELINE` rule](../BASELINE_RULE.md). Immediately before
+assembling or launching a worker prompt, run `git fetch --all --prune` from the
+operator's current checkout and capture its absolute root, current branch, full
+SHA, exact status, refresh result, and upstream relation.
+
+The current checkout is the operator's selection. Do not substitute
+`origin/main`, another clone, or a same-name remote branch. Do not use checkout,
+reset, pull, merge, rebase, or stash to manufacture agreement. The prompt MUST
+carry the complete baseline record in EXTRA/BATON and teach the receiver to
+accept only the exact SHA or a reviewed descendant on the same root and branch.
+Everything else is **DIVERGED-STOP**. A failed fetch is also DIVERGED-STOP unless
+the operator explicitly records a freshness waiver.
+
 ## Repository Work Doctrine
 
 For repository work, start with Loctree as the map: use `loct context`,
@@ -88,7 +104,8 @@ the agent's model flag: `--model` for claude, `-m` for codex). An unpinned
 cut runs on the account default — which is a non-decision, not a safe default:
 pin deliberately, and treat a missing pin as a smell to resolve before launch.
 
-1. **Pre-flight (once per line)**: test the verify commands from the briefs
+1. **Pre-flight (once per line)**: establish `OPERATOR_CHOSEN_BASELINE` first,
+   then test the verify commands from the briefs
    before the line moves — a gate that matches 0 tests is trivially green;
    demand ≥1 new non-trivial test in EXTRA. `grep -c` exits 1 on 0 hits
    (`|| true`); count ALL `test result:` lines (multiple binaries — `tail -1`
@@ -104,7 +121,8 @@ pin deliberately, and treat a missing pin as a smell to resolve before launch.
    (`vc_run_launch` / `vc_launch`) default `runtime="headless"` and do NOT detect
    the session, so when dispatching through MCP pass `runtime="visible"`
    explicitly, or use the CLI. Headless is the unattended/cron lane only. Record
-   the receipt (run_id, report, transcript, meta) in the tracker.
+   the receipt (run_id, report, transcript, meta) and immutable baseline record
+   in the tracker.
 3. **Spanko**: await through artifacts, never by staring at a pane. Use the
    dedicated command as the standard dispatcher loop. Canonical supervisor
    contract (see `docs/runtime/AGENT_OPS.md`): After dispatch, arm
@@ -133,7 +151,9 @@ pin deliberately, and treat a missing pin as a smell to resolve before launch.
    SHA + worker-reported gates + who verified. Manual/runtime acceptance
    stays `[?]` for the operator. Ledger rules: `references/ledger.md`.
 6. **Baton**: next cut's prompt carries the line state — which cuts landed,
-   which commits, which files moved, what the next worker must re-read.
+   which commits, which files moved, what the next worker must re-read. It also
+   carries the original `OPERATOR_CHOSEN_BASELINE` plus the reviewed descendant
+   chain; it never launders drift by replacing provenance with the current HEAD.
 
 ## Parallel waves are an obligation
 
@@ -219,6 +239,10 @@ backlog cuts on the operator's button.
 
 ## Failure patterns (do not repeat)
 
+- Launching from "latest HEAD" folklore without `git fetch --all --prune`, a
+  named upstream relation, and an `OPERATOR_CHOSEN_BASELINE` record.
+- Fixing a root/branch/SHA mismatch by moving the Living Tree instead of
+  DIVERGED-STOP and returning evidence.
 - Prompt in argv; placeholders unrendered (`grep -c '{' file` gate = 0).
 - Killing a supervisor racing its own loop — check `ps` children and
   `git log` after; the orphan often delivers.

@@ -1,6 +1,6 @@
 ---
 name: vc-dispatch
-description: "Operate external Vibecrafted fleet lines with prompt assembly, await/observe, reports, and recovery."
+description: "Operate external Vibecrafted fleet lines with prompt assembly, await/observe, reports, and recovery. Use when the operator asks to launch, dispatch, run the fleet, supplies a concrete vibecrafted command, or needs execution anchored to an operator-chosen Git checkout and refreshed baseline."
 ---
 
 <!-- fleet-imperative: v2 -->
@@ -64,6 +64,22 @@ zanim zbudujesz kolejność fal, ułożysz briefy workerów, ocenisz nakładanie
 przyjmiesz baton z poprzedniego cięcia. Brak evidence z Loctree oznacza, że linia
 jest ślepa, nie tylko słabo udokumentowana.
 
+## Checkpoint baseline wybranego checkoutu operatora (HARD-BLOCK)
+
+Każdy konkretny launch floty wyzwala regułę
+[`OPERATOR_CHOSEN_BASELINE`](../../BASELINE_RULE.md). Bezpośrednio przed
+złożeniem lub uruchomieniem promptu workera wykonaj `git fetch --all --prune`
+z bieżącego checkoutu operatora i zapisz absolutny root, branch, pełny SHA,
+dokładny status, wynik refreshu i relację z upstreamem.
+
+Bieżący checkout jest wyborem operatora. Nie zastępuj go `origin/main`, innym
+klonem ani zdalnym branchem o tej samej nazwie. Nie używaj checkout, reset,
+pull, merge, rebase ani stash do sfabrykowania zgodności. Prompt MUSI nieść
+pełny rekord baseline w EXTRA/BATON i nauczyć receivera akceptować wyłącznie
+dokładny SHA albo przejrzanego potomka na tym samym root i branchu. Wszystko
+inne to **DIVERGED-STOP**. Nieudany fetch również oznacza DIVERGED-STOP, chyba
+że operator jawnie zapisze waiver świeżości.
+
 ## Doktryna pracy z repozytorium
 
 W pracy z repozytorium zacznij od Loctree jako mapy: użyj `loct context`,
@@ -89,7 +105,8 @@ dla codex). Cut bez pinu leci na defaulcie
 konta — a to NIE-decyzja, nie bezpieczny default: pinuj świadomie, a brak
 pinu traktuj jako smell do rozwiązania przed startem.
 
-1. **Pre-flight (raz na linię)**: przetestuj komendy weryfikujące z briefów,
+1. **Pre-flight (raz na linię)**: najpierw ustanów `OPERATOR_CHOSEN_BASELINE`,
+   potem przetestuj komendy weryfikujące z briefów,
    zanim linia ruszy — bramka, która matchuje 0 testów, jest trywialnie zielona;
    żądaj ≥1 nowego nietrywialnego testu w EXTRA. `grep -c` wychodzi z kodem 1 przy 0 trafień
    (`|| true`); licz WSZYSTKIE linie `test result:` (wiele binarek — `tail -1`
@@ -98,7 +115,7 @@ pinu traktuj jako smell do rozwiązania przed startem.
    nowe linie), cztery warstwy wg checklisty. Launch:
    `bash -c 'ulimit -f unlimited; vibecrafted <skill> <agent> --file <p.md>'`
    (shelle mogą nieść miękki `ulimit -f` → SIGXFSZ/exit 153). Zapisz receipt
-   (run_id, report, transcript, meta) w trackerze.
+   (run_id, report, transcript, meta) oraz niezmienny rekord baseline w trackerze.
 3. **Spanko**: czekaj przez artefakty, nigdy przez gapienie się w pane. Użyj
    dedykowanej komendy jako standardowej pętli dyspozytora. Kanoniczny kontrakt
    supervisora (zobacz `docs/runtime/AGENT_OPS.md`): po dispatchu uzbrój
@@ -128,6 +145,8 @@ pinu traktuj jako smell do rozwiązania przed startem.
    zostaje `[?]` dla operatora. Reguły ledgera: `references/ledger.md`.
 6. **Baton**: prompt kolejnego cięcia niesie stan linii — które cięcia wylądowały,
    które commity, które pliki się przesunęły, co następny worker musi przeczytać ponownie.
+   Niesie też oryginalny `OPERATOR_CHOSEN_BASELINE` oraz przejrzany łańcuch
+   potomków; nie pierze dryfu przez podmianę proweniencji na bieżący HEAD.
 
 ## Fale równoległe to obowiązek
 
@@ -212,6 +231,10 @@ cięciami backlogowymi na guzik operatora.
 
 ## Wzorce awarii (nie powtarzaj)
 
+- Launch z folkloru „latest HEAD” bez `git fetch --all --prune`, nazwanej
+  relacji upstream i rekordu `OPERATOR_CHOSEN_BASELINE`.
+- Naprawianie niezgodności root/branch/SHA przez poruszanie Living Tree zamiast
+  DIVERGED-STOP i zwrotu evidence.
 - Prompt w argv; placeholdery nierenderowane (bramka `grep -c '{' file` = 0).
 - Zabicie supervisora ścigającego własną pętlę — sprawdź dzieci `ps` i
   `git log` po fakcie; orphan często dowozi.

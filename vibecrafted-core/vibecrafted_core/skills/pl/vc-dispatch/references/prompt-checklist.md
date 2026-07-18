@@ -14,7 +14,10 @@ z vc-init są materiałem źródłowym; checklista poniżej jest bramką.
    uwaga: case-insensitive APFS może pokazać dwie pisownie jednego katalogu).
 3. Czego wymaga kontrakt repo? (CLAUDE.md: format commita, hooki, nietykalne
    ścieżki, precedencja configu, footguny języka/edycji.)
-4. Co ruszyło się na Living Tree, odkąd napisano briefy? (`git log` od baseline'u
+4. Jaki jest `OPERATOR_CHOSEN_BASELINE` po `git fetch --all --prune`? Zapisz
+   root, branch, pełny SHA, status, wynik refreshu i relację upstream bez
+   poruszania checkoutu (zobacz `../../../BASELINE_RULE.md`).
+5. Co ruszyło się na Living Tree, odkąd napisano briefy? (`git log` od baseline'u
    — to staje się treścią EXTRA i BATON.)
 
 ## Cztery warstwy (jeden plik .md, w tej kolejności)
@@ -25,6 +28,8 @@ Musi pokryć (złożone Z kontekstu, nie skopiowane z szablonu):
 
 - [ ] ścieżka repo + gałąź; reguły Living Tree (zero worktree, zero
       przełączania gałęzi, re-read przed edycją, nigdy stash/discard cudzej pracy)
+- [ ] pełny blok `OPERATOR_CHOSEN_BASELINE`; checkout operatora pozostaje
+      autorytatywny, a „latest HEAD” jest zabronione bez nazwanego refa i dowodu
 - [ ] kolejność narzędzi prawdy strukturalnej (loctree-first; ścieżka raportu
       fallbacku dla miss)
 - [ ] inwarianty architektury (np. prezentacja w app/ nigdy core/) oraz
@@ -56,6 +61,9 @@ Musi pokryć (złożone Z kontekstu, nie skopiowane z szablonu):
 - [ ] śruby bezpieczeństwa: DIVERGED-STOP, ogrodzenia scope'u („nie wchodź
       w pliki cięcia X"), klauzula idempotencji dla refire („jeśli już dowiezione
       na drzewie: zweryfikuj acceptance i zatrzymaj się — nie duplikuj")
+- [ ] decyzja exact-or-reviewed-descendant: dowiedź pochodzenia przez
+      `git merge-base --is-ancestor <baseline_sha> HEAD`; mismatch root/branch,
+      niepotomny HEAD lub nieprzejrzany dryf scope'u oznacza DIVERGED-STOP
 - [ ] fazowanie dla wielkich cięć: zacommituj działający podzbiór + uczciwy
       raport zamiast półproduktu rozsmarowanego po N plikach
 
@@ -64,10 +72,11 @@ Musi pokryć (złożone Z kontekstu, nie skopiowane z szablonu):
 - [ ] które cięcia są [x], ich SHA commitów, które pliki dotknęły
 - [ ] wprost „HEAD może iść do przodu, gdy pracujesz; operator testuje żywą
       aplikację równolegle — re-read przed edycją"
-- [ ] pre-handoff baseline dla workera przejmującego: branch, SHA HEAD,
-      `git status --short`, zmienione pliki, bramki już uruchomione, znane
-      awarie, niezweryfikowane powierzchnie, bieżąca intencja, ogrodzenie
-      scope'u i dokładna następna instrukcja/ścieżka raportu
+- [ ] niezmienny `OPERATOR_CHOSEN_BASELINE`: absolutny root, branch, pełny SHA,
+      dokładny status, receipt refreshu remote, relacja upstream, źródło wyboru
+- [ ] bieżący stan receivera: HEAD, status, potomne commity od baseline,
+      zmienione pliki, bramki, znane awarie, niezweryfikowane powierzchnie,
+      intencja, scope fence i dokładna następna instrukcja/ścieżka raportu
 - [ ] dla recovery-dispatch: co poprzedni run zostawił / czego nie zostawił
       („nie dziedziczysz nic" albo dokładny opis WIP), z evidence
 - [ ] co przychodzi po tym cięciu (żeby worker ogrodził swój scope)
@@ -76,6 +85,7 @@ Musi pokryć (złożone Z kontekstu, nie skopiowane z szablonu):
 
 ```bash
 grep -c '{repo}\|{id}\|{reports_dir}\|{[a-z_]*}' prompt.md   # MUST be 0
+grep -c '^OPERATOR_CHOSEN_BASELINE$' prompt.md                # MUST be 1
 wc -l prompt.md                                              # sanity: full brief present
 ```
 

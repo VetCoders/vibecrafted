@@ -15,6 +15,18 @@ created: <ISO-8601 timestamp>
 
 # Architecture Plan: [Project Name]
 
+## OPERATOR_CHOSEN_BASELINE
+
+Zapisz absolutny root Gita, wybrany przez operatora branch, pełny 40-znakowy
+SHA, dokładny status, wynik `git fetch --all --prune` z czasem UTC, upstream ref
+i relację oraz źródło wyboru. Ten rekord to niezmienna proweniencja.
+
+Przed działaniem każdy receiver ponownie sprawdza root/branch/HEAD/status.
+Dokładny SHA przechodzi. Potomek na tym samym root i branchu przechodzi dopiero
+po `git merge-base --is-ancestor <baseline_sha> HEAD`, przejrzeniu dryfu i
+ponownym odczycie dotkniętych plików. Każda inna relacja to DIVERGED-STOP;
+nigdy nie używaj checkout/reset/rebase/stash do sfabrykowania zgodności.
+
 ## Problem Statement
 
 [1-2 zdania. Jaki problem rozwiązujemy? Czemu to ma znaczenie?]
@@ -85,7 +97,7 @@ marker `state` `[ ] [~] [?] [!] [x]` (zobacz references/measure-core.md); tylko 
 **Owner:** [Skill agenta lub rola człowieka]
 **Delivery-verifier:** [niefałszowalny test, który przerzuca [~]→[x]; bez niego task dowozi się jako [?]]
 **Acceptance:** [intent vs baseline — co dowodzi, że delivery ≈ claim, nie tylko „agent tak powiedział"]
-**Pre-handoff baseline:** [branch + HEAD + git status + zmienione pliki + bramki/znane awarie + dokładna następna instrukcja]
+**Pre-handoff baseline:** [niezmienny OPERATOR_CHOSEN_BASELINE + bieżący potomny HEAD/status + przejrzany dryf + bramki/znane awarie + dokładna następna instrukcja; mismatch = DIVERGED-STOP]
 
 Przykład:
 ```
@@ -97,7 +109,7 @@ Depends on: Infrastructure up, database schema
 Owner: Core backend agent
 Delivery-verifier: `pnpm test auth` green — rejects invalid tokens, passes valid; flips [~]→[x]
 Acceptance: intent (auth enforced on all routes) vs baseline (routes open); delivery proven by the verifier, not "agent said so"
-Pre-handoff baseline: branch, HEAD, git status, changed files, verifier output, known failures, next instruction
+Pre-handoff baseline: immutable OPERATOR_CHOSEN_BASELINE, current descendant HEAD/status, reviewed drift, verifier output, known failures, next instruction; mismatch = DIVERGED-STOP
 
 ```
 

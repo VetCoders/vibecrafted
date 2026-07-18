@@ -30,11 +30,19 @@ prompt_id: <slug>
 agent: <claude|codex|gemini>
 skill: <vc-implement|...>
 wave: <Wn>            target_repo: <repo>      baseline_branch: <branch>
+baseline_sha: <pełny 40-znakowy sha>
 authored_by: <agent> <agents@vetcoders.io>     report_path: <path>
 vector: <stabilize|implement|recon|e2e>
 ---
 
 # <Wn> — <title>
+
+## 1. OPERATOR_CHOSEN_BASELINE
+
+Zapisz absolutny root repo, wybrany branch, pełny SHA, dokładny status, wynik
+`git fetch --all --prune`, relację upstream i źródło wyboru. Receiver akceptuje
+dokładny SHA albo przejrzanego potomka na tym samym root/branchu; każdy inny
+mismatch oznacza DIVERGED-STOP. Nigdy nie poruszaj checkoutu, żeby przejść gate.
 
 ## 2. Mission (one paragraph: the WRITE this wave delivers)
 
