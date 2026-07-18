@@ -31,7 +31,7 @@ from .events import append_event
 from .foundation.service import preflight_launch
 from .model_overrides import _model_override_receipt, _with_model_override
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
-from .spawn import _stdin_command
+from .spawn import _resume_stdin_command, _stdin_command
 from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE
 from .workflows import registry as workflow_registry
 
@@ -1774,6 +1774,356 @@ def retry_run(
         "run_id": target,
         "retry_run_id": str(launched.get("run_id") or ""),
         "launch": launched,
+    }
+
+
+def _lifecycle_state_for_run(run_id: str) -> str:
+    """Find the lifecycle state.json whose stage launched ``run_id``.
+
+    The run's meta.json does not carry its lifecycle binding, so resume
+    rediscovers it from the durable lifecycle records. Returns "" when the run
+    was not part of a lifecycle.
+    """
+    target = str(run_id or "").strip()
+    if not target:
+        return ""
+    lifecycle_root = control_plane_home() / "lifecycle_runs"
+    if not lifecycle_root.is_dir():
+        return ""
+    candidates: list[tuple[str, Path]] = []
+    for state_path in lifecycle_root.glob("*/state.json"):
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for stage in payload.get("stages") or []:
+            if not isinstance(stage, dict):
+                continue
+            launch = stage.get("launch") or {}
+            stage_run = str(
+                (launch.get("run_id") if isinstance(launch, dict) else "")
+                or (stage.get("worker_exit") or {}).get("run_id", "")
+                or ""
+            )
+            if stage_run == target:
+                candidates.append(
+                    (str(payload.get("run_id") or state_path.parent.name), state_path)
+                )
+                break
+    if not candidates:
+        return ""
+    # Newest lifecycle run wins when a run id somehow appears in several.
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return str(candidates[0][1])
+
+
+def _resume_prompt_body(
+    run: dict[str, Any],
+    *,
+    report_path: str,
+    operator_prompt: str,
+) -> str:
+    lines = [
+        "You are being RESUMED inside your previous Vibecrafted worker session.",
+        "",
+        "Contract (unchanged from the original run):",
+        f"- Repository root: {run.get('root') or '.'}",
+        f"- Skill: vc-{run.get('skill') or 'workflow'}",
+        f"- Write your final report to: {report_path}",
+        "- The runtime owns run metadata; do not create or edit meta files.",
+        "- Finish the original task from where the session stopped. Do not",
+        "  redo completed work; consolidate what you already produced and",
+        "  deliver the missing artifacts (the report above first).",
+        "",
+    ]
+    if operator_prompt.strip():
+        lines.extend(["Operator resume prompt:", operator_prompt.strip(), ""])
+    return "\n".join(lines)
+
+
+def resume_run(
+    run_id: str,
+    source_dir: str | Path = ".",
+    *,
+    prompt: str = "",
+    fork_session: bool = False,
+    runtime: str = "",
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Resume a terminal run IN PLACE through the dispatcher lane.
+
+    Unlike :func:`retry_run` (fresh run id, fresh report), resume keeps the
+    original run identity: same ``run_id``, same meta/transcript paths, same
+    canonical report path — and continues the recorded agent session, so the
+    parent session and the run lineage survive. observe/await keep reading the
+    same run and therefore show the same truth as the resumed worker writes.
+    """
+    target = str(run_id or "").strip()
+    if not target:
+        raise ValueError("run_id is required")
+
+    def _reject(reason: str, **extra: Any) -> dict[str, Any]:
+        append_event(
+            kind="audit:resume",
+            run_id=target,
+            message=f"resume rejected: {reason.replace('_', ' ')}",
+            payload={"accepted": False, "reason": reason, **extra},
+        )
+        return {"accepted": False, "run_id": target, "reason": reason, **extra}
+
+    run = lookup_run(target)
+    if run is None:
+        return _reject("run_not_found")
+    if not _run_is_terminal(run):
+        return _reject("run_not_terminal", state=run.get("state"))
+
+    run_dir = control_plane_home() / "runtime_runs" / target
+    meta_path = run_dir / "meta.json"
+    meta: dict[str, Any] = {}
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            meta = {}
+    session_id = str(
+        meta.get("agent_session_id")
+        or meta.get("session_id")
+        or run.get("session_id")
+        or ""
+    ).strip()
+    if not session_id or session_id in {"pending", "none", "null", "unknown"}:
+        return _reject("no_agent_session")
+
+    agent = str(meta.get("agent") or run.get("agent") or "").strip()
+    skill = str(run.get("skill") or "workflow").strip() or "workflow"
+    mode = str(run.get("mode") or skill)
+    root = str(meta.get("root") or run.get("root") or Path(source_dir).resolve())
+    report_path = str(meta.get("report") or run.get("latest_report") or "").strip()
+    if not report_path:
+        return _reject("no_report_path")
+    transcript_path = run_dir / "transcript.log"
+
+    try:
+        worker_command = _resume_stdin_command(
+            agent, session_id, fork_session=fork_session
+        )
+    except ValueError as exc:
+        return _reject("resume_unsupported", error=str(exc))
+    model_requested = str(run.get("model_requested") or "").strip()
+    worker_command = _with_model_override(agent, worker_command, model_requested)
+
+    definition = workflow_registry.workflow_definition(skill)
+    foundation = preflight_launch(
+        root=root,
+        workflow=skill,
+        can_modify_code=bool(definition and definition.can_modify_code),
+        plan_path=None,
+        receipt_path=None,
+    )
+    if not foundation.get("allowed"):
+        return _reject(
+            "foundation_blocked",
+            foundation=foundation,
+        )
+
+    lifecycle_state_path = _lifecycle_state_for_run(target)
+    effective_runtime = str(runtime or run.get("runtime") or "headless").strip()
+    prompt_body = _resume_prompt_body(
+        {**run, "root": root, "skill": skill},
+        report_path=report_path,
+        operator_prompt=prompt,
+    )
+    resume_index = 1
+    while (run_dir / f"resume-{resume_index}.md").exists():
+        resume_index += 1
+    prompt_path = _write_prompt_file(run_dir / f"resume-{resume_index}.md", prompt_body)
+
+    dispatch_command = _dispatcher_command(
+        run_id=target,
+        root=root,
+        meta_path=meta_path,
+        prompt_path=prompt_path,
+        report_path=Path(report_path),
+        transcript_path=transcript_path,
+        worker_command=worker_command,
+        tee_output=effective_runtime in {"terminal", "visible"},
+        emit_json=effective_runtime not in {"terminal", "visible"},
+        quiet=effective_runtime in {"terminal", "visible"},
+        lifecycle_state_path=lifecycle_state_path,
+    )
+
+    launch_dir = control_plane_home() / "launches"
+    launch_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    launch_log = launch_dir / f"{stamp}_resume_{skill}.log"
+    merged_env = dict(os.environ)
+    if env:
+        merged_env.update(env)
+    _prepend_pythonpath(merged_env, _core_package_root())
+    operator_env_session = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
+    merged_env["VIBECRAFTED_RUN_ID"] = target
+    merged_env["VIBECRAFTED_SESSION_ID"] = operator_env_session
+    merged_env["VIBECRAFTED_REPORT_PATH"] = report_path
+    merged_env["VIBECRAFTED_TRANSCRIPT_PATH"] = str(transcript_path)
+    merged_env["VIBECRAFTED_META_PATH"] = str(meta_path)
+    merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_path)
+    merged_env["VIBECRAFTED_AGENT"] = agent
+    merged_env["VIBECRAFTED_SKILL"] = skill
+    merged_env["VIBECRAFTED_RUNTIME"] = effective_runtime
+    operator_session = _effective_operator_session(
+        root=root, run_id=target, env=merged_env
+    )
+    merged_env["VIBECRAFTED_OPERATOR_SESSION"] = operator_session
+
+    transport_spec = WorkflowLaunchSpec(
+        agent=agent,
+        mode=mode,
+        skill=skill,
+        prompt="",
+        file=str(prompt_path),
+        runtime=effective_runtime,
+        root=root,
+        lifecycle_state_path=lifecycle_state_path,
+    )
+    command, transport, command_script = _launch_transport_command(
+        spec=transport_spec,
+        run_id=target,
+        operator_session=operator_session,
+        dispatch_command=dispatch_command,
+        launch_dir=launch_dir,
+        prompt_path=prompt_path,
+        report_path=Path(report_path),
+        transcript_path=transcript_path,
+        meta_path=meta_path,
+        canonical_report_dir=Path(report_path).parent,
+        artifact_slug="",
+        artifact_ts="",
+        artifact_suffix="",
+    )
+
+    append_event(
+        kind="launch",
+        run_id=target,
+        message=f"resume accepted for {skill}",
+        payload={
+            "state": "created",
+            "agent": agent,
+            "skill": skill,
+            "mode": mode,
+            "runtime": effective_runtime,
+            "root": root,
+            "operator_session": operator_session,
+            "session_id": session_id,
+            "identity_required": True,
+            "source_dir": str(Path(source_dir).resolve()),
+            "prompt": "",
+            "file": str(prompt_path),
+            "prompt_file": str(prompt_path),
+            "report": report_path,
+            "transcript": str(transcript_path),
+            "meta": str(meta_path),
+            "foundation": foundation,
+            "worker_command": worker_command,
+            "dispatch_command": dispatch_command,
+            "command": command,
+            "transport": transport,
+            "command_script": str(command_script or ""),
+            "resume_of_session": session_id,
+            "fork_session": bool(fork_session),
+            "resume": True,
+            "lifecycle_state": lifecycle_state_path,
+        },
+    )
+
+    resume_lineage = {
+        "resumed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "parent_session_id": session_id,
+        "fork_session": bool(fork_session),
+        "resume_prompt": str(prompt_path),
+        "resume_index": resume_index,
+    }
+    if meta:
+        history = list(meta.get("resume_history") or [])
+        history.append(resume_lineage)
+        meta["resume_history"] = history
+        meta["status"] = "resuming"
+        try:
+            meta_path.write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    with launch_log.open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "ts": stamp,
+                    "run_id": target,
+                    "resume": resume_lineage,
+                    "foundation": foundation,
+                    "worker_command": worker_command,
+                    "dispatch_command": dispatch_command,
+                    "command": command,
+                    "transport": transport,
+                }
+            )
+            + "\n"
+        )
+        try:
+            proc = subprocess.Popen(
+                command,
+                cwd=Path(source_dir).resolve(),
+                env=merged_env,
+                stdout=handle,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                text=True,
+            )
+        except OSError as exc:
+            append_event(
+                kind="launch",
+                run_id=target,
+                message=f"resume spawn failed: {type(exc).__name__}: {exc}",
+                payload={
+                    "state": "failed",
+                    "agent": agent,
+                    "skill": skill,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "resume": True,
+                },
+            )
+            return {
+                "accepted": False,
+                "run_id": target,
+                "reason": "spawn_failed",
+                "error": f"{type(exc).__name__}: {exc}",
+                "command": command,
+            }
+
+    return {
+        "accepted": True,
+        "run_id": target,
+        "agent": agent,
+        "skill": skill,
+        "root": root,
+        "status": "resuming",
+        "session_id": session_id,
+        "fork_session": bool(fork_session),
+        "report": report_path,
+        "transcript": str(transcript_path),
+        "meta": str(meta_path),
+        "prompt_file": str(prompt_path),
+        "lifecycle_state": lifecycle_state_path,
+        "launcher_pid": proc.pid,
+        "transport": transport,
+        "command": command,
+        "worker_command": worker_command,
+        "launch_log": str(launch_log),
+        "foundation": foundation,
     }
 
 

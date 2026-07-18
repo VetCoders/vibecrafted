@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, Sequence
 
 from .supervisor_async import AsyncSupervisor
@@ -74,26 +75,62 @@ def _normalize_worker(argv: Sequence[str]) -> list[str]:
     return worker
 
 
+def _lifecycle_recorded_failure(state_path: str, run_id: str) -> bool:
+    """True when state.json already records a FAILED worker_exit for run_id."""
+    try:
+        payload = json.loads(Path(state_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    candidates: list[dict[str, Any]] = []
+    top = payload.get("stage_worker_exit")
+    if isinstance(top, dict) and str(top.get("run_id") or "") == run_id:
+        candidates.append(top)
+    for stage in payload.get("stages") or []:
+        if not isinstance(stage, dict):
+            continue
+        launch = stage.get("launch") or {}
+        exit_record = stage.get("worker_exit")
+        if (
+            isinstance(exit_record, dict)
+            and isinstance(launch, dict)
+            and str(launch.get("run_id") or "") == run_id
+        ):
+            candidates.append(exit_record)
+    for record in candidates:
+        exit_code = record.get("exit_code")
+        if (isinstance(exit_code, int) and exit_code != 0) or not record.get(
+            "artifact_ok"
+        ):
+            return True
+    return False
+
+
 def _maybe_record_lifecycle_worker_exit(
     state_path: str, summary: dict[str, Any]
 ) -> None:
     """Push-side report-on-death (docs/runtime/AGENT_OPS.md, Class 2).
 
-    Only failures are written back: a healthy no-await handoff already leaves
-    its truth in the report file, and keeping the write rare keeps the window
-    for racing an operator verb on state.json effectively closed.
+    Failures are always written back. A success is written back ONLY when the
+    state already records a failed worker_exit for this run — i.e. a resumed
+    worker just healed an earlier death, and leaving the stale failure in
+    state.json would make the lifecycle and the report disagree. A healthy
+    first-pass handoff still writes nothing, keeping the write rare and the
+    window for racing an operator verb on state.json effectively closed.
     """
     exit_code = summary.get("exit_code")
     failed = (isinstance(exit_code, int) and exit_code != 0) or not summary.get(
         "artifact_ok"
     )
-    if not failed:
+    run_id = str(summary.get("run_id") or "")
+    if not failed and not _lifecycle_recorded_failure(state_path, run_id):
         return
     from .lifecycle_runner import record_stage_worker_exit
 
     record_stage_worker_exit(
         state_path,
-        str(summary.get("run_id") or ""),
+        run_id,
         {
             "state": summary.get("state"),
             "exit_code": exit_code,

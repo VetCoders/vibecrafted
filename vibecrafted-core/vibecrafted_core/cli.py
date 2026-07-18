@@ -512,6 +512,74 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
     return 1
 
 
+def _resume_run_cli(raw_args: list[str]) -> int:
+    """`vibecrafted resume [<agent>] --run-id <id>` — control-plane resume lane.
+
+    Continues the recorded agent session of a terminal run under the same
+    run id, meta, transcript, and canonical report path, so observe/await and
+    any bound lifecycle keep reading one truth.
+    """
+    parser = argparse.ArgumentParser(
+        prog="vibecrafted resume",
+        description="Resume a terminal run in place (same run id and report).",
+    )
+    parser.add_argument("agent", nargs="?", default="")
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--fork-session", action="store_true")
+    parser.add_argument("-p", "--prompt", default="")
+    parser.add_argument("-f", "--file", default="")
+    parser.add_argument("--runtime", default="")
+    parser.add_argument("--source-dir", default="")
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(raw_args)
+
+    prompt = args.prompt
+    if args.file:
+        try:
+            prompt_file_body = Path(args.file).expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"error: cannot read --file: {exc}", file=sys.stderr)
+            return 2
+        prompt = f"{prompt}\n\n{prompt_file_body}" if prompt else prompt_file_body
+
+    from .workflow import resume_run
+
+    payload = resume_run(
+        args.run_id,
+        args.source_dir or str(Path.cwd()),
+        prompt=prompt,
+        fork_session=args.fork_session,
+        runtime=args.runtime,
+    )
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    else:
+        accepted = bool(payload.get("accepted"))
+        print("==================== VIBECRAFTED RESUME RECEIPT ====================")
+        print(f"run_id:     {payload.get('run_id', '')}")
+        print(f"agent:      {payload.get('agent', args.agent)}")
+        print(f"skill:      {payload.get('skill', '')}")
+        print(f"accepted:   {str(accepted).lower()}")
+        if not accepted:
+            print(f"reason:     {payload.get('reason', '')}")
+            if payload.get("error"):
+                print(f"error:      {payload.get('error')}")
+        print(f"session:    {payload.get('session_id', '')}")
+        print(f"fork:       {str(bool(payload.get('fork_session'))).lower()}")
+        print(f"report:     {payload.get('report', '')}")
+        print(f"transcript: {payload.get('transcript', '')}")
+        if payload.get("lifecycle_state"):
+            print(f"lifecycle:  {payload.get('lifecycle_state')}")
+        agent_name = payload.get("agent", args.agent) or "claude"
+        run_id = payload.get("run_id", args.run_id)
+        print(f"observe:    vibecrafted {agent_name} observe --run-id {run_id}")
+        print(f"await:      vibecrafted {agent_name} await --run-id {run_id}")
+        print("=====================================================================")
+    if bool(payload.get("accepted")):
+        return 0
+    return 3 if payload.get("reason") == "foundation_blocked" else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
     invoked_as = Path(sys.argv[0]).name if argv is None else "vibecrafted"
@@ -536,8 +604,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         LAUNCHERS
     )
     agent_python_verbs = {"observe", "await", "stop"}
-    is_lifecycle = shell_wrapper_verb is not None
-    if raw_args and shell_wrapper_verb is None:
+    # `resume --run-id` is the control-plane resume lane (same run id, same
+    # report path, continued agent session). Core owns it; the shell deck keeps
+    # the session-only `resume --session` lane.
+    is_run_resume = (
+        bool(raw_args) and raw_args[0] == "resume" and "--run-id" in raw_args
+    )
+    is_lifecycle = shell_wrapper_verb is not None and not is_run_resume
+    if raw_args and shell_wrapper_verb is None and not is_run_resume:
         first = raw_args[0]
         second = raw_args[1] if len(raw_args) > 1 else ""
         if first in AGENTS and second in agent_python_verbs:
@@ -574,6 +648,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .foundation.cli import main as foundation_main
 
         return foundation_main(raw_args[1:])
+    if is_run_resume:
+        return _resume_run_cli(raw_args[1:])
     if raw_args and raw_args[0] == "stop":
         from .wrappers import stop_main
 

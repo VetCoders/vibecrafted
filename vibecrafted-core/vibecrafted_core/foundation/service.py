@@ -423,10 +423,24 @@ def preflight_launch(
         }
     selected = str(receipt_path or bindings.get("foundation_receipt_path") or "")
     if not selected:
+        # Fail-closed discovery: a repository that already sealed its truth
+        # keeps the receipt at latest_receipt_path(). Binding it implicitly is
+        # safe because verify_receipt() below re-validates authority drift,
+        # hash, and root binding — a stale or foreign receipt still BLOCKS.
+        # Without this, every public deck launch (which has no frontmatter
+        # bindings) dies with "no bound Foundation receipt" even on a freshly
+        # sealed repo.
+        candidate = latest_receipt_path(repo)
+        if candidate.is_file():
+            selected = str(candidate)
+    if not selected:
         return {
             "allowed": False,
             "status": FoundationStatus.BLOCKED.value,
-            "reasons": ["write launch has no bound Foundation receipt"],
+            "reasons": [
+                "write launch has no bound Foundation receipt "
+                "(seal one with: vibecrafted foundation seal)"
+            ],
             "workflow": workflow,
         }
     result = verify_receipt(

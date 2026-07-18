@@ -240,6 +240,75 @@ def _stdin_command(agent: str) -> list[str]:
     raise ValueError(f"unsupported agent: {agent}")
 
 
+def _resume_stdin_command(
+    agent: str, session_id: str, *, fork_session: bool = False
+) -> list[str]:
+    """Build a non-interactive agent command that RESUMES an existing session.
+
+    Mirrors ``_stdin_command`` (prompt on stdin, flags on argv) but continues
+    the recorded agent session instead of opening a fresh one — this is what
+    lets a dispatcher-supervised run keep its parent session lineage.
+    Fail-closed: agents whose public CLI has no headless resume/fork are
+    rejected, never silently downgraded to a fresh session.
+    """
+    session = str(session_id or "").strip()
+    if not session:
+        raise ValueError("resume requires a recorded agent session id")
+    if agent == "claude":
+        command = [
+            "claude",
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--dangerously-skip-permissions",
+        ]
+        if fork_session:
+            command.append("--fork-session")
+        command.extend(["--resume", session])
+        return command
+    if agent == "codex":
+        if fork_session:
+            raise ValueError(
+                "codex --fork-session requires a visible terminal runtime; "
+                "codex exec has no fork command"
+            )
+        return [
+            "codex",
+            "exec",
+            "--json",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "resume",
+            session,
+            "-",
+        ]
+    if agent == "grok":
+        command = [
+            "grok",
+            "--resume",
+            session,
+        ]
+        if fork_session:
+            command.append("--fork-session")
+        command.extend(
+            [
+                "--cwd",
+                ".",
+                "--permission-mode",
+                "bypassPermissions",
+                "--no-alt-screen",
+                "--output-format",
+                "streaming-json",
+                "--prompt-file",
+                "/dev/stdin",
+            ]
+        )
+        return command
+    raise ValueError(
+        f"{agent} has no non-interactive resume contract in the installed CLI"
+    )
+
+
 def _parse_launcher_assignment(path: Path, key: str) -> str:
     if not path.is_file():
         return ""
