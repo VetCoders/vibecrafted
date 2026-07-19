@@ -407,6 +407,60 @@ def test_spawn_prepare_paths_include_run_id_for_durable_artifacts(
     assert first_meta != second_meta
 
 
+def test_spawn_prepare_paths_dry_run_never_bootstraps_perception(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    plan = tmp_path / "plan.md"
+    root = tmp_path / "repo"
+    marker = tmp_path / "perception-started"
+    home.mkdir()
+    root.mkdir()
+    plan.write_text("# Plan\n", encoding="utf-8")
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export HOME="{home}"
+        export VIBECRAFTED_HOME="{home / ".vibecrafted"}"
+        source "{COMMON_SH}"
+        spawn_ensure_perception() {{ : > "{marker}"; }}
+
+        spawn_prepare_paths codex "{plan}" "{root}" implement 1
+        test ! -e "{marker}"
+        '''
+    )
+
+    assert result.returncode == 0
+
+
+def test_spawn_prepare_paths_real_run_bootstraps_perception(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    plan = tmp_path / "plan.md"
+    root = tmp_path / "repo"
+    marker = tmp_path / "perception-started"
+    home.mkdir()
+    root.mkdir()
+    plan.write_text("# Plan\n", encoding="utf-8")
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export HOME="{home}"
+        export VIBECRAFTED_HOME="{home / ".vibecrafted"}"
+        source "{COMMON_SH}"
+        spawn_ensure_perception() {{ : > "{marker}"; }}
+
+        spawn_prepare_paths codex "{plan}" "{root}" implement 0
+        test -e "{marker}"
+        '''
+    )
+
+    assert result.returncode == 0
+
+
 def _split_vc_frame_calls(payload: str) -> list[list[str]]:
     calls: list[list[str]] = []
     current: list[str] = []

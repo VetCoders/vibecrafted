@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
 
-# Maintain exactly one loctree perception layer per root for a run: a single
-# `loct watch --http` (lock-held watcher + co-spawned streamable-HTTP
-# loctree-mcp at 127.0.0.1:<port>/mcp). loctree's own scan.lock makes it
-# single-instance; vibecrafted_core.perception detects an existing watcher and
-# handles contention gently (exit 75 -> skip), so this is best-effort and never
-# blocks or fails the spawn. Opt out with VIBECRAFTED_PERCEPTION_WATCH=0.
+# Maintain exactly one scan-only loctree watcher per root. MCP transport is a
+# separate client/supervisor concern; a repository watcher must never spawn
+# its own MCP server. loctree's scan.lock keeps this single-instance and
+# vibecrafted_core.perception handles contention gently (exit 75 -> skip), so
+# this is best-effort and never blocks a spawn. Opt out with
+# VIBECRAFTED_PERCEPTION_WATCH=0.
 spawn_ensure_perception() {
   local root="${1:-${SPAWN_ROOT:-$PWD}}"
   [[ "${VIBECRAFTED_PERCEPTION_WATCH:-1}" != "0" ]] || return 0
@@ -197,6 +197,7 @@ spawn_prepare_paths() {
   local prompt_file="$2"
   local root="${3:-}"
   local mode="${4:-${VIBECRAFTED_SKILL_NAME:-}}"
+  local dry_run="${5:-0}"
   local skill_name="${VIBECRAFTED_SKILL_NAME:-$mode}"
   local lock_file=""
   local discovered_session=""
@@ -216,7 +217,9 @@ spawn_prepare_paths() {
     SPAWN_ROOT="$(spawn_repo_root)"
   fi
 
-  spawn_ensure_perception "$SPAWN_ROOT"
+  if [[ "$dry_run" != "1" ]]; then
+    spawn_ensure_perception "$SPAWN_ROOT"
+  fi
 
   if [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
     discovered_session="$(spawn_effective_operator_session 2>/dev/null || true)"

@@ -77,12 +77,12 @@ def _ensure(root, **kwargs):
 
 
 # ---------------------------------------------------------------------------
-# Default transport canon — streamable HTTP, not stdio-per-run
+# Watcher canon — scans are per-root; MCP transport is owned separately
 # ---------------------------------------------------------------------------
 
 
-def test_default_transport_is_streamable_http() -> None:
-    assert perception.DEFAULT_MCP_TRANSPORT == "http"
+def test_default_watcher_mode_never_spawns_an_http_mcp() -> None:
+    assert perception.DEFAULT_WATCH_MODE == "scan"
 
 
 def test_mcp_config_entry_default_is_http_url(tmp_path: Path) -> None:
@@ -111,12 +111,11 @@ def test_stdio_transport_is_explicit_legacy_fallback(tmp_path: Path) -> None:
     assert "url" not in entry
 
 
-def test_build_watch_command_default_uses_http_and_port(tmp_path: Path) -> None:
+def test_build_watch_command_default_is_scan_only(tmp_path: Path) -> None:
     cmd = perception.build_watch_command("loct", tmp_path)
     assert cmd[:2] == ["loct", "watch"]
-    assert "--http" in cmd
-    port = cmd[cmd.index("--port") + 1]
-    assert port == str(perception.port_for_root(tmp_path))
+    assert "--bg" in cmd
+    assert "--http" not in cmd
     assert cmd[-1] == perception.canonical_root(tmp_path)
 
 
@@ -165,8 +164,8 @@ def test_lock_held_skips_spawn(tmp_path: Path) -> None:
 
     outcome = _ensure(tmp_path, lock_probe=lambda _root: True, spawner=boom)
     assert outcome.status == "already_running"
-    assert outcome.transport == "http"
-    assert outcome.endpoint.endswith("/mcp")
+    assert outcome.transport == "scan"
+    assert outcome.endpoint is None
 
 
 def test_contention_exit_75_is_already_running_not_crash(tmp_path: Path) -> None:
@@ -218,10 +217,7 @@ def test_fresh_start_reports_started(tmp_path: Path) -> None:
     outcome = _ensure(tmp_path, spawner=spawn)
     assert outcome.status == "started"
     assert outcome.pid == 4242
-    assert outcome.endpoint == perception.mcp_endpoint(
-        perception.canonical_root(tmp_path),
-        port=perception.port_for_root(tmp_path),
-    )
+    assert outcome.endpoint is None
 
 
 def test_bg_fork_returncode_zero_is_started(tmp_path: Path) -> None:
@@ -288,13 +284,15 @@ def test_cli_ensure_watch_unavailable_exits_zero(
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "unavailable"
-    assert payload["transport"] == "http"
+    assert payload["transport"] == "scan"
 
 
-def test_cli_status_exits_zero_and_reports_endpoint(capsys, tmp_path: Path) -> None:
+def test_cli_status_exits_zero_without_per_root_mcp_endpoint(
+    capsys, tmp_path: Path
+) -> None:
     rc = perception.main(["status", "--root", str(tmp_path)])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["running"] is False
-    assert payload["endpoint"].endswith("/mcp")
-    assert payload["port"] == perception.port_for_root(tmp_path)
+    assert payload["endpoint"] is None
+    assert payload["port"] is None

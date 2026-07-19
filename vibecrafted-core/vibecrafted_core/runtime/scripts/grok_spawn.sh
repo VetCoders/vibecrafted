@@ -75,7 +75,7 @@ done
 }
 spawn_require_file "$plan_file"
 spawn_validate_runtime "$runtime"
-spawn_prepare_paths grok "$plan_file" "$root" "$mode"
+spawn_prepare_paths grok "$plan_file" "$root" "$mode" "$dry_run"
 spawn_scan_active "${SPAWN_LOG_DIR:-$SPAWN_REPORT_DIR}"
 runtime_input="$SPAWN_TMP_DIR/${SPAWN_TS}_${SPAWN_RUN_ID}_${SPAWN_SLUG}_grok_prompt.md"
 spawn_build_runtime_prompt "$SPAWN_PLAN" "$runtime_input" "$SPAWN_REPORT" grok "$model"
