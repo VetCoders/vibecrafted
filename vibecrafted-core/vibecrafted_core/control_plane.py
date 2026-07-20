@@ -13,6 +13,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from .delivery.model import (
+    ContractError,
+    DeliveryProofContract,
+    DeliverySeal,
+    DeliveryState,
+    ExecutionState,
+    ProofResult,
+    ProofState,
+)
 from .runtime_paths import vibecrafted_home
 
 
@@ -124,6 +133,22 @@ class Event:
     message: str
     payload: dict[str, Any]
     cursor: int
+
+
+@dataclass(frozen=True)
+class DeliveryAxes:
+    """Read-only projection of execution, proof, and delivery state."""
+
+    execution_state: ExecutionState
+    proof_state: ProofState
+    delivery_state: DeliveryState
+
+    def to_payload(self) -> dict[str, str]:
+        return {
+            "execution_state": self.execution_state.value,
+            "proof_state": self.proof_state.value,
+            "delivery_state": self.delivery_state.value,
+        }
 
 
 def control_plane_home() -> Path:
@@ -1398,6 +1423,13 @@ def _project_run_payload(
     if not payload.get("liveness"):
         payload["liveness"] = "terminal" if _run_is_terminal(payload) else "heartbeat"
     payload["lifecycle"] = _lifecycle_controls(payload)
+    run_dir = _runtime_run_dir(run_id)
+    axes = _delivery_axes_from_run_dir(
+        run_dir if run_dir.is_dir() else None,
+        legacy_state=str(payload.get("state") or ""),
+        exit_code=_coerce_int(payload.get("exit_code")),
+    )
+    payload.update(axes.to_payload())
     return payload
 
 
@@ -1604,6 +1636,98 @@ def resolve_run(run_id: str) -> ResolvedRun:
         return legacy
 
     raise RunNotResolved(target)
+
+
+def read_delivery_axes(run_id: str) -> DeliveryAxes:
+    """Read the three independent state axes for any resolvable run.
+
+    Legacy metadata supplies execution only. Proof and delivery are never
+    inferred from ``completed``, report bytes, or ``artifact_ok``: absent proof
+    remains ``undeclared`` and absent seal remains ``unverified``.
+    """
+
+    resolved = resolve_run(run_id)
+    meta_payload = _read_json(resolved.meta) if resolved.meta is not None else {}
+    legacy_state = str(
+        meta_payload.get("state") or meta_payload.get("status") or "created"
+    )
+    return _delivery_axes_from_run_dir(
+        resolved.run_dir,
+        legacy_state=legacy_state,
+        exit_code=_coerce_int(meta_payload.get("exit_code")),
+    )
+
+
+def _delivery_axes_from_run_dir(
+    run_dir: Path | None,
+    *,
+    legacy_state: str,
+    exit_code: int | None,
+) -> DeliveryAxes:
+    execution_state = _legacy_execution_state(legacy_state, exit_code)
+    proof_state = ProofState.UNDECLARED
+    delivery_state = DeliveryState.UNVERIFIED
+
+    if run_dir is not None:
+        proof_result_path = run_dir / "proof" / "result.json"
+        proof_contract_path = run_dir / "delivery-proof-contract.json"
+        if proof_result_path.is_file():
+            try:
+                proof_state = ProofResult.from_payload(
+                    _read_json(proof_result_path)
+                ).state
+            except (ContractError, TypeError, ValueError):
+                proof_state = ProofState.INVALID
+        elif proof_contract_path.is_file():
+            try:
+                DeliveryProofContract.from_payload(_read_json(proof_contract_path))
+            except (ContractError, TypeError, ValueError):
+                proof_state = ProofState.INVALID
+            else:
+                proof_state = ProofState.DECLARED
+
+        seal_path = run_dir / "delivery-seal.json"
+        if seal_path.is_file():
+            try:
+                DeliverySeal.from_payload(_read_json(seal_path))
+            except (ContractError, TypeError, ValueError):
+                delivery_state = DeliveryState.INVALIDATED
+            else:
+                delivery_state = DeliveryState.SEALED
+
+    return DeliveryAxes(
+        execution_state=execution_state,
+        proof_state=proof_state,
+        delivery_state=delivery_state,
+    )
+
+
+def _legacy_execution_state(state: str, exit_code: int | None) -> ExecutionState:
+    normalized = str(state or "").strip().lower()
+    if normalized == "timed_out":
+        return ExecutionState.TIMED_OUT
+    if normalized in {"interrupted", "partial", "stopped", "gc"}:
+        return ExecutionState.INTERRUPTED
+    if normalized in {
+        "blocked",
+        "contract_failed",
+        "failed",
+        "ghost",
+        "process_dead",
+        "recovery_required",
+        "report_invalid",
+        "report_missing",
+    }:
+        return ExecutionState.FAILED
+    if exit_code is not None:
+        return ExecutionState.EXITED if exit_code == 0 else ExecutionState.FAILED
+    if normalized in {"report_validated", "completed", "closed", "converged"}:
+        return ExecutionState.EXITED
+    if normalized in {"process_spawned", "initialized", "launching", "promise"}:
+        return ExecutionState.LAUNCHED
+    if normalized in ACTIVE_STATES - {"created"}:
+        return ExecutionState.RUNNING
+    return ExecutionState.CREATED
 
 
 def _await_progress_fingerprint(run: dict[str, Any] | None) -> tuple[Any, ...]:

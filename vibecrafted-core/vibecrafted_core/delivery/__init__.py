@@ -1,7 +1,7 @@
-"""Typed delivery-proof kernel contracts.
+"""Typed delivery-proof kernel contracts and atomic persistence.
 
-The package owns data shape and state legality only. Execution, persistence,
-shipping authority, and public package-root re-exports land in later waves.
+The package owns data shape, state legality, and the canonical run-directory
+layout. Execution and shipping authority remain outside this package.
 """
 
 from .model import (
@@ -23,23 +23,51 @@ from .model import (
     UnsupportedSchemaError,
     delivery_transition_allowed,
 )
+from .store import (
+    ASSERTIONS_PATH,
+    ASSERTIONS_SCHEMA,
+    DELIVERY_RECORD_PATH,
+    DELIVERY_SEAL_PATH,
+    EXECUTION_ENVELOPE_PATH,
+    NEGATIVE_CONTROLS_PATH,
+    NEGATIVE_CONTROLS_SCHEMA,
+    PROOF_CONTRACT_PATH,
+    PROOF_RESULT_PATH,
+    DeliveryStore,
+    DeliveryStoreError,
+    atomic_write_json,
+    read_json,
+)
 
 __all__ = [
     "ALLOWED_TRANSITIONS",
     "DELIVERY_TRANSITIONS",
     "EXECUTION_TRANSITIONS",
     "PROOF_TRANSITIONS",
+    "ASSERTIONS_PATH",
+    "ASSERTIONS_SCHEMA",
     "ContractError",
     "ContractValidationError",
+    "DELIVERY_RECORD_PATH",
+    "DELIVERY_SEAL_PATH",
     "DeliveryProofContract",
     "DeliveryRecord",
     "DeliverySeal",
     "DeliveryState",
+    "DeliveryStore",
+    "DeliveryStoreError",
+    "EXECUTION_ENVELOPE_PATH",
     "ExecutionEnvelope",
     "ExecutionEvidence",
     "ExecutionState",
+    "NEGATIVE_CONTROLS_PATH",
+    "NEGATIVE_CONTROLS_SCHEMA",
+    "PROOF_CONTRACT_PATH",
+    "PROOF_RESULT_PATH",
     "ProofResult",
     "ProofState",
     "UnsupportedSchemaError",
+    "atomic_write_json",
     "delivery_transition_allowed",
+    "read_json",
 ]

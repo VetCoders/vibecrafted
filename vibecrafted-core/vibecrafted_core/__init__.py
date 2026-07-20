@@ -64,6 +64,13 @@ def _resolve_installed_version() -> str:
 __version__ = _resolve_installed_version()
 
 _LAZY_EXPORTS = {
+    "DELIVERY_EVENT_KINDS": ".events",
+    "DeliveryAxes": ".control_plane",
+    "DeliveryEventKind": ".events",
+    "DeliveryStore": ".delivery",
+    "DeliveryStoreError": ".delivery",
+    "append_delivery_event": ".events",
+    "read_delivery_axes": ".control_plane",
     "WorkflowLaunchSpec": ".workflow",
     "await_launch_truth": ".workflow",
     "build_launch_command": ".workflow",
@@ -83,6 +90,12 @@ def __getattr__(name: str) -> Any:
 
     if module_name == ".workflow":
         from . import workflow as module
+    elif module_name == ".delivery":
+        from . import delivery as module
+    elif module_name == ".events":
+        from . import events as module
+    elif module_name == ".control_plane":
+        from . import control_plane as module
     else:  # pragma: no cover - _LAZY_EXPORTS is the whitelist.
         raise AttributeError(f"module {__name__!r} has no lazy module for {name!r}")
 
@@ -96,6 +109,11 @@ __all__ = [
     "Event",
     "EventKind",
     "ArtifactValidation",
+    "DELIVERY_EVENT_KINDS",
+    "DeliveryAxes",
+    "DeliveryEventKind",
+    "DeliveryStore",
+    "DeliveryStoreError",
     "ToolCapability",
     "WatchOutcome",
     "DEFAULT_MCP_TRANSPORT",
@@ -104,6 +122,7 @@ __all__ = [
     "RunState",
     "WorkflowLaunchSpec",
     "append_event",
+    "append_delivery_event",
     "await_run",
     "await_launch_truth",
     "build_launch_command",
@@ -124,6 +143,7 @@ __all__ = [
     "normalize_launch_spec",
     "retry_run",
     "read_event_tail",
+    "read_delivery_axes",
     "read_version_file",
     "repo_full",
     "repo_full_summary",
