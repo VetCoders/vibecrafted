@@ -418,3 +418,18 @@ spawn_finalize_artifacts() {
   spawn_python_module vibecrafted_core.spawn finalize-artifacts "$meta_path" "$report_path" "$transcript_path"
   spawn_sync_control_plane
 }
+
+# Move a finished run's tab into its vc-frame status bucket. Runs LAST, after
+# artifacts are closed: a successful transfer closes the tab this launcher is
+# running in, so anything sequenced after it may never execute.
+#
+# Triage is decoration on an already-finished run, so this never fails a run —
+# the Python side swallows every error and records a receipt instead. The `|| true`
+# is belt-and-braces for the interpreter itself failing to start.
+spawn_triage_run() {
+  local meta_path="$1"
+
+  [[ -f "$meta_path" ]] || return 0
+
+  spawn_python_module vibecrafted_core.run_triage "$meta_path" || true
+}

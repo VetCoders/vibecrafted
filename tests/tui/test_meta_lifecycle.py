@@ -296,3 +296,68 @@ def test_write_meta_python_direct(tmp_path: Path) -> None:
     assert data["model"] == "gpt-4"
     assert isinstance(data["created_at"], str)
     assert isinstance(data["updated_at"], str)
+
+
+def test_triage_run_is_the_last_step_of_a_generated_launcher() -> None:
+    """Triage closes the tab the launcher is running in, so it must run last.
+
+    Anything sequenced after `spawn_triage_run` in a successful transfer may
+    simply never execute — the pane is gone. Pinning the order here keeps a
+    later edit from quietly moving artifact closure behind it and losing the
+    report on exactly the runs that finished cleanly.
+    """
+    launcher_src = (
+        REPO_ROOT / "runtime" / "scripts" / "lib" / "launcher.sh"
+    ).read_text(encoding="utf-8")
+
+    for branch, tail in (
+        ("success", 'spawn_triage_run "$meta"\nelse'),
+        ("failure", 'spawn_triage_run "$meta"\n  exit "$exit_code"'),
+    ):
+        assert tail in launcher_src, f"{branch} branch does not end with triage"
+
+    # ...and in both branches artifact closure precedes it.
+    first_triage = launcher_src.index('spawn_triage_run "$meta"')
+    first_finalize = launcher_src.index('spawn_finalize_artifacts "$meta"')
+    assert first_finalize < first_triage
+
+    last_triage = launcher_src.rindex('spawn_triage_run "$meta"')
+    last_finalize = launcher_src.rindex('spawn_finalize_artifacts "$meta"')
+    assert last_finalize < last_triage
+
+
+def test_triage_run_never_fails_a_finished_run(tmp_path: Path) -> None:
+    """The shell wrapper is fail-open: no meta, no session, no vc-frame — exit 0."""
+    meta = tmp_path / "agent.meta.json"
+    meta.write_text(
+        json.dumps({"run_id": "r1", "exit_code": 0}) + "\n", encoding="utf-8"
+    )
+
+    # _ENV_SANITIZE clears VC_FRAME_* but not the legacy ZELLIJ_* aliases that
+    # vc-frame still dual-emits, and this suite may itself be running inside a
+    # live session. Clear both so the assertion is about the code, not the host.
+    result = _bash(
+        f'''
+        set -euo pipefail
+        unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME
+        source "{COMMON_SH}"
+        spawn_triage_run "{meta}"
+        echo "survived=$?"
+        '''
+    )
+
+    assert "survived=0" in result.stdout
+    # Headless test env has no vc-frame pane: the receipt says so plainly.
+    data = json.loads(meta.read_text(encoding="utf-8"))
+    assert data["triage"] == "skipped"
+    assert data["triage_reason"] == "no_session"
+
+
+def test_triage_run_tolerates_a_missing_meta(tmp_path: Path) -> None:
+    _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        spawn_triage_run "{tmp_path / "absent.meta.json"}"
+        '''
+    )

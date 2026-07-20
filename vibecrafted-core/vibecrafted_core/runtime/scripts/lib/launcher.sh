@@ -162,6 +162,8 @@ EOF_LAUNCH
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
+  # Last: a successful transfer closes this very tab.
+  spawn_triage_run "$meta"
 else
   exit_code=$?
   spawn_finish_meta "$meta" "failed" "$exit_code"
@@ -176,6 +178,8 @@ EOF_LAUNCH
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
+  # Last: a successful transfer closes this very tab.
+  spawn_triage_run "$meta"
   exit "$exit_code"
 fi
 EOF_LAUNCH
