@@ -1,9 +1,9 @@
 """Tests for the runtime caller of ``vc-frame triage-run``.
 
 The transfer primitive itself lives in vc-frame and is tested there. What is at
-stake here is the caller's judgement: which runs may be transferred at all, where
-each exit code lands, and — above all — that nothing in this path can damage a run
-that has already finished.
+stake here is the caller's judgement: which runs may be transferred at all, which
+drawer the conjunction of a run's signals earns it, and — above all — that nothing
+in this path can damage a run that has already finished.
 """
 
 from __future__ import annotations
@@ -15,38 +15,56 @@ from typing import Any, Sequence
 import pytest
 
 from vibecrafted_core.run_triage import (
+    BUCKET_FAILED,
     BUCKET_FINALIZED,
     BUCKET_NEEDS_ATTENTION,
+    MINIMAL_TRANSCRIPT_BYTES,
+    OUTCOME_ERROR,
     OUTCOME_FAILED,
     OUTCOME_FINALIZED,
     OUTCOME_NEEDS_ATTENTION,
     OUTCOME_SKIPPED,
+    VERDICT_FAILED,
+    VERDICT_FINALIZED,
+    VERDICT_NEEDS_ATTENTION,
     bucket_for_exit_code,
+    classify_run,
     plan_triage,
+    read_run_signals,
     triage_finished_run,
 )
 
+MODERN_HELP = "Usage: vc-frame triage-run [OPTIONS]\n  --bucket <BUCKET>\n"
+
 
 class FakeProc:
-    def __init__(self, returncode: int = 0, stderr: str = "") -> None:
+    def __init__(self, returncode: int = 0, stderr: str = "", stdout: str = "") -> None:
         self.returncode = returncode
         self.stderr = stderr
-        self.stdout = ""
+        self.stdout = stdout
 
 
 class Runner:
     """Records invocations; answers the `--help` probe as a modern binary would."""
 
-    def __init__(self, result: Any = None, supports: bool = True) -> None:
+    def __init__(
+        self,
+        result: Any = None,
+        supports: bool = True,
+        supports_bucket: bool = True,
+    ) -> None:
         self.calls: list[list[str]] = []
         self.result = result if result is not None else FakeProc(0)
         self.supports = supports
+        self.supports_bucket = supports_bucket
 
     def __call__(self, argv: Sequence[str]) -> Any:
         argv = list(argv)
         self.calls.append(argv)
         if argv[1:] == ["triage-run", "--help"]:
-            return FakeProc(0 if self.supports else 2)
+            if not self.supports:
+                return FakeProc(2)
+            return FakeProc(0, stdout=MODERN_HELP if self.supports_bucket else "")
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -54,6 +72,10 @@ class Runner:
     @property
     def transfer_calls(self) -> list[list[str]]:
         return [c for c in self.calls if c[1:2] == ["triage-run"] and "--help" not in c]
+
+    def bucket_flag(self) -> str | None:
+        call = self.transfer_calls[0]
+        return call[call.index("--bucket") + 1] if "--bucket" in call else None
 
 
 LIVE_ENV = {
@@ -82,7 +104,24 @@ def live_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
     return make_env(VIBECRAFTED_VC_FRAME_BIN=fake_bin(tmp_path), **overrides)
 
 
+def _tiny_transcript(tmp_path: Path) -> Path:
+    """A transcript holding nothing but the launcher banner — the W0-A shape."""
+    path = tmp_path / "banner-only.transcript.log"
+    path.write_text("x" * (MINIMAL_TRANSCRIPT_BYTES - 1), encoding="utf-8")
+    return path
+
+
 def write_meta(tmp_path: Path, **overrides: Any) -> Path:
+    """A clean finalized run: exit 0, `completed`, report on disk, real transcript.
+
+    Every deviation a test wants is an override, so each test names exactly the
+    one signal it is bending.
+    """
+    report = tmp_path / "agent.md"
+    report.write_text("# report\n", encoding="utf-8")
+    transcript = tmp_path / "agent.transcript.log"
+    transcript.write_text("x" * (MINIMAL_TRANSCRIPT_BYTES * 4), encoding="utf-8")
+
     payload: dict[str, Any] = {
         "status": "completed",
         "run_id": "run-0007",
@@ -90,6 +129,8 @@ def write_meta(tmp_path: Path, **overrides: Any) -> Path:
         "root": "/repo",
         "launcher": "/tmp/launch-run-0007.sh",
         "liveness": "terminal",
+        "report": str(report),
+        "transcript": str(transcript),
     }
     payload.update(overrides)
     meta = tmp_path / "agent.meta.json"
@@ -98,7 +139,259 @@ def write_meta(tmp_path: Path, **overrides: Any) -> Path:
 
 
 # --------------------------------------------------------------------------
-# Exit code → bucket. One place, and it must hold for the whole integer range.
+# The classifier. Single signals lie, so the verdict is a conjunction — and the
+# whole point of this matrix is that only two rows are allowed to be confident.
+# --------------------------------------------------------------------------
+
+BIG = MINIMAL_TRANSCRIPT_BYTES * 10
+TINY = MINIMAL_TRANSCRIPT_BYTES - 1
+
+
+def verdict(
+    exit_code: Any = 0,
+    state: Any = "completed",
+    report_exists: bool | None = True,
+    report_bytes: int | None = 512,
+    transcript_bytes: int | None = BIG,
+) -> str:
+    return classify_run(
+        exit_code, state, report_exists, report_bytes, transcript_bytes
+    ).verdict
+
+
+# --- The two confident verdicts ------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "state", ["completed", "report_validated", "closed", "converged"]
+)
+def test_finalized_needs_all_three_signals(state: str) -> None:
+    """Exit 0 AND a delivery state AND a report actually on disk."""
+    assert verdict(exit_code=0, state=state) == VERDICT_FINALIZED
+
+
+@pytest.mark.parametrize("state", ["failed", "stopped", "report_missing"])
+@pytest.mark.parametrize("code", [1, 2, 137, 143])
+def test_failed_is_a_run_that_died_before_working(state: str, code: int) -> None:
+    """Non-zero exit AND death state AND no report AND nothing in the transcript."""
+    assert (
+        verdict(
+            exit_code=code,
+            state=state,
+            report_exists=False,
+            report_bytes=0,
+            transcript_bytes=TINY,
+        )
+        == VERDICT_FAILED
+    )
+
+
+def test_w0a_specimen_is_failed() -> None:
+    """Today's live specimen: worker killed by the session limit.
+
+    Exit non-zero, control-plane state `report_missing`, no report, and a
+    transcript holding nothing but the launcher banner. This is the shape the
+    third bucket exists for — it must not land in "Needs attention" and drown
+    the contradictions that actually need a human.
+    """
+    signals = classify_run(
+        exit_code=1,
+        run_state="report_missing",
+        report_exists=False,
+        report_bytes=0,
+        transcript_bytes=180,
+    )
+    assert signals.verdict == VERDICT_FAILED
+    assert signals.bucket == BUCKET_FAILED
+    assert signals.bucket_flag == "failed"
+    assert "180b" in signals.reason
+
+
+# --- Every contradiction routes to a human -------------------------------
+
+
+def test_exit_zero_without_report_is_a_contradiction() -> None:
+    """The 2026-05-14 record: top-level `completed`/exit 0, nothing delivered."""
+    assert (
+        verdict(exit_code=0, report_exists=False, report_bytes=0)
+        == VERDICT_NEEDS_ATTENTION
+    )
+
+
+def test_nonzero_exit_with_a_report_is_a_contradiction() -> None:
+    """The mirror: the run says it died, the artifacts say it delivered."""
+    assert verdict(exit_code=1, state="failed") == VERDICT_NEEDS_ATTENTION
+
+
+def test_exit_zero_with_a_death_state_is_a_contradiction() -> None:
+    assert verdict(exit_code=0, state="failed") == VERDICT_NEEDS_ATTENTION
+
+
+def test_nonzero_exit_with_a_delivery_state_is_a_contradiction() -> None:
+    assert (
+        verdict(exit_code=1, state="completed", report_exists=False, report_bytes=0)
+        == VERDICT_NEEDS_ATTENTION
+    )
+
+
+def test_empty_report_is_never_a_delivery() -> None:
+    """A zero-byte report is control_plane's `report_invalid`, not a report."""
+    assert verdict(exit_code=0, report_bytes=0) == VERDICT_NEEDS_ATTENTION
+
+
+def test_death_after_real_work_is_not_a_clean_failure() -> None:
+    """It died — but it did something first, and that something is worth a look."""
+    assert (
+        verdict(
+            exit_code=1,
+            state="failed",
+            report_exists=False,
+            report_bytes=0,
+            transcript_bytes=BIG,
+        )
+        == VERDICT_NEEDS_ATTENTION
+    )
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "report_invalid",
+        "contract_failed",
+        "ghost",
+        "timed_out",
+        "recovery_required",
+        "blocked",
+        "stalled",
+        "gc",
+    ],
+)
+@pytest.mark.parametrize("code", [0, 1])
+def test_ambiguous_states_never_reach_a_confident_drawer(state: str, code: int) -> None:
+    """These states *are* the contradiction — no other signal can rescue them."""
+    assert verdict(exit_code=code, state=state) == VERDICT_NEEDS_ATTENTION
+
+
+# --- Unreadable signals fail closed, never to a drawer -------------------
+
+
+@pytest.mark.parametrize("code", [None, "", "abc", [], {}])
+def test_unreadable_exit_code_fails_closed(code: Any) -> None:
+    assert verdict(exit_code=code) == VERDICT_NEEDS_ATTENTION
+
+
+@pytest.mark.parametrize("state", [None, "", "   ", "some_state_from_the_future"])
+def test_unreadable_or_unknown_state_fails_closed(state: Any) -> None:
+    """An unrecognised state is a signal we cannot read, not a benign one."""
+    assert verdict(state=state) == VERDICT_NEEDS_ATTENTION
+
+
+def test_unstattable_report_fails_closed() -> None:
+    assert verdict(report_exists=None, report_bytes=None) == VERDICT_NEEDS_ATTENTION
+
+
+def test_report_of_unknown_size_fails_closed() -> None:
+    assert verdict(report_exists=True, report_bytes=None) == VERDICT_NEEDS_ATTENTION
+
+
+def test_unreadable_transcript_fails_closed() -> None:
+    """Without the transcript we cannot tell a death from a death-after-work."""
+    assert (
+        verdict(
+            exit_code=1,
+            state="failed",
+            report_exists=False,
+            report_bytes=0,
+            transcript_bytes=None,
+        )
+        == VERDICT_NEEDS_ATTENTION
+    )
+
+
+def test_state_matching_is_case_and_whitespace_tolerant() -> None:
+    assert verdict(state="  Completed  ") == VERDICT_FINALIZED
+
+
+def test_every_verdict_carries_a_reason() -> None:
+    """The receipt has to be able to say *why*, for all three verdicts."""
+    for classification in (
+        classify_run(0, "completed", True, 10, BIG),
+        classify_run(1, "failed", False, 0, TINY),
+        classify_run(0, "ghost", True, 10, BIG),
+    ):
+        assert classification.reason
+        assert classification.bucket
+        assert classification.bucket_flag
+
+
+# --------------------------------------------------------------------------
+# Reading the signals off a run's artifacts
+# --------------------------------------------------------------------------
+
+
+def test_signals_are_read_from_the_artifacts_on_disk(tmp_path: Path) -> None:
+    report = tmp_path / "r.md"
+    report.write_text("body", encoding="utf-8")
+    transcript = tmp_path / "t.log"
+    transcript.write_text("xyz", encoding="utf-8")
+
+    signals = read_run_signals(
+        {
+            "exit_code": 0,
+            "status": "completed",
+            "report": str(report),
+            "transcript": str(transcript),
+        }
+    )
+
+    assert signals.report_exists is True
+    assert signals.report_bytes == 4
+    assert signals.transcript_bytes == 3
+    assert signals.classify().verdict == VERDICT_FINALIZED
+
+
+def test_declared_but_absent_report_is_absent_not_unreadable(tmp_path: Path) -> None:
+    signals = read_run_signals(
+        {"exit_code": 1, "status": "failed", "report": str(tmp_path / "gone.md")}
+    )
+    assert signals.report_exists is False
+    assert signals.report_bytes == 0
+
+
+def test_undeclared_transcript_is_unknown(tmp_path: Path) -> None:
+    """No transcript path means we do not know where to look — not zero work."""
+    signals = read_run_signals({"exit_code": 1, "status": "failed"})
+    assert signals.transcript_bytes is None
+    assert signals.classify().verdict == VERDICT_NEEDS_ATTENTION
+
+
+def test_symlinked_transcript_is_measured_through_the_link(tmp_path: Path) -> None:
+    """`spawn.finalize_artifacts` leaves a compat symlink at the announced path,
+    so the announced transcript is routinely a link to the real one. Measuring
+    the link instead of its target reads ~60 bytes and calls a full run dead."""
+    real = tmp_path / "real.log"
+    real.write_text("x" * BIG, encoding="utf-8")
+    link = tmp_path / "announced.log"
+    link.symlink_to(real)
+
+    signals = read_run_signals(
+        {"exit_code": 1, "status": "failed", "transcript": str(link)}
+    )
+
+    assert signals.transcript_bytes == BIG
+
+
+def test_control_plane_state_key_wins_over_launcher_status() -> None:
+    """`state` is the control-plane spelling; when present it is the fresher truth."""
+    signals = read_run_signals(
+        {"exit_code": 0, "status": "completed", "state": "contract_failed"}
+    )
+    assert signals.run_state == "contract_failed"
+    assert signals.classify().verdict == VERDICT_NEEDS_ATTENTION
+
+
+# --------------------------------------------------------------------------
+# Exit code → bucket. The degraded path only; it must hold for the whole range.
 # --------------------------------------------------------------------------
 
 
@@ -241,6 +534,16 @@ def test_argv_carries_the_full_identity() -> None:
     assert argv[-2:] == ["--", "/tmp/l.sh"]
 
 
+def test_argv_carries_the_verdict_as_a_bucket_flag(tmp_path: Path) -> None:
+    """W2-B-4a's contract: the drawer is ours to choose, in kebab spelling."""
+    meta = write_meta(tmp_path, exit_code=0)
+    runner = Runner()
+
+    triage_finished_run(meta, live_env(tmp_path), runner)
+
+    assert runner.bucket_flag() == "finalized"
+
+
 def test_command_is_passed_after_the_separator() -> None:
     """clap `last(true)`: everything after `--` is the preserved command line."""
     plan = plan_triage(
@@ -269,6 +572,38 @@ def test_stale_binary_without_the_subcommand_is_a_skip(tmp_path: Path) -> None:
     assert runner.transfer_calls == []
 
 
+def test_binary_predating_the_bucket_flag_degrades_gracefully(tmp_path: Path) -> None:
+    """A vc-frame with `triage-run` but no `--bucket` must still work.
+
+    Passing a flag it cannot parse would fail the whole call, so we omit it and
+    let vc-frame bucket by exit code — and the receipt says so, both in where the
+    run actually went and in the fact that the verdict did not choose it.
+    """
+    meta = write_meta(
+        tmp_path,
+        exit_code=137,
+        status="report_missing",
+        report=str(tmp_path / "never-written.md"),
+        transcript=str(_tiny_transcript(tmp_path)),
+    )
+    runner = Runner(supports_bucket=False)
+
+    outcome = triage_finished_run(meta, live_env(tmp_path), runner)
+
+    assert runner.bucket_flag() is None
+    assert outcome.verdict_degraded == "exit_code_only"
+    # The verdict was `failed`, but a stale vc-frame has no such drawer, so the
+    # receipt must name the drawer the run really lands in.
+    assert outcome.verdict == VERDICT_FAILED
+    assert outcome.outcome == OUTCOME_NEEDS_ATTENTION
+    assert outcome.bucket == BUCKET_NEEDS_ATTENTION
+
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["triage_verdict"] == VERDICT_FAILED
+    assert payload["triage_bucket"] == BUCKET_NEEDS_ATTENTION
+    assert payload["triage_verdict_degraded"] == "exit_code_only"
+
+
 def test_missing_binary_is_a_skip(tmp_path: Path) -> None:
     meta = write_meta(tmp_path)
     runner = Runner()
@@ -287,8 +622,11 @@ def test_nonzero_triage_exit_is_recorded_not_raised(tmp_path: Path) -> None:
 
     outcome = triage_finished_run(meta, live_env(tmp_path), runner)
 
-    assert outcome.outcome == OUTCOME_FAILED
+    # `error` and not `failed`: a broken transfer says nothing about the run.
+    assert outcome.outcome == OUTCOME_ERROR
     assert "bucket session vanished" in outcome.reason
+    # The verdict survives the broken transfer, so the operator still sees it.
+    assert outcome.verdict == VERDICT_FINALIZED
 
 
 def test_exploding_runner_is_contained(tmp_path: Path) -> None:
@@ -298,7 +636,7 @@ def test_exploding_runner_is_contained(tmp_path: Path) -> None:
 
     outcome = triage_finished_run(meta, live_env(tmp_path), runner)
 
-    assert outcome.outcome == OUTCOME_FAILED
+    assert outcome.outcome == OUTCOME_ERROR
     assert "no fork for you" in outcome.reason
 
 
@@ -334,7 +672,38 @@ def test_success_receipt_names_the_bucket(tmp_path: Path) -> None:
     assert payload["triage_pending"] is False
 
 
-def test_failed_run_receipt_says_needs_attention(tmp_path: Path) -> None:
+def test_receipt_records_the_verdict_and_its_evidence(tmp_path: Path) -> None:
+    """The operator must be able to audit *why* a run went where it went."""
+    meta = write_meta(tmp_path, exit_code=0)
+
+    triage_finished_run(meta, live_env(tmp_path), Runner())
+
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["triage_verdict"] == VERDICT_FINALIZED
+    assert payload["triage_verdict_reason"] == "exit_0_report_delivered"
+    assert payload["triage_verdict_degraded"] == ""
+
+
+def test_killed_run_receipt_says_failed(tmp_path: Path) -> None:
+    """Exit 137, no report, banner-only transcript — the W0-A shape, end to end."""
+    meta = write_meta(
+        tmp_path,
+        exit_code=137,
+        status="report_missing",
+        report=str(tmp_path / "never-written.md"),
+        transcript=str(_tiny_transcript(tmp_path)),
+    )
+
+    outcome = triage_finished_run(meta, live_env(tmp_path), Runner())
+
+    assert outcome.outcome == OUTCOME_FAILED
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["triage_bucket"] == BUCKET_FAILED
+    assert payload["triage_verdict"] == VERDICT_FAILED
+
+
+def test_contradicting_run_receipt_says_needs_attention(tmp_path: Path) -> None:
+    """Exit 137 with a full report on disk — the signals disagree, so: a human."""
     meta = write_meta(tmp_path, exit_code=137, status="failed")
 
     outcome = triage_finished_run(meta, live_env(tmp_path), Runner())
@@ -342,6 +711,7 @@ def test_failed_run_receipt_says_needs_attention(tmp_path: Path) -> None:
     assert outcome.outcome == OUTCOME_NEEDS_ATTENTION
     payload = json.loads(meta.read_text(encoding="utf-8"))
     assert payload["triage_bucket"] == BUCKET_NEEDS_ATTENTION
+    assert payload["triage_verdict_reason"] == "exit_137_with_report"
 
 
 def test_skip_receipt_is_written_for_headless_runs(tmp_path: Path) -> None:

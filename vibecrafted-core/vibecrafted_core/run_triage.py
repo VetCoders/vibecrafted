@@ -20,6 +20,14 @@ when the tab belongs to this run alone. The runtime spawns run tabs named by run
 id (``lib/vc_frame.sh``), but marbles runs share one tab across siblings — closing
 that would take the siblings with it. :func:`plan_triage` refuses that case rather
 than trusting the caller to know the difference.
+
+**Single signals lie.** The drawer a run lands in is decided by
+:func:`classify_run`, a conjunction over exit code, run state, report delivery and
+transcript volume — never by the exit code alone. The AICX record from 2026-05-14
+holds runs reporting top-level ``completed``/exit 0 whose own reports said
+``failed``, and ``timed_out``/``report_missing`` states sitting next to complete
+artifacts. Every such contradiction is routed to human review rather than to a
+confident drawer, and so is every signal the classifier cannot read.
 """
 
 from __future__ import annotations
@@ -33,13 +41,23 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 __all__ = [
+    "BUCKET_FAILED",
     "BUCKET_FINALIZED",
     "BUCKET_NEEDS_ATTENTION",
+    "MINIMAL_REPORT_BYTES",
+    "MINIMAL_TRANSCRIPT_BYTES",
+    "RunClassification",
+    "RunSignals",
     "TriagePlan",
     "TriageOutcome",
+    "VERDICT_FAILED",
+    "VERDICT_FINALIZED",
+    "VERDICT_NEEDS_ATTENTION",
     "bucket_for_exit_code",
+    "classify_run",
     "outcome_for_exit_code",
     "plan_triage",
+    "read_run_signals",
     "triage_finished_run",
     "main",
 ]
@@ -48,19 +66,244 @@ __all__ = [
 # They are mirrored here only so the receipt can name the destination without a
 # round-trip; vc-frame remains the owner of the rail UI and these strings.
 BUCKET_FINALIZED = "Finalized runs"
+BUCKET_FAILED = "Failed runs"
 BUCKET_NEEDS_ATTENTION = "Needs attention"
 
-# Receipt values written to meta.json under "triage".
-OUTCOME_FINALIZED = "finalized"
-OUTCOME_NEEDS_ATTENTION = "needs_attention"
+# The three verdicts. Also the receipt values written to meta.json under
+# "triage" — the headline of a receipt is where the run went.
+VERDICT_FINALIZED = "finalized"
+VERDICT_FAILED = "failed"
+VERDICT_NEEDS_ATTENTION = "needs_attention"
+
+OUTCOME_FINALIZED = VERDICT_FINALIZED
+OUTCOME_FAILED = VERDICT_FAILED
+OUTCOME_NEEDS_ATTENTION = VERDICT_NEEDS_ATTENTION
+#: No transfer was attempted — nothing to triage, or nothing able to triage it.
 OUTCOME_SKIPPED = "skipped"
-OUTCOME_FAILED = "failed"
+#: The transfer itself broke. A different axis from the verdict: it says nothing
+#: about the run, only about our call into vc-frame.
+OUTCOME_ERROR = "error"
 
 _TRUTHY_OFF = {"0", "false", "no", "off"}
 
+# --------------------------------------------------------------------------
+# Signal thresholds. Measured, not guessed (sample: every run transcript under
+# ~/.vibecrafted/artifacts newer than 2026-06-15, read through their compat
+# symlinks, on 2026-07-21).
+# --------------------------------------------------------------------------
+
+#: A transcript below this carries only the launcher's frontmatter banner
+#: (~380 B) — no tool call, no output, no work. The smallest transcript in the
+#: sample that came from a run which actually produced a report was 885 B, so
+#: 512 sits in the empty gap between "died at startup" and "did something".
+MINIMAL_TRANSCRIPT_BYTES = 512
+
+#: A report file that exists but holds nothing is what control_plane calls
+#: `report_invalid` — a contradiction, never a delivery.
+MINIMAL_REPORT_BYTES = 1
+
+# Run states, in control_plane's vocabulary (`FINAL_STATES`). Split by what each
+# one *asserts*, because the verdict is a conjunction: a state that disagrees
+# with the exit code is itself the contradiction.
+
+#: States asserting the artifact contract held.
+_STATES_DELIVERED = frozenset({"report_validated", "completed", "closed", "converged"})
+#: States asserting the run stopped without delivering. Consistent with a death.
+_STATES_DIED = frozenset({"failed", "stopped", "report_missing"})
+#: States that *are* the contradiction, or that name human review outright.
+#: These never reach a confident drawer regardless of the other signals.
+_STATES_CONTRADICTORY = frozenset(
+    {
+        "report_invalid",
+        "contract_failed",
+        "recovery_required",
+        "blocked",
+        "stalled",
+        "timed_out",
+        "ghost",
+        "gc",
+    }
+)
+
+_BUCKET_FOR_VERDICT = {
+    VERDICT_FINALIZED: BUCKET_FINALIZED,
+    VERDICT_FAILED: BUCKET_FAILED,
+    VERDICT_NEEDS_ATTENTION: BUCKET_NEEDS_ATTENTION,
+}
+# vc-frame's `triage-run --bucket` takes the kebab spelling (W2-B-4a).
+_BUCKET_FLAG_FOR_VERDICT = {
+    VERDICT_FINALIZED: "finalized",
+    VERDICT_FAILED: "failed",
+    VERDICT_NEEDS_ATTENTION: "needs-attention",
+}
+
+
+@dataclass(frozen=True)
+class RunClassification:
+    """Where a finished run belongs, and the evidence that put it there."""
+
+    verdict: str
+    reason: str
+
+    @property
+    def bucket(self) -> str:
+        """The vc-frame session name for this verdict."""
+        return _BUCKET_FOR_VERDICT[self.verdict]
+
+    @property
+    def bucket_flag(self) -> str:
+        """The value for ``triage-run --bucket``."""
+        return _BUCKET_FLAG_FOR_VERDICT[self.verdict]
+
+
+def _attention(reason: str) -> RunClassification:
+    return RunClassification(VERDICT_NEEDS_ATTENTION, reason)
+
+
+def classify_run(
+    exit_code: Any,
+    run_state: Any,
+    report_exists: bool | None,
+    report_bytes: int | None,
+    transcript_bytes: int | None,
+) -> RunClassification:
+    """Decide a finished run's drawer from the conjunction of its signals.
+
+    Pure. Three outcomes, and only two of them are confident:
+
+    * **finalized** — exit 0, a state asserting delivery, and a non-empty report
+      actually on disk. All three, or it is not finalized.
+    * **failed** — exit non-zero, a state asserting death, no report, and a
+      transcript too small to contain work. A run that died before doing any.
+    * **needs_attention** — everything else. Every contradiction between signals
+      (exit 0 with no report, non-zero exit *with* a report, a state that
+      disagrees with the exit code, ``report_invalid``/``contract_failed``/
+      ``ghost``/``timed_out``), and every signal we could not read.
+
+    The last clause is the point: an unreadable signal fails closed, to a human,
+    never to a confident drawer. ``report_exists=None`` and
+    ``transcript_bytes=None`` mean "could not stat", not "absent".
+    """
+    state = str(run_state or "").strip().lower()
+    if not state:
+        return _attention("state_unreadable")
+    if state in _STATES_CONTRADICTORY:
+        return _attention(f"state_{state}")
+    if state not in _STATES_DELIVERED and state not in _STATES_DIED:
+        return _attention(f"state_unrecognized:{state}")
+
+    try:
+        code = int(exit_code)
+    except (TypeError, ValueError):
+        return _attention("exit_code_unreadable")
+
+    if report_exists is None:
+        return _attention("report_unreadable")
+
+    delivered = bool(report_exists)
+    if delivered:
+        if report_bytes is None:
+            return _attention("report_size_unreadable")
+        if report_bytes < MINIMAL_REPORT_BYTES:
+            return _attention("report_empty")
+
+    if code == 0:
+        if not delivered:
+            # The 2026-05-14 specimen: top-level success, nothing delivered.
+            return _attention("exit_0_without_report")
+        if state not in _STATES_DELIVERED:
+            return _attention(f"exit_0_but_state_{state}")
+        return RunClassification(VERDICT_FINALIZED, "exit_0_report_delivered")
+
+    # Non-zero exit from here down.
+    if delivered:
+        # The mirror specimen: the run says it died, the artifacts say otherwise.
+        return _attention(f"exit_{code}_with_report")
+    if state not in _STATES_DIED:
+        return _attention(f"exit_{code}_but_state_{state}")
+    if transcript_bytes is None:
+        return _attention("transcript_unreadable")
+    if transcript_bytes >= MINIMAL_TRANSCRIPT_BYTES:
+        # It died, but not before working. Whatever it managed is worth a look.
+        return _attention(f"exit_{code}_no_report_after_{transcript_bytes}b")
+    return RunClassification(
+        VERDICT_FAILED,
+        f"exit_{code}_no_report_transcript_{transcript_bytes}b",
+    )
+
+
+@dataclass(frozen=True)
+class RunSignals:
+    """The classifier's inputs, read off a run's meta payload and its artifacts.
+
+    ``None`` always means "could not read", never "absent" — the distinction the
+    classifier needs to fail closed.
+    """
+
+    exit_code: Any
+    run_state: str
+    report_exists: bool | None
+    report_bytes: int | None
+    transcript_bytes: int | None
+
+    def classify(self) -> RunClassification:
+        return classify_run(
+            self.exit_code,
+            self.run_state,
+            self.report_exists,
+            self.report_bytes,
+            self.transcript_bytes,
+        )
+
+
+def _stat_artifact(raw: Any) -> tuple[bool | None, int | None]:
+    """``(exists, bytes)`` for an artifact path.
+
+    Three distinguishable answers, because the classifier needs them apart:
+    an undeclared path is unknown (``None`` bytes — we do not know where to
+    look), a declared path that is not there is a known zero, and an ``OSError``
+    is unreadable in both fields.
+    """
+    path = str(raw or "").strip()
+    if not path:
+        return False, None
+    try:
+        target = Path(path)
+        if not target.exists():
+            return False, 0
+        return True, target.stat().st_size
+    except OSError:
+        return None, None
+
+
+def read_run_signals(meta: Mapping[str, Any]) -> RunSignals:
+    """Gather the classifier's inputs from a run's meta payload.
+
+    The only impure step in the chain — it stats the report and the transcript.
+    ``Path.stat`` follows symlinks, which matters: ``spawn.finalize_artifacts``
+    leaves a compat symlink at the announced path, so the announced transcript is
+    routinely a link to the real one.
+    """
+    report_exists, report_bytes = _stat_artifact(meta.get("report"))
+    _, transcript_bytes = _stat_artifact(meta.get("transcript"))
+    # `state` is the control-plane spelling, `status` the launcher meta's. Either
+    # is the run's own account of how it ended.
+    run_state = str(meta.get("state") or meta.get("status") or "").strip()
+    return RunSignals(
+        exit_code=meta.get("exit_code"),
+        run_state=run_state,
+        report_exists=report_exists,
+        report_bytes=report_bytes,
+        transcript_bytes=transcript_bytes,
+    )
+
 
 def bucket_for_exit_code(exit_code: Any) -> str:
-    """Map a run's exit code to its vc-frame bucket. The single source of truth.
+    """Map a run's exit code to its vc-frame bucket — the degraded path only.
+
+    :func:`classify_run` is the verdict. This survives for one case: a vc-frame
+    predating ``triage-run --bucket``, which buckets by exit code on its own. We
+    mirror its arithmetic so the receipt can name the destination it will pick.
 
     Mirrors vc-frame's ``BucketKind::for_exit_code``: exit 0 is the only success.
     Timeouts and kills arrive as their signal-derived codes (137, 143, ...) and
@@ -94,14 +337,20 @@ class TriagePlan:
     run_id: str = ""
     exit_code: int = 0
     bucket: str = ""
+    verdict: str = ""
+    verdict_reason: str = ""
     origin_session: str = ""
     origin_tab: str = ""
     pane_id: str = ""
     cwd: str = ""
     command: tuple[str, ...] = ()
 
-    def argv(self, binary: str) -> list[str]:
-        """Render the ``vc-frame triage-run`` invocation for this plan."""
+    def argv(self, binary: str, with_bucket: bool = True) -> list[str]:
+        """Render the ``vc-frame triage-run`` invocation for this plan.
+
+        ``with_bucket=False`` omits ``--bucket`` for a binary predating W2-B-4a,
+        leaving vc-frame to bucket by exit code on its own — the degraded path.
+        """
         argv = [
             binary,
             "triage-run",
@@ -110,6 +359,8 @@ class TriagePlan:
             "--exit-code",
             str(self.exit_code),
         ]
+        if with_bucket and self.verdict:
+            argv += ["--bucket", _BUCKET_FLAG_FOR_VERDICT[self.verdict]]
         if self.origin_session:
             argv += ["--origin-session", self.origin_session]
         if self.origin_tab:
@@ -135,6 +386,14 @@ class TriageOutcome:
     #: True only for the intent written before the transfer is attempted. A
     #: receipt left pending means the process did not survive its own transfer.
     pending: bool = False
+    #: The classifier's verdict and its evidence, preserved independently of the
+    #: outcome so the operator can audit *why* a run went where — including when
+    #: the transfer later broke, or when the destination was degraded.
+    verdict: str = ""
+    verdict_reason: str = ""
+    #: Non-empty when the destination was not the classifier's to choose:
+    #: ``exit_code_only`` for a vc-frame predating ``--bucket``.
+    verdict_degraded: str = ""
 
     def receipt(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -144,6 +403,9 @@ class TriageOutcome:
         # Always written, so a confirming receipt clears a stale intent.
         payload["triage_reason"] = self.reason
         payload["triage_bucket"] = self.bucket
+        payload["triage_verdict"] = self.verdict
+        payload["triage_verdict_reason"] = self.verdict_reason
+        payload["triage_verdict_degraded"] = self.verdict_degraded
         return payload
 
 
@@ -192,7 +454,7 @@ def plan_triage(
     if marbles_tab and tab_name == marbles_tab and marbles_tab != run_id:
         return TriagePlan(should_run=False, skip_reason="shared_tab")
 
-    exit_code_raw = meta.get("exit_code")
+    exit_code_raw: Any = meta.get("exit_code")
     try:
         exit_code = int(exit_code_raw)
     except (TypeError, ValueError):
@@ -210,11 +472,15 @@ def plan_triage(
     else:
         command = ()
 
+    classification = read_run_signals(meta).classify()
+
     return TriagePlan(
         should_run=True,
         run_id=run_id,
         exit_code=exit_code,
-        bucket=bucket_for_exit_code(exit_code),
+        bucket=classification.bucket,
+        verdict=classification.verdict,
+        verdict_reason=classification.reason,
         origin_session=origin_session,
         origin_tab=tab_name,
         pane_id=_env("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID"),
@@ -232,18 +498,34 @@ def _resolve_binary(env: Mapping[str, str]) -> str:
     return which("vc-frame", path=env.get("PATH")) or ""
 
 
-def _supports_triage_run(binary: str, runner: Callable[..., Any]) -> bool:
-    """Probe for the subcommand.
+@dataclass(frozen=True)
+class _Probe:
+    """What the installed vc-frame can actually be asked to do."""
+
+    supported: bool
+    bucket: bool = False
+
+
+def _probe_triage_run(binary: str, runner: Callable[..., Any]) -> _Probe:
+    """Probe for the subcommand, and for ``--bucket`` within it.
 
     The installed binary may predate vc-frame ``71146085``; an older build parses
     ``triage-run`` as a stray argument and exits non-zero. Probing keeps a stale
-    install a recorded skip rather than a spurious failure.
+    install a recorded skip rather than a spurious failure. A binary that has
+    ``triage-run`` but predates W2-B-4a has no ``--bucket``, so its help text is
+    read too: we degrade to exit-code bucketing rather than passing a flag that
+    would make the whole call fail.
     """
     try:
         proc = runner([binary, "triage-run", "--help"])
     except Exception:
-        return False
-    return getattr(proc, "returncode", 1) == 0
+        return _Probe(supported=False)
+    if getattr(proc, "returncode", 1) != 0:
+        return _Probe(supported=False)
+    help_text = (
+        f"{getattr(proc, 'stdout', '') or ''}{getattr(proc, 'stderr', '') or ''}"
+    )
+    return _Probe(supported=True, bucket="--bucket" in help_text)
 
 
 def _default_runner(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -284,55 +566,91 @@ def triage_finished_run(
         _record_receipt(meta, payload, outcome)
         return outcome
 
+    # Resolve the binary before writing anything: a stale or absent vc-frame
+    # means no transfer will be attempted at all, and a pending intent for a
+    # transfer that never starts would be a receipt describing fiction.
+    binary = _resolve_binary(env)
+    if not binary:
+        outcome = TriageOutcome(OUTCOME_SKIPPED, reason="no_binary")
+        _record_receipt(meta, payload, outcome)
+        return outcome
+    probe = _probe_triage_run(binary, runner)
+    if not probe.supported:
+        outcome = TriageOutcome(OUTCOME_SKIPPED, reason="unsupported_binary")
+        _record_receipt(meta, payload, outcome)
+        return outcome
+
+    # Where the run will actually land. With `--bucket` that is the classifier's
+    # verdict; without it vc-frame decides by exit code alone, so the receipt
+    # must say the exit-code answer — and say that it was degraded to it.
+    if probe.bucket:
+        destination, bucket = plan.verdict, plan.bucket
+        degraded = ""
+    else:
+        destination = outcome_for_exit_code(plan.exit_code)
+        bucket = bucket_for_exit_code(plan.exit_code)
+        degraded = "exit_code_only"
+
     # A successful transfer closes the origin tab — the tab this process is
     # running in. Our own success is therefore likely to kill us before we can
     # write the receipt. So record the intent first, marked pending, and correct
     # it only if we live long enough to learn better. A run that vanishes mid-
     # transfer then still says where it was headed instead of saying nothing.
     intent = TriageOutcome(
-        outcome_for_exit_code(plan.exit_code),
-        bucket=plan.bucket,
+        destination,
+        reason=plan.verdict_reason,
+        bucket=bucket,
         pending=True,
+        verdict=plan.verdict,
+        verdict_reason=plan.verdict_reason,
+        verdict_degraded=degraded,
     )
     _record_receipt(meta, payload, intent)
 
-    outcome = _run_triage(plan, env, runner)
+    outcome = _run_triage(plan, binary, probe, runner, destination, bucket, degraded)
     _record_receipt(meta, payload, outcome)
     return outcome
 
 
 def _run_triage(
     plan: TriagePlan,
-    env: Mapping[str, str],
+    binary: str,
+    probe: _Probe,
     runner: Callable[..., Any],
+    destination: str,
+    bucket: str,
+    degraded: str,
 ) -> TriageOutcome:
-    binary = _resolve_binary(env)
-    if not binary:
-        return TriageOutcome(OUTCOME_SKIPPED, reason="no_binary")
-    if not _supports_triage_run(binary, runner):
-        return TriageOutcome(OUTCOME_SKIPPED, reason="unsupported_binary")
+    def _error(reason: str) -> TriageOutcome:
+        return TriageOutcome(
+            OUTCOME_ERROR,
+            reason=reason,
+            bucket=bucket,
+            verdict=plan.verdict,
+            verdict_reason=plan.verdict_reason,
+            verdict_degraded=degraded,
+        )
 
     try:
-        proc = runner(plan.argv(binary))
+        proc = runner(plan.argv(binary, with_bucket=probe.bucket))
     except Exception as exc:
-        return TriageOutcome(
-            OUTCOME_FAILED,
-            reason=f"invoke_error: {type(exc).__name__}: {exc}",
-            bucket=plan.bucket,
-        )
+        return _error(f"invoke_error: {type(exc).__name__}: {exc}")
 
     returncode = getattr(proc, "returncode", 1)
     if returncode != 0:
         stderr = str(getattr(proc, "stderr", "") or "").strip()
-        return TriageOutcome(
-            OUTCOME_FAILED,
-            reason=f"exit {returncode}: {stderr[:500]}"
-            if stderr
-            else f"exit {returncode}",
-            bucket=plan.bucket,
+        return _error(
+            f"exit {returncode}: {stderr[:500]}" if stderr else f"exit {returncode}"
         )
 
-    return TriageOutcome(outcome_for_exit_code(plan.exit_code), bucket=plan.bucket)
+    return TriageOutcome(
+        destination,
+        reason=plan.verdict_reason,
+        bucket=bucket,
+        verdict=plan.verdict,
+        verdict_reason=plan.verdict_reason,
+        verdict_degraded=degraded,
+    )
 
 
 def _record_receipt(
@@ -372,13 +690,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     outcome = triage_finished_run(args.meta)
     line = f"triage: {outcome.outcome}"
-    if outcome.bucket and outcome.outcome in {
-        OUTCOME_FINALIZED,
-        OUTCOME_NEEDS_ATTENTION,
-    }:
+    if outcome.bucket and outcome.outcome in _BUCKET_FOR_VERDICT:
         line += f" → {outcome.bucket}"
     if outcome.reason:
         line += f" ({outcome.reason})"
+    if outcome.verdict_degraded:
+        line += f" [degraded: {outcome.verdict_degraded}]"
     print(line)
     # Always 0: triage never fails a run.
     return 0
