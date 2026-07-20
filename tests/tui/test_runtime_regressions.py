@@ -116,7 +116,11 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
     assert "resume-codex" in new_tab_call
     command_script = Path(new_tab_call[-1])
     command_body = command_script.read_text(encoding="utf-8")
-    assert "codex resume sess-123" in command_body
+    # Explicit --prompt means "continue the job": the visible tab must host the
+    # NON-INTERACTIVE `codex exec ... resume`, never the interactive picker
+    # (operator contract 2026-07-21). Bare resume without input keeps the TUI.
+    assert "codex exec" in command_body
+    assert "resume sess-123" in command_body
     assert "carry on" in command_body
 
 

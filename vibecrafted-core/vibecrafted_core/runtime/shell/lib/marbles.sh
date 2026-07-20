@@ -174,9 +174,18 @@ _vetcoders_resume_agent() {
   local resume_prompt
   local runtime
   local resume_cmd
+  local resume_mode
   resume_prompt="$(_vetcoders_compose_input_context "$_vetcoders_contract_prompt" "$_vetcoders_contract_file")" || return 1
   runtime="$(_vetcoders_effective_runtime)"
-  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt")" || return 1
+  # An explicit --prompt/--file means "continue the job", not "open me a TUI":
+  # the resume must run the agent's NON-INTERACTIVE invocation even when a
+  # visible operator tab hosts it, so it finishes, exits, and can be triaged.
+  # Only a bare resume (no input) parks an interactive session in the tab.
+  resume_mode="interactive"
+  if [[ -n "$_vetcoders_contract_prompt" || -n "$_vetcoders_contract_file" ]]; then
+    resume_mode="headless"
+  fi
+  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" "$resume_mode")" || return 1
 
   # prepare_operator_runtime can create or attach an operator surface only when
   # we are already in vc_frame, know an operator session, or have an interactive
