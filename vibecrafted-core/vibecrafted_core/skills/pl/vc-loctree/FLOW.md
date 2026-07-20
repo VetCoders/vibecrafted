@@ -1,30 +1,20 @@
-# `vc-loctree` Flow
-
-## Flow
+# Flow `vc-loctree`
 
 ```mermaid
 flowchart TD
-    A[Repo-specific task] --> B[repo-view]
-    B --> C[focus target dirs]
-    C --> D[slice files before edits]
-    D --> E{Delete or major refactor?}
-    E -->|yes| F[impact]
-    E -->|no| G[find before new symbols]
+    A[Zadanie repozytoryjne] --> B{Pytanie jest już zawężone?}
+    B -->|nie| C[context / repo-view]
+    B -->|tak| D[focus / slice / find]
+    C --> D
+    D --> E{Delete, rename, duży refactor?}
+    E -->|tak| F[impact plus świadek manifest/runtime/test]
+    E -->|nie| G[bezpośrednie czytanie źródła]
     F --> G
-    G --> H[follow dead/cycles/twins/hotspots when needed]
-    H --> I[Run nearest gate]
+    G --> H[najbliższa realna brama produktu]
 ```
 
-## Trasy
+Ścieżka literalna: `loct find Name` → `--where-symbol` → `loct body Name`.
+Ścieżka discovery: `loct find --discover Terms` → literalna weryfikacja kandydatów.
 
-| Wejście          | Argumenty       | Produkuje               | Wyjście         |
-| ---------------- | --------------- | ----------------------- | --------------- |
-| `loct repo-view` | korzeń projektu | przegląd repo           | mapa            |
-| `loct focus`     | katalog         | przegląd modułu         | mapa celu       |
-| `loct slice`     | plik            | zależności i konsumenci | kontekst edycji |
-
-## Reguła fallbacku
-
-Grep lub surowe przeszukiwanie plików to evidence fallbacku tylko wtedy, gdy Loctree nie potrafi
-odpowiedzieć na pytanie strukturalne. Odnotuj tę lukę strukturalną, aby powierzchnia Loctree mogła
-się poprawić.
+Loctree mapuje reprezentowaną strukturę. Decyzje destrukcyjne wymagają osobnego
+świadka dla entrypointów, manifestów, generated/dynamic wiring, testów i runtime.
