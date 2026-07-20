@@ -1029,6 +1029,10 @@ def normalize_launch_spec(
         payload.get("depth"), 3 if definition.supports_depth else None
     )
     model = str(payload.get("model") or payload.get("model_requested") or "").strip()
+    if not model and file_path:
+        # Brief frontmatter is the plan's voice: `model: <id>` pins the worker
+        # tier without an explicit --model flag. Flag always wins over brief.
+        model = parse_frontmatter(Path(file_path).expanduser()).get("model", "").strip()
     research_agents: tuple[str, ...] = ()
     research_synthesizer = ""
     research_synthesizer_model = str(

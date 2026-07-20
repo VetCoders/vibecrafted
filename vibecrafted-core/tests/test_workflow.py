@@ -72,6 +72,54 @@ def test_normalize_launch_spec_maps_justdo_to_implement(tmp_path: Path) -> None:
     assert spec.agent == "codex"
 
 
+def test_normalize_launch_spec_reads_model_from_brief_frontmatter(
+    tmp_path: Path,
+) -> None:
+    brief = tmp_path / "brief.md"
+    brief.write_text(
+        "---\nmodel: opus\ntitle: sample cut\n---\n\ndo the work\n",
+        encoding="utf-8",
+    )
+
+    spec = workflow.normalize_launch_spec(
+        {"skill": "implement", "agent": "claude", "file": str(brief)},
+        tmp_path,
+    )
+
+    assert spec.model == "opus"
+
+
+def test_normalize_launch_spec_model_flag_wins_over_brief_frontmatter(
+    tmp_path: Path,
+) -> None:
+    brief = tmp_path / "brief.md"
+    brief.write_text("---\nmodel: opus\n---\n\ndo the work\n", encoding="utf-8")
+
+    spec = workflow.normalize_launch_spec(
+        {
+            "skill": "implement",
+            "agent": "claude",
+            "file": str(brief),
+            "model": "claude-sonnet-5",
+        },
+        tmp_path,
+    )
+
+    assert spec.model == "claude-sonnet-5"
+
+
+def test_normalize_launch_spec_no_model_without_frontmatter(tmp_path: Path) -> None:
+    brief = tmp_path / "brief.md"
+    brief.write_text("do the work\n", encoding="utf-8")
+
+    spec = workflow.normalize_launch_spec(
+        {"skill": "implement", "agent": "claude", "file": str(brief)},
+        tmp_path,
+    )
+
+    assert spec.model == ""
+
+
 def test_artifact_slug_skips_boilerplate_research_words() -> None:
     assert (
         workflow._artifact_slug(
