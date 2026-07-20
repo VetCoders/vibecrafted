@@ -1,6 +1,6 @@
 # Delivery Proof Kernel v1 — specyfikacja prawdy o dostarczeniu
 
-_Status: input contract for `vc-scaffold` · 2026-07-20 · owner: operator + Sol_
+_Status: input contract for `vc-scaffold` · 2026-07-20 · owner: operator + Sol · amended after resume-identity autopsy_
 
 ## 1. Po co istnieje ten dokument
 
@@ -171,6 +171,30 @@ delivery_state
 Frontend nie może więc uczciwie powiedzieć, czy ogląda zakończony proces,
 zweryfikowaną zmianę czy dostarczony produkt.
 
+### 4.7. Jedno pole `session_id` miesza różne domeny tożsamości
+
+Aktualny runtime używa nazwy `session_id` dla co najmniej dwóch różnych bytów:
+
+- Vibecrafted generuje własny UUID przez `ensure_session_id()` i przekazuje go
+  jako `VIBECRAFTED_SESSION_ID`;
+- agent posiada własny identyfikator konwersacji, threadu albo rolloutu,
+  emitowany przez natywny runtime dostawcy.
+
+`Supervisor.spawn()` tworzy Vibecrafted session id przed uruchomieniem agenta i
+zapisuje go w `SpawnHandle.session_id`. `_maybe_extract_session_id()` zwraca
+istniejącą wartość z meta bez próby związania jej z agent-native identity.
+Jednocześnie capability registry deklaruje agent-native źródła identity, ale
+wspólny `_SESSION_TOKEN` i szerokie regexy akceptują praktycznie dowolny token z
+myślnikami. Typ i provenance giną w jednym stringu.
+
+To nie jest wyłącznie problem nazewnictwa. Runtime może przekazać własny UUID do
+`codex resume`, uznać obcy proces za właściwego workera albo pokazać operatorowi
+session id, którego natywne CLI nigdy nie wyemitowało.
+
+Analogicznie obecna liveness opiera się głównie na istnieniu PID/PGID oraz wieku
+heartbeat. PID bez process start time, argv, cwd, ancestry i provider-session
+binding dowodzi tylko, że _jakiś_ proces pod tym numerem żyje.
+
 ## 5. Incydenty, które nowy kontrakt musi umieć odtworzyć
 
 ### 5.1. Oracle sprawdza dawcę, nie biorcę
@@ -228,6 +252,37 @@ wyżej zaprezentuje to jako ukończone.
 nieznany exit code ani brak obiecanego artefaktu nie może awansować do
 `delivery.delivered` przez projekcję kompatybilności.
 
+### 5.5. Resume dostał identyfikator z obcej domeny, a cudze sesje udawały liveness
+
+W rzeczywistym recovery runie do `codex resume` przekazano UUIDv4 wygenerowany
+przez control plane zamiast agent-native Codex conversation/thread id. W
+zaobserwowanej wersji Codexa prawidłowe identyfikatory były UUIDv7 emitowanymi w
+rolloutach. Proces umarł przed utworzeniem rolloutu, launch logu i trwałego
+run-state.
+
+Następnie trzy pozornie niezależne sygnały dały fałszywy PASS: istniały procesy
+`codex resume/fork`, inne rollouty rosły, a równoległe sesje były aktywne. Każdy
+sygnał należał jednak do cudzych sesji VS Code. Monitor związany z właściwym
+workerem poprawnie zgłosił `WORKER-GONE`, lecz niepowiązane sygnały zostały
+błędnie potraktowane jako quorum.
+
+Recovery stało się wiarygodne dopiero po związaniu jednego łańcucha przyczynowego:
+
+```text
+Vibecrafted run id
+→ provider-native resume target
+→ exact PID + process start time + argv + cwd
+→ exact provider rollout/thread activity
+→ dedicated report path + commits above declared baseline
+```
+
+Prefiks `019` jest dobrym fixture'em regresji dla tej konkretnej wersji Codexa,
+ale nie może stać się uniwersalną heurystyką. Normatywne rozwiązanie to
+namespaced identity potwierdzone przez provider capability i natywne zdarzenie,
+nie zgadywanie po kształcie stringa.
+
+Trzy sygnały bez poprawnej atrybucji są zerem dowodów, nie quorum.
+
 ## 6. Docelowa architektura
 
 Jedna implementacja ma mieszkać w Pythonowym runtime core, logicznie jako:
@@ -246,6 +301,10 @@ Przepływ:
 ```text
 ExecutionEnvelope
     ↓ preflight qualification
+RunIdentityBundle
+    ↓ launch attempt + provider-native binding
+LivenessEvidence[]
+    ↓ causally attributed execution truth
 DeliveryProofContract
     ↓ deterministic executor
 ExecutionEvidence[]
@@ -265,7 +324,8 @@ Runtime musi utrzymywać trzy ortogonalne osie:
 
 ```text
 execution_state:
-  created | launched | running | exited | interrupted | timed_out | failed
+  created | preflight_passed | spawn_attempted | provider_bound | running
+  | exited | interrupted | timed_out | launch_failed | failed
 
 proof_state:
   undeclared | declared | running | passed | failed | invalid | stale
@@ -324,7 +384,88 @@ spawnem. Dispatch nie interpretuje semantyki dowodu produktu.
 
 Pogoda nad Bałtykiem pozostaje poza schematem.
 
-### 7.2. `DeliveryProofContract`
+### 7.2. `RunIdentityBundle`
+
+Identity odpowiada na pytanie: _który dokładnie run, proces i agent-native
+conversation/thread obserwujemy?_ Żadne pole przekraczające granicę modułu nie
+może nazywać się wyłącznie `session_id` bez namespace'u.
+
+Minimalny kształt logiczny:
+
+```yaml
+identity:
+  schema: vibecrafted.run-identity.v1
+  run:
+    namespace: vibecrafted.run.v1
+    value: impl-260720-example
+  orchestration_session:
+    namespace: vibecrafted.session.v1
+    value: 3ea1f929-...
+    issuer: vibecrafted-control-plane
+  provider:
+    agent: codex
+    capability_digest: sha256:...
+    requested_session:
+      namespace: codex.thread.v1
+      value: 019f7f3a-...
+      purpose: resume
+      validation: provider-schema-confirmed
+    observed_session:
+      namespace: codex.thread.v1
+      value: 019f7f3a-...
+      source: exec-json-thread-started
+      source_event_sha256: sha256:...
+      observed_at: 2026-07-20T13:12:00Z
+  process:
+    pid: 63491
+    process_start_time: <os-specific-stable-value>
+    pgid: <pgid>
+    parent_pid: <pid>
+    resolved_executable: /absolute/path/to/codex
+    argv_sha256: sha256:...
+    cwd: /Volumes/vc-workspace/vetcoders/codescribe
+```
+
+`orchestration_session` i `provider.requested_session` mogą przypadkiem mieć ten
+sam tekst. Nadal są różnymi typami i nie są wzajemnie podstawialne. Resume/fork
+przyjmuje wyłącznie provider-native ref zgodny z aktualnie probe-confirmed
+capability. Kształt identyfikatora jest walidacją pomocniczą; authority pochodzi
+z namespace'u, źródła i natywnego provider eventu.
+
+Runtime zapisuje launch attempt _przed_ spawnem. Po natywnym identity event
+wiąże `observed_session` z runem atomowo. Brak tego eventu oznacza
+`provider_identity=unverified` albo `launch_failed`; nie wolno wypełnić pola
+własnym UUID ani wyłuskać pierwszego podobnego tokenu z niepowiązanego logu.
+
+### 7.3. `LivenessEvidence`
+
+Liveness odpowiada na pytanie: _czy ten konkretny worker nadal wykonuje ten
+konkretny run?_ Każda obserwacja jest osobnym rekordem zawierającym:
+
+- `run_id` oraz digest `RunIdentityBundle`;
+- rodzaj sygnału: process, provider activity, heartbeat, dedicated artifact albo
+  scoped commit progress;
+- correlation ref wskazujący dokładnie proces/provider session/artifact;
+- observer, source, observed_at, source digest i freshness window;
+- wynik `bound_alive`, `bound_quiet`, `gone`, `unknown` albo `conflicted`;
+- powód, dla którego sygnał należy do runu, nie tylko wygląda podobnie.
+
+Process witness wymaga co najmniej PID + process start time + argv digest + cwd;
+sam `kill(pid, 0)` nie wystarcza i nie chroni przed PID reuse. Provider witness
+musi czytać aktywność dokładnego `observed_session`, nie najnowszy lub dowolny
+rosnący rollout. Artifact witness musi wskazywać ścieżkę przypisaną do runu, a
+commit witness — dokładny baseline i repo identity.
+
+Agregator nie może głosować po liczbie sygnałów. Najpierw odrzuca wszystkie
+niezwiązane i konfliktowe obserwacje, dopiero potem stosuje politykę do evidence
+tego samego identity bundle. Aktywność sibling sessions nigdy nie może odwrócić
+`gone` właściwego workera.
+
+Jeżeli spawn umrze przed provider init, nadal istnieje launch-attempt record z
+command/cwd/exit/stderr i stan `launch_failed`. „Zero rolloutu, zero logu, zero
+run-state” jest błędem runtime'u, nie akceptowalnym brakiem danych.
+
+### 7.4. `DeliveryProofContract`
 
 Kontrakt odpowiada na pytanie: _co dokładnie ma zostać udowodnione i jak
 udowodnimy, że sam dowód potrafi zawieść?_
@@ -382,7 +523,7 @@ Nie każde zadanie potrzebuje zewnętrznego oracle. Wtedy `oracle` może być
 `null`, ale kontrakt nadal musi mieć witness, jawne expected outcome, assertion
 i negative control. Oracle nie może być dekoracyjnym obowiązkiem.
 
-### 7.3. `ExecutionEvidence`
+### 7.5. `ExecutionEvidence`
 
 Każdy proces dostaje osobny rekord. Minimalne pola:
 
@@ -397,6 +538,8 @@ Każdy proces dostaje osobny rekord. Minimalne pola:
 - input/output paths i ich SHA-256;
 - repo/HEAD snapshot przed i po procesie;
 - identyfikator parent contractu i runu.
+- digest `RunIdentityBundle` oraz powiązane liveness evidence, jeżeli procesem
+  jest agent worker lub runtime probe.
 
 Formatter, `tee`, `grep`, `tail` i renderer nie mogą być niewidzialną częścią
 exit code producenta. Preferowane są argv arrays i programowe przetwarzanie
@@ -404,7 +547,7 @@ outputu. Jeżeli shell jest konieczny, executor ma jawnie uruchomić ścisłą
 powłokę, zapisać `PIPESTATUS` każdego segmentu i uznać błąd dowolnego wymaganego
 segmentu za błąd całego dowodu.
 
-### 7.4. `ProofResult`
+### 7.6. `ProofResult`
 
 `ProofResult` jest deterministycznym wynikiem wykonania kontraktu:
 
@@ -421,7 +564,7 @@ segmentu za błąd całego dowodu.
 oracle są tym samym producentem, assertion nie czyta subject outputu, negative
 control nie robi się czerwony, zmienił się verifier albo envelope.
 
-### 7.5. `DeliveryRecord`
+### 7.7. `DeliveryRecord`
 
 `DeliveryRecord` jest wynikiem kwalifikacji scope. Łączy `ProofResult` z
 twierdzeniem o miejscu dostarczenia i odpowiada na pytanie, którego sam test nie
@@ -432,7 +575,7 @@ provenance, wyniki wymaganych runtime probes oraz status `delivered` albo
 `unverified` z przyczynami odmowy. Może powstać po udanym proof, ale nie jest
 jeszcze pieczęcią i nie daje żadnej powierzchni prawa do pokazania `sealed`.
 
-### 7.6. `DeliverySeal`
+### 7.8. `DeliverySeal`
 
 `DeliverySeal` jest content-addressed, nieedytowalną pieczęcią wydawaną wyłącznie
 przez `vc-ship` po udanym proof i kwalifikacji zakresu delivery.
@@ -441,6 +584,7 @@ Musi wiązać co najmniej:
 
 - schema version, seal id, issued_at i issuer;
 - run id, lifecycle id, cut id i proof id;
+- RunIdentityBundle digest oraz digests rozstrzygających liveness evidence;
 - ExecutionEnvelope digest;
 - DeliveryProofContract digest;
 - ProofResult digest;
@@ -552,8 +696,10 @@ musi unieważnić wynik i wymusić rerun.
 
 ### `vc-scaffold` — definiuje dowód
 
-Scaffold ma tworzyć ExecutionEnvelope i DeliveryProofContract dla każdego
-cutu, którego rezultat będzie twierdził coś więcej niż wykonanie procesu.
+Scaffold ma tworzyć ExecutionEnvelope, RunIdentityBundle i
+DeliveryProofContract dla każdego cutu, którego rezultat będzie twierdził coś
+więcej niż wykonanie procesu. Dla długowiecznych workerów i recovery runów
+projektuje również politykę LivenessEvidence.
 
 Machine scaffold-doctor odrzuca brief, gdy brakuje:
 
@@ -563,6 +709,9 @@ Machine scaffold-doctor odrzuca brief, gdy brakuje:
 - negative control;
 - delivery scope;
 - execution envelope z agentem, repo, rootem, branchem, HEAD i brief digest;
+- namespaced run/provider identity contract dla resume, fork i monitorowanych
+  workerów;
+- reguły korelacji liveness, gdy cut uruchamia długowiecznego workera;
 - producenta wymaganych narzędzi gate'owych;
 - bezpiecznej polityki dla Living Tree.
 
@@ -577,6 +726,11 @@ Dispatch:
 - blokuje mismatch przed spawnem;
 - uruchamia właściwego agenta w właściwym repo/root/branch/HEAD;
 - zapisuje run, prompt i brief digests;
+- zapisuje launch attempt przed spawnem;
+- rozróżnia orchestration session od provider-native resume/fork targetu;
+- waliduje provider-native target przez aktualną capability i wiąże natywne
+  identity event z exact procesem oraz runem;
+- emituje wyłącznie causally-bound liveness evidence;
 - transportuje proof contract bez interpretowania jego semantyki;
 - zapisuje execution state.
 
@@ -642,6 +796,9 @@ control-plane layoutem, ale logicznie potrzebne są:
 
 ```text
 execution-envelope.json
+run-identity.json
+launch-attempt.json
+liveness/<observation-id>.json
 delivery-proof-contract.json
 proof/executions/<role>-<n>.json
 proof/assertions.json
@@ -654,6 +811,10 @@ delivery-seal.json
 Control plane publikuje osobne eventy, co najmniej:
 
 ```text
+launch.attempted
+launch.failed
+provider.identity_bound
+liveness.observed
 execution.exited
 proof.started
 proof.failed
@@ -681,6 +842,10 @@ derived record wskazuje digests rekordów źródłowych.
 - Executable resolution jest zapisywane przed wykonaniem; późniejsza zmiana PATH
   nie może reinterpretować starego evidence.
 - Kontrakt i seal mają wersjonowanie oraz fail-closed parsing nieznanych wersji.
+- Identyfikatory są namespaced i nie są konwertowane między domenami na
+  podstawie podobnego stringa, UUID version ani prefiksu.
+- Szeroki transcript regex może dostarczyć kandydata do kwalifikacji, ale nie
+  może samodzielnie ustanowić provider identity.
 
 ## 14. Migracja bez pięknego kłamstwa
 
@@ -696,34 +861,46 @@ derived record wskazuje digests rekordów źródłowych.
    czterech SKILL.md.
 7. Rust read model i MCP rozszerzają schema addytywnie. Stare rekordy są jawnie
    `unverified`, nie optymistycznie `sealed`.
+8. Legacy `session_id` migruje do namespaced `legacy.untyped-session.v1`. Nie
+   może zostać użyty jako resume/fork target, dopóki provider-native provenance
+   nie zostanie ponownie ustalone z natywnego artefaktu lub eventu.
 
 ## 15. TDD — obowiązkowe czerwone dowody przed implementacją
 
 Scaffold musi zacząć od testów, które na obecnym kodzie są czerwone. Minimum:
 
-| ID  | Fałszywe zabezpieczenie                                   | Oczekiwany wynik nowego kernela                     |
-| --- | --------------------------------------------------------- | --------------------------------------------------- |
-| T01 | Subject command nie został uruchomiony                    | `proof.invalid` lub `proof.failed`; brak seal       |
-| T02 | Oracle porównuje swój output ze swoim goldenem            | odrzucenie: subject output nie był konsumowany      |
-| T03 | Subject i oracle mają ten sam producer id                 | schema/doctor FAIL                                  |
-| T04 | Subject exit 101, formatter/grep exit 0                   | proof FAIL z zachowanymi oboma exit codes           |
-| T05 | Subject output został usunięty                            | negative control czerwony; verifier kwalifikuje się |
-| T06 | Subject output został uszkodzony                          | assertion FAIL                                      |
-| T07 | Negative control nie jest wykrywany                       | `proof.invalid`, nigdy warning                      |
-| T08 | Brief digest różni się od envelope                        | dispatch BLOCKED przed spawnem                      |
-| T09 | Repo/root/branch/HEAD różnią się od envelope              | dispatch BLOCKED przed spawnem                      |
-| T10 | Relevant file zmienia się podczas proof                   | `proof.stale`; wymagany rerun                       |
-| T11 | Zmienia się tylko niezależny plik poza scope              | drift zapisany; decyzja zgodna z policy             |
-| T12 | Run jest interrupted/partial/timed_out                    | delivery nie awansuje                               |
-| T13 | Raport istnieje i ma bajty, ale nie ma proof              | `artifact_ok=true`, `delivery=unverified`           |
-| T14 | Verifier zmienił się po PASS                              | seal reconstruction FAIL / stale                    |
-| T15 | Scope `installed`, lecz test uruchamia repo binary        | scope qualification FAIL                            |
-| T16 | Scope `live`, lecz brak target probe                      | scope qualification FAIL                            |
-| T17 | Commit nie jest osiągalny z integration target            | `integrated` FAIL                                   |
-| T18 | Poprawny subject + witness + assertion + negative control | proof PASS                                          |
-| T19 | Proof PASS + prawidłowy scope + ship authority            | deterministic DeliverySeal                          |
-| T20 | Ten sam immutable input uruchomiony ponownie              | ten sam content digest, różny event time            |
-| T21 | Filtr testów uruchamia zero testów                        | proof FAIL, nigdy vacuous green                     |
+| ID  | Fałszywe zabezpieczenie                                   | Oczekiwany wynik nowego kernela                      |
+| --- | --------------------------------------------------------- | ---------------------------------------------------- |
+| T01 | Subject command nie został uruchomiony                    | `proof.invalid` lub `proof.failed`; brak seal        |
+| T02 | Oracle porównuje swój output ze swoim goldenem            | odrzucenie: subject output nie był konsumowany       |
+| T03 | Subject i oracle mają ten sam producer id                 | schema/doctor FAIL                                   |
+| T04 | Subject exit 101, formatter/grep exit 0                   | proof FAIL z zachowanymi oboma exit codes            |
+| T05 | Subject output został usunięty                            | negative control czerwony; verifier kwalifikuje się  |
+| T06 | Subject output został uszkodzony                          | assertion FAIL                                       |
+| T07 | Negative control nie jest wykrywany                       | `proof.invalid`, nigdy warning                       |
+| T08 | Brief digest różni się od envelope                        | dispatch BLOCKED przed spawnem                       |
+| T09 | Repo/root/branch/HEAD różnią się od envelope              | dispatch BLOCKED przed spawnem                       |
+| T10 | Relevant file zmienia się podczas proof                   | `proof.stale`; wymagany rerun                        |
+| T11 | Zmienia się tylko niezależny plik poza scope              | drift zapisany; decyzja zgodna z policy              |
+| T12 | Run jest interrupted/partial/timed_out                    | delivery nie awansuje                                |
+| T13 | Raport istnieje i ma bajty, ale nie ma proof              | `artifact_ok=true`, `delivery=unverified`            |
+| T14 | Verifier zmienił się po PASS                              | seal reconstruction FAIL / stale                     |
+| T15 | Scope `installed`, lecz test uruchamia repo binary        | scope qualification FAIL                             |
+| T16 | Scope `live`, lecz brak target probe                      | scope qualification FAIL                             |
+| T17 | Commit nie jest osiągalny z integration target            | `integrated` FAIL                                    |
+| T18 | Poprawny subject + witness + assertion + negative control | proof PASS                                           |
+| T19 | Proof PASS + prawidłowy scope + ship authority            | deterministic DeliverySeal                           |
+| T20 | Ten sam immutable input uruchomiony ponownie              | ten sam content digest, różny event time             |
+| T21 | Filtr testów uruchamia zero testów                        | proof FAIL, nigdy vacuous green                      |
+| T22 | Vibecrafted UUIDv4 podany jako Codex resume target        | BLOCKED przed spawnem: wrong identity namespace      |
+| T23 | Rośnie rollout innej równoległej sesji Codexa             | brak liveness evidence dla target runu               |
+| T24 | PID żyje, lecz start time/argv/cwd nie zgadzają się       | `conflicted`; worker nie jest uznany za żywy         |
+| T25 | Provider emituje natywny identity event po starcie        | atomowy bind observed session do runu                |
+| T26 | Proces umiera przed provider init                         | trwały `launch_failed`; attempt/exit/stderr istnieją |
+| T27 | Target PID gone i target rollout quiet; siblings żyją     | target `gone`; cudze sesje nie tworzą quorum         |
+| T28 | Ten sam tekst id występuje w dwóch namespace'ach          | typy pozostają niepodstawialne                       |
+| T29 | OS ponownie używa PID dla innego procesu                  | stary process witness zostaje odrzucony              |
+| T30 | Regex znajduje podobny token bez provider eventu          | candidate `unverified`, nie identity                 |
 
 Testy nie mogą kończyć się na walidacji dataclass. Potrzebny jest realny E2E z
 tymczasowym repo, dwoma odrębnymi producentami, rzeczywistymi subprocessami,
@@ -737,6 +914,12 @@ Implementacja spełnia spec dopiero, gdy:
 - [ ] `vc-scaffold` emituje machine-readable contract i doctor potrafi go
       odrzucić przed dispatch.
 - [ ] `vc-dispatch` fail-closed egzekwuje ExecutionEnvelope przed spawnem.
+- [ ] Żaden cross-module contract nie przenosi niekwalifikowanego `session_id`;
+      orchestration i provider identity mają osobne namespace'y i provenance.
+- [ ] Resume/fork odrzuca identyfikator z obcej domeny przed spawnem.
+- [ ] Launch failure przed provider init nadal zostawia trwały attempt record.
+- [ ] Liveness jest związane z exact run/process/provider session; aktywność
+      sibling sessions nie może dać targetowi fałszywego `alive`.
 - [ ] Każdy subprocess ma własny exit code i evidence; pipeline nie maskuje
       producenta.
 - [ ] Runtime potwierdza, że assertion skonsumowała output rzeczywistego SUT.
@@ -781,7 +964,8 @@ Worker ma otrzymać ten dokument w całości i:
 6. rozpisać red-first TDD, ownership, zależności i fale możliwe do wykonania na
    jednym Living Tree bez worktrees;
 7. przypisać każdego producenta narzędzia gate do konkretnego cutu;
-8. umieścić ExecutionEnvelope i DeliveryProofContract w każdym briefie;
+8. umieścić ExecutionEnvelope, RunIdentityBundle i DeliveryProofContract w
+   każdym briefie oraz projektować LivenessEvidence dla monitorowanych workerów;
 9. sprawić, by machine scaffold-doctor odrzucał pięknie opakowane kłamstwo;
 10. zostawić operatorowi prawdziwy DRIVER, tracker i briefy, z których świeży
     agent może wykonać pracę bez zgadywania.
@@ -807,6 +991,10 @@ vc-ship wystawił DeliverySeal <id>.
 
 Nie wolno skracać tego do „done”, jeśli któregokolwiek zdania nie da się
 odtworzyć z typowanych artefaktów.
+
+Nie wolno również mówić „worker żyje”, jeśli nie da się wskazać jednego
+namespaced identity bundle i causally-bound liveness evidence. Obecność innego
+procesu tego samego agenta nie jest dowodem.
 
 To nie jest dodatkowa biurokracja. To mechanizm, który pozwala ponownie ufać
 autonomii agentów, ponieważ runtime przestaje nagradzać je za dobrze opowiedziane
