@@ -76,15 +76,23 @@ def test_version_falls_back_to_installed_metadata(monkeypatch) -> None:
 
 def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
     version_file = tmp_path / "VERSION"
-    pyproject = tmp_path / "vibecrafted-core" / "pyproject.toml"
-    packaged = tmp_path / "vibecrafted-core" / "vibecrafted_core" / "VERSION"
-    pyproject.parent.mkdir(parents=True)
-    packaged.parent.mkdir(parents=True)
-    version_file.write_text("1.4.1\n", encoding="utf-8")
-    pyproject.write_text(
-        '[project]\nname = "fixture"\nversion = "1.4.1"\n', encoding="utf-8"
+    pyprojects = (
+        tmp_path / "vibecrafted-core" / "pyproject.toml",
+        tmp_path / "vibecrafted-mcp" / "pyproject.toml",
     )
-    packaged.write_text("1.4.1\n", encoding="utf-8")
+    packaged_versions = (
+        tmp_path / "vibecrafted-core" / "vibecrafted_core" / "VERSION",
+        tmp_path / "vibecrafted-mcp" / "vibecrafted_mcp" / "VERSION",
+    )
+    version_file.write_text("1.4.1\n", encoding="utf-8")
+    for pyproject in pyprojects:
+        pyproject.parent.mkdir(parents=True)
+        pyproject.write_text(
+            '[project]\nname = "fixture"\nversion = "1.4.1"\n', encoding="utf-8"
+        )
+    for packaged in packaged_versions:
+        packaged.parent.mkdir(parents=True)
+        packaged.write_text("1.4.1\n", encoding="utf-8")
 
     result = subprocess.run(
         [
@@ -101,28 +109,39 @@ def test_version_bump_updates_every_declared_projection(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     assert version_file.read_text(encoding="utf-8") == "1.5.0\n"
-    assert (
-        tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
-        == "1.5.0"
-    )
-    assert packaged.read_text(encoding="utf-8") == "1.5.0\n"
+    for pyproject in pyprojects:
+        assert (
+            tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"]
+            == "1.5.0"
+        )
+    for packaged in packaged_versions:
+        assert packaged.read_text(encoding="utf-8") == "1.5.0\n"
 
 
 def test_version_bump_rejects_drift_without_partial_writes(tmp_path: Path) -> None:
     version_file = tmp_path / "VERSION"
-    pyproject = tmp_path / "vibecrafted-core" / "pyproject.toml"
-    packaged = tmp_path / "vibecrafted-core" / "vibecrafted_core" / "VERSION"
-    pyproject.parent.mkdir(parents=True)
-    packaged.parent.mkdir(parents=True)
-    version_file.write_text("1.4.1\n", encoding="utf-8")
-    pyproject.write_text(
-        '[project]\nname = "fixture"\nversion = "1.4.0"\n', encoding="utf-8"
+    pyprojects = (
+        tmp_path / "vibecrafted-core" / "pyproject.toml",
+        tmp_path / "vibecrafted-mcp" / "pyproject.toml",
     )
-    packaged.write_text("1.4.1\n", encoding="utf-8")
+    packaged_versions = (
+        tmp_path / "vibecrafted-core" / "vibecrafted_core" / "VERSION",
+        tmp_path / "vibecrafted-mcp" / "vibecrafted_mcp" / "VERSION",
+    )
+    version_file.write_text("1.4.1\n", encoding="utf-8")
+    for index, pyproject in enumerate(pyprojects):
+        pyproject.parent.mkdir(parents=True)
+        pyproject.write_text(
+            f'[project]\nname = "fixture"\nversion = "1.4.{index}"\n',
+            encoding="utf-8",
+        )
+    for packaged in packaged_versions:
+        packaged.parent.mkdir(parents=True)
+        packaged.write_text("1.4.1\n", encoding="utf-8")
 
     before = {
         path: path.read_text(encoding="utf-8")
-        for path in (version_file, pyproject, packaged)
+        for path in (version_file, *pyprojects, *packaged_versions)
     }
     result = subprocess.run(
         [

@@ -13,8 +13,14 @@ SEMVER_RE = re.compile(
 PROJECT_VERSION_RE = re.compile(
     r'^(?P<prefix>\s*version\s*=\s*")(?P<version>[^"]+)(?P<suffix>".*)$'
 )
-PYPROJECT_RELATIVE = Path("vibecrafted-core/pyproject.toml")
-PACKAGED_VERSION_RELATIVE = Path("vibecrafted-core/vibecrafted_core/VERSION")
+PYPROJECT_RELATIVES = (
+    Path("vibecrafted-core/pyproject.toml"),
+    Path("vibecrafted-mcp/pyproject.toml"),
+)
+PACKAGED_VERSION_RELATIVES = (
+    Path("vibecrafted-core/vibecrafted_core/VERSION"),
+    Path("vibecrafted-mcp/vibecrafted_mcp/VERSION"),
+)
 
 
 def _parse_version(value: str) -> tuple[int, int, int]:
@@ -79,17 +85,22 @@ def _replace_project_version(text: str, version: str) -> str:
     return "".join(output)
 
 
-def _version_projections(version_file: Path) -> tuple[Path, Path] | None:
+def _version_projections(
+    version_file: Path,
+) -> tuple[tuple[Path, ...], tuple[Path, ...]] | None:
     project_root = version_file.parent
-    pyproject = project_root / PYPROJECT_RELATIVE
-    packaged = project_root / PACKAGED_VERSION_RELATIVE
-    existing = (pyproject.exists(), packaged.exists())
+    pyprojects = tuple(project_root / path for path in PYPROJECT_RELATIVES)
+    packaged = tuple(project_root / path for path in PACKAGED_VERSION_RELATIVES)
+    projections = pyprojects + packaged
+    existing = tuple(path.exists() for path in projections)
     if not any(existing):
         return None
     if not all(existing):
-        missing = pyproject if not existing[0] else packaged
-        raise ValueError(f"version declaration missing: {missing}")
-    return pyproject, packaged
+        missing = [
+            str(path) for path, present in zip(projections, existing) if not present
+        ]
+        raise ValueError(f"version declaration missing: {', '.join(missing)}")
+    return pyprojects, packaged
 
 
 def update_version_declarations(version_file: Path, requested: str) -> tuple[str, str]:
@@ -99,21 +110,33 @@ def update_version_declarations(version_file: Path, requested: str) -> tuple[str
 
     updates = {version_file: next_version + "\n"}
     if projections is not None:
-        pyproject, packaged = projections
-        pyproject_text = pyproject.read_text(encoding="utf-8")
-        declared = {
-            version_file: current,
-            pyproject: _project_version(pyproject_text),
-            packaged: packaged.read_text(encoding="utf-8").strip(),
+        pyprojects, packaged_versions = projections
+        pyproject_texts = {
+            path: path.read_text(encoding="utf-8") for path in pyprojects
         }
+        declared = {version_file: current}
+        declared.update(
+            {path: _project_version(text) for path, text in pyproject_texts.items()}
+        )
+        declared.update(
+            {
+                path: path.read_text(encoding="utf-8").strip()
+                for path in packaged_versions
+            }
+        )
         drift = {path: value for path, value in declared.items() if value != current}
         if drift:
             details = ", ".join(f"{path}={value}" for path, value in drift.items())
             raise ValueError(
                 f"Version drift detected; expected {current} in every declaration: {details}"
             )
-        updates[pyproject] = _replace_project_version(pyproject_text, next_version)
-        updates[packaged] = next_version + "\n"
+        updates.update(
+            {
+                path: _replace_project_version(text, next_version)
+                for path, text in pyproject_texts.items()
+            }
+        )
+        updates.update({path: next_version + "\n" for path in packaged_versions})
 
     for path, content in updates.items():
         path.write_text(content, encoding="utf-8")

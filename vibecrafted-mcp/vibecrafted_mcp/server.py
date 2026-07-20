@@ -490,8 +490,9 @@ def build_server() -> Any:
     per case without relying on import-time global state.
     """
     from fastmcp import FastMCP
+    from . import __version__
 
-    mcp = FastMCP("vibecrafted")
+    mcp = FastMCP("vibecrafted", version=__version__)
 
     @mcp.tool(annotations={"readOnlyHint": True})
     def vc_repo_full(project: str = ".") -> dict[str, Any]:
