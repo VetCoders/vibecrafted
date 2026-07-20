@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from vibecrafted_core.delivery.model import ContractError, ExecutionEnvelope
 from vibecrafted_core.workflow import SUPPORTED_WORKFLOWS
 
 from .model import (
@@ -95,6 +96,8 @@ def parse_dispatch(text: str, *, base_dir: str | Path | None = None) -> Dispatch
         errors.append(f"schema: unsupported schema {schema!r}")
 
     meta = _parse_meta(raw.get("meta"), errors)
+    envelope = _parse_execution(raw.get("execution"), errors)
+    proof = _parse_proof(raw.get("proof"), errors)
     policy = _parse_policy(raw.get("policy"), errors)
     common = _parse_common(raw.get("common"))
     workflow_map = _parse_workflow_map(
@@ -128,6 +131,8 @@ def parse_dispatch(text: str, *, base_dir: str | Path | None = None) -> Dispatch
         phases=tuple(phases),
         cuts=tuple(cuts),
         workflow_map=workflow_map,
+        envelope=envelope,
+        proof=proof,
     )
 
 
@@ -206,6 +211,41 @@ def _parse_meta(value: Any, errors: list[str]) -> Meta:
         reports_dir=_string(value.get("reports_dir")),
         tracker=_string(value.get("tracker")),
     )
+
+
+def _parse_execution(value: Any, errors: list[str]) -> ExecutionEnvelope | None:
+    """Parse the optional `[execution]` envelope block (spec §7.1).
+
+    Absent envelope = legacy dispatch, unchanged. Present envelope is typed
+    through the delivery kernel and fails closed: unknown schema versions,
+    unknown fields, and missing fields all refuse the whole dispatch.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        errors.append("execution: table is required when present")
+        return None
+    try:
+        return ExecutionEnvelope.from_payload(value)
+    except ContractError as exc:
+        errors.append(f"execution: {exc}")
+    except KeyError as exc:
+        errors.append(f"execution: missing envelope field {exc}")
+    return None
+
+
+def _parse_proof(value: Any, errors: list[str]) -> dict[str, Any] | None:
+    """Transport the `[proof]` contract opaquely (spec §11).
+
+    Dispatch never interprets proof semantics: the payload is preserved
+    verbatim for the worker, unknown fields included.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        errors.append("proof: table is required when present")
+        return None
+    return value
 
 
 def _parse_policy(value: Any, errors: list[str]) -> Policy:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from vibecrafted_core.delivery.model import ExecutionEnvelope
 from vibecrafted_core.workflow import WorkflowLaunchSpec, launch_workflow
 
 from .model import (
@@ -251,6 +253,20 @@ class DispatchSupervisor:
     # -------------------------------------------------------------- per cut
 
     def _run_cut(self, cut: Cut, baton: Baton) -> Verdict:
+        blocked = self._envelope_block_failures(cut)
+        if blocked:
+            self._journal(
+                f"[{cut.id}] blocked before spawn: envelope qualification failed:"
+                f" {'; '.join(blocked)}"
+            )
+            return Verdict(
+                cut_id=cut.id,
+                phase=cut.phase,
+                state=STATE_FAILED,
+                failures=tuple(
+                    f"{cut.id}: blocked before spawn: {reason}" for reason in blocked
+                ),
+            )
         prompt = render_cell_prompt(self.dispatch, cut, baton=baton)
         self._materialize_prompt(cut, "initial", prompt)
         git_before = self._git_state()
@@ -697,6 +713,106 @@ class DispatchSupervisor:
             "Fix the refuted surface, re-run the gates, and commit the repair."
         )
 
+    # -------------------------------------------------- envelope gate
+
+    def _envelope_block_failures(self, cut: Cut) -> tuple[str, ...]:
+        """Qualify the ExecutionEnvelope against the live checkout (spec §7.1).
+
+        Called before ANY spawn. Any mismatch between the declared envelope
+        and the observed agent/repo/root/branch/HEAD/brief digest/dirty state
+        blocks the cut before the worker process exists. Absent envelope
+        keeps the legacy path unchanged.
+        """
+        envelope = self.dispatch.envelope
+        if envelope is None:
+            return ()
+        failures: list[str] = []
+        if cut.agent != envelope.agent:
+            failures.append(
+                f"agent mismatch: declared {envelope.agent!r},"
+                f" observed cut agent {cut.agent!r}"
+            )
+        observed_repo = _repo_identity_from_url(
+            self._git(["remote", "get-url", "origin"])
+        )
+        if observed_repo != envelope.repo:
+            failures.append(
+                f"repo identity mismatch: declared {envelope.repo!r},"
+                f" observed {observed_repo or '<none>'!r}"
+            )
+        observed_root = self._git(["rev-parse", "--show-toplevel"])
+        declared_root = (
+            str(Path(envelope.root).expanduser().resolve()) if envelope.root else ""
+        )
+        resolved_root = str(Path(observed_root).resolve()) if observed_root else ""
+        if not resolved_root or resolved_root != declared_root:
+            failures.append(
+                f"root mismatch: declared {envelope.root!r},"
+                f" observed {observed_root or '<none>'!r}"
+            )
+        observed_branch = self._git(["branch", "--show-current"])
+        if observed_branch != envelope.branch:
+            failures.append(
+                f"branch mismatch: declared {envelope.branch!r},"
+                f" observed {observed_branch or '<none>'!r}"
+            )
+        observed_head = self._git_head()
+        if observed_head != envelope.expected_head:
+            failures.append(
+                f"HEAD mismatch: declared {envelope.expected_head!r},"
+                f" observed {observed_head or '<none>'!r}"
+            )
+        declared_digest = _normalize_digest(envelope.brief_sha256)
+        try:
+            brief_bytes = Path(envelope.brief_path).expanduser().read_bytes()
+        except OSError as exc:
+            failures.append(
+                f"brief unreadable at {envelope.brief_path!r}:"
+                f" {type(exc).__name__}: {exc}"
+            )
+        else:
+            observed_digest = f"sha256:{hashlib.sha256(brief_bytes).hexdigest()}"
+            if observed_digest != declared_digest:
+                failures.append(
+                    f"brief digest mismatch: declared {declared_digest},"
+                    f" observed {observed_digest}"
+                )
+        failures.extend(self._dirty_policy_failures(envelope))
+        return tuple(failures)
+
+    def _dirty_policy_failures(self, envelope: ExecutionEnvelope) -> list[str]:
+        if envelope.dirty_policy != "living-tree-scoped":
+            # Fail closed: an unknown policy never degrades to "allow".
+            return [
+                f"unsupported dirty_policy {envelope.dirty_policy!r}:"
+                " refusing to launch"
+            ]
+        # Living tree: dirt outside the cut's owned paths is expected and
+        # allowed; dirt inside owned paths would poison attribution.
+        dirty = self._dirty_paths()
+        owned_dirty = sorted(
+            path for path in dirty if _path_in_scope(path, envelope.owned_paths)
+        )
+        if owned_dirty:
+            return [
+                f"dirty files inside owned_paths at launch: {', '.join(owned_dirty)}"
+            ]
+        return []
+
+    def _dirty_paths(self) -> set[str]:
+        paths: set[str] = set()
+        # `_git` strips stdout, which eats the leading status column of the
+        # first porcelain line — split on whitespace instead of slicing.
+        for line in self._git(["status", "--porcelain"]).splitlines():
+            parts = line.strip().split(None, 1)
+            if len(parts) != 2:
+                continue
+            for part in parts[1].split(" -> "):
+                cleaned = part.strip().strip('"')
+                if cleaned:
+                    paths.add(cleaned)
+        return paths
+
     # ------------------------------------------------------------- git
 
     def _git_state(self) -> tuple[str, str]:
@@ -901,6 +1017,43 @@ class DispatchSupervisor:
                 " push/release stays a human action."
             )
         return f"Re-dispatch or inspect unverified cuts: {', '.join(unverified)}."
+
+
+def _repo_identity_from_url(url: str) -> str:
+    """Reduce a git remote URL to its `owner/repo` identity.
+
+    Handles https/ssh scheme URLs and scp-like `git@host:owner/repo.git`.
+    Empty input (no remote) reduces to "" and fails the qualification
+    against any declared identity.
+    """
+    tail = url.strip()
+    if not tail:
+        return ""
+    if "://" in tail:
+        tail = tail.split("://", 1)[1]
+        tail = tail.split("/", 1)[1] if "/" in tail else ""
+    elif ":" in tail.split("/", 1)[0]:
+        tail = tail.split(":", 1)[1]
+    if tail.endswith(".git"):
+        tail = tail[: -len(".git")]
+    return tail.strip("/")
+
+
+def _normalize_digest(digest: str) -> str:
+    cleaned = digest.strip().lower()
+    if cleaned.startswith("sha256:"):
+        cleaned = cleaned[len("sha256:") :]
+    return f"sha256:{cleaned}"
+
+
+def _path_in_scope(path: str, scopes: tuple[str, ...]) -> bool:
+    for scope in scopes:
+        anchor = scope.rstrip("/")
+        if not anchor:
+            continue
+        if path == anchor or path.startswith(anchor + "/"):
+            return True
+    return False
 
 
 def run_dispatch(

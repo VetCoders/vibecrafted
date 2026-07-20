@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
 from typing import Any
 
+from vibecrafted_core.delivery.model import ExecutionEnvelope
+
 
 SCHEMA_VERSION = "vibecrafted.dispatch.v1"
 MATCHER_TYPES = {"contains", "equals", "matches", "not_contains", "exit_code"}
@@ -253,6 +255,13 @@ class Dispatch:
     phases: tuple[Phase, ...]
     cuts: tuple[Cut, ...]
     workflow_map: dict[str, str] = field(default_factory=dict)
+    # Optional typed execution envelope (spec §7.1). Absent = legacy dispatch;
+    # present = the supervisor MUST qualify it against the live checkout
+    # before any spawn.
+    envelope: ExecutionEnvelope | None = None
+    # Opaque delivery-proof contract payload (spec §11): dispatch transports
+    # it for the worker and never interprets proof semantics.
+    proof: Mapping[str, Any] | None = None
 
     def empty_baton(self) -> Baton:
         return Baton.empty(total=len(self.cuts))
