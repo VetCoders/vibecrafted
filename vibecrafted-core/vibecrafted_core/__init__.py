@@ -24,6 +24,7 @@ from .capabilities import (
 )
 from .perception import (
     DEFAULT_MCP_TRANSPORT,
+    DEFAULT_WATCH_MODE,
     WatchOutcome,
     ensure_watch,
     loctree_mcp_config_entry,
@@ -69,7 +70,10 @@ _LAZY_EXPORTS = {
     "DeliveryEventKind": ".events",
     "DeliveryStore": ".delivery",
     "DeliveryStoreError": ".delivery",
+    "ProviderCapability": ".continuity",
     "append_delivery_event": ".events",
+    "capability_registry": ".continuity",
+    "probe_provider": ".continuity",
     "read_delivery_axes": ".control_plane",
     "WorkflowLaunchSpec": ".workflow",
     "await_launch_truth": ".workflow",
@@ -88,14 +92,27 @@ def __getattr__(name: str) -> Any:
     if module_name is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+    module: Any
     if module_name == ".workflow":
-        from . import workflow as module
+        from . import workflow
+
+        module = workflow
+    elif module_name == ".continuity":
+        from . import continuity
+
+        module = continuity
     elif module_name == ".delivery":
-        from . import delivery as module
+        from . import delivery
+
+        module = delivery
     elif module_name == ".events":
-        from . import events as module
+        from . import events
+
+        module = events
     elif module_name == ".control_plane":
-        from . import control_plane as module
+        from . import control_plane
+
+        module = control_plane
     else:  # pragma: no cover - _LAZY_EXPORTS is the whitelist.
         raise AttributeError(f"module {__name__!r} has no lazy module for {name!r}")
 
@@ -114,9 +131,11 @@ __all__ = [
     "DeliveryEventKind",
     "DeliveryStore",
     "DeliveryStoreError",
+    "ProviderCapability",
     "ToolCapability",
     "WatchOutcome",
     "DEFAULT_MCP_TRANSPORT",
+    "DEFAULT_WATCH_MODE",
     "AsyncRunHandle",
     "AsyncSupervisor",
     "RunState",
@@ -126,6 +145,7 @@ __all__ = [
     "await_run",
     "await_launch_truth",
     "build_launch_command",
+    "capability_registry",
     "control_plane_home",
     "doctor_run",
     "doctor_summary",
@@ -136,6 +156,7 @@ __all__ = [
     "mcp_endpoint",
     "mcp_servers_config",
     "port_for_root",
+    "probe_provider",
     "probe_tool",
     "watcher_running",
     "launch_workflow",
