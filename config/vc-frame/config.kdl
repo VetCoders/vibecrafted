@@ -49,7 +49,9 @@ theme "pastel"
 // ─── Shell & Display ────────────────────────────────────────────────────────────
 default_shell "zsh"
 // compact chowal rail SESSIONS z nowego default.kdl (2026-07-07)
-default_layout "default"
+// 2026-07-20: default = wbudowany "vibecrafted" (operator layout z railem,
+// Guide + vibecrafted tabs) — zrzut zywego "Vibecrafted Operator"
+default_layout "vibecrafted"
 copy_command "pbcopy"
 mouse_mode true
 pane_frames true
