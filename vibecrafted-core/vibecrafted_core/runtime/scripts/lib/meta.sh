@@ -433,3 +433,14 @@ spawn_triage_run() {
 
   spawn_python_module vibecrafted_core.run_triage "$meta_path" || true
 }
+
+# Sweep processes that outlived this (now terminal) run. Runs BEFORE triage: a
+# successful triage closes the tab we are running in, so anything sequenced after
+# it may never execute — and the survivors would keep burning cores until reboot.
+#
+# The reaper excludes its own pid and every ancestor, so calling it from inside
+# the run it is cleaning up after is safe; only siblings (monitors, watchers) are
+# candidates. Like triage, it never fails a run that already finished.
+spawn_reap_run() {
+  spawn_python_module vibecrafted_core.run_reaper || true
+}

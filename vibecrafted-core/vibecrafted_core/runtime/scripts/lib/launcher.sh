@@ -162,6 +162,8 @@ EOF_LAUNCH
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
+  # Before triage: triage may close this tab, and survivors must not outlive us.
+  spawn_reap_run
   # Last: a successful transfer closes this very tab.
   spawn_triage_run "$meta"
 else
@@ -178,6 +180,8 @@ EOF_LAUNCH
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
+  # Before triage: triage may close this tab, and survivors must not outlive us.
+  spawn_reap_run
   # Last: a successful transfer closes this very tab.
   spawn_triage_run "$meta"
   exit "$exit_code"

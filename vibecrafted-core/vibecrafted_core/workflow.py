@@ -1194,6 +1194,16 @@ def build_launch_command(
     return _with_model_override(worker_agent, _stdin_command(worker_agent), spec.model)
 
 
+def _sweep_stale_runs() -> None:
+    """Reap survivors of terminal runs. Never raises, never blocks a launch."""
+    try:
+        from .run_reaper import sweep_quietly
+
+        sweep_quietly()
+    except Exception:
+        pass
+
+
 def launch_workflow(
     spec: WorkflowLaunchSpec,
     source_dir: str | Path,
@@ -1201,6 +1211,12 @@ def launch_workflow(
     env: dict[str, str] | None = None,
     retry_of: str = "",
 ) -> dict[str, Any]:
+    # Opportunistic pre-flight: before adding a run to the machine, take the dead
+    # ones' survivors off it. Every spawn is the natural sweep point — it needs no
+    # daemon, and it is exactly when the residue starts costing the new run cores.
+    # Silent and best-effort; a reaper problem must never block a launch.
+    _sweep_stale_runs()
+
     run_id = _run_id(spec.skill)
     artifacts = _run_artifact_paths(run_id)
     runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)

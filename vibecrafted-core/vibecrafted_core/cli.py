@@ -120,6 +120,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="describe workflow execution contracts (versioned, machine-readable)",
     )
     capabilities.add_argument("--json", action="store_true")
+    reap = sub.add_parser(
+        "reap",
+        help="terminate processes that outlived their run (survivors of terminal runs)",
+    )
+    reap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the would-kill table with ownership evidence, signal nothing",
+    )
+    reap.add_argument("--json", action="store_true")
     for name in LAUNCHERS:
         _add_launch_parser(sub, name)
     return parser
@@ -535,9 +545,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"vibecrafted {__version__}")
         return 0
 
-    python_commands = {"capabilities", "dispatch", "doctor", "paste", "stop"} | set(
-        LAUNCHERS
-    )
+    python_commands = {
+        "capabilities",
+        "dispatch",
+        "doctor",
+        "paste",
+        "reap",
+        "stop",
+    } | set(LAUNCHERS)
     agent_python_verbs = {"observe", "await", "stop"}
     is_lifecycle = shell_wrapper_verb is not None
     if raw_args and shell_wrapper_verb is None:
@@ -606,6 +621,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{summary['failures']} failures"
             )
         return 0 if summary["failures"] == 0 else 1
+    if args.command == "reap":
+        from .run_reaper import main as reap_main
+
+        reap_argv: list[str] = []
+        if args.dry_run:
+            reap_argv.append("--dry-run")
+        if args.json:
+            reap_argv.append("--json")
+        return reap_main(reap_argv)
     if args.command == "capabilities":
         from .workflow_capabilities import (
             render_capabilities_lines,

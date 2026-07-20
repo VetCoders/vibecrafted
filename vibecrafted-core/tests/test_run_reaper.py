@@ -1,0 +1,466 @@
+"""Unit tests for the stale-run reaper.
+
+Every test drives a fake process table and a fake env index; no test signals a
+real process. The one real-process proof lives in the report, not the suite.
+"""
+
+from __future__ import annotations
+
+import signal
+import subprocess
+from types import SimpleNamespace
+
+import pytest
+
+from vibecrafted_core import run_reaper
+
+
+TERMINAL_RUN = {
+    "run_id": "impl-260720-000001-11000",
+    "state": "completed",
+    "exit_code": 0,
+    "worker_pgid": 4242,
+}
+LIVE_RUN = {
+    "run_id": "impl-260720-000002-22000",
+    "state": "running",
+    "worker_pgid": 5252,
+}
+
+
+def entry(
+    pid: int, ppid: int = 1, pgid: int | None = None, command: str = "node agent"
+):
+    return run_reaper.ProcessEntry(
+        pid=pid, ppid=ppid, pgid=pid if pgid is None else pgid, command=command
+    )
+
+
+# --------------------------------------------------------------------------
+# Ownership proof — positive
+# --------------------------------------------------------------------------
+
+
+def test_env_run_id_proves_ownership():
+    table = [entry(900, command="voc monitor")]
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN],
+        table,
+        env_index={900: TERMINAL_RUN["run_id"]},
+        self_pid=1000,
+        env={},
+    )
+    assert [c.pid for c in plan.doomed] == [900]
+    assert plan.doomed[0].evidence == "env_run_id"
+    assert plan.doomed[0].run_id == TERMINAL_RUN["run_id"]
+
+
+def test_worker_pgid_proves_ownership_without_env():
+    """The orphan case: parent is gone (ppid=1) and the env is unreadable."""
+    table = [entry(901, ppid=1, pgid=4242, command="/bin/sleep 99")]
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN], table, env_index={}, self_pid=1000, env={}
+    )
+    assert [c.pid for c in plan.doomed] == [901]
+    assert plan.doomed[0].evidence == "worker_pgid"
+
+
+def test_worker_pid_also_registers_as_a_group():
+    run = {"run_id": "r-1", "state": "completed", "worker_pid": 7777}
+    table = [entry(902, pgid=7777)]
+    plan = run_reaper.plan_reap([run], table, env_index={}, self_pid=1000, env={})
+    assert [c.pid for c in plan.doomed] == [902]
+
+
+# --------------------------------------------------------------------------
+# Ownership proof — refusal (fail-closed)
+# --------------------------------------------------------------------------
+
+
+def test_untagged_process_is_never_reaped():
+    """No env, no matching pgid — the reaper must not touch it at all."""
+    table = [entry(903, pgid=9999, command="some-unrelated-daemon")]
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN], table, env_index={}, self_pid=1000, env={}
+    )
+    assert plan.doomed == ()
+    assert plan.unproven == ()
+
+
+def test_process_of_a_live_run_is_unproven_not_doomed():
+    table = [entry(904, pgid=5252)]
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN, LIVE_RUN],
+        table,
+        env_index={904: LIVE_RUN["run_id"]},
+        self_pid=1000,
+        env={},
+    )
+    assert plan.doomed == ()
+    assert [c.pid for c in plan.unproven] == [904]
+    assert plan.unproven[0].proven is False
+
+
+def test_run_id_in_a_command_line_cannot_forge_ownership():
+    """Only a real SPAWN_RUN_ID= token counts; a mention in argv is not proof."""
+    index = run_reaper.build_env_index(
+        runner=lambda argv: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "  PID   TT  STAT      TIME COMMAND\n"
+                f"  905   ??  Ss     0:00.00 grep --run 'SPAWN_RUN_ID:{TERMINAL_RUN['run_id']}'\n"
+                f"  906   ??  Ss     0:00.00 node agent SPAWN_RUN_ID={TERMINAL_RUN['run_id']}\n"
+            ),
+        )
+    )
+    assert 905 not in index
+    assert index[906] == TERMINAL_RUN["run_id"]
+
+
+def test_pgid_zero_and_one_never_prove_ownership():
+    """A run recording pgid 0/1 would otherwise match half the machine."""
+    run = {"run_id": "r-2", "state": "completed", "worker_pgid": 1}
+    table = [entry(907, pgid=1), entry(908, pgid=0)]
+    plan = run_reaper.plan_reap([run], table, env_index={}, self_pid=1000, env={})
+    assert plan.doomed == ()
+
+
+def test_non_terminal_runs_contribute_no_targets():
+    table = [entry(909, pgid=5252)]
+    plan = run_reaper.plan_reap([LIVE_RUN], table, env_index={}, self_pid=1000, env={})
+    assert plan.doomed == ()
+
+
+# --------------------------------------------------------------------------
+# Self-preservation
+# --------------------------------------------------------------------------
+
+
+def test_reaper_never_kills_itself_or_its_ancestors():
+    """The terminal-seam caller is itself a process of the run being reaped."""
+    table = [
+        entry(500, ppid=1, pgid=4242, command="launcher.sh"),  # our parent
+        entry(600, ppid=500, pgid=4242, command="python -m run_reaper"),  # us
+        entry(700, ppid=1, pgid=4242, command="voc monitor"),  # sibling: fair game
+    ]
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN],
+        table,
+        env_index={p: TERMINAL_RUN["run_id"] for p in (500, 600, 700)},
+        self_pid=600,
+        env={},
+    )
+    assert [c.pid for c in plan.doomed] == [700]
+
+
+def test_pid_one_is_never_a_candidate():
+    table = [entry(1, ppid=0, pgid=4242, command="/sbin/launchd")]
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN],
+        table,
+        env_index={1: TERMINAL_RUN["run_id"]},
+        self_pid=1000,
+        env={},
+    )
+    assert plan.doomed == ()
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["vc-frame --server", "zellij attach main", "loctree-mcp serve", "tmux new"],
+)
+def test_workspace_infrastructure_is_protected_even_when_proven(command):
+    table = [entry(910, pgid=4242, command=command)]
+    plan = run_reaper.plan_reap(
+        [TERMINAL_RUN], table, env_index={}, self_pid=1000, env={}
+    )
+    assert plan.doomed == ()
+    assert [c.pid for c in plan.protected] == [910]
+
+
+# --------------------------------------------------------------------------
+# Kill switch
+# --------------------------------------------------------------------------
+
+
+def test_kill_switch_disables_planning():
+    table = [entry(911, pgid=4242)]
+    for value in ("0", "false", "no", "off", "OFF"):
+        plan = run_reaper.plan_reap(
+            [TERMINAL_RUN],
+            table,
+            env_index={},
+            self_pid=1000,
+            env={run_reaper.REAPER_ENABLED_ENV: value},
+        )
+        assert plan.should_run is False
+        assert plan.skip_reason == "disabled"
+        assert plan.doomed == ()
+
+
+def test_reaper_enabled_by_default():
+    assert run_reaper.reaper_enabled({}) is True
+    assert run_reaper.reaper_enabled({run_reaper.REAPER_ENABLED_ENV: "1"}) is True
+
+
+def test_grace_seconds_falls_back_on_garbage():
+    assert run_reaper.grace_seconds({}) == run_reaper.DEFAULT_GRACE_SECONDS
+    assert (
+        run_reaper.grace_seconds({run_reaper.REAPER_GRACE_ENV: "nonsense"})
+        == run_reaper.DEFAULT_GRACE_SECONDS
+    )
+    assert (
+        run_reaper.grace_seconds({run_reaper.REAPER_GRACE_ENV: "-4"})
+        == run_reaper.DEFAULT_GRACE_SECONDS
+    )
+    assert run_reaper.grace_seconds({run_reaper.REAPER_GRACE_ENV: "2.5"}) == 2.5
+
+
+# --------------------------------------------------------------------------
+# Escalation order
+# --------------------------------------------------------------------------
+
+
+def test_escalation_terms_then_kills_a_survivor():
+    plan = run_reaper.ReapPlan(
+        should_run=True,
+        doomed=(
+            run_reaper.ReapCandidate(
+                pid=920, command="voc", run_id="r", evidence="env_run_id"
+            ),
+        ),
+    )
+    sent: list[tuple[int, int]] = []
+
+    receipts = run_reaper.execute_reap(
+        plan,
+        grace=0,
+        sleeper=lambda _: None,
+        alive_check=lambda pid: (pid, signal.SIGKILL) not in sent,
+        signaller=lambda pid, sig: (sent.append((pid, sig)), "signalled")[1],
+    )
+
+    assert sent == [(920, signal.SIGTERM), (920, signal.SIGKILL)]
+    row = receipts["r"].reaped[0]
+    assert row["term"] == "signalled"
+    assert row["kill"] == "signalled"
+    assert row["outcome"] == "killed"
+
+
+def test_escalation_stops_at_term_when_the_process_exits():
+    plan = run_reaper.ReapPlan(
+        should_run=True,
+        doomed=(
+            run_reaper.ReapCandidate(
+                pid=921, command="voc", run_id="r", evidence="worker_pgid"
+            ),
+        ),
+    )
+    sent: list[tuple[int, int]] = []
+
+    receipts = run_reaper.execute_reap(
+        plan,
+        grace=0,
+        sleeper=lambda _: None,
+        alive_check=lambda pid: False,
+        signaller=lambda pid, sig: (sent.append((pid, sig)), "signalled")[1],
+    )
+
+    assert sent == [(921, signal.SIGTERM)]
+    row = receipts["r"].reaped[0]
+    assert row["outcome"] == "exited"
+    assert "kill" not in row
+
+
+def test_delivered_sigkill_reads_as_killed_not_survived():
+    """A killed orphan lingers as a zombie; that must not be reported as survival."""
+    plan = run_reaper.ReapPlan(
+        should_run=True,
+        doomed=(
+            run_reaper.ReapCandidate(
+                pid=924, command="voc", run_id="r", evidence="env_run_id"
+            ),
+        ),
+    )
+    receipts = run_reaper.execute_reap(
+        plan,
+        grace=0,
+        sleeper=lambda _: None,
+        alive_check=lambda pid: True,  # zombie: still visible to kill(pid, 0)
+        signaller=lambda pid, sig: "signalled",
+    )
+    assert receipts["r"].reaped[0]["outcome"] == "killed"
+
+
+def test_undeliverable_sigkill_reads_as_survived():
+    plan = run_reaper.ReapPlan(
+        should_run=True,
+        doomed=(
+            run_reaper.ReapCandidate(
+                pid=925, command="voc", run_id="r", evidence="env_run_id"
+            ),
+        ),
+    )
+    receipts = run_reaper.execute_reap(
+        plan,
+        grace=0,
+        sleeper=lambda _: None,
+        alive_check=lambda pid: True,
+        signaller=lambda pid, sig: "permission_denied",
+    )
+    assert receipts["r"].reaped[0]["outcome"] == "survived"
+
+
+def test_already_gone_pid_is_receipted_not_escalated():
+    plan = run_reaper.ReapPlan(
+        should_run=True,
+        doomed=(
+            run_reaper.ReapCandidate(
+                pid=922, command="voc", run_id="r", evidence="env_run_id"
+            ),
+        ),
+    )
+    receipts = run_reaper.execute_reap(
+        plan,
+        grace=0,
+        sleeper=lambda _: None,
+        alive_check=lambda pid: False,
+        signaller=lambda pid, sig: "already_gone",
+    )
+    assert receipts["r"].reaped[0]["term"] == "already_gone"
+
+
+def test_grace_window_is_waited_before_kill():
+    plan = run_reaper.ReapPlan(
+        should_run=True,
+        doomed=(
+            run_reaper.ReapCandidate(
+                pid=923, command="voc", run_id="r", evidence="env_run_id"
+            ),
+        ),
+    )
+    slept: list[float] = []
+    run_reaper.execute_reap(
+        plan,
+        grace=0.3,
+        sleeper=lambda s: slept.append(s),
+        alive_check=lambda pid: True,
+        signaller=lambda pid, sig: "signalled",
+    )
+    assert slept, "expected the reaper to wait out the grace window before SIGKILL"
+
+
+def test_disabled_plan_signals_nothing():
+    plan = run_reaper.ReapPlan(should_run=False, skip_reason="disabled")
+    receipts = run_reaper.execute_reap(
+        plan,
+        grace=0,
+        sleeper=lambda _: None,
+        alive_check=lambda pid: True,
+        signaller=lambda pid, sig: pytest.fail("must not signal when disabled"),
+    )
+    assert receipts == {}
+
+
+# --------------------------------------------------------------------------
+# Rendering / dry run
+# --------------------------------------------------------------------------
+
+
+def test_dry_run_render_shows_evidence_for_each_verdict():
+    plan = run_reaper.ReapPlan(
+        should_run=True,
+        doomed=(run_reaper.ReapCandidate(930, "voc monitor", "r-term", "env_run_id"),),
+        unproven=(run_reaper.ReapCandidate(931, "helper", "r-live"),),
+        protected=(run_reaper.ReapCandidate(932, "vc-frame", "r-term", "worker_pgid"),),
+    )
+    out = plan.render()
+    assert "REAP" in out and "930" in out and "env_run_id" in out
+    assert "KEEP/unproven" in out and "931" in out
+    assert "KEEP/protected" in out and "932" in out
+
+
+def test_render_of_disabled_plan_names_the_reason():
+    assert "disabled" in run_reaper.ReapPlan(False, "disabled").render()
+
+
+def test_render_with_no_survivors():
+    assert "no survivors" in run_reaper.ReapPlan(should_run=True).render()
+
+
+def test_dry_run_never_signals(monkeypatch):
+    monkeypatch.setattr(
+        run_reaper,
+        "execute_reap",
+        lambda *a, **k: pytest.fail("dry-run must not execute"),
+    )
+    plan = run_reaper.reap_terminal_runs(
+        dry_run=True,
+        env={},
+        runs=[TERMINAL_RUN],
+        table=[entry(940, pgid=4242)],
+        env_index={},
+    )
+    assert [c.pid for c in plan.doomed] == [940]
+
+
+# --------------------------------------------------------------------------
+# Table / index parsing
+# --------------------------------------------------------------------------
+
+
+def test_process_table_parses_ps_output():
+    table = run_reaper.build_process_table(
+        runner=lambda argv: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "    1     0     1 /sbin/launchd\n"
+                "  500   400   500 node /path/agent --flag value\n"
+                "garbage line\n"
+            ),
+        )
+    )
+    assert [e.pid for e in table] == [1, 500]
+    assert table[1].command == "node /path/agent --flag value"
+    assert table[1].ppid == 400
+
+
+def test_process_table_is_empty_when_ps_fails():
+    assert (
+        run_reaper.build_process_table(
+            runner=lambda argv: SimpleNamespace(returncode=1, stdout="")
+        )
+        == ()
+    )
+
+    def boom(argv):
+        raise OSError("no ps")
+
+    assert run_reaper.build_process_table(runner=boom) == ()
+
+
+def test_env_index_empty_when_ps_fails():
+    def boom(argv):
+        raise subprocess.SubprocessError("nope")
+
+    assert run_reaper.build_env_index(runner=boom) == {}
+
+
+def test_reap_is_disabled_without_a_process_table():
+    """No table means no evidence; the reaper must refuse rather than guess."""
+    plan = run_reaper.reap_terminal_runs(env={}, runs=[TERMINAL_RUN], table=[])
+    assert plan.should_run is False
+    assert plan.skip_reason == "no_process_table"
+
+
+def test_reap_never_raises_on_internal_failure(monkeypatch):
+    monkeypatch.setattr(
+        run_reaper,
+        "plan_reap",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    plan = run_reaper.reap_terminal_runs(
+        env={}, runs=[TERMINAL_RUN], table=[entry(950)], env_index={}
+    )
+    assert plan.should_run is False
+    assert plan.skip_reason == "error"

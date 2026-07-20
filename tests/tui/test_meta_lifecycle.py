@@ -326,6 +326,41 @@ def test_triage_run_is_the_last_step_of_a_generated_launcher() -> None:
     assert last_finalize < last_triage
 
 
+def test_reap_runs_after_artifact_closure_and_before_triage() -> None:
+    """The reaper sits between artifact closure and triage, in both branches.
+
+    Before triage, because a successful transfer closes this tab: sequenced after
+    it, the sweep may never run and the survivors keep burning cores until reboot.
+    After artifact closure, because the reap is only correct once the run's
+    terminal state is on disk — that is what makes it a *terminal* run's residue.
+    """
+    launcher_src = (
+        REPO_ROOT / "runtime" / "scripts" / "lib" / "launcher.sh"
+    ).read_text(encoding="utf-8")
+
+    assert launcher_src.count("spawn_reap_run") == 2, "both branches must sweep"
+
+    for finder in ("index", "rindex"):
+        finalize = getattr(launcher_src, finder)('spawn_finalize_artifacts "$meta"')
+        reap = getattr(launcher_src, finder)("spawn_reap_run")
+        triage = getattr(launcher_src, finder)('spawn_triage_run "$meta"')
+        assert finalize < reap < triage
+
+
+def test_reap_run_never_fails_a_finished_run(tmp_path: Path) -> None:
+    """The shell wrapper is fail-open: a reaper problem cannot fail a done run."""
+    proc = _bash(
+        f"""
+        source "{COMMON_SH}"
+        export VIBECRAFTED_REAPER=0
+        spawn_reap_run
+        echo "survived"
+        """
+    )
+    assert proc.returncode == 0
+    assert "survived" in proc.stdout
+
+
 def test_triage_run_never_fails_a_finished_run(tmp_path: Path) -> None:
     """The shell wrapper is fail-open: no meta, no session, no vc-frame — exit 0."""
     meta = tmp_path / "agent.meta.json"
