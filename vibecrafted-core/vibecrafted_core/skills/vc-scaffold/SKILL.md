@@ -163,6 +163,17 @@ It MUST contain all five:
    wrecks an operator run ("się zajebiemy"). Encode it where the dispatcher's eyes are.
 5. **Live status snapshot** + `dou-index = |[x]| / total`.
 
+### 5.6 manifest.json (HARD-GATE — canonical artifact inventory)
+
+Create one plan root at
+`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan_id>/` and write
+`manifest.json` there as mandatory output. Schema version `"1"` declares `plan_id`, `org`, `repo`,
+`day`, and an ordered `artifacts` array. Every artifact entry declares a stable `id`, explicit
+`role`, relative `path`, `editable`, and `required`; optional `dependencies` contain artifact IDs.
+Supported roles are `driver`, `wave-atlas`, `brief`, `design-doc`, `traceability`, `tracker`,
+`falsification`, `report`, and `other`. Register every generated artifact before handoff. Filenames
+never imply roles. Do not create an `operator/` mirror, compatibility copy, naming alias, or symlink.
+
 ### 6. Serve & review (editable artifacts via vibecrafted-server)
 
 The plan + briefs are **editable artifacts**, not a wall of inline questions. The flow is:
@@ -179,7 +190,10 @@ twenty questions mid-scaffold. Refine WITH the operator on the served artifacts.
 must be multi-tab + editable from day one, not a static dump.
 
 **scaffold-doctor (the gate, machine-checked):** a deterministic validator in
-`vibecrafted-server/control-core` that refuses the scaffold→implement baton until: master-dispatch
+`vibecrafted-server/control-core` that loads the same typed `manifest.json` used by the server and
+refuses the scaffold→implement baton until: the manifest identity matches its canonical plan root;
+all declared required artifacts exist; IDs and paths are unique; dependencies resolve; editable
+paths are non-symlinked and remain inside the plan root; briefs on disk are declared; and the atlas
 has a wave atlas + dependency graph; every cut has a `briefs/<wave>-<slot>_<slug>.md` with all 12
 sections; acceptance bullets are atomic + verifier-backed; a design doc exists for every cut flagged
 `needs_design`; **a `DRIVER.md` exists and carries all five (full paths · why-annotated graph ·
@@ -206,8 +220,11 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
   gate. A plan a human can't drive from one file when the loop dies is not handoff-ready.
 - **Durable artifacts NEVER go to `/tmp`.** `/tmp` is ephemeral scratch only — it is wiped, untracked,
   and invisible to the operator's tooling and sync. Every plan, brief, DRIVER, tracker, journal, report,
-  and design doc lands in the **canonical store**: `~/.vibecrafted/artifacts/<org>/<repo>/<DATE>/plans/`
+  and design doc lands in the **canonical plan root**:
+  `~/.vibecrafted/artifacts/<org>/<repo>/<DATE>/plans/<plan_id>/`
   (mirrors the reports layout). Writing a durable artifact to `/tmp` is a process failure, not a shortcut.
+- **manifest.json is mandatory.** It is the only artifact inventory and role contract. No `operator/`
+  mirror, duplicate, filename-role inference, or compatibility symlink may become a second writable truth.
 - **Serve, don't interrogate.** Render editable artifacts and review them through `vibecrafted-server`;
   the operator edits the plan, not answers twenty mid-scaffold questions.
 - **Measure, don't claim.** A cut is done when its verifier is green, never when an agent says so.

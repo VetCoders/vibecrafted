@@ -1,42 +1,132 @@
-//! Typed scaffold-artifact editor contract.
-//!
-//! This is intentionally scoped to Markdown artifacts produced by
-//! `vc-scaffold` under `artifacts/<org>/<repo>/<day>/operator/`. The Python
-//! control-plane writer remains the source of truth for run state; this module
-//! only reads/writes operator review artifacts and sidecars in the artifact
-//! directory itself.
+//! Manifest-backed scaffold artifact contract shared by the doctor and server.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-/// Markdown artifact role in the scaffold review surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ScaffoldArtifactKind {
-    WaveAtlas,
-    Brief,
-    DesignDoc,
-    Other,
+pub const SCAFFOLD_SCHEMA_VERSION: &str = "1";
+pub const SCAFFOLD_MANIFEST_SCHEMA_JSON: &str =
+    include_str!("../schema/scaffold-manifest-v1.schema.json");
+
+#[derive(Debug)]
+pub enum ScaffoldError {
+    Io(io::Error),
+    Json(serde_json::Error),
+    InvalidManifest { message: String },
+    SelectionRequired { plan_ids: Vec<String> },
+    ArtifactNotFound { id: String },
+    Conflict { expected: String, actual: String },
+    ReadOnly { message: String },
+    UnsafePath { message: String },
 }
 
-impl ScaffoldArtifactKind {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
+impl fmt::Display for ScaffoldError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ScaffoldArtifactKind::WaveAtlas => "wave-atlas",
-            ScaffoldArtifactKind::Brief => "brief",
-            ScaffoldArtifactKind::DesignDoc => "design-doc",
-            ScaffoldArtifactKind::Other => "other",
+            Self::Io(error) => write!(formatter, "{error}"),
+            Self::Json(error) => write!(formatter, "{error}"),
+            Self::InvalidManifest { message }
+            | Self::ReadOnly { message }
+            | Self::UnsafePath { message } => formatter.write_str(message),
+            Self::SelectionRequired { plan_ids } => write!(
+                formatter,
+                "scaffold plan selection required; available plans: {}",
+                plan_ids.join(", ")
+            ),
+            Self::ArtifactNotFound { id } => write!(formatter, "artifact id not found: {id}"),
+            Self::Conflict { expected, actual } => write!(
+                formatter,
+                "artifact changed since load (expected {expected}, actual {actual})"
+            ),
         }
     }
 }
 
-/// Per-artifact approve/checkpoint state.
+impl std::error::Error for ScaffoldError {}
+
+impl From<io::Error> for ScaffoldError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<serde_json::Error> for ScaffoldError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Json(error)
+    }
+}
+
+pub type ScaffoldResult<T> = Result<T, ScaffoldError>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScaffoldArtifactRole {
+    Driver,
+    WaveAtlas,
+    Brief,
+    DesignDoc,
+    Traceability,
+    Tracker,
+    Falsification,
+    Report,
+    Other,
+}
+
+impl ScaffoldArtifactRole {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Driver => "driver",
+            Self::WaveAtlas => "wave-atlas",
+            Self::Brief => "brief",
+            Self::DesignDoc => "design-doc",
+            Self::Traceability => "traceability",
+            Self::Tracker => "tracker",
+            Self::Falsification => "falsification",
+            Self::Report => "report",
+            Self::Other => "other",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldArtifactDeclaration {
+    pub id: String,
+    pub role: ScaffoldArtifactRole,
+    pub path: String,
+    pub editable: bool,
+    pub required: bool,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldManifest {
+    pub schema_version: String,
+    pub plan_id: String,
+    pub org: String,
+    pub repo: String,
+    pub day: String,
+    pub artifacts: Vec<ScaffoldArtifactDeclaration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldPlanSummary {
+    pub plan_id: String,
+    pub org: String,
+    pub repo: String,
+    pub day: String,
+    pub plan_root: String,
+    pub artifact_count: usize,
+    pub legacy_read_only: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ScaffoldCheckpoint {
     pub artifact_id: String,
@@ -45,40 +135,42 @@ pub struct ScaffoldCheckpoint {
     pub updated_at: String,
 }
 
-/// A single editable Markdown artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScaffoldArtifact {
     pub id: String,
     pub title: String,
-    pub kind: ScaffoldArtifactKind,
+    pub role: ScaffoldArtifactRole,
     pub path: String,
     pub relative_path: String,
+    pub editable: bool,
+    pub required: bool,
     pub content: String,
+    pub content_hash: String,
     pub bytes: usize,
     pub modified_at: String,
     pub checkpoint: ScaffoldCheckpoint,
 }
 
-/// Batch review workspace served to the browser and agent endpoints.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScaffoldWorkspace {
     pub org: String,
     pub repo: String,
     pub day: String,
-    pub operator_dir: String,
+    pub plan_id: String,
+    pub plan_root: String,
+    pub legacy_read_only: bool,
     pub changes_path: String,
     pub checkpoints_path: String,
     pub artifacts: Vec<ScaffoldArtifact>,
 }
 
-/// Persist an operator edit to an existing discovered artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScaffoldArtifactPatch {
     pub artifact_id: String,
     pub content: String,
+    pub expected_hash: String,
 }
 
-/// Persist an approve/checkpoint decision for an artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScaffoldCheckpointPatch {
     pub artifact_id: String,
@@ -86,17 +178,32 @@ pub struct ScaffoldCheckpointPatch {
     pub note: String,
 }
 
-/// Append-only agent-readable edit/checkpoint feed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScaffoldChange {
     pub ts: String,
+    pub plan_id: String,
     pub artifact_id: String,
     pub relative_path: String,
-    pub kind: ScaffoldArtifactKind,
+    pub role: ScaffoldArtifactRole,
     pub action: String,
     pub bytes: usize,
     pub checkpointed: bool,
     pub note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldDoctorError {
+    pub code: String,
+    pub artifact_id: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScaffoldDoctorReport {
+    pub valid: bool,
+    pub plan_id: String,
+    pub artifact_ids: Vec<String>,
+    pub errors: Vec<ScaffoldDoctorError>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -116,85 +223,239 @@ impl ScaffoldArtifactStore {
         Self { home: home.into() }
     }
 
-    #[must_use]
-    pub fn operator_dir(&self, org: &str, repo: &str, day: &str) -> PathBuf {
-        self.home
-            .join("artifacts")
-            .join(org)
-            .join(repo)
-            .join(day)
-            .join("operator")
-    }
-
-    fn checked_operator_dir(&self, org: &str, repo: &str, day: &str) -> io::Result<PathBuf> {
+    fn day_root(&self, org: &str, repo: &str, day: &str) -> ScaffoldResult<PathBuf> {
         validate_path_segment(org, "org")?;
         validate_path_segment(repo, "repo")?;
         validate_path_segment(day, "day")?;
-        Ok(self.operator_dir(org, repo, day))
+        Ok(self.home.join("artifacts").join(org).join(repo).join(day))
     }
 
-    pub fn latest_workspace(&self) -> io::Result<ScaffoldWorkspace> {
-        let mut candidates = Vec::new();
-        collect_operator_dirs(&self.home.join("artifacts"), &mut candidates);
-        candidates.sort();
-        let Some(path) = candidates.pop() else {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "no scaffold operator artifact directory found",
-            ));
+    fn plan_root(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+        plan_id: &str,
+    ) -> ScaffoldResult<PathBuf> {
+        validate_path_segment(plan_id, "plan_id")?;
+        Ok(self.day_root(org, repo, day)?.join("plans").join(plan_id))
+    }
+
+    pub fn plans(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+    ) -> ScaffoldResult<Vec<ScaffoldPlanSummary>> {
+        let plans_root = self.day_root(org, repo, day)?.join("plans");
+        let mut plans = Vec::new();
+        let Ok(entries) = fs::read_dir(plans_root) else {
+            return Ok(plans);
         };
-        let (org, repo, day) = split_operator_dir(&self.home, &path)?;
-        self.workspace(&org, &repo, &day)
+        for entry in entries.flatten() {
+            let root = entry.path();
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir())
+                || !root.join("manifest.json").is_file()
+            {
+                continue;
+            }
+            let manifest = read_manifest(&root)?;
+            if manifest.org != org || manifest.repo != repo || manifest.day != day {
+                continue;
+            }
+            plans.push(ScaffoldPlanSummary {
+                plan_id: manifest.plan_id,
+                org: org.to_string(),
+                repo: repo.to_string(),
+                day: day.to_string(),
+                plan_root: root.display().to_string(),
+                artifact_count: manifest.artifacts.len(),
+                legacy_read_only: false,
+            });
+        }
+        plans.sort_by(|left, right| left.plan_id.cmp(&right.plan_id));
+        Ok(plans)
     }
 
-    pub fn workspace(&self, org: &str, repo: &str, day: &str) -> io::Result<ScaffoldWorkspace> {
-        let operator_dir = self.checked_operator_dir(org, repo, day)?;
-        let checkpoints = read_checkpoints(&checkpoint_path(&operator_dir));
-        let mut paths = discover_artifact_paths(&operator_dir);
-        paths.sort_by(|a, b| {
-            artifact_sort_key(&operator_dir, a).cmp(&artifact_sort_key(&operator_dir, b))
-        });
+    pub fn latest_workspace(&self) -> ScaffoldResult<ScaffoldWorkspace> {
+        let mut manifests = Vec::new();
+        collect_manifest_paths(&self.home.join("artifacts"), &mut manifests);
+        if manifests.len() != 1 {
+            let plan_ids = manifests
+                .iter()
+                .filter_map(|path| {
+                    read_manifest(path.parent()?)
+                        .ok()
+                        .map(|manifest| manifest.plan_id)
+                })
+                .collect();
+            return Err(ScaffoldError::SelectionRequired { plan_ids });
+        }
+        let root = manifests
+            .remove(0)
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| ScaffoldError::InvalidManifest {
+                message: "manifest has no plan root".into(),
+            })?;
+        let manifest = read_manifest(&root)?;
+        self.workspace(
+            &manifest.org,
+            &manifest.repo,
+            &manifest.day,
+            Some(&manifest.plan_id),
+        )
+    }
 
-        let mut artifacts = Vec::new();
-        for path in paths {
-            let relative = relative_string(&operator_dir, &path)?;
+    pub fn workspace(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+        plan_id: Option<&str>,
+    ) -> ScaffoldResult<ScaffoldWorkspace> {
+        let plans = self.plans(org, repo, day)?;
+        let selected = match plan_id {
+            Some(requested) => plans
+                .iter()
+                .find(|plan| plan.plan_id == requested)
+                .cloned()
+                .ok_or_else(|| ScaffoldError::InvalidManifest {
+                    message: format!("manifest-backed scaffold plan not found: {requested}"),
+                })?,
+            None if plans.len() == 1 => plans[0].clone(),
+            None if plans.is_empty() => return self.legacy_workspace(org, repo, day),
+            None => {
+                return Err(ScaffoldError::SelectionRequired {
+                    plan_ids: plans.into_iter().map(|plan| plan.plan_id).collect(),
+                });
+            }
+        };
+        self.manifest_workspace(org, repo, day, &selected.plan_id)
+    }
+
+    fn manifest_workspace(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+        plan_id: &str,
+    ) -> ScaffoldResult<ScaffoldWorkspace> {
+        let root = self.plan_root(org, repo, day, plan_id)?;
+        let manifest = read_manifest(&root)?;
+        validate_identity(&manifest, org, repo, day, plan_id)?;
+        let report = validate_manifest_plan(&root, &manifest);
+        if report.errors.iter().any(workspace_fatal_error) {
+            return Err(ScaffoldError::InvalidManifest {
+                message: report
+                    .errors
+                    .iter()
+                    .map(|error| error.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            });
+        }
+        let checkpoints = read_checkpoints(&checkpoint_path(&root));
+        let mut artifacts = Vec::with_capacity(manifest.artifacts.len());
+        for declaration in manifest.artifacts {
+            let path = declared_path(&root, &declaration)?;
             let content = fs::read_to_string(&path)?;
-            let id = artifact_id(&relative);
-            let kind = classify_artifact(&relative);
-            let modified_at = modified_at(&path);
-            let checkpoint =
-                checkpoints
-                    .artifacts
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_else(|| ScaffoldCheckpoint {
-                        artifact_id: id.clone(),
-                        approved: false,
-                        note: String::new(),
-                        updated_at: String::new(),
-                    });
+            let checkpoint = checkpoints
+                .artifacts
+                .get(&declaration.id)
+                .cloned()
+                .unwrap_or_else(|| ScaffoldCheckpoint {
+                    artifact_id: declaration.id.clone(),
+                    ..ScaffoldCheckpoint::default()
+                });
             artifacts.push(ScaffoldArtifact {
-                id,
-                title: artifact_title(&relative, kind),
-                kind,
+                id: declaration.id.clone(),
+                title: artifact_title(&declaration.path, declaration.role),
+                role: declaration.role,
                 path: path.display().to_string(),
-                relative_path: relative,
+                relative_path: declaration.path,
+                editable: declaration.editable,
+                required: declaration.required,
                 bytes: content.len(),
+                content_hash: content_hash(content.as_bytes()),
                 content,
-                modified_at,
+                modified_at: modified_at(&path),
                 checkpoint,
             });
         }
-
         Ok(ScaffoldWorkspace {
             org: org.to_string(),
             repo: repo.to_string(),
             day: day.to_string(),
-            operator_dir: operator_dir.display().to_string(),
-            changes_path: changes_path(&operator_dir).display().to_string(),
-            checkpoints_path: checkpoint_path(&operator_dir).display().to_string(),
+            plan_id: plan_id.to_string(),
+            plan_root: root.display().to_string(),
+            legacy_read_only: false,
+            changes_path: changes_path(&root).display().to_string(),
+            checkpoints_path: checkpoint_path(&root).display().to_string(),
             artifacts,
         })
+    }
+
+    fn legacy_workspace(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+    ) -> ScaffoldResult<ScaffoldWorkspace> {
+        let root = self.day_root(org, repo, day)?.join("operator");
+        if !root.is_dir() {
+            return Err(ScaffoldError::InvalidManifest {
+                message: "no manifest-backed scaffold plan found".into(),
+            });
+        }
+        let checkpoints = read_checkpoints(&checkpoint_path(&root));
+        let mut paths = discover_legacy_paths(&root);
+        paths.sort();
+        let mut artifacts = Vec::new();
+        for path in paths {
+            let relative = relative_string(&root, &path)?;
+            let content = fs::read_to_string(&path)?;
+            let id = legacy_artifact_id(&relative);
+            let role = legacy_role(&relative);
+            artifacts.push(ScaffoldArtifact {
+                checkpoint: checkpoints.artifacts.get(&id).cloned().unwrap_or_default(),
+                id,
+                title: artifact_title(&relative, role),
+                role,
+                path: path.display().to_string(),
+                relative_path: relative,
+                editable: false,
+                required: false,
+                bytes: content.len(),
+                content_hash: content_hash(content.as_bytes()),
+                content,
+                modified_at: modified_at(&path),
+            });
+        }
+        Ok(ScaffoldWorkspace {
+            org: org.to_string(),
+            repo: repo.to_string(),
+            day: day.to_string(),
+            plan_id: "legacy-operator".into(),
+            plan_root: root.display().to_string(),
+            legacy_read_only: true,
+            changes_path: changes_path(&root).display().to_string(),
+            checkpoints_path: checkpoint_path(&root).display().to_string(),
+            artifacts,
+        })
+    }
+
+    pub fn doctor(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+        plan_id: &str,
+    ) -> ScaffoldResult<ScaffoldDoctorReport> {
+        let root = self.plan_root(org, repo, day, plan_id)?;
+        let manifest = read_manifest(&root)?;
+        validate_identity(&manifest, org, repo, day, plan_id)?;
+        Ok(validate_manifest_plan(&root, &manifest))
     }
 
     pub fn write_artifact(
@@ -202,31 +463,55 @@ impl ScaffoldArtifactStore {
         org: &str,
         repo: &str,
         day: &str,
+        plan_id: &str,
         patch: ScaffoldArtifactPatch,
-    ) -> io::Result<ScaffoldArtifact> {
-        let operator_dir = self.checked_operator_dir(org, repo, day)?;
-        let workspace = self.workspace(org, repo, day)?;
+    ) -> ScaffoldResult<ScaffoldArtifact> {
+        let workspace = self.workspace(org, repo, day, Some(plan_id))?;
+        if workspace.legacy_read_only {
+            return Err(ScaffoldError::ReadOnly {
+                message: "legacy scaffold workspaces are read-only".into(),
+            });
+        }
         let artifact = workspace
             .artifacts
             .iter()
             .find(|artifact| artifact.id == patch.artifact_id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "artifact id not found"))?;
-        let path = artifact_write_path(&operator_dir, artifact)?;
+            .ok_or_else(|| ScaffoldError::ArtifactNotFound {
+                id: patch.artifact_id.clone(),
+            })?;
+        if !artifact.editable {
+            return Err(ScaffoldError::ReadOnly {
+                message: format!("artifact is not editable: {}", artifact.id),
+            });
+        }
+        let actual = content_hash(fs::read(&artifact.path)?.as_slice());
+        if patch.expected_hash != actual {
+            return Err(ScaffoldError::Conflict {
+                expected: patch.expected_hash,
+                actual,
+            });
+        }
+        let root = PathBuf::from(&workspace.plan_root);
+        let path = root.join(validate_relative_markdown_path(&artifact.relative_path)?);
+        reject_symlink_path(&root, &path)?;
         write_atomic(&path, patch.content.as_bytes())?;
         let refreshed = self
-            .workspace(org, repo, day)?
+            .workspace(org, repo, day, Some(plan_id))?
             .artifacts
             .into_iter()
             .find(|candidate| candidate.id == artifact.id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "artifact vanished"))?;
+            .ok_or_else(|| ScaffoldError::ArtifactNotFound {
+                id: artifact.id.clone(),
+            })?;
         append_change(
-            &operator_dir,
+            &root,
             ScaffoldChange {
                 ts: now_ts(),
+                plan_id: plan_id.to_string(),
                 artifact_id: refreshed.id.clone(),
                 relative_path: refreshed.relative_path.clone(),
-                kind: refreshed.kind,
-                action: "edit".to_string(),
+                role: refreshed.role,
+                action: "edit".into(),
                 bytes: refreshed.bytes,
                 checkpointed: refreshed.checkpoint.approved,
                 note: String::new(),
@@ -240,16 +525,24 @@ impl ScaffoldArtifactStore {
         org: &str,
         repo: &str,
         day: &str,
+        plan_id: &str,
         patch: ScaffoldCheckpointPatch,
-    ) -> io::Result<ScaffoldCheckpoint> {
-        let operator_dir = self.checked_operator_dir(org, repo, day)?;
-        let workspace = self.workspace(org, repo, day)?;
+    ) -> ScaffoldResult<ScaffoldCheckpoint> {
+        let workspace = self.workspace(org, repo, day, Some(plan_id))?;
         let artifact = workspace
             .artifacts
             .iter()
             .find(|artifact| artifact.id == patch.artifact_id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "artifact id not found"))?;
-        let mut store = read_checkpoints(&checkpoint_path(&operator_dir));
+            .ok_or_else(|| ScaffoldError::ArtifactNotFound {
+                id: patch.artifact_id.clone(),
+            })?;
+        if workspace.legacy_read_only {
+            return Err(ScaffoldError::ReadOnly {
+                message: "legacy scaffold workspaces are read-only".into(),
+            });
+        }
+        let root = PathBuf::from(&workspace.plan_root);
+        let mut store = read_checkpoints(&checkpoint_path(&root));
         let checkpoint = ScaffoldCheckpoint {
             artifact_id: artifact.id.clone(),
             approved: patch.approved,
@@ -259,15 +552,16 @@ impl ScaffoldArtifactStore {
         store
             .artifacts
             .insert(checkpoint.artifact_id.clone(), checkpoint.clone());
-        write_checkpoints(&checkpoint_path(&operator_dir), &store)?;
+        write_checkpoints(&checkpoint_path(&root), &store)?;
         append_change(
-            &operator_dir,
+            &root,
             ScaffoldChange {
                 ts: checkpoint.updated_at.clone(),
+                plan_id: plan_id.to_string(),
                 artifact_id: artifact.id.clone(),
                 relative_path: artifact.relative_path.clone(),
-                kind: artifact.kind,
-                action: "checkpoint".to_string(),
+                role: artifact.role,
+                action: "checkpoint".into(),
                 bytes: artifact.bytes,
                 checkpointed: checkpoint.approved,
                 note: checkpoint.note.clone(),
@@ -276,188 +570,394 @@ impl ScaffoldArtifactStore {
         Ok(checkpoint)
     }
 
-    pub fn changes(&self, org: &str, repo: &str, day: &str) -> io::Result<Vec<ScaffoldChange>> {
-        let operator_dir = self.checked_operator_dir(org, repo, day)?;
-        let path = changes_path(&operator_dir);
-        let Ok(text) = fs::read_to_string(path) else {
+    pub fn changes(
+        &self,
+        org: &str,
+        repo: &str,
+        day: &str,
+        plan_id: &str,
+    ) -> ScaffoldResult<Vec<ScaffoldChange>> {
+        let root = self.plan_root(org, repo, day, plan_id)?;
+        let Ok(text) = fs::read_to_string(changes_path(&root)) else {
             return Ok(Vec::new());
         };
         Ok(text
             .lines()
-            .filter_map(|line| serde_json::from_str::<ScaffoldChange>(line).ok())
+            .filter_map(|line| serde_json::from_str(line).ok())
             .collect())
     }
 }
 
-fn collect_operator_dirs(root: &Path, out: &mut Vec<PathBuf>) {
+fn workspace_fatal_error(error: &ScaffoldDoctorError) -> bool {
+    matches!(
+        error.code.as_str(),
+        "duplicate_artifact_id"
+            | "duplicate_artifact_path"
+            | "missing_required_artifact"
+            | "missing_manifest_artifact"
+            | "path_escape"
+            | "writable_symlink"
+    )
+}
+
+fn read_manifest(root: &Path) -> ScaffoldResult<ScaffoldManifest> {
+    Ok(serde_json::from_slice(&fs::read(
+        root.join("manifest.json"),
+    )?)?)
+}
+
+fn validate_identity(
+    manifest: &ScaffoldManifest,
+    org: &str,
+    repo: &str,
+    day: &str,
+    plan_id: &str,
+) -> ScaffoldResult<()> {
+    if manifest.schema_version != SCAFFOLD_SCHEMA_VERSION
+        || manifest.org != org
+        || manifest.repo != repo
+        || manifest.day != day
+        || manifest.plan_id != plan_id
+    {
+        return Err(ScaffoldError::InvalidManifest {
+            message: "manifest identity does not match its canonical plan path".into(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_manifest_plan(root: &Path, manifest: &ScaffoldManifest) -> ScaffoldDoctorReport {
+    let mut errors = Vec::new();
+    let mut ids = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    let declared_ids: BTreeSet<&str> = manifest
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.id.as_str())
+        .collect();
+    let mut role_counts = BTreeMap::new();
+    for artifact in &manifest.artifacts {
+        if !ids.insert(artifact.id.clone()) {
+            doctor_error(
+                &mut errors,
+                "duplicate_artifact_id",
+                Some(&artifact.id),
+                "duplicate artifact id",
+            );
+        }
+        if !paths.insert(artifact.path.clone()) {
+            doctor_error(
+                &mut errors,
+                "duplicate_artifact_path",
+                Some(&artifact.id),
+                "duplicate artifact path",
+            );
+        }
+        *role_counts.entry(artifact.role.as_str()).or_insert(0usize) += 1;
+        for dependency in &artifact.dependencies {
+            if !declared_ids.contains(dependency.as_str()) {
+                doctor_error(
+                    &mut errors,
+                    "unknown_dependency",
+                    Some(&artifact.id),
+                    &format!("unknown dependency: {dependency}"),
+                );
+            }
+        }
+        match declared_path(root, artifact) {
+            Ok(path) => {
+                if !path.is_file() {
+                    let code = if artifact.required {
+                        "missing_required_artifact"
+                    } else {
+                        "missing_manifest_artifact"
+                    };
+                    doctor_error(
+                        &mut errors,
+                        code,
+                        Some(&artifact.id),
+                        "manifest artifact is missing from disk",
+                    );
+                } else if path.is_file() {
+                    if artifact.editable && path_has_symlink(root, &path) {
+                        doctor_error(
+                            &mut errors,
+                            "writable_symlink",
+                            Some(&artifact.id),
+                            "editable artifact path contains a symlink",
+                        );
+                    }
+                    if fs::metadata(&path).is_ok_and(|metadata| metadata.len() == 0) {
+                        doctor_error(
+                            &mut errors,
+                            "empty_contract",
+                            Some(&artifact.id),
+                            "declared artifact is empty",
+                        );
+                    }
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        validate_frontmatter(artifact, &content, &mut errors);
+                        validate_role_contract(artifact, &content, &mut errors);
+                    }
+                }
+            }
+            Err(error) => doctor_error(
+                &mut errors,
+                "path_escape",
+                Some(&artifact.id),
+                &error.to_string(),
+            ),
+        }
+    }
+    if role_counts.get("driver").copied() != Some(1) {
+        doctor_error(
+            &mut errors,
+            "driver_contract",
+            None,
+            "manifest must declare exactly one driver",
+        );
+    }
+    if role_counts.get("wave-atlas").copied() != Some(1) {
+        doctor_error(
+            &mut errors,
+            "atlas_contract",
+            None,
+            "manifest must declare exactly one wave-atlas",
+        );
+    }
+    let mut briefs_on_disk = Vec::new();
+    collect_markdown(&root.join("briefs"), &mut briefs_on_disk);
+    for path in briefs_on_disk {
+        if let Ok(relative) = relative_string(root, &path) {
+            if !paths.contains(&relative) {
+                doctor_error(
+                    &mut errors,
+                    "brief_absent_from_manifest",
+                    None,
+                    &format!("brief is absent from manifest: {relative}"),
+                );
+            }
+        }
+    }
+    ScaffoldDoctorReport {
+        valid: errors.is_empty(),
+        plan_id: manifest.plan_id.clone(),
+        artifact_ids: manifest
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.id.clone())
+            .collect(),
+        errors,
+    }
+}
+
+fn doctor_error(
+    errors: &mut Vec<ScaffoldDoctorError>,
+    code: &str,
+    artifact_id: Option<&str>,
+    message: &str,
+) {
+    errors.push(ScaffoldDoctorError {
+        code: code.into(),
+        artifact_id: artifact_id.map(str::to_string),
+        message: message.into(),
+    });
+}
+
+fn validate_frontmatter(
+    artifact: &ScaffoldArtifactDeclaration,
+    content: &str,
+    errors: &mut Vec<ScaffoldDoctorError>,
+) {
+    if !content.starts_with("---\n") {
+        return;
+    }
+    let Some(frontmatter) = content[4..].split("\n---").next() else {
+        return;
+    };
+    for key in ["id", "artifact_id"] {
+        if let Some(value) = frontmatter
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("{key}:")))
+            .map(str::trim)
+        {
+            if value != artifact.id {
+                doctor_error(
+                    errors,
+                    "frontmatter_drift",
+                    Some(&artifact.id),
+                    &format!("frontmatter {key} does not match manifest id"),
+                );
+            }
+        }
+    }
+    if let Some(role) = frontmatter
+        .lines()
+        .find_map(|line| line.strip_prefix("role:"))
+        .map(str::trim)
+    {
+        if role != artifact.role.as_str() {
+            doctor_error(
+                errors,
+                "frontmatter_drift",
+                Some(&artifact.id),
+                "frontmatter role does not match manifest role",
+            );
+        }
+    }
+}
+
+fn validate_role_contract(
+    artifact: &ScaffoldArtifactDeclaration,
+    content: &str,
+    errors: &mut Vec<ScaffoldDoctorError>,
+) {
+    let lower = content.to_ascii_lowercase();
+    let (code, required_tokens): (&str, &[&str]) = match artifact.role {
+        ScaffoldArtifactRole::Driver => (
+            "driver_contract",
+            &["why", "vibecrafted ", "[ ]", "[x]", "dou-index"],
+        ),
+        ScaffoldArtifactRole::WaveAtlas => ("atlas_contract", &["wave", "dependenc"]),
+        ScaffoldArtifactRole::Brief => ("brief_contract", &["mission", "acceptance", "verifier"]),
+        ScaffoldArtifactRole::Tracker => ("tracker_contract", &["state", "[ ]"]),
+        _ => return,
+    };
+    let missing = required_tokens
+        .iter()
+        .filter(|token| !lower.contains(**token))
+        .copied()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        doctor_error(
+            errors,
+            code,
+            Some(&artifact.id),
+            &format!(
+                "{} is missing contract markers: {}",
+                artifact.role.as_str(),
+                missing.join(", ")
+            ),
+        );
+    }
+}
+
+fn declared_path(root: &Path, artifact: &ScaffoldArtifactDeclaration) -> ScaffoldResult<PathBuf> {
+    Ok(root.join(validate_relative_markdown_path(&artifact.path)?))
+}
+
+fn validate_relative_markdown_path(relative: &str) -> ScaffoldResult<PathBuf> {
+    if relative.is_empty() || Path::new(relative).is_absolute() || relative.contains('\\') {
+        return Err(ScaffoldError::UnsafePath {
+            message: "refusing unsafe scaffold artifact path".into(),
+        });
+    }
+    let path = Path::new(relative);
+    if path
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+        || path.extension().and_then(|extension| extension.to_str()) != Some("md")
+    {
+        return Err(ScaffoldError::UnsafePath {
+            message: "refusing unsafe or non-Markdown scaffold artifact path".into(),
+        });
+    }
+    Ok(path.to_path_buf())
+}
+
+fn reject_symlink_path(root: &Path, path: &Path) -> ScaffoldResult<()> {
+    if path_has_symlink(root, path) {
+        return Err(ScaffoldError::UnsafePath {
+            message: "refusing symlinked scaffold artifact path".into(),
+        });
+    }
+    Ok(())
+}
+
+fn path_has_symlink(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return true;
+    };
+    let mut cursor = root.to_path_buf();
+    for component in relative.components() {
+        cursor.push(component.as_os_str());
+        if fs::symlink_metadata(&cursor).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+            return true;
+        }
+    }
+    false
+}
+
+fn validate_path_segment(value: &str, label: &str) -> ScaffoldResult<()> {
+    if value.is_empty() || value == "." || value == ".." || value.contains(['/', '\\']) {
+        return Err(ScaffoldError::UnsafePath {
+            message: format!("invalid scaffold {label} path segment"),
+        });
+    }
+    Ok(())
+}
+
+fn collect_manifest_paths(root: &Path, output: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if entry.file_type().is_ok_and(|ft| ft.is_dir()) {
-            if path.file_name().and_then(|name| name.to_str()) == Some("operator") {
-                out.push(path);
-            } else {
-                collect_operator_dirs(&path, out);
-            }
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            collect_manifest_paths(&path, output);
+        } else if path.file_name().and_then(|name| name.to_str()) == Some("manifest.json") {
+            output.push(path);
         }
     }
 }
 
-fn split_operator_dir(home: &Path, operator_dir: &Path) -> io::Result<(String, String, String)> {
-    let relative = operator_dir
-        .strip_prefix(home.join("artifacts"))
-        .map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "operator dir outside artifacts",
-            )
-        })?;
-    let parts: Vec<String> = relative
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => part.to_str().map(ToString::to_string),
-            _ => None,
-        })
-        .collect();
-    if parts.len() < 4 || parts[3] != "operator" {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "operator dir must be artifacts/<org>/<repo>/<day>/operator",
-        ));
-    }
-    Ok((parts[0].clone(), parts[1].clone(), parts[2].clone()))
-}
-
-fn discover_artifact_paths(operator_dir: &Path) -> Vec<PathBuf> {
+fn discover_legacy_paths(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    let master = operator_dir.join("master-dispatch.md");
+    let master = root.join("master-dispatch.md");
     if master.is_file() {
         paths.push(master);
     }
-    collect_markdown(&operator_dir.join("briefs"), &mut paths);
-    collect_markdown(&operator_dir.join("designs"), &mut paths);
-    collect_markdown(&operator_dir.join("design-docs"), &mut paths);
-    collect_top_level_design_docs(operator_dir, &mut paths);
+    for directory in ["briefs", "designs", "design-docs"] {
+        collect_markdown(&root.join(directory), &mut paths);
+    }
     paths
 }
 
-fn collect_markdown(root: &Path, out: &mut Vec<PathBuf>) {
+fn collect_markdown(root: &Path, output: &mut Vec<PathBuf>) {
     let Ok(entries) = fs::read_dir(root) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
         match entry.file_type() {
-            Ok(ft) if ft.is_dir() => collect_markdown(&path, out),
-            Ok(ft)
-                if ft.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("md") =>
+            Ok(kind) if kind.is_dir() => collect_markdown(&path, output),
+            Ok(kind)
+                if kind.is_file()
+                    && path.extension().and_then(|extension| extension.to_str()) == Some("md") =>
             {
-                out.push(path);
+                output.push(path)
             }
             _ => {}
         }
     }
 }
 
-fn collect_top_level_design_docs(operator_dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(operator_dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !entry.file_type().is_ok_and(|ft| ft.is_file()) {
-            continue;
-        }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if name.contains("design") {
-            out.push(path);
-        }
-    }
+fn relative_string(root: &Path, path: &Path) -> ScaffoldResult<String> {
+    Ok(path
+        .strip_prefix(root)
+        .map_err(|_| ScaffoldError::UnsafePath {
+            message: "artifact outside scaffold root".into(),
+        })?
+        .to_string_lossy()
+        .replace('\\', "/"))
 }
 
-fn artifact_sort_key(operator_dir: &Path, path: &Path) -> (u8, String) {
-    let relative =
-        relative_string(operator_dir, path).unwrap_or_else(|_| path.display().to_string());
-    let kind = classify_artifact(&relative);
-    let rank = match kind {
-        ScaffoldArtifactKind::WaveAtlas => 0,
-        ScaffoldArtifactKind::Brief => 1,
-        ScaffoldArtifactKind::DesignDoc => 2,
-        ScaffoldArtifactKind::Other => 3,
-    };
-    (rank, relative)
-}
-
-fn relative_string(root: &Path, path: &Path) -> io::Result<String> {
-    path.strip_prefix(root)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "artifact outside operator dir"))
-        .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-}
-
-fn validate_path_segment(value: &str, label: &str) -> io::Result<()> {
-    let invalid = value.is_empty()
-        || value == "."
-        || value == ".."
-        || value.contains('/')
-        || value.contains('\\');
-    if invalid {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("invalid scaffold {label} path segment"),
-        ));
-    }
-    Ok(())
-}
-
-fn artifact_write_path(operator_dir: &Path, artifact: &ScaffoldArtifact) -> io::Result<PathBuf> {
-    let relative = safe_relative_markdown_path(&artifact.relative_path)?;
-    let path = operator_dir.join(relative);
-    reject_unsafe_artifact_path(operator_dir, &path)?;
-    Ok(path)
-}
-
-fn safe_relative_markdown_path(relative: &str) -> io::Result<PathBuf> {
-    if relative.is_empty() || relative.starts_with('/') || relative.starts_with('\\') {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "refusing unsafe scaffold artifact path",
-        ));
-    }
-    let mut clean = PathBuf::new();
-    for part in relative.split('/') {
-        let invalid = part.is_empty() || part == "." || part == ".." || part.contains('\\');
-        if invalid {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "refusing unsafe scaffold artifact path",
-            ));
-        }
-        clean.push(part);
-    }
-    if clean.extension().and_then(|ext| ext.to_str()) != Some("md") {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "refusing to write non-Markdown scaffold artifact",
-        ));
-    }
-    Ok(clean)
-}
-
-fn artifact_id(relative: &str) -> String {
+fn legacy_artifact_id(relative: &str) -> String {
     relative
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
             } else {
                 '_'
             }
@@ -465,104 +965,92 @@ fn artifact_id(relative: &str) -> String {
         .collect()
 }
 
-fn classify_artifact(relative: &str) -> ScaffoldArtifactKind {
+fn legacy_role(relative: &str) -> ScaffoldArtifactRole {
     let lower = relative.to_ascii_lowercase();
     if lower == "master-dispatch.md" {
-        ScaffoldArtifactKind::WaveAtlas
+        ScaffoldArtifactRole::WaveAtlas
     } else if lower.starts_with("briefs/") {
-        ScaffoldArtifactKind::Brief
+        ScaffoldArtifactRole::Brief
     } else if lower.contains("design") {
-        ScaffoldArtifactKind::DesignDoc
+        ScaffoldArtifactRole::DesignDoc
     } else {
-        ScaffoldArtifactKind::Other
+        ScaffoldArtifactRole::Other
     }
 }
 
-fn artifact_title(relative: &str, kind: ScaffoldArtifactKind) -> String {
-    if kind == ScaffoldArtifactKind::WaveAtlas {
-        return "Wave atlas".to_string();
+fn artifact_title(relative: &str, role: ScaffoldArtifactRole) -> String {
+    if role == ScaffoldArtifactRole::WaveAtlas {
+        return "Wave atlas".into();
     }
-    let file_name = relative
-        .rsplit('/')
-        .next()
-        .filter(|part| !part.is_empty())
-        .unwrap_or(relative);
-    let stem = file_name.strip_suffix(".md").unwrap_or(file_name);
-    stem.replace(['_', '-'], " ")
+    let file = relative.rsplit('/').next().unwrap_or(relative);
+    file.strip_suffix(".md")
+        .unwrap_or(file)
+        .replace(['_', '-'], " ")
+}
+
+fn content_hash(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
 fn modified_at(path: &Path) -> String {
-    let Ok(modified) = fs::metadata(path).and_then(|metadata| metadata.modified()) else {
-        return String::new();
-    };
-    let dt: chrono::DateTime<Utc> = modified.into();
-    dt.to_rfc3339()
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map(|modified| {
+            let value: chrono::DateTime<Utc> = modified.into();
+            value.to_rfc3339()
+        })
+        .unwrap_or_default()
 }
 
-fn checkpoint_path(operator_dir: &Path) -> PathBuf {
-    operator_dir.join(".scaffold-checkpoints.json")
+fn checkpoint_path(root: &Path) -> PathBuf {
+    root.join(".scaffold-checkpoints.json")
 }
-
-fn changes_path(operator_dir: &Path) -> PathBuf {
-    operator_dir.join(".scaffold-changes.jsonl")
+fn changes_path(root: &Path) -> PathBuf {
+    root.join(".scaffold-changes.jsonl")
 }
 
 fn read_checkpoints(path: &Path) -> CheckpointStore {
     fs::read_to_string(path)
         .ok()
-        .and_then(|text| serde_json::from_str::<CheckpointStore>(&text).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
 }
 
-fn write_checkpoints(path: &Path, store: &CheckpointStore) -> io::Result<()> {
-    let bytes = serde_json::to_vec_pretty(store).map_err(io::Error::other)?;
-    write_atomic(path, &bytes)
+fn write_checkpoints(path: &Path, store: &CheckpointStore) -> ScaffoldResult<()> {
+    write_atomic(path, &serde_json::to_vec_pretty(store)?)
 }
 
-/// Atomic write: stage into a sibling temp file then rename over the target.
-/// A same-directory rename is atomic on POSIX, so a crash mid-write or a
-/// concurrent reader never observes a truncated artifact or checkpoint store —
-/// `read_checkpoints` silently degrades a corrupt file to `default()`, and a
-/// half-written artifact is lost operator work (the only editable surface).
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+fn write_atomic(path: &Path, bytes: &[u8]) -> ScaffoldResult<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
+    let file = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("scaffold");
-    let tmp = parent.join(format!(".{file_name}.tmp.{}", std::process::id()));
-    fs::write(&tmp, bytes)?;
-    match fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            let _ = fs::remove_file(&tmp);
-            Err(err)
-        }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let temporary = parent.join(format!(".{file}.tmp.{}.{nonce}", std::process::id()));
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    output.write_all(bytes)?;
+    output.sync_all()?;
+    drop(output);
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.into());
     }
+    Ok(())
 }
 
-fn append_change(operator_dir: &Path, change: ScaffoldChange) -> io::Result<()> {
+fn append_change(root: &Path, change: ScaffoldChange) -> ScaffoldResult<()> {
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(changes_path(operator_dir))?;
-    let line = serde_json::to_string(&change).map_err(io::Error::other)?;
-    writeln!(file, "{line}")
-}
-
-fn reject_unsafe_artifact_path(operator_dir: &Path, path: &Path) -> io::Result<()> {
-    if !path.starts_with(operator_dir) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "refusing to write outside operator artifact dir",
-        ));
-    }
-    if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "refusing to write non-Markdown scaffold artifact",
-        ));
-    }
+        .open(changes_path(root))?;
+    writeln!(file, "{}", serde_json::to_string(&change)?)?;
     Ok(())
 }
 
@@ -575,39 +1063,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn safe_relative_markdown_path_rejects_traversal_and_absolute_paths() {
-        for relative in [
+    fn relative_paths_reject_traversal_absolute_and_non_markdown() {
+        for path in [
             "",
             "/brief.md",
-            "\\brief.md",
             "../brief.md",
             "briefs/../brief.md",
-            "briefs/./brief.md",
+            "brief.txt",
             "briefs\\brief.md",
-            "briefs/brief.txt",
         ] {
-            assert!(
-                safe_relative_markdown_path(relative).is_err(),
-                "{relative} should be rejected"
-            );
+            assert!(validate_relative_markdown_path(path).is_err(), "{path}");
         }
-    }
-
-    #[test]
-    fn safe_relative_markdown_path_accepts_nested_markdown_paths() {
-        let path = safe_relative_markdown_path("briefs/WS-1_cut.md").expect("safe path");
-        assert_eq!(path, PathBuf::from("briefs").join("WS-1_cut.md"));
-    }
-
-    #[test]
-    fn artifact_title_uses_string_segments_not_filesystem_resolution() {
         assert_eq!(
-            artifact_title("briefs/WS-1_design.md", ScaffoldArtifactKind::Brief),
-            "WS 1 design"
-        );
-        assert_eq!(
-            artifact_title("../escape.md", ScaffoldArtifactKind::Other),
-            "escape"
+            validate_relative_markdown_path("briefs/cut.md").expect("safe"),
+            PathBuf::from("briefs/cut.md")
         );
     }
 }

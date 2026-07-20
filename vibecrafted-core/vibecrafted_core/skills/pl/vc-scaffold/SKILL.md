@@ -164,6 +164,17 @@ MUSI zawierać wszystkie pięć:
    wykłada przebieg operatora („się zajebiemy"). Zakoduj to tam, gdzie są oczy dispatchera.
 5. **Snapshot statusu na żywo** + `dou-index = |[x]| / total`.
 
+### 5.6 manifest.json (HARD-GATE — kanoniczny inwentarz artefaktów)
+
+Utwórz jeden root planu pod
+`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan_id>/` i zapisz w nim obowiązkowy
+`manifest.json`. Schema version `"1"` deklaruje `plan_id`, `org`, `repo`, `day` i uporządkowaną
+tablicę `artifacts`. Każdy wpis artefaktu deklaruje stabilne `id`, jawną `role`, względną `path`,
+`editable` i `required`; opcjonalne `dependencies` zawierają ID artefaktów. Obsługiwane role:
+`driver`, `wave-atlas`, `brief`, `design-doc`, `traceability`, `tracker`, `falsification`, `report`,
+`other`. Zarejestruj każdy wygenerowany artefakt przed przekazaniem. Nazwy plików nigdy nie wyznaczają
+roli. Nie twórz lustra `operator/`, kopii kompatybilności, aliasu nazwy ani symlinka.
+
 ### 6. Serwuj i przeglądaj (edytowalne artefakty przez vibecrafted-server)
 
 Plan + briefy to **edytowalne artefakty**, nie ściana pytań inline. Flow jest taki:
@@ -180,7 +191,11 @@ visual-companion z `/brainstorming` (sprawdzone generatory mockupów/diagramów 
 musi być wielozakładkowa + edytowalna od pierwszego dnia, nie statyczny zrzut.
 
 **scaffold-doctor (bramka, sprawdzana maszynowo):** deterministyczny walidator w
-`vibecrafted-server/control-core`, który odmawia przekazania batonu scaffold→implement, dopóki: master-dispatch
+`vibecrafted-server/control-core`, który ładuje ten sam typowany `manifest.json` co server i odmawia
+przekazania batonu scaffold→implement, dopóki: tożsamość manifestu nie zgadza się z kanonicznym rootem
+planu; wszystkie wymagane artefakty nie istnieją; ID i ścieżki nie są unikalne; zależności się nie
+rozwiązują; edytowalne ścieżki są symlinkami lub wychodzą poza root; briefy na dysku nie są zadeklarowane;
+oraz master-dispatch
 nie ma wave atlasu + grafu zależności; każde cięcie nie ma `briefs/<wave>-<slot>_<slug>.md` z wszystkimi 12
 sekcjami; bullety acceptance nie są atomowe + poparte verifierem; nie istnieje design doc dla każdego cięcia oznaczonego
 `needs_design`; **nie istnieje `DRIVER.md` niosący wszystkie pięć (pełne ścieżki · graf z adnotacją why ·
@@ -207,8 +222,12 @@ to wyzwala recovery-vector** (fallback/failover/handsoff). Pełen alfabet + mark
   Plan, którego człowiek nie poprowadzi z jednego pliku, gdy pętla umrze, nie jest gotowy do przekazania.
 - **Trwałe artefakty NIGDY nie idą do `/tmp`.** `/tmp` to tylko ulotny scratch — jest wymazywany, nieśledzony
   i niewidoczny dla tooling-u i synca operatora. Każdy plan, brief, DRIVER, tracker, journal, raport
-  i design doc ląduje w **kanonicznym katalogu**: `~/.vibecrafted/artifacts/<org>/<repo>/<DATE>/plans/`
+  i design doc ląduje w **kanonicznym root planu**:
+  `~/.vibecrafted/artifacts/<org>/<repo>/<DATE>/plans/<plan_id>/`
   (lustro layoutu raportów). Zapis trwałego artefaktu do `/tmp` to porażka procesu, nie skrót.
+- **manifest.json jest obowiązkowy.** To jedyny inwentarz artefaktów i kontrakt ról. Żadne lustro
+  `operator/`, duplikat, inferencja roli z nazwy ani symlink kompatybilności nie może stać się drugą
+  zapisywalną prawdą.
 - **Serwuj, nie przesłuchuj.** Renderuj edytowalne artefakty i przeglądaj je przez `vibecrafted-server`;
   operator edytuje plan, a nie odpowiada na dwadzieścia pytań w trakcie scaffoldu.
 - **Mierz, nie twierdź.** Cięcie jest gotowe, gdy jego verifier jest zielony, nigdy gdy agent tak mówi.

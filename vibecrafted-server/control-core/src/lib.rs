@@ -8,8 +8,10 @@
 //! re-parsing JSON ad hoc.
 //!
 //! The scaffold editor is the deliberate exception to the read-only rule: it
-//! edits operator-authored Markdown artifacts under `artifacts/**/operator/`
-//! and records change/checkpoint sidecars there. It never writes Python
+//! edits manifest-declared Markdown artifacts under canonical
+//! `artifacts/<org>/<repo>/<day>/plans/<plan_id>/` roots and records
+//! change/checkpoint sidecars there. Legacy `operator/` roots are read-only.
+//! It never writes Python
 //! control-plane snapshots.
 //!
 //! Three layers:
@@ -51,6 +53,9 @@ pub use model::{
 };
 pub use read::{ControlPlane, StateView, vibecrafted_home};
 pub use scaffold::{
-    ScaffoldArtifact, ScaffoldArtifactKind, ScaffoldArtifactPatch, ScaffoldArtifactStore,
-    ScaffoldChange, ScaffoldCheckpoint, ScaffoldCheckpointPatch, ScaffoldWorkspace,
+    SCAFFOLD_MANIFEST_SCHEMA_JSON, SCAFFOLD_SCHEMA_VERSION, ScaffoldArtifact,
+    ScaffoldArtifactDeclaration, ScaffoldArtifactPatch, ScaffoldArtifactRole,
+    ScaffoldArtifactStore, ScaffoldChange, ScaffoldCheckpoint, ScaffoldCheckpointPatch,
+    ScaffoldDoctorError, ScaffoldDoctorReport, ScaffoldError, ScaffoldManifest,
+    ScaffoldPlanSummary, ScaffoldResult, ScaffoldWorkspace,
 };

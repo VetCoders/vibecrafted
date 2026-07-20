@@ -1,7 +1,7 @@
 ---
 status: accepted
 owner: codex
-date: 2026-06-06
+date: 2026-07-20
 scope: vibecrafted-server scaffold artifact editor
 ---
 
@@ -11,11 +11,12 @@ scope: vibecrafted-server scaffold artifact editor
 
 `vc-scaffold` Phase 6 requires the plan, cut briefs, and design docs to become editable artifacts served through `vibecrafted-server`. The runtime roadmap already fixes the invariant: Python writes control-plane run state, Rust `control-core` reads typed state, and frontends do not hand-parse JSON.
 
-The missing piece is a review surface for `~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/operator/`:
+The review surface consumes canonical plan roots at
+`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan_id>/`:
 
-- `master-dispatch.md` is the wave atlas.
-- `briefs/*.md` are one tab per cut.
-- design docs are served from operator-local design folders/files.
+- `manifest.json` is the ordered, explicit artifact inventory.
+- roles come from manifest declarations, never filenames or locations.
+- every editable tab maps to one physical file below the plan root.
 - operator edits must persist to disk and become visible to agents through a typed endpoint.
 - approvals/checkpoints must be first-class state because scaffold-doctor will gate the scaffold to implement baton on them.
 
@@ -25,8 +26,9 @@ Use a Leptos-native mount with a server-rendered editor route and typed `control
 
 The editor is mounted from `web/src/app.rs` at `/scaffold`. The actual editable HTML is served from `/scaffold/editor` by Axum so it can read and write local artifacts without client-side filesystem tricks. JSON endpoints expose the same typed contract:
 
-- `GET /api/scaffold/artifacts`
-- `GET /api/scaffold/changes`
+- `GET /api/scaffold/plans?org=&repo=&day=`
+- `GET /api/scaffold/artifacts?org=&repo=&day=&plan_id=`
+- `GET /api/scaffold/changes?org=&repo=&day=&plan_id=`
 - `POST /api/scaffold/artifact`
 - `POST /api/scaffold/checkpoint`
 
@@ -36,7 +38,9 @@ Leptos-native vs transplanted Studio browser app: choose Leptos-native. GlyphPul
 
 Batch + sequential review: the surface supports both. The sidebar shows all artifacts at once for batch review; each artifact panel has its own save/checkpoint form for sequential review.
 
-Bidirectional edit to endpoint sync: operator saves update the Markdown file, append `.scaffold-changes.jsonl`, and refresh `GET /api/scaffold/artifacts` / `GET /api/scaffold/changes`. Agents poll the endpoint instead of reading raw JSON or scraping HTML.
+Bidirectional edit to endpoint sync: operator saves include the loaded SHA-256 content hash, update
+the canonical Markdown file with an atomic sibling rename, append `.scaffold-changes.jsonl`, and
+refresh the typed endpoints. A stale hash returns `409 Conflict`.
 
 Checkpoint primitive: each artifact carries a typed checkpoint sidecar in `.scaffold-checkpoints.json`; checkpoint updates append the same change feed. This is the foundation scaffold-doctor can read later.
 
@@ -52,9 +56,9 @@ GlyphPulse Studio contributed the browser shape: persistent sidebar, switchable 
 
 `control-core::ScaffoldArtifactStore` owns the typed artifact contract:
 
-- discovers operator artifacts;
-- classifies wave atlas, briefs, and design docs;
-- writes only discovered Markdown artifacts under the operator directory;
+- discovers manifest-backed plans and requires explicit selection when a day has multiple plans;
+- preserves manifest order and explicit roles;
+- writes only declared, editable, non-symlinked Markdown artifacts below the selected plan root;
 - appends an agent-readable change feed;
 - stores checkpoint state as a sidecar next to the artifacts.
 
@@ -62,4 +66,5 @@ The Python control-plane writer remains untouched and remains the source of trut
 
 ## Follow-Up
 
-`scaffold-doctor` should consume the checkpoint sidecar and artifact list, then enforce the full Phase 6 gate: master-dispatch shape, every brief's 12 sections, atomic verifier-backed acceptance, and required design docs for `needs_design` cuts.
+`scaffold-doctor` and the server call the same `control-core` manifest loader and validator. Legacy
+`operator/` workspaces remain discoverable for one compatibility window but are always read-only.

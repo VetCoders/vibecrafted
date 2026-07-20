@@ -1,7 +1,7 @@
 //! Read-only Rust eye on lifecycle runs written by the Python lifecycle runner.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use control_core::ControlPlane;
@@ -15,7 +15,7 @@ fn temp_home(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("control-core-{name}-{nanos}"))
 }
 
-fn write_lifecycle_run(home: &PathBuf, run_id: &str, state_dou: Option<i64>) {
+fn write_lifecycle_run(home: &Path, run_id: &str, state_dou: Option<i64>) {
     let run_dir = home
         .join("control_plane")
         .join("lifecycle_runs")

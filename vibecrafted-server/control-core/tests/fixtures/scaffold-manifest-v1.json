@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "plan_id": "aicx-product-convergence-v1",
+  "org": "Loctree",
+  "repo": "aicx",
+  "day": "2026_0720",
+  "artifacts": [
+    {
+      "id": "driver",
+      "role": "driver",
+      "path": "DRIVER.md",
+      "editable": true,
+      "required": true
+    },
+    {
+      "id": "atlas",
+      "role": "wave-atlas",
+      "path": "00_ATLAS.md",
+      "editable": true,
+      "required": true
+    },
+    {
+      "id": "w0-01",
+      "role": "brief",
+      "path": "briefs/W0-01_substrate-closure.md",
+      "editable": true,
+      "required": true,
+      "dependencies": ["driver", "atlas"]
+    }
+  ]
+}
