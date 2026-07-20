@@ -195,6 +195,28 @@ Analogicznie obecna liveness opiera się głównie na istnieniu PID/PGID oraz wi
 heartbeat. PID bez process start time, argv, cwd, ancestry i provider-session
 binding dowodzi tylko, że _jakiś_ proces pod tym numerem żyje.
 
+### 4.8. Model jest transportowany, ale polityka wyboru nie jest częścią envelope
+
+Aktualny runtime posiada drogę transportu modelu: `Cut.model` przechodzi do
+`WorkflowLaunchSpec.model`, a launcher potrafi przekazać pin do natywnego CLI.
+Control plane zachowuje również `model_requested` i raportowany `agent_model`.
+
+To jednak nadal nie jest pełny kontrakt wyboru:
+
+- `Cut.model` i `WorkflowLaunchSpec.model` domyślnie są pustym stringiem, który
+  nie rozróżnia świadomego `provider-default` od zgubionego pinu;
+- CLI dopuszcza brak `--model`;
+- `ExecutionEnvelope` nie zawiera modelu;
+- zapis requested/observed nie wiąże wyniku z polityką wyboru;
+- explicit pin może zostać zgubiony albo zastąpiony bez fail-closed verdictu.
+
+Model wpływa na zdolność rozumowania, koszt, cache, dostępne capabilities i
+wiarygodność wykonania chirurgicznego cutu. Dlatego **polityka jego wyboru** jest
+częścią execution substrate na równi z agentem, rootem, branchem i HEAD-em.
+Użytkownik nie musi jednak podawać pinu: omission jest legalną, jawną decyzją
+`provider-default`. Dopiero explicit pin tworzy kontrakt `exact`, którego nie
+wolno po cichu zgubić ani zastąpić fallbackiem.
+
 ## 5. Incydenty, które nowy kontrakt musi umieć odtworzyć
 
 ### 5.1. Oracle sprawdza dawcę, nie biorcę
@@ -283,6 +305,23 @@ nie zgadywanie po kształcie stringa.
 
 Trzy sygnały bez poprawnej atrybucji są zerem dowodów, nie quorum.
 
+### 5.6. Runtime odrzuca składnię, którą jego własna pomoc przedstawia jako legalną
+
+`vc-research` dokumentuje i obsługuje selektory `uno|duo|trio`, natomiast
+kanoniczna ścieżka `vibecrafted research` interpretuje każdy positional jako
+nazwę konkretnego agenta. W rezultacie polecenie
+`vibecrafted research trio claude codex grok --file ...` kończy się
+`Unsupported research agent: trio`, mimo że komunikat naprawczy ponownie wymienia
+`trio` jako dozwoloną wartość.
+
+Ten sam komunikat renderuje listę wyborów jako pythonowe
+`['trio', 'claude', ...]`. Wklejenie jej do Zsh daje `bad pattern`, więc runtime
+nie tylko odrzuca obiecaną ścieżkę, ale proponuje niewykonywalną komendę
+recovery. To jest drift publicznego kontraktu pomiędzy wrapperem, parserem,
+helpem i zainstalowanym artefaktem. Proof dla CLI musi wykonać każdą reklamowaną
+formę polecenia w prawdziwej powłoce i sprawdzić, że ścieżka błędu proponuje
+syntaktycznie poprawne, akceptowane recovery.
+
 ## 6. Docelowa architektura
 
 Jedna implementacja ma mieszkać w Pythonowym runtime core, logicznie jako:
@@ -363,6 +402,10 @@ Minimalne pola:
 execution:
   schema: vibecrafted.execution-envelope.v1
   agent: codex
+  model:
+    requested: null
+    selection_source: omitted
+    resolution_policy: provider-default
   repo: Loctree/aicx
   root: /Volumes/vc-workspace/Loctree/aicx
   branch: fix/example
@@ -378,9 +421,20 @@ execution:
 ```
 
 `vc-dispatch` jest właścicielem egzekucji envelope. Przed uruchomieniem sprawdza
-agenta, repo identity, root, branch, HEAD, brief digest i politykę dirty tree.
-Jeżeli frontmatter briefa przeczy runtime'owi, run zostaje `blocked` przed
-spawnem. Dispatch nie interpretuje semantyki dowodu produktu.
+agenta, politykę wyboru modelu, repo identity, root, branch, HEAD, brief digest i
+politykę dirty tree. Jeżeli frontmatter briefa przeczy runtime'owi, run zostaje
+`blocked` przed spawnem. Dispatch nie interpretuje semantyki dowodu produktu.
+
+Obiekt `model` jest obowiązkowy w maszynowym envelope, lecz
+`model.requested` może być `null`. `requested: null` z
+`resolution_policy: provider-default` oznacza świadomą decyzję: launcher nie
+przekazuje flagi modelu, a provider wybiera swój default. Run nie może z tego
+powodu failować. Gdy `requested` zawiera pin, `resolution_policy` musi być
+`exact`: model musi być obsługiwany przez agenta i przekazany do natywnego
+launchera, a silent fallback lub mismatch blokuje proof i seal. Jeżeli provider
+nie pozwala zmienić modelu przy resume, runtime ma zachować tę prawdę jako
+capability restriction dla pinu `exact`; resume z `provider-default` pozostaje
+legalne.
 
 Pogoda nad Bałtykiem pozostaje poza schematem.
 
@@ -405,6 +459,13 @@ identity:
   provider:
     agent: codex
     capability_digest: sha256:...
+    model_selection:
+      requested: null
+      resolution_policy: provider-default
+    observed_model:
+      value: gpt-5.6-sol
+      source: provider-init-event
+      source_event_sha256: sha256:...
     requested_session:
       namespace: codex.thread.v1
       value: 019f7f3a-...
@@ -436,6 +497,14 @@ Runtime zapisuje launch attempt _przed_ spawnem. Po natywnym identity event
 wiąże `observed_session` z runem atomowo. Brak tego eventu oznacza
 `provider_identity=unverified` albo `launch_failed`; nie wolno wypełnić pola
 własnym UUID ani wyłuskać pierwszego podobnego tokenu z niepowiązanego logu.
+
+Polityka wyboru modelu pochodzi z envelope, a effective/observed model z
+natywnego zdarzenia albo kwalifikowanego provider artifactu. Przy
+`provider-default` brak observed model oznacza `effective_model=unverified`, ale
+nie blokuje uruchomienia ani sam z siebie nie unieważnia dowodu produktu. Przy
+`exact` brak observed model oznacza `model_verification=unverified`, a inny
+observed model oznacza `model_mismatch`; oba stany blokują twierdzenie, że cut
+wykonano na zadeklarowanym modelu, oraz blokują proof i seal.
 
 ### 7.3. `LivenessEvidence`
 
@@ -585,6 +654,8 @@ Musi wiązać co najmniej:
 - schema version, seal id, issued_at i issuer;
 - run id, lifecycle id, cut id i proof id;
 - RunIdentityBundle digest oraz digests rozstrzygających liveness evidence;
+- model selection mode, requested/effective model, ich provenance oraz match
+  verdict;
 - ExecutionEnvelope digest;
 - DeliveryProofContract digest;
 - ProofResult digest;
@@ -709,6 +780,8 @@ Machine scaffold-doctor odrzuca brief, gdy brakuje:
 - negative control;
 - delivery scope;
 - execution envelope z agentem, repo, rootem, branchem, HEAD i brief digest;
+- poprawnej polityki wyboru modelu: `provider-default` przy omission albo
+  niepustego pinu `exact` zgodnego z agent capability;
 - namespaced run/provider identity contract dla resume, fork i monitorowanych
   workerów;
 - reguły korelacji liveness, gdy cut uruchamia długowiecznego workera;
@@ -724,12 +797,17 @@ Dispatch:
 
 - kwalifikuje ExecutionEnvelope;
 - blokuje mismatch przed spawnem;
-- uruchamia właściwego agenta w właściwym repo/root/branch/HEAD;
+- uruchamia właściwego agenta i politykę wyboru modelu w właściwym
+  repo/root/branch/HEAD;
 - zapisuje run, prompt i brief digests;
 - zapisuje launch attempt przed spawnem;
 - rozróżnia orchestration session od provider-native resume/fork targetu;
 - waliduje provider-native target przez aktualną capability i wiąże natywne
   identity event z exact procesem oraz runem;
+- dla `exact` przekazuje model pin do natywnego launchera; dla
+  `provider-default` świadomie pomija flagę modelu;
+- zapisuje requested/effective model oraz blokuje silent fallback i mismatch
+  tylko wtedy, gdy obowiązuje pin `exact`;
 - emituje wyłącznie causally-bound liveness evidence;
 - transportuje proof contract bez interpretowania jego semantyki;
 - zapisuje execution state.
@@ -864,6 +942,10 @@ derived record wskazuje digests rekordów źródłowych.
 8. Legacy `session_id` migruje do namespaced `legacy.untyped-session.v1`. Nie
    może zostać użyty jako resume/fork target, dopóki provider-native provenance
    nie zostanie ponownie ustalone z natywnego artefaktu lub eventu.
+9. Legacy cut bez informacji o polityce wyboru modelu pozostaje
+   `model_selection=legacy-unknown`, nie `provider-default`. Nie wolno
+   rekonstruować historycznej decyzji ani pinu z aktualnego account defaultu lub
+   dzisiejszej konfiguracji CLI.
 
 ## 15. TDD — obowiązkowe czerwone dowody przed implementacją
 
@@ -901,6 +983,14 @@ Scaffold musi zacząć od testów, które na obecnym kodzie są czerwone. Minimu
 | T28 | Ten sam tekst id występuje w dwóch namespace'ach          | typy pozostają niepodstawialne                       |
 | T29 | OS ponownie używa PID dla innego procesu                  | stary process witness zostaje odrzucony              |
 | T30 | Regex znajduje podobny token bez provider eventu          | candidate `unverified`, nie identity                 |
+| T31 | Executable brief pomija model                             | envelope zapisuje jawne `provider-default`; PASS     |
+| T32 | Launcher pomija zadeklarowany model pin `exact`           | launch contract FAIL; brak delivery                  |
+| T33 | Provider raportuje model inny niż requested `exact`       | `model_mismatch`; brak proof/seal                    |
+| T34 | Omission uruchamia account/provider default               | run działa; effective model zapisany lub unverified  |
+| T35 | Resume nie wspiera override'u pinu `exact`                | jawny capability BLOCKED, nigdy silent fallback      |
+| T36 | Dwa default runy dostają różne modele effective           | oba legalne; receipts nie udają identycznego modelu  |
+| T37 | Help reklamuje `research trio`, parser odrzuca `trio`     | CLI contract test FAIL                               |
+| T38 | Error proponuje pythonową listę do wklejenia w Zsh        | shell replay FAIL; brak fałszywego recovery hintu    |
 
 Testy nie mogą kończyć się na walidacji dataclass. Potrzebny jest realny E2E z
 tymczasowym repo, dwoma odrębnymi producentami, rzeczywistymi subprocessami,
@@ -914,6 +1004,12 @@ Implementacja spełnia spec dopiero, gdy:
 - [ ] `vc-scaffold` emituje machine-readable contract i doctor potrafi go
       odrzucić przed dispatch.
 - [ ] `vc-dispatch` fail-closed egzekwuje ExecutionEnvelope przed spawnem.
+- [ ] Każdy executable run ma jawną politykę wyboru modelu w envelope; omission
+      jest legalnym `provider-default` i nie blokuje dispatch.
+- [ ] Pin `exact` dociera do natywnego launchera, effective model ma provider
+      provenance, a silent fallback lub mismatch blokuje proof i seal.
+- [ ] `provider-default` zapisuje effective model albo uczciwe `unverified`, ale
+      nigdy nie udaje konkretnego pinu i nie failuje tylko z powodu omission.
 - [ ] Żaden cross-module contract nie przenosi niekwalifikowanego `session_id`;
       orchestration i provider identity mają osobne namespace'y i provenance.
 - [ ] Resume/fork odrzuca identyfikator z obcej domeny przed spawnem.
@@ -964,8 +1060,9 @@ Worker ma otrzymać ten dokument w całości i:
 6. rozpisać red-first TDD, ownership, zależności i fale możliwe do wykonania na
    jednym Living Tree bez worktrees;
 7. przypisać każdego producenta narzędzia gate do konkretnego cutu;
-8. umieścić ExecutionEnvelope, RunIdentityBundle i DeliveryProofContract w
-   każdym briefie oraz projektować LivenessEvidence dla monitorowanych workerów;
+8. umieścić ExecutionEnvelope z jawną polityką wyboru modelu,
+   RunIdentityBundle i DeliveryProofContract w każdym briefie oraz projektować
+   LivenessEvidence dla monitorowanych workerów;
 9. sprawić, by machine scaffold-doctor odrzucał pięknie opakowane kłamstwo;
 10. zostawić operatorowi prawdziwy DRIVER, tracker i briefy, z których świeży
     agent może wykonać pracę bez zgadywania.
@@ -984,6 +1081,8 @@ Po wdrożeniu wolno mówić:
 
 ```text
 Proces zakończył się poprawnie.
+Polityka wyboru modelu była jawna; effective model został zapisany albo uczciwie
+oznaczony jako unverified.
 Proof przeszedł i wykrywa kontrolowaną nieprawdę.
 Efekt został sprawdzony w zakresie installed.
 vc-ship wystawił DeliverySeal <id>.
