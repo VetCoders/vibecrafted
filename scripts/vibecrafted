@@ -489,9 +489,10 @@ _print_skill_specific_flags() {
       ;;
     resume)
       printf '\n%bResume flags:%b\n' "$_bold" "$_reset"
-      printf '  --session <id>                 Session ID to resume\n'
+      printf '  --session <id>                 Session ID to resume (optional)\n'
       printf '  -p, --prompt <text>            Continue with extra prompt text\n'
       printf '  -f, --file <path.md>           Continue with prompt context from file\n'
+      printf '  (no --session)                 AICX 48h multi-agent continuity fallback\n'
       ;;
   esac
 }
@@ -794,14 +795,23 @@ cmd_resume_help() {
   printf '\n'
   printf '%b⚒%b  %bresume%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  Resume an existing agent session.\n'
+  printf '  Resume an existing agent session, or continue from AICX multi-agent context.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted resume <claude|codex|agy|junie|grok> --session <session_id> [flags]\n'
+  printf '  vibecrafted resume <claude|codex|agy|junie|grok> [flags]\n'
+  printf '\n'
+  printf '%bWithout --session:%b\n' "$_bold" "$_reset"
+  printf '  Builds a bounded continuity pack from aicx sessions list + intents + overlay\n'
+  printf '  for the last 48h (all agents). If a same-agent session for this cwd is found,\n'
+  printf '  native-resumes it with the pack as prompt; otherwise starts a NEW session.\n'
+  printf '  Override window: VIBECRAFTED_RESUME_AICX_HOURS=72\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted resume claude --session abc123\n'
   printf '  vibecrafted resume codex --session abc123 --prompt "Continue from the failing test"\n'
+  printf '  vibecrafted resume grok\n'
+  printf '  vibecrafted resume codex --prompt "pick up where the fleet left off"\n'
   printf '\n'
   _print_skill_specific_flags "resume"
   printf '\n'

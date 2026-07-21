@@ -140,28 +140,397 @@ _vetcoders_marbles() {
   fi
 }
 
+# When resume has no session_id: assemble a bounded multi-agent continuity pack
+# from AICX (last 48h by default) via sessions list + intents + overlay.
+# Emits KEY=value lines on stdout:
+#   SESSION_ID=...   (may be empty → NEW session)
+#   CONTEXT_FILE=...
+#   SESSION_COUNT=...
+#   MODE=native_resume|new_session
+_vetcoders_aicx_resume_fallback() {
+  local agent="$1"
+  local root="${2:-$(_vetcoders_repo_root)}"
+  local hours="${VIBECRAFTED_RESUME_AICX_HOURS:-48}"
+  local tmp_dir context_file meta_file
+  command -v aicx >/dev/null 2>&1 || {
+    echo "aicx not found on PATH — cannot build session-less resume context." >&2
+    echo "Install aicx or pass --session <session_id>." >&2
+    return 1
+  }
+  tmp_dir="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/tmp"
+  mkdir -p "$tmp_dir" 2>/dev/null || tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/vc-resume.XXXXXX")"
+  context_file="$tmp_dir/resume-aicx-${agent}-$(date +%Y%m%d_%H%M%S).md"
+  meta_file="${context_file}.meta.json"
+
+  python3 - "$agent" "$root" "$hours" "$context_file" "$meta_file" <<'PY' || return 1
+from __future__ import annotations
+
+import datetime as dt
+import json
+import pathlib
+import subprocess
+import sys
+
+agent, root, hours_s, context_file, meta_file = sys.argv[1:6]
+hours = int(hours_s)
+now = dt.datetime.now(dt.timezone.utc)
+cutoff = now - dt.timedelta(hours=hours)
+since = cutoff.date().isoformat()
+root_path = pathlib.Path(root).resolve()
+project = root_path.name
+degradations: list[str] = []
+max_pack_chars = 48_000
+
+
+def run(cmd: list[str], timeout: float) -> tuple[int, str, str]:
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return proc.returncode, proc.stdout or "", proc.stderr or ""
+    except FileNotFoundError:
+        return 127, "", "not_found"
+    except subprocess.TimeoutExpired:
+        return 124, "", "timeout"
+
+
+def parse_ts(value: object) -> dt.datetime | None:
+    if not value or not isinstance(value, str):
+        return None
+    text = value.replace("Z", "+00:00")
+    try:
+        stamp = dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=dt.timezone.utc)
+    return stamp.astimezone(dt.timezone.utc)
+
+
+sessions: list[dict] = []
+for flags in (["--cwd"], []):
+    code, out, err = run(
+        [
+            "aicx",
+            "sessions",
+            "list",
+            "--format",
+            "json",
+            "--since",
+            since,
+            "--limit",
+            "40",
+            *flags,
+        ],
+        timeout=18,
+    )
+    if code != 0 or not out.strip():
+        degradations.append(
+            f"sessions_list{flags or ['_all']}:{code}:{(err or out)[:160]}"
+        )
+        continue
+    try:
+        payload = json.loads(out)
+    except json.JSONDecodeError:
+        degradations.append(f"sessions_list_json_invalid{flags or ['_all']}")
+        continue
+    if isinstance(payload, list) and payload:
+        sessions = payload
+        if flags == ["--cwd"]:
+            break
+
+filtered: list[dict] = []
+for item in sessions:
+    if not isinstance(item, dict):
+        continue
+    stamp = parse_ts(item.get("updated_at") or item.get("started_at"))
+    if stamp is None or stamp >= cutoff:
+        filtered.append(item)
+
+candidate: dict | None = None
+for item in filtered:
+    if str(item.get("agent") or "") != agent:
+        continue
+    repo = str(item.get("repo_path") or "")
+    try:
+        if repo and pathlib.Path(repo).resolve() == root_path:
+            candidate = item
+            break
+    except OSError:
+        pass
+if candidate is None:
+    for item in filtered:
+        if str(item.get("agent") or "") == agent:
+            candidate = item
+            break
+
+# Prefer aicx tail (default window 48h, fast snapshot) before full intents.
+# Overlay is best-effort and often slow on large repos — never block resume.
+intents_md = ""
+code, out, err = run(
+    ["aicx", "tail", "-H", str(hours), "--limit", "20", "-p", project],
+    timeout=12,
+)
+if code == 0 and out.strip():
+    intents_md = out.strip()
+else:
+    degradations.append(f"tail:{code}:{(err or out)[:160]}")
+    for project_args in ([project], []):
+        cmd = [
+            "aicx",
+            "intents",
+            "-H",
+            str(hours),
+            "--limit",
+            "15",
+            "--emit",
+            "markdown",
+        ]
+        if project_args:
+            cmd.extend(["-p", project_args[0]])
+        code, out, err = run(cmd, timeout=12)
+        if code == 0 and out.strip():
+            intents_md = out.strip()
+            break
+        degradations.append(f"intents:{code}:{(err or out)[:160]}")
+
+overlay_blob = ""
+code, out, err = run(
+    ["aicx", "overlay", "--repo", str(root_path), "--format", "json"],
+    timeout=8,
+)
+if code == 0 and out.strip():
+    try:
+        overlay_obj = json.loads(out)
+        overlay_blob = json.dumps(overlay_obj, indent=2, ensure_ascii=False)[:12_000]
+    except json.JSONDecodeError:
+        overlay_blob = out[:8_000]
+        degradations.append("overlay_json_invalid")
+else:
+    degradations.append(f"overlay:{code}:{(err or out)[:160]}")
+
+lines: list[str] = [
+    "# Resume continuity pack (no session_id)",
+    "",
+    "Fallback path: AICX multi-agent context for the last "
+    f"{hours}h (sessions list + intents + overlay).",
+    "",
+    f"- agent: `{agent}`",
+    f"- root: `{root_path}`",
+    f"- window: last {hours}h across all agents",
+    f"- assembled_at: `{now.isoformat()}`",
+]
+if candidate:
+    lines.append(
+        f"- native_resume_candidate: `{candidate.get('session_id')}` "
+        f"(agent={candidate.get('agent')}, project={candidate.get('project')})"
+    )
+    lines.append(
+        "- mode: prefer native resume of that session with this pack as the "
+        "continuation prompt"
+    )
+else:
+    lines.append("- native_resume_candidate: none")
+    lines.append(
+        "- mode: NEW provider session — continuity only (not a native resume)"
+    )
+if degradations:
+    lines.append("- degradations:")
+    for item in degradations:
+        lines.append(f"  - `{item}`")
+
+lines.extend(["", "## Session catalog (48h, multi-agent)", ""])
+if not filtered:
+    lines.append("_(no sessions discovered in window)_")
+else:
+    lines.append("| agent | session_id | project | updated_at | title |")
+    lines.append("| --- | --- | --- | --- | --- |")
+    for item in filtered[:30]:
+        title = str(item.get("title") or "").replace("|", "/").replace("\n", " ")
+        if len(title) > 72:
+            title = title[:69] + "..."
+        lines.append(
+            "| {agent} | `{sid}` | {proj} | {updated} | {title} |".format(
+                agent=item.get("agent") or "?",
+                sid=item.get("session_id") or "?",
+                proj=item.get("project") or "?",
+                updated=item.get("updated_at") or "?",
+                title=title or "—",
+            )
+        )
+
+lines.extend(["", "## Intents (aicx, window)", ""])
+lines.append(intents_md[:20_000] if intents_md else "_(empty or unavailable)_")
+
+if overlay_blob:
+    lines.extend(
+        [
+            "",
+            "## AICX overlay (bounded JSON)",
+            "",
+            "```json",
+            overlay_blob,
+            "```",
+        ]
+    )
+
+lines.extend(
+    [
+        "",
+        "## Operator instruction",
+        "",
+        "Continue work in this repository with continuity from the multi-agent "
+        "session catalog, intents, and overlay above.",
+        "Historical paths and foreign-agent sessions are evidence only — not "
+        "launch destinations unless native_resume_candidate was selected.",
+        "Re-read files before editing (Living Tree). Prefer runtime truth over "
+        "remembered state.",
+        "",
+    ]
+)
+
+body = "\n".join(lines)
+if len(body) > max_pack_chars:
+    body = body[: max_pack_chars - 80] + "\n\n_(truncated for resume pack budget)_\n"
+
+pathlib.Path(context_file).write_text(body, encoding="utf-8")
+meta = {
+    "schema": "vibecrafted.resume.aicx_fallback.v1",
+    "agent": agent,
+    "root": str(root_path),
+    "hours": hours,
+    "session_id": str((candidate or {}).get("session_id") or ""),
+    "session_count": len(filtered),
+    "mode": "native_resume" if candidate else "new_session",
+    "context_file": context_file,
+    "degradations": degradations,
+}
+pathlib.Path(meta_file).write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+print(f"SESSION_ID={meta['session_id']}")
+print(f"CONTEXT_FILE={context_file}")
+print(f"SESSION_COUNT={meta['session_count']}")
+print(f"MODE={meta['mode']}")
+PY
+}
+
+# Fresh provider session (no native --resume). Used when AICX fallback cannot
+# pick a same-agent session in the window.
+_vetcoders_fresh_session_command() {
+  local tool="$1"
+  local prompt="${2:-}"
+  local mode="${3:-interactive}"
+  local quoted_prompt=""
+  if [[ -n "$prompt" ]]; then
+    quoted_prompt="$(_vetcoders_shell_quote "$prompt")"
+  else
+    quoted_prompt="$(_vetcoders_shell_quote "Continue from the AICX multi-agent continuity pack.")"
+  fi
+
+  case "$tool" in
+    claude)
+      if [[ "$mode" == headless ]]; then
+        printf 'claude --print --dangerously-skip-permissions %s\n' "$quoted_prompt"
+      else
+        printf 'claude %s\n' "$quoted_prompt"
+      fi
+      ;;
+    codex)
+      if [[ "$mode" == headless ]]; then
+        printf 'codex exec --dangerously-bypass-approvals-and-sandbox %s\n' "$quoted_prompt"
+      else
+        printf 'codex %s\n' "$quoted_prompt"
+      fi
+      ;;
+    agy)
+      if [[ "$mode" == headless ]]; then
+        printf 'agy --dangerously-skip-permissions --print %s\n' "$quoted_prompt"
+      else
+        printf 'agy --prompt-interactive %s\n' "$quoted_prompt"
+      fi
+      ;;
+    junie)
+      printf 'junie --task=%s --project=. --skip-update-check\n' "$quoted_prompt"
+      ;;
+    grok)
+      if [[ "$mode" == headless ]]; then
+        printf 'grok --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json --single %s\n' "$quoted_prompt"
+      else
+        printf 'grok --cwd . --permission-mode bypassPermissions --no-alt-screen --single %s\n' "$quoted_prompt"
+      fi
+      ;;
+    *)
+      echo "Unknown agent for fresh resume session: $tool" >&2
+      return 1
+      ;;
+  esac
+}
+
 _vetcoders_resume_agent() {
   local tool="$1"
   shift
   _vetcoders_parse_contract "$@" || return 1
   # Positional form: `vc-resume <agent> <session_id> [prompt words...]`.
-  # Without --session the shared parser routes positionals into tail/prompt,
-  # but a resume cannot run without a session — promote the first tail token.
+  # Without --session the shared parser routes positionals into tail/prompt.
+  # Promote the first tail token only when it looks like a session id (not a
+  # free-form prompt word).
   if [[ -z "$_vetcoders_contract_session" && -n "$_vetcoders_contract_tail" ]]; then
     local -a _resume_positional=()
     read -r -a _resume_positional <<<"$_vetcoders_contract_tail"
-    _vetcoders_contract_session="${_resume_positional[0]}"
-    local _resume_rest="${_vetcoders_contract_tail#"${_resume_positional[0]}"}"
-    _resume_rest="${_resume_rest# }"
-    if [[ "$_vetcoders_contract_prompt" == "$_vetcoders_contract_tail" ]]; then
-      _vetcoders_contract_prompt="$_resume_rest"
+    local _maybe_session="${_resume_positional[0]:-}"
+    # UUIDs / long hex / codex-style tokens; short words stay as prompt text.
+    if [[ "$_maybe_session" =~ ^[0-9a-fA-F-]{8,}$ || "$_maybe_session" =~ ^[0-9a-zA-Z_-]{16,}$ ]]; then
+      _vetcoders_contract_session="$_maybe_session"
+      local _resume_rest="${_vetcoders_contract_tail#"${_resume_positional[0]}"}"
+      _resume_rest="${_resume_rest# }"
+      if [[ "$_vetcoders_contract_prompt" == "$_vetcoders_contract_tail" ]]; then
+        _vetcoders_contract_prompt="$_resume_rest"
+      fi
+      _vetcoders_contract_tail="$_resume_rest"
     fi
-    _vetcoders_contract_tail="$_resume_rest"
   fi
-  [[ -n "$_vetcoders_contract_session" ]] || {
-    echo "Usage: vc-resume [<claude|codex|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
-    return 1
-  }
+
+  local aicx_fallback_mode=""
+  local aicx_context_file=""
+  if [[ -z "$_vetcoders_contract_session" ]]; then
+    # No session id: compose multi-agent continuity from AICX (48h default).
+    local root_dir fallback_lines
+    root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
+    printf 'No --session: assembling AICX multi-agent continuity (last %sh)...\n' \
+      "${VIBECRAFTED_RESUME_AICX_HOURS:-48}" >&2
+    fallback_lines="$(_vetcoders_aicx_resume_fallback "$tool" "$root_dir")" || return 1
+    local line key val
+    while IFS= read -r line; do
+      key="${line%%=*}"
+      val="${line#*=}"
+      case "$key" in
+        SESSION_ID) _vetcoders_contract_session="$val" ;;
+        CONTEXT_FILE) aicx_context_file="$val" ;;
+        MODE) aicx_fallback_mode="$val" ;;
+      esac
+    done <<<"$fallback_lines"
+    if [[ -n "$aicx_context_file" ]]; then
+      # Continuity pack becomes the primary file input; operator --prompt stays.
+      if [[ -n "$_vetcoders_contract_file" ]]; then
+        _vetcoders_contract_prompt="$(
+          printf '%s\n\nAlso see operator file: %s\n' \
+            "${_vetcoders_contract_prompt:-}" \
+            "$_vetcoders_contract_file"
+        )"
+      fi
+      _vetcoders_contract_file="$aicx_context_file"
+      printf '  context: %s\n' "$aicx_context_file" >&2
+      if [[ -n "$_vetcoders_contract_session" ]]; then
+        printf '  native resume candidate: %s\n' "$_vetcoders_contract_session" >&2
+      else
+        printf '  no same-agent session in window → NEW session with continuity pack\n' >&2
+      fi
+    fi
+  fi
+
   [[ -z "$_vetcoders_contract_count" ]] || {
     echo "--count is only supported by vibecrafted marbles." >&2
     return 1
@@ -181,11 +550,20 @@ _vetcoders_resume_agent() {
   # the resume must run the agent's NON-INTERACTIVE invocation even when a
   # visible operator tab hosts it, so it finishes, exits, and can be triaged.
   # Only a bare resume (no input) parks an interactive session in the tab.
+  # AICX fallback always carries a file → treat as headless job unless the
+  # operator only wants an interactive shell with empty prompt (rare).
   resume_mode="interactive"
   if [[ -n "$_vetcoders_contract_prompt" || -n "$_vetcoders_contract_file" ]]; then
     resume_mode="headless"
   fi
-  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" "$resume_mode")" || return 1
+
+  if [[ -n "$_vetcoders_contract_session" ]]; then
+    resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" "$resume_mode")" || return 1
+  else
+    # NEW session: continuity pack only (explicitly not a native resume).
+    resume_cmd="$(_vetcoders_fresh_session_command "$tool" "$resume_prompt" "$resume_mode")" || return 1
+    aicx_fallback_mode="${aicx_fallback_mode:-new_session}"
+  fi
 
   # prepare_operator_runtime can create or attach an operator surface only when
   # we are already in vc_frame, know an operator session, or have an interactive
@@ -198,7 +576,13 @@ _vetcoders_resume_agent() {
       _vetcoders_spawn_into_operator_session "resume-${tool}" "$resume_cmd" || return 1
       printf 'Resume launched in operator session: %s\n' "$VIBECRAFTED_OPERATOR_SESSION"
       printf '  agent:   %s\n' "$tool"
-      printf '  session: %s\n' "$_vetcoders_contract_session"
+      if [[ -n "$_vetcoders_contract_session" ]]; then
+        printf '  session: %s\n' "$_vetcoders_contract_session"
+      else
+        printf '  session: (new — aicx 48h multi-agent continuity)\n'
+      fi
+      [[ -n "$aicx_fallback_mode" ]] && printf '  mode:    %s\n' "$aicx_fallback_mode"
+      [[ -n "$aicx_context_file" ]] && printf '  pack:    %s\n' "$aicx_context_file"
       return 0
     fi
   fi
@@ -206,7 +590,11 @@ _vetcoders_resume_agent() {
   # No operator surface (piped / async-supervisor baton-pass): run the agent's
   # NON-INTERACTIVE resume invocation directly. Recompute in headless mode so we
   # don't eval an interactive command that would hang without a tty.
-  resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" headless)" || return 1
+  if [[ -n "$_vetcoders_contract_session" ]]; then
+    resume_cmd="$(_vetcoders_resume_command "$tool" "$_vetcoders_contract_session" "$resume_prompt" headless)" || return 1
+  else
+    resume_cmd="$(_vetcoders_fresh_session_command "$tool" "$resume_prompt" headless)" || return 1
+  fi
   eval "$resume_cmd"
 }
 
@@ -352,7 +740,8 @@ PY
 vc-resume() {
   local tool="${1:-}"
   [[ -n "$tool" ]] || {
-    echo "Usage: vc-resume [<claude|codex|agy|junie|grok>] <session_id> [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "Usage: vc-resume <claude|codex|agy|junie|grok> [<session_id>] [prompt ...] | --session <session_id> [--prompt <text>] [--file <path>]" >&2
+    echo "  Without session_id: AICX multi-agent continuity pack (last ${VIBECRAFTED_RESUME_AICX_HOURS:-48}h) → native resume if a same-agent session is found, else NEW session." >&2
     return 1
   }
   if [[ "$tool" == "--session" ]]; then
