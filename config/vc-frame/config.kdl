@@ -38,13 +38,15 @@ themes {
 //   export VIBECRAFTED_VC_FRAME_THEME="$(./auto-theme.sh)"
 //
 // Then either override `theme "..."` below or pass via overlay config.
-// The fleet default below (vibecrafted) is intentionally neutral so the
-// shipped framework looks the same on a fresh install regardless of host.
-
-// Default theme: pastel (calm). Swap to "monochrome" for greyscale, or
-// "vibecrafted" for the amber/gold brand palette. Both pastel and monochrome
-// ship bundled in the vc-frame binary (assets/themes/).
-theme "pastel"
+// Fleet chrome default: monochrome greyscale + flat key tiles (no powerline
+// triangles). pastel shipped green ribbons +  separators — rejected as
+// operator standard. Brand block "vibecrafted" (graphite + amber) remains
+// defined above for explicit `theme "vibecrafted"` / mesh overrides.
+// monochrome ships bundled in the vc-frame binary (assets/themes/).
+theme "monochrome"
+// Flat status-bar / tab-bar: no powerline arrow fonts (). Plugins paint
+// plain Ctrl+<key> LABEL tiles instead of triangular ribbon buttons.
+simplified_ui true
 
 // ─── Shell & Display ────────────────────────────────────────────────────────────
 default_shell "zsh"

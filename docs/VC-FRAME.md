@@ -14,7 +14,7 @@ extend it.
 
 ```
 config/vc-frame/
-├── config.kdl                       # base config + neutral theme
+├── config.kdl                       # base config + monochrome chrome (flat UI)
 ├── auto-theme.sh                    # host detection -> theme name
 ├── themes/
 │   └── vetcoders-mesh.kdl           # 4 mesh themes (dragon/sztudio/silver/div0)
@@ -65,12 +65,28 @@ and `mgbook16` is wired as an alias for `div0` because that is the value
 The `VIBECRAFTED_THEME` env var bypasses host detection outright, so an
 operator can pin a fleet baseline theme even when running on a mesh host.
 
+### Fleet chrome default (status-bar / tab-bar)
+
+Shipped `config.kdl` uses:
+
+```kdl
+theme "monochrome"
+simplified_ui true
+```
+
+- **monochrome** — greyscale chrome; no pastel green ribbons
+- **simplified_ui** — plugins paint flat `Ctrl+<key> LABEL` tiles (no powerline
+  `` triangles)
+
+The brand block `vibecrafted` (graphite + amber) stays defined for explicit
+`theme "vibecrafted"` or mesh overrides. Mesh host accents below are **opt-in**,
+not the fleet status-bar default.
+
 ### Activating the host theme
 
-The shipped `config.kdl` defaults to the neutral `vibecrafted` theme so a fresh
-install looks the same on every machine. To activate the host accent, wire one
-of the following in your shell init or in a host-local `config/vc-frame/local.kdl`
-overlay:
+The shipped chrome default is monochrome (flat). To activate a host accent
+instead, wire one of the following in your shell init or in a host-local
+`config/vc-frame/local.kdl` overlay:
 
 ```bash
 # Shell init — print the matching theme name for diagnostics.
