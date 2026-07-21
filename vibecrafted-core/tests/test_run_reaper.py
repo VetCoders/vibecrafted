@@ -464,3 +464,216 @@ def test_reap_never_raises_on_internal_failure(monkeypatch):
     )
     assert plan.should_run is False
     assert plan.skip_reason == "error"
+
+
+# --------------------------------------------------------------------------
+# G5 — reaper_ownership buckets + legacy quarantine migration
+# --------------------------------------------------------------------------
+
+
+LEGACY_TERMINAL = {
+    "run_id": "impl-legacy-000001-11000",
+    "state": "completed",
+    "exit_code": 0,
+    # no worker_pgid — historical run predating the second ownership proof
+}
+
+LEGACY_MARKED = {
+    "run_id": "impl-legacy-000002-22000",
+    "state": "completed",
+    "exit_code": 0,
+    "reaper_ownership": "legacy",
+}
+
+PROVABLE_TERMINAL = {
+    "run_id": "impl-provable-000003-33000",
+    "state": "completed",
+    "exit_code": 0,
+    "worker_pgid": 7777,
+}
+
+LIVE_NO_PGID = {
+    "run_id": "impl-live-000004-44000",
+    "state": "running",
+    # no worker_pgid — still live; migration must not mark legacy
+}
+
+
+def test_classify_run_ownership_three_buckets():
+    assert run_reaper.classify_run_ownership(LEGACY_MARKED) == "legacy"
+    assert run_reaper.classify_run_ownership(PROVABLE_TERMINAL) == "provable"
+    assert run_reaper.classify_run_ownership(LEGACY_TERMINAL) == "undecidable"
+    assert run_reaper.classify_run_ownership(LIVE_NO_PGID) == "undecidable"
+
+
+def test_quarantine_marks_terminal_without_pgid_as_legacy():
+    """Three fixtures: terminal-no-pgid → legacy; terminal-with-pgid → untouched; live → skipped."""
+    written: dict[str, dict] = {}
+
+    def writer(run_id: str, payload: dict) -> None:
+        written[run_id] = dict(payload)
+
+    result = run_reaper.quarantine_legacy_runs(
+        runs=[LEGACY_TERMINAL, PROVABLE_TERMINAL, LIVE_NO_PGID],
+        table=(),
+        env_index={},
+        writer=writer,
+    )
+
+    assert LEGACY_TERMINAL["run_id"] in result.marked_legacy
+    assert written[LEGACY_TERMINAL["run_id"]]["reaper_ownership"] == "legacy"
+    assert "worker_pgid" not in written[LEGACY_TERMINAL["run_id"]]
+
+    assert PROVABLE_TERMINAL["run_id"] in result.skipped_has_pgid
+    assert PROVABLE_TERMINAL["run_id"] not in written
+
+    assert LIVE_NO_PGID["run_id"] in result.skipped_live
+    assert LIVE_NO_PGID["run_id"] not in written
+
+
+def test_quarantine_is_idempotent():
+    store: dict[str, dict] = {
+        LEGACY_TERMINAL["run_id"]: dict(LEGACY_TERMINAL),
+    }
+
+    def writer(run_id: str, payload: dict) -> None:
+        store[run_id] = dict(payload)
+
+    first = run_reaper.quarantine_legacy_runs(
+        runs=[store[LEGACY_TERMINAL["run_id"]]],
+        table=(),
+        env_index={},
+        writer=writer,
+    )
+    assert first.changed == 1
+    assert store[LEGACY_TERMINAL["run_id"]]["reaper_ownership"] == "legacy"
+
+    second = run_reaper.quarantine_legacy_runs(
+        runs=[store[LEGACY_TERMINAL["run_id"]]],
+        table=(),
+        env_index={},
+        writer=writer,
+    )
+    assert second.changed == 0
+    assert second.marked_legacy == []
+    assert LEGACY_TERMINAL["run_id"] in second.already_legacy
+
+
+def test_quarantine_recovers_pgid_for_live_run_with_env_proof():
+    """Best-effort: live run without pgid gets worker_pgid only via SPAWN_RUN_ID proof."""
+    written: dict[str, dict] = {}
+
+    def writer(run_id: str, payload: dict) -> None:
+        written[run_id] = dict(payload)
+
+    live = dict(LIVE_NO_PGID)
+    table = [entry(8801, pgid=8801, command="node agent")]
+    env_index = {8801: live["run_id"]}
+
+    result = run_reaper.quarantine_legacy_runs(
+        runs=[live],
+        table=table,
+        env_index=env_index,
+        writer=writer,
+    )
+
+    assert result.recovered_pgid
+    assert result.recovered_pgid[0]["run_id"] == live["run_id"]
+    assert result.recovered_pgid[0]["worker_pgid"] == 8801
+    assert written[live["run_id"]]["worker_pgid"] == 8801
+    assert written[live["run_id"]].get("reaper_ownership") != "legacy"
+
+
+def test_quarantine_does_not_guess_pgid_without_env_proof():
+    """A matching pgid alone on a live run is NOT enough — need SPAWN_RUN_ID."""
+    written: dict[str, dict] = {}
+
+    def writer(run_id: str, payload: dict) -> None:
+        written[run_id] = dict(payload)
+
+    live = dict(LIVE_NO_PGID)
+    # process group exists but env is silent (macOS SIP case without SPAWN_RUN_ID readable)
+    table = [entry(8802, pgid=8802, command="node agent")]
+    result = run_reaper.quarantine_legacy_runs(
+        runs=[live],
+        table=table,
+        env_index={},  # no SPAWN_RUN_ID visible
+        writer=writer,
+    )
+    assert result.recovered_pgid == []
+    assert live["run_id"] not in written or "worker_pgid" not in written.get(
+        live["run_id"], {}
+    )
+
+
+def test_legacy_run_never_produces_kill_candidates():
+    """Even with a live process carrying SPAWN_RUN_ID of a legacy run — KEEP, never REAP."""
+    table = [entry(9901, pgid=9901, command="voc orphan")]
+    plan = run_reaper.plan_reap(
+        [LEGACY_MARKED, PROVABLE_TERMINAL],
+        table,
+        env_index={9901: LEGACY_MARKED["run_id"]},
+        self_pid=1000,
+        env={},
+    )
+    assert plan.doomed == ()
+    assert any(c.pid == 9901 for c in plan.legacy)
+    assert plan.legacy[0].evidence == "legacy"
+    assert LEGACY_MARKED["run_id"] in plan.ownership.legacy
+
+
+def test_legacy_run_pgid_match_also_not_killed():
+    """Fail-closed: reaper_ownership=legacy wins even if a spurious pgid is present."""
+    run = {
+        "run_id": "impl-legacy-pgid-1",
+        "state": "completed",
+        "worker_pgid": 4242,
+        "reaper_ownership": "legacy",
+    }
+    table = [entry(9902, pgid=4242, command="sleep 99")]
+    plan = run_reaper.plan_reap([run], table, env_index={}, self_pid=1000, env={})
+    assert plan.doomed == ()
+    assert any(c.pid == 9902 for c in plan.legacy)
+
+
+def test_undecidable_run_without_any_proof_is_never_killed():
+    """Terminal run with neither pgid nor env proof — zero kill candidates, fail-closed."""
+    table = [entry(9903, pgid=11111, command="some-daemon")]
+    plan = run_reaper.plan_reap(
+        [LEGACY_TERMINAL],  # no worker_pgid, not yet marked legacy
+        table,
+        env_index={},
+        self_pid=1000,
+        env={},
+    )
+    assert plan.doomed == ()
+    assert LEGACY_TERMINAL["run_id"] in plan.ownership.undecidable
+    assert plan.ownership.provable == ()
+
+
+def test_reap_json_exposes_three_ownership_buckets():
+    """reap --json must surface ownership.provable / .legacy / .undecidable explicitly."""
+    plan = run_reaper.plan_reap(
+        [LEGACY_MARKED, PROVABLE_TERMINAL, LEGACY_TERMINAL],
+        table=[
+            entry(7777, pgid=7777, command="voc survivor"),
+            entry(8800, command="voc orphan"),
+        ],
+        env_index={8800: LEGACY_MARKED["run_id"]},
+        self_pid=1000,
+        env={},
+    )
+    payload = run_reaper.plan_json_payload(plan, dry_run=True)
+    assert "ownership" in payload
+    buckets = payload["ownership"]
+    assert set(buckets.keys()) >= {"provable", "legacy", "undecidable"}
+    assert PROVABLE_TERMINAL["run_id"] in buckets["provable"]
+    assert LEGACY_MARKED["run_id"] in buckets["legacy"]
+    assert LEGACY_TERMINAL["run_id"] in buckets["undecidable"]
+    # process-level mirror: doomed processes appear under provable candidates
+    assert any(row["pid"] == 7777 for row in payload["reaped"])
+    assert any(row["pid"] == 8800 for row in payload["legacy"])
+    # snapshot-stable key order surface for verifier
+    assert payload["ownership"]["provable"]
+    assert payload["ownership"]["legacy"]
+    assert payload["ownership"]["undecidable"]

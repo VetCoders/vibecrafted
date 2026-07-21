@@ -115,6 +115,15 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("dispatch", help="run or validate a dispatch plan")
     doctor = sub.add_parser("doctor", help="verify installed Vibecrafted runtime")
     doctor.add_argument("--json", action="store_true")
+    doctor.add_argument(
+        "--quarantine-legacy-runs",
+        action="store_true",
+        help=(
+            "one-shot migration: mark terminal runs without worker_pgid as "
+            "reaper_ownership=legacy; best-effort recover pgid for live runs "
+            "only when SPAWN_RUN_ID is positively visible"
+        ),
+    )
     capabilities = sub.add_parser(
         "capabilities",
         help="describe workflow execution contracts (versioned, machine-readable)",
@@ -607,6 +616,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0 if invoked_as in {"vc-help", "vc-dashboard"} else 2
     if args.command == "doctor":
+        if getattr(args, "quarantine_legacy_runs", False):
+            from .run_reaper import quarantine_legacy_runs
+
+            quarantine = quarantine_legacy_runs()
+            payload = quarantine.as_dict()
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(
+                    "quarantine-legacy-runs: "
+                    f"changed={payload['changed']} "
+                    f"marked_legacy={len(payload['marked_legacy'])} "
+                    f"recovered_pgid={len(payload['recovered_pgid'])} "
+                    f"skipped_live={len(payload['skipped_live'])} "
+                    f"skipped_has_pgid={len(payload['skipped_has_pgid'])} "
+                    f"already_legacy={len(payload['already_legacy'])} "
+                    f"parse_errors={len(payload['parse_errors'])}"
+                )
+                for run_id in payload["marked_legacy"]:
+                    print(f"  legacy: {run_id}")
+                for row in payload["recovered_pgid"]:
+                    print(
+                        f"  recovered: {row.get('run_id')} "
+                        f"worker_pgid={row.get('worker_pgid')}"
+                    )
+                for err in payload["parse_errors"]:
+                    print(f"  parse_error: {err}")
+            return 0
         findings = doctor_module.doctor_run()
         summary = doctor_module.doctor_summary(findings)
         if args.json:

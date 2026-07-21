@@ -22,6 +22,12 @@
 //! * `GET /api/control/lifecycle` — lifecycle run summaries, newest-first.
 //! * `GET /api/control/lifecycle/{run_id}` — full nested lifecycle state with
 //!   projected per-run and per-stage axes (shape of `write_lifecycle_report`).
+//! * `GET /api/control/events` — Server-Sent Events stream of `events.jsonl`
+//!   from a client-held cursor (`?since=` / `Last-Event-ID`), with `: ping`
+//!   keepalives. Read-only; see [`events_sse`].
+
+#[cfg(feature = "ssr")]
+mod events_sse;
 
 #[cfg(feature = "ssr")]
 pub mod api {
@@ -35,6 +41,8 @@ pub mod api {
     use control_core::{ControlPlane, StateView};
     use serde_json::json;
 
+    use super::events_sse::events_sse;
+
     /// The control-plane read router, keyed to the same `LeptosOptions` state the
     /// app router carries so it merges without a state-type mismatch.
     pub fn control_routes() -> Router<leptos::config::LeptosOptions> {
@@ -44,6 +52,7 @@ pub mod api {
             .route("/api/control/runs/{run_id}", get(run))
             .route("/api/control/lifecycle", get(lifecycle))
             .route("/api/control/lifecycle/{run_id}", get(lifecycle_run))
+            .route("/api/control/events", get(events_sse))
     }
 
     /// Serialise a [`StateView`] into the JSON envelope. `StateView` itself is

@@ -30,6 +30,27 @@ Anything without one of those is reported as ``unproven`` and left running. A
 survivor we failed to prove is a survivor we keep; killing the wrong process in a
 live workspace costs far more than missing one.
 
+**Three ownership buckets** (run-level inventory + process verdicts):
+
+``provable``
+    Terminal run carries a recorded ``worker_pgid``/``worker_pid`` (or a live
+    process is proven via ``SPAWN_RUN_ID`` / matching pgid). Kill candidates only
+    come from this bucket.
+
+``legacy``
+    Historical terminal run without a recorded pgid, explicitly marked by the
+    one-shot migration (``reaper_ownership: legacy``). The reaper never treats
+    these as kill sources — even if a lingering process still carries their
+    ``SPAWN_RUN_ID``.
+
+``undecidable``
+    Terminal run with neither a recorded pgid nor a legacy mark, and no positive
+    env proof on a live process. Fail-closed: never killed.
+
+Migration lives at ``quarantine_legacy_runs`` (doctor: ``--quarantine-legacy-runs``):
+marks terminal-no-pgid as legacy; best-effort recovers pgid for *live* runs only
+when ``SPAWN_RUN_ID`` is positively visible in ``ps``.
+
 **We never take ourselves down.** The terminal-seam caller runs *inside* the very
 run whose survivors it is reaping, so its own pid and every ancestor are excluded
 before anything is signalled. Siblings — the orphaned monitor — remain fair game;
@@ -56,10 +77,20 @@ __all__ = [
     "ReapCandidate",
     "ReapPlan",
     "ReapReceipt",
+    "OwnershipBuckets",
+    "QuarantineResult",
     "PROTECTED_COMMAND_PATTERNS",
+    "REAPER_OWNERSHIP_KEY",
+    "OWNERSHIP_LEGACY",
+    "OWNERSHIP_PROVABLE",
+    "OWNERSHIP_UNDECIDABLE",
     "build_env_index",
     "build_process_table",
+    "classify_run_ownership",
+    "plan_json_payload",
     "plan_reap",
+    "quarantine_legacy_runs",
+    "recorded_worker_pgid",
     "reap_terminal_runs",
     "main",
 ]
@@ -69,6 +100,12 @@ _TRUTHY_OFF = {"0", "false", "no", "off"}
 REAPER_ENABLED_ENV = "VIBECRAFTED_REAPER"
 REAPER_GRACE_ENV = "VIBECRAFTED_REAPER_GRACE_SECONDS"
 DEFAULT_GRACE_SECONDS = 5.0
+
+#: Field written by the one-shot legacy quarantine migration.
+REAPER_OWNERSHIP_KEY = "reaper_ownership"
+OWNERSHIP_LEGACY = "legacy"
+OWNERSHIP_PROVABLE = "provable"
+OWNERSHIP_UNDECIDABLE = "undecidable"
 
 #: Never signalled, even when a proof matches. These are workspace infrastructure
 #: that can share a process group with a run by accident of how a tab was opened:
@@ -103,6 +140,74 @@ def grace_seconds(env: Mapping[str, str] | None = None) -> float:
     except ValueError:
         return DEFAULT_GRACE_SECONDS
     return value if value >= 0 else DEFAULT_GRACE_SECONDS
+
+
+def recorded_worker_pgid(run: Mapping[str, Any]) -> int | None:
+    """Return a recorded process-group id that is safe to treat as ownership proof.
+
+    pgid 0/1 would match half the machine; only a real group (>1) counts.
+    """
+    from .control_plane import _coerce_int
+
+    for key in ("worker_pgid", "worker_pid"):
+        pgid = _coerce_int(run.get(key))
+        if pgid is not None and pgid > 1:
+            return pgid
+    return None
+
+
+def classify_run_ownership(run: Mapping[str, Any]) -> str:
+    """Classify a run into provable / legacy / undecidable.
+
+    ``legacy`` is an explicit field written by the quarantine migration — it
+    wins over a spurious recorded pgid so a marked historical run can never be
+    treated as a kill source.
+    """
+    if str(run.get(REAPER_OWNERSHIP_KEY) or "").strip() == OWNERSHIP_LEGACY:
+        return OWNERSHIP_LEGACY
+    if recorded_worker_pgid(run) is not None:
+        return OWNERSHIP_PROVABLE
+    return OWNERSHIP_UNDECIDABLE
+
+
+@dataclass(frozen=True)
+class OwnershipBuckets:
+    """Terminal-run inventory for the reaper report: three exclusive buckets."""
+
+    provable: tuple[str, ...] = ()
+    legacy: tuple[str, ...] = ()
+    undecidable: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, list[str]]:
+        return {
+            OWNERSHIP_PROVABLE: list(self.provable),
+            OWNERSHIP_LEGACY: list(self.legacy),
+            OWNERSHIP_UNDECIDABLE: list(self.undecidable),
+        }
+
+
+@dataclass
+class QuarantineResult:
+    """Outcome of the one-shot ``reaper_ownership: legacy`` migration."""
+
+    marked_legacy: list[str] = field(default_factory=list)
+    recovered_pgid: list[dict[str, Any]] = field(default_factory=list)
+    skipped_live: list[str] = field(default_factory=list)
+    skipped_has_pgid: list[str] = field(default_factory=list)
+    already_legacy: list[str] = field(default_factory=list)
+    parse_errors: list[str] = field(default_factory=list)
+    changed: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "marked_legacy": list(self.marked_legacy),
+            "recovered_pgid": list(self.recovered_pgid),
+            "skipped_live": list(self.skipped_live),
+            "skipped_has_pgid": list(self.skipped_has_pgid),
+            "already_legacy": list(self.already_legacy),
+            "parse_errors": list(self.parse_errors),
+            "changed": self.changed,
+        }
 
 
 @dataclass(frozen=True)
@@ -149,6 +254,10 @@ class ReapPlan:
     doomed: tuple[ReapCandidate, ...] = ()
     unproven: tuple[ReapCandidate, ...] = ()
     protected: tuple[ReapCandidate, ...] = ()
+    #: Processes tied to a ``reaper_ownership: legacy`` run — never killed.
+    legacy: tuple[ReapCandidate, ...] = ()
+    #: Terminal-run inventory: provable / legacy / undecidable.
+    ownership: OwnershipBuckets = field(default_factory=OwnershipBuckets)
 
     def render(self) -> str:
         """The ``--dry-run`` table: every pid with the evidence behind its verdict."""
@@ -157,6 +266,7 @@ class ReapPlan:
         lines: list[str] = []
         for label, rows in (
             ("REAP", self.doomed),
+            ("KEEP/legacy", self.legacy),
             ("KEEP/unproven", self.unproven),
             ("KEEP/protected", self.protected),
         ):
@@ -166,12 +276,34 @@ class ReapPlan:
                     f"evidence={candidate.evidence or 'unproven':<12} {candidate.command[:80]}"
                 )
         if not lines:
+            buckets = self.ownership
+            if buckets.legacy or buckets.undecidable or buckets.provable:
+                return (
+                    "reaper: no survivors of terminal runs "
+                    f"(ownership provable={len(buckets.provable)} "
+                    f"legacy={len(buckets.legacy)} "
+                    f"undecidable={len(buckets.undecidable)})"
+                )
             return "reaper: no survivors of terminal runs"
         header = (
-            f"reaper: {len(self.doomed)} to reap, {len(self.unproven)} unproven, "
-            f"{len(self.protected)} protected"
+            f"reaper: {len(self.doomed)} to reap, {len(self.legacy)} legacy, "
+            f"{len(self.unproven)} unproven, {len(self.protected)} protected"
         )
         return "\n".join([header, *lines])
+
+
+def plan_json_payload(plan: ReapPlan, dry_run: bool = False) -> dict[str, Any]:
+    """Machine-readable reap plan: explicit ownership buckets + process rows."""
+    return {
+        "should_run": plan.should_run,
+        "skip_reason": plan.skip_reason,
+        "dry_run": dry_run,
+        "ownership": plan.ownership.as_dict(),
+        "reaped": [c.row() for c in plan.doomed],
+        "legacy": [c.row() for c in plan.legacy],
+        "unproven": [c.row() for c in plan.unproven],
+        "protected": [c.row() for c in plan.protected],
+    }
 
 
 @dataclass
@@ -283,23 +415,55 @@ def _terminal_run_index(
 ) -> tuple[
     dict[str, dict[str, Any]],
     dict[int, str],
+    dict[int, str],
+    set[str],
+    OwnershipBuckets,
 ]:
-    """Map terminal runs by id, and their recorded process groups back to run ids."""
-    from .control_plane import _coerce_int, _run_is_terminal
+    """Map terminal runs by id, pgid ownership, legacy set, and ownership inventory.
+
+    Legacy runs are inventoried and tracked in ``legacy_pgid_owner`` for KEEP
+    reporting only — never in ``pgid_owner`` (kill source). A process that still
+    carries their ``SPAWN_RUN_ID`` or matches a legacy-recorded pgid is reported
+    in the legacy process bucket instead of doomed.
+    """
+    from .control_plane import _run_is_terminal
 
     by_run: dict[str, dict[str, Any]] = {}
     pgid_owner: dict[int, str] = {}
+    legacy_pgid_owner: dict[int, str] = {}
+    legacy_runs: set[str] = set()
+    provable: list[str] = []
+    legacy_ids: list[str] = []
+    undecidable: list[str] = []
+
     for run in runs:
         run_id = str(run.get("run_id") or "").strip()
         if not run_id or not _run_is_terminal(dict(run)):
             continue
-        by_run[run_id] = dict(run)
-        for key in ("worker_pgid", "worker_pid"):
-            pgid = _coerce_int(run.get(key))
-            # pgid 0/1 would match half the machine; only a real group proves ownership.
-            if pgid is not None and pgid > 1:
+        payload = dict(run)
+        by_run[run_id] = payload
+        bucket = classify_run_ownership(payload)
+        if bucket == OWNERSHIP_LEGACY:
+            legacy_runs.add(run_id)
+            legacy_ids.append(run_id)
+            pgid = recorded_worker_pgid(payload)
+            if pgid is not None:
+                legacy_pgid_owner.setdefault(pgid, run_id)
+            continue
+        if bucket == OWNERSHIP_PROVABLE:
+            provable.append(run_id)
+            pgid = recorded_worker_pgid(payload)
+            if pgid is not None:
                 pgid_owner.setdefault(pgid, run_id)
-    return by_run, pgid_owner
+            continue
+        undecidable.append(run_id)
+
+    ownership = OwnershipBuckets(
+        provable=tuple(provable),
+        legacy=tuple(legacy_ids),
+        undecidable=tuple(undecidable),
+    )
+    return by_run, pgid_owner, legacy_pgid_owner, legacy_runs, ownership
 
 
 def plan_reap(
@@ -318,9 +482,11 @@ def plan_reap(
     if not reaper_enabled(env):
         return ReapPlan(should_run=False, skip_reason="disabled")
 
-    by_run, pgid_owner = _terminal_run_index(runs)
+    by_run, pgid_owner, legacy_pgid_owner, legacy_runs, ownership = _terminal_run_index(
+        runs
+    )
     if not by_run:
-        return ReapPlan(should_run=True)
+        return ReapPlan(should_run=True, ownership=ownership)
 
     env_index = {} if env_index is None else env_index
     self_pid = os.getpid() if self_pid is None else self_pid
@@ -332,6 +498,7 @@ def plan_reap(
     doomed: list[ReapCandidate] = []
     unproven: list[ReapCandidate] = []
     protected: list[ReapCandidate] = []
+    legacy_candidates: list[ReapCandidate] = []
 
     for entry in table:
         if entry.pid <= 1 or entry.pid in protected_pids:
@@ -340,16 +507,28 @@ def plan_reap(
         run_id = ""
         evidence = ""
         detail = ""
+        is_legacy = False
 
         env_run_id = env_index.get(entry.pid, "")
         if env_run_id and env_run_id in by_run:
-            run_id, evidence = env_run_id, "env_run_id"
-            detail = f"SPAWN_RUN_ID={env_run_id}"
+            if env_run_id in legacy_runs:
+                is_legacy = True
+                run_id, evidence = env_run_id, OWNERSHIP_LEGACY
+                detail = f"reaper_ownership=legacy SPAWN_RUN_ID={env_run_id}"
+            else:
+                run_id, evidence = env_run_id, "env_run_id"
+                detail = f"SPAWN_RUN_ID={env_run_id}"
         else:
-            owner = pgid_owner.get(entry.pgid)
-            if owner:
-                run_id, evidence = owner, "worker_pgid"
-                detail = f"pgid={entry.pgid} matches run worker_pgid"
+            legacy_owner = legacy_pgid_owner.get(entry.pgid)
+            if legacy_owner:
+                is_legacy = True
+                run_id, evidence = legacy_owner, OWNERSHIP_LEGACY
+                detail = f"reaper_ownership=legacy pgid={entry.pgid}"
+            else:
+                owner = pgid_owner.get(entry.pgid)
+                if owner:
+                    run_id, evidence = owner, "worker_pgid"
+                    detail = f"pgid={entry.pgid} matches run worker_pgid"
 
         if not evidence:
             # Only surface processes that look run-adjacent; the whole machine is
@@ -372,6 +551,9 @@ def plan_reap(
             evidence=evidence,
             detail=detail,
         )
+        if is_legacy or run_id in legacy_runs:
+            legacy_candidates.append(candidate)
+            continue
         if _is_protected(entry.command):
             protected.append(candidate)
         else:
@@ -382,6 +564,8 @@ def plan_reap(
         doomed=tuple(doomed),
         unproven=tuple(unproven),
         protected=tuple(protected),
+        legacy=tuple(legacy_candidates),
+        ownership=ownership,
     )
 
 
@@ -504,6 +688,124 @@ def _terminal_run_snapshots() -> list[dict[str, Any]]:
         return []
 
 
+def quarantine_legacy_runs(
+    runs: Iterable[Mapping[str, Any]] | None = None,
+    table: Sequence[ProcessEntry] | None = None,
+    env_index: Mapping[int, str] | None = None,
+    *,
+    dry_run: bool = False,
+    writer: Callable[[str, dict[str, Any]], None] | None = None,
+) -> QuarantineResult:
+    """One-shot migration: mark terminal runs without pgid as ``reaper_ownership: legacy``.
+
+    Rules (fail-closed, no fiction):
+
+    * Terminal + no valid recorded pgid → write ``reaper_ownership: legacy``.
+    * Terminal + valid pgid → untouched (already provable).
+    * Already ``reaper_ownership: legacy`` → no write (idempotent).
+    * Live (non-terminal) → never marked legacy; best-effort recover
+      ``worker_pgid`` from the process table **only** when ``SPAWN_RUN_ID`` is
+      positively visible for that run (env proof). A bare pgid match is not enough.
+
+    Historical JSON variants that break parsing are listed in ``parse_errors``
+    and skipped rather than crashing the migration.
+    """
+    from .control_plane import (
+        _run_is_terminal,
+        _snapshot_path,
+        _write_json,
+    )
+
+    result = QuarantineResult()
+
+    if runs is None:
+        try:
+            run_list: list[dict[str, Any]] = _terminal_run_snapshots()
+        except Exception as exc:  # pragma: no cover - defensive
+            result.parse_errors.append(f"load_snapshots:{exc}")
+            return result
+    else:
+        run_list = []
+        for raw in runs:
+            try:
+                run_list.append(dict(raw))
+            except Exception as exc:
+                result.parse_errors.append(f"coerce:{exc}")
+
+    proc_table = () if table is None else table
+    # When the caller did not inject a table, only build one if we need live recovery.
+    need_recovery = any(
+        (not _run_is_terminal(r)) and recorded_worker_pgid(r) is None for r in run_list
+    )
+    if table is None and need_recovery:
+        proc_table = build_process_table()
+    index = {} if env_index is None else dict(env_index)
+    if env_index is None and need_recovery:
+        index = build_env_index()
+
+    by_pid = {entry.pid: entry for entry in proc_table}
+
+    def _default_writer(run_id: str, payload: dict[str, Any]) -> None:
+        _write_json(_snapshot_path(run_id), payload)
+
+    persist = writer if writer is not None else _default_writer
+
+    for run in run_list:
+        try:
+            run_id = str(run.get("run_id") or "").strip()
+            if not run_id:
+                result.parse_errors.append("missing_run_id")
+                continue
+            payload = dict(run)
+
+            if not _run_is_terminal(payload):
+                # Live run: never legacy. Best-effort pgid recovery with env proof only.
+                if recorded_worker_pgid(payload) is not None:
+                    result.skipped_live.append(run_id)
+                    continue
+                recovered: int | None = None
+                for pid, env_run_id in index.items():
+                    if env_run_id != run_id:
+                        continue
+                    entry = by_pid.get(pid)
+                    if entry is None:
+                        continue
+                    if entry.pgid > 1:
+                        recovered = entry.pgid
+                        break
+                if recovered is None:
+                    result.skipped_live.append(run_id)
+                    continue
+                payload["worker_pgid"] = recovered
+                if not dry_run:
+                    persist(run_id, payload)
+                result.recovered_pgid.append(
+                    {"run_id": run_id, "worker_pgid": recovered}
+                )
+                result.changed += 1
+                continue
+
+            # Terminal path.
+            if str(payload.get(REAPER_OWNERSHIP_KEY) or "").strip() == OWNERSHIP_LEGACY:
+                result.already_legacy.append(run_id)
+                continue
+            if recorded_worker_pgid(payload) is not None:
+                result.skipped_has_pgid.append(run_id)
+                continue
+
+            payload[REAPER_OWNERSHIP_KEY] = OWNERSHIP_LEGACY
+            if not dry_run:
+                persist(run_id, payload)
+            result.marked_legacy.append(run_id)
+            result.changed += 1
+        except Exception as exc:
+            # Quarantine variants, never crash the doctor path.
+            rid = str(run.get("run_id") or "?")
+            result.parse_errors.append(f"{rid}:{type(exc).__name__}:{exc}")
+
+    return result
+
+
 def reap_terminal_runs(
     dry_run: bool = False,
     env: Mapping[str, str] | None = None,
@@ -559,14 +861,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.json:
         print(
             json.dumps(
-                {
-                    "should_run": plan.should_run,
-                    "skip_reason": plan.skip_reason,
-                    "dry_run": args.dry_run,
-                    "reaped": [c.row() for c in plan.doomed],
-                    "unproven": [c.row() for c in plan.unproven],
-                    "protected": [c.row() for c in plan.protected],
-                },
+                plan_json_payload(plan, dry_run=args.dry_run),
                 indent=2,
                 ensure_ascii=False,
             )

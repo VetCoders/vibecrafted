@@ -2402,9 +2402,12 @@ name = "vibecrafted-server-web"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "bytes",
  "chrono",
  "console_error_panic_hook",
  "control-core",
+ "futures-util",
+ "http",
  "http-body-util",
  "leptos",
  "leptos_axum",
