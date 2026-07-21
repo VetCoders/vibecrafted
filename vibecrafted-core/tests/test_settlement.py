@@ -57,7 +57,8 @@ def test_exit_zero_without_report_is_needs_attention() -> None:
     assert "without_report" in settlement.reason
 
 
-def test_report_without_seal_is_needs_attention(tmp_path: Path) -> None:
+def test_unsealed_kernel_axes_reason_is_not_rewritten(tmp_path: Path) -> None:
+    """Polarized: kernel receipt present → axes_* reason stays; no legacy rewrite."""
     report = tmp_path / "report.md"
     report.write_text("# done\n", encoding="utf-8")
     settlement = settle_payload(
@@ -70,6 +71,27 @@ def test_report_without_seal_is_needs_attention(tmp_path: Path) -> None:
             "prompt": "settle the layer",
             "proof_state": "undeclared",
             "delivery_state": "unverified",
+        }
+    )
+    assert settlement is not None
+    assert settlement.verdict is SettlementVerdict.NEEDS_ATTENTION
+    assert settlement.reason == "axes_e=none_p=undeclared_d=unverified"
+    assert settlement.claim_digest
+
+
+def test_legacy_report_without_seal_when_no_kernel_axes(tmp_path: Path) -> None:
+    """No kernel receipt: legacy finalize demotes with report_without_seal."""
+    report = tmp_path / "report.md"
+    report.write_text("# done\n", encoding="utf-8")
+    settlement = settle_payload(
+        {
+            "state": "report_validated",
+            "exit_code": 0,
+            "report": str(report),
+            "agent": "codex",
+            "skill": "workflow",
+            "prompt": "settle the layer",
+            # deliberately no proof_state / delivery_state / delivery_axes
         }
     )
     assert settlement is not None
@@ -252,7 +274,13 @@ def test_sync_state_writes_settlement_on_terminal(
     run = next(r for r in snapshot["recent_runs"] if r["run_id"] == "work-settle-1")
 
     assert run["settlement_verdict"] == "needs_attention"
-    assert run["settlement_reason"] == "report_without_seal"
+    # sync_state projects kernel axes onto the board even when meta omitted them;
+    # polarized dialect keeps the axes reason (no rewrite to report_without_seal).
+    assert run["settlement_reason"].startswith("axes_"), run["settlement_reason"]
+    assert (
+        "unverified" in run["settlement_reason"]
+        or "undeclared" in run["settlement_reason"]
+    )
     assert run["settlement_tui"] == "n"
     assert "settlement_counts" in snapshot
     assert snapshot["settlement_counts"]["n"] >= 1

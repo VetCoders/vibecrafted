@@ -1,6 +1,6 @@
 """Settlement layer — typed terminal for every finished run.
 
-Contract (canonical draft v1, 2026-07-21):
+Contract (canonical draft v1, polarized 2026-07-21):
 
 **Artifact without settlement = automatically ``needs_attention`` (TUI ``n``),
 never silence.**
@@ -9,6 +9,16 @@ The delivery-proof kernel (``DeliveryState`` / ``ProofState``) answers "was
 the claim sealed?" Settlement answers a different question: "where does this
 run sit on the operator board (f/x/n)?" Those axes are deliberately separate.
 ``exit_code == 0`` alone can never produce ``FINALIZED``.
+
+**Reason dialect (one language, no dual rewrite):**
+
+- When a delivery-kernel receipt is present (``kernel_axes`` on the run),
+  ``settlement_reason`` is the triage classification reason
+  (``axes_e=…_p=…_d=…``, ``delivery_sealed``, ``execution_failed``, …).
+  Settlement does **not** rewrite axes into legacy human tokens.
+- When no kernel receipt is present (legacy five-signal path), settlement may
+  use legacy tokens (``report_without_seal``, ``claim_unchecked``,
+  ``exit_0_without_report``, …).
 
 Terminals (1:1 to TUI f/x/n; INVALID folds into ``x`` with reason):
 
@@ -360,18 +370,16 @@ def settle_payload(
         )
 
     has_report = bool(signals.report_exists)
-    # classify_run (legacy or axes) may already say needs_attention for an
-    # unsealed report. Prefer the settlement contract vocabulary so the board
-    # and tests speak "report_without_seal" / "claim_unchecked", not only
-    # triage's axes_e=… encoding.
+    # Polarized contract (doctrine, 2026-07-21):
+    # When a delivery-kernel receipt is present, settlement_reason IS the
+    # triage classification reason (axes_e=… / delivery_sealed / …). Never
+    # rewrite axes into legacy tokens. Legacy human tokens
+    # (report_without_seal, claim_unchecked) apply only when kernel_axes
+    # is absent — one language per path, no dual dialect.
     if classification.verdict == VERDICT_NEEDS_ATTENTION:
         reason = classification.reason
-        if has_report and not _proof_passed(payload):
+        if signals.kernel_axes is None and has_report and not _proof_passed(payload):
             reason = "claim_unchecked" if not claim_digest else "report_without_seal"
-        elif not has_report and "without_report" not in reason:
-            # Axes path often parks death-without-delivery as axes_*; keep
-            # the classifier reason when it already names the hole.
-            pass
         return Settlement(
             verdict=SettlementVerdict.NEEDS_ATTENTION,
             reason=reason,
@@ -394,9 +402,16 @@ def settle_payload(
                 claim_digest="",
             )
         if not _proof_passed(payload):
+            # Axes path never finalizes without delivery=sealed; this demotion
+            # is legacy-only. Keep the legacy token only when no kernel receipt.
+            demote_reason = (
+                classification.reason
+                if signals.kernel_axes is not None
+                else "report_without_seal"
+            )
             return Settlement(
                 verdict=SettlementVerdict.NEEDS_ATTENTION,
-                reason="report_without_seal",
+                reason=demote_reason,
                 settled_at=settled_at,
                 source=source,
                 claim_digest=claim_digest,
