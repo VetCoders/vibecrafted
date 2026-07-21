@@ -13,9 +13,15 @@
 //!   raw sources plus lifecycle projections so the server never depends on the
 //!   Python sync having run.
 //! * `GET /api/control/runs` — every `runs/<id>.json` snapshot, newest-first.
-//! * `GET /api/control/runs/{run_id}` — a single run, or `404` JSON.
+//!   Each run serialises optional delivery-proof axes (`execution_state`,
+//!   `proof_state`, `delivery_state`) and optional `seal` when present on the
+//!   kernel receipt / snapshot. Absent axes stay absent (never invented from
+//!   `completed`).
+//! * `GET /api/control/runs/{run_id}` — a single run, or `404` JSON. Same axis
+//!   / seal projection as the list route.
 //! * `GET /api/control/lifecycle` — lifecycle run summaries, newest-first.
-//! * `GET /api/control/lifecycle/{run_id}` — full nested lifecycle state.
+//! * `GET /api/control/lifecycle/{run_id}` — full nested lifecycle state with
+//!   projected per-run and per-stage axes (shape of `write_lifecycle_report`).
 
 #[cfg(feature = "ssr")]
 pub mod api {
@@ -91,6 +97,10 @@ pub mod api {
     }
 
     /// Full nested lifecycle state by id, or a `404` JSON body when absent.
+    ///
+    /// The payload includes projected delivery-proof axes on the run and each
+    /// stage (`execution_state` / `proof_state` / `delivery_state`). Projection
+    /// is owned by `control_core` and never maps `completed` → delivered/sealed.
     async fn lifecycle_run(Path(run_id): Path<String>) -> impl IntoResponse {
         let plane = ControlPlane::from_env();
         match plane.resolve_lifecycle_run(&run_id) {
@@ -104,6 +114,9 @@ pub mod api {
     }
 
     /// A single run by id, or a `404` JSON body when absent.
+    ///
+    /// Serialises typed delivery axes and seal when the snapshot/receipt carries
+    /// them; omits those keys for legacy runs (no completed→delivery guess).
     async fn run(Path(run_id): Path<String>) -> impl IntoResponse {
         let plane = ControlPlane::from_env();
         match plane.lookup_run(&run_id) {

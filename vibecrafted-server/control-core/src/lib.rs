@@ -45,11 +45,12 @@ pub mod scaffold;
 
 pub use events::{EventBatch, EventStream};
 pub use model::{
-    ACTIVE_STATES, AgentMeta, EVENT_TAIL_LIMIT, Event, FINAL_STATES, Health, LifecycleBaton,
-    LifecycleDouIndex, LifecycleOperatorAction, LifecycleRun, LifecycleRunSummary, LifecycleStage,
-    LifecycleTransition, RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, SKILL_CODE_MAP,
-    StateClass, classify_state, coerce_int_value, is_active_state, is_final_state, merge_status,
-    operator_session_name, parse_iso, skill_from_code, state_health,
+    ACTIVE_STATES, AgentMeta, DeliveryAxes, DeliverySealRef, DeliveryState, EVENT_TAIL_LIMIT,
+    Event, ExecutionState, FINAL_STATES, Health, LifecycleBaton, LifecycleDouIndex,
+    LifecycleOperatorAction, LifecycleRun, LifecycleRunSummary, LifecycleStage,
+    LifecycleTransition, ProofState, RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, SKILL_CODE_MAP,
+    StateClass, classify_state, coerce_int_value, delivery_axes_for_receipt, is_active_state,
+    is_final_state, merge_status, operator_session_name, parse_iso, skill_from_code, state_health,
 };
 pub use read::{ControlPlane, StateView, vibecrafted_home};
 pub use scaffold::{

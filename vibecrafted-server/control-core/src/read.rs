@@ -20,8 +20,8 @@ use chrono::{DateTime, Utc};
 
 use crate::events::EventStream;
 use crate::model::{
-    AgentMeta, Event, FINAL_STATES, Health, LifecycleRun, LifecycleRunSummary, RECENT_RUN_LIMIT,
-    RUN_STALL_SECONDS, RunStatus, coerce_int_value, is_final_state, merge_status,
+    AgentMeta, DeliverySealRef, Event, FINAL_STATES, Health, LifecycleRun, LifecycleRunSummary,
+    RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, coerce_int_value, is_final_state, merge_status,
     operator_session_name, parse_iso, skill_from_code, state_health,
 };
 
@@ -156,7 +156,7 @@ impl ControlPlane {
             }
             if let Some(run) = read_json::<RunStatus>(&path) {
                 if !run.run_id.is_empty() {
-                    runs.push(run);
+                    runs.push(self.attach_seal_if_present(run));
                 }
             }
         }
@@ -175,7 +175,7 @@ impl ControlPlane {
         let direct = self.run_snapshot_dir().join(format!("{target}.json"));
         if let Some(run) = read_json::<RunStatus>(&direct) {
             if run.run_id == target {
-                return Some(run);
+                return Some(self.attach_seal_if_present(run));
             }
         }
         if let Some(run) = self
@@ -190,10 +190,32 @@ impl ControlPlane {
         // of control_plane.resolve_run so this frontend eye reads the same place
         // the runtime wrote (Niezmiennik 3 — one contract, many eyes).
         if let Some(run) = self.resolve_runtime_run(target) {
-            return Some(run);
+            return Some(self.attach_seal_if_present(run));
         }
         self.resolve_lifecycle_run(target)
             .map(|run| self.lifecycle_run_status(&run))
+    }
+
+    /// Attach a seal projection from `runtime_runs/<id>/delivery-seal.json`
+    /// when the snapshot does not already carry one. Read-only; never invents
+    /// delivery axes from process state.
+    fn attach_seal_if_present(&self, mut run: RunStatus) -> RunStatus {
+        if run.seal.is_none() {
+            run.seal = self.read_seal_ref(&run.run_id);
+        }
+        run
+    }
+
+    /// Read `delivery-seal.json` under the runtime run directory, if present
+    /// and well-formed enough to project.
+    #[must_use]
+    pub fn read_seal_ref(&self, run_id: &str) -> Option<DeliverySealRef> {
+        let target = run_id.trim();
+        if target.is_empty() {
+            return None;
+        }
+        let path = self.runtime_run_dir(target).join("delivery-seal.json");
+        read_json::<DeliverySealRef>(&path).filter(|seal| !seal.seal_id.is_empty())
     }
 
     /// Resolve a run straight from `runtime_runs/<id>/` — the read-follows-write
@@ -242,6 +264,12 @@ impl ControlPlane {
             session_id: String::new(),
             current_loop: None,
             total_loops: None,
+            // No delivery section on a still-launching runtime dir unless a
+            // seal file is later attached by attach_seal_if_present.
+            execution_state: None,
+            proof_state: None,
+            delivery_state: None,
+            seal: None,
         })
     }
 
@@ -269,6 +297,10 @@ impl ControlPlane {
     }
 
     /// Resolve a full nested lifecycle run from `lifecycle_runs/<id>/state.json`.
+    ///
+    /// Delivery-proof axes are projected onto the run and each stage (shape of
+    /// `write_lifecycle_report`) so `/api/control/lifecycle/{run_id}` never
+    /// has to re-derive them from `completed`/`artifact_ok` in the server.
     #[must_use]
     pub fn resolve_lifecycle_run(&self, run_id: &str) -> Option<LifecycleRun> {
         let target = run_id.trim();
@@ -276,8 +308,9 @@ impl ControlPlane {
             return None;
         }
         let state_path = self.lifecycle_run_dir(target).join("state.json");
-        let run = read_json::<LifecycleRun>(&state_path)?;
+        let mut run = read_json::<LifecycleRun>(&state_path)?;
         if run.run_id == target {
+            run.project_delivery_axes();
             Some(run)
         } else {
             None
@@ -285,6 +318,8 @@ impl ControlPlane {
     }
 
     /// Full nested lifecycle runs, newest first by `state.json` mtime.
+    /// Each run carries projected delivery-proof axes (see
+    /// [`LifecycleRun::project_delivery_axes`]).
     #[must_use]
     pub fn load_lifecycle_runs(&self) -> Vec<LifecycleRun> {
         let Ok(entries) = fs::read_dir(self.lifecycle_runs_dir()) else {
@@ -296,12 +331,13 @@ impl ControlPlane {
                 continue;
             }
             let state_path = entry.path().join("state.json");
-            let Some(run) = read_json::<LifecycleRun>(&state_path) else {
+            let Some(mut run) = read_json::<LifecycleRun>(&state_path) else {
                 continue;
             };
             if run.run_id.is_empty() {
                 continue;
             }
+            run.project_delivery_axes();
             runs.push((modified_at(&state_path), run));
         }
         runs.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
@@ -647,6 +683,10 @@ fn normalize_lock(path: &Path, now: DateTime<Utc>) -> Option<RunStatus> {
         session_id: String::new(),
         current_loop: None,
         total_loops: None,
+        execution_state: None,
+        proof_state: None,
+        delivery_state: None,
+        seal: None,
     })
 }
 
@@ -749,6 +789,10 @@ impl MarblesState {
             session_id: String::new(),
             current_loop: self.current_loop,
             total_loops: self.total_loops,
+            execution_state: None,
+            proof_state: None,
+            delivery_state: None,
+            seal: None,
         })
     }
 }
