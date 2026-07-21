@@ -307,6 +307,9 @@ shape. Then default every claim to UNVERIFIED and earn each PASS.
 
 ## Closing Rail
 
+Delivery-proof semantics live in `vibecrafted_core.delivery`; see
+`docs/runtime/DELIVERY_PROOF_KERNEL_v1.md`.
+
 ```text
 =======================
 Remember: audit mode is permission to refuse a claim, not permission

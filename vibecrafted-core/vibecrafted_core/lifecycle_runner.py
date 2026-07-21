@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .control_plane import control_plane_home, normalize_run_root, run_liveness
+from .delivery.model import DeliveryState, ExecutionState, ProofState
 from .workflow import (
     SUPPORTED_AGENTS,
     WorkflowLaunchSpec,
@@ -30,6 +31,40 @@ from .workflows.model import WorkflowManifest, WorkflowStage
 LaunchWorkflow = Callable[[WorkflowLaunchSpec, str | Path], dict[str, Any]]
 AwaitWorkflow = Callable[[dict[str, Any]], dict[str, Any]]
 LIFECYCLE_SCHEMA_ID = "vibecrafted.lifecycle.v1"
+
+
+def delivery_axes_for_receipt(
+    status: str, payload: dict[str, Any] | None = None
+) -> dict[str, str]:
+    """Project legacy lifecycle truth onto the three independent axes.
+
+    A legacy ``completed`` value is execution evidence only.  Missing proof or
+    seal artifacts therefore remain explicitly undeclared/unverified.
+    """
+
+    source = payload or {}
+    execution_default = {
+        "launching": ExecutionState.LAUNCHED,
+        "running": ExecutionState.RUNNING,
+        "completed": ExecutionState.EXITED,
+    }.get(str(status), ExecutionState.FAILED)
+
+    def enum_value(name: str, enum_type: type[Any], default: Any) -> str:
+        raw = source.get(name)
+        try:
+            return enum_type(raw).value if raw is not None else default.value
+        except ValueError:
+            return default.value
+
+    return {
+        "execution_state": enum_value(
+            "execution_state", ExecutionState, execution_default
+        ),
+        "proof_state": enum_value("proof_state", ProofState, ProofState.UNDECLARED),
+        "delivery_state": enum_value(
+            "delivery_state", DeliveryState, DeliveryState.UNVERIFIED
+        ),
+    }
 
 
 @dataclass(frozen=True)
@@ -515,6 +550,7 @@ class LifecycleRunner:
             "agent": spec.agent,
             "root": str(root),
             "status": "launching",
+            **delivery_axes_for_receipt("launching"),
             "await_stages": spec.await_stages,
             "parent_run_id": spec.parent_run_id,
             "operator_actions": [],
@@ -590,6 +626,8 @@ class LifecycleRunner:
                 state_path=state_path,
             )
             state["stages"].append(record)
+            record.update(delivery_axes_for_receipt("launching", record.get("launch")))
+            state.update(delivery_axes_for_receipt("launching", record))
             self._write_state(state_path, state)
             with transcript_path.open(
                 "a", encoding="utf-8", errors="replace"
@@ -620,6 +658,8 @@ class LifecycleRunner:
             record["status"] = (
                 "completed" if await_result.get("artifact_ok") else "failed"
             )
+            record.update(delivery_axes_for_receipt(record["status"], await_result))
+            state.update(delivery_axes_for_receipt(record["status"], record))
             reported_dou = _surfaced_dou_index(await_result)
             if reported_dou is not None:
                 record["dou_index"] = reported_dou
@@ -946,11 +986,15 @@ def record_stage_worker_exit(
 
 def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
     stages = state.get("stages") or []
+    axes = delivery_axes_for_receipt(str(state.get("status") or ""), state)
     lines = [
         f"# Lifecycle run {state.get('run_id')}",
         "",
         f"- workflow: {state.get('workflow')}",
         f"- status: {state.get('status')}",
+        f"- execution_state: {axes['execution_state']}",
+        f"- proof_state: {axes['proof_state']}",
+        f"- delivery_state: {axes['delivery_state']}",
         f"- agent: {state.get('agent')}",
         f"- root: {state.get('root')}",
         f"- context_atlas_ok: {state.get('context_atlas', {}).get('ok')}",
@@ -967,6 +1011,7 @@ def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
         lines.append(f"- accepted_dou_findings: {len(accepted_dou)}")
     lines.extend(["", "## Stages"])
     for stage in stages:
+        stage_axes = delivery_axes_for_receipt(str(stage.get("status") or ""), stage)
         lines.extend(
             [
                 "",
@@ -984,6 +1029,9 @@ def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
                 f"  - commit_after: {stage.get('commit_after', '')}",
                 f"  - exit_code: {stage.get('await', {}).get('exit_code', '')}",
                 f"  - artifact_ok: {stage.get('await', {}).get('artifact_ok', '')}",
+                f"  - execution_state: {stage_axes['execution_state']}",
+                f"  - proof_state: {stage_axes['proof_state']}",
+                f"  - delivery_state: {stage_axes['delivery_state']}",
                 "  - transition_conditions: "
                 + ", ".join(stage.get("transition_conditions") or []),
                 "  - allowed_artifacts: "
@@ -1041,11 +1089,13 @@ class LifecycleSupervisor:
             # Primary no-await mode: the runner exits before the worker writes
             # its report, so the DoU index only exists in the live frontmatter.
             dou_value = report_dou_index(str(stage_launch.get("report") or ""))
+        axes = delivery_axes_for_receipt(str(state.get("status") or ""), state)
         return {
             "schema": state.get("schema"),
             "run_id": state.get("run_id"),
             "workflow": state.get("workflow"),
             "status": state.get("status"),
+            **axes,
             "current_stage": last_stage.get("id", ""),
             "next_stage": (state.get("baton") or {}).get("next_stage", ""),
             "next_agent": (state.get("baton") or {}).get("next_agent", ""),
@@ -1069,6 +1119,10 @@ def _print_lifecycle_receipt(state: dict[str, Any]) -> None:
     print(f"run_id:     {state.get('run_id')}")
     print(f"workflow:   {state.get('workflow')}")
     print(f"status:     {state.get('status')}")
+    axes = delivery_axes_for_receipt(str(state.get("status") or ""), state)
+    print(f"execution:  {axes['execution_state']}")
+    print(f"proof:      {axes['proof_state']}")
+    print(f"delivery:   {axes['delivery_state']}")
     print(f"state:      {state.get('state_path')}")
     print(f"report:     {state.get('report_path')}")
     print("=" * (24 + len(title)))

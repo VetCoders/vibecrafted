@@ -232,6 +232,9 @@ backlog cuts on the operator's button.
 
 ## Dependencies
 
+Delivery-proof semantics live in `vibecrafted_core.delivery`; see
+`docs/runtime/DELIVERY_PROOF_KERNEL_v1.md`.
+
 vc-marbles (Living Tree, cache heat, one round = one commit) ·
 vc-scaffold (brief/tracker shape) · vc-init (orientation evidence) ·
 vc-followup / vc-audit / vc-dou (settlement) · vc-polarize (product smear

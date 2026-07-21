@@ -270,6 +270,9 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
 
 ## Verification carries into the prompt
 
+Delivery-proof semantics live in `vibecrafted_core.delivery`; see
+`docs/runtime/DELIVERY_PROOF_KERNEL_v1.md`.
+
 Every prompt this skill composes must carry the [Verification Rule](../VERIFICATION_RULE.md) into the worker's dispatch: walk-around verification (gates green ≠ works) + loct literal-vs-semantic. See `vc-operator/DISPATCH_TEMPLATE.md` Sections 6 + 9.
 
 _𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_
