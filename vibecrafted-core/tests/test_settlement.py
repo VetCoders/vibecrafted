@@ -10,12 +10,16 @@ import pytest
 
 from vibecrafted_core import control_plane
 from vibecrafted_core.settlement import (
+    BareMarkdownError,
     SettlementVerdict,
     board_fxn_counts,
     can_archive,
     claim_digest_from_payload,
+    is_untitled_markdown,
     orphan_markdown_paths,
+    orphan_settlement_payloads,
     persist_await_verdict,
+    require_bound_markdown,
     settle_payload,
     tui_key_for,
 )
@@ -181,6 +185,27 @@ def test_orphan_markdown_scan(tmp_path: Path) -> None:
     assert "Untitled 1.md" in names
     assert "Untitled-final.md" in names
     assert "real-report.md" not in names
+
+
+def test_require_bound_markdown_refuses_untitled(tmp_path: Path) -> None:
+    bare = tmp_path / "Untitled.md"
+    assert is_untitled_markdown(bare) is True
+    with pytest.raises(BareMarkdownError, match="bare markdown"):
+        require_bound_markdown(bare, run_id="work-1")
+    with pytest.raises(BareMarkdownError, match="run_id"):
+        require_bound_markdown(tmp_path / "ok-report.md", run_id="")
+    bound = require_bound_markdown(tmp_path / "ok-report.md", run_id="work-1")
+    assert bound.name == "ok-report.md"
+
+
+def test_orphan_settlement_payloads_are_needs_attention(tmp_path: Path) -> None:
+    (tmp_path / "Untitled.md").write_text("", encoding="utf-8")
+    payloads = orphan_settlement_payloads(tmp_path, now="2026-07-21T00:00:00+00:00")
+    assert len(payloads) == 1
+    assert payloads[0]["settlement_verdict"] == "needs_attention"
+    assert payloads[0]["settlement_tui"] == "n"
+    assert payloads[0]["settlement_reason"] == "orphan_untitled_markdown"
+    assert payloads[0]["run_id"].startswith("orphan-md-")
 
 
 def test_claim_digest_stable() -> None:
@@ -371,3 +396,22 @@ def test_persist_await_verdict_standalone(tmp_path: Path) -> None:
     assert body["await_rc"] == 1
     assert body["await_outcome"] == "timed_out"
     assert fields["await_reason"] == "idle_stall"
+
+
+def test_sync_state_surfaces_orphan_untitled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
+    art = home / "artifacts" / "Vetcoders" / "vibecrafted" / "2026_0721" / "reports"
+    art.mkdir(parents=True)
+    (art / "Untitled.md").write_text("", encoding="utf-8")
+
+    snapshot = control_plane.sync_state()
+
+    assert snapshot["settlement_counts"]["orphans"] >= 1
+    assert snapshot["settlement_counts"]["n"] >= 1
+    assert any(
+        path.endswith("Untitled.md") for path in snapshot.get("orphan_artifacts") or []
+    )

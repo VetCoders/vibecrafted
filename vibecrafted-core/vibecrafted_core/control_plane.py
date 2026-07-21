@@ -26,6 +26,7 @@ from .runtime_paths import vibecrafted_home
 from .settlement import (
     board_fxn_counts,
     can_archive,
+    orphan_settlement_payloads,
     persist_await_verdict,
     persist_settlement_to_meta,
     settle_payload,
@@ -1602,6 +1603,19 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
         if run.get("health") in {"active", "stalled"}
         and run.get("state") not in FINAL_STATES
     ]
+    # Contract rule 6: legacy Untitled*.md under artifacts/ lands as n.
+    # Full board only — scoped single-run polls must not pay the rglob cost.
+    orphan_runs: list[dict[str, Any]] = []
+    if not scoped:
+        try:
+            orphan_runs = orphan_settlement_payloads(vibecrafted_home() / "artifacts")
+        except OSError:
+            orphan_runs = []
+        if orphan_runs:
+            # Count orphans on the settlement axis; surface a short list for
+            # the board without drowning recent_runs.
+            payload_runs = list(payload_runs) + orphan_runs
+
     recent_runs = payload_runs[:RECENT_RUN_LIMIT]
     # TUI f/x/n reads the settlement axis only — never exit counters or raw states.
     fxn = board_fxn_counts(payload_runs)
@@ -1611,11 +1625,17 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
         "recent_runs": recent_runs,
         "warnings": _warnings_for_runs(payload_runs),
         "events": read_event_tail(),
+        "orphan_artifacts": [
+            str(run.get("orphan_path") or run.get("report") or "")
+            for run in orphan_runs
+            if str(run.get("orphan_path") or run.get("report") or "")
+        ],
         "settlement_counts": {
             "f": fxn.get("f", 0),
             "x": fxn.get("x", 0),
             "n": fxn.get("n", 0),
             "total_settled": sum(fxn.values()),
+            "orphans": len(orphan_runs),
         },
     }
 

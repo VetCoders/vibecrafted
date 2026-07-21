@@ -47,12 +47,16 @@ __all__ = [
     "TUI_FINALIZED",
     "TUI_NEEDS_ATTENTION",
     "SETTLED_TERMINALS",
+    "BareMarkdownError",
     "board_fxn_counts",
     "can_archive",
     "claim_digest_from_payload",
+    "is_untitled_markdown",
     "orphan_markdown_paths",
+    "orphan_settlement_payloads",
     "persist_await_verdict",
     "persist_settlement_to_meta",
+    "require_bound_markdown",
     "settle_payload",
     "settlement_from_payload",
     "tui_key_for",
@@ -355,17 +359,31 @@ def settle_payload(
             claim_digest=claim_digest,
         )
 
+    has_report = bool(signals.report_exists)
+    # classify_run (legacy or axes) may already say needs_attention for an
+    # unsealed report. Prefer the settlement contract vocabulary so the board
+    # and tests speak "report_without_seal" / "claim_unchecked", not only
+    # triage's axes_e=… encoding.
     if classification.verdict == VERDICT_NEEDS_ATTENTION:
+        reason = classification.reason
+        if has_report and not _proof_passed(payload):
+            reason = "claim_unchecked" if not claim_digest else "report_without_seal"
+        elif not has_report and "without_report" not in reason:
+            # Axes path often parks death-without-delivery as axes_*; keep
+            # the classifier reason when it already names the hole.
+            pass
         return Settlement(
             verdict=SettlementVerdict.NEEDS_ATTENTION,
-            reason=classification.reason,
+            reason=reason,
             settled_at=settled_at,
             source=source,
             claim_digest=claim_digest,
         )
 
-    # classify_run says finalized (exit 0 + delivered state + report). Contract
-    # still requires claim + proof/seal — otherwise park as n.
+    # classify_run says finalized (exit 0 + delivered state + report, or
+    # delivery_state=sealed). Contract still requires claim + proof/seal —
+    # otherwise park as n. exit_code==0 alone never reaches here as FINALIZED
+    # without a report (or a seal) from the classifier.
     if classification.verdict == VERDICT_FINALIZED:
         if not claim_digest:
             return Settlement(
@@ -433,6 +451,44 @@ def board_fxn_counts(runs: list[Mapping[str, Any]]) -> dict[str, int]:
 _UNTITLED_RE = re.compile(r"(?i)^untitled.*\.md$")
 
 
+class BareMarkdownError(ValueError):
+    """Raised when an artifact path would violate the bound-markdown contract."""
+
+
+def is_untitled_markdown(path: Path | str) -> bool:
+    """True when the basename matches the bare ``Untitled*.md`` pattern."""
+    name = path.name if isinstance(path, Path) else Path(str(path)).name
+    return bool(_UNTITLED_RE.match(name))
+
+
+def require_bound_markdown(
+    path: Path | str,
+    *,
+    run_id: str = "",
+    claim_digest: str = "",
+) -> Path:
+    """Refuse bare markdown. Artifact creation requires run_id (+ claim digest).
+
+    Contract rule 6: ``Untitled*.md`` cannot be created through the runtime
+    write path. Call this before every report write that the runtime owns.
+    """
+    target = path if isinstance(path, Path) else Path(str(path))
+    if is_untitled_markdown(target):
+        raise BareMarkdownError(
+            f"bare markdown refused: {target.name!r} (Untitled*.md lands only "
+            f"as needs_attention via orphan scan, never as a runtime write)"
+        )
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise BareMarkdownError(f"artifact write requires run_id: {target}")
+    # claim_digest is required for FINALIZED later; at write time we only
+    # refuse the empty-binding case when the caller explicitly asks for it
+    # by passing claim_digest="" *and* setting a sentinel — keep write path
+    # permissive on digest so workers can still land reports that settle as n.
+    _ = claim_digest  # reserved for future hard-require at seal time
+    return target
+
+
 def orphan_markdown_paths(artifacts_root: Path) -> list[Path]:
     """List bare ``Untitled*.md`` artifacts (no run_id binding).
 
@@ -446,6 +502,54 @@ def orphan_markdown_paths(artifacts_root: Path) -> list[Path]:
         if _UNTITLED_RE.match(path.name):
             found.append(path)
     return sorted(found)
+
+
+def orphan_settlement_payloads(
+    artifacts_root: Path,
+    *,
+    now: str | None = None,
+) -> list[dict[str, Any]]:
+    """Project each legacy ``Untitled*.md`` as a synthetic settled-``n`` run.
+
+    Used by the board so orphan artifacts are never silent — they always
+    contribute to the TUI ``n`` count until cleaned up or waived.
+    """
+    stamp = now or _now_iso()
+    payloads: list[dict[str, Any]] = []
+    for path in orphan_markdown_paths(artifacts_root):
+        digest = hashlib.sha256(str(path).encode("utf-8")).hexdigest()[:12]
+        run_id = f"orphan-md-{digest}"
+        settlement = Settlement(
+            verdict=SettlementVerdict.NEEDS_ATTENTION,
+            reason="orphan_untitled_markdown",
+            settled_at=stamp,
+            source="orphan_scan",
+            claim_digest="",
+        )
+        payload: dict[str, Any] = {
+            "run_id": run_id,
+            "state": "completed",
+            "health": "final",
+            "liveness": "terminal",
+            "agent": "orphan",
+            "skill": "orphan_scan",
+            "report": str(path),
+            "latest_report": str(path),
+            "orphan_path": str(path),
+            "updated_at": stamp,
+        }
+        payload.update(settlement.to_payload())
+        payload["settlement"] = {
+            "verdict": settlement.verdict.value,
+            "reason": settlement.reason,
+            "settled_at": settlement.settled_at,
+            "source": settlement.source,
+            "claim_digest": settlement.claim_digest,
+            "waived": False,
+            "tui": settlement.tui_key,
+        }
+        payloads.append(payload)
+    return payloads
 
 
 def persist_settlement_to_meta(meta_path: Path, settlement: Settlement) -> bool:

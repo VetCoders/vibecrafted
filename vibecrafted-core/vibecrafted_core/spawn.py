@@ -15,6 +15,7 @@ from typing import Any, Callable, Sequence
 from .agent_dispatch import extract_session_id, sandbox_supported
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
+from .settlement import BareMarkdownError, require_bound_markdown
 from .telemetry import estimate_cost_usd
 
 EventCallback = Callable[[dict[str, Any]], None]
@@ -937,6 +938,12 @@ def finalize_artifacts(
         final_report = reports_dir / f"{stem}.md"
         final_transcript = reports_dir / f"{stem}.transcript.log"
         final_meta = reports_dir / f"{stem}.meta.json"
+        # Contract rule 6: refuse bare Untitled*.md and unbound report paths.
+        require_bound_markdown(
+            final_report,
+            run_id=str(payload.get("run_id") or ""),
+            claim_digest=str(payload.get("claim_digest") or ""),
+        )
 
         report = _move_artifact(report, final_report)
         transcript = _move_artifact(transcript, final_transcript)
@@ -1039,6 +1046,18 @@ def _ensure_failed_report_artifact(
 
     if not report.exists():
         report.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            require_bound_markdown(
+                report,
+                run_id=str(payload.get("run_id") or handle.run_id or ""),
+            )
+        except BareMarkdownError:
+            # Fall back to a bound name rather than writing Untitled*.md.
+            report = report.with_name(
+                f"{payload.get('run_id') or handle.run_id or 'run'}-failed-report.md"
+            )
+            payload["report"] = str(report)
+            _write_meta(handle.meta_path, payload)
         transcript_ref = str(transcript or payload.get("transcript") or "")
         report.write_text(
             "\n".join(
