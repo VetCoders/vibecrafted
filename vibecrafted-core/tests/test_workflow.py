@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -496,15 +497,14 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
 
     captured: dict[str, Any] = {}
 
-    class FakeProc:
-        pid = 4242
-
-    def fake_popen(command: list[str], **kwargs: Any) -> FakeProc:
+    def fake_host_action(
+        command: list[str], *, operator_session: str, timeout: float = 30.0
+    ) -> workflow._HostActionResult:
         captured["command"] = command
-        captured["kwargs"] = kwargs
-        return FakeProc()
+        captured["operator_session"] = operator_session
+        return workflow._HostActionResult(True, 4242, "", "", False)
 
-    monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(workflow, "_vc_frame_run_host_action", fake_host_action)
 
     payload = workflow.launch_workflow(spec, source)
 
@@ -540,15 +540,50 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert payload["control"].endswith(f"{payload['run_id']}.json")
 
 
-def test_terminal_runtime_degrades_to_headless_when_session_absent(
+def test_terminal_runtime_resurrects_missing_host_session(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """G3: missing host → one create-background + retry, not silent headless."""
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
-    monkeypatch.setenv("VC_FRAME_SESSION_NAME", "vibecrafted")
+    monkeypatch.setenv("VC_FRAME_SESSION_NAME", "host-session")
     source = _source_dir(tmp_path)
     vc_frame = tmp_path / "bin" / "vc-frame"
     vc_frame.parent.mkdir()
-    vc_frame.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    state = tmp_path / "vc_state"
+    state.mkdir()
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'args=("$@")',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                '  if [[ -f "$STATE/live" ]]; then printf "host-session [Created]\\n"; fi',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "attach" && "${2:-}" == "--create-background" ]]; then',
+                '  touch "$STATE/live"',
+                '  printf "created\\n" >> "$STATE/create"',
+                "  exit 0",
+                "fi",
+                # action path: --session NAME action ...
+                'if [[ "${1:-}" == "--session" ]]; then',
+                '  if [[ ! -f "$STATE/live" ]]; then',
+                '    printf "Session \'%s\' not found\\n" "${2:-}" >&2',
+                "    exit 1",
+                "  fi",
+                "  exit 0",
+                "fi",
+                "exit 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
 
     spec = workflow.WorkflowLaunchSpec(
         agent="codex",
@@ -565,27 +600,98 @@ def test_terminal_runtime_degrades_to_headless_when_session_absent(
         "which",
         lambda name: str(vc_frame) if name == "vc-frame" else None,
     )
-    # Requested operator session is not live -> must degrade, not strand worker.
-    monkeypatch.setattr(workflow, "_vc_frame_session_active", lambda _vc, _s: False)
-
-    captured: dict[str, Any] = {}
-
-    class FakeProc:
-        pid = 7777
-
-    def fake_popen(command: list[str], **kwargs: Any) -> FakeProc:
-        captured["command"] = command
-        return FakeProc()
-
-    monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
 
     payload = workflow.launch_workflow(spec, source)
 
     assert payload["accepted"] is True
-    assert payload["transport"] == "headless"
-    # Headless transport runs the dispatcher directly, not a vc-frame new-tab.
-    assert str(vc_frame) not in captured["command"]
-    assert "vibecrafted_core.dispatcher" in " ".join(captured["command"])
+    assert payload["transport"] == "vc-frame"
+    assert (state / "create").is_file()
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "attach" in calls
+    assert "--create-background" in calls
+    assert calls.count("--CALL--") >= 2  # action + list-sessions + create etc.
+
+
+def test_terminal_runtime_host_double_fail_marks_failed_with_last_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """G3: create-background also fails → state=failed + last_error immediately."""
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VC_FRAME_SESSION_NAME", "ghost-host")
+    source = _source_dir(tmp_path)
+    vc_frame = tmp_path / "bin" / "vc-frame"
+    vc_frame.parent.mkdir()
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'if [[ "${1:-}" == "list-sessions" ]]; then exit 0; fi',
+                'if [[ "${1:-}" == "attach" ]]; then',
+                '  printf "attach failed for %s\\n" "${3:-}" >&2',
+                "  exit 1",
+                "fi",
+                'if [[ "${1:-}" == "--session" ]]; then',
+                '  printf "Session \'%s\' not found\\n" "${2:-}" >&2',
+                "  exit 1",
+                "fi",
+                "exit 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+
+    spec = workflow.WorkflowLaunchSpec(
+        agent="codex",
+        mode="implement",
+        skill="implement",
+        prompt="go",
+        file="",
+        runtime="terminal",
+        root=str(tmp_path),
+    )
+    monkeypatch.setattr(workflow, "_stdin_command", lambda _agent: ["codex", "exec"])
+    monkeypatch.setattr(
+        workflow.shutil,
+        "which",
+        lambda name: str(vc_frame) if name == "vc-frame" else None,
+    )
+    # Force the operator session name the stub fails on.
+    monkeypatch.setattr(
+        workflow,
+        "_effective_operator_session",
+        lambda **_kwargs: "ghost-host",
+    )
+
+    events: list[dict[str, Any]] = []
+
+    def _capture_event(**kwargs: Any) -> None:
+        events.append(kwargs)
+
+    monkeypatch.setattr(workflow, "append_event", _capture_event)
+    monkeypatch.setattr(workflow, "sync_state", lambda: {"sync": "test"})
+
+    t0 = time.monotonic()
+    payload = workflow.launch_workflow(spec, source)
+    elapsed = time.monotonic() - t0
+
+    assert payload["accepted"] is False
+    assert (
+        "not found" in (payload.get("last_error") or payload.get("error") or "").lower()
+        or "create-background"
+        in (payload.get("last_error") or payload.get("error") or "").lower()
+    )
+    assert elapsed < 5.0
+    states = [e.get("payload", {}).get("state") for e in events]
+    assert "failed" in states
+    failed = next(e for e in events if e.get("payload", {}).get("state") == "failed")
+    err = str(
+        failed["payload"].get("last_error") or failed["payload"].get("error") or ""
+    )
+    assert err
+    assert "not found" in err.lower() or "create-background" in err.lower()
 
 
 def test_vc_frame_session_active_parses_list_sessions(tmp_path: Path) -> None:
@@ -687,15 +793,14 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
 
     captured: dict[str, Any] = {}
 
-    class FakeProc:
-        pid = 4243
-
-    def fake_popen(command: list[str], **kwargs: Any) -> FakeProc:
+    def fake_host_action(
+        command: list[str], *, operator_session: str, timeout: float = 30.0
+    ) -> workflow._HostActionResult:
         captured["command"] = command
-        captured["kwargs"] = kwargs
-        return FakeProc()
+        captured["kwargs"] = {"operator_session": operator_session}
+        return workflow._HostActionResult(True, 4243, "", "", False)
 
-    monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(workflow, "_vc_frame_run_host_action", fake_host_action)
 
     payload = workflow.launch_workflow(spec, source)
 
@@ -709,10 +814,9 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert Path(payload["transcript"]).parent == runtime_bucket
     assert Path(payload["meta"]).parent == runtime_bucket
     assert Path(payload["prompt_file"]).parent == runtime_bucket
-    assert captured["kwargs"]["env"]["VIBECRAFTED_REPORT_PATH"] == payload["report"]
-    assert captured["kwargs"]["env"]["VIBECRAFTED_CANONICAL_REPORT_DIR"] == str(
-        Path(payload["report"]).parent
-    )
+    # Host-action path does not re-Popen; report path is still on the receipt.
+    assert payload["report"]
+    assert Path(payload["report"]).parent.name == "research"
     command = captured["command"]
     assert command[:5] == [
         str(vc_frame),

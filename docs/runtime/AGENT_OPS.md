@@ -169,6 +169,39 @@ No baton cargo is lost; the stage relaunches with the full report trail.
    exits write nothing, which also keeps the write too rare to race operator
    verbs on the same file.
 
+### Launch-time variant — dead hosting session (G3, 2026-07-21)
+
+Class 2 above covers death **mid-run**. This variant covers death **at
+launch**, before any worker process exists:
+
+- **Symptom**: `vc-frame --session <host> action new-tab ...` prints
+  `Session '<host>' not found` (and some builds still exit 0). The launcher
+  recorded `process_spawned` and later reconciles to `stalled` / `pid_gone`
+  with an empty `last_error`. Observed after a host `vc-frame` session
+  restart: three dispatches died this way with no receipt trail.
+- **Mechanism**: the spawn path treated the short-lived `vc-frame action`
+  process as success (or swallowed the diagnostic), so control-plane never
+  received a terminal `failed` event. Heartbeat was the only detector.
+- **Caller-side contract** (vibecrafted launcher — not a vc-frame change):
+  1. Every `vc-frame ... action ...` on the spawn path checks **exit code
+     and stderr** for the session-not-found diagnostic (exit code alone is
+     insufficient).
+  2. On not-found: exactly **one**
+     `vc-frame attach --create-background <operator_session>` (the same
+     host name already used as `operator_session` in the launch log), then
+     retry the action once.
+  3. On second failure: control-plane run lands `state=failed` with
+     `last_error` containing the vc-frame stderr, **immediately** (≤5 s) —
+     no wait for heartbeat stale. Bash surfaces this via
+     `SPAWN_VC_FRAME_LAST_ERROR` + `spawn_record_host_session_failure`;
+     Python via `_vc_frame_run_host_action` + a failed `append_event`.
+  4. Happy path (host session live): zero extra vc-frame calls beyond the
+     previous action surface.
+- **Surfaces**: `runtime/scripts/lib/vc_frame.sh` (and the shell twin
+  `runtime/shell/lib/vc_frame.sh`), `workflow.launch_workflow` for the
+  Python terminal transport. Hosting session name is never hardcoded —
+  it is the resolved `operator_session` already written to the launch log.
+
 ---
 
 ## Class 3 — Premature/untrusted await (observability contract drift)

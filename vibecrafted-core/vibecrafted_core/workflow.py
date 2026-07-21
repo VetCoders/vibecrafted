@@ -491,16 +491,29 @@ def _write_research_layout(
 
 
 _ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+_SESSION_NOT_FOUND_RE = re.compile(
+    r"Session ['\"][^'\"]+['\"] not found|There is no active session!",
+    re.IGNORECASE,
+)
+
+
+def _vc_frame_stderr_is_session_not_found(text: str) -> bool:
+    """True when stderr carries vc-frame's missing-host-session diagnostic.
+
+    Some builds exit 0 while still printing this message — exit code alone is
+    not sufficient (G3 recon, 2026-07-21).
+    """
+    return bool(_SESSION_NOT_FOUND_RE.search(text or ""))
 
 
 def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
-    """True only if `session` is a live vc-frame session.
+    """True only if `session` is a live (non-EXITED) vc-frame session.
 
     A terminal-runtime launch opens a new tab in an existing operator session
     (`vc-frame --session <name> action new-tab`). If that session does not
     exist, vc-frame prints "Session '<name>' not found" and the tab — and the
-    dispatcher inside it — never runs, leaving the worker dead. Probe the live
-    session list first so the caller can degrade to headless instead.
+    dispatcher inside it — never runs. EXITED sessions are not spawn targets
+    (parity with bash ``spawn_session_is_live``).
     """
     if not session:
         return False
@@ -517,9 +530,121 @@ def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
         return False
     for line in result.stdout.splitlines():
         clean = _ANSI_SGR.sub("", line).strip()
-        if clean and clean.split()[0] == session:
-            return True
+        if not clean:
+            continue
+        name = clean.split()[0]
+        if name != session:
+            continue
+        if "EXITED" in clean.upper():
+            return False
+        return True
     return False
+
+
+def _vc_frame_create_background(vc_frame: str, session: str) -> tuple[bool, str]:
+    """One-shot ``attach --create-background`` for a missing host session."""
+    try:
+        result = subprocess.run(
+            [vc_frame, "attach", "--create-background", session],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    combined = "\n".join(
+        part for part in (result.stderr or "", result.stdout or "") if part
+    ).strip()
+    if _vc_frame_session_active(vc_frame, session):
+        return True, combined
+    if result.returncode == 0:
+        # Some builds report success before the session is listable; accept
+        # zero exit when the message is not a hard failure.
+        return True, combined
+    return False, combined or f"attach --create-background exit {result.returncode}"
+
+
+@dataclass(frozen=True)
+class _HostActionResult:
+    ok: bool
+    pid: int | None
+    error: str
+    stderr: str
+    resurrected: bool = False
+
+
+def _vc_frame_run_host_action(
+    command: list[str],
+    *,
+    operator_session: str,
+    timeout: float = 30.0,
+) -> _HostActionResult:
+    """Run a vc-frame host action with one create-background retry on not-found.
+
+    Treats "Session 'X' not found" as failure even when the binary exits 0.
+    """
+    if not command:
+        return _HostActionResult(False, None, "empty vc-frame command", "", False)
+
+    resurrected = False
+
+    def _run_once() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    # CompletedProcess has no .pid; host actions are short-lived, so pid is
+    # informational only. Use os.getpid() of the parent as a stable handle for
+    # receipt fields that require an int.
+    action_pid = os.getpid()
+
+    try:
+        result = _run_once()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _HostActionResult(False, None, f"{type(exc).__name__}: {exc}", "", False)
+
+    combined = "\n".join(
+        part for part in (result.stderr or "", result.stdout or "") if part
+    ).strip()
+
+    if _vc_frame_stderr_is_session_not_found(combined):
+        if not operator_session:
+            return _HostActionResult(False, action_pid, combined, combined, False)
+        ok_create, create_err = _vc_frame_create_background(
+            command[0], operator_session
+        )
+        resurrected = True
+        if not ok_create:
+            err = "\n".join(
+                part
+                for part in (combined, create_err, "attach --create-background failed")
+                if part
+            )
+            return _HostActionResult(False, action_pid, err, err, True)
+        try:
+            result = _run_once()
+        except (OSError, subprocess.SubprocessError) as exc:
+            return _HostActionResult(
+                False, None, f"{type(exc).__name__}: {exc}", "", True
+            )
+        combined = "\n".join(
+            part for part in (result.stderr or "", result.stdout or "") if part
+        ).strip()
+        if _vc_frame_stderr_is_session_not_found(combined) or result.returncode != 0:
+            err = (
+                combined
+                or f"vc-frame action failed after host resurrect (exit {result.returncode})"
+            )
+            return _HostActionResult(False, action_pid, err, err, True)
+
+    elif result.returncode != 0:
+        err = combined or f"vc-frame action exit {result.returncode}"
+        return _HostActionResult(False, action_pid, err, err, False)
+
+    return _HostActionResult(True, action_pid, "", combined, resurrected)
 
 
 def _launch_transport_command(
@@ -546,10 +671,11 @@ def _launch_transport_command(
     if not vc_frame:
         return dispatch_command, "headless", None
 
-    # Degrade-not-die: a terminal launch into a non-existent operator session
-    # would open no tab and silently strand the worker. Fall back to headless.
-    if not _vc_frame_session_active(vc_frame, operator_session):
-        return dispatch_command, "headless", None
+    # G3: missing host sessions are handled at launch time via one-shot
+    # `attach --create-background` + action retry (`_vc_frame_run_host_action`).
+    # Do not silently degrade to headless here — that path left runs in
+    # process_spawned→stalled with no last_error. Always emit the vc-frame
+    # transport when the binary exists; the spawn step fails loud on double-fail.
 
     command_script = _write_command_script(
         launch_dir / f"{run_id}-dispatcher.sh",
@@ -1407,16 +1533,78 @@ def launch_workflow(
             )
             + "\n"
         )
+        launcher_pid: int | None = None
         try:
-            proc = subprocess.Popen(
-                command,
-                cwd=Path(source_dir).resolve(),
-                env=merged_env,
-                stdout=handle,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                text=True,
-            )
+            if transport == "vc-frame":
+                # G3: run action synchronously so "Session not found" cannot
+                # leave a silent process_spawned receipt. One create-background
+                # retry lives inside _vc_frame_run_host_action.
+                host = _vc_frame_run_host_action(
+                    command, operator_session=operator_session
+                )
+                handle.write(
+                    json.dumps(
+                        {
+                            "ts": stamp,
+                            "event": "vc_frame_host_action",
+                            "ok": host.ok,
+                            "resurrected": host.resurrected,
+                            "error": host.error,
+                            "stderr": host.stderr[:2000] if host.stderr else "",
+                        }
+                    )
+                    + "\n"
+                )
+                if not host.ok:
+                    append_event(
+                        kind="launch",
+                        run_id=run_id,
+                        message=f"vc-frame host session launch failed: {host.error}",
+                        payload={
+                            "state": "failed",
+                            "agent": spec.agent,
+                            "skill": spec.skill,
+                            "mode": spec.mode,
+                            "runtime": spec.runtime,
+                            "root": spec.root,
+                            "operator_session": operator_session,
+                            "session_id": session_id,
+                            "error": host.error,
+                            "last_error": host.error,
+                            "retry_of": retry_of,
+                            **model_receipt,
+                        },
+                    )
+                    return {
+                        "accepted": False,
+                        "message": f"Failed to launch {spec.skill}: {host.error}",
+                        "command": command,
+                        "worker_command": worker_command,
+                        "dispatch_command": dispatch_command,
+                        "transport": transport,
+                        "command_script": str(command_script or ""),
+                        "launch_log": str(launch_log),
+                        "spec": safe_spec,
+                        "error": host.error,
+                        "last_error": host.error,
+                        "run_id": run_id,
+                        "operator_session": operator_session,
+                        "retry_of": retry_of,
+                        **model_receipt,
+                        "control_plane": sync_state(),
+                    }
+                launcher_pid = host.pid
+            else:
+                proc = subprocess.Popen(
+                    command,
+                    cwd=Path(source_dir).resolve(),
+                    env=merged_env,
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    text=True,
+                )
+                launcher_pid = proc.pid
         except OSError as exc:
             handle.write(
                 json.dumps(
@@ -1446,6 +1634,7 @@ def launch_workflow(
                     "operator_session": operator_session,
                     "session_id": session_id,
                     "error": f"{type(exc).__name__}: {exc}",
+                    "last_error": f"{type(exc).__name__}: {exc}",
                     "retry_of": retry_of,
                     **model_receipt,
                 },
@@ -1472,7 +1661,7 @@ def launch_workflow(
             message="dispatcher process spawned",
             payload={
                 "state": "process_spawned",
-                "launcher_pid": proc.pid,
+                "launcher_pid": launcher_pid,
                 "agent": spec.agent,
                 "skill": spec.skill,
                 "mode": spec.mode,
@@ -1499,7 +1688,7 @@ def launch_workflow(
             },
         )
         handle.write(
-            json.dumps({"ts": stamp, "event": "spawned", "pid": proc.pid}) + "\n"
+            json.dumps({"ts": stamp, "event": "spawned", "pid": launcher_pid}) + "\n"
         )
 
     return {
@@ -1510,7 +1699,7 @@ def launch_workflow(
         "worker_command": worker_command,
         "transport": transport,
         "command_script": str(command_script or ""),
-        "pid": proc.pid,
+        "pid": launcher_pid,
         "run_id": run_id,
         "agent": spec.agent,
         "skill": spec.skill,

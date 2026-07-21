@@ -2638,9 +2638,18 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
     )
 
     calls = _split_vc_frame_calls(capture_file.read_text(encoding="utf-8"))
-    assert len(calls) == 2
+    # G3 after-base probe may insert `action new-tab --help` between list-tabs
+    # and the real new-tab; filter help probes so the contract stays stable.
+    material = [
+        c
+        for c in calls
+        if not (
+            len(c) >= 3 and c[0] == "action" and c[1] == "new-tab" and "--help" in c
+        )
+    ]
+    assert len(material) == 2
 
-    list_tabs_call, workflow_call = calls
+    list_tabs_call, workflow_call = material
     assert list_tabs_call[:5] == [
         "--session",
         operator_session,
@@ -2652,7 +2661,7 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
     assert "--name" in workflow_call
     assert run_id in workflow_call
     assert "workflow" not in workflow_call[workflow_call.index("--name") + 1]
-    assert not any("startup-monitor" in arg for call in calls for arg in call)
+    assert not any("startup-monitor" in arg for call in material for arg in call)
 
     workflow_script = Path(workflow_call[workflow_call.index("--") + 1])
     assert workflow_script.parent == expected_tmp_root
@@ -2806,3 +2815,196 @@ PY
 
     assert result.stderr == ""
     assert done_file.read_text(encoding="utf-8") == "first-acquired\n"
+
+
+def test_spawn_vc_frame_session_action_resurrects_missing_host_once(
+    tmp_path: Path,
+) -> None:
+    """G3: first action Session-not-found → one create-background → retry ok."""
+    host = "host-resurrect"
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                '  if [[ -f "$STATE/live" ]]; then printf "%s [Created]\\n" "host-resurrect"; fi',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "attach" && "${2:-}" == "--create-background" ]]; then',
+                '  touch "$STATE/live"',
+                '  printf "create-ok\\n" >> "$STATE/create"',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "--session" ]]; then',
+                '  if [[ ! -f "$STATE/live" ]]; then',
+                '    printf "Session \'%s\' not found\\n" "${2:-}" >&2',
+                "    # Intentionally exit 0: real binary has been observed doing this.",
+                "    exit 0",
+                "  fi",
+                '  printf "action-ok\\n" >> "$STATE/action"',
+                "  exit 0",
+                "fi",
+                "exit 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        source "{COMMON_SH}"
+        spawn_vc_frame_session_action vc-frame "{host}" action new-tab --name t --cwd "{tmp_path}" -- /bin/true
+        printf 'status=%s\\n' "$?"
+        printf 'create=%s\\n' "$(cat "{state}/create" 2>/dev/null || true)"
+        printf 'action=%s\\n' "$(cat "{state}/action" 2>/dev/null || true)"
+        '''
+    )
+
+    assert "status=0" in result.stdout
+    assert "create-ok" in result.stdout
+    assert "action-ok" in result.stdout
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert calls.count("attach") == 1
+    assert "--create-background" in calls
+    # Two action invocations (first miss, second after resurrect).
+    assert calls.count("new-tab") == 2
+
+
+def test_spawn_vc_frame_session_action_double_fail_is_loud(tmp_path: Path) -> None:
+    """G3: create-background also fails → return 2 + SPAWN_VC_FRAME_LAST_ERROR."""
+    host = "ghost-host"
+    state = tmp_path / "state"
+    state.mkdir()
+    meta = tmp_path / "meta.json"
+    meta.write_text(
+        json.dumps({"status": "launching", "run_id": "g3-double-fail"}),
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" ]]; then exit 0; fi',
+                'if [[ "${1:-}" == "attach" ]]; then',
+                '  printf "attach boom\\n" >&2',
+                "  exit 1",
+                "fi",
+                'if [[ "${1:-}" == "--session" ]]; then',
+                '  printf "Session \'%s\' not found\\n" "${2:-}" >&2',
+                "  exit 1",
+                "fi",
+                "exit 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            _ENV_SANITIZE
+            + f'''
+            set +e
+            export PATH="{fake_bin}:$PATH"
+            export SPAWN_META="{meta}"
+            source "{COMMON_SH}"
+            spawn_vc_frame_session_action vc-frame "{host}" action new-tab --name t --cwd "{tmp_path}" -- /bin/true
+            status=$?
+            printf 'status=%s\\n' "$status"
+            printf 'last_error=%s\\n' "${{SPAWN_VC_FRAME_LAST_ERROR:-}}"
+            if [[ "$status" -eq 2 ]]; then
+              spawn_record_host_session_failure
+            fi
+            exit 0
+            ''',
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "status=2" in result.stdout
+    assert "not found" in result.stdout.lower() or "not found" in result.stderr.lower()
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload.get("status") == "failed"
+    assert (
+        "not found" in str(meta_payload.get("last_error") or "").lower()
+        or "create-background" in str(meta_payload.get("last_error") or "").lower()
+    )
+
+
+def test_spawn_vc_frame_session_action_happy_path_no_create_background(
+    tmp_path: Path,
+) -> None:
+    """G3: live session — zero create-background, single action."""
+    host = "live-host"
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{host}"',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "attach" ]]; then',
+                '  printf "UNEXPECTED_CREATE\\n" >> "$STATE/create"',
+                "  exit 0",
+                "fi",
+                "exit 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+
+    _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        source "{COMMON_SH}"
+        spawn_vc_frame_session_action vc-frame "{host}" action new-tab --name t --cwd "{tmp_path}" -- /bin/true
+        '''
+    )
+
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "attach" not in calls
+    assert "--create-background" not in calls
+    assert calls.count("new-tab") == 1
+    assert not (state / "create").exists()

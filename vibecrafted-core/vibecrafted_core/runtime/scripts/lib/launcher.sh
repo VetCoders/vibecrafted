@@ -255,44 +255,61 @@ spawn_launch() {
 
   case "$runtime" in
     terminal|visible)
+      # G3: host-session unrecoverable failure (return 2) must NOT degrade to
+      # headless — that path is how process_spawned→stalled pid_gone hid the
+      # "Session not found" death. Loud fail with receipt last_error instead.
+      local _pane_status=0
+      local _op_status=0
       if spawn_in_vc_frame_pane "$launcher" "$pane_name"; then
         :
-      elif spawn_in_operator_session "$launcher" "$pane_name"; then
-        :
       else
-        # Degrade, don't die. No vc-frame operator session exists to host a
-        # visible tab (e.g. dispatched from a plain terminal, outside vc-frame).
-        # AppleScript/iTerm fallback stays forbidden — but a hard failure is
-        # worse UX than running detached. Fall back to headless, show a short
-        # honest live tail so the operator sees real progress, then hand off to
-        # observe/await. Start from inside vc-start if you want a visible tab.
-        printf 'No vc-frame operator session for %s runtime — running headless instead.\n' "$runtime" >&2
-        spawn_launch_headless "$launcher"
-        local _vc_transcript="${SPAWN_TRANSCRIPT:-}"
-        local _vc_agent="${SPAWN_AGENT:-agent}"
-        local _vc_run_id="${SPAWN_RUN_ID:-${VIBECRAFTED_RUN_ID:-}}"
-        local _vc_tail_secs="${VIBECRAFTED_DEGRADE_TAIL_SECONDS:-10}"
-        # The live tail is for a human at an interactive terminal. Skip it when
-        # stderr is not a TTY (pipes, tests, CI, nested dispatch) so automated
-        # callers are not blocked for 10s.
-        if [[ -n "$_vc_transcript" && -t 2 && "$_vc_tail_secs" != "0" ]]; then
-          local _vc_wait=0
-          while [[ ! -s "$_vc_transcript" && $_vc_wait -lt 14 ]]; do
-            sleep 0.5
-            _vc_wait=$((_vc_wait + 1))
-          done
-          printf -- '--- live agent output (%ss) ------------------------------------\n' "$_vc_tail_secs" >&2
-          tail -n 40 -F "$_vc_transcript" >&2 2>/dev/null &
-          local _vc_tail_pid=$!
-          sleep "$_vc_tail_secs"
-          kill "$_vc_tail_pid" 2>/dev/null || true
-          wait "$_vc_tail_pid" 2>/dev/null || true
-          printf -- '----------------------------------------------------------------\n' >&2
+        _pane_status=$?
+        if [[ "$_pane_status" -eq 2 ]]; then
+          printf 'vc-frame host session launch failed (in-pane path); not degrading to headless.\n' >&2
+          return 1
         fi
-        printf 'Agent is still running headless. Continue to observe it:\n' >&2
-        printf '  vibecrafted %s observe --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
-        printf '  vibecrafted %s await   --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
-        return 0
+        if spawn_in_operator_session "$launcher" "$pane_name"; then
+          :
+        else
+          _op_status=$?
+          if [[ "$_op_status" -eq 2 ]]; then
+            printf 'vc-frame host session launch failed; not degrading to headless.\n' >&2
+            return 1
+          fi
+          # Degrade, don't die. No vc-frame operator session exists to host a
+          # visible tab (e.g. dispatched from a plain terminal, outside vc-frame).
+          # AppleScript/iTerm fallback stays forbidden — but a hard failure is
+          # worse UX than running detached. Fall back to headless, show a short
+          # honest live tail so the operator sees real progress, then hand off to
+          # observe/await. Start from inside vc-start if you want a visible tab.
+          printf 'No vc-frame operator session for %s runtime — running headless instead.\n' "$runtime" >&2
+          spawn_launch_headless "$launcher"
+          local _vc_transcript="${SPAWN_TRANSCRIPT:-}"
+          local _vc_agent="${SPAWN_AGENT:-agent}"
+          local _vc_run_id="${SPAWN_RUN_ID:-${VIBECRAFTED_RUN_ID:-}}"
+          local _vc_tail_secs="${VIBECRAFTED_DEGRADE_TAIL_SECONDS:-10}"
+          # The live tail is for a human at an interactive terminal. Skip it when
+          # stderr is not a TTY (pipes, tests, CI, nested dispatch) so automated
+          # callers are not blocked for 10s.
+          if [[ -n "$_vc_transcript" && -t 2 && "$_vc_tail_secs" != "0" ]]; then
+            local _vc_wait=0
+            while [[ ! -s "$_vc_transcript" && $_vc_wait -lt 14 ]]; do
+              sleep 0.5
+              _vc_wait=$((_vc_wait + 1))
+            done
+            printf -- '--- live agent output (%ss) ------------------------------------\n' "$_vc_tail_secs" >&2
+            tail -n 40 -F "$_vc_transcript" >&2 2>/dev/null &
+            local _vc_tail_pid=$!
+            sleep "$_vc_tail_secs"
+            kill "$_vc_tail_pid" 2>/dev/null || true
+            wait "$_vc_tail_pid" 2>/dev/null || true
+            printf -- '----------------------------------------------------------------\n' >&2
+          fi
+          printf 'Agent is still running headless. Continue to observe it:\n' >&2
+          printf '  vibecrafted %s observe --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
+          printf '  vibecrafted %s await   --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
+          return 0
+        fi
       fi
       ;;
     headless|background|detached)
