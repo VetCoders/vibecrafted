@@ -62,6 +62,13 @@ default_shell "zsh"
 default_layout "vibecrafted"
 copy_command "pbcopy"
 mouse_mode true
+// Rail hover chrome (pane frames + advanced mouse). Defaults in vc-frame are
+// already true; set explicitly so product surface does not drift with binary
+// defaults. Note: Mouse::Hover reaches plugins only while the pane is focused
+// (active-pane path) — click the SESSIONS strip once, then hover lights rows.
+// focus_follows_mouse stays off (global focus-steal is a separate product call).
+advanced_mouse_actions true
+mouse_hover_effects true
 pane_frames true
 scroll_buffer_size 50000
 styled_underlines false
