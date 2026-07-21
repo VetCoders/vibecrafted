@@ -23,6 +23,13 @@ from .delivery.model import (
     ProofState,
 )
 from .runtime_paths import vibecrafted_home
+from .settlement import (
+    board_fxn_counts,
+    can_archive,
+    persist_await_verdict,
+    persist_settlement_to_meta,
+    settle_payload,
+)
 
 
 ACTIVE_STATES = {
@@ -538,15 +545,30 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         artifact_failure_state = "report_invalid"
 
     gc_grace = _configured_run_gc_grace_seconds()
-    should_gc = not artifact_failure_state and age_seconds >= gc_grace
-    result["state"] = "gc" if should_gc else artifact_failure_state or "stalled"
-    result["health"] = "final" if artifact_failure_state or should_gc else "stalled"
-    result["liveness"] = "pid_gone"
-    result["updated_at"] = now.isoformat()
-    if should_gc:
+    past_gc_grace = not artifact_failure_state and age_seconds >= gc_grace
+    # Settlement precedes gc (contract §7): a collector must never erase a run
+    # that has no settlement terminal. Past grace without settlement parks as
+    # needs_attention (TUI n) instead of silent gc.
+    if past_gc_grace:
+        # Terminalize so settle_payload can classify; verdict is applied in
+        # _project_run_payload. State stays visible as stalled-with-n until
+        # settlement is written, then may become gc once settled.
+        result["state"] = "gc"
+        result["health"] = "final"
+        result["liveness"] = "pid_gone"
         result["completed_at"] = now.isoformat()
-    else:
+        result["settlement_park"] = "gc_blocked_until_settled"
+    elif artifact_failure_state:
+        result["state"] = artifact_failure_state
+        result["health"] = "final"
+        result["liveness"] = "pid_gone"
         result["recovery_required"] = True
+    else:
+        result["state"] = "stalled"
+        result["health"] = "stalled"
+        result["liveness"] = "pid_gone"
+        result["recovery_required"] = True
+    result["updated_at"] = now.isoformat()
     pid_detail = (
         f"launcher_pid {launcher_pid} is not alive"
         if launcher_pid is not None
@@ -562,11 +584,12 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         if artifact_failure_state
         else ""
     )
-    if should_gc:
+    if past_gc_grace:
         explanation = (
             f"garbage-collected: dead launcher, heartbeat stale >{gc_grace}s; "
             f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
-            f"(threshold {threshold}s); no live launcher proof{lock_detail}"
+            f"(threshold {threshold}s); no live launcher proof{lock_detail}; "
+            f"settlement parks as needs_attention before archive"
         )
     else:
         explanation = (
@@ -1161,8 +1184,29 @@ def _archive_expired_snapshots() -> None:
     terminal_snapshots.sort(key=lambda item: item[0], reverse=True)
     expired_by_count = {path for _, path, _ in terminal_snapshots[retention_count:]}
     for path in sorted(expired_by_age | expired_by_count):
-        if path.exists():
-            _archive_snapshot(path)
+        if not path.exists():
+            continue
+        payload = _read_json(path)
+        # Settlement precedes gc: never erase without a written terminal.
+        # Settle first (default → needs_attention), then archive only once
+        # the settlement axis is present. Live/unreadable runs stay put.
+        if not can_archive(payload):
+            settlement = settle_payload(payload, source="auto")
+            if settlement is not None:
+                payload.update(settlement.to_payload())
+                payload["settlement"] = {
+                    "verdict": settlement.verdict.value,
+                    "reason": settlement.reason,
+                    "settled_at": settlement.settled_at,
+                    "source": settlement.source,
+                    "claim_digest": settlement.claim_digest,
+                    "waived": settlement.waived,
+                    "tui": settlement.tui_key,
+                }
+                _write_json(path, payload)
+            if not can_archive(payload):
+                continue
+        _archive_snapshot(path)
 
 
 def _select_run(snapshot: dict[str, Any], run_id: str) -> dict[str, Any] | None:
@@ -1430,6 +1474,48 @@ def _project_run_payload(
         exit_code=_coerce_int(payload.get("exit_code")),
     )
     payload.update(axes.to_payload())
+    # Settlement axis (f/x/n). Written on every terminal projection so the
+    # board never renders silence for unfinished claim→proof work. Delivery
+    # kernel axes above stay orthogonal (unverified/sealed ≠ settled).
+    if previous:
+        for key in (
+            "settlement_verdict",
+            "settlement_reason",
+            "settlement_at",
+            "settlement_source",
+            "settlement_tui",
+            "settlement_waived",
+            "settlement_claim_digest",
+            "settlement",
+            "await_rc",
+            "await_outcome",
+            "await_reason",
+            "await_worker_alive",
+            "await_settled_at",
+            "settlement_waive",
+            "operator_waive",
+            "claim",
+            "mission",
+            "brief",
+            "claim_digest",
+        ):
+            if key in previous and key not in payload:
+                payload[key] = previous[key]
+    settlement = settle_payload(payload)
+    if settlement is not None:
+        payload.update(settlement.to_payload())
+        payload["settlement"] = {
+            "verdict": settlement.verdict.value,
+            "reason": settlement.reason,
+            "settled_at": settlement.settled_at,
+            "source": settlement.source,
+            "claim_digest": settlement.claim_digest,
+            "waived": settlement.waived,
+            "tui": settlement.tui_key,
+        }
+        meta = run_dir / "meta.json" if run_dir.is_dir() else None
+        if meta is not None and meta.is_file():
+            persist_settlement_to_meta(meta, settlement)
     return payload
 
 
@@ -1517,12 +1603,20 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
         and run.get("state") not in FINAL_STATES
     ]
     recent_runs = payload_runs[:RECENT_RUN_LIMIT]
+    # TUI f/x/n reads the settlement axis only — never exit counters or raw states.
+    fxn = board_fxn_counts(payload_runs)
     return {
         "generated_at": _now().isoformat(),
         "active_runs": active_runs,
         "recent_runs": recent_runs,
         "warnings": _warnings_for_runs(payload_runs),
         "events": read_event_tail(),
+        "settlement_counts": {
+            "f": fxn.get("f", 0),
+            "x": fxn.get("x", 0),
+            "n": fxn.get("n", 0),
+            "total_settled": sum(fxn.values()),
+        },
     }
 
 
@@ -1799,6 +1893,92 @@ def _resolve_await_hard_cap(hard_cap_seconds: float | None) -> float | None:
     return cap if cap > 0 else None
 
 
+def _finalize_await_result(
+    run_id: str,
+    last_run: dict[str, Any] | None,
+    *,
+    completed: bool,
+    timed_out: bool,
+    reason: str,
+    worker_alive: bool,
+    attempts: int,
+) -> dict[str, Any]:
+    """Build the await return value and persist the supervisor verdict.
+
+    Contract §8: await verdicts (rc + 3-signal outcome + timestamp) are written
+    into the run meta so supervisor knowledge survives the supervisor process.
+    """
+    exit_code = _coerce_int((last_run or {}).get("exit_code"))
+    if timed_out and exit_code is None:
+        exit_code = 124
+    elif completed and exit_code is None:
+        exit_code = 0
+
+    outcome = "completed" if completed else ("timed_out" if timed_out else "unknown")
+    meta_path: Path | None = None
+    run_dir = _runtime_run_dir(run_id)
+    if run_dir.is_dir() and (run_dir / "meta.json").is_file():
+        meta_path = run_dir / "meta.json"
+    elif last_run is not None:
+        candidate = str(last_run.get("meta") or "").strip()
+        if candidate:
+            path = Path(candidate)
+            if path.is_file():
+                meta_path = path
+
+    await_fields = persist_await_verdict(
+        meta_path,
+        rc=exit_code,
+        outcome=outcome,
+        worker_alive=worker_alive,
+        reason=reason,
+    )
+
+    # Also stamp the board snapshot so TUI/readers see the await verdict without
+    # waiting for the next meta-driven projection.
+    snapshot_path = _snapshot_path(run_id)
+    if snapshot_path.is_file():
+        try:
+            snapshot = _read_json(snapshot_path)
+            if snapshot:
+                snapshot.update(await_fields)
+                # Re-settle with await evidence so unsealed reports stay n.
+                settlement = settle_payload(snapshot, force=True, source="await")
+                if settlement is not None:
+                    snapshot.update(settlement.to_payload())
+                    snapshot["settlement"] = {
+                        "verdict": settlement.verdict.value,
+                        "reason": settlement.reason,
+                        "settled_at": settlement.settled_at,
+                        "source": settlement.source,
+                        "claim_digest": settlement.claim_digest,
+                        "waived": settlement.waived,
+                        "tui": settlement.tui_key,
+                        "await_rc": exit_code,
+                        "await_outcome": outcome,
+                    }
+                    if meta_path is not None:
+                        persist_settlement_to_meta(meta_path, settlement)
+                _write_json(snapshot_path, snapshot)
+                last_run = snapshot
+        except OSError:
+            pass
+
+    return {
+        "run_id": run_id,
+        "found": last_run is not None,
+        "completed": completed,
+        "timed_out": timed_out,
+        "reason": reason,
+        "worker_alive": worker_alive,
+        "attempts": attempts,
+        "run": last_run,
+        "await_rc": exit_code,
+        "await_outcome": outcome,
+        **await_fields,
+    }
+
+
 def await_run(
     run_id: str,
     *,
@@ -1864,16 +2044,15 @@ def await_run(
             or any(_worker_is_alive(child) for child in children)
         )
         if last_run is not None and _run_is_terminal(last_run) and not worker_alive:
-            return {
-                "run_id": target,
-                "found": True,
-                "completed": True,
-                "timed_out": False,
-                "reason": "terminal",
-                "worker_alive": False,
-                "attempts": attempts,
-                "run": last_run,
-            }
+            return _finalize_await_result(
+                target,
+                last_run,
+                completed=True,
+                timed_out=False,
+                reason="terminal",
+                worker_alive=False,
+                attempts=attempts,
+            )
 
         delivered_report = str(
             report_path or (last_run.get("latest_report") if last_run else "") or ""
@@ -1887,16 +2066,15 @@ def await_run(
             and _report_file_written(delivered_report)
             and not worker_alive
         ):
-            return {
-                "run_id": target,
-                "found": last_run is not None,
-                "completed": True,
-                "timed_out": False,
-                "reason": "report_delivered",
-                "worker_alive": False,
-                "attempts": attempts,
-                "run": last_run,
-            }
+            return _finalize_await_result(
+                target,
+                last_run,
+                completed=True,
+                timed_out=False,
+                reason="report_delivered",
+                worker_alive=False,
+                attempts=attempts,
+            )
 
         now = time.monotonic()
         fingerprint = (
@@ -1917,27 +2095,25 @@ def await_run(
             idle_deadline = now + idle_window
 
         if hard_deadline is not None and now >= hard_deadline:
-            return {
-                "run_id": target,
-                "found": last_run is not None,
-                "completed": False,
-                "timed_out": True,
-                "reason": "hard_cap",
-                "worker_alive": worker_alive,
-                "attempts": attempts,
-                "run": last_run,
-            }
+            return _finalize_await_result(
+                target,
+                last_run,
+                completed=False,
+                timed_out=True,
+                reason="hard_cap",
+                worker_alive=worker_alive,
+                attempts=attempts,
+            )
         if now >= idle_deadline and not worker_alive:
-            return {
-                "run_id": target,
-                "found": last_run is not None,
-                "completed": False,
-                "timed_out": True,
-                "reason": "idle_stall",
-                "worker_alive": worker_alive,
-                "attempts": attempts,
-                "run": last_run,
-            }
+            return _finalize_await_result(
+                target,
+                last_run,
+                completed=False,
+                timed_out=True,
+                reason="idle_stall",
+                worker_alive=worker_alive,
+                attempts=attempts,
+            )
 
         sleep_for = interval_seconds
         if hard_deadline is not None:
