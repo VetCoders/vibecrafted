@@ -1,18 +1,24 @@
-// operator — operator entrypoint
+// operator — operator entrypoint (synced to vibecrafted standard)
 // Launch: vibecrafted start | vc-start | vibecrafted dashboard operator
 //
-// Operator layout = the original, working strider layout.
-// The previous bespoke operator layout shipped a broken strider `cwd`
-// (`${VIBECRAFTED_HOME:-...}` is not expanded in a bare vc-frame layout `cwd`,
-// so strider opened a garbage path and died). The stock strider layout just
-// works: a file browser beside a shell. Agents spawned via marbles/workflow/
-// research still open as ADDITIONAL TABS in this session.
+// CANON = same eye as built-in default_layout "vibecrafted"
+// (zellij-utils/assets/layouts/vibecrafted.kdl, captured 2026-07-20):
+//   • compact-bar brand + SESSIONS rail ALWAYS (default_tab_template)
+//   • Guide (Mission Control) + vibecrafted shell
+//   • no strider split — that was a parallel path; rejected as fleet standard
+//
+// default_tab_template (not new_tab_template): vc-frame 0.44 broke children
+// inside new_tab_template; every tab — including agent tabs — inherits rail.
+//
+// Vibecrafted with AI Agents (c)2024-2026 LibraxisAI
 layout {
-    // Bars on every tab (incl. agent tabs spawned by marbles/workflow/research
-    // into this session) so monitoring chrome is consistent across the session.
+    // Every tab: brand bar + SESSIONS rail (always visible) + content + status.
     default_tab_template {
         pane size=1 borderless=true {
-            plugin location="tab-bar"
+            plugin location="compact-bar" {
+                brand_text " 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. "
+                brand_text_short " VC. "
+            }
         }
         pane split_direction="vertical" {
             pane size=24 borderless=true {
@@ -23,20 +29,26 @@ layout {
             }
             pane { children; }
         }
-        pane size=2 borderless=true {
+        pane size=1 borderless=true {
             plugin location="status-bar"
         }
     }
-    // Primary operator tab: file browser ("Files", via strider's pane_title
-    // config — no plugin rebuild needed) beside a shell.
-    tab name="Operator" focus=true {
-        pane split_direction="Vertical" {
-            pane size="20%" {
-                plugin location="strider" {
-                    pane_title "Files"
-                }
+
+    // Primary: Mission Control guide (same as default_layout vibecrafted).
+    tab name="Guide" focus=true {
+        pane name="VibeCrafted Shell Guide" {
+            plugin location="about" {
+                guide_mode "mission-control"
+                pane_title "VibeCrafted Shell Guide"
             }
-            pane
+        }
+    }
+
+    // Operator shell — work surface; agents open as additional tabs (rail stays).
+    tab name="vibecrafted" hide_floating_panes=true {
+        pane command="/bin/zsh" name="operator" {
+            args "-l"
+            start_suspended true
         }
     }
 }

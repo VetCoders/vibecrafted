@@ -1,0 +1,131 @@
+// vibecrafted-ivory — light-mode fleet chrome (kość słoniowa)
+//
+// Pair with dark monochrome via:
+//   theme_dark "monochrome"
+//   theme_light "vibecrafted-ivory"
+//
+// Design: warm ivory paper + charcoal ink. Ribbons are soft bone/taupe —
+// never neon green (rejected operator pastel). Flat UI still uses
+// simplified_ui true (no powerline ); this file is colors only.
+//
+// Vibecrafted with AI Agents (c)2024-2026 LibraxisAI
+themes {
+    vibecrafted-ivory {
+        text_unselected {
+            base 55 48 42            // warm charcoal ink
+            background 250 246 238   // ivory paper
+            emphasis_0 140 120 100   // muted bronze
+            emphasis_1 90 85 78      // stone
+            emphasis_2 40 36 32      // near-black for strong labels
+            emphasis_3 170 155 135   // soft taupe
+        }
+        text_selected {
+            base 40 36 32
+            background 235 228 215   // slightly deeper ivory
+            emphasis_0 140 120 100
+            emphasis_1 90 85 78
+            emphasis_2 30 28 26
+            emphasis_3 160 145 125
+        }
+        ribbon_selected {
+            base 250 246 238         // ivory text on dark ribbon
+            background 70 64 58      // charcoal bar (not green)
+            emphasis_0 140 120 100
+            emphasis_1 200 190 175
+            emphasis_2 250 246 238
+            emphasis_3 120 110 95
+        }
+        ribbon_unselected {
+            base 70 64 58
+            background 235 228 215   // bone ribbon
+            emphasis_0 140 120 100
+            emphasis_1 55 48 42
+            emphasis_2 90 85 78
+            emphasis_3 160 145 125
+        }
+        table_title {
+            base 70 64 58
+            background 250 246 238
+            emphasis_0 140 120 100
+            emphasis_1 90 85 78
+            emphasis_2 40 36 32
+            emphasis_3 160 145 125
+        }
+        table_cell_selected {
+            base 40 36 32
+            background 235 228 215
+            emphasis_0 140 120 100
+            emphasis_1 90 85 78
+            emphasis_2 30 28 26
+            emphasis_3 160 145 125
+        }
+        table_cell_unselected {
+            base 55 48 42
+            background 250 246 238
+            emphasis_0 140 120 100
+            emphasis_1 90 85 78
+            emphasis_2 40 36 32
+            emphasis_3 170 155 135
+        }
+        list_selected {
+            base 40 36 32
+            background 235 228 215
+            emphasis_0 140 120 100
+            emphasis_1 90 85 78
+            emphasis_2 30 28 26
+            emphasis_3 160 145 125
+        }
+        list_unselected {
+            base 55 48 42
+            background 250 246 238
+            emphasis_0 140 120 100
+            emphasis_1 90 85 78
+            emphasis_2 40 36 32
+            emphasis_3 170 155 135
+        }
+        frame_selected {
+            base 70 64 58
+            background 250 246 238
+            emphasis_0 140 120 100
+            emphasis_1 90 85 78
+            emphasis_2 40 36 32
+            emphasis_3 160 145 125
+        }
+        frame_highlight {
+            base 90 85 78
+            background 250 246 238
+            emphasis_0 140 120 100
+            emphasis_1 70 64 58
+            emphasis_2 40 36 32
+            emphasis_3 160 145 125
+        }
+        exit_code_success {
+            base 70 100 70           // muted sage success (not neon)
+            background 250 246 238
+            emphasis_0 140 120 100
+            emphasis_1 90 85 78
+            emphasis_2 40 36 32
+            emphasis_3 160 145 125
+        }
+        exit_code_error {
+            base 160 70 55           // warm brick error
+            background 250 246 238
+            emphasis_0 140 120 100
+            emphasis_1 90 85 78
+            emphasis_2 40 36 32
+            emphasis_3 160 145 125
+        }
+        multiplayer_user_colors {
+            player_1 70 64 58
+            player_2 140 120 100
+            player_3 90 85 78
+            player_4 160 145 125
+            player_5 55 48 42
+            player_6 120 110 95
+            player_7 100 90 80
+            player_8 80 75 70
+            player_9 150 140 125
+            player_10 60 55 50
+        }
+    }
+}

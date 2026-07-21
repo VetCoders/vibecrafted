@@ -38,12 +38,18 @@ themes {
 //   export VIBECRAFTED_VC_FRAME_THEME="$(./auto-theme.sh)"
 //
 // Then either override `theme "..."` below or pass via overlay config.
-// Fleet chrome default: monochrome greyscale + flat key tiles (no powerline
-// triangles). pastel shipped green ribbons +  separators — rejected as
-// operator standard. Brand block "vibecrafted" (graphite + amber) remains
-// defined above for explicit `theme "vibecrafted"` / mesh overrides.
-// monochrome ships bundled in the vc-frame binary (assets/themes/).
+// Fleet chrome — two eyes, one standard shape (flat tiles, no  triangles):
+//
+//   dark  → monochrome        (bundled in vc-frame assets)
+//   light → vibecrafted-ivory (themes/vibecrafted-ivory.kdl — kość słoniowa)
+//
+// theme_dark + theme_light both required for host-terminal auto-switch
+// (CSI 2031). Static `theme` is the fallback when the terminal does not
+// report a palette. Brand block "vibecrafted" (graphite + amber) and mesh
+// themes remain for explicit override / host identity.
 theme "monochrome"
+theme_dark "monochrome"
+theme_light "vibecrafted-ivory"
 // Flat status-bar / tab-bar: no powerline arrow fonts (). Plugins paint
 // plain Ctrl+<key> LABEL tiles instead of triangular ribbon buttons.
 simplified_ui true

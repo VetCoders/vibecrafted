@@ -67,20 +67,34 @@ operator can pin a fleet baseline theme even when running on a mesh host.
 
 ### Fleet chrome default (status-bar / tab-bar)
 
-Shipped `config.kdl` uses:
+Shipped `config.kdl` uses two eyes + flat tiles:
 
 ```kdl
 theme "monochrome"
+theme_dark "monochrome"
+theme_light "vibecrafted-ivory"
 simplified_ui true
 ```
 
-- **monochrome** — greyscale chrome; no pastel green ribbons
-- **simplified_ui** — plugins paint flat `Ctrl+<key> LABEL` tiles (no powerline
-  `` triangles)
+| Mode                           | Theme               | Feel                       |
+| ------------------------------ | ------------------- | -------------------------- |
+| dark (fallback + `theme_dark`) | `monochrome`        | greyscale graphite         |
+| light (`theme_light`)          | `vibecrafted-ivory` | kość słoniowa / warm paper |
 
-The brand block `vibecrafted` (graphite + amber) stays defined for explicit
-`theme "vibecrafted"` or mesh overrides. Mesh host accents below are **opt-in**,
-not the fleet status-bar default.
+- **simplified_ui** — flat `Ctrl+<key> LABEL` tiles (no powerline ``)
+- Ivory lives in `themes/vibecrafted-ivory.kdl` (auto-loaded with mesh themes)
+- Brand block `vibecrafted` (graphite + amber) and mesh host accents are **opt-in**
+
+### Operator layout = vibecrafted standard
+
+`layouts/operator.kdl` (vc-start) is synced to the same eye as built-in
+`default_layout "vibecrafted"`:
+
+- `default_tab_template` — compact-bar brand + **SESSIONS rail always** + status-bar
+- tab **Guide** — Mission Control (`about` / `guide_mode "mission-control"`)
+- tab **vibecrafted** — operator shell
+
+No strider split on the entrypoint.
 
 ### Activating the host theme
 
