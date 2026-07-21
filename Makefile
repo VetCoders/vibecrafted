@@ -619,6 +619,7 @@ test-hammerspoon:
 #   GET /api/control/state         merged StateView (active/recent/warnings/events)
 #   GET /api/control/runs          every runs/<id>.json snapshot, newest-first
 #   GET /api/control/runs/{run_id} a single run, or 404 JSON
+#   GET /api/control/events        SSE stream of events.jsonl (?since= / Last-Event-ID)
 #
 # The bin is built/run with the `ssr` feature (the bare `cargo build` main is a
 # hydrate stub). vc-server constructs LeptosOptions itself, so foreground and
@@ -642,6 +643,7 @@ server: server-build
 	@echo "[server] listening on  http://$(SERVER_ADDR)   (Ctrl-C to stop)"
 	@echo "[server] reads: /api/control/state  /api/control/runs  /api/control/runs/{run_id}"
 	@echo "[server] reads: /api/control/lifecycle  /api/control/lifecycle/{run_id}"
+	@echo "[server] stream: /api/control/events  (SSE, ?since= / Last-Event-ID)"
 	@cd $(SERVER_DIR) && ./target/debug/$(SERVER_PACKAGE) --addr "$(SERVER_ADDR)"
 
 server-check:
