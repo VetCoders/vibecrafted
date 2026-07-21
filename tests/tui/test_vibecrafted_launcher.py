@@ -451,6 +451,77 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
     assert "codex exec" not in script_body
 
 
+@pytest.mark.parametrize(
+    ("agent", "command_needle"),
+    [
+        ("agy", "agy --dangerously-skip-permissions --add-dir . --prompt-interactive "),
+        ("junie", "junie --task="),
+        (
+            "grok",
+            "grok --cwd . --permission-mode bypassPermissions --no-alt-screen --single ",
+        ),
+    ],
+)
+def test_init_fleet_agents_resolve_skill_init_helpers(
+    agent: str, command_needle: str, tmp_path: Path
+) -> None:
+    """Regression: vibecrafted init <agent> must not fail with Missing helper
+    <agent>-skill-init. Fleet surface is five agents; wrappers for only
+    claude/codex used to brick agy/junie/grok at the launcher.
+    """
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    session_state_file = tmp_path / "session-state.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
+    _write_fake_osascript(fake_bin, capture_file, session_state_file)
+    _write_fake_agent(fake_bin, agent, tmp_path / f"unused-{agent}.txt")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["SESSION_STATE_FILE"] = str(session_state_file)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "init", agent],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, (
+        f"init {agent} failed:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Missing helper" not in result.stderr
+    assert f"{agent}-skill-init" not in result.stderr or "Missing helper" not in (
+        result.stdout + result.stderr
+    )
+
+    payload = capture_file.read_text(encoding="utf-8")
+    assert (
+        f"VC_FRAME --session {_expected_operator_session()} action new-tab" in payload
+    )
+
+    command_script = _spawned_command_script(payload)
+    script_body = command_script.read_text(encoding="utf-8")
+    assert command_needle in script_body
+    assert "/vc-init" in script_body
+
+
 def test_init_gemini_returns_actionable_agy_migration() -> None:
     result = subprocess.run(
         ["bash", str(LAUNCHER), "init", "gemini"],

@@ -43,67 +43,129 @@ agy-partner() { _vetcoders_skill agy partner "$@"; }
 junie-partner() { _vetcoders_skill junie partner "$@"; }
 grok-partner() { _vetcoders_skill grok partner "$@"; }
 
+# Per-agent skill-* helpers. The deck (`vibecrafted <skill> <agent>` and
+# `vibecrafted init <agent>`) resolves `${agent}-skill-${skill}` by name.
+# All five fleet agents must be present — missing one is a hard fail at
+# the launcher. cmd_init / cmd_skill also know the generic
+# _vetcoders_skill_* entrypoints as a defense-in-depth fallback.
 codex-skill-agents() { _vetcoders_skill_entry codex agents "$@"; }
 claude-skill-agents() { _vetcoders_skill_entry claude agents "$@"; }
+agy-skill-agents() { _vetcoders_skill_entry agy agents "$@"; }
+junie-skill-agents() { _vetcoders_skill_entry junie agents "$@"; }
+grok-skill-agents() { _vetcoders_skill_entry grok agents "$@"; }
 
 codex-skill-audit() { _vetcoders_skill_entry codex audit "$@"; }
 claude-skill-audit() { _vetcoders_skill_entry claude audit "$@"; }
+agy-skill-audit() { _vetcoders_skill_entry agy audit "$@"; }
+junie-skill-audit() { _vetcoders_skill_entry junie audit "$@"; }
+grok-skill-audit() { _vetcoders_skill_entry grok audit "$@"; }
 
 codex-skill-decorate() { _vetcoders_skill_entry codex decorate "$@"; }
 claude-skill-decorate() { _vetcoders_skill_entry claude decorate "$@"; }
+agy-skill-decorate() { _vetcoders_skill_entry agy decorate "$@"; }
+junie-skill-decorate() { _vetcoders_skill_entry junie decorate "$@"; }
+grok-skill-decorate() { _vetcoders_skill_entry grok decorate "$@"; }
 
 codex-skill-delegate() { _vetcoders_skill_entry codex delegate "$@"; }
 claude-skill-delegate() { _vetcoders_skill_entry claude delegate "$@"; }
+agy-skill-delegate() { _vetcoders_skill_entry agy delegate "$@"; }
+junie-skill-delegate() { _vetcoders_skill_entry junie delegate "$@"; }
+grok-skill-delegate() { _vetcoders_skill_entry grok delegate "$@"; }
 
 codex-skill-dou() { _vetcoders_skill_entry codex dou "$@"; }
 claude-skill-dou() { _vetcoders_skill_entry claude dou "$@"; }
+agy-skill-dou() { _vetcoders_skill_entry agy dou "$@"; }
+junie-skill-dou() { _vetcoders_skill_entry junie dou "$@"; }
+grok-skill-dou() { _vetcoders_skill_entry grok dou "$@"; }
 
 codex-skill-followup() { _vetcoders_skill_entry codex followup "$@"; }
 claude-skill-followup() { _vetcoders_skill_entry claude followup "$@"; }
+agy-skill-followup() { _vetcoders_skill_entry agy followup "$@"; }
+junie-skill-followup() { _vetcoders_skill_entry junie followup "$@"; }
+grok-skill-followup() { _vetcoders_skill_entry grok followup "$@"; }
 
 codex-skill-hydrate() { _vetcoders_skill_entry codex hydrate "$@"; }
 claude-skill-hydrate() { _vetcoders_skill_entry claude hydrate "$@"; }
+agy-skill-hydrate() { _vetcoders_skill_entry agy hydrate "$@"; }
+junie-skill-hydrate() { _vetcoders_skill_entry junie hydrate "$@"; }
+grok-skill-hydrate() { _vetcoders_skill_entry grok hydrate "$@"; }
 
 codex-skill-init() { _vetcoders_skill_init codex "$@"; }
 claude-skill-init() { _vetcoders_skill_init claude "$@"; }
+agy-skill-init() { _vetcoders_skill_init agy "$@"; }
+junie-skill-init() { _vetcoders_skill_init junie "$@"; }
+grok-skill-init() { _vetcoders_skill_init grok "$@"; }
 
 codex-skill-justdo() { _vetcoders_skill_entry codex justdo "$@"; }
 claude-skill-justdo() { _vetcoders_skill_entry claude justdo "$@"; }
+agy-skill-justdo() { _vetcoders_skill_entry agy justdo "$@"; }
+junie-skill-justdo() { _vetcoders_skill_entry junie justdo "$@"; }
+grok-skill-justdo() { _vetcoders_skill_entry grok justdo "$@"; }
 
 # vc-implement is the front-face brand for vc-justdo. Both helper families hit
 # the same dispatcher (skill id stays "justdo" so run_id prefix, locks, and
 # already-trained agents keep working unchanged).
 codex-skill-implement() { _vetcoders_skill_entry codex justdo "$@"; }
 claude-skill-implement() { _vetcoders_skill_entry claude justdo "$@"; }
+agy-skill-implement() { _vetcoders_skill_entry agy justdo "$@"; }
+junie-skill-implement() { _vetcoders_skill_entry junie justdo "$@"; }
+grok-skill-implement() { _vetcoders_skill_entry grok justdo "$@"; }
 
 codex-skill-marbles() { _vetcoders_marbles codex "$@"; }
 claude-skill-marbles() { _vetcoders_marbles claude "$@"; }
+agy-skill-marbles() { _vetcoders_marbles agy "$@"; }
+junie-skill-marbles() { _vetcoders_marbles junie "$@"; }
+grok-skill-marbles() { _vetcoders_marbles grok "$@"; }
 
 codex-skill-partner() { _vetcoders_skill_entry codex partner "$@"; }
 claude-skill-partner() { _vetcoders_skill_entry claude partner "$@"; }
+agy-skill-partner() { _vetcoders_skill_entry agy partner "$@"; }
+junie-skill-partner() { _vetcoders_skill_entry junie partner "$@"; }
+grok-skill-partner() { _vetcoders_skill_entry grok partner "$@"; }
 
 codex-skill-polarize() { _vetcoders_skill_entry codex polarize "$@"; }
 claude-skill-polarize() { _vetcoders_skill_entry claude polarize "$@"; }
+agy-skill-polarize() { _vetcoders_skill_entry agy polarize "$@"; }
+junie-skill-polarize() { _vetcoders_skill_entry junie polarize "$@"; }
+grok-skill-polarize() { _vetcoders_skill_entry grok polarize "$@"; }
 
 codex-skill-prune() { _vetcoders_skill_entry codex prune "$@"; }
 claude-skill-prune() { _vetcoders_skill_entry claude prune "$@"; }
+agy-skill-prune() { _vetcoders_skill_entry agy prune "$@"; }
+junie-skill-prune() { _vetcoders_skill_entry junie prune "$@"; }
+grok-skill-prune() { _vetcoders_skill_entry grok prune "$@"; }
 
 codex-skill-release() { _vetcoders_skill_entry codex release "$@"; }
 claude-skill-release() { _vetcoders_skill_entry claude release "$@"; }
+agy-skill-release() { _vetcoders_skill_entry agy release "$@"; }
+junie-skill-release() { _vetcoders_skill_entry junie release "$@"; }
+grok-skill-release() { _vetcoders_skill_entry grok release "$@"; }
 
 codex-skill-research() { _vetcoders_skill_entry codex research "$@"; }
 claude-skill-research() { _vetcoders_skill_entry claude research "$@"; }
+agy-skill-research() { _vetcoders_skill_entry agy research "$@"; }
+junie-skill-research() { _vetcoders_skill_entry junie research "$@"; }
+grok-skill-research() { _vetcoders_skill_entry grok research "$@"; }
 vc-research() { _vetcoders_research "$@"; }
 vc-research-await() { _vetcoders_await "" --research "$@"; }
 
 codex-skill-review() { _vetcoders_skill_entry codex review "$@"; }
 claude-skill-review() { _vetcoders_skill_entry claude review "$@"; }
+agy-skill-review() { _vetcoders_skill_entry agy review "$@"; }
+junie-skill-review() { _vetcoders_skill_entry junie review "$@"; }
+grok-skill-review() { _vetcoders_skill_entry grok review "$@"; }
 
 codex-skill-scaffold() { _vetcoders_skill_entry codex scaffold "$@"; }
 claude-skill-scaffold() { _vetcoders_skill_entry claude scaffold "$@"; }
+agy-skill-scaffold() { _vetcoders_skill_entry agy scaffold "$@"; }
+junie-skill-scaffold() { _vetcoders_skill_entry junie scaffold "$@"; }
+grok-skill-scaffold() { _vetcoders_skill_entry grok scaffold "$@"; }
 
 codex-skill-workflow() { _vetcoders_skill_entry codex workflow "$@"; }
 claude-skill-workflow() { _vetcoders_skill_entry claude workflow "$@"; }
+agy-skill-workflow() { _vetcoders_skill_entry agy workflow "$@"; }
+junie-skill-workflow() { _vetcoders_skill_entry junie workflow "$@"; }
+grok-skill-workflow() { _vetcoders_skill_entry grok workflow "$@"; }
 
 _vetcoders_skill_wrapper_usage() {
   local skill="$1"

@@ -1969,7 +1969,20 @@ cmd_init() {
   [[ $# -gt 0 ]] && shift
   printf '%b⚒%b  Starting %b%s%b with vc-init...\n' "$_copper" "$_reset" "$_bold" "$agent" "$_reset"
   _ensure_helpers_loaded || return 1
-  _run_helper "${agent}-skill-init" "$@"
+  # Prefer the named per-agent helper; fall back to the generic entrypoint so a
+  # missing wrapper (version skew / incomplete fleet surface) cannot brick
+  # `vibecrafted init <agent>` the way Missing helper grok-skill-init did.
+  local helper_name="${agent}-skill-init"
+  if command -v "$helper_name" >/dev/null 2>&1; then
+    _run_helper "$helper_name" "$@"
+    return
+  fi
+  if command -v _vetcoders_skill_init >/dev/null 2>&1; then
+    _vetcoders_skill_init "$agent" "$@"
+    return
+  fi
+  printf '%b✗%b Missing helper %s and no generic skill-init is available.\n' "$_red" "$_reset" "$helper_name" >&2
+  return 1
 }
 
 cmd_doctor() {
