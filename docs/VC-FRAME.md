@@ -19,7 +19,7 @@ config/vc-frame/
 ├── themes/
 │   └── vetcoders-mesh.kdl           # 4 mesh themes (dragon/sztudio/silver/div0)
 └── layouts/
-    ├── operator.kdl                 # entrypoint  -- `vibecrafted start`
+    ├── operator.kdl                 # launch alias of built-in vibecrafted — `vibecrafted start`
     ├── dashboard.kdl                # mission control 2x2 grid
     ├── marbles.kdl                  # convergence workspace
     ├── research.kdl                 # triple-agent research swarm
@@ -87,8 +87,9 @@ simplified_ui true
 
 ### Operator layout = vibecrafted standard
 
-`layouts/operator.kdl` (vc-start) is synced to the same eye as built-in
-`default_layout "vibecrafted"`:
+`layouts/operator.kdl` (vc-start) is the same file content as built-in
+`default_layout "vibecrafted"` (tabs **Start here** + **Shell**, no spaces in
+layout _filenames_; never `Vibecrafted Operator.kdl`):
 
 - `default_tab_template` — compact-bar brand + **SESSIONS rail always** + status-bar
 - tab **Guide** — Mission Control (`about` / `guide_mode "mission-control"`)

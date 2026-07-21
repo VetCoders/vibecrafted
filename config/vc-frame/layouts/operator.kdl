@@ -1,18 +1,17 @@
-// operator — operator entrypoint (synced to vibecrafted standard)
-// Launch: vibecrafted start | vc-start | vibecrafted dashboard operator
+// operator — launch alias for the vibecrafted operator entrypoint
+// Path kept as operator.kdl for: vibecrafted start | dashboard operator
+// Content CANON = built-in default_layout "vibecrafted"
+//   (zellij-utils/assets/layouts/vibecrafted.kdl)
 //
-// CANON = same eye as built-in default_layout "vibecrafted"
-// (zellij-utils/assets/layouts/vibecrafted.kdl, captured 2026-07-20):
-//   • compact-bar brand + SESSIONS rail ALWAYS (default_tab_template)
-//   • Guide (Mission Control) + vibecrafted shell
-//   • no strider split — that was a parallel path; rejected as fleet standard
 //
-// default_tab_template (not new_tab_template): vc-frame 0.44 broke children
-// inside new_tab_template; every tab — including agent tabs — inherits rail.
+// Tabs:
+//   "Start here"  — first-run map (about mission-control): chrome, rail, keys
+//   "Shell"       — work shell with banner + zsh (not a silent suspended pane)
 //
-// Vibecrafted with AI Agents (c)2024-2026 LibraxisAI
+// Contract: every tab keeps the left Sessions rail (default_tab_template).
+//
+// 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
 layout {
-    // Every tab: brand bar + SESSIONS rail (always visible) + content + status.
     default_tab_template {
         pane size=1 borderless=true {
             plugin location="compact-bar" {
@@ -34,21 +33,70 @@ layout {
         }
     }
 
-    // Primary: Mission Control guide (same as default_layout vibecrafted).
-    tab name="Guide" focus=true {
-        pane name="VibeCrafted Shell Guide" {
+    tab name="Start here" focus=true {
+        pane name="Start here" {
             plugin location="about" {
                 guide_mode "mission-control"
-                pane_title "VibeCrafted Shell Guide"
+                pane_title "Start here — map of this workspace"
             }
         }
     }
 
-    // Operator shell — work surface; agents open as additional tabs (rail stays).
-    tab name="vibecrafted" hide_floating_panes=true {
-        pane command="/bin/zsh" name="operator" {
-            args "-l"
-            start_suspended true
+    tab name="Shell" hide_floating_panes=true {
+        // Banner then interactive zsh — wakes immediately (no suspended Enter void).
+        pane command="bash" name="Shell" {
+            args "-lc" "printf '\\n'; printf '  ┌────────────────────────────────────────────────────────────┐\\n'; printf '  │  VIBECRAFTED  ·  SHELL TAB                                  │\\n'; printf '  ├────────────────────────────────────────────────────────────┤\\n'; printf '  │  This is your work shell (not the Guide).                  │\\n'; printf '  │                                                            │\\n'; printf '  │  First commands:                                           │\\n'; printf '  │    vibecrafted start     open / attach operator flow       │\\n'; printf '  │    vibecrafted help      list CLI surfaces                 │\\n'; printf '  │                                                            │\\n'; printf '  │  Chrome (always on screen):                                │\\n'; printf '  │    LEFT  SESSIONS = other sessions / agent rooms (click)   │\\n'; printf '  │    TOP   tabs of THIS session: Start here | Shell          │\\n'; printf '  │    Ctrl+t then 1     back to the Guide map                 │\\n'; printf '  │    click a name on the left rail to jump sessions          │\\n'; printf '  └────────────────────────────────────────────────────────────┘\\n'; printf '\\n'; exec zsh -l"
+        }
+    }
+
+    swap_tiled_layout name="vertical" {
+        tab max_panes=5 {
+            pane split_direction="vertical" {
+                pane
+                pane { children; }
+            }
+        }
+        tab max_panes=8 {
+            pane split_direction="vertical" {
+                pane { children; }
+                pane { pane; pane; pane; pane; }
+            }
+        }
+        tab max_panes=12 {
+            pane split_direction="vertical" {
+                pane { children; }
+                pane { pane; pane; pane; pane; }
+                pane { pane; pane; pane; pane; }
+            }
+        }
+    }
+
+    swap_tiled_layout name="horizontal" {
+        tab max_panes=4 {
+            pane
+            pane
+        }
+        tab max_panes=8 {
+            pane split_direction="vertical" {
+                pane { children; }
+                pane { pane; pane; pane; pane; }
+            }
+        }
+        tab max_panes=12 {
+            pane split_direction="vertical" {
+                pane { children; }
+                pane { pane; pane; pane; pane; }
+                pane { pane; pane; pane; pane; }
+            }
+        }
+    }
+
+    swap_tiled_layout name="stacked" {
+        tab min_panes=5 {
+            pane
+            pane stacked=true {
+                children
+            }
         }
     }
 }

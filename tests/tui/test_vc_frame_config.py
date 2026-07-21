@@ -106,9 +106,9 @@ def test_layout_tab_branding_matches_frame_contract() -> None:
     for layout_file in sorted(LAYOUTS_DIR.glob("*.kdl")):
         payload = layout_file.read_text(encoding="utf-8")
         if layout_file.name == "operator.kdl":
-            # Operator uses Guide + vibecrafted names (synced to default_layout).
-            assert 'tab name="Guide"' in payload
-            assert 'tab name="vibecrafted"' in payload
+            # Launch alias for default_layout "vibecrafted": Start here + Shell.
+            assert 'tab name="Start here"' in payload
+            assert 'tab name="Shell"' in payload
             continue
         assert "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍." in payload, f"{layout_file.name} missing branded tab name"
 
@@ -123,17 +123,18 @@ def test_marbles_layout_is_operator_centric() -> None:
 
 
 def test_operator_layout_matches_vibecrafted_standard() -> None:
-    """vc-start operator layout is the same eye as default_layout vibecrafted:
-    Guide + shell, SESSIONS rail on every tab, no strider split."""
+    """vc-start operator.kdl is the launch alias of default_layout vibecrafted:
+    Start here + Shell, SESSIONS rail on every tab, no strider, no spaced names."""
     payload = (LAYOUTS_DIR / "operator.kdl").read_text(encoding="utf-8")
-    assert 'tab name="Guide"' in payload
-    assert 'tab name="vibecrafted"' in payload
+    assert 'tab name="Start here"' in payload
+    assert 'tab name="Shell"' in payload
     assert 'guide_mode "mission-control"' in payload
     assert "session-manager" in payload
     assert "rail true" in payload
     assert "default_tab_template" in payload
     assert "compact-bar" in payload
     assert "status-bar" in payload
+    assert "vibecrafted start" in payload
     # Rejected parallel path (ignore comments).
     active = "\n".join(
         line
@@ -142,13 +143,16 @@ def test_operator_layout_matches_vibecrafted_standard() -> None:
     )
     assert "strider" not in active
     assert 'tab name="Operator"' not in active
+    assert "VibeCrafted" not in active
 
 
 def test_operator_layout_guide_and_shell_tabs() -> None:
     payload = (LAYOUTS_DIR / "operator.kdl").read_text(encoding="utf-8")
     assert 'plugin location="about"' in payload
-    assert 'command="/bin/zsh"' in payload
-    assert 'name="operator"' in payload
+    assert 'name="Shell"' in payload
+    # Shell wakes with banner then zsh (not bare suspended /bin/zsh).
+    assert "exec zsh" in payload or "zsh -l" in payload
+    assert "start_suspended true" not in payload
 
 
 def test_workflow_layout_has_swap_layouts() -> None:
