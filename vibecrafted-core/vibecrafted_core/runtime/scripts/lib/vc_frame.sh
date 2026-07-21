@@ -482,7 +482,14 @@ spawn_in_vc_frame_pane() {
       local run_tab_id=""
       run_tab_id="$(spawn_tab_id_by_name "$run_tab_name" 2>/dev/null || true)"
       if [[ -z "$run_tab_id" ]]; then
+        # --after-base (W2-B-4c): run tabs grow from the base card. Probe the
+        # binary — a stale install without the flag keeps append placement.
+        local placement_flag=""
+        if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--after-base'; then
+          placement_flag="--after-base"
+        fi
         "$vc_frame_bin" action new-tab \
+          ${placement_flag:+"$placement_flag"} \
           --name "$run_tab_name" \
           --cwd "${SPAWN_ROOT:-$(pwd)}" \
           -- "$cmd_script" >/dev/null || launch_status=$?

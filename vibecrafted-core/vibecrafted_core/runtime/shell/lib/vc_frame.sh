@@ -447,7 +447,15 @@ _vetcoders_spawn_into_operator_session() {
   # readable trail for debugging.
   cmd_script="$(_vetcoders_tmp_script_path "vc-spawn-cmd" "$root_dir")"
   _vetcoders_write_command_script "$cmd_script" "$command_text" || return 1
+  # --after-base (W2-B-4c): run tabs grow from the base card, newest right of
+  # it, instead of drifting to the rail's far end. Probe the binary — a stale
+  # install without the flag degrades to the old append placement.
+  local placement_flag=""
+  if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--after-base'; then
+    placement_flag="--after-base"
+  fi
   if "$vc_frame_bin" --session "$session_name" action new-tab \
+    ${placement_flag:+"$placement_flag"} \
     --name "$tab_name" \
     --cwd "$root_dir" \
     -- "$cmd_script" >/dev/null; then
