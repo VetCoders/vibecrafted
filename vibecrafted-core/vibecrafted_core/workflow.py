@@ -21,7 +21,6 @@ from .control_plane import (
     ensure_session_id,
     lookup_run,
     normalize_run_root,
-    operator_session_name,
     record_stop_transition,
     run_snapshot_dir,
     sync_state,
@@ -532,12 +531,13 @@ def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
         clean = _ANSI_SGR.sub("", line).strip()
         if not clean:
             continue
-        name = clean.split()[0]
-        if name != session:
-            continue
         if "EXITED" in clean.upper():
-            return False
-        return True
+            continue
+        # Strip trailing status tags so multi-word hosts (G7: "<repo> workers") match.
+        name = re.sub(r"\s+\[.*$", "", clean)
+        name = re.sub(r"\s+\([^)]*\)$", "", name).rstrip()
+        if name == session:
+            return True
     return False
 
 
@@ -768,48 +768,37 @@ def _launch_transport_command(
 
 
 def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) -> str:
-    """Resolve the LIVE vc-frame session that can host a visible run tab.
+    """Resolve the vc-frame session that hosts worker tabs (G7).
 
-    Python mirror of the bash runtime's ``spawn_effective_operator_session``
-    (``runtime/scripts/lib/vc_frame.sh``). The ``vibecrafted <skill>`` workflow
-    dispatch routes through ``launch_workflow`` here — NOT the bash ``*_spawn.sh``
-    path — so the two fixes already landed on the bash side (eb346da, 2952f05)
-    have to be mirrored, or a CLI/headless/nested dispatch from OUTSIDE a pane
-    degrades to an invisible headless orphan even when a live operator session
-    exists. Two guards, both empirically the source of the outside→headless gap:
+    Python mirror of bash ``spawn_effective_operator_session``
+    (``runtime/scripts/lib/vc_frame.sh``). The launch-log field
+    ``operator_session`` records this host (truthful worker target), not the
+    human operator's interactive seat.
 
-    1. Honour an env-provided session ONLY when it names a LIVE session. The
-       dispatcher propagates ``VIBECRAFTED_OPERATOR_SESSION`` = a per-run tracking
-       id (``operator_session_name`` = ``"<repo>-<run_id>"``) which is NOT a live
-       session; targeting a tab at it lands nowhere (the 2952f05 bug).
-    2. With no live env session, discover the repo-bound operator session — named
-       after ``basename("$root")`` — and accept it only when live. This is what
-       lets an outside dispatch land as a visible tab (the eb346da fix). Only
-       when no live session exists at all do we return the per-run id, so the
-       caller (``_launch_transport_command``) honestly degrades to headless —
-       the correct fallback when there is nothing live to host a tab.
+    Rules (exact order):
+
+    1. ``VIBECRAFTED_WORKER_SESSION`` if set — explicit override wins.
+    2. ``basename(root)`` — per-project host session for workers.
+    3. If that equals the dispatcher seat (``VC_FRAME_SESSION_NAME`` /
+       ``ZELLIJ_SESSION_NAME``), use ``"<repo> workers"`` so the operator
+       session never receives a worker tab — even when repo name == seat name.
+
+    Missing hosts are resurrected by G3 (``attach --create-background``). The
+    ``run_id`` argument is retained for call-site compatibility only.
     """
-    vc_frame = shutil.which("vc-frame") or ""
+    _ = run_id  # call-site compatibility; not part of G7 host rules
+    override = str(env.get("VIBECRAFTED_WORKER_SESSION") or "").strip()
+    if override:
+        return override
 
-    def _live(name: str) -> bool:
-        return (
-            bool(name) and bool(vc_frame) and _vc_frame_session_active(vc_frame, name)
-        )
-
-    for key in (
-        "VIBECRAFTED_OPERATOR_SESSION",
-        "VC_FRAME_SESSION_NAME",
-        "ZELLIJ_SESSION_NAME",
-    ):
-        session_name = str(env.get(key) or "").strip()
-        if session_name and _live(session_name):
-            return session_name
-
-    repo_session = operator_session_name(root, "")
-    if _live(repo_session):
-        return repo_session
-
-    return operator_session_name(root, run_id)
+    host = Path(root or ".").name or "vibecrafted"
+    dispatcher = (
+        str(env.get("VC_FRAME_SESSION_NAME") or "").strip()
+        or str(env.get("ZELLIJ_SESSION_NAME") or "").strip()
+    )
+    if dispatcher and host == dispatcher:
+        return f"{host} workers"
+    return host
 
 
 def _run_is_terminal(run: dict[str, Any]) -> bool:

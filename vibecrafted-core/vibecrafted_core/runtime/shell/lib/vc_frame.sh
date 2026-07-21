@@ -210,6 +210,28 @@ _vetcoders_operator_session_name() {
   _vetcoders_operator_session_name_for_run_id "$run_id"
 }
 
+# G7 twin of spawn_effective_operator_session (scripts/lib/vc_frame.sh).
+# Worker host session: override → basename(root) → collision suffix. Never the
+# human operator seat (VC_FRAME_SESSION_NAME / ZELLIJ_SESSION_NAME).
+_vetcoders_effective_worker_session() {
+  if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" ]]; then
+    printf '%s\n' "${VIBECRAFTED_WORKER_SESSION}"
+    return 0
+  fi
+  local root_dir="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-${_vetcoders_contract_root:-}}}"
+  if [[ -z "$root_dir" ]]; then
+    root_dir="$(_vetcoders_repo_root 2>/dev/null || pwd)"
+  fi
+  local host=""
+  host="$(basename "$root_dir")"
+  [[ -n "$host" ]] || return 1
+  local dispatcher="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
+  if [[ -n "$dispatcher" && "$host" == "$dispatcher" ]]; then
+    host="${host} workers"
+  fi
+  printf '%s\n' "$host"
+}
+
 _vetcoders_vc_frame_gc_script() {
   _vetcoders_workflow_script "vc-operator" "mission-control/vc-frame-gc.sh"
 }
@@ -507,7 +529,17 @@ _vetcoders_spawn_into_operator_session() {
   export PATH
   local tab_name="$1"
   local command_text="$2"
-  local session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
+  # Operator-UI path (vc-init / operator agent / resume): land in the prepared
+  # operator seat. Skill *workers* use scripts/lib spawn_launch (G7 per-project
+  # host). Optional: VIBECRAFTED_WORKER_SESSION forces the G7 worker host here
+  # too (marbles fleets that share this entrypoint).
+  local session_name=""
+  if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" ]]; then
+    session_name="$(_vetcoders_effective_worker_session 2>/dev/null || true)"
+  else
+    session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
+  fi
+  [[ -n "$session_name" ]] || return 1
   local root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
   local layout_file state
   local cmd_script

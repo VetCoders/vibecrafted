@@ -202,6 +202,42 @@ launch**, before any worker process exists:
   Python terminal transport. Hosting session name is never hardcoded —
   it is the resolved `operator_session` already written to the launch log.
 
+### Hosting — per-project worker sessions (G7, 2026-07-21)
+
+Worker tabs must **never** open in the human operator's interactive seat.
+The operator session (e.g. `vc-workspace`) stays clean; workers land in a
+host session named after the project, visible as a separate session in the
+vc-frame left rail. Finished runs still triage into `f` / `x` / `n`
+drawers independently of the source session.
+
+**Surface**: skill-worker launch path (`runtime/scripts/lib/vc_frame.sh` +
+`spawn_launch` + Python `workflow.launch_workflow`). Operator-UI entrypoints
+(`vc-init`, interactive operator agent, shell twin
+`_vetcoders_spawn_into_operator_session`) still land in the prepared human
+seat unless `VIBECRAFTED_WORKER_SESSION` is set.
+
+**Resolution order** (bash `spawn_effective_operator_session` + Python
+`_effective_operator_session` — same rules):
+
+1. `VIBECRAFTED_WORKER_SESSION` if set — explicit override wins (any name,
+   including one that matches the operator seat).
+2. Else `basename(--root)` (SPAWN_ROOT / VIBECRAFTED_ROOT / cwd) — the
+   per-project host (e.g. `vibecrafted`, `vc-frame`).
+3. If that name equals the **dispatcher seat**
+   (`VC_FRAME_SESSION_NAME` / `ZELLIJ_SESSION_NAME` — the session the human
+   is attached to when dispatch fires), use `"<repo> workers"` instead so
+   the operator session never receives a worker tab — even when repo name
+   equals seat name.
+
+**Missing host**: G3 contract applies — one
+`vc-frame attach --create-background <host>`, then the `new-tab` action.
+**Receipt truth**: launch-log / control-plane field `operator_session` is
+the **actual worker host** after the rules above, not the human seat name.
+
+**Out of scope for this cut**: sidebar UI grouping in the vc-frame repo;
+moving live PTYs between sessions; triage drawer logic; forcing marbles
+shell-entrypoint off the operator seat (primary fleet path is scripts/lib).
+
 ---
 
 ## Class 3 — Premature/untrusted await (observability contract drift)

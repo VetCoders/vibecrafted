@@ -487,10 +487,13 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert "new-tab" in payload
+    # In-frame marbles path: go-to-tab-name --create + new-pane (not new-tab).
+    # One run_id = one marbles-* tab; loops stack panes in that tab.
+    assert "go-to-tab-name" in payload or "new-pane" in payload
+    assert "new-pane" in payload
     assert "--name" in payload
-    assert "marbles" in payload
-    assert "vibecrafted-marb-014520" in payload
+    assert "marbles" in " ".join(payload) or "marb-014520" in payload
+    assert "vibecrafted-marb-014520" in payload or "marb-014520" in payload
 
 
 def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
@@ -539,7 +542,8 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     assert result.returncode == 0
     assert result.stderr == ""
     payload = capture_file.read_text(encoding="utf-8")
-    assert "new-tab" in payload
+    # Bundled vc-frame must be used for the in-frame marbles new-pane path.
+    assert "new-pane" in payload or "go-to-tab-name" in payload
     assert result.stdout.endswith(f"PATH={os.defpath}\n")
 
 

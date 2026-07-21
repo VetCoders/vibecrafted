@@ -27,7 +27,7 @@ _ENV_SANITIZE = """
 unset VC_FRAME VC_FRAME_PANE_ID VC_FRAME_SESSION_NAME VC_FRAME_TAB_NAME VC_FRAME_CONFIG_DIR
 unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME ZELLIJ_SOCKET_DIR
 unset VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION VIBECRAFTED_PANE_SEQ VIBECRAFTED_MARBLES_TAB_NAME
-unset VIBECRAFTED_OPERATOR_SESSION VIBECRAFTED_RUN_ID VIBECRAFTED_RUN_LOCK
+unset VIBECRAFTED_OPERATOR_SESSION VIBECRAFTED_WORKER_SESSION VIBECRAFTED_RUN_ID VIBECRAFTED_RUN_LOCK
 unset VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME VIBECRAFTED_LOOP_NR
 unset VIBECRAFTED_VC_FRAME_CLOSE_AGENT_PANES VIBECRAFTED_VC_FRAME_KEEP_AGENT_PANES VIBECRAFTED_INLINE_STARTUP_WATCH
 unset VIBECRAFTED_SPAWN_STAGGER VIBECRAFTED_SPAWN_STAGGER_SECONDS
@@ -1641,6 +1641,9 @@ def test_spawn_in_vc_frame_pane_honors_requested_direction(tmp_path: Path) -> No
         export VC_FRAME_SESSION_NAME="{operator_session}"
         export ZELLIJ_SESSION_NAME="{operator_session}"
         export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
+        # G7: in-pane path only fires when current seat == worker host.
+        # Simulate "already inside the project worker session".
+        export VIBECRAFTED_WORKER_SESSION="{operator_session}"
         export VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=down
         source "{COMMON_SH}"
         spawn_in_vc_frame_pane "{launcher}" "workflow"
@@ -2009,8 +2012,11 @@ def test_spawn_prepare_paths_generates_real_run_context_when_missing(
 
 def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None:
     run_id = "marb-014520"
-    operator_session = _expected_operator_session(run_id)
-    launcher = tmp_path / "launch.sh"
+    # G7: host is basename(SPAWN_ROOT), not ambient VIBECRAFTED_OPERATOR_SESSION.
+    project_root = tmp_path / "proj-foo"
+    project_root.mkdir()
+    host_session = project_root.name
+    launcher = project_root / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
 
@@ -2024,7 +2030,7 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 'if [[ "${1:-}" == "list-sessions" ]]; then',
-                f'  printf "%s [Created]\\n" "{operator_session}"',
+                f'  printf "%s [Created]\\n" "{host_session}"',
                 "  exit 0",
                 "fi",
                 'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
@@ -2042,8 +2048,9 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
         export PATH="{fake_bin}:$PATH"
         export CAPTURE_FILE="{capture_file}"
         export VIBECRAFTED_RUN_ID="{run_id}"
-        export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
-        export SPAWN_ROOT="{tmp_path}"
+        # Ambient human seat must not steal the worker host.
+        export VIBECRAFTED_OPERATOR_SESSION="operator-seat"
+        export SPAWN_ROOT="{project_root}"
         source "{COMMON_SH}"
         spawn_in_operator_session "{launcher}" "workflow"
         '''
@@ -2051,7 +2058,8 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "--session" in payload
-    assert operator_session in payload
+    assert host_session in payload
+    assert "operator-seat" not in payload
     assert "action" in payload
     # When spawning from outside a vc_frame context (no VC_FRAME/VC_FRAME_PANE_ID),
     # the routing guard forces a new-tab to avoid landing in a stale operator tab.
@@ -2064,7 +2072,7 @@ def test_spawn_in_operator_session_suppresses_vc_frame_tab_number_output(
     tmp_path: Path,
 ) -> None:
     run_id = "marb-014520"
-    operator_session = _expected_operator_session(run_id)
+    host_session = tmp_path.name  # G7: basename(SPAWN_ROOT)
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
@@ -2079,7 +2087,7 @@ def test_spawn_in_operator_session_suppresses_vc_frame_tab_number_output(
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 'if [[ "${1:-}" == "list-sessions" ]]; then',
-                f'  printf "%s [Created]\\n" "{operator_session}"',
+                f'  printf "%s [Created]\\n" "{host_session}"',
                 "  exit 0",
                 "fi",
                 'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
@@ -2096,12 +2104,12 @@ def test_spawn_in_operator_session_suppresses_vc_frame_tab_number_output(
         [
             "bash",
             "-lc",
-            f'''
+            _ENV_SANITIZE
+            + f'''
             set -euo pipefail
             export PATH="{fake_bin}:$PATH"
             export CAPTURE_FILE="{capture_file}"
             export VIBECRAFTED_RUN_ID="{run_id}"
-            export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
             export SPAWN_ROOT="{tmp_path}"
             source "{COMMON_SH}"
             spawn_in_operator_session "{launcher}" "workflow"
@@ -2174,6 +2182,7 @@ def test_spawn_in_vc_frame_pane_marbles_tab_suppresses_tab_number_output(
             export VC_FRAME_TAB_NAME="operator-tab"
             export VIBECRAFTED_RUN_ID="{run_id}"
             export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
+            export VIBECRAFTED_WORKER_SESSION="{operator_session}"
             export VIBECRAFTED_MARBLES_TAB_NAME="marbles"
             export SPAWN_ROOT="{tmp_path}"
             export SPAWN_LOOP_NR=1
@@ -2255,6 +2264,7 @@ def test_spawn_in_vc_frame_pane_marbles_tab_can_keep_agent_panes_for_forensics(
             export ZELLIJ_SESSION_NAME="{operator_session}"
             export VIBECRAFTED_RUN_ID="{run_id}"
             export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
+            export VIBECRAFTED_WORKER_SESSION="{operator_session}"
             export VIBECRAFTED_MARBLES_TAB_NAME="marbles"
             export VIBECRAFTED_VC_FRAME_KEEP_AGENT_PANES=1
             export SPAWN_ROOT="{tmp_path}"
@@ -2582,7 +2592,7 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
     tmp_path: Path,
 ) -> None:
     run_id = "rsch-014520"
-    operator_session = _expected_operator_session(run_id)
+    host_session = tmp_path.name  # G7: basename(SPAWN_ROOT)
     expected_tmp_root = tmp_path / ".vibecrafted" / "tmp"
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -2605,7 +2615,7 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 'if [[ "${1:-}" == "list-sessions" ]]; then',
-                f'  printf "%s [Created]\\n" "{operator_session}"',
+                f'  printf "%s [Created]\\n" "{host_session}"',
                 "  exit 0",
                 "fi",
                 "{",
@@ -2626,7 +2636,6 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
         export PATH="{fake_bin}:$PATH"
         export CAPTURE_FILE="{capture_file}"
         export VIBECRAFTED_RUN_ID="{run_id}"
-        export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
         export SPAWN_ROOT="{tmp_path}"
         export SPAWN_META="{meta}"
         export SPAWN_TRANSCRIPT="{transcript}"
@@ -2652,12 +2661,12 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
     list_tabs_call, workflow_call = material
     assert list_tabs_call[:5] == [
         "--session",
-        operator_session,
+        host_session,
         "action",
         "list-tabs",
         "--json",
     ]
-    assert workflow_call[:4] == ["--session", operator_session, "action", "new-tab"]
+    assert workflow_call[:4] == ["--session", host_session, "action", "new-tab"]
     assert "--name" in workflow_call
     assert run_id in workflow_call
     assert "workflow" not in workflow_call[workflow_call.index("--name") + 1]
@@ -2674,7 +2683,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
     tmp_path: Path,
 ) -> None:
     run_id = "ownr-014520"
-    operator_session = _expected_operator_session(run_id)
+    host_session = tmp_path.name  # G7: basename(SPAWN_ROOT)
     expected_tmp_root = tmp_path / ".vibecrafted" / "tmp"
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -2690,7 +2699,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 'if [[ "${1:-}" == "list-sessions" ]]; then',
-                f'  printf "%s [Created]\\n" "{operator_session}"',
+                f'  printf "%s [Created]\\n" "{host_session}"',
                 "  exit 0",
                 "fi",
                 "{",
@@ -2719,7 +2728,6 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
         export PATH="{fake_bin}:$PATH"
         export CAPTURE_FILE="{capture_file}"
         export VIBECRAFTED_RUN_ID="{run_id}"
-        export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
         export SPAWN_ROOT="{tmp_path}"
         source "{COMMON_SH}"
         spawn_in_operator_session "{launcher}" "ownership-codex"
@@ -2730,21 +2738,21 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
     assert len(calls) == 4
     assert calls[0][:5] == [
         "--session",
-        operator_session,
+        host_session,
         "action",
         "list-tabs",
         "--json",
     ]
     assert calls[1][:5] == [
         "--session",
-        operator_session,
+        host_session,
         "action",
         "current-tab-info",
         "--json",
     ]
 
     pane_call = calls[2]
-    assert pane_call[:4] == ["--session", operator_session, "action", "new-pane"]
+    assert pane_call[:4] == ["--session", host_session, "action", "new-pane"]
     assert "--tab-id" in pane_call
     assert "7" in pane_call
     assert "--stacked" in pane_call
@@ -2752,8 +2760,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
     assert "--name" in pane_call
     assert "ownership-codex" in pane_call
     assert not any(
-        call[:4] == ["--session", operator_session, "action", "new-tab"]
-        for call in calls
+        call[:4] == ["--session", host_session, "action", "new-tab"] for call in calls
     )
     assert not any("startup-monitor" in arg for call in calls for arg in call)
 
@@ -2765,7 +2772,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
 
     assert calls[3][:5] == [
         "--session",
-        operator_session,
+        host_session,
         "action",
         "go-to-tab-by-id",
         "2",
@@ -3008,3 +3015,266 @@ def test_spawn_vc_frame_session_action_happy_path_no_create_background(
     assert "--create-background" not in calls
     assert calls.count("new-tab") == 1
     assert not (state / "create").exists()
+
+
+# ---------------------------------------------------------------------------
+# G7 — worker tabs host in per-project sessions, never the operator seat
+# ---------------------------------------------------------------------------
+
+
+def _g7_fake_vc_frame(
+    tmp_path: Path, *, live_sessions: list[str] | None = None
+) -> tuple[Path, Path, Path]:
+    """Stub vc-frame that logs argv and optional create-background."""
+    state = tmp_path / "g7-state"
+    state.mkdir(exist_ok=True)
+    (state / "live").write_text(
+        "\n".join(live_sessions or []) + ("\n" if live_sessions else ""),
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(exist_ok=True)
+    capture = state / "calls"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" || "${1:-}" == "ls" ]]; then',
+                '  if [[ -f "$STATE/live" ]]; then cat "$STATE/live"; fi',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "attach" && "${2:-}" == "--create-background" ]]; then',
+                '  printf "%s [Created]\\n" "${3:-}" >> "$STATE/live"',
+                '  printf "create:%s\\n" "${3:-}" >> "$STATE/create"',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "--session" ]]; then',
+                '  sess="${2:-}"',
+                '  if ! grep -qxF "$sess [Created]" "$STATE/live" 2>/dev/null \\',
+                '     && ! grep -qxF "$sess" "$STATE/live" 2>/dev/null; then',
+                "    # Accept bare name lines too.",
+                '    if ! awk -v s="$sess" \'$1 == s { found=1 } END { exit found ? 0 : 1 }\' "$STATE/live" 2>/dev/null; then',
+                '      printf "Session \'%s\' not found\\n" "$sess" >&2',
+                "      exit 0",
+                "    fi",
+                "  fi",
+                "  exit 0",
+                "fi",
+                "exit 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+    return fake_bin, state, capture
+
+
+def test_g7_worker_tab_never_lands_in_operator_session(tmp_path: Path) -> None:
+    """Dispatch from seat X for repo foo → tab in foo, zero --session X."""
+    project = tmp_path / "foo"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    operator_seat = "operator-X"
+    fake_bin, state, _capture = _g7_fake_vc_frame(
+        tmp_path, live_sessions=[f"{operator_seat} [Created]", "foo [Created]"]
+    )
+
+    _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export VC_FRAME=1
+        export VC_FRAME_PANE_ID=pane-1
+        export VC_FRAME_SESSION_NAME="{operator_seat}"
+        export SPAWN_ROOT="{project}"
+        export VIBECRAFTED_RUN_ID="impl-g7-001"
+        export VIBECRAFTED_OPERATOR_SESSION="{operator_seat}"
+        source "{COMMON_SH}"
+        spawn_in_operator_session "{launcher}" "worker"
+        printf 'resolved=%s\\n' "$(spawn_effective_operator_session)"
+        '''
+    )
+
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "--session" in calls
+    assert "\nfoo\n" in calls or calls.endswith("foo") or "\nfoo\n" in f"\n{calls}\n"
+    # No action targets the operator seat.
+    assert f"--session\n{operator_seat}\n" not in calls
+    assert "operator-X" not in [
+        line
+        for i, line in enumerate(calls.splitlines())
+        if i and calls.splitlines()[i - 1] == "--session"
+    ]
+
+
+def test_g7_missing_project_session_create_background_then_tab(tmp_path: Path) -> None:
+    """Host foo missing → one create-background + tab; live host → no create."""
+    project = tmp_path / "foo"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+
+    # Missing host first.
+    fake_bin, state, _ = _g7_fake_vc_frame(tmp_path, live_sessions=[])
+    _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export SPAWN_ROOT="{project}"
+        export VIBECRAFTED_RUN_ID="impl-g7-miss"
+        source "{COMMON_SH}"
+        spawn_in_operator_session "{launcher}" "worker"
+        '''
+    )
+    create = (state / "create").read_text(encoding="utf-8")
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "create:foo" in create
+    assert "--create-background" in calls
+    # Real actions only (exclude `action new-tab --help` capability probe).
+    material_new_tabs = [
+        c
+        for c in _split_vc_frame_calls(calls)
+        if len(c) >= 2 and "new-tab" in c and "--help" not in c
+    ]
+    assert len(material_new_tabs) == 2  # miss + after resurrect
+
+    # Happy path: host already live → zero create-background.
+    state2 = tmp_path / "g7-live"
+    state2.mkdir()
+    fake_bin2, state_live, _ = _g7_fake_vc_frame(
+        state2, live_sessions=["foo [Created]"]
+    )
+    launcher2 = state2 / "foo" / "launch.sh"
+    launcher2.parent.mkdir()
+    launcher2.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher2.chmod(0o755)
+    _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin2}:$PATH"
+        export SPAWN_ROOT="{launcher2.parent}"
+        export VIBECRAFTED_RUN_ID="impl-g7-live"
+        source "{COMMON_SH}"
+        spawn_in_operator_session "{launcher2}" "worker"
+        '''
+    )
+    live_calls = (state_live / "calls").read_text(encoding="utf-8")
+    assert "--create-background" not in live_calls
+    live_new_tabs = [
+        c
+        for c in _split_vc_frame_calls(live_calls)
+        if len(c) >= 2 and "new-tab" in c and "--help" not in c
+    ]
+    assert len(live_new_tabs) == 1
+
+
+def test_g7_worker_session_env_override(tmp_path: Path) -> None:
+    """VIBECRAFTED_WORKER_SESSION=bar → tab in bar regardless of repo."""
+    project = tmp_path / "foo"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    fake_bin, state, _ = _g7_fake_vc_frame(tmp_path, live_sessions=["bar [Created]"])
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export SPAWN_ROOT="{project}"
+        export VC_FRAME_SESSION_NAME="operator-X"
+        export VIBECRAFTED_WORKER_SESSION="bar"
+        export VIBECRAFTED_RUN_ID="impl-g7-ov"
+        source "{COMMON_SH}"
+        printf 'host=%s\\n' "$(spawn_effective_operator_session)"
+        spawn_in_operator_session "{launcher}" "worker"
+        '''
+    )
+    assert "host=bar" in result.stdout
+    sessions = [
+        line
+        for i, line in enumerate(
+            (state / "calls").read_text(encoding="utf-8").splitlines()
+        )
+        if i
+        and (state / "calls").read_text(encoding="utf-8").splitlines()[i - 1]
+        == "--session"
+    ]
+    assert "bar" in sessions
+    assert "foo" not in sessions
+
+
+def test_g7_name_collision_uses_workers_suffix(tmp_path: Path) -> None:
+    """Dispatch from seat foo for repo foo → host 'foo workers', not foo."""
+    project = tmp_path / "foo"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    host = "foo workers"
+    fake_bin, state, _ = _g7_fake_vc_frame(
+        tmp_path, live_sessions=[f"{host} [Created]", "foo [Created]"]
+    )
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export VC_FRAME=1
+        export VC_FRAME_PANE_ID=pane-1
+        export VC_FRAME_SESSION_NAME="foo"
+        export SPAWN_ROOT="{project}"
+        export VIBECRAFTED_RUN_ID="impl-g7-col"
+        source "{COMMON_SH}"
+        printf 'host=%s\\n' "$(spawn_effective_operator_session)"
+        spawn_in_operator_session "{launcher}" "worker"
+        '''
+    )
+    assert "host=foo workers" in result.stdout
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "foo workers" in calls
+    # Worker action must not target the bare operator seat name as host.
+    session_args = []
+    lines = calls.splitlines()
+    for i, line in enumerate(lines):
+        if line == "--session" and i + 1 < len(lines):
+            session_args.append(lines[i + 1])
+    assert "foo workers" in session_args
+    assert session_args.count("foo") == 0
+
+
+def test_g7_receipt_operator_session_is_worker_host(tmp_path: Path) -> None:
+    """After resolve, VIBECRAFTED_OPERATOR_SESSION export = actual worker host."""
+    project = tmp_path / "proj-bar"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    fake_bin, _state, _ = _g7_fake_vc_frame(
+        tmp_path, live_sessions=["proj-bar [Created]"]
+    )
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export VC_FRAME_SESSION_NAME="vc-workspace"
+        export SPAWN_ROOT="{project}"
+        export VIBECRAFTED_OPERATOR_SESSION="vc-workspace"
+        export VIBECRAFTED_RUN_ID="impl-g7-rcpt"
+        source "{COMMON_SH}"
+        spawn_in_operator_session "{launcher}" "worker"
+        printf 'receipt=%s\\n' "${{VIBECRAFTED_OPERATOR_SESSION}}"
+        '''
+    )
+    assert "receipt=proj-bar" in result.stdout

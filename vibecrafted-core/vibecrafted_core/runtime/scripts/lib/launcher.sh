@@ -240,12 +240,13 @@ spawn_launch() {
   pane_name="${pane_name%-}"
   [[ -n "$pane_name" ]] || pane_name="agent"
 
-  if [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
-    local discovered_session=""
-    discovered_session="$(spawn_effective_operator_session 2>/dev/null || true)"
-    if [[ -n "$discovered_session" ]]; then
-      export VIBECRAFTED_OPERATOR_SESSION="$discovered_session"
-    fi
+  # G7: always resolve the worker host session (per-project / override). Do not
+  # keep ambient VIBECRAFTED_OPERATOR_SESSION from the human seat — that is what
+  # dumped worker tabs into the operator interactive session.
+  local discovered_session=""
+  discovered_session="$(spawn_effective_operator_session 2>/dev/null || true)"
+  if [[ -n "$discovered_session" ]]; then
+    export VIBECRAFTED_OPERATOR_SESSION="$discovered_session"
   fi
 
   if (( dry_run )); then

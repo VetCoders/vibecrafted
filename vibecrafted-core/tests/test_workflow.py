@@ -711,55 +711,61 @@ def test_vc_frame_session_active_parses_list_sessions(tmp_path: Path) -> None:
     assert workflow._vc_frame_session_active(str(vc_frame), "") is False
 
 
-def test_effective_operator_session_resolves_only_live_targets(
+def test_effective_operator_session_g7_worker_host_routing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Mirror of the bash spawn_effective_operator_session contract: the tab
-    # target must be a LIVE session, never the dispatcher's per-run tracking id.
-    # Regression guard for the outside-dispatch -> invisible-headless gap.
-    monkeypatch.setattr(
-        workflow.shutil,
-        "which",
-        lambda name: "/usr/bin/vc-frame" if name == "vc-frame" else None,
-    )
-    live: set[str] = {"vibecrafted"}
-    monkeypatch.setattr(workflow, "_vc_frame_session_active", lambda _vc, s: s in live)
+    # G7: worker host is per-project / override; never the dispatcher seat.
+    # Liveness is G3's job (create-background); resolution always returns host.
     root = "/Users/x/work/vibecrafted"
+    root_foo = "/Users/x/work/foo"
 
-    # 1. A LIVE env-provided session is honoured (the in-frame path).
+    # 1. Outside any pane → basename(root).
     assert (
-        workflow._effective_operator_session(
-            root=root, run_id="r1", env={"VC_FRAME_SESSION_NAME": "vibecrafted"}
-        )
+        workflow._effective_operator_session(root=root, run_id="r1", env={})
         == "vibecrafted"
     )
 
-    # 2. The per-run tracking id the dispatcher propagates is NOT live, so it is
-    #    rejected; resolution falls through to the live repo-bound session.
+    # 2. Ambient VIBECRAFTED_OPERATOR_SESSION (human seat) is ignored as target.
     assert (
         workflow._effective_operator_session(
             root=root,
             run_id="r2",
-            env={"VIBECRAFTED_OPERATOR_SESSION": "vibecrafted-r2"},
+            env={"VIBECRAFTED_OPERATOR_SESSION": "vc-workspace"},
         )
         == "vibecrafted"
     )
 
-    # 3. Outside any pane (empty env) still discovers the live repo session —
-    #    this is what lets a CLI/headless dispatch land as a visible tab.
-    assert (
-        workflow._effective_operator_session(root=root, run_id="r3", env={})
-        == "vibecrafted"
-    )
-
-    # 4. When nothing live exists, return the per-run id so the caller degrades
-    #    to headless (the correct fallback when no session can host a tab).
-    live.clear()
+    # 3. Dispatch from seat X for repo foo → host foo (not X).
     assert (
         workflow._effective_operator_session(
-            root=root, run_id="r4", env={"VC_FRAME_SESSION_NAME": "vibecrafted"}
+            root=root_foo,
+            run_id="r3",
+            env={"VC_FRAME_SESSION_NAME": "operator-X"},
         )
-        == "vibecrafted-r4"
+        == "foo"
+    )
+
+    # 4. Name collision: seat == basename → "<repo> workers".
+    assert (
+        workflow._effective_operator_session(
+            root=root,
+            run_id="r4",
+            env={"VC_FRAME_SESSION_NAME": "vibecrafted"},
+        )
+        == "vibecrafted workers"
+    )
+
+    # 5. Explicit worker-session override wins (even over collision).
+    assert (
+        workflow._effective_operator_session(
+            root=root,
+            run_id="r5",
+            env={
+                "VC_FRAME_SESSION_NAME": "vibecrafted",
+                "VIBECRAFTED_WORKER_SESSION": "bar",
+            },
+        )
+        == "bar"
     )
 
 

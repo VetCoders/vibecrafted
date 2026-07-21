@@ -23,6 +23,12 @@ spawn_current_vc_frame_session_name() {
   printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 }
 
+# Session the dispatcher is attached to (pane env). Empty when outside vc-frame.
+# G7: this seat must NEVER receive worker tabs.
+spawn_dispatcher_session_name() {
+  printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
+}
+
 # A vc-frame session is a usable spawn target only when it is actually live.
 # Guards against the dispatcher's per-run tracking id (operator_session_name() =
 # "<repo>-<run_id>", see control_plane.py) being treated as a real session.
@@ -35,72 +41,57 @@ spawn_session_is_live() {
   local sessions=""
   sessions="$("$bin" list-sessions 2>/dev/null || true)"
   [[ -n "$sessions" ]] || sessions="$("$bin" ls 2>/dev/null || true)"
+  # Match full session name (G7 may use multi-word hosts like "<repo> workers").
+  # Strip trailing status tags: [Created], (current), EXITED markers.
   printf '%s\n' "$sessions" \
     | sed 's/\x1b\[[0-9;]*m//g' \
-    | awk -v s="$name" '$1 == s && $0 !~ /EXITED/ { hit = 1 } END { exit hit ? 0 : 1 }'
+    | awk -v s="$name" '
+        {
+          if ($0 ~ /EXITED/) next
+          line = $0
+          sub(/[[:space:]]+\[.*$/, "", line)
+          sub(/[[:space:]]+\([^)]*\)$/, "", line)
+          gsub(/[[:space:]]+$/, "", line)
+          if (line == s) hit = 1
+        }
+        END { exit hit ? 0 : 1 }
+      '
 }
 
+# G7 (2026-07-21): resolve the WORKER host session — never the human operator seat.
+# Name kept for call-site compatibility; launch-log field operator_session records
+# this host (truthful target), not the dispatcher's interactive session.
+#
+# Rules (exact order):
+#   1. VIBECRAFTED_WORKER_SESSION if set — explicit override wins.
+#   2. basename of SPAWN_ROOT / VIBECRAFTED_ROOT / cwd = per-project host.
+#   3. If host == dispatcher seat (VC_FRAME_SESSION_NAME / ZELLIJ_SESSION_NAME),
+#      use "<repo> workers" so the operator session never gets a worker tab.
+# Missing host sessions are resurrected by G3 (attach --create-background).
 spawn_effective_operator_session() {
   spawn_normalize_ambient_context
 
-  local session_name=""
-
-  local vc_frame_bin=""
-  vc_frame_bin="$(spawn_vc_frame_bin)" || return 1
-
-  # Honour an explicitly-provided operator session FIRST when it names a LIVE
-  # vc-frame session (restores pre-W1-06 precedence so `vc-resume`/marbles land in
-  # the session the caller asked for). The liveness gate still keeps a STALE
-  # ambient VIBECRAFTED_OPERATOR_SESSION from stealing the visible tab.
-  local explicit=""
-  for explicit in "${VIBECRAFTED_OPERATOR_SESSION:-}" \
-    "${VC_FRAME_SESSION_NAME:-}" "${ZELLIJ_SESSION_NAME:-}"; do
-    if [[ -n "$explicit" ]] && spawn_session_is_live "$explicit"; then
-      printf '%s\n' "$explicit"
-      return 0
-    fi
-  done
-
-  local repo_root_hint="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-}}"
-  if [[ -z "${VC_FRAME_SESSION_NAME:-}" && -n "$repo_root_hint" ]]; then
-    session_name="$(basename "$repo_root_hint")"
-    printf '%s\n' "$session_name"
+  if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" ]]; then
+    printf '%s\n' "${VIBECRAFTED_WORKER_SESSION}"
     return 0
   fi
 
-  # Attached-pane marker: vc-frame tags the session you are currently in.
-  local sessions=""
-  sessions="$("$vc_frame_bin" list-sessions 2>/dev/null || true)"
-  [[ -n "$sessions" ]] || sessions="$("$vc_frame_bin" ls 2>/dev/null || true)"
-  session_name="$(
-    printf '%s\n' "$sessions" \
-      | sed 's/\x1b\[[0-9;]*m//g' \
-      | awk '/\(current\)/ {print $1; exit}'
-  )"
+  local repo_root="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-}}"
+  local host=""
+  if [[ -n "$repo_root" ]]; then
+    host="$(basename "$repo_root")"
+  else
+    host="$(basename "$(pwd)")"
+  fi
+  [[ -n "$host" ]] || return 1
 
-  # No (current) marker → dispatched from OUTSIDE any vc-frame pane (plain
-  # terminal, headless agent, nested dispatch). The operator session is repo-bound
-  # — named after `basename "$root"` (see dispatch.sh). Try that deterministic
-  # target first; if the action fails, the caller degrades to headless. This keeps
-  # stale ambient VIBECRAFTED_OPERATOR_SESSION values from stealing the visible tab.
-  if [[ -z "$session_name" ]]; then
-    local repo_session=""
-    repo_session="$(basename "${SPAWN_ROOT:-$(pwd)}")"
-    session_name="$repo_session"
+  local dispatcher=""
+  dispatcher="$(spawn_dispatcher_session_name)"
+  if [[ -n "$dispatcher" && "$host" == "$dispatcher" ]]; then
+    host="${host} workers"
   fi
 
-  # Final fallback for explicitly supplied live operator sessions. This is last
-  # on purpose: it keeps external launches visible-by-default in the repo-bound
-  # frame and prevents stale ambient env from stealing the tab.
-  if [[ -z "$session_name" ]]; then
-    session_name="${VIBECRAFTED_OPERATOR_SESSION:-}"
-    if [[ -n "$session_name" ]] && ! spawn_session_is_live "$session_name"; then
-      session_name=""
-    fi
-  fi
-
-  [[ -n "$session_name" ]] || return 1
-  printf '%s\n' "$session_name"
+  printf '%s\n' "$host"
 }
 
 spawn_in_target_vc_frame_session() {
