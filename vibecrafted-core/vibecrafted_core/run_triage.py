@@ -22,12 +22,15 @@ that would take the siblings with it. :func:`plan_triage` refuses that case rath
 than trusting the caller to know the difference.
 
 **Single signals lie.** The drawer a run lands in is decided by
-:func:`classify_run`, a conjunction over exit code, run state, report delivery and
-transcript volume — never by the exit code alone. The AICX record from 2026-05-14
-holds runs reporting top-level ``completed``/exit 0 whose own reports said
-``failed``, and ``timed_out``/``report_missing`` states sitting next to complete
-artifacts. Every such contradiction is routed to human review rather than to a
-confident drawer, and so is every signal the classifier cannot read.
+:func:`classify_run`. When a delivery-kernel receipt is present, the three
+orthogonal axes (``execution_state`` / ``proof_state`` / ``delivery_state``)
+own the verdict; otherwise a conjunction over exit code, run state, report
+delivery and transcript volume decides — never the exit code alone. The AICX
+record from 2026-05-14 holds runs reporting top-level ``completed``/exit 0
+whose own reports said ``failed``, and ``timed_out``/``report_missing`` states
+sitting next to complete artifacts. Every such contradiction is routed to
+human review rather than to a confident drawer, and so is every signal the
+classifier cannot read.
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ __all__ = [
     "BUCKET_FAILED",
     "BUCKET_FINALIZED",
     "BUCKET_NEEDS_ATTENTION",
+    "KernelAxes",
     "MINIMAL_REPORT_BYTES",
     "MINIMAL_TRANSCRIPT_BYTES",
     "RunClassification",
@@ -57,6 +61,7 @@ __all__ = [
     "classify_run",
     "outcome_for_exit_code",
     "plan_triage",
+    "read_kernel_axes",
     "read_run_signals",
     "triage_finished_run",
     "main",
@@ -160,16 +165,167 @@ def _attention(reason: str) -> RunClassification:
     return RunClassification(VERDICT_NEEDS_ATTENTION, reason)
 
 
+# Axis field names written by lifecycle/ship receipts and nested under
+# ``delivery_axes``. Presence of any of these (or a nested receipt body) is
+# the switch that hands the drawer to the kernel path.
+_KERNEL_AXIS_KEYS = ("execution_state", "proof_state", "delivery_state")
+
+
+@dataclass(frozen=True)
+class KernelAxes:
+    """Delivery-kernel axes when a kernel receipt is present for the run.
+
+    Constructed only when a receipt exists. Individual fields may be ``None``
+    (unreadable). ``corrupt=True`` means the receipt body itself could not be
+    parsed — that is not the same as "no receipt", and fails closed.
+    """
+
+    execution_state: str | None = None
+    proof_state: str | None = None
+    delivery_state: str | None = None
+    corrupt: bool = False
+
+
+def _normalize_axis_value(raw: Any) -> str | None:
+    """Coerce one axis field. ``None`` / blank → unreadable (fail closed)."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        return text or None
+    # Enums and other value-bearing objects: take their value/str form.
+    enum_value = getattr(raw, "value", None)
+    if isinstance(enum_value, str):
+        text = enum_value.strip().lower()
+        return text or None
+    text = str(raw).strip().lower()
+    return text or None
+
+
+def _kernel_axes_from_mapping(source: Mapping[str, Any]) -> KernelAxes:
+    return KernelAxes(
+        execution_state=_normalize_axis_value(source.get("execution_state")),
+        proof_state=_normalize_axis_value(source.get("proof_state")),
+        delivery_state=_normalize_axis_value(source.get("delivery_state")),
+        corrupt=False,
+    )
+
+
+def _load_axes_blob(raw: Any) -> KernelAxes | None:
+    """Parse a nested ``delivery_axes`` value into axes or a corrupt marker.
+
+    Returns ``None`` only when ``raw`` is a missing/empty marker (caller should
+    fall through to top-level keys). A present-but-broken body is corrupt.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, Mapping):
+        return _kernel_axes_from_mapping(raw)
+    if not isinstance(raw, str):
+        return KernelAxes(corrupt=True)
+    text = raw.strip()
+    if not text:
+        return None
+    # Inline JSON object.
+    if text.startswith("{"):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return KernelAxes(corrupt=True)
+        if not isinstance(payload, Mapping):
+            return KernelAxes(corrupt=True)
+        return _kernel_axes_from_mapping(payload)
+    # Path to a receipt file on disk.
+    path = Path(text)
+    try:
+        if not path.is_file():
+            return KernelAxes(corrupt=True)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeError):
+        return KernelAxes(corrupt=True)
+    if not isinstance(payload, Mapping):
+        return KernelAxes(corrupt=True)
+    return _kernel_axes_from_mapping(payload)
+
+
+def read_kernel_axes(meta: Mapping[str, Any]) -> KernelAxes | None:
+    """Extract kernel axes from a run receipt, or ``None`` if no receipt exists.
+
+    Presence rules (any one is enough):
+
+    * nested ``delivery_axes`` mapping / JSON / path
+    * any of ``execution_state`` / ``proof_state`` / ``delivery_state`` on meta
+
+    A present-but-unreadable body returns :class:`KernelAxes` with
+    ``corrupt=True`` — never raises, never pretends the receipt was absent.
+    """
+    if "delivery_axes" in meta:
+        loaded = _load_axes_blob(meta.get("delivery_axes"))
+        if loaded is not None:
+            return loaded
+        # Explicit null/empty delivery_axes still counts as a receipt attempt
+        # only when other axis keys are also absent; fall through.
+    if any(key in meta for key in _KERNEL_AXIS_KEYS):
+        return _kernel_axes_from_mapping(meta)
+    return None
+
+
+def _classify_from_kernel_axes(axes: KernelAxes) -> RunClassification:
+    """Drawer from the three delivery-kernel axes. Fail closed on uncertainty.
+
+    * ``delivery=sealed`` → finalized (seal is authority; legacy signals ignored)
+    * ``execution=failed`` or ``proof∈{failed,invalid}`` → failed
+    * every other combination, partial axes, or corrupt receipt → needs_attention
+    """
+    if axes.corrupt:
+        return _attention("kernel_axes_unreadable")
+
+    delivery = axes.delivery_state
+    execution = axes.execution_state
+    proof = axes.proof_state
+
+    if delivery == "sealed":
+        return RunClassification(VERDICT_FINALIZED, "delivery_sealed")
+
+    if execution == "failed":
+        return RunClassification(VERDICT_FAILED, "execution_failed")
+    if proof == "failed":
+        return RunClassification(VERDICT_FAILED, "proof_failed")
+    if proof == "invalid":
+        return RunClassification(VERDICT_FAILED, "proof_invalid")
+
+    # Partial, in-progress, or honest-but-unsealed terminals.
+    parts = [
+        f"e={execution or 'none'}",
+        f"p={proof or 'none'}",
+        f"d={delivery or 'none'}",
+    ]
+    return _attention("axes_" + "_".join(parts))
+
+
 def classify_run(
     exit_code: Any,
     run_state: Any,
     report_exists: bool | None,
     report_bytes: int | None,
     transcript_bytes: int | None,
+    *,
+    kernel_axes: KernelAxes | None = None,
 ) -> RunClassification:
-    """Decide a finished run's drawer from the conjunction of its signals.
+    """Decide a finished run's drawer from its signals.
 
-    Pure. Three outcomes, and only two of them are confident:
+    Pure. Three outcomes, and only two of them are confident.
+
+    When ``kernel_axes`` is provided (a delivery-kernel receipt was present),
+    the three orthogonal axes decide:
+
+    * **finalized** — ``delivery_state=sealed``
+    * **failed** — ``execution_state=failed`` or ``proof_state∈{failed,invalid}``
+    * **needs_attention** — every other axis combination, and any unreadable
+      receipt body
+
+    When no kernel receipt is present (``kernel_axes is None``), the legacy
+    five-signal conjunction applies:
 
     * **finalized** — exit 0, a state asserting delivery, and a non-empty report
       actually on disk. All three, or it is not finalized.
@@ -184,6 +340,9 @@ def classify_run(
     never to a confident drawer. ``report_exists=None`` and
     ``transcript_bytes=None`` mean "could not stat", not "absent".
     """
+    if kernel_axes is not None:
+        return _classify_from_kernel_axes(kernel_axes)
+
     state = str(run_state or "").strip().lower()
     if not state:
         return _attention("state_unreadable")
@@ -237,7 +396,9 @@ class RunSignals:
     """The classifier's inputs, read off a run's meta payload and its artifacts.
 
     ``None`` always means "could not read", never "absent" — the distinction the
-    classifier needs to fail closed.
+    classifier needs to fail closed. ``kernel_axes`` is ``None`` when no delivery
+    kernel receipt is present (legacy path); a :class:`KernelAxes` instance when
+    one is, including the corrupt case.
     """
 
     exit_code: Any
@@ -245,6 +406,7 @@ class RunSignals:
     report_exists: bool | None
     report_bytes: int | None
     transcript_bytes: int | None
+    kernel_axes: KernelAxes | None = None
 
     def classify(self) -> RunClassification:
         return classify_run(
@@ -253,6 +415,7 @@ class RunSignals:
             self.report_exists,
             self.report_bytes,
             self.transcript_bytes,
+            kernel_axes=self.kernel_axes,
         )
 
 
@@ -295,6 +458,7 @@ def read_run_signals(meta: Mapping[str, Any]) -> RunSignals:
         report_exists=report_exists,
         report_bytes=report_bytes,
         transcript_bytes=transcript_bytes,
+        kernel_axes=read_kernel_axes(meta),
     )
 
 

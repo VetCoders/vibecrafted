@@ -18,6 +18,7 @@ from vibecrafted_core.run_triage import (
     BUCKET_FAILED,
     BUCKET_FINALIZED,
     BUCKET_NEEDS_ATTENTION,
+    KernelAxes,
     MINIMAL_TRANSCRIPT_BYTES,
     OUTCOME_ERROR,
     OUTCOME_FAILED,
@@ -30,6 +31,7 @@ from vibecrafted_core.run_triage import (
     bucket_for_exit_code,
     classify_run,
     plan_triage,
+    read_kernel_axes,
     read_run_signals,
     triage_finished_run,
 )
@@ -778,3 +780,253 @@ def test_concurrent_writer_is_not_clobbered(tmp_path: Path) -> None:
     payload = json.loads(meta.read_text(encoding="utf-8"))
     assert payload["session_id"] == "written-by-someone-else"
     assert payload["triage"] == OUTCOME_FINALIZED
+
+
+# --------------------------------------------------------------------------
+# G4 — Delivery-kernel three-axis branch
+#
+# When a kernel receipt is present, the drawer follows the orthogonal axes
+# (execution / proof / delivery). Without a receipt the legacy 5-signal
+# conjunction above is the whole story — those tests must stay green.
+# --------------------------------------------------------------------------
+
+
+def _axes(
+    *,
+    execution: str = "exited",
+    proof: str = "passed",
+    delivery: str = "unverified",
+    corrupt: bool = False,
+) -> KernelAxes:
+    return KernelAxes(
+        execution_state=execution,
+        proof_state=proof,
+        delivery_state=delivery,
+        corrupt=corrupt,
+    )
+
+
+def test_kernel_sealed_is_finalized_even_with_tiny_transcript() -> None:
+    """delivery=sealed is authority; legacy transcript size is irrelevant."""
+    classification = classify_run(
+        exit_code=1,
+        run_state="failed",
+        report_exists=False,
+        report_bytes=0,
+        transcript_bytes=TINY,
+        kernel_axes=_axes(delivery="sealed", execution="exited", proof="passed"),
+    )
+    assert classification.verdict == VERDICT_FINALIZED
+    assert classification.bucket_flag == "finalized"
+    assert "sealed" in classification.reason
+
+
+def test_kernel_proof_invalid_is_failed() -> None:
+    classification = classify_run(
+        0,
+        "completed",
+        True,
+        512,
+        BIG,
+        kernel_axes=_axes(proof="invalid", delivery="unverified"),
+    )
+    assert classification.verdict == VERDICT_FAILED
+    assert classification.bucket_flag == "failed"
+    assert (
+        "proof_invalid" in classification.reason or "invalid" in classification.reason
+    )
+
+
+def test_kernel_execution_failed_is_failed() -> None:
+    classification = classify_run(
+        0,
+        "completed",
+        True,
+        512,
+        BIG,
+        kernel_axes=_axes(
+            execution="failed", proof="undeclared", delivery="unverified"
+        ),
+    )
+    assert classification.verdict == VERDICT_FAILED
+    assert classification.bucket_flag == "failed"
+    assert (
+        "execution_failed" in classification.reason or "failed" in classification.reason
+    )
+
+
+def test_kernel_partial_axes_need_attention() -> None:
+    """exited + passed + unverified is honest incompleteness, not a drawer lie."""
+    classification = classify_run(
+        0,
+        "completed",
+        True,
+        512,
+        BIG,
+        kernel_axes=_axes(execution="exited", proof="passed", delivery="unverified"),
+    )
+    assert classification.verdict == VERDICT_NEEDS_ATTENTION
+    assert classification.bucket_flag == "needs-attention"
+
+
+def test_kernel_proof_failed_is_failed() -> None:
+    classification = classify_run(
+        0,
+        "completed",
+        True,
+        512,
+        BIG,
+        kernel_axes=_axes(proof="failed", delivery="unverified"),
+    )
+    assert classification.verdict == VERDICT_FAILED
+
+
+def test_no_kernel_receipt_keeps_legacy_conjunction() -> None:
+    """Absence of axes is the pre-G4 path — sealed-or-not never enters."""
+    # Same inputs as the legacy finalized matrix row.
+    assert (
+        classify_run(0, "completed", True, 512, BIG, kernel_axes=None).verdict
+        == VERDICT_FINALIZED
+    )
+    # And the W0-A death still fails without axes.
+    assert (
+        classify_run(1, "report_missing", False, 0, TINY, kernel_axes=None).verdict
+        == VERDICT_FAILED
+    )
+
+
+def test_corrupt_kernel_receipt_fails_closed_never_raises(tmp_path: Path) -> None:
+    """Unreadable receipt body is not 'no receipt' — it is unreadable axes."""
+    bad = tmp_path / "axes.json"
+    bad.write_text("{not-json", encoding="utf-8")
+
+    # Path to a broken JSON file.
+    axes = read_kernel_axes({"delivery_axes": str(bad)})
+    assert axes is not None
+    assert axes.corrupt is True
+    assert (
+        classify_run(0, "completed", True, 512, BIG, kernel_axes=axes).verdict
+        == VERDICT_NEEDS_ATTENTION
+    )
+
+    # Inline garbage is the same fail-closed shape.
+    axes2 = read_kernel_axes({"delivery_axes": "{still-not-json"})
+    assert axes2 is not None and axes2.corrupt is True
+    assert (
+        classify_run(0, "completed", True, 512, BIG, kernel_axes=axes2).verdict
+        == VERDICT_NEEDS_ATTENTION
+    )
+
+
+def test_read_run_signals_picks_up_meta_axes(tmp_path: Path) -> None:
+    """Lifecycle/ship write the three axis keys onto the run receipt."""
+    report = tmp_path / "r.md"
+    report.write_text("body", encoding="utf-8")
+    # Tiny transcript would block legacy finalized; axes must win.
+    transcript = tmp_path / "t.log"
+    transcript.write_text("x" * TINY, encoding="utf-8")
+
+    signals = read_run_signals(
+        {
+            "exit_code": 0,
+            "status": "completed",
+            "report": str(report),
+            "transcript": str(transcript),
+            "execution_state": "exited",
+            "proof_state": "passed",
+            "delivery_state": "sealed",
+        }
+    )
+    assert signals.kernel_axes is not None
+    assert signals.kernel_axes.delivery_state == "sealed"
+    assert signals.classify().verdict == VERDICT_FINALIZED
+
+
+def test_read_kernel_axes_absent_when_no_receipt() -> None:
+    assert read_kernel_axes({"exit_code": 0, "status": "completed"}) is None
+
+
+def test_nested_delivery_axes_dict_is_a_receipt() -> None:
+    axes = read_kernel_axes(
+        {
+            "delivery_axes": {
+                "execution_state": "exited",
+                "proof_state": "passed",
+                "delivery_state": "sealed",
+            }
+        }
+    )
+    assert axes is not None
+    assert axes.delivery_state == "sealed"
+
+
+def test_modern_caller_always_passes_explicit_bucket_for_every_verdict(
+    tmp_path: Path,
+) -> None:
+    """vc-frame BucketKind::for_exit_code never yields Failed — only --bucket does.
+
+    The modern path must therefore always ship an explicit --bucket flag for
+    every confident verdict, including failed.
+    """
+    cases = [
+        # sealed axes → finalized
+        {
+            "exit_code": 0,
+            "status": "completed",
+            "execution_state": "exited",
+            "proof_state": "passed",
+            "delivery_state": "sealed",
+            "expected_bucket": "finalized",
+        },
+        # execution failed axes → failed
+        {
+            "exit_code": 1,
+            "status": "failed",
+            "report": str(tmp_path / "gone.md"),
+            "transcript": str(_tiny_transcript(tmp_path)),
+            "execution_state": "failed",
+            "proof_state": "undeclared",
+            "delivery_state": "unverified",
+            "expected_bucket": "failed",
+        },
+        # partial axes → needs-attention
+        {
+            "exit_code": 0,
+            "status": "completed",
+            "execution_state": "exited",
+            "proof_state": "passed",
+            "delivery_state": "unverified",
+            "expected_bucket": "needs-attention",
+        },
+    ]
+    for case in cases:
+        expected = case.pop("expected_bucket")
+        meta = write_meta(tmp_path, **case)
+        runner = Runner()
+        triage_finished_run(meta, live_env(tmp_path), runner)
+        assert runner.bucket_flag() == expected, case
+        # And the flag is present on the argv, not merely in the receipt.
+        transfer = runner.transfer_calls[0]
+        assert "--bucket" in transfer
+        assert transfer[transfer.index("--bucket") + 1] == expected
+        # Reset meta file for next case (write_meta overwrites).
+        meta.unlink(missing_ok=True)
+
+
+def test_plan_argv_includes_bucket_for_failed_verdict(tmp_path: Path) -> None:
+    """Direct plan.argv contract: failed is only reachable via explicit flag."""
+    meta_payload = {
+        "run_id": "run-fail",
+        "exit_code": 1,
+        "status": "failed",
+        "report": str(tmp_path / "gone.md"),
+        "transcript": str(_tiny_transcript(tmp_path)),
+        "execution_state": "failed",
+        "proof_state": "undeclared",
+        "delivery_state": "unverified",
+    }
+    plan = plan_triage(meta_payload, make_env())
+    assert plan.verdict == VERDICT_FAILED
+    argv = plan.argv("/usr/bin/vc-frame", with_bucket=True)
+    assert "--bucket" in argv
+    assert argv[argv.index("--bucket") + 1] == "failed"
