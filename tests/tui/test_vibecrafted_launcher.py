@@ -1992,7 +1992,7 @@ def test_resume_subcommand_forwards_session_and_prompt_to_agent(
     ]
 
 
-def test_resume_subcommand_wraps_terminal_runtime_in_vc_frame_operator_session(
+def test_resume_subcommand_wraps_headless_codex_in_vc_frame_worker_session(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -2010,6 +2010,7 @@ def test_resume_subcommand_wraps_terminal_runtime_in_vc_frame_operator_session(
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["VETCODERS_SPAWN_RUNTIME"] = "terminal"
     env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-test"
+    env["VIBECRAFTED_WORKER_SESSION"] = "worker-test"
     env["CAPTURE_FILE"] = str(capture_file)
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
@@ -2037,7 +2038,8 @@ def test_resume_subcommand_wraps_terminal_runtime_in_vc_frame_operator_session(
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "--session" in payload
-    assert "operator-test" in payload
+    assert "worker-test" in payload
+    assert "operator-test" not in payload
     assert "action" in payload
     assert "new-tab" in payload
     assert "--name" in payload

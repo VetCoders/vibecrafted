@@ -228,7 +228,7 @@ def test_public_and_packaged_resume_help_describe_codex_mode_contract() -> None:
         assert "native-resumes it with the pack as prompt" not in result.stdout
 
 
-def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
+def test_resume_terminal_runtime_routes_headless_codex_into_worker_session(
     tmp_path: Path,
 ) -> None:
     fake_bin = tmp_path / "bin"
@@ -281,6 +281,7 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
     env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-session"
+    env["VIBECRAFTED_WORKER_SESSION"] = "worker-session"
     env["VC_FRAME_CAPTURE"] = str(vc_frame_capture)
     env["CODEX_CAPTURE"] = str(codex_capture)
 
@@ -301,9 +302,11 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
         text=True,
     )
 
-    # Explicit VIBECRAFTED_OPERATOR_SESSION wins over the repo-derived name
-    # (W1-06: honour explicit operator session in vc-frame targeting).
-    assert "Resume launched in operator session: operator-session" in result.stdout
+    # Explicit input makes this a non-interactive continuation, so G7 routes it
+    # to the worker column rather than occupying the human operator seat.
+    assert "Resume launched in worker session: worker-session" in result.stdout
+    assert "mode:    headless (G7 workers column)" in result.stdout
+    assert "Resume launched in operator session" not in result.stdout
     assert not codex_capture.exists()
     vc_frame_lines = vc_frame_capture.read_text(encoding="utf-8").splitlines()
     calls: list[list[str]] = []
@@ -320,7 +323,7 @@ def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(
     new_tab_call = next(call for call in calls if call[2:4] == ["action", "new-tab"])
     assert new_tab_call[:5] == [
         "--session",
-        "operator-session",
+        "worker-session",
         "action",
         "new-tab",
         "--name",
