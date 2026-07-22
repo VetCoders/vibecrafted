@@ -14,6 +14,10 @@ from typing import Any, Callable, Sequence
 
 from .control_plane import control_plane_home, normalize_run_root, run_liveness
 from .delivery.model import DeliveryState, ExecutionState, ProofState
+from .lifecycle_delivery import (
+    claim_digest_for_text,
+    try_grant_lifecycle_stage_seal,
+)
 from .workflow import (
     SUPPORTED_AGENTS,
     WorkflowLaunchSpec,
@@ -65,6 +69,60 @@ def delivery_axes_for_receipt(
             "delivery_state", DeliveryState, DeliveryState.UNVERIFIED
         ),
     }
+
+
+def _maybe_seal_awaited_stage(
+    *,
+    record: dict[str, Any],
+    await_result: dict[str, Any],
+    lifecycle_id: str,
+    mission_text: str,
+) -> Any:
+    """Drive the delivery kernel after a stage await completes.
+
+    Only runs when the stage produced a validated report artifact. Refusal
+    reasons stay on the record; axes remain undeclared/unverified so
+    settlement parks as needs_attention (never silent FINALIZED).
+    """
+    from .control_plane import control_plane_home
+
+    stage_run_id = str(await_result.get("run_id") or "").strip()
+    if not stage_run_id:
+        launch = record.get("launch") if isinstance(record.get("launch"), dict) else {}
+        stage_run_id = str(launch.get("run_id") or "").strip()
+    if not stage_run_id:
+        return None
+
+    report_path = str(await_result.get("report") or "").strip()
+    transcript_path = str(await_result.get("transcript") or "").strip()
+    run = await_result.get("run") if isinstance(await_result.get("run"), dict) else {}
+    exit_code = run.get("exit_code")
+    if exit_code is None:
+        exit_code = await_result.get("exit_code")
+
+    # Prefer runtime_runs/<id> (control-plane projection source); fall back to
+    # meta parent when the launch announced an absolute meta path.
+    run_dir = control_plane_home() / "runtime_runs" / stage_run_id
+    if not run_dir.is_dir():
+        meta_path = str(await_result.get("meta") or "").strip()
+        if meta_path:
+            candidate = Path(meta_path).expanduser().resolve().parent
+            if candidate.is_dir():
+                run_dir = candidate
+
+    mission_digest = claim_digest_for_text(mission_text)
+    return try_grant_lifecycle_stage_seal(
+        run_dir,
+        run_id=stage_run_id,
+        lifecycle_id=lifecycle_id,
+        stage_id=str(record.get("id") or ""),
+        report_path=report_path or None,
+        transcript_path=transcript_path or None,
+        mission_text=mission_text,
+        mission_digest=mission_digest,
+        artifact_ok=bool(await_result.get("artifact_ok")),
+        exit_code=exit_code,
+    )
 
 
 @dataclass(frozen=True)
@@ -658,8 +716,24 @@ class LifecycleRunner:
             record["status"] = (
                 "completed" if await_result.get("artifact_ok") else "failed"
             )
+            # Delivery kernel: only when report validated. Never from bare exit 0.
+            seal_result = _maybe_seal_awaited_stage(
+                record=record,
+                await_result=await_result,
+                lifecycle_id=str(state.get("run_id") or ""),
+                mission_text=source_prompt,
+            )
+            if seal_result is not None:
+                record["lifecycle_seal"] = seal_result.to_payload()
+                await_result.update(seal_result.axes_payload())
+                await_result["claim_digest"] = seal_result.claim_digest
             record.update(delivery_axes_for_receipt(record["status"], await_result))
             state.update(delivery_axes_for_receipt(record["status"], record))
+            if seal_result is not None and seal_result.granted:
+                # Propagate seal to the lifecycle run receipt (final stage wins).
+                state.update(seal_result.axes_payload())
+                state["claim_digest"] = seal_result.claim_digest
+                state["lifecycle_seal"] = seal_result.to_payload()
             reported_dou = _surfaced_dou_index(await_result)
             if reported_dou is not None:
                 record["dou_index"] = reported_dou
