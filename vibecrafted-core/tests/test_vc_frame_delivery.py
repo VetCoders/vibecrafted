@@ -94,6 +94,65 @@ def test_regular_file_collision_gets_stale_backup(tmp_path: Path, monkeypatch) -
     assert "choinka" not in (view / "config.kdl").resolve().read_text(encoding="utf-8")
 
 
+def test_foreign_symlink_is_preserved_without_force(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
+    operator_config = tmp_path / "operator-config.kdl"
+    operator_config.write_text('theme "operator-custom"\n', encoding="utf-8")
+    view = home / ".config" / "vc-frame"
+    view.mkdir(parents=True)
+    config_link = view / "config.kdl"
+    config_link.symlink_to(operator_config)
+
+    plan = stage_vc_frame_config(
+        home=home,
+        tools_home=tools,
+        version="preserve-foreign",
+        prefer_repo=False,
+    )
+
+    assert config_link.is_symlink()
+    assert config_link.resolve() == operator_config.resolve()
+    assert operator_config.read_text(encoding="utf-8") == 'theme "operator-custom"\n'
+    assert any(
+        action.kind == "skip"
+        and action.path == str(config_link)
+        and "foreign" in action.detail
+        for action in plan.actions
+    )
+
+
+def test_foreign_symlink_is_replaced_with_force(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
+    operator_config = tmp_path / "operator-config.kdl"
+    operator_config.write_text('theme "operator-custom"\n', encoding="utf-8")
+    view = home / ".config" / "vc-frame"
+    view.mkdir(parents=True)
+    config_link = view / "config.kdl"
+    config_link.symlink_to(operator_config)
+
+    stage_vc_frame_config(
+        home=home,
+        tools_home=tools,
+        version="replace-foreign",
+        prefer_repo=False,
+        force=True,
+    )
+
+    assert config_link.is_symlink()
+    assert config_link.resolve() != operator_config.resolve()
+    assert operator_config.read_text(encoding="utf-8") == 'theme "operator-custom"\n'
+
+
 def test_version_flip_keeps_view_paths(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()

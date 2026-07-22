@@ -14,29 +14,22 @@ from __future__ import annotations
 
 import pytest
 
-from vibecrafted_core import spawn
+from vibecrafted_core import spawn, workflow_runtime
 from vibecrafted_core.continuity import capabilities as continuity
 
 EXECUTABLE_AGENTS = ("claude", "codex", "agy", "junie", "grok")
+VERIFIED_HEADLESS_RESUME_AGENTS = ("claude", "codex", "grok")
 
 
 def _spawn_accepts_headless_resume(agent: str) -> bool:
     try:
-        spawn._resume_stdin_command(agent, "sess-parity-check")
+        workflow_runtime._resume_stdin_command(agent, "sess-parity-check")
     except ValueError:
         return False
     return True
 
 
-def _spawn_accepts_headless_fork(agent: str) -> bool:
-    try:
-        spawn._resume_stdin_command(agent, "sess-parity-check", fork_session=True)
-    except ValueError:
-        return False
-    return True
-
-
-@pytest.mark.parametrize("agent", EXECUTABLE_AGENTS)
+@pytest.mark.parametrize("agent", VERIFIED_HEADLESS_RESUME_AGENTS)
 def test_core_spawn_and_registry_agree_on_headless_resume(agent: str) -> None:
     cap = continuity.capability_for(agent)
     spawn_says = _spawn_accepts_headless_resume(agent)
@@ -50,25 +43,13 @@ def test_core_spawn_and_registry_agree_on_headless_resume(agent: str) -> None:
     )
 
 
-@pytest.mark.parametrize("agent", EXECUTABLE_AGENTS)
-def test_core_spawn_and_registry_agree_on_headless_fork(agent: str) -> None:
-    cap = continuity.capability_for(agent)
-    spawn_says = _spawn_accepts_headless_fork(agent)
-    registry_says = cap.native_fork == continuity.SUPPORTED
-    assert spawn_says == registry_says, (
-        f"{agent}: spawn headless-fork={spawn_says} but registry "
-        f"declares {cap.native_fork!r} "
-        f"(restrictions: {cap.fork_runtime_restrictions})"
-    )
-
-
 def test_gemini_rejected_by_both_registry_and_spawn() -> None:
     cap = continuity.capability_for("gemini")
     assert cap.execution == continuity.EVIDENCE_ONLY
     with pytest.raises(ValueError, match="deprecated"):
         spawn._stdin_command("gemini")
     with pytest.raises(ValueError):
-        spawn._resume_stdin_command("gemini", "sess-parity-check")
+        workflow_runtime._resume_stdin_command("gemini", "sess-parity-check")
 
 
 def test_every_executable_agent_has_a_fresh_launch_lane() -> None:

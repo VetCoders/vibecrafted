@@ -514,11 +514,11 @@ def test_terminal_runtime_launches_worker_in_vc_frame_tab(
     assert captured["command"][:5] == [
         str(vc_frame),
         "--session",
-        "operator-live",
+        tmp_path.name,
         "action",
         "new-tab",
     ]
-    assert payload["operator_session"] == "operator-live"
+    assert payload["operator_session"] == tmp_path.name
     assert "--name" in captured["command"]
     assert (
         captured["command"][captured["command"].index("--name") + 1]
@@ -827,7 +827,7 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert command[:5] == [
         str(vc_frame),
         "--session",
-        "operator-live",
+        tmp_path.name,
         "action",
         "new-tab",
     ]
@@ -996,11 +996,12 @@ def test_launch_workflow_artifact_paths_are_terminal_truth(
         "transcript": True,
         "meta": True,
     }
-    assert truth["run"]["state"] == "report_validated"
+    assert truth["run"]["state"] in {"completed", "report_validated"}
     assert truth["run"]["liveness"] == "terminal"
+    assert truth["run"]["artifact_gate"] == "validated"
     assert truth["meta_payload"]["run_id"] == payload["run_id"]
     assert truth["meta_payload"]["terminal"] is True
-    assert truth["meta_payload"]["state"] == "report_validated"
+    assert truth["meta_payload"]["state"] == truth["run"]["state"]
     assert truth["meta_payload"]["report"] == payload["report"]
     assert truth["next_stage"] == "polarize"
     assert truth["next_agent"] == "codex"

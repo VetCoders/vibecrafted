@@ -8,6 +8,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -1596,6 +1597,17 @@ def launch_workflow(
                     text=True,
                 )
                 launcher_pid = proc.pid
+                # The launch is intentionally asynchronous, but dropping the
+                # Popen object without waiting leaves a completed launcher as a
+                # zombie.  ``kill(pid, 0)`` then reports it alive and canonical
+                # await cannot distinguish finalization from stale OS state.
+                wait_for_launcher = getattr(proc, "wait", None)
+                if callable(wait_for_launcher):
+                    threading.Thread(
+                        target=wait_for_launcher,
+                        name=f"vibecrafted-reap-{run_id}",
+                        daemon=True,
+                    ).start()
         except OSError as exc:
             handle.write(
                 json.dumps(

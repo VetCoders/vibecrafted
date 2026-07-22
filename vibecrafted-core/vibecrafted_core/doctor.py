@@ -221,13 +221,13 @@ def _vc_frame_delivery_findings(
     if themes_dir.is_dir() or themes_dir.is_symlink():
         try:
             resolved = themes_dir.resolve(strict=True)
-            kdl = list(resolved.glob("*.kdl"))
-            if kdl:
+            theme_files = list(resolved.glob("*.kdl"))
+            if theme_files:
                 findings.append(
                     _Finding(
                         "ok",
                         "vc-frame:themes",
-                        f"{len(kdl)} theme file(s) under {themes_dir}",
+                        f"{len(theme_files)} theme file(s) under {themes_dir}",
                     )
                 )
             else:
@@ -261,8 +261,8 @@ def _vc_frame_delivery_findings(
     unsubstituted = False
     if layouts.exists():
         try:
-            for kdl in layouts.resolve().glob("*.kdl"):
-                text = kdl.read_text(encoding="utf-8", errors="ignore")
+            for layout_file in layouts.resolve().glob("*.kdl"):
+                text = layout_file.read_text(encoding="utf-8", errors="ignore")
                 if 'command="zsh"' in text and shell != "zsh":
                     unsubstituted = True
                     break

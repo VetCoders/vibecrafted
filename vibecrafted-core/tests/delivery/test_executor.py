@@ -125,9 +125,9 @@ def test_timeout_kills_process_and_keeps_partial_stream_digests(
         cwd=temp_git_repo,
         parent_contract_id="proof-timeout",
         run_id="run-timeout",
-        # Interpreter startup + flush must land before the kill; 0.1s lost
-        # that race 2/6 under load while sleep(10) keeps the timeout certain.
-        timeout_seconds=1.0,
+        # Interpreter startup + flush must land before the kill; loaded CI hosts
+        # can take over one second while sleep(10) keeps this timeout certain.
+        timeout_seconds=2.0,
     )
 
     assert result.succeeded is False

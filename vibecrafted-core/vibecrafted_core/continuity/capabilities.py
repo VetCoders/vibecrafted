@@ -9,7 +9,7 @@ capability.
 Two truth layers live here, deliberately separated:
 
 * the **declarative table** (:data:`CAPABILITIES`) — current core truth
-  (``spawn._stdin_command`` / ``spawn._resume_stdin_command``) merged with the
+  (``spawn._stdin_command`` / ``workflow_runtime._resume_stdin_command``) merged with the
   operator-verified installed-CLI evidence (AICX 2026-07-12/13, host probes
   2026-07-18); a claim the runtime has not proven headless stays
   ``unverified``, never optimistically ``supported``;

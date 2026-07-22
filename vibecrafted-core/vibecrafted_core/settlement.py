@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .run_triage import (
     VERDICT_FAILED,
@@ -446,7 +446,7 @@ def can_archive(payload: Mapping[str, Any]) -> bool:
     return settlement.verdict.value in SETTLED_TERMINALS
 
 
-def board_fxn_counts(runs: list[Mapping[str, Any]]) -> dict[str, int]:
+def board_fxn_counts(runs: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     """Count TUI f/x/n cells from the settlement axis only.
 
     Never recomputed from exit codes or raw lifecycle states. Unsettled

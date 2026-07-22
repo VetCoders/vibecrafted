@@ -730,6 +730,60 @@ def test_sync_state_heals_repaired_report_contract_to_completed_attention(
     }
 
 
+def test_sync_state_refuses_report_repair_from_another_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "cross-wired.md"
+    report.write_text(
+        "---\n"
+        "run_id: other-run\n"
+        "agent: codex\n"
+        "skill: implement\n"
+        "status: completed\n"
+        "---\n"
+        "# Wrong report\n",
+        encoding="utf-8",
+    )
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-22T14:28:54+00:00",
+                "run_id": "victim-run",
+                "kind": "lifecycle:report_invalid",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": "report_invalid",
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "report": str(report),
+                    "exit_code": 0,
+                    "artifact_ok": False,
+                    "artifact_errors": ["report_frontmatter_missing"],
+                    "liveness": "terminal",
+                    "recovery_required": True,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["run_id"] == "victim-run"
+    assert run["state"] == "report_invalid"
+    assert run["artifact_ok"] is False
+    assert run["settlement_tui"] == "x"
+    assert run["lifecycle"]["recovery_required"] is True
+
+
 def test_sync_state_keeps_unrepaired_report_invalid_in_failed_recovery(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1231,6 +1285,60 @@ def test_await_run_returns_report_delivered_when_worker_is_gone(
     assert payload["timed_out"] is False
     assert payload["reason"] == "report_delivered"
     assert payload["attempts"] == 1
+
+
+def test_await_run_waits_for_live_launcher_to_finalize_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A dead worker's report is not terminal while its launcher can still
+    publish final metadata.  Await must keep the canonical loop open until the
+    finalizer exits instead of returning an ``active`` pre-handoff snapshot.
+    """
+    import subprocess
+    import sys
+    import threading
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "stage-report.md"
+    report.write_text("### Summary\ndelivered\n", encoding="utf-8")
+
+    launcher = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
+    reaper = threading.Thread(target=launcher.wait, daemon=True)
+    reaper.start()
+    try:
+        _write_meta(
+            home,
+            {
+                "run_id": "revi-launcher-finalizing-42",
+                "status": "running",
+                "agent": "codex",
+                "mode": "review",
+                "skill_code": "revi",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "launcher_pid": launcher.pid,
+                "worker_pid": 999999999,
+                "worker_pgid": 999999999,
+                "liveness": "pid_alive",
+            },
+        )
+
+        payload = control_plane.await_run(
+            "revi-launcher-finalizing-42",
+            timeout_seconds=1,
+            interval_seconds=0.05,
+            hard_cap_seconds=2,
+            report_path=str(report),
+        )
+    finally:
+        reaper.join(timeout=2)
+
+    assert payload["completed"] is True
+    assert payload["timed_out"] is False
+    assert payload["reason"] in {"terminal", "report_delivered"}
+    assert payload["worker_alive"] is False
+    assert payload["attempts"] >= 2
 
 
 def test_await_run_report_alone_never_completes_a_live_worker(

@@ -684,6 +684,11 @@ def _reconcile_repaired_report_terminal(run: dict[str, Any]) -> dict[str, Any]:
     validation = validate_report_file(report, require_frontmatter=True)
     if not validation.ok:
         return result
+    if (
+        str(validation.fields.get("run_id") or "").strip()
+        != str(result.get("run_id") or "").strip()
+    ):
+        return result
     errors = [str(item) for item in (result.get("artifact_errors") or []) if str(item)]
     if any(not item.startswith("report_") for item in errors):
         return result
@@ -746,6 +751,20 @@ def _worker_is_alive(run: dict[str, Any]) -> bool:
         if pid is not None and _pid_is_alive(pid):
             return True
     return False
+
+
+def _await_process_is_alive(run: dict[str, Any]) -> bool:
+    """True while either the worker or its launcher is still finalizing.
+
+    Launchers are intentionally ignored by the general liveness reconciler: a
+    dead ephemeral launcher must not invalidate a worker that continues on its
+    own.  Await has a narrower obligation.  It must not seal a delivered report
+    while a live launcher can still write the terminal metadata and projection.
+    """
+    if _worker_is_alive(run):
+        return True
+    launcher_pid = _coerce_int(run.get("launcher_pid"))
+    return launcher_pid is not None and _pid_is_alive(launcher_pid)
 
 
 def _has_retry_spec(run: dict[str, Any]) -> bool:
@@ -2136,8 +2155,8 @@ def await_run(
             on_poll(last_run)
         children = _await_child_runs(snapshot, target)
         worker_alive = bool(
-            (last_run is not None and _worker_is_alive(last_run))
-            or any(_worker_is_alive(child) for child in children)
+            (last_run is not None and _await_process_is_alive(last_run))
+            or any(_await_process_is_alive(child) for child in children)
         )
         if last_run is not None and _run_is_terminal(last_run) and not worker_alive:
             return _finalize_await_result(

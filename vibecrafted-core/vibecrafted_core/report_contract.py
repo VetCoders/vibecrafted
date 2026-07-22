@@ -326,9 +326,13 @@ def ensure_frontmatter_on_text(
             fields["claim_status"] = fields["status"]
             changed = True
         if extra:
-            for key, value in extra.items():
-                if value is not None and str(value).strip() and key not in fields:
-                    fields[key] = str(value)
+            for key, extra_value in extra.items():
+                if (
+                    extra_value is not None
+                    and str(extra_value).strip()
+                    and key not in fields
+                ):
+                    fields[key] = str(extra_value)
                     changed = True
         if not changed:
             return text if text.endswith("\n") else text + "\n"

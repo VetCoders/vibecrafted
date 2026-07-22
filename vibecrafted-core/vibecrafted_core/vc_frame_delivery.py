@@ -269,6 +269,12 @@ def _wire_one(
             except OSError:
                 pass
 
+    if channel == "foreign" and view_path.is_symlink() and not force:
+        actions.append(
+            WireAction("skip", str(view_path), "user-managed foreign symlink")
+        )
+        return
+
     if view_path.is_symlink() and channel == "DANGLING":
         actions.append(WireAction("remove", str(view_path), "dangling"))
         if not dry_run:
