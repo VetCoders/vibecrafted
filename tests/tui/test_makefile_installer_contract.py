@@ -165,6 +165,17 @@ def test_install_manifest_post_install_uses_mirror_sync() -> None:
     assert "make --no-print-directory install-python-tools" in text
 
 
+def test_make_install_stages_vc_frame_from_stable_runtime() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    install_block = makefile.split("\ninstall:\n", 1)[1].split("\n# `make install`", 1)[
+        0
+    ]
+
+    assert 'PYTHONPATH="$$stable_root/vibecrafted-core"' in install_block
+    assert "from vibecrafted_core.vc_frame_delivery import" in install_block
+    assert "vc-frame config delivery skipped" not in install_block
+
+
 def test_installer_copies_skill_rules_to_fresh_skills_root(tmp_path: Path) -> None:
     source_skills = tmp_path / "source" / "skills"
     install_skills = tmp_path / "install" / "skills"
