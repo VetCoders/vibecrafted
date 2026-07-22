@@ -3,7 +3,7 @@
 Delivery contract (plan vcframe-config-delivery):
 - Source: ``vc_frame_config_source()`` (wheel package data or checkout).
 - Stage: copy into the complete runtime already selected by
-  ``tools/vibecrafted-current/config/vc-frame/``.
+  ``tools/vibecrafted-current/runtime/generated/vc-frame/``.
 - Ownership: config delivery never creates or flips the runtime-owned
   ``vibecrafted-current`` symlink.
 - View: ``$XDG_CONFIG_HOME/vc-frame/{config.kdl,layouts,themes}`` → store-current
@@ -358,7 +358,10 @@ def plan_delivery(
         clipboard_command=clipboard_command,
     )
 
-    staged_cfg = runtime_root / "config" / "vc-frame"
+    # The mirrored distribution exposes package data through a symlink back to
+    # ``<runtime>/config/vc-frame``.  Never stage there: deleting the previous
+    # generated tree would then delete the source before it can be copied.
+    staged_cfg = runtime_root / "runtime" / "generated" / "vc-frame"
     if not use_repo:
         _copy_tree_with_shell(
             source,
@@ -375,7 +378,7 @@ def plan_delivery(
                 f"preserve runtime owner (requested config version {version or 'current'})",
             )
         )
-        base = current / "config" / "vc-frame"
+        base = current / "runtime" / "generated" / "vc-frame"
     else:
         plan.actions.append(
             WireAction("note", str(source), "dev-checkout: skip stage copy")

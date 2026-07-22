@@ -73,7 +73,44 @@ def test_stage_wires_view_through_current(tmp_path: Path, monkeypatch) -> None:
     assert (current / "Makefile").is_file()
     assert (current / "vibecrafted-core").is_dir()
     assert (current / "runtime" / "scripts" / "codex_spawn.sh").is_file()
-    assert (current / "config" / "vc-frame" / "config.kdl").exists()
+    assert (current / "runtime" / "generated" / "vc-frame" / "config.kdl").exists()
+
+
+def test_stage_keeps_mirrored_runtime_source_distinct_from_generated_view(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime = _seed_complete_runtime(tools)
+    source = runtime / "config" / "vc-frame"
+    (source / "layouts").mkdir(parents=True)
+    (source / "themes").mkdir()
+    (source / "config.kdl").write_text(
+        'theme "monochrome"\ndefault_shell "zsh"\n', encoding="utf-8"
+    )
+    (source / "layouts" / "operator.kdl").write_text(
+        'pane command="zsh"\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "vibecrafted_core.vc_frame_delivery.vc_frame_config_source",
+        lambda: source,
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+
+    stage_vc_frame_config(
+        home=home,
+        tools_home=tools,
+        prefer_repo=False,
+        path_env=str(tmp_path / "empty-path"),
+    )
+
+    assert (source / "config.kdl").read_text(encoding="utf-8").startswith("theme")
+    generated = runtime / "runtime" / "generated" / "vc-frame"
+    assert (generated / "config.kdl").is_file()
+    assert (home / ".config" / "vc-frame" / "config.kdl").resolve() == (
+        generated / "config.kdl"
+    ).resolve()
 
 
 def test_dry_run_mutates_nothing(tmp_path: Path, monkeypatch) -> None:
@@ -255,7 +292,7 @@ def test_pane_shell_substitution_on_stage_without_zsh(
         prefer_repo=False,
         path_env=str(fake_bin),
     )
-    staged_root = runtime / "config" / "vc-frame"
+    staged_root = runtime / "runtime" / "generated" / "vc-frame"
     staged = staged_root / "layouts"
     assert plan.pane_shell == "bash"
     research = (staged / "research.kdl").read_text(encoding="utf-8")
