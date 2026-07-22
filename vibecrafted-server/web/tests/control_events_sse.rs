@@ -211,8 +211,7 @@ async fn sse_streams_appended_event_with_id_and_json_data() {
     );
     let data = sse_data_payloads(&body);
     assert!(!data.is_empty(), "expected data: frames\n{body}");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&data[0]).expect("data JSON must parse");
+    let parsed: serde_json::Value = serde_json::from_str(&data[0]).expect("data JSON must parse");
     assert_eq!(parsed["run_id"], "run-a");
     assert_eq!(parsed["kind"], "spawn");
     assert_eq!(parsed["message"], "started");
@@ -376,7 +375,11 @@ async fn sse_session_writes_nothing_to_control_plane() {
     let before = home.snapshot_tree();
     let before_meta: Vec<_> = before
         .iter()
-        .filter_map(|p| fs::metadata(p).ok().map(|m| (p.clone(), m.len(), m.modified().ok())))
+        .filter_map(|p| {
+            fs::metadata(p)
+                .ok()
+                .map(|m| (p.clone(), m.len(), m.modified().ok()))
+        })
         .collect();
 
     let app = test_app();
@@ -418,5 +421,3 @@ async fn sse_session_writes_nothing_to_control_plane() {
         }
     }
 }
-
-

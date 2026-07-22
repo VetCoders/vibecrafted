@@ -363,8 +363,20 @@ pub fn App() -> impl IntoView {
 
 #[component]
 pub fn ConsolePage() -> impl IntoView {
-    let theme = use_theme();
     let dashboard = load_dashboard_data();
+
+    view! {
+        <Title text="vc-server - control plane" />
+        <Meta name="description" content="Vibecrafted control-plane dashboard." />
+        <Meta name="theme-color" content="#0e0e0e" />
+        <Link rel="preload" as_="font" type_="font/woff2" href="/fonts/inter-var-latin.woff2" crossorigin="anonymous" />
+        <Link rel="preload" as_="font" type_="font/woff2" href="/fonts/jetbrains-mono-var-latin.woff2" crossorigin="anonymous" />
+        {console_dashboard(dashboard)}
+    }
+}
+
+fn console_dashboard(dashboard: DashboardData) -> impl IntoView {
+    let theme = use_theme();
     let active_count = dashboard.active_runs.len();
     let recent_count = dashboard.recent_runs.len();
     let all_count = dashboard.all_runs.len();
@@ -383,12 +395,6 @@ pub fn ConsolePage() -> impl IntoView {
     };
 
     view! {
-        <Title text="vc-server - control plane" />
-        <Meta name="description" content="Vibecrafted control-plane dashboard." />
-        <Meta name="theme-color" content="#0e0e0e" />
-        <Link rel="preload" as_="font" type_="font/woff2" href="/fonts/inter-var-latin.woff2" crossorigin="anonymous" />
-        <Link rel="preload" as_="font" type_="font/woff2" href="/fonts/jetbrains-mono-var-latin.woff2" crossorigin="anonymous" />
-
         <main class="server-console-shell">
             <div class="settlement-board-wrap">
                 {settlement_board(settlement)}
@@ -526,8 +532,9 @@ mod tests {
     use leptos::prelude::*;
     use serde_json::{Value, json};
 
-    use super::{load_dashboard_data_from, settlement_board};
+    use super::{console_dashboard, load_dashboard_data_from};
     use crate::control::api::state_payload;
+    use crate::theme::provide_theme_context;
 
     fn temp_home() -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -587,7 +594,11 @@ mod tests {
             .with_timezone(&Utc);
         let api = serde_json::to_value(state_payload(&plane, now)).expect("state JSON");
         let dashboard = load_dashboard_data_from(&plane, now);
-        let html = settlement_board(dashboard.settlement).to_html();
+        let owner = Owner::new();
+        let html = owner.with(|| {
+            provide_theme_context();
+            console_dashboard(dashboard).to_html()
+        });
         let board = &api["settlement_counts"];
 
         for key in ["active", "f", "x", "n", "invalid", "total_settled"] {
@@ -603,6 +614,29 @@ mod tests {
         assert!(html.contains("Finalized"));
         assert!(html.contains("Failed"));
         assert!(html.contains("Needs attention"));
+        let board_position = html.find("aria-label=\"Settlement board\"").expect("board");
+        let active_position = html
+            .find("aria-label=\"Active runs\"")
+            .expect("active runs");
+        let warnings_position = html.find("aria-label=\"Warnings\"").expect("warnings");
+        let lifecycle_position = html
+            .find("aria-label=\"Lifecycle runs\"")
+            .expect("lifecycle runs");
+        let all_runs_position = html.find("aria-label=\"All runs\"").expect("all runs");
+        let recent_position = html
+            .find("aria-label=\"Recent state view\"")
+            .expect("recent state");
+        let events_position = html.find("aria-label=\"Event tail\"").expect("event tail");
+        assert!(
+            board_position < active_position,
+            "settlement must be the first fleet summary"
+        );
+        assert!(board_position < warnings_position);
+        assert!(active_position < lifecycle_position);
+        assert!(warnings_position < lifecycle_position);
+        assert!(lifecycle_position < all_runs_position);
+        assert!(all_runs_position < recent_position);
+        assert!(recent_position < events_position);
         assert_eq!(board["f"], 1);
         assert_eq!(board["x"], 2);
         assert_eq!(board["invalid"], 1);
