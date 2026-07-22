@@ -15,6 +15,12 @@ Use this when a human operator is working in zsh, usually inside vc-frame.
 Interactive shell helpers may resolve before binaries. This is expected for a
 human shell, but agents must not assume these functions exist.
 
+**Checkout override ≠ staged daily driver.** A floating git tree can be newer
+than the tools home the installed `vibecrafted` CLI actually loads. Finish hooks
+(triage into SESSIONS `f · x · n`, origin stamp) only exist in the **installed**
+wire — re-run install after runtime landings and match `VERSION` `+g<sha>` to
+HEAD. Canon: [`TRIAGE_AND_SESSIONS.md`](./TRIAGE_AND_SESSIONS.md).
+
 ## 2. Installed Binary
 
 Use this for headless execution, scripts, and agent subprocesses.

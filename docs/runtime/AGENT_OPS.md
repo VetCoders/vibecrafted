@@ -210,6 +210,10 @@ host session named after the project, visible as a separate session in the
 vc-frame left rail. Finished runs still triage into `f` / `x` / `n`
 drawers independently of the source session.
 
+Canonical triage contract (what `f·x·n` counts, origin stamp, classification,
+push≠install, research vs implement tabs):
+[`TRIAGE_AND_SESSIONS.md`](./TRIAGE_AND_SESSIONS.md).
+
 **Surface**: skill-worker launch path (`runtime/scripts/lib/vc_frame.sh` +
 `spawn_launch` + Python `workflow.launch_workflow`). Operator-UI entrypoints
 (`vc-init`, interactive operator agent, shell twin
@@ -234,9 +238,18 @@ seat unless `VIBECRAFTED_WORKER_SESSION` is set.
 **Receipt truth**: launch-log / control-plane field `operator_session` is
 the **actual worker host** after the rules above, not the human seat name.
 
-**Out of scope for this cut**: sidebar UI grouping in the vc-frame repo;
-moving live PTYs between sessions; triage drawer logic; forcing marbles
-shell-entrypoint off the operator seat (primary fleet path is scripts/lib).
+**Out of scope for this cut**: sidebar UI grouping chrome inside the vc-frame
+repo beyond the existing session-manager rail; migrating live PTYs without
+recreate (vc-frame always recreates for triage); forcing marbles shell-entrypoint
+off the operator seat (primary fleet path is scripts/lib).
+
+**In scope (landed runtime wire)**: caller-side `triage_finished_run` /
+`spawn_triage_run` → `vc-frame triage-run`, origin stamp in meta, conjunction
+classifier, fail-open receipts. See
+[`TRIAGE_AND_SESSIONS.md`](./TRIAGE_AND_SESSIONS.md). If tools home lags the
+checkout that contains the wire, finished tabs stay in the work session and
+`f·x·n` stays at zero even with many `completed` metas — install, do not assume
+git alone refreshed the daily driver.
 
 ---
 

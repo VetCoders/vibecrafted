@@ -21,6 +21,10 @@ file is **transport**, not operator job text — bare resume stays interactive.
 3. **Start 1st Operator session** → pick agent + root → `vibecrafted init <agent>`
    → new tab on the **human seat** with `/vc-init` seed, **interactive**.
 4. Workers land in `… workers` sessions (G7); not in the human seat.
+5. When a supervised worker finishes, runtime triage may move its tab into a
+   bucket session (`Finalized runs` / `Failed runs` / `Needs attention`). Board
+   `f · x · n` counts those bucket tabs — not control-plane completed rows.
+   See [`TRIAGE_AND_SESSIONS.md`](./TRIAGE_AND_SESSIONS.md).
 
 ## Per-command
 

@@ -46,10 +46,19 @@ source "${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders/vc-skills.sh"
 
 ```bash
 vibecrafted doctor
+vibecrafted --version
+# optional stamp check after a local checkout install:
+# cat ~/.local/share/vibecrafted/tools/vibecrafted-current/VERSION
 ```
 
 Green means ready. Yellow means the doctor tells you what is weak and what to
 check next.
+
+**Daily CLI ≠ floating git checkout.** After you pull runtime changes into a
+local tree, re-run `make install` (or `install-auto`) so the staged tools home
+and `VERSION` `+g<sha>` match the intended HEAD. Finished-run SESSIONS rail
+(`f · x · n`), origin stamp, and research-vs-bucket placement:
+[runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md).
 
 ## 3. Orient your agent
 

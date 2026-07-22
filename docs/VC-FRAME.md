@@ -92,10 +92,48 @@ simplified_ui true
 layout _filenames_; never `Vibecrafted Operator.kdl`):
 
 - `default_tab_template` — compact-bar brand + **SESSIONS rail always** + status-bar
-- tab **Guide** — Mission Control (`about` / `guide_mode "mission-control"`)
-- tab **vibecrafted** — operator shell
+- tab **Start here** — Mission Control (`about` / `guide_mode "mission-control"`)
+- tab **Shell** — operator work shell
 
 No strider split on the entrypoint.
+
+### SESSIONS rail and finished-run triage (`f` · `x` · `n`)
+
+The left **Sessions** column (session-manager plugin, `rail true` in shipped
+layouts) lists host sessions. Worker tabs open in **project / worker hosts**
+(see `docs/runtime/AGENT_OPS.md` G7), not in the human operator seat.
+
+When a supervised run finishes, the runtime calls **`vc-frame triage-run`**:
+
+1. Capture scrollback + run identity.
+2. Recreate a viewer/rerun tab in one of:
+   - `Finalized runs` (**f**)
+   - `Failed runs` (**x**)
+   - `Needs attention` (**n**)
+3. Only then close the origin tab in the work session.
+
+Board counters **`f · x · n` count tabs inside those three bucket sessions**,
+not “how many control-plane runs completed.” Settlement in meta
+(`status=completed`, exit 0, report path) is a different axis from triage.
+
+Full contract (classification, origin stamp, push≠install, research vs
+implement, backfill):  
+**[`docs/runtime/TRIAGE_AND_SESSIONS.md`](runtime/TRIAGE_AND_SESSIONS.md)**.
+
+### Research layout (multi-pane ≠ multi-session)
+
+Static `layouts/research.kdl`:
+
+- Includes the same **session-manager** rail as operator/dashboard.
+- **One** research tab: synthesis left (~55%), agent stack right (claude /
+  codex / agy). Swap layouts: `grid`, `synthesis`.
+- Agents are **panes**, not separate SESSIONS board columns.
+
+Workflow-generated research KDL (`workflow._write_research_layout`) may omit
+the session-manager rail even though the static file has it — treat that as a
+layout-generator gap, not as research “learning” sessions over time. A finished
+research **run** still triages as one origin tab into a bucket when origin +
+install wire are present (see triage doc).
 
 ### Activating the host theme
 
@@ -150,5 +188,7 @@ when the host doesn't have them.
 - Kronika 2026-04-12 — first vc-frame landing
 - `docs/plans/META_22_SCAFFOLD_TO_RELEASE.md` Plan 12 — full contract
 - `skills/vc-agents/SKILL.md` — operator-facing dispatch surface
+- [`docs/runtime/TRIAGE_AND_SESSIONS.md`](runtime/TRIAGE_AND_SESSIONS.md) — f/x/n, `triage-run`, origin stamp
+- [`docs/runtime/AGENT_OPS.md`](runtime/AGENT_OPS.md) — worker host sessions (G7)
 
 Vibecrafted with AI Agents (c)2024-2026 LibraxisAI

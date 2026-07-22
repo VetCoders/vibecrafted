@@ -196,6 +196,9 @@ Missing frontmatter block or required keys → artifact contract error
 `claim_status: completed` is triangulated against exit code, report/transcript,  
 and delivery-kernel axes. Contradictions land in Needs attention (`n`).
 
+Full SESSIONS rail contract (bucket session names, origin stamp, when triage
+runs, push≠install): [`TRIAGE_AND_SESSIONS.md`](./TRIAGE_AND_SESSIONS.md).
+
 ## Plan Template
 
 Use this structure for execution plans:

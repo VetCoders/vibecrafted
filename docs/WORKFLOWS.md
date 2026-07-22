@@ -120,9 +120,17 @@ flowchart TD
   delegation unless the operator explicitly invokes a delegation path.
 - `vc-operator` is an orchestration posture. The live public supervisor command
   is `vibecrafted dispatch`, not `vibecrafted operator`.
+- Supervised finishes call `vc-frame triage-run` into bucket sessions
+  (`Finalized runs` / `Failed runs` / `Needs attention`). Board **`f · x · n`
+  counts tabs in those sessions**, not control-plane completed rows. Settlement
+  without triage leaves finished tabs in the work session. Canon:
+  [runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md).
+- `git pull` alone does not refresh the daily CLI; staged tools home needs
+  `make install` / `install-auto` so `VERSION` matches the intended `+g<sha>`.
 
 ## Next reading
 
 - [SKILLS](./SKILLS.md) for the per-skill route index.
 - [DOCUMENTATION_MAP](./DOCUMENTATION_MAP.md) for command and documentation truth.
+- [runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md) for SESSIONS rail, triage, push≠install.
 - `skills/<skill>/FLOW.md` for individual flowcharts and CLI schemas.

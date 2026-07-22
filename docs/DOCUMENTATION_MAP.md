@@ -66,20 +66,26 @@ first path a founder sees.
 
 Current runtime is not a future scaffold. It is active.
 
-| Surface                                 | Status                                                               |
-| --------------------------------------- | -------------------------------------------------------------------- |
-| `scripts/vibecrafted`                   | Live command deck and routing layer                                  |
-| `runtime/scripts/`                      | Active spawn, await, meta, watcher, marbles, and installer scripts   |
-| `runtime/scripts/lib/`                  | Shared launcher/session/path/meta library                            |
-| `runtime/shell/lib/`                    | Installed shell facade modules                                       |
-| `runtime/vc-marbles/`                   | Extracted per-workflow runtime pattern                               |
-| `runtime/vc-research/`                  | Extracted research shell runtime                                     |
-| `runtime/vc-operator/`                  | Mission-control helpers, not a public `vibecrafted operator` command |
-| `vibecrafted dispatch`                  | Deterministic dispatch supervisor and async lifecycle lane           |
-| `vibecrafted gui` / `tui` / `dashboard` | Operator surfaces, second-visit tools                                |
+| Surface                                 | Status                                                                                 |
+| --------------------------------------- | -------------------------------------------------------------------------------------- |
+| `scripts/vibecrafted`                   | Live command deck and routing layer                                                    |
+| `runtime/scripts/`                      | Active spawn, await, meta, watcher, marbles, and installer scripts                     |
+| `runtime/scripts/lib/`                  | Shared launcher/session/path/meta library                                              |
+| `runtime/shell/lib/`                    | Installed shell facade modules                                                         |
+| `runtime/vc-marbles/`                   | Extracted per-workflow runtime pattern                                                 |
+| `runtime/vc-research/`                  | Extracted research shell runtime                                                       |
+| `runtime/vc-operator/`                  | Mission-control helpers, not a public `vibecrafted operator` command                   |
+| `vibecrafted dispatch`                  | Deterministic dispatch supervisor and async lifecycle lane                             |
+| `vibecrafted gui` / `tui` / `dashboard` | Operator surfaces, second-visit tools                                                  |
+| Finished-run triage (`f·x·n`)           | Live: `run_triage` + `vc-frame triage-run` — see `docs/runtime/TRIAGE_AND_SESSIONS.md` |
+| Tools home vs checkout                  | Daily CLI runs staged `vibecrafted-current`, not floating git HEAD                     |
 
 When docs need to discuss what is planned, say "planned" or "partial." Do not
 leave old design language that says a live directory is reserved for later.
+
+**Install discipline:** `git push` / merge alone does not refresh the staged
+tools home. After runtime wire changes, `make install` (or the install path you
+actually use) must stamp `VERSION` to the intended `+g<sha>`.
 
 ## Skill Runtime Split
 
@@ -108,6 +114,31 @@ This pass covered every tracked markdown/html doc family:
 - skill docs: `skills/**/*.md`, including templates and references
 - app/package docs: `vibecrafted-app`, `vibecrafted-core`, `vibecrafted-mcp`,
   `vibecrafted-server`, `vibecrafted-vm`, `tools`, `templates`, `workflows`
+
+### 2026-07-22 — triage / SESSIONS / install stamp
+
+Field: many completed implement runs + clogged work-session rail + `f·x·n=0`
+while checkout already had triage wire and tools home lagged one commit.
+
+| Doc                                          | Change                                                                                                 |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `docs/runtime/TRIAGE_AND_SESSIONS.md`        | **New** canonical contract (product order: finalize→reap→triage; EXIT footer often only on skip/error) |
+| `docs/VC-FRAME.md`                           | SESSIONS rail, triage, research multi-pane vs buckets; operator tabs **Start here** + **Shell**        |
+| `docs/runtime/AGENT_OPS.md`                  | Link + “triage in scope”; push≠install failure mode                                                    |
+| `docs/runtime/CONTRACT.md`                   | Link from frontmatter claim rule                                                                       |
+| `docs/runtime/README.md`                     | Index row for triage + AGENT_OPS                                                                       |
+| `docs/INSTALL.md`                            | Verify stamp, push≠install, rail-zero troubleshooting                                                  |
+| `docs/FAQ.md`                                | pull≠install + f·x·n=0 answers                                                                         |
+| `docs/FAQ-ANSWERED.md`                       | Parity with short FAQ (pull≠install + rail zeros)                                                      |
+| `docs/QUICK_START.md`                        | Verify + tools-home stamp + link to triage canon                                                       |
+| `docs/WORKFLOWS.md`                          | Runtime contract bullets + next reading                                                                |
+| `docs/runtime/AGENT_INTERACTIVE_CONTRACT.md` | Finish → bucket sessions pointer after G7                                                              |
+| `docs/runtime/EXECUTION_SURFACES.md`         | Checkout override ≠ staged daily driver                                                                |
+| `docs/DOCUMENTATION_MAP.md`                  | This ledger entry + runtime truth rows                                                                 |
+
+Not in this pass (deliberate): skill-body rewrites, `docs/pl/*` mirror, product
+marketing pages, implementing the research-generator session-rail code fix
+(docs name the gap; code change is separate).
 
 This file is not a replacement for those docs. It is the map that keeps them
 from drifting into separate religions.

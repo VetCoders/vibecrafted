@@ -26,6 +26,14 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
   Use `make install-auto` for the direct non-interactive path, or
   `python3 scripts/vetcoders_install.py install --source "$PWD" --non-interactive` when you want full CLI control.
 
+- **I pulled new commits — is my install updated?**
+  No. The daily CLI runs the **staged tools home**
+  (`~/.local/share/vibecrafted/tools/vibecrafted-current/`), not the floating git
+  checkout. Re-run `make install` (or `install-auto`) and confirm
+  `VERSION` / `vibecrafted --version` show the same `+g<sha>` as
+  `git rev-parse --short HEAD`. See [INSTALL.md](INSTALL.md) and
+  [runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md).
+
 ## Skills, Agents, Foundations
 
 - **What is the difference between a skill and an agent?**
@@ -63,6 +71,13 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 - **What lives in `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/`?**
   Plans, reports, transcripts, and metadata from major runs. The artifact store exists so agent work leaves durable
   evidence.
+
+- **Why is the SESSIONS rail still `f · 0 x · 0 n · 0` when many runs completed?**
+  Those counters count **tabs in bucket sessions** (`Finalized runs` /
+  `Failed runs` / `Needs attention`) after `vc-frame triage-run`, not
+  control-plane `completed` rows. Settlement without triage leaves finished
+  tabs in the work session. See
+  [runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md).
 
 - **What is Definition of Undone?**
   DoU is the audit that checks whether people can discover, understand, install, trust, and adopt the thing, not only

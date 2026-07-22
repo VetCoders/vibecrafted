@@ -54,6 +54,14 @@ Answers from the trenches. This is the truth as of April 2026.
   Because things break. We snapshot your shell rc files, existing skills, and symlinks into
   `$VIBECRAFTED_ROOT/.vibecrafted/skills/.backup/` before touching anything. Safety over speed.
 
+- **I pulled new commits — is my install updated?**
+  No. The daily `vibecrafted` CLI runs the **staged tools home**
+  (`~/.local/share/vibecrafted/tools/vibecrafted-current/`), not the floating git
+  checkout. Re-run `make install` or `make install-auto` and confirm
+  `VERSION` / `vibecrafted --version` share the same `+g<sha>` as
+  `git rev-parse --short HEAD`. See [INSTALL.md](INSTALL.md) and
+  [runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md).
+
 ## Skills & Agents
 
 - **What is the difference between a skill and an agent?**
@@ -200,6 +208,13 @@ Answers from the trenches. This is the truth as of April 2026.
   Yes. Use the direct non-interactive install path (`make install-auto` or
   `python3 scripts/vetcoders_install.py install --source "$PWD" --non-interactive`). `vc-review` and `vc-followup` are
   designed to run as quality gates in CI pipelines.
+
+- **Why is the SESSIONS rail still `f · 0 x · 0 n · 0` when many runs completed?**
+  Those counters count **tabs in bucket sessions** (`Finalized runs` /
+  `Failed runs` / `Needs attention`) after `vc-frame triage-run`, not
+  control-plane `completed` rows. Settlement without triage leaves finished
+  tabs in the work session. Full diagnostic list:
+  [runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md).
 
 - **How does 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. handle merge conflicts between parallel agents?**
   By emphasizing "Surgical Edits." 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. encourages small, targeted changes. If conflicts happen, the

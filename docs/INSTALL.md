@@ -67,7 +67,32 @@ make install-auto         # non-interactive (CI-friendly)
 ```bash
 vibecrafted doctor        # health check — should report 100+ ok / 0 failures
 vc-help                   # cross-shell skill discovery
+vibecrafted --version     # must match tools-home VERSION stamp
+cat ~/.local/share/vibecrafted/tools/vibecrafted-current/VERSION
 ```
+
+### Push ≠ install (runtime tools home)
+
+The git checkout is **not** what the daily `vibecrafted` CLI runs. Install
+stages a stable tools tree (typically
+`~/.local/share/vibecrafted/tools/vibecrafted-current/`) and stamps
+`VERSION` as `X.Y.Z+g<shortsha>`. `uv tool install` points at that staged tree,
+not at a floating branch checkout.
+
+After runtime changes land in git:
+
+```bash
+make install              # or make install-auto
+# confirm stamp:
+git rev-parse --short HEAD
+cat ~/.local/share/vibecrafted/tools/vibecrafted-current/VERSION
+# expect the same +g<sha>
+```
+
+If the stamp lags HEAD, finished worker tabs will not pick up new finish hooks
+(e.g. SESSIONS triage into `Finalized runs` / `Failed runs` /
+`Needs attention`). See
+[`docs/runtime/TRIAGE_AND_SESSIONS.md`](runtime/TRIAGE_AND_SESSIONS.md).
 
 ### macOS-specific surfaces
 
@@ -319,6 +344,18 @@ owner if desired. Operator artifacts, control-plane history, and logs under
 ---
 
 ## Troubleshooting
+
+### SESSIONS rail stays `f · 0 x · 0 n · 0` despite many completed runs
+
+Those counters count **tabs in bucket sessions** after `vc-frame triage-run`,
+not completed control-plane metas. Usual causes:
+
+1. Tools home stamp behind checkout (`VERSION` `+g` ≠ `git rev-parse --short HEAD`) — re-run `make install`.
+2. Meta missing `origin_session` / `origin_tab` → triage skips with `no_session`.
+3. Installed `vc-frame` without `triage-run` / without `--bucket`.
+4. Historical runs finished before the wire was installed — no auto-backfill.
+
+Full diagnostic list: [`docs/runtime/TRIAGE_AND_SESSIONS.md`](runtime/TRIAGE_AND_SESSIONS.md).
 
 ### `vibecrafted: command not found` after install
 
