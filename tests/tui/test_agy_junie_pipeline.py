@@ -202,7 +202,9 @@ def test_grok_resume_uses_resume_flag_not_session_id_and_streams_json() -> None:
     assert toks["input"] == 42
     assert toks["output"] == 17
     assert toks["cached_input"] == 5
-    assert toks["total"] == 64
+    # Grok reports cached input as a subset of input, so total must not count
+    # those five tokens twice.
+    assert toks["total"] == 59
     # cost may be absent in raw stream (footer supplies); ensure no crash
     assert _extract_cost(grok_stream) is None or isinstance(
         _extract_cost(grok_stream), float

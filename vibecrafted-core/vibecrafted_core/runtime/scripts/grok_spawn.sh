@@ -125,8 +125,9 @@ salvage_success_report="if [[ \$pipeline_status -eq 0 && ! -s $qreport && -s $ql
 salvage_failure_report="if [[ \$pipeline_status -ne 0 && ! -s $qreport ]]; then { printf '%s\n' '---'; printf 'run_id: %s\n' \"\${SPAWN_RUN_ID:-unknown}\"; printf 'prompt_id: %s\n' \"\${SPAWN_PROMPT_ID:-unknown}\"; printf 'agent: %s\n' \"\${SPAWN_AGENT:-grok}\"; printf 'skill: %s\n' \"\${SPAWN_SKILL_CODE:-unknown}\"; printf 'model: %s\n' \"\${SPAWN_MODEL:-unknown}\"; printf 'status: failed\n'; printf 'session_id: %s\n' \"\${SPAWN_SESSION_ID:-pending}\"; printf 'repo_path: %s\n' \"\${SPAWN_ROOT:-unknown}\"; printf 'tokens_input: 0\n'; printf 'tokens_output: 0\n'; printf 'tokens_total: 0\n'; printf 'cost_usd: unknown\n'; printf '%s\n\n' '---'; if [[ -s $qlast_message ]]; then cat $qlast_message; else printf '%s\n' 'Grok failed before writing a standalone report file, and no final message was captured.'; printf '%s\n' 'See transcript for the full event stream:'; printf '%s\n' $qtranscript; printf '%s\n' 'Last message path checked:'; printf '%s\n' $qlast_message; fi; } > $qreport; fi;"
 # Human pane: AgentStreamParser. Raw streaming-json teed to transcript for await.
 # (resume headless uses the same filter via marbles.sh — keep them in parity.)
-# SCRIPT_DIR = .../vibecrafted_core/runtime/scripts → package parent is ../../..
-filter_core="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+# Prefer the runtime's shared resolver because checkout launchers live at
+# <repo>/runtime/scripts while wheel launchers live under vibecrafted_core.
+filter_core="$(spawn_python_core_path 2>/dev/null || { cd "$SCRIPT_DIR/../../.." && pwd; })"
 qfilter_py="$(spawn_shell_quote "$(spawn_python_bin)")"
 qfilter_core="$(spawn_shell_quote "$filter_core")"
 qfilter_cmd="PYTHONPATH=$qfilter_core $qfilter_py -m vibecrafted_core.agent_stream --agent grok"

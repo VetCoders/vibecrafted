@@ -261,6 +261,19 @@ _vetcoders_skill_dispatch() {
   return 127
 }
 
+_vetcoders_command_dispatch() {
+  local command_name="$1"
+  local deck_command="$2"
+  shift 2 || true
+  if command -v vibecrafted >/dev/null 2>&1; then
+    command vibecrafted "$deck_command" "$@"
+    return
+  fi
+  printf 'vc-%s: vibecrafted helper layer is not loaded and no "vibecrafted" deck is on PATH.\n' "$command_name" >&2
+  printf 'Run scripts/install-foundations.sh or add the repo bin/ to PATH.\n' >&2
+  return 127
+}
+
 vc-agents() { _vetcoders_skill_dispatch agents "$@"; }
 vc-audit() { _vetcoders_skill_dispatch audit "$@"; }
 vc-decorate() { command vibecrafted decorate "$@"; }
@@ -270,8 +283,8 @@ vc-hydrate() { _vetcoders_skill_dispatch hydrate "$@"; }
 vc-init() { _vetcoders_skill_dispatch init "$@"; }
 vc-intents() { command vibecrafted intents "$@"; }
 # Thin aliases — same argv/backend as `vibecrafted <skill>` (no second parser).
-vc-justdo() { command vibecrafted implement "$@"; }
-vc-implement() { command vibecrafted implement "$@"; }
+vc-justdo() { _vetcoders_command_dispatch justdo implement "$@"; }
+vc-implement() { _vetcoders_command_dispatch implement implement "$@"; }
 vc-loop() { _vetcoders_loop "$@"; }
 vc-cron() { command vibecrafted cron "$@"; }
 vc-ship() { command vibecrafted ship "$@"; }

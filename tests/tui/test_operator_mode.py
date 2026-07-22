@@ -487,10 +487,14 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    # In-frame marbles path: go-to-tab-name --create + new-pane (not new-tab).
-    # One run_id = one marbles-* tab; loops stack panes in that tab.
-    assert "go-to-tab-name" in payload or "new-pane" in payload
-    assert "new-pane" in payload
+    # One marbles run owns a dedicated host session. Its first surface is a
+    # fresh marbles tab, never a pane in the operator's active session.
+    assert payload[:4] == [
+        "--session",
+        "vibecrafted-marb-014520",
+        "action",
+        "new-tab",
+    ]
     assert "--name" in payload
     assert "marbles" in " ".join(payload) or "marb-014520" in payload
     assert "vibecrafted-marb-014520" in payload or "marb-014520" in payload
@@ -542,8 +546,8 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     assert result.returncode == 0
     assert result.stderr == ""
     payload = capture_file.read_text(encoding="utf-8")
-    # Bundled vc-frame must be used for the in-frame marbles new-pane path.
-    assert "new-pane" in payload or "go-to-tab-name" in payload
+    # Bundled vc-frame must create the tab in the dedicated marbles host.
+    assert "--session\nvibecrafted-marb-014520\naction\nnew-tab\n" in payload
     assert result.stdout.endswith(f"PATH={os.defpath}\n")
 
 

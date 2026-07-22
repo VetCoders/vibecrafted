@@ -422,7 +422,8 @@ PY
 _vetcoders_agent_stream_filter_cmd() {
   local agent="$1"
   local raw_file="${2:-}"
-  local py="" candidate package_parent quoted_agent quoted_raw quoted_parent
+  local py="" candidate package_parent="" source_dir=""
+  local quoted_agent quoted_raw quoted_parent
   for candidate in \
     "${VIBECRAFTED_PYTHON:-}" \
     "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-core/bin/python3" \
@@ -451,8 +452,16 @@ _vetcoders_agent_stream_filter_cmd() {
     fi
     return 0
   fi
-  # Packaged layout: shell/lib → … → vibecrafted-core (parent of vibecrafted_core).
-  package_parent="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd 2>/dev/null || true)"
+  source_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || true)"
+  # Packaged layout: shell/lib → … → vibecrafted-core (parent of
+  # vibecrafted_core). Checkout layout is a hardlinked runtime twin under
+  # <repo>/runtime, so its import root is <repo>/vibecrafted-core instead.
+  if [[ -n "$source_dir" ]]; then
+    package_parent="$(cd "$source_dir/../../../.." && pwd 2>/dev/null || true)"
+    if [[ ! -d "$package_parent/vibecrafted_core" ]]; then
+      package_parent="$(cd "$source_dir/../../.." && pwd 2>/dev/null || true)/vibecrafted-core"
+    fi
+  fi
   if [[ -n "$package_parent" && -d "$package_parent/vibecrafted_core" ]]; then
     quoted_parent="$(_vetcoders_shell_quote "$package_parent")"
     if [[ -n "$quoted_raw" ]]; then

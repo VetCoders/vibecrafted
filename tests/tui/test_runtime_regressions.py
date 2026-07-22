@@ -384,7 +384,9 @@ def test_resume_headless_routes_codex_through_exec(tmp_path: Path) -> None:
     subprocess.run(
         [
             "bash",
-            "-lc",
+            "--noprofile",
+            "--norc",
+            "-c",
             (
                 f'source "{SHELL_SH}"; '
                 "vc-resume codex --runtime terminal "

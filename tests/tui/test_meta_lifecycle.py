@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -20,13 +22,17 @@ unset SPAWN_MODEL SPAWN_PROMPT_ID
 
 
 def _bash(script: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", "-lc", _ENV_SANITIZE + script],
-        check=True,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    with tempfile.TemporaryDirectory(prefix="vibecrafted-meta-test-") as state_root:
+        env = os.environ.copy()
+        env["VIBECRAFTED_HOME"] = str(Path(state_root) / ".vibecrafted")
+        return subprocess.run(
+            ["bash", "-lc", _ENV_SANITIZE + script],
+            check=True,
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
 
 
 def _write_meta(meta: Path, status: str) -> None:
@@ -42,6 +48,38 @@ def _write_meta(meta: Path, status: str) -> None:
 
 def _load(meta: Path) -> dict:
     return json.loads(meta.read_text(encoding="utf-8"))
+
+
+def test_control_plane_script_prefers_explicit_root_then_checkout(
+    tmp_path: Path,
+) -> None:
+    explicit_root = tmp_path / "explicit"
+    tools_home = tmp_path / "tools"
+    installed_root = tools_home / "vibecrafted-current"
+    for root in (explicit_root, installed_root):
+        script = root / "scripts" / "control_plane_state.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("# test helper\n", encoding="utf-8")
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        export VIBECRAFTED_ROOT="{explicit_root}"
+        export VIBECRAFTED_TOOLS_HOME="{tools_home}"
+        spawn_control_plane_script
+        unset VIBECRAFTED_ROOT
+        spawn_control_plane_script
+        cd "{tmp_path}"
+        spawn_control_plane_script
+        '''
+    )
+
+    assert result.stdout.splitlines() == [
+        str(explicit_root / "scripts" / "control_plane_state.py"),
+        str(REPO_ROOT / "scripts" / "control_plane_state.py"),
+        str(installed_root / "scripts" / "control_plane_state.py"),
+    ]
 
 
 def test_mark_meta_running_flips_launching_to_running(tmp_path: Path) -> None:

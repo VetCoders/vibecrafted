@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
 spawn_control_plane_script() {
-  local candidate
+  local candidate repo_source=""
+  repo_source="$(spawn_repo_root 2>/dev/null || true)"
   for candidate in \
-    "${VIBECRAFTED_ROOT:-}/scripts/control_plane_state.py" \
-    "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/vibecrafted/tools}/vibecrafted-current/scripts/control_plane_state.py" \
-    "$(spawn_repo_root 2>/dev/null)/scripts/control_plane_state.py"
+    "${VIBECRAFTED_ROOT:+${VIBECRAFTED_ROOT}/scripts/control_plane_state.py}" \
+    "${repo_source:+${repo_source}/scripts/control_plane_state.py}" \
+    "${VIBECRAFTED_TOOLS_HOME:-${XDG_DATA_HOME:-${HOME}/.local/share}/vibecrafted/tools}/vibecrafted-current/scripts/control_plane_state.py"
   do
     [[ -n "$candidate" && -f "$candidate" ]] || continue
     printf '%s\n' "$candidate"

@@ -4,8 +4,11 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMMON_SH = REPO_ROOT / "runtime" / "scripts" / "common.sh"
@@ -36,6 +39,18 @@ unset SPAWN_RUN_ID SPAWN_RUN_LOCK SPAWN_AGENT SPAWN_SKILL_CODE SPAWN_SKILL_NAME
 unset SPAWN_PROMPT_ID
 export VIBECRAFTED_SPAWN_STAGGER_SECONDS=0
 """
+
+
+@pytest.fixture(autouse=True)
+def _isolate_spawn_test_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Shell subprocesses must never fall through to the operator store."""
+    home = tmp_path / "ambient-home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("VIBECRAFTED_HOME", raising=False)
 
 
 def _bash(script: str) -> subprocess.CompletedProcess[str]:
@@ -229,15 +244,18 @@ def test_skill_dry_run_reaches_spawn_launcher_without_launching(tmp_path: Path) 
     env["HOME"] = str(home)
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    env["VIBECRAFTED_PYTHON"] = sys.executable
+    env["PATH"] = f"{local_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
 
     result = subprocess.run(
         [
             "bash",
-            "-lc",
+            "--noprofile",
+            "--norc",
+            "-c",
             (
                 f'source "{SHELL_SH}"; '
-                f'vc-followup claude --runtime detached --dry-run --file "{plan}"'
+                f'vc-audit claude --runtime detached --dry-run --file "{plan}"'
             ),
         ],
         check=True,
@@ -1757,6 +1775,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
     _bash(
         f'''
         set -euo pipefail
+        export VIBECRAFTED_HOME="{tmp_path / ".vibecrafted"}"
         source "{COMMON_SH}"
         export SPAWN_ROOT="{root_dir}"
         export SPAWN_AGENT="codex"
@@ -1777,7 +1796,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
     assert payload["tokens_input"] == 10
     assert payload["tokens_cached_input"] == 3
     assert payload["tokens_output"] == 5
-    assert payload["tokens_total"] == 18
+    assert payload["tokens_total"] == 15
     assert (
         payload["resume_hint"]
         == f"Use `cd {root_dir} && vc-resume --session sess-abc-123` to continue work with this Agent."
@@ -1790,7 +1809,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
         assert "session_id: sess-abc-123" in text
         assert "tokens_input: 10" in text
         assert "tokens_output: 5" in text
-        assert "tokens_total: 18" in text
+        assert "tokens_total: 15" in text
         assert "cost_usd: unknown" in text
         assert "<!-- vibecrafted-artifact-footer:impl-010203-999 -->" in text
         assert "vc-resume --session sess-abc-123" in text

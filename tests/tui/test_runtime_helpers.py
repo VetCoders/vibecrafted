@@ -450,13 +450,13 @@ def test_vc_skill_wrapper_help_after_agent_does_not_launch_worker() -> None:
         HELPER_SCRIPT,
         (
             "_vetcoders_skill_entry() { printf 'launched\\n'; return 99; }; "
-            "vc-review codex --help"
+            "vc-audit codex --help"
         ),
         {"VIBECRAFTED_ROOT": str(REPO_ROOT)},
     )
 
     assert result.returncode == 0
-    assert "Usage: vc-review <claude|codex|agy|junie|grok>" in result.stderr
+    assert "Usage: vc-audit <claude|codex|agy|junie|grok>" in result.stderr
     assert "launched" not in result.stdout
 
 
