@@ -129,6 +129,35 @@ def _build_parser() -> argparse.ArgumentParser:
         help="describe workflow execution contracts (versioned, machine-readable)",
     )
     capabilities.add_argument("--json", action="store_true")
+    config = sub.add_parser(
+        "config",
+        help="install/wire packaged vc-frame config into the tools store and ~/.config/vc-frame",
+    )
+    config_sub = config.add_subparsers(dest="config_action")
+    config_install = config_sub.add_parser(
+        "install",
+        help="stage package config → tools store + wire ~/.config/vc-frame view",
+    )
+    config_install.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the wiring plan without mutating the filesystem",
+    )
+    config_install.add_argument(
+        "--force",
+        action="store_true",
+        help="replace healthy view links (default: leave healthy wiring alone)",
+    )
+    config_install.add_argument(
+        "--prefer-repo",
+        action="store_true",
+        help="wire view to checkout config/vc-frame (dev mode)",
+    )
+    config_zshrc = config_sub.add_parser(
+        "ensure-zshrc",
+        help="idempotent host ~/.zshrc onboarding (create or fenced append)",
+    )
+    config_zshrc.add_argument("--dry-run", action="store_true")
     reap = sub.add_parser(
         "reap",
         help="terminate processes that outlived their run (survivors of terminal runs)",
@@ -567,6 +596,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     python_commands = {
         "capabilities",
+        "config",
         "dispatch",
         "doctor",
         "paste",
@@ -627,6 +657,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 0 if invoked_as in {"vc-help", "vc-dashboard"} else 2
+    if args.command == "config":
+        from .vc_frame_delivery import ensure_zshrc, stage_vc_frame_config
+
+        action = getattr(args, "config_action", None)
+        if action == "ensure-zshrc":
+            result = ensure_zshrc(dry_run=bool(getattr(args, "dry_run", False)))
+            print(f"ensure-zshrc: {result['action']} -> {result['path']}")
+            return 0
+        if action != "install":
+            print(
+                "usage: vibecrafted config install [--dry-run] [--force] [--prefer-repo]\n"
+                "       vibecrafted config ensure-zshrc [--dry-run]",
+                file=sys.stderr,
+            )
+            return 2
+        plan = stage_vc_frame_config(
+            dry_run=bool(getattr(args, "dry_run", False)),
+            force=bool(getattr(args, "force", False)),
+            prefer_repo=True if getattr(args, "prefer_repo", False) else None,
+        )
+        print(plan.render(), end="")
+        return 0
     if args.command == "doctor":
         if getattr(args, "quarantine_legacy_runs", False):
             from .run_reaper import quarantine_legacy_runs

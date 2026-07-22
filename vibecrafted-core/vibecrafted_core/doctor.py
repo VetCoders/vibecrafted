@@ -9,6 +9,15 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .package_resources import deck_path, runtime_path, skills_path
+from .vc_frame_delivery import (
+    classify_view_path,
+    frontier_root,
+    list_dangling_frontier_links,
+    prefer_repo_vc_frame,
+    resolve_pane_shell,
+    tools_current_path,
+    vc_frame_user_config_dir,
+)
 
 _INSTALLER_MODULE: Any | None = None
 
@@ -147,6 +156,167 @@ def _packaged_asset_findings() -> list[_Finding]:
     return findings
 
 
+def _vc_frame_delivery_findings(
+    *,
+    home: Path | None = None,
+    tools_home: Path | None = None,
+) -> list[_Finding]:
+    """Config delivery health: view channel, themes, pane-shell, frontier zombies."""
+    findings: list[_Finding] = []
+    view = vc_frame_user_config_dir(home)
+    current = tools_current_path(tools_home)
+    store_cfg = current / "config" / "vc-frame"
+    checkout = None
+    try:
+        from .frontier_assets import vc_frame_config_source
+
+        checkout = vc_frame_config_source()
+    except FileNotFoundError:
+        pass
+
+    channels: list[str] = []
+    for name in ("config.kdl", "layouts", "themes"):
+        path = view / name
+        ch = classify_view_path(path, store_current=store_cfg, checkout=checkout)
+        channels.append(ch)
+        if ch == "DANGLING":
+            findings.append(
+                _Finding(
+                    "fail",
+                    "vc-frame:view",
+                    f"{path} is a dangling symlink — run `vibecrafted config install`",
+                )
+            )
+        elif ch == "STALE-FILE":
+            findings.append(
+                _Finding(
+                    "fail",
+                    "vc-frame:view",
+                    f"{path} is a regular file shadowing the store view — "
+                    f"run `vibecrafted config install` (backs up as .stale.*)",
+                )
+            )
+        elif ch == "missing":
+            findings.append(
+                _Finding(
+                    "warn",
+                    "vc-frame:view",
+                    f"{path} missing — run `vibecrafted config install`",
+                )
+            )
+        elif ch == "foreign":
+            findings.append(
+                _Finding(
+                    "warn",
+                    "vc-frame:view",
+                    f"{path} is user-managed (foreign) — not store/dev view",
+                )
+            )
+        else:
+            findings.append(_Finding("ok", "vc-frame:view", f"{name}: {ch} -> {path}"))
+
+    # themes presence under view or source
+    themes_dir = view / "themes"
+    if themes_dir.is_dir() or themes_dir.is_symlink():
+        try:
+            resolved = themes_dir.resolve(strict=True)
+            kdl = list(resolved.glob("*.kdl"))
+            if kdl:
+                findings.append(
+                    _Finding(
+                        "ok",
+                        "vc-frame:themes",
+                        f"{len(kdl)} theme file(s) under {themes_dir}",
+                    )
+                )
+            else:
+                findings.append(
+                    _Finding(
+                        "warn",
+                        "vc-frame:themes",
+                        f"themes dir empty: {themes_dir}",
+                    )
+                )
+        except OSError:
+            findings.append(
+                _Finding(
+                    "fail",
+                    "vc-frame:themes",
+                    f"themes path does not resolve: {themes_dir}",
+                )
+            )
+    else:
+        findings.append(
+            _Finding(
+                "warn",
+                "vc-frame:themes",
+                f"themes view missing at {themes_dir}",
+            )
+        )
+
+    # pane-shell: if layouts still hardcode zsh and zsh missing → warn
+    shell = resolve_pane_shell()
+    layouts = view / "layouts"
+    unsubstituted = False
+    if layouts.exists():
+        try:
+            for kdl in layouts.resolve().glob("*.kdl"):
+                text = kdl.read_text(encoding="utf-8", errors="ignore")
+                if 'command="zsh"' in text and shell != "zsh":
+                    unsubstituted = True
+                    break
+        except OSError:
+            pass
+    if unsubstituted:
+        findings.append(
+            _Finding(
+                "warn",
+                "vc-frame:pane-shell",
+                f'layouts still use command="zsh" but host shell is {shell!r} '
+                f"(dev-checkout view or unstaged) — stage via config install",
+            )
+        )
+    else:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:pane-shell",
+                f"pane shell ok (host prefers {shell})",
+            )
+        )
+
+    # frontier zombies
+    froot = frontier_root(home)
+    zombies = list_dangling_frontier_links(froot)
+    if zombies:
+        findings.append(
+            _Finding(
+                "fail",
+                "frontier:zombies",
+                f"{len(zombies)} dangling link(s) under {froot} — "
+                f"re-run install-frontier-config.sh or config install",
+            )
+        )
+    else:
+        findings.append(
+            _Finding(
+                "ok",
+                "frontier:zombies",
+                f"no dangling frontier links under {froot}",
+            )
+        )
+
+    if prefer_repo_vc_frame():
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:channel",
+                "VIBECRAFTED_PREFER_REPO_VC_FRAME=1 (dev-checkout preferred)",
+            )
+        )
+    return findings
+
+
 def doctor_run(
     store_path: str | Path | None = None,
     state: Any | None = None,
@@ -168,6 +338,7 @@ def doctor_run(
         findings = list(installer.run_doctor(resolved_store, resolved_state))
         findings.extend(_packaged_asset_findings())
     findings.extend(_launcher_shim_findings())
+    findings.extend(_vc_frame_delivery_findings())
     return findings
 
 

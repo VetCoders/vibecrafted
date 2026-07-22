@@ -1200,3 +1200,51 @@ def test_describe_dumb_terminal_noise_flags_starship_and_stdout() -> None:
     assert "starship init still runs under TERM=dumb" in detail
     assert "stdout noise:" in detail
     assert '[[ -o interactive && "${TERM:-}" != "dumb" ]]' in detail
+
+
+# --- W3-A vc-frame config delivery (plan vcframe-config-delivery) ---
+
+from vibecrafted_core.doctor import _vc_frame_delivery_findings
+from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
+
+
+def test_vc_frame_delivery_healthy_store_view_ok(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
+    stage_vc_frame_config(home=home, tools_home=tools, version="doc1", prefer_repo=False)
+    findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
+    view = [f.level for f in findings if f.component == "vc-frame:view"]
+    assert "fail" not in view, findings
+
+
+def test_vc_frame_delivery_stale_file_fails_view(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    view = home / ".config" / "vc-frame"
+    view.mkdir(parents=True)
+    (view / "config.kdl").write_text('theme "choinka"\n', encoding="utf-8")
+    (view / "layouts").mkdir()
+    (view / "themes").mkdir()
+    findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
+    fails = [f for f in findings if f.component == "vc-frame:view" and f.level == "fail"]
+    assert fails
+    assert any("config install" in f.message for f in fails)
+
+
+def test_vc_frame_delivery_dangling_frontier_fails(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    z = home / ".config" / "vetcoders" / "frontier" / "zellij"
+    z.mkdir(parents=True)
+    bad = z / "x.kdl"
+    bad.symlink_to("./nope.kdl")
+    findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
+    zf = [f for f in findings if f.component == "frontier:zombies"]
+    assert zf and zf[0].level == "fail"

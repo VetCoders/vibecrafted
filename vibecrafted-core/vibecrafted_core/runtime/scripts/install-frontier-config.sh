@@ -106,13 +106,48 @@ printf '  source repo: %s\n' "$repo_root"
 printf '  mode: %s\n' "$mode"
 printf '  frontier root: %s\n' "$frontier_root"
 
+# Prefer staged tools store when present; fall back to checkout (--source).
+vc_frame_src="$repo_root/config/vc-frame"
+if [[ -n "${VIBECRAFTED_PREFER_REPO_VC_FRAME:-}" ]]; then
+  vc_frame_src="$repo_root/config/vc-frame"
+elif [[ -d "${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools/vibecrafted-current/config/vc-frame" ]]; then
+  vc_frame_src="${XDG_DATA_HOME:-$HOME/.local/share}/vibecrafted/tools/vibecrafted-current/config/vc-frame"
+elif [[ -d "$HOME/.local/share/vibecrafted/tools/vibecrafted-current/config/vc-frame" ]]; then
+  vc_frame_src="$HOME/.local/share/vibecrafted/tools/vibecrafted-current/config/vc-frame"
+fi
+
 install_one "$repo_root/config/starship.toml" "$frontier_root/starship.toml"
 install_one "$repo_root/config/atuin/config.toml" "$frontier_root/atuin/config.toml"
-install_one "$repo_root/config/vc-frame/config.kdl" "$frontier_root/vc-frame/config.kdl"
-install_one "$repo_root/config/vc-frame/layouts/research.kdl" "$frontier_root/vc-frame/layouts/research.kdl"
-install_one "$repo_root/config/vc-frame/layouts/workflow.kdl" "$frontier_root/vc-frame/layouts/workflow.kdl"
-install_one "$repo_root/config/vc-frame/layouts/marbles.kdl" "$frontier_root/vc-frame/layouts/marbles.kdl"
-install_one "$repo_root/config/vc-frame/layouts/dashboard.kdl" "$frontier_root/vc-frame/layouts/dashboard.kdl"
-install_one "$repo_root/config/vc-frame/layouts/operator.kdl" "$frontier_root/vc-frame/layouts/operator.kdl"
+install_one "$vc_frame_src/config.kdl" "$frontier_root/vc-frame/config.kdl"
+install_one "$vc_frame_src/layouts/research.kdl" "$frontier_root/vc-frame/layouts/research.kdl"
+install_one "$vc_frame_src/layouts/workflow.kdl" "$frontier_root/vc-frame/layouts/workflow.kdl"
+install_one "$vc_frame_src/layouts/marbles.kdl" "$frontier_root/vc-frame/layouts/marbles.kdl"
+install_one "$vc_frame_src/layouts/dashboard.kdl" "$frontier_root/vc-frame/layouts/dashboard.kdl"
+install_one "$vc_frame_src/layouts/operator.kdl" "$frontier_root/vc-frame/layouts/operator.kdl"
+install_one "$vc_frame_src/auto-theme.sh" "$frontier_root/vc-frame/auto-theme.sh"
+
+# themes/ — link each theme file (and keep directory shape)
+if [[ -d "$vc_frame_src/themes" ]]; then
+  while IFS= read -r -d '' theme_file; do
+    rel="${theme_file#"$vc_frame_src/"}"
+    install_one "$theme_file" "$frontier_root/vc-frame/$rel"
+  done < <(find "$vc_frame_src/themes" -type f -print0 2>/dev/null)
+fi
+
+# Legacy zombie cleanup: remove dangling symlinks under frontier (incl. old zellij/)
+if (( ! dry_run )); then
+  if [[ -d "$frontier_root" ]]; then
+    while IFS= read -r -d '' zombie; do
+      printf '  removing dangling frontier link: %s\n' "$zombie"
+      rm -f "$zombie"
+    done < <(find "$frontier_root" -type l ! -exec test -e {} \; -print0 2>/dev/null)
+  fi
+else
+  if [[ -d "$frontier_root" ]]; then
+    while IFS= read -r -d '' zombie; do
+      printf '  dry-run: would remove dangling frontier link: %s\n' "$zombie"
+    done < <(find "$frontier_root" -type l ! -exec test -e {} \; -print0 2>/dev/null)
+  fi
+fi
 
 printf 'Done.\n'
