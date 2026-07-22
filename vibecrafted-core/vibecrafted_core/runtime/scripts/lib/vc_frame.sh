@@ -480,7 +480,7 @@ spawn_vc_frame_create_host_session() {
 }
 
 spawn_record_host_session_failure() {
-  local err="${1:-${SPAWN_VC_FRAME_LAST_ERROR:-hosting session launch failed}}"
+  local err="${SPAWN_VC_FRAME_LAST_ERROR:-hosting session launch failed}"
   SPAWN_VC_FRAME_LAST_ERROR="$err"
   printf 'host session launch failed: %s\n' "$err" >&2
   local meta_path="${SPAWN_META:-}"
