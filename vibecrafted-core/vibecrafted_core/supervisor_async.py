@@ -150,7 +150,7 @@ def _render_fallback_report(handle: AsyncRunHandle, transcript_text: str) -> str
     )
     from .report_contract import render_minimal_frontmatter
 
-    skill = str(
+    skill = handle.skill or str(
         os.environ.get("VIBECRAFTED_SKILL_NAME")
         or os.environ.get("VIBECRAFTED_SKILL_CODE")
         or "unknown"
@@ -263,6 +263,7 @@ class AsyncRunHandle:
     first_output_seen: bool = False
     session_id: str = ""
     agent: str = ""
+    skill: str = ""
     agent_session_id: str = ""
     agent_model: str = ""
     model_requested: str = ""
@@ -323,6 +324,11 @@ class AsyncSupervisor:
         if prompt_file is not None:
             merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_file)
         agent = str(merged_env.get("VIBECRAFTED_AGENT") or _infer_agent(command))
+        skill = str(
+            merged_env.get("VIBECRAFTED_SKILL_NAME")
+            or merged_env.get("VIBECRAFTED_SKILL_CODE")
+            or "unknown"
+        )
         agent_model = resolve_default_model(agent, command=command, env=merged_env)
         model_receipt = _model_override_receipt(
             agent, str(merged_env.get("VIBECRAFTED_MODEL_REQUESTED") or "")
@@ -344,6 +350,7 @@ class AsyncSupervisor:
                 "session_id": session_id,
                 "identity_required": True,
                 "agent": agent,
+                "skill": skill,
                 "agent_model": agent_model,
                 **model_receipt,
             },
@@ -377,6 +384,7 @@ class AsyncSupervisor:
             transcript_path=transcript,
             session_id=session_id,
             agent=agent,
+            skill=skill,
             agent_model=agent_model,
             model_requested=str(model_receipt.get("model_requested") or ""),
             model_override_supported=bool(
@@ -420,6 +428,7 @@ class AsyncSupervisor:
                 seed.setdefault("run_id", run_id)
                 seed.setdefault("root", str(cwd))
                 seed.setdefault("agent", agent)
+                seed.setdefault("skill", skill)
                 handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
                 handle.meta_path.write_text(
                     json.dumps(seed, indent=2, ensure_ascii=False, sort_keys=True)
@@ -616,24 +625,52 @@ class AsyncSupervisor:
         self._sync_stream_summary(handle, parser)
 
     def _write_report_fallback(self, handle: AsyncRunHandle) -> None:
-        if (
-            handle.report_path is None
-            or handle.report_path.exists()
-            or handle.exit_code != 0
-            or handle.agent != "grok"
-        ):
+        report = handle.report_path
+        if report is None:
             return
-        transcript_text = ""
-        if handle.transcript_path is not None and handle.transcript_path.exists():
-            try:
-                transcript_text = handle.transcript_path.read_text(
-                    encoding="utf-8", errors="replace"
-                )
-            except OSError:
-                transcript_text = ""
-        rendered = _render_fallback_report(handle, transcript_text)
-        handle.report_path.parent.mkdir(parents=True, exist_ok=True)
-        handle.report_path.write_text(rendered, encoding="utf-8")
+        if not report.exists():
+            if handle.exit_code != 0 or handle.agent != "grok":
+                return
+            transcript_text = ""
+            if handle.transcript_path is not None and handle.transcript_path.exists():
+                try:
+                    transcript_text = handle.transcript_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    transcript_text = ""
+            rendered = _render_fallback_report(handle, transcript_text)
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(rendered, encoding="utf-8")
+            return
+
+        # Reports are worker-authored evidence, but the runtime owns their
+        # transport contract. Normalize an existing substantive report before
+        # strict validation so a good handoff cannot become report_invalid only
+        # because the worker omitted the dashboard frontmatter. Preserve the
+        # body and any explicit claim (blocked/partial/failed) verbatim.
+        try:
+            if report.stat().st_size == 0:
+                return
+            text = report.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        from .report_contract import ensure_frontmatter_on_text
+
+        status = "completed" if handle.exit_code == 0 else "failed"
+        normalized = ensure_frontmatter_on_text(
+            text,
+            run_id=handle.run_id,
+            agent=handle.agent or "unknown",
+            skill=handle.skill or "unknown",
+            status=status,
+            extra={
+                "session_id": handle.agent_session_id or "unknown",
+                "model": handle.agent_model or "unknown",
+            },
+        )
+        if normalized != text:
+            report.write_text(normalized, encoding="utf-8")
 
     def _sync_stream_summary(
         self, handle: AsyncRunHandle, parser: AgentStreamParser

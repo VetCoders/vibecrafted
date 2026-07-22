@@ -662,6 +662,184 @@ def test_sync_state_reconciles_dead_launcher_with_missing_report_to_terminal_fai
     assert refreshed["health"] == "final"
 
 
+@pytest.mark.parametrize("terminal_state", ["report_invalid", "report_missing"])
+def test_sync_state_heals_repaired_report_contract_to_completed_attention(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, terminal_state: str
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "repaired.md"
+    report.write_text(
+        "---\n"
+        "run_id: repaired-report\n"
+        "agent: codex\n"
+        "skill: implement\n"
+        "status: completed\n"
+        "---\n"
+        "# Verified handoff\n",
+        encoding="utf-8",
+    )
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-22T14:28:54+00:00",
+                "run_id": "repaired-report",
+                "kind": f"lifecycle:{terminal_state}",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": terminal_state,
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "report": str(report),
+                    "exit_code": 0,
+                    "artifact_ok": False,
+                    "artifact_errors": [
+                        "report_missing"
+                        if terminal_state == "report_missing"
+                        else "report_frontmatter_missing"
+                    ],
+                    "liveness": "terminal",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "completed"
+    assert run["artifact_ok"] is True
+    assert run["artifact_errors"] == []
+    assert run["execution_state"] == "exited"
+    assert run["settlement_verdict"] == "needs_attention"
+    assert run["settlement_tui"] == "n"
+    assert run["lifecycle"]["recovery_required"] is False
+    assert run["failure_card"] is None
+    assert snapshot["settlement_counts"] == {
+        "f": 0,
+        "x": 0,
+        "n": 1,
+        "total_settled": 1,
+        "orphans": 0,
+    }
+
+
+def test_sync_state_keeps_unrepaired_report_invalid_in_failed_recovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "still-invalid.md"
+    report.write_text("# Missing frontmatter\n", encoding="utf-8")
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-22T14:28:54+00:00",
+                "run_id": "still-invalid",
+                "kind": "lifecycle:report_invalid",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": "report_invalid",
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "report": str(report),
+                    "exit_code": 0,
+                    "artifact_ok": False,
+                    "artifact_errors": ["report_frontmatter_missing"],
+                    "liveness": "terminal",
+                    "recovery_required": True,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "report_invalid"
+    assert run["settlement_verdict"] == "failed"
+    assert run["settlement_tui"] == "x"
+    assert run["lifecycle"]["recovery_required"] is True
+    assert snapshot["settlement_counts"]["x"] == 1
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "invalid_proof"),
+    [(0, True), (7, False)],
+)
+def test_sync_state_never_heals_failed_execution_or_invalid_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    exit_code: int,
+    invalid_proof: bool,
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "proof-invalid" if invalid_proof else "execution-failed"
+    report = tmp_path / "valid-report.md"
+    report.write_text(
+        "---\n"
+        f"run_id: {run_id}\n"
+        "agent: codex\n"
+        "skill: implement\n"
+        "status: completed\n"
+        "---\n"
+        "# Report\n",
+        encoding="utf-8",
+    )
+    if invalid_proof:
+        proof = home / "control_plane" / "runtime_runs" / run_id / "proof"
+        proof.mkdir(parents=True, exist_ok=True)
+        (proof / "result.json").write_text("{}\n", encoding="utf-8")
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-22T14:28:54+00:00",
+                "run_id": run_id,
+                "kind": "lifecycle:report_invalid",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": "report_invalid",
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "report": str(report),
+                    "exit_code": exit_code,
+                    "artifact_errors": ["report_frontmatter_missing"],
+                    "liveness": "terminal",
+                    "recovery_required": True,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "report_invalid"
+    assert run["proof_state"] == ("invalid" if invalid_proof else "undeclared")
+    assert run["settlement_verdict"] == ("invalid" if invalid_proof else "failed")
+    assert run["settlement_tui"] == "x"
+    assert run["lifecycle"]["recovery_required"] is True
+
+
 def test_sync_state_reaps_stale_lock_present_run_without_launcher_pid(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

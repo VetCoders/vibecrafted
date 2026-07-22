@@ -115,6 +115,123 @@ def test_dispatcher_cli_runs_full_lifecycle(
     assert "dispatcher lifecycle hello" in transcript.read_text(encoding="utf-8")
 
 
+def test_dispatcher_normalizes_bare_codex_report_before_validation(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_SKILL_NAME", "implement")
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    codex = tmp_path / "codex"
+    codex.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'# Worker handoff\\n\\nSubstantive body.\\n', encoding='utf-8')\n"
+        "print('done')\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-bare-codex",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--json",
+            "--",
+            str(codex),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifact_ok"] is True
+    assert payload["state"] == "report_validated"
+    report_text = report.read_text(encoding="utf-8")
+    assert "run_id: disp-bare-codex" in report_text
+    assert "agent: codex" in report_text
+    assert "skill: implement" in report_text
+    assert "status: completed" in report_text
+    assert "# Worker handoff\n\nSubstantive body.\n" in report_text
+
+
+def test_async_supervisor_preserves_blocked_claim_while_filling_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_SKILL_NAME", "implement")
+    report = tmp_path / "blocked.md"
+    worker = tmp_path / "codex"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'---\\nstatus: blocked\\nclaim_status: blocked\\n---\\n# Body\\n', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="blocked-claim",
+            command=[str(worker)],
+            root=tmp_path,
+            report_path=report,
+        )
+    )
+
+    assert handle.artifact_validation is not None
+    assert handle.artifact_validation.ok
+    report_text = report.read_text(encoding="utf-8")
+    assert "status: blocked" in report_text
+    assert "claim_status: blocked" in report_text
+    assert "run_id: blocked-claim" in report_text
+    assert "# Body\n" in report_text
+
+
+def test_async_supervisor_normalizes_existing_report_after_nonzero_exit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_SKILL_NAME", "implement")
+    report = tmp_path / "failed.md"
+    worker = tmp_path / "codex"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('# Failure evidence\\n', encoding='utf-8')\n"
+        "sys.exit(7)\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="failed-with-report",
+            command=[str(worker)],
+            root=tmp_path,
+            report_path=report,
+        )
+    )
+
+    assert handle.exit_code == 7
+    assert handle.artifact_validation is not None
+    assert handle.artifact_validation.ok
+    report_text = report.read_text(encoding="utf-8")
+    assert "status: failed" in report_text
+    assert "# Failure evidence\n" in report_text
+
+
 def test_dispatcher_cli_delivers_prompt_file_on_stdin(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

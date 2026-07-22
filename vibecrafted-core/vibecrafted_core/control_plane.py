@@ -660,6 +660,48 @@ def _reconcile_successful_terminal(run: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _reconcile_repaired_report_terminal(run: dict[str, Any]) -> dict[str, Any]:
+    """Heal a report contract terminal after its artifact was repaired.
+
+    A successful worker can only recover from report_missing/report_invalid.
+    Execution failures and proof/delivery invalidation remain terminal failures.
+    """
+    result = dict(run)
+    if str(result.get("state") or "") not in {"report_invalid", "report_missing"}:
+        return result
+    if _coerce_int(result.get("exit_code")) != 0:
+        return result
+    if str(result.get("proof_state") or "").lower() in {"failed", "invalid"}:
+        return result
+    if str(result.get("delivery_state") or "").lower() == "invalidated":
+        return result
+
+    report = str(result.get("latest_report") or result.get("report") or "").strip()
+    if not report:
+        return result
+    from .report_contract import validate_report_file
+
+    validation = validate_report_file(report, require_frontmatter=True)
+    if not validation.ok:
+        return result
+    errors = [str(item) for item in (result.get("artifact_errors") or []) if str(item)]
+    if any(not item.startswith("report_") for item in errors):
+        return result
+
+    completed_at = str(result.get("completed_at") or result.get("updated_at") or "")
+    result["state"] = "completed"
+    result["health"] = "final"
+    result["liveness"] = "terminal"
+    result["completed_at"] = completed_at or _now().isoformat()
+    result["artifact_ok"] = True
+    result["artifact_errors"] = []
+    result["artifact_gate"] = "validated"
+    result["operator_state"] = "completed"
+    result["last_error"] = ""
+    result.pop("recovery_required", None)
+    return result
+
+
 def _failure_card(run: dict[str, Any]) -> dict[str, Any] | None:
     errors = [str(item) for item in (run.get("artifact_errors") or []) if str(item)]
     state = str(run.get("state") or "")
@@ -1486,13 +1528,6 @@ def _project_run_payload(
     """Project one run's status to its snapshot payload (single-run, lockless)."""
     payload = _artifact_projection(_status_to_payload(status), previous)
     payload = _reconcile_dead_launcher(payload)
-    payload["failure_card"] = _failure_card(payload)
-    payload["health"] = _state_health(
-        str(payload.get("state") or ""), str(payload.get("updated_at") or "")
-    )
-    if not payload.get("liveness"):
-        payload["liveness"] = "terminal" if _run_is_terminal(payload) else "heartbeat"
-    payload["lifecycle"] = _lifecycle_controls(payload)
     run_dir = _runtime_run_dir(run_id)
     axes = _delivery_axes_from_run_dir(
         run_dir if run_dir.is_dir() else None,
@@ -1500,6 +1535,22 @@ def _project_run_payload(
         exit_code=_coerce_int(payload.get("exit_code")),
     )
     payload.update(axes.to_payload())
+    previous_state = str(payload.get("state") or "")
+    payload = _reconcile_repaired_report_terminal(payload)
+    if previous_state != str(payload.get("state") or ""):
+        axes = _delivery_axes_from_run_dir(
+            run_dir if run_dir.is_dir() else None,
+            legacy_state=str(payload.get("state") or ""),
+            exit_code=_coerce_int(payload.get("exit_code")),
+        )
+        payload.update(axes.to_payload())
+    payload["failure_card"] = _failure_card(payload)
+    payload["health"] = _state_health(
+        str(payload.get("state") or ""), str(payload.get("updated_at") or "")
+    )
+    if not payload.get("liveness"):
+        payload["liveness"] = "terminal" if _run_is_terminal(payload) else "heartbeat"
+    payload["lifecycle"] = _lifecycle_controls(payload)
     # Settlement axis (f/x/n). Written on every terminal projection so the
     # board never renders silence for unfinished claim→proof work. Delivery
     # kernel axes above stay orthogonal (unverified/sealed ≠ settled).

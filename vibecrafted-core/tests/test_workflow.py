@@ -925,6 +925,9 @@ def test_runtime_prompt_keeps_metadata_runtime_owned(tmp_path: Path) -> None:
     prompt = workflow._runtime_prompt(spec)
 
     assert "Write your final report to the path in VIBECRAFTED_REPORT_PATH" in prompt
+    assert "non-empty `run_id`, `agent`," in prompt
+    assert "`skill`, and `status` keys" in prompt
+    assert "Preserve an honest blocked/partial/failed status" in prompt
     assert "runtime owns VIBECRAFTED_META_PATH" in prompt
     assert "If you create or update run metadata" not in prompt
     # Every dispatched worker is oriented first: the vc-init Step 0 rides in the
