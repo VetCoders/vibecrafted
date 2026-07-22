@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use chrono::Utc;
 use control_core::ControlPlane;
+use serde_json::{Value, json};
 
 fn temp_home(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -16,6 +17,51 @@ fn temp_home(name: &str) -> PathBuf {
         .expect("clock")
         .as_nanos();
     std::env::temp_dir().join(format!("control-core-{name}-{nanos}"))
+}
+
+fn write_snapshot(
+    runs_dir: &std::path::Path,
+    run_id: &str,
+    state: &str,
+    settlement: Option<(&str, &str)>,
+) {
+    let mut payload = json!({
+        "run_id": run_id,
+        "state": state,
+        "agent": "codex",
+        "skill": "implement",
+        "mode": "implement",
+        "root": "/tmp/repo",
+        "operator_session": format!("repo-{run_id}"),
+        "latest_report": "",
+        "latest_transcript": "",
+        "last_error": "",
+        "updated_at": "2026-07-22T12:00:00+00:00",
+        "started_at": "2026-07-22T11:59:00+00:00",
+        "health": if state == "running" { "active" } else { "final" },
+        "source": "agent-meta",
+        "lock_present": false,
+        "exit_code": Value::Null,
+        "liveness": if state == "running" { "heartbeat" } else { "terminal" },
+        "launcher_pid": Value::Null,
+        "completed_at": "",
+        "session_id": "",
+        "current_loop": Value::Null,
+        "total_loops": Value::Null
+    });
+    if let Some((verdict, tui)) = settlement {
+        let object = payload.as_object_mut().expect("snapshot object");
+        object.insert(
+            "settlement_verdict".to_string(),
+            Value::String(verdict.to_string()),
+        );
+        object.insert("settlement_tui".to_string(), Value::String(tui.to_string()));
+    }
+    fs::write(
+        runs_dir.join(format!("{run_id}.json")),
+        serde_json::to_vec_pretty(&payload).expect("snapshot JSON"),
+    )
+    .expect("write snapshot");
 }
 
 #[test]
@@ -64,6 +110,98 @@ fn compute_view_surfaces_a_launching_run_not_yet_synced() {
             .any(|r| r.run_id == run_id && r.source == "runtime_runs"),
         "compute_view surfaces the launching run straight from runtime_runs"
     );
+}
+
+#[test]
+fn compute_view_reads_settlement_board_only_from_retained_snapshots() {
+    let home = temp_home("settlement-board");
+    let control_plane = home.join("control_plane");
+    let runs_dir = control_plane.join("runs");
+    fs::create_dir_all(&runs_dir).expect("runs dir");
+
+    write_snapshot(&runs_dir, "disagree", "completed", Some(("finalized", "f")));
+    write_snapshot(&runs_dir, "failed", "completed", Some(("failed", "x")));
+    write_snapshot(&runs_dir, "invalid", "completed", Some(("invalid", "x")));
+    write_snapshot(
+        &runs_dir,
+        "attention",
+        "completed",
+        Some(("needs_attention", "n")),
+    );
+    write_snapshot(&runs_dir, "unsettled-terminal", "completed", None);
+    write_snapshot(&runs_dir, "unsettled-live", "running", None);
+    let live_path = runs_dir.join("unsettled-live.json");
+    let mut unsettled_live: Value =
+        serde_json::from_slice(&fs::read(&live_path).expect("read live snapshot"))
+            .expect("live snapshot JSON");
+    let live_object = unsettled_live
+        .as_object_mut()
+        .expect("live snapshot object");
+    live_object.insert("proof_state".to_string(), json!("failed"));
+    live_object.insert("delivery_state".to_string(), json!("invalidated"));
+    live_object.insert("settlement_tui".to_string(), json!("f"));
+    fs::write(
+        &live_path,
+        serde_json::to_vec_pretty(&unsettled_live).expect("live snapshot JSON"),
+    )
+    .expect("rewrite live snapshot");
+
+    // Raw compute_view source disagrees with the persisted `disagree` snapshot:
+    // Rust sees it as active, while settlement must remain Python's finalized.
+    let artifacts = home.join("artifacts");
+    fs::create_dir_all(&artifacts).expect("artifacts dir");
+    fs::write(
+        artifacts.join("disagree.meta.json"),
+        serde_json::to_vec_pretty(&json!({
+            "run_id": "disagree",
+            "status": "running",
+            "updated_at": "2026-07-22T12:00:00+00:00",
+            "started_at": "2026-07-22T11:59:00+00:00",
+            "agent": "codex",
+            "mode": "implement",
+            "root": "/tmp/repo",
+            "skill_code": "impl",
+            "liveness": "heartbeat"
+        }))
+        .expect("meta JSON"),
+    )
+    .expect("write raw meta");
+
+    let sync_lock = control_plane.join(".sync.lock");
+    fs::write(&sync_lock, "python-writer-sentinel").expect("lock sentinel");
+    let now = chrono::DateTime::parse_from_rfc3339("2026-07-22T12:00:00+00:00")
+        .expect("fixed now")
+        .with_timezone(&Utc);
+    let view = ControlPlane::new(&home).compute_view(now);
+
+    let board = &view.settlement_counts;
+    assert_eq!(
+        board.active, 1,
+        "existing Rust active count remains visible"
+    );
+    assert_eq!(board.f, 1, "raw running state must not erase snapshot f");
+    assert_eq!(board.x, 2, "failed + invalid share the x bucket");
+    assert_eq!(board.invalid, 1, "invalid remains an x subset");
+    assert!(
+        board.invalid <= board.x,
+        "invalid cannot exceed the x bucket"
+    );
+    assert_eq!(board.n, 2, "needs_attention + unsettled terminal");
+    assert_eq!(board.total_settled, board.f + board.x + board.n);
+    assert_eq!(
+        fs::read_to_string(&sync_lock).expect("read lock sentinel"),
+        "python-writer-sentinel",
+        "read model must not acquire or mutate Python's write lock"
+    );
+
+    let contract = serde_json::to_value(board).expect("board serialises");
+    assert_eq!(contract["scope"], json!("retained_control_plane_snapshots"));
+    assert!(
+        contract.get("today").is_none(),
+        "scope is not a daily claim"
+    );
+
+    fs::remove_dir_all(&home).ok();
 }
 
 #[test]

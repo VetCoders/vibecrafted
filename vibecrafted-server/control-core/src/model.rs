@@ -449,6 +449,23 @@ pub struct RunStatus {
     pub current_loop: Option<i64>,
     #[serde(default)]
     pub total_loops: Option<i64>,
+    /// Persisted Python settlement verdict. Absent on legacy and live snapshots.
+    /// Unknown future values are treated as absent, matching
+    /// `settlement_from_payload()` rather than rejecting the whole snapshot.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_optional_settlement_verdict"
+    )]
+    pub settlement_verdict: Option<SettlementVerdict>,
+    /// Persisted Python TUI cell. Carried for schema fidelity; board totals are
+    /// mapped from `settlement_verdict`, never inferred from process/proof data.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_optional_settlement_tui"
+    )]
+    pub settlement_tui: Option<SettlementTui>,
     /// Process axis from the delivery-proof kernel. Absent on pre-kernel
     /// snapshots — never invented from `state`/`completed` at read time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -494,6 +511,168 @@ impl RunStatus {
             _ => None,
         }
     }
+}
+
+/// Python-owned terminal verdict written into retained run snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlementVerdict {
+    Finalized,
+    Failed,
+    NeedsAttention,
+    Invalid,
+}
+
+impl SettlementVerdict {
+    /// Canonical f/x/n projection from `settlement.tui_key_for`.
+    #[must_use]
+    pub fn tui(self) -> SettlementTui {
+        match self {
+            Self::Finalized => SettlementTui::F,
+            Self::Failed | Self::Invalid => SettlementTui::X,
+            Self::NeedsAttention => SettlementTui::N,
+        }
+    }
+}
+
+/// Persisted one-character settlement cell written by Python.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SettlementTui {
+    F,
+    X,
+    N,
+}
+
+/// Declared time/scope boundary for a settlement aggregate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlementScope {
+    /// Every snapshot currently retained under `control_plane/runs/`.
+    RetainedControlPlaneSnapshots,
+}
+
+/// Typed f/x/n aggregate sourced only from persisted Python snapshots.
+///
+/// `invalid` is diagnostic detail inside `x`, not a fourth total bucket.
+/// `active` comes from the existing Rust live projection and is likewise not
+/// part of `total_settled`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementBoard {
+    pub scope: SettlementScope,
+    pub active: usize,
+    pub f: usize,
+    pub x: usize,
+    pub n: usize,
+    pub invalid: usize,
+    pub total_settled: usize,
+}
+
+impl SettlementBoard {
+    /// Count the Python settlement axis from retained snapshots.
+    ///
+    /// A missing/unreadable verdict contributes `n` only when Python's
+    /// settlement terminal predicate would consider the snapshot terminal.
+    /// Live unsettled snapshots are ignored. No exit/process/proof signal is
+    /// ever promoted to `f`, `x`, or `invalid`.
+    #[must_use]
+    pub fn from_snapshots(runs: &[RunStatus]) -> Self {
+        let mut board = Self {
+            scope: SettlementScope::RetainedControlPlaneSnapshots,
+            active: 0,
+            f: 0,
+            x: 0,
+            n: 0,
+            invalid: 0,
+            total_settled: 0,
+        };
+
+        for run in runs {
+            match run.settlement_verdict {
+                Some(SettlementVerdict::Finalized) => board.f += 1,
+                Some(SettlementVerdict::Failed) => board.x += 1,
+                Some(SettlementVerdict::Invalid) => {
+                    board.x += 1;
+                    board.invalid += 1;
+                }
+                Some(SettlementVerdict::NeedsAttention) => board.n += 1,
+                None if is_unsettled_settlement_terminal(run) => board.n += 1,
+                None => {}
+            }
+        }
+        board.total_settled = board.f + board.x + board.n;
+        board
+    }
+}
+
+fn is_unsettled_settlement_terminal(run: &RunStatus) -> bool {
+    const TERMINAL_STATES: [&str; 17] = [
+        "report_validated",
+        "completed",
+        "closed",
+        "converged",
+        "stopped",
+        "blocked",
+        "failed",
+        "report_missing",
+        "report_invalid",
+        "contract_failed",
+        "recovery_required",
+        "timed_out",
+        "gc",
+        "ghost",
+        "stalled",
+        "killed_by_operator",
+        "process_dead",
+    ];
+    TERMINAL_STATES.contains(&run.state.as_str())
+        || run.liveness == "terminal"
+        || run.exit_code.is_some()
+}
+
+fn de_optional_settlement_verdict<'de, D>(
+    deserializer: D,
+) -> Result<Option<SettlementVerdict>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(
+        match value
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase()
+            .as_str()
+        {
+            "finalized" => Some(SettlementVerdict::Finalized),
+            "failed" => Some(SettlementVerdict::Failed),
+            "needs_attention" => Some(SettlementVerdict::NeedsAttention),
+            "invalid" => Some(SettlementVerdict::Invalid),
+            _ => None,
+        },
+    )
+}
+
+fn de_optional_settlement_tui<'de, D>(deserializer: D) -> Result<Option<SettlementTui>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(
+        match value
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase()
+            .as_str()
+        {
+            "f" => Some(SettlementTui::F),
+            "x" => Some(SettlementTui::X),
+            "n" => Some(SettlementTui::N),
+            _ => None,
+        },
+    )
 }
 
 /// Nested lifecycle run state written by `lifecycle_runner.py`.
@@ -678,6 +857,8 @@ impl LifecycleRun {
             session_id: String::new(),
             current_loop: None,
             total_loops: None,
+            settlement_verdict: None,
+            settlement_tui: None,
             execution_state: Some(axes.execution_state),
             proof_state: Some(axes.proof_state),
             delivery_state: Some(axes.delivery_state),
@@ -987,6 +1168,8 @@ impl AgentMeta {
             session_id: self.session_id.clone(),
             current_loop: None,
             total_loops: None,
+            settlement_verdict: None,
+            settlement_tui: None,
             // Meta is not a delivery receipt; axes stay absent until a
             // snapshot or seal file provides them (never inferred here).
             execution_state: None,
@@ -1044,6 +1227,8 @@ pub fn merge_status(existing: Option<RunStatus>, incoming: RunStatus) -> RunStat
         session_id: nonempty_or(&preferred.session_id, &other.session_id),
         current_loop: preferred.current_loop.or(other.current_loop),
         total_loops: preferred.total_loops.or(other.total_loops),
+        settlement_verdict: preferred.settlement_verdict.or(other.settlement_verdict),
+        settlement_tui: preferred.settlement_tui.or(other.settlement_tui),
         // Prefer explicit axes; never synthesise from the other side's state.
         execution_state: preferred.execution_state.or(other.execution_state),
         proof_state: preferred.proof_state.or(other.proof_state),

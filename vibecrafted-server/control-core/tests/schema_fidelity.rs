@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use chrono::Duration;
 use control_core::model::{
     AgentMeta, DeliveryAxes, DeliverySealRef, DeliveryState, ExecutionState, Health, ProofState,
-    coerce_int_value, delivery_axes_for_receipt,
+    SettlementTui, SettlementVerdict, coerce_int_value, delivery_axes_for_receipt,
 };
 use control_core::{EventStream, LifecycleRun, RunStatus, parse_iso, state_health};
 
@@ -299,6 +299,34 @@ fn active_run_snapshot_roundtrips() {
 }
 
 #[test]
+fn settlement_fields_deserialise_typed_without_breaking_legacy_snapshots() {
+    let legacy = assert_run_roundtrips_without_loss(GOLDEN_RUN_FINAL);
+    assert_eq!(legacy.settlement_verdict, None);
+    assert_eq!(legacy.settlement_tui, None);
+
+    let mut settled: serde_json::Value =
+        serde_json::from_str(GOLDEN_RUN_FINAL).expect("golden JSON");
+    let object = settled.as_object_mut().expect("run object");
+    object.insert(
+        "settlement_verdict".to_string(),
+        serde_json::Value::String("invalid".to_string()),
+    );
+    object.insert(
+        "settlement_tui".to_string(),
+        serde_json::Value::String("x".to_string()),
+    );
+
+    let run: RunStatus = serde_json::from_value(settled.clone()).expect("settled snapshot");
+    assert_eq!(run.settlement_verdict, Some(SettlementVerdict::Invalid));
+    assert_eq!(run.settlement_tui, Some(SettlementTui::X));
+    assert_eq!(
+        serde_json::to_value(run).expect("settled snapshot serialises"),
+        settled,
+        "typed settlement fields must preserve the Python snapshot wire shape"
+    );
+}
+
+#[test]
 fn meta_normalizes_to_runstatus() {
     let meta: AgentMeta = serde_json::from_str(GOLDEN_META).expect("AgentMeta deserialises");
     let updated = parse_iso("2026-06-01T01:45:09.807447+00:00").expect("parse updated_at");
@@ -453,7 +481,7 @@ fn python_kernel_axes_payload_deserialises_1_to_1() {
     assert_eq!(axes.proof_state, ProofState::Passed);
     assert_eq!(axes.delivery_state, DeliveryState::Sealed);
 
-    let reserialised = serde_json::to_value(&axes).expect("serialize");
+    let reserialised = serde_json::to_value(axes).expect("serialize");
     let original: serde_json::Value =
         serde_json::from_str(PYTHON_KERNEL_AXES_SEALED).expect("original");
     assert_eq!(

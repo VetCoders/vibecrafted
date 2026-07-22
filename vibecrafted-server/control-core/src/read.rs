@@ -21,8 +21,8 @@ use chrono::{DateTime, Utc};
 use crate::events::EventStream;
 use crate::model::{
     AgentMeta, DeliverySealRef, Event, FINAL_STATES, Health, LifecycleRun, LifecycleRunSummary,
-    RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, coerce_int_value, is_final_state, merge_status,
-    operator_session_name, parse_iso, skill_from_code, state_health,
+    RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, SettlementBoard, coerce_int_value,
+    is_final_state, merge_status, operator_session_name, parse_iso, skill_from_code, state_health,
 };
 
 /// Resolve `~`-prefixed paths against `$HOME`. Other paths pass through.
@@ -72,6 +72,9 @@ pub struct StateView {
     pub warnings: Vec<String>,
     /// Newest-first event tail.
     pub events: Vec<Event>,
+    /// Python-owned settlement truth across retained `runs/*.json` snapshots,
+    /// plus the active count from this Rust projection.
+    pub settlement_counts: SettlementBoard,
 }
 
 impl ControlPlane {
@@ -264,6 +267,8 @@ impl ControlPlane {
             session_id: String::new(),
             current_loop: None,
             total_loops: None,
+            settlement_verdict: None,
+            settlement_tui: None,
             // No delivery section on a still-launching runtime dir unless a
             // seal file is later attached by attach_seal_if_present.
             execution_state: None,
@@ -425,7 +430,8 @@ impl ControlPlane {
     #[must_use]
     pub fn read_state_view(&self) -> StateView {
         let runs = self.load_snapshots();
-        self.project_view(runs)
+        let settlement_counts = SettlementBoard::from_snapshots(&runs);
+        self.project_view(runs, settlement_counts)
     }
 
     /// Build a [`StateView`] by merging the three raw sources in Rust
@@ -434,6 +440,10 @@ impl ControlPlane {
     /// frontend-self-sufficient path.
     #[must_use]
     pub fn compute_view(&self, now: DateTime<Utc>) -> StateView {
+        // Verdict truth is Python's persisted snapshot projection. Raw meta,
+        // lock, runtime, marbles, and lifecycle sources below can disagree on
+        // process state, but they must never be used to invent a settlement.
+        let settlement_counts = SettlementBoard::from_snapshots(&self.load_snapshots());
         let mut merged: Vec<RunStatus> = Vec::new();
 
         let mut absorb = |incoming: RunStatus| {
@@ -480,24 +490,30 @@ impl ControlPlane {
         }
 
         sort_recent_first(&mut merged);
-        self.project_view(merged)
+        self.project_view(merged, settlement_counts)
     }
 
-    fn project_view(&self, runs: Vec<RunStatus>) -> StateView {
+    fn project_view(
+        &self,
+        runs: Vec<RunStatus>,
+        mut settlement_counts: SettlementBoard,
+    ) -> StateView {
         let warnings = warnings_for_runs(&runs);
-        let active_runs = runs
+        let active_runs: Vec<RunStatus> = runs
             .iter()
             .filter(|run| {
                 matches!(run.health.as_str(), "active" | "stalled") && !is_final_state(&run.state)
             })
             .cloned()
             .collect();
+        settlement_counts.active = active_runs.len();
         let recent_runs = runs.into_iter().take(RECENT_RUN_LIMIT).collect();
         StateView {
             active_runs,
             recent_runs,
             warnings,
             events: self.read_event_tail(crate::model::EVENT_TAIL_LIMIT),
+            settlement_counts,
         }
     }
 
@@ -683,6 +699,8 @@ fn normalize_lock(path: &Path, now: DateTime<Utc>) -> Option<RunStatus> {
         session_id: String::new(),
         current_loop: None,
         total_loops: None,
+        settlement_verdict: None,
+        settlement_tui: None,
         execution_state: None,
         proof_state: None,
         delivery_state: None,
@@ -789,6 +807,8 @@ impl MarblesState {
             session_id: String::new(),
             current_loop: self.current_loop,
             total_loops: self.total_loops,
+            settlement_verdict: None,
+            settlement_tui: None,
             execution_state: None,
             proof_state: None,
             delivery_state: None,
