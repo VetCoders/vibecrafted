@@ -87,7 +87,15 @@ def _install_wheel_venv(wheel: Path, venv_dir: Path) -> Path:
                 py = venv_dir / "Scripts" / "python.exe"
             if py.is_file():
                 inst = subprocess.run(
-                    [uv, "pip", "install", "--python", str(py), "--no-deps", str(wheel)],
+                    [
+                        uv,
+                        "pip",
+                        "install",
+                        "--python",
+                        str(py),
+                        "--no-deps",
+                        str(wheel),
+                    ],
                     capture_output=True,
                     text=True,
                     timeout=180,
@@ -200,13 +208,15 @@ def _run_stage_in_venv(
         print(json.dumps(out))
         """
     )
+    isolated_env = {**os.environ, "PATH": path_env}
+    isolated_env.pop("PYTHONPATH", None)
     proc = subprocess.run(
         [str(venv_python), "-c", script],
         capture_output=True,
         text=True,
         timeout=120,
         check=False,
-        env={**os.environ, "PATH": path_env},
+        env=isolated_env,
     )
     if proc.returncode != 0:
         pytest.fail(
@@ -226,8 +236,11 @@ def test_wheel_members_include_vc_frame(tmp_path: Path) -> None:
 
 
 @pytest.mark.e2e_delivery
-def test_channel1_wheel_venv_stage_zsh_present(tmp_path: Path) -> None:
+def test_channel1_wheel_venv_stage_zsh_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Channel-1 / zsh present: wheel→venv→pip→stage retains command=\"zsh\"."""
+    monkeypatch.setenv("PYTHONPATH", str(CORE))
     wheel = _build_wheel(tmp_path / "dist")
     py = _install_wheel_venv(wheel, tmp_path / "venv")
     home = tmp_path / "home"
@@ -289,7 +302,9 @@ def test_channel_dev_checkout(tmp_path: Path, monkeypatch) -> None:
     resolved = (home / ".config" / "vc-frame" / "config.kdl").resolve()
     assert "config/vc-frame" in str(resolved)
     # canonical checkout layouts keep zsh
-    research = (resolved.parent / "layouts" / "research.kdl").read_text(encoding="utf-8")
+    research = (resolved.parent / "layouts" / "research.kdl").read_text(
+        encoding="utf-8"
+    )
     assert 'command="zsh"' in research
 
 

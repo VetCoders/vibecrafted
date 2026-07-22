@@ -117,7 +117,7 @@ not “how many control-plane runs completed.” Settlement in meta
 (`status=completed`, exit 0, report path) is a different axis from triage.
 
 Full contract (classification, origin stamp, push≠install, research vs
-implement, backfill):  
+implement, backfill):
 **[`docs/runtime/TRIAGE_AND_SESSIONS.md`](runtime/TRIAGE_AND_SESSIONS.md)**.
 
 ### Research layout (multi-pane ≠ multi-session)

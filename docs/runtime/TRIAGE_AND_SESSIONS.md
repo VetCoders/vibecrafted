@@ -1,12 +1,12 @@
 # Run triage and SESSIONS rail (`f` · `x` · `n`)
 
-> **Canonical contract for finished-run terminal placement.**  
-> Source of truth in code: `vibecrafted_core/run_triage.py`,  
-> `vibecrafted_core/dispatcher.py` (Python finish hook),  
-> `runtime/scripts/lib/meta.sh` → `spawn_triage_run` (shell finish hook),  
-> `vc-frame triage-run` (transfer primitive).  
-> Related: [CONTRACT.md](./CONTRACT.md) (report frontmatter),  
-> [AGENT_OPS.md](./AGENT_OPS.md) (worker host sessions),  
+> **Canonical contract for finished-run terminal placement.**
+> Source of truth in code: `vibecrafted_core/run_triage.py`,
+> `vibecrafted_core/dispatcher.py` (Python finish hook),
+> `runtime/scripts/lib/meta.sh` → `spawn_triage_run` (shell finish hook),
+> `vc-frame triage-run` (transfer primitive).
+> Related: [CONTRACT.md](./CONTRACT.md) (report frontmatter),
+> [AGENT_OPS.md](./AGENT_OPS.md) (worker host sessions),
 > [VC-FRAME.md](../VC-FRAME.md) (layouts and SESSIONS rail).
 
 This document exists because field evidence repeatedly confused three different
