@@ -271,11 +271,13 @@ def agents_main(argv: Sequence[str] | None = None) -> int:
 
 
 def followup_main(argv: Sequence[str] | None = None) -> int:
-    return _lifecycle_main("vc-followup", argv)
+    # One path with `vibecrafted followup` (lifecycle stages live under `ship`).
+    return supervised_skill_main("followup", argv)
 
 
 def implement_main(argv: Sequence[str] | None = None) -> int:
-    return _lifecycle_main("vc-implement", argv)
+    # One path with `vibecrafted implement` / shell `vc-implement`.
+    return supervised_skill_main("implement", argv)
 
 
 def _lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
@@ -323,11 +325,16 @@ def prune_main(argv: Sequence[str] | None = None) -> int:
 
 
 def review_main(argv: Sequence[str] | None = None) -> int:
-    return _lifecycle_main("vc-review", argv)
+    # One path with `vibecrafted review` (lifecycle stages live under `ship`).
+    return supervised_skill_main("review", argv)
 
 
 def scaffold_main(argv: Sequence[str] | None = None) -> int:
-    return _lifecycle_main("vc-scaffold", argv)
+    # One launch authority with `vibecrafted scaffold` / shell `vc-scaffold`.
+    # Lifecycle-stage flags used to diverge here (second CLI brain); skill
+    # delivery is the cli + dispatcher path. Use `vibecrafted ship` for staged
+    # lifecycle orchestration, not a private second scaffold parser.
+    return supervised_skill_main("scaffold", argv)
 
 
 def decorate_main(argv: Sequence[str] | None = None) -> int:

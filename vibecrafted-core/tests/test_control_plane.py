@@ -413,6 +413,54 @@ def test_sync_state_reconciles_dead_launcher_to_stalled(
     assert "recovery_required" in refreshed["last_error"]
 
 
+def test_sync_state_settles_active_pid_gone_on_nonzero_exit_immediately(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Worker death with exit_code!=0 must not leave state=active and hang await.
+
+    Field 2026-07-22: scaffold died on MCP AuthRequired; meta stayed active with
+    pid_gone and await idled the heartbeat window.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    # Fresh heartbeat would previously block settle for the full threshold.
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "999999")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
+    now = "2026-07-22T12:00:00+00:00"
+    _write_meta(
+        home,
+        {
+            "run_id": "scaf-dead-exit1",
+            "status": "running",
+            "state": "active",
+            "agent": "codex",
+            "mode": "scaffold",
+            "root": str(tmp_path),
+            "updated_at": now,
+            "heartbeat_at": now,
+            "skill_code": "scaf",
+            "launcher_pid": 999999999,
+            "exit_code": 1,
+            "liveness": "pid_gone",
+            "last_error": "AuthRequired: stripe",
+        },
+    )
+
+    run = control_plane.sync_state()["recent_runs"][0]
+    assert run["state"] == "failed"
+    assert run["health"] == "final"
+    assert run["liveness"] == "pid_gone"
+    assert run["exit_code"] == 1
+    assert run["recovery_required"] is True
+    assert "pid_gone immediate settle" in str(run.get("last_error") or "")
+
+    await_result = control_plane.await_run(
+        "scaf-dead-exit1", timeout_seconds=2, interval_seconds=0.2
+    )
+    assert await_result["completed"] is True
+    assert await_result["timed_out"] is False
+
+
 def test_sync_state_keeps_run_live_when_worker_alive_despite_dead_launcher(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

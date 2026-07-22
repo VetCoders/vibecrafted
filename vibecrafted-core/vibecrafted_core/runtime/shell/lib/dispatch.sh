@@ -266,12 +266,12 @@ vc-audit() { _vetcoders_skill_dispatch audit "$@"; }
 vc-decorate() { command vibecrafted decorate "$@"; }
 vc-delegate() { command vibecrafted delegate "$@"; }
 vc-dou() { _vetcoders_skill_dispatch dou "$@"; }
-vc-followup() { _vetcoders_skill_dispatch followup "$@"; }
 vc-hydrate() { _vetcoders_skill_dispatch hydrate "$@"; }
 vc-init() { _vetcoders_skill_dispatch init "$@"; }
 vc-intents() { command vibecrafted intents "$@"; }
-vc-justdo() { _vetcoders_skill_dispatch justdo "$@"; }
-vc-implement() { _vetcoders_skill_dispatch justdo "$@"; }
+# Thin aliases — same argv/backend as `vibecrafted <skill>` (no second parser).
+vc-justdo() { command vibecrafted implement "$@"; }
+vc-implement() { command vibecrafted implement "$@"; }
 vc-loop() { _vetcoders_loop "$@"; }
 vc-cron() { command vibecrafted cron "$@"; }
 vc-ship() { command vibecrafted ship "$@"; }
@@ -282,8 +282,10 @@ vc-partner() { command vibecrafted partner "$@"; }
 vc-polarize() { _vetcoders_skill_dispatch polarize "$@"; }
 vc-prune() { _vetcoders_skill_dispatch prune "$@"; }
 vc-release() { command vibecrafted release "$@"; }
-vc-review() { _vetcoders_skill_dispatch review "$@"; }
-vc-scaffold() { _vetcoders_skill_dispatch scaffold "$@"; }
+vc-review() { command vibecrafted review "$@"; }
+vc-followup() { command vibecrafted followup "$@"; }
+# Thin alias — must not invent a second help/parser (split-brain 2026-07-22).
+vc-scaffold() { command vibecrafted scaffold "$@"; }
 vc-workflow() { command vibecrafted workflow "$@"; }
 
 vc-help() {

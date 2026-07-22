@@ -517,6 +517,31 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         return result
     if _has_success_evidence(result):
         return _reconcile_successful_terminal(result)
+
+    exit_code = _coerce_int(result.get("exit_code"))
+    # Field 2026-07-22 (Pensieve scaffold): `_run_is_terminal` is True whenever
+    # exit_code is set, which previously short-circuited reconcile while leaving
+    # state=`active`/`running`. Board stayed "active" + pid_gone; await could
+    # disagree with projection. Normalize dead worker + nonzero exit → failed
+    # *before* the terminal early-return.
+    if exit_code is not None and exit_code != 0 and state in ACTIVE_STATES - {"paused"}:
+        now = _now()
+        result["state"] = "failed"
+        result["health"] = "final"
+        result["liveness"] = "pid_gone"
+        result["completed_at"] = str(result.get("completed_at") or now.isoformat())
+        result["updated_at"] = now.isoformat()
+        result["recovery_required"] = True
+        previous_error = str(result.get("last_error") or "").strip()
+        explanation = (
+            f"worker dead with exit_code={exit_code}; settled active→failed "
+            f"(pid_gone immediate settle)"
+        )
+        result["last_error"] = (
+            f"{previous_error}; {explanation}" if previous_error else explanation
+        )
+        return result
+
     if _run_is_terminal(result):
         return result
     if state not in ACTIVE_STATES - {"paused"}:
