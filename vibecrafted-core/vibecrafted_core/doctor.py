@@ -160,6 +160,7 @@ def _vc_frame_delivery_findings(
     *,
     home: Path | None = None,
     tools_home: Path | None = None,
+    path_env: str | None = None,
 ) -> list[_Finding]:
     """Config delivery health: view channel, themes, pane-shell, frontier zombies."""
     findings: list[_Finding] = []
@@ -255,7 +256,7 @@ def _vc_frame_delivery_findings(
         )
 
     # pane-shell: if layouts still hardcode zsh and zsh missing → warn
-    shell = resolve_pane_shell()
+    shell = resolve_pane_shell(path_env)
     layouts = view / "layouts"
     unsubstituted = False
     if layouts.exists():

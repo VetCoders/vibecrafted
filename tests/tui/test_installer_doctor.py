@@ -1248,3 +1248,38 @@ def test_vc_frame_delivery_dangling_frontier_fails(tmp_path, monkeypatch):
     findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
     zf = [f for f in findings if f.component == "frontier:zombies"]
     assert zf and zf[0].level == "fail"
+
+
+def test_vc_frame_delivery_pane_shell_warn_when_zsh_missing_and_layouts_unsubstituted(
+    tmp_path, monkeypatch
+):
+    """zsh-less PATH + layouts still command=\"zsh\" → vc-frame:pane-shell warn."""
+    import os
+    import shutil
+
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    # Unsubstituted layouts (dev-style view pointing at raw kdl with zsh)
+    view = home / ".config" / "vc-frame"
+    layouts = view / "layouts"
+    layouts.mkdir(parents=True)
+    (view / "config.kdl").write_text('theme "monochrome"\n', encoding="utf-8")
+    (view / "themes").mkdir()
+    (layouts / "research.kdl").write_text(
+        'pane command="zsh"\npane command="zsh"\n', encoding="utf-8"
+    )
+    # PATH with only bash
+    bash = shutil.which("bash")
+    assert bash
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "bash").symlink_to(bash)
+    findings = _vc_frame_delivery_findings(
+        home=home, tools_home=tools, path_env=str(fake)
+    )
+    pane = [f for f in findings if f.component == "vc-frame:pane-shell"]
+    assert pane, findings
+    assert pane[0].level == "warn"
+    assert "zsh" in pane[0].message
