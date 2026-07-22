@@ -3,13 +3,30 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
+
+import pytest
 
 from vibecrafted_core.vc_frame_delivery import (
     stage_vc_frame_config,
     substitute_pane_shell,
     classify_view_path,
 )
+
+
+def _seed_complete_runtime(tools: Path) -> Path:
+    runtime = tools / "vibecrafted-full"
+    (runtime / "vibecrafted-core").mkdir(parents=True)
+    (runtime / "runtime" / "scripts").mkdir(parents=True)
+    (runtime / "Makefile").write_text("all:\n\t@true\n", encoding="utf-8")
+    (runtime / "runtime" / "scripts" / "codex_spawn.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+    current = tools / "vibecrafted-current"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(runtime)
+    return runtime
 
 
 def test_substitute_pane_shell_only_exact_command_zsh() -> None:
@@ -29,6 +46,7 @@ def test_stage_wires_view_through_current(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime = _seed_complete_runtime(tools)
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     # ensure zsh present so canonical retained (or force path)
@@ -51,6 +69,10 @@ def test_stage_wires_view_through_current(tmp_path: Path, monkeypatch) -> None:
     # through current
     current = tools / "vibecrafted-current"
     assert current.is_symlink()
+    assert current.resolve() == runtime.resolve()
+    assert (current / "Makefile").is_file()
+    assert (current / "vibecrafted-core").is_dir()
+    assert (current / "runtime" / "scripts" / "codex_spawn.sh").is_file()
     assert (current / "config" / "vc-frame" / "config.kdl").exists()
 
 
@@ -72,10 +94,25 @@ def test_dry_run_mutates_nothing(tmp_path: Path, monkeypatch) -> None:
     assert not tools.exists() or not list(tools.iterdir())
 
 
+def test_stage_refuses_to_create_a_config_only_runtime_pointer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+
+    with pytest.raises(RuntimeError, match="stage the full distribution"):
+        stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
+
+    assert not (tools / "vibecrafted-current").exists()
+
+
 def test_regular_file_collision_gets_stale_backup(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
     view = home / ".config" / "vc-frame"
@@ -100,6 +137,7 @@ def test_foreign_symlink_is_preserved_without_force(
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
     operator_config = tmp_path / "operator-config.kdl"
@@ -131,6 +169,7 @@ def test_foreign_symlink_is_replaced_with_force(tmp_path: Path, monkeypatch) -> 
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
     operator_config = tmp_path / "operator-config.kdl"
@@ -153,10 +192,13 @@ def test_foreign_symlink_is_replaced_with_force(tmp_path: Path, monkeypatch) -> 
     assert operator_config.read_text(encoding="utf-8") == 'theme "operator-custom"\n'
 
 
-def test_version_flip_keeps_view_paths(tmp_path: Path, monkeypatch) -> None:
+def test_config_refresh_preserves_runtime_pointer_and_view_paths(
+    tmp_path: Path, monkeypatch
+) -> None:
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime = _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
     stage_vc_frame_config(home=home, tools_home=tools, version="vA", prefer_repo=False)
@@ -166,12 +208,10 @@ def test_version_flip_keeps_view_paths(tmp_path: Path, monkeypatch) -> None:
         home=home, tools_home=tools, version="vB", prefer_repo=False, force=True
     )
     assert str(view_cfg) == path_a
-    assert (tools / "vibecrafted-vA").exists()
-    assert (tools / "vibecrafted-vB").exists()
-    # current points at vB
-    assert (tools / "vibecrafted-current").resolve() == (
-        tools / "vibecrafted-vB"
-    ).resolve()
+    assert (tools / "vibecrafted-current").resolve() == runtime.resolve()
+    assert (runtime / "Makefile").is_file()
+    assert (runtime / "vibecrafted-core").is_dir()
+    assert (runtime / "runtime" / "scripts" / "codex_spawn.sh").is_file()
     assert view_cfg.resolve().is_file()
 
 
@@ -199,24 +239,37 @@ def test_pane_shell_substitution_on_stage_without_zsh(
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime = _seed_complete_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
-    # PATH without zsh: only /usr/bin (has bash on macOS/linux usually)
-    minimal_path = "/usr/bin:/bin"
+    # PATH without zsh or a clipboard helper: expose only bash.
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    bash = shutil.which("bash")
+    assert bash is not None
+    (fake_bin / "bash").symlink_to(bash)
     plan = stage_vc_frame_config(
         home=home,
         tools_home=tools,
         version="noshell",
         prefer_repo=False,
-        path_env=minimal_path,
+        path_env=str(fake_bin),
     )
-    staged = tools / "vibecrafted-noshell" / "config" / "vc-frame" / "layouts"
-    if plan.pane_shell == "zsh":
-        # Host truly has zsh on minimal path — skip strict assert
-        return
+    staged_root = runtime / "config" / "vc-frame"
+    staged = staged_root / "layouts"
+    assert plan.pane_shell == "bash"
     research = (staged / "research.kdl").read_text(encoding="utf-8")
     assert 'command="zsh"' not in research
     assert f'command="{plan.pane_shell}"' in research
+    all_kdl = "\n".join(
+        path.read_text(encoding="utf-8") for path in staged_root.rglob("*.kdl")
+    )
+    assert 'default_shell "zsh"' not in all_kdl
+    assert "exec zsh -l" not in all_kdl
+    assert "exec /bin/zsh -l" not in all_kdl
+    if plan.clipboard_command is None:
+        assert 'copy_command "pbcopy"' not in all_kdl
+        assert "pbcopy <" not in all_kdl
 
 
 def test_classify_dangling(tmp_path: Path) -> None:

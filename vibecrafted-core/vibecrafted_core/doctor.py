@@ -14,6 +14,7 @@ from .vc_frame_delivery import (
     frontier_root,
     list_dangling_frontier_links,
     prefer_repo_vc_frame,
+    resolve_clipboard_command,
     resolve_pane_shell,
     tools_current_path,
     vc_frame_user_config_dir,
@@ -255,26 +256,47 @@ def _vc_frame_delivery_findings(
             )
         )
 
-    # pane-shell: if layouts still hardcode zsh and zsh missing → warn
+    # Host commands: every shipped KDL must match the available shell/clipboard.
     shell = resolve_pane_shell(path_env)
+    clipboard = resolve_clipboard_command(path_env)
     layouts = view / "layouts"
-    unsubstituted = False
+    unresolved: list[str] = []
+    kdl_files: list[Path] = []
+    config_file = view / "config.kdl"
+    if config_file.exists():
+        kdl_files.append(config_file)
     if layouts.exists():
         try:
-            for layout_file in layouts.resolve().glob("*.kdl"):
-                text = layout_file.read_text(encoding="utf-8", errors="ignore")
-                if 'command="zsh"' in text and shell != "zsh":
-                    unsubstituted = True
-                    break
+            kdl_files.extend(sorted(layouts.resolve().glob("*.kdl")))
         except OSError:
             pass
-    if unsubstituted:
+    for kdl_file in kdl_files:
+        try:
+            text = kdl_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if shell != "zsh" and any(
+            token in text
+            for token in (
+                'command="zsh"',
+                'default_shell "zsh"',
+                "exec zsh -l",
+                "exec /bin/zsh -l",
+            )
+        ):
+            unresolved.append(f"{kdl_file.name}:zsh")
+        if clipboard is None and (
+            'copy_command "pbcopy"' in text or "pbcopy <" in text
+        ):
+            unresolved.append(f"{kdl_file.name}:pbcopy")
+    if unresolved:
         findings.append(
             _Finding(
                 "warn",
                 "vc-frame:pane-shell",
-                f'layouts still use command="zsh" but host shell is {shell!r} '
-                f"(dev-checkout view or unstaged) — stage via config install",
+                f"unresolved host commands for shell={shell!r}, "
+                f"clipboard={clipboard or 'internal'}: {', '.join(unresolved)}; "
+                "stage via config install",
             )
         )
     else:
@@ -282,7 +304,7 @@ def _vc_frame_delivery_findings(
             _Finding(
                 "ok",
                 "vc-frame:pane-shell",
-                f"pane shell ok (host prefers {shell})",
+                f"host commands ok (shell={shell}, clipboard={clipboard or 'internal'})",
             )
         )
 

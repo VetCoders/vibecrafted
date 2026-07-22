@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 
 from scripts import vetcoders_install as installer
+from vibecrafted_core.doctor import _vc_frame_delivery_findings
+from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -1204,17 +1206,28 @@ def test_describe_dumb_terminal_noise_flags_starship_and_stdout() -> None:
 
 # --- W3-A vc-frame config delivery (plan vcframe-config-delivery) ---
 
-from vibecrafted_core.doctor import _vc_frame_delivery_findings
-from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
+
+def _seed_complete_vibecrafted_runtime(tools: Path) -> Path:
+    runtime = tools / "vibecrafted-local"
+    (runtime / "vibecrafted-core").mkdir(parents=True)
+    (runtime / "runtime" / "scripts").mkdir(parents=True)
+    (runtime / "Makefile").write_text("install:\n", encoding="utf-8")
+    current = tools / "vibecrafted-current"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(runtime.name)
+    return runtime
 
 
 def test_vc_frame_delivery_healthy_store_view_ok(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    _seed_complete_vibecrafted_runtime(tools)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
-    stage_vc_frame_config(home=home, tools_home=tools, version="doc1", prefer_repo=False)
+    stage_vc_frame_config(
+        home=home, tools_home=tools, version="doc1", prefer_repo=False
+    )
     findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
     view = [f.level for f in findings if f.component == "vc-frame:view"]
     assert "fail" not in view, findings
@@ -1231,7 +1244,9 @@ def test_vc_frame_delivery_stale_file_fails_view(tmp_path, monkeypatch):
     (view / "layouts").mkdir()
     (view / "themes").mkdir()
     findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
-    fails = [f for f in findings if f.component == "vc-frame:view" and f.level == "fail"]
+    fails = [
+        f for f in findings if f.component == "vc-frame:view" and f.level == "fail"
+    ]
     assert fails
     assert any("config install" in f.message for f in fails)
 
@@ -1254,9 +1269,6 @@ def test_vc_frame_delivery_pane_shell_warn_when_zsh_missing_and_layouts_unsubsti
     tmp_path, monkeypatch
 ):
     """zsh-less PATH + layouts still command=\"zsh\" → vc-frame:pane-shell warn."""
-    import os
-    import shutil
-
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
@@ -1265,10 +1277,17 @@ def test_vc_frame_delivery_pane_shell_warn_when_zsh_missing_and_layouts_unsubsti
     view = home / ".config" / "vc-frame"
     layouts = view / "layouts"
     layouts.mkdir(parents=True)
-    (view / "config.kdl").write_text('theme "monochrome"\n', encoding="utf-8")
+    (view / "config.kdl").write_text(
+        'theme "monochrome"\ndefault_shell "zsh"\ncopy_command "pbcopy"\n',
+        encoding="utf-8",
+    )
     (view / "themes").mkdir()
     (layouts / "research.kdl").write_text(
         'pane command="zsh"\npane command="zsh"\n', encoding="utf-8"
+    )
+    (layouts / "operator.kdl").write_text(
+        'pane command="bash" { args "-lc" "exec /bin/zsh -l" }\n',
+        encoding="utf-8",
     )
     # PATH with only bash
     bash = shutil.which("bash")
@@ -1283,3 +1302,4 @@ def test_vc_frame_delivery_pane_shell_warn_when_zsh_missing_and_layouts_unsubsti
     assert pane, findings
     assert pane[0].level == "warn"
     assert "zsh" in pane[0].message
+    assert "pbcopy" in pane[0].message

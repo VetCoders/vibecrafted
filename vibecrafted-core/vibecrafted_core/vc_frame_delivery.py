@@ -2,11 +2,14 @@
 
 Delivery contract (plan vcframe-config-delivery):
 - Source: ``vc_frame_config_source()`` (wheel package data or checkout).
-- Stage: copy into ``tools/vibecrafted-<version>/config/vc-frame/``.
-- Flip: atomic ``vibecrafted-current`` symlink.
+- Stage: copy into the complete runtime already selected by
+  ``tools/vibecrafted-current/config/vc-frame/``.
+- Ownership: config delivery never creates or flips the runtime-owned
+  ``vibecrafted-current`` symlink.
 - View: ``$XDG_CONFIG_HOME/vc-frame/{config.kdl,layouts,themes}`` → store-current
   (or checkout when ``VIBECRAFTED_PREFER_REPO_VC_FRAME=1``).
-- Stage-time pane-shell: rewrite ``command="zsh"`` only when zsh is missing.
+- Stage-time host adaptation: rewrite every shipped zsh entrypoint and select
+  an available clipboard command.
 """
 
 from __future__ import annotations
@@ -20,13 +23,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .frontier_assets import vc_frame_config_source
-from .runtime_paths import (
-    read_version_file,
-    vibecrafted_tools_home,
-    xdg_config_home,
-)
+from .runtime_paths import vibecrafted_tools_home, xdg_config_home
 
 _PANE_ZSH_RE = re.compile(r'command="zsh"')
+_DEFAULT_ZSH_RE = re.compile(r'default_shell\s+"zsh"')
+_EXEC_ZSH_RE = re.compile(r"exec\s+(?:/bin/)?zsh\s+-l")
+_COPY_PBCOPY_RE = re.compile(r'copy_command\s+"pbcopy"')
+_PBCOPY_STDIN_RE = re.compile(r"\bpbcopy(?=\s*<)")
 _FENCE_BEGIN = "# >>> vibecrafted >>>"
 _FENCE_END = "# <<< vibecrafted <<<"
 
@@ -48,6 +51,7 @@ class DeliveryPlan:
     dry_run: bool = False
     actions: list[WireAction] = field(default_factory=list)
     pane_shell: str = "zsh"
+    clipboard_command: str | None = None
 
     def render(self) -> str:
         lines = [
@@ -57,6 +61,7 @@ class DeliveryPlan:
             f"view_root: {self.view_root}",
             f"channel: {self.channel}",
             f"pane_shell: {self.pane_shell}",
+            f"clipboard_command: {self.clipboard_command or 'internal'}",
             f"dry_run: {self.dry_run}",
             "actions:",
         ]
@@ -90,38 +95,6 @@ def tools_current_path(tools_home: Path | None = None) -> Path:
     return base / "vibecrafted-current"
 
 
-def tools_version_dir(
-    version: str | None = None, tools_home: Path | None = None
-) -> Path:
-    base = tools_home if tools_home is not None else vibecrafted_tools_home()
-    ver = version or _default_version_token()
-    safe = ver.replace("/", "-").replace(" ", "-")
-    return base / f"vibecrafted-{safe}"
-
-
-def _default_version_token() -> str:
-    # Prefer package VERSION when available
-    try:
-        from .package_resources import resource_path
-
-        vpath = resource_path("VERSION")
-        if vpath.is_file():
-            text = vpath.read_text(encoding="utf-8").strip()
-            if text:
-                return text
-    except FileNotFoundError:
-        pass
-    # Checkout VERSION
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        vf = parent / "VERSION"
-        if vf.is_file():
-            text = read_version_file(parent)
-            if text and text != "unknown":
-                return text
-    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
-
-
 def resolve_pane_shell(path_env: str | None = None) -> str:
     """First available: zsh → $SHELL basename → bash."""
     path = path_env if path_env is not None else os.environ.get("PATH", "")
@@ -137,11 +110,44 @@ def resolve_pane_shell(path_env: str | None = None) -> str:
     return "sh"
 
 
+def resolve_clipboard_command(path_env: str | None = None) -> str | None:
+    """Return the first host clipboard command available on PATH."""
+    path = path_env if path_env is not None else os.environ.get("PATH", "")
+    for executable, command in (
+        ("pbcopy", "pbcopy"),
+        ("wl-copy", "wl-copy"),
+        ("xclip", "xclip -selection clipboard"),
+        ("xsel", "xsel --clipboard --input"),
+    ):
+        if shutil.which(executable, path=path):
+            return command
+    return None
+
+
+def substitute_host_commands(
+    kdl_text: str, shell: str, clipboard_command: str | None
+) -> str:
+    """Adapt every shipped shell and clipboard entrypoint to the current host."""
+    text = kdl_text
+    if shell != "zsh":
+        text = _PANE_ZSH_RE.sub(f'command="{shell}"', text)
+        text = _DEFAULT_ZSH_RE.sub(f'default_shell "{shell}"', text)
+        text = _EXEC_ZSH_RE.sub(f"exec {shell} -l", text)
+    if clipboard_command != "pbcopy":
+        if clipboard_command:
+            text = _COPY_PBCOPY_RE.sub(f'copy_command "{clipboard_command}"', text)
+            text = _PBCOPY_STDIN_RE.sub(clipboard_command, text)
+        else:
+            text = _COPY_PBCOPY_RE.sub(
+                "// copy_command omitted: no host clipboard command", text
+            )
+            text = _PBCOPY_STDIN_RE.sub("cat >/dev/null", text)
+    return text
+
+
 def substitute_pane_shell(kdl_text: str, shell: str) -> str:
-    """Replace only command=\"zsh\" with command=\"<shell>\"."""
-    if shell == "zsh":
-        return kdl_text
-    return _PANE_ZSH_RE.sub(f'command="{shell}"', kdl_text)
+    """Backward-compatible shell-only adapter used by existing callers."""
+    return substitute_host_commands(kdl_text, shell, "pbcopy")
 
 
 def classify_view_path(
@@ -185,6 +191,7 @@ def _copy_tree_with_shell(
     source: Path,
     dest: Path,
     pane_shell: str,
+    clipboard_command: str | None,
     *,
     dry_run: bool,
     actions: list[WireAction],
@@ -202,10 +209,11 @@ def _copy_tree_with_shell(
         for name in files:
             src_f = Path(root) / name
             dst_f = out_dir / name
-            if name.endswith(".kdl") and pane_shell != "zsh":
+            if name.endswith(".kdl"):
                 text = src_f.read_text(encoding="utf-8")
                 dst_f.write_text(
-                    substitute_pane_shell(text, pane_shell), encoding="utf-8"
+                    substitute_host_commands(text, pane_shell, clipboard_command),
+                    encoding="utf-8",
                 )
             else:
                 shutil.copy2(src_f, dst_f)
@@ -215,18 +223,31 @@ def _copy_tree_with_shell(
                 dst_f.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
-def _atomic_symlink(
-    target: Path, link: Path, *, dry_run: bool, actions: list[WireAction]
-) -> None:
-    actions.append(WireAction("flip", str(link), f"-> {target}"))
-    if dry_run:
-        return
-    link.parent.mkdir(parents=True, exist_ok=True)
-    tmp = link.parent / f".{link.name}.tmp.{os.getpid()}"
-    if tmp.exists() or tmp.is_symlink():
-        tmp.unlink()
-    tmp.symlink_to(target)
-    os.replace(tmp, link)
+def _complete_runtime_root(current: Path, *, dry_run: bool) -> Path:
+    """Resolve the single runtime owner and refuse config-only substitutes."""
+    if dry_run and not (current.exists() or current.is_symlink()):
+        return current
+    try:
+        runtime_root = current.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError(
+            f"canonical runtime pointer is unavailable at {current}; "
+            "stage the full distribution before vc-frame config"
+        ) from exc
+    required = (
+        runtime_root / "Makefile",
+        runtime_root / "vibecrafted-core",
+        runtime_root / "runtime" / "scripts",
+    )
+    missing = [
+        str(path.relative_to(runtime_root)) for path in required if not path.exists()
+    ]
+    if missing:
+        raise RuntimeError(
+            f"canonical runtime at {runtime_root} is incomplete; missing: "
+            + ", ".join(missing)
+        )
+    return runtime_root
 
 
 def _wire_one(
@@ -317,28 +338,43 @@ def plan_delivery(
         # Isolate tools under sandbox when tools_home not overridden
         if tools_home is None:
             tools = home / ".local" / "share" / "vibecrafted" / "tools"
-    version_dir = tools_version_dir(version, tools)
     current = tools / "vibecrafted-current"
     view_root = vc_frame_user_config_dir(home)
     use_repo = prefer_repo if prefer_repo is not None else prefer_repo_vc_frame()
     channel = "dev-checkout" if use_repo else "store-current"
     pane_shell = resolve_pane_shell(path_env)
+    clipboard_command = resolve_clipboard_command(path_env)
+    runtime_root = (
+        source if use_repo else _complete_runtime_root(current, dry_run=dry_run)
+    )
     plan = DeliveryPlan(
         source=source,
-        version_dir=version_dir,
+        version_dir=runtime_root,
         current_link=current,
         view_root=view_root,
         channel=channel,
         dry_run=dry_run,
         pane_shell=pane_shell,
+        clipboard_command=clipboard_command,
     )
 
-    staged_cfg = version_dir / "config" / "vc-frame"
+    staged_cfg = runtime_root / "config" / "vc-frame"
     if not use_repo:
         _copy_tree_with_shell(
-            source, staged_cfg, pane_shell, dry_run=dry_run, actions=plan.actions
+            source,
+            staged_cfg,
+            pane_shell,
+            clipboard_command,
+            dry_run=dry_run,
+            actions=plan.actions,
         )
-        _atomic_symlink(version_dir, current, dry_run=dry_run, actions=plan.actions)
+        plan.actions.append(
+            WireAction(
+                "note",
+                str(current),
+                f"preserve runtime owner (requested config version {version or 'current'})",
+            )
+        )
         base = current / "config" / "vc-frame"
     else:
         plan.actions.append(

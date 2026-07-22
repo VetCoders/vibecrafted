@@ -166,6 +166,16 @@ def _run_stage_in_venv(
         home = Path({str(home)!r})
         tools = Path({str(tools)!r})
         os.environ["XDG_CONFIG_HOME"] = str(home / ".config")
+        runtime_root = tools / "vibecrafted-full"
+        (runtime_root / "vibecrafted-core").mkdir(parents=True)
+        (runtime_root / "runtime" / "scripts").mkdir(parents=True)
+        (runtime_root / "Makefile").write_text("all:\\n\\t@true\\n", encoding="utf-8")
+        (runtime_root / "runtime" / "scripts" / "codex_spawn.sh").write_text(
+            "#!/usr/bin/env bash\\n", encoding="utf-8"
+        )
+        current = tools / "vibecrafted-current"
+        current.parent.mkdir(parents=True, exist_ok=True)
+        current.symlink_to(runtime_root)
         if {prefer_repo!r}:
             os.environ["VIBECRAFTED_PREFER_REPO_VC_FRAME"] = "1"
         else:
@@ -194,6 +204,13 @@ def _run_stage_in_venv(
         layouts = (view / "layouts").resolve()
         research = (layouts / "research.kdl").read_text(encoding="utf-8")
         workflow = (layouts / "workflow.kdl").read_text(encoding="utf-8")
+        all_kdl = "\\n".join(
+            [text]
+            + [
+                path.read_text(encoding="utf-8")
+                for path in sorted(layouts.glob("*.kdl"))
+            ]
+        )
         out = {{
             "channel": plan.channel,
             "pane_shell": plan.pane_shell,
@@ -204,6 +221,25 @@ def _run_stage_in_venv(
             "workflow_shell": workflow.count(f'command="{{plan.pane_shell}}"'),
             "has_layouts": (view / "layouts").exists(),
             "has_themes": (view / "themes").exists(),
+            "hard_zsh_references": sum(
+                all_kdl.count(token)
+                for token in (
+                    'command="zsh"',
+                    'default_shell "zsh"',
+                    "exec zsh -l",
+                    "exec /bin/zsh -l",
+                )
+            ),
+            "hard_pbcopy_references": (
+                all_kdl.count('copy_command "pbcopy"')
+                + all_kdl.count("pbcopy <")
+            ),
+            "runtime_pointer_preserved": current.resolve() == runtime_root.resolve(),
+            "runtime_makefile_preserved": (current / "Makefile").is_file(),
+            "runtime_core_preserved": (current / "vibecrafted-core").is_dir(),
+            "runtime_launcher_preserved": (
+                current / "runtime" / "scripts" / "codex_spawn.sh"
+            ).is_file(),
         }}
         print(json.dumps(out))
         """
@@ -260,6 +296,10 @@ def test_channel1_wheel_venv_stage_zsh_present(
     assert data["research_zsh"] > 0
     assert data["workflow_zsh"] > 0
     assert data["has_layouts"] and data["has_themes"]
+    assert data["runtime_pointer_preserved"]
+    assert data["runtime_makefile_preserved"]
+    assert data["runtime_core_preserved"]
+    assert data["runtime_launcher_preserved"]
     assert "site-packages" in data["source"] or "dist-packages" in data["source"]
 
 
@@ -285,6 +325,8 @@ def test_channel1_wheel_venv_stage_zsh_absent(tmp_path: Path) -> None:
     assert data["pane_shell"] != "zsh"
     assert data["research_zsh"] == 0
     assert data["workflow_zsh"] == 0
+    assert data["hard_zsh_references"] == 0
+    assert data["hard_pbcopy_references"] == 0
     assert data["research_shell"] > 0
     assert data["workflow_shell"] > 0
 
@@ -313,6 +355,16 @@ def test_upgrade_flip_atomicity(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
     tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime = tools / "vibecrafted-full"
+    (runtime / "vibecrafted-core").mkdir(parents=True)
+    (runtime / "runtime" / "scripts").mkdir(parents=True)
+    (runtime / "Makefile").write_text("all:\n\t@true\n", encoding="utf-8")
+    (runtime / "runtime" / "scripts" / "codex_spawn.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+    current = tools / "vibecrafted-current"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(runtime)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
     stage_vc_frame_config(
@@ -324,8 +376,8 @@ def test_upgrade_flip_atomicity(tmp_path: Path, monkeypatch) -> None:
         home=home, tools_home=tools, version="e2e-B", prefer_repo=False, force=True
     )
     assert str(view) == path_before
-    assert (tools / "vibecrafted-current").resolve() == (
-        tools / "vibecrafted-e2e-B"
-    ).resolve()
-    assert (tools / "vibecrafted-e2e-A").is_dir()
+    assert current.resolve() == runtime.resolve()
+    assert (current / "Makefile").is_file()
+    assert (current / "vibecrafted-core").is_dir()
+    assert (current / "runtime" / "scripts" / "codex_spawn.sh").is_file()
     assert not list(tools.glob(".vibecrafted-current.tmp.*"))
