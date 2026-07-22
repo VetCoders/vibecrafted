@@ -1518,6 +1518,90 @@ button:hover > .icon-box {
     gap: var(--space-6);
 }
 
+.settlement-board {
+    display: grid;
+    gap: var(--space-5);
+    padding: var(--space-6);
+    background: color-mix(in srgb, var(--surface-card) 96%, transparent);
+    border: 1px solid var(--border-active);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-hover);
+}
+
+.settlement-board-wrap {
+    width: min(100%, var(--max-w-page));
+    margin: 0 auto;
+    padding: var(--space-8) var(--container-gutter) 0;
+}
+
+.settlement-board-head,
+.settlement-board-foot,
+.settlement-scope {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+}
+
+.settlement-board-head h2 {
+    margin: 0;
+    color: var(--text-primary);
+    font-family: var(--font-display);
+    font-size: clamp(2rem, 4vw, 3.5rem);
+    font-weight: 400;
+}
+
+.settlement-scope {
+    align-items: flex-end;
+    flex-direction: column;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+}
+
+.settlement-scope strong {
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+}
+
+.settlement-cells {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-4);
+    margin: 0;
+}
+
+.settlement-cell {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-5);
+    background: rgba(255, 255, 255, 0.025);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+}
+
+.settlement-cell dt,
+.settlement-cell small,
+.settlement-board-foot {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+}
+
+.settlement-cell kbd {
+    margin-right: var(--space-2);
+    color: var(--accent-interaction);
+    font: inherit;
+}
+
+.settlement-cell dd {
+    margin: 0;
+    color: var(--accent-narrative);
+    font-family: var(--font-mono);
+    font-size: clamp(2rem, 5vw, 4rem);
+    line-height: 1;
+}
+
 .control-plane-meta,
 .control-panel-head,
 .control-run-primary,
@@ -1658,6 +1742,20 @@ button:hover > .icon-box {
 }
 
 @media (max-width: 820px) {
+    .settlement-board-head,
+    .settlement-board-foot {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .settlement-scope {
+        align-items: flex-start;
+    }
+
+    .settlement-cells {
+        grid-template-columns: 1fr;
+    }
+
     .control-dashboard-grid {
         grid-template-columns: 1fr;
     }

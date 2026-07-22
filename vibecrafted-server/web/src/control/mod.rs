@@ -9,9 +9,9 @@
 //!
 //! Routes:
 //! * `GET /api/control/state` — merged [`StateView`](control_core::StateView)
-//!   (active/recent runs, warnings, event tail), computed in Rust from the three
-//!   raw sources plus lifecycle projections so the server never depends on the
-//!   Python sync having run.
+//!   (canonical settlement board, active/recent runs, warnings, event tail),
+//!   computed in Rust from retained snapshots plus the three raw live sources
+//!   and lifecycle projections.
 //! * `GET /api/control/runs` — every `runs/<id>.json` snapshot, newest-first.
 //!   Each run serialises optional delivery-proof axes (`execution_state`,
 //!   `proof_state`, `delivery_state`) and optional `seal` when present on the
@@ -37,8 +37,9 @@ pub mod api {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     use axum::routing::get;
-    use chrono::Utc;
-    use control_core::{ControlPlane, StateView};
+    use chrono::{DateTime, Utc};
+    use control_core::{ControlPlane, Event, RunStatus, SettlementBoard};
+    use serde::Serialize;
     use serde_json::json;
 
     use super::events_sse::events_sse;
@@ -55,23 +56,30 @@ pub mod api {
             .route("/api/control/events", get(events_sse))
     }
 
-    /// Serialise a [`StateView`] into the JSON envelope. `StateView` itself is
-    /// not `Serialize` (it carries no clock), but its `RunStatus` / `Event`
-    /// members are, so we project field-by-field and stamp `generated_at` here —
-    /// matching the `generated_at` the Python `sync_state` payload adds.
-    fn state_envelope(
-        plane: &ControlPlane,
-        view: &StateView,
-        generated_at: String,
-    ) -> Json<serde_json::Value> {
-        Json(json!({
-            "control_plane": plane.control_plane_home().display().to_string(),
-            "generated_at": generated_at,
-            "active_runs": view.active_runs,
-            "recent_runs": view.recent_runs,
-            "warnings": view.warnings,
-            "events": view.events,
-        }))
+    /// Canonical server projection consumed by both JSON and dashboard SSR.
+    /// Settlement classification remains wholly owned by `control-core`.
+    #[derive(Clone, Serialize)]
+    pub(crate) struct StateEnvelope {
+        pub(crate) control_plane: String,
+        pub(crate) generated_at: String,
+        pub(crate) active_runs: Vec<RunStatus>,
+        pub(crate) recent_runs: Vec<RunStatus>,
+        pub(crate) warnings: Vec<String>,
+        pub(crate) events: Vec<Event>,
+        pub(crate) settlement_counts: SettlementBoard,
+    }
+
+    pub(crate) fn state_payload(plane: &ControlPlane, now: DateTime<Utc>) -> StateEnvelope {
+        let view = plane.compute_view(now);
+        StateEnvelope {
+            control_plane: plane.control_plane_home().display().to_string(),
+            generated_at: now.to_rfc3339(),
+            active_runs: view.active_runs,
+            recent_runs: view.recent_runs,
+            warnings: view.warnings,
+            events: view.events,
+            settlement_counts: view.settlement_counts,
+        }
     }
 
     /// Merged control-plane state view. The self-sufficient path: merges
@@ -79,8 +87,7 @@ pub mod api {
     async fn state() -> impl IntoResponse {
         let plane = ControlPlane::from_env();
         let now = Utc::now();
-        let view = plane.compute_view(now);
-        state_envelope(&plane, &view, now.to_rfc3339())
+        Json(state_payload(&plane, now))
     }
 
     /// Every `runs/<id>.json` snapshot, newest-first.
