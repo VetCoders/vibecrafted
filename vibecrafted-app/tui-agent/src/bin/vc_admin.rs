@@ -9,7 +9,7 @@ use voc::mission_control::default_artifact_root;
 use voc::state::ControlPlaneState;
 use voc::{
     ActionQueueItem, ActiveDispatch, AgentStatsRow, DataQuality, FailureEntry, FleetHealthSignal,
-    MissionControlState, SkillStatsRow, WaveSegment,
+    MissionControlState, SettlementBoardCounts, SkillStatsRow, WaveSegment,
 };
 
 #[derive(Debug, Parser)]
@@ -163,6 +163,7 @@ fn render_command(command: &Command, snapshot: &MissionSnapshot) -> String {
 
 fn render_status(snapshot: &MissionSnapshot) -> String {
     let mut out = header(snapshot);
+    out.push_str(&render_settlement_board(&snapshot.state.settlement));
     out.push_str(&render_active_dispatches(
         "Active dispatches",
         &snapshot.state.active_dispatches,
@@ -211,6 +212,17 @@ fn header(snapshot: &MissionSnapshot) -> String {
     writeln!(out, "control plane: {}", snapshot.state_root.display()).unwrap();
     writeln!(out, "artifact root: {}", snapshot.artifact_root.display()).unwrap();
     writeln!(out).unwrap();
+    out
+}
+
+fn render_settlement_board(board: &SettlementBoardCounts) -> String {
+    let mut out = section_title("Settlement board", board.total_settled);
+    out.push_str(&board.render_strip());
+    out.push('\n');
+    out.push_str(
+        "note: f/x/n reads settlement_verdict on retained snapshots only; \
+         Python sync_state may also fold meta-derived runs (different scope).\n\n",
+    );
     out
 }
 

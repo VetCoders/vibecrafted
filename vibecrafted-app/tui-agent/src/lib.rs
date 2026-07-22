@@ -31,8 +31,8 @@ pub use config::{AppConfig, CliOptions, build_config, parse_args};
 pub use launch::{LaunchCommand, LaunchKind};
 pub use mission_control::{
     ActionPriority, ActionQueueItem, ActionQueueKind, ActiveDispatch, AgentStatsRow, DataQuality,
-    FailureEntry, FleetHealthSignal, FleetHealthStatus, MissionControlState, SkillStatsRow,
-    WaveSegment, WaveState, default_artifact_root,
+    FailureEntry, FleetHealthSignal, FleetHealthStatus, MissionControlState, SettlementBoardCounts,
+    SkillStatsRow, WaveSegment, WaveState, default_artifact_root,
 };
 pub use polarize::{PolarizeBand, PolarizeIntent};
 pub use run_detail::{RunDetail, load_run_detail};

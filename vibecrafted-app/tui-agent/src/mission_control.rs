@@ -1,5 +1,6 @@
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, Utc};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
@@ -9,7 +10,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::polarize::{PolarizeBand, PolarizeIntent};
-use crate::state::{ControlPlaneState, RunKind, classify_run};
+use crate::state::{ControlPlaneState, RunKind, RunSnapshot, classify_run};
 
 /// Maximum number of `*.meta.json` files we will fold per refresh. Large
 /// artifact roots can hold tens of thousands of files; the dashboard
@@ -58,9 +59,155 @@ static TAILSCALE_STATUS_CACHE: OnceLock<Mutex<ProbeCache<Result<String, String>>
     OnceLock::new();
 static AICX_HEALTH_CACHE: OnceLock<Mutex<ProbeCache<Result<String, String>>>> = OnceLock::new();
 
+/// Settlement f/x/n board for retained control-plane snapshots.
+///
+/// Source of truth for counting semantics:
+/// `vibecrafted-server/control-core/src/model.rs` — `SettlementBoard::from_snapshots`.
+/// Replicated here (not linked) so `vc-admin` stays free of the control-core crate graph.
+/// Scope is honest: retained `control_plane/runs/*.json` only — not meta-folded history.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SettlementBoardCounts {
+    /// Human-readable scope boundary (never claim full meta history).
+    pub scope: String,
+    pub f: usize,
+    pub x: usize,
+    pub n: usize,
+    /// Diagnostic detail inside `x`, not a fourth total bucket.
+    pub invalid: usize,
+    /// Live unsettled runs (not part of `total_settled`).
+    pub active: usize,
+    pub total_settled: usize,
+}
+
+impl SettlementBoardCounts {
+    pub const SCOPE_RETAINED_SNAPSHOTS: &'static str =
+        "retained control_plane/runs snapshots (≠ full meta history)";
+
+    /// Count settlement axis from retained run snapshots.
+    ///
+    /// Mirrors `SettlementBoard::from_snapshots` / Python `board_fxn_counts`:
+    /// missing verdict contributes `n` only when the run is terminal; live
+    /// unsettled runs are ignored. No exit/process signal promotes to `f`.
+    #[must_use]
+    pub fn from_snapshots(runs: &[RunSnapshot], active: usize) -> Self {
+        let mut board = Self {
+            scope: Self::SCOPE_RETAINED_SNAPSHOTS.to_string(),
+            active,
+            f: 0,
+            x: 0,
+            n: 0,
+            invalid: 0,
+            total_settled: 0,
+        };
+        for run in runs {
+            match settlement_verdict_of(run) {
+                Some(SettlementCell::Finalized) => board.f += 1,
+                Some(SettlementCell::Failed) => board.x += 1,
+                Some(SettlementCell::Invalid) => {
+                    board.x += 1;
+                    board.invalid += 1;
+                }
+                Some(SettlementCell::NeedsAttention) => board.n += 1,
+                None if is_unsettled_settlement_terminal(run) => board.n += 1,
+                None => {}
+            }
+        }
+        board.total_settled = board.f + board.x + board.n;
+        board
+    }
+
+    /// One-line operator strip for `vc-admin status` / Mission Control.
+    #[must_use]
+    pub fn render_strip(&self) -> String {
+        format!(
+            "settlement  f={} x={} n={} (+invalid={}) · active={} · total_settled={} · scope: {}",
+            self.f, self.x, self.n, self.invalid, self.active, self.total_settled, self.scope
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettlementCell {
+    Finalized,
+    Failed,
+    NeedsAttention,
+    Invalid,
+}
+
+fn settlement_verdict_of(run: &RunSnapshot) -> Option<SettlementCell> {
+    // Flat field first (Rust-reader compatible), then nested settlement.verdict.
+    let flat = run
+        .extra
+        .get("settlement_verdict")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase);
+    if let Some(raw) = flat {
+        return parse_settlement_verdict(&raw);
+    }
+    run.extra
+        .get("settlement")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("verdict"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase)
+        .and_then(|raw| parse_settlement_verdict(&raw))
+}
+
+fn parse_settlement_verdict(raw: &str) -> Option<SettlementCell> {
+    match raw {
+        "finalized" => Some(SettlementCell::Finalized),
+        "failed" => Some(SettlementCell::Failed),
+        "needs_attention" => Some(SettlementCell::NeedsAttention),
+        "invalid" => Some(SettlementCell::Invalid),
+        _ => None,
+    }
+}
+
+/// Mirrors control-core `is_unsettled_settlement_terminal` / Python `_is_terminal`.
+fn is_unsettled_settlement_terminal(run: &RunSnapshot) -> bool {
+    const TERMINAL_STATES: &[&str] = &[
+        "report_validated",
+        "completed",
+        "closed",
+        "converged",
+        "stopped",
+        "blocked",
+        "failed",
+        "report_missing",
+        "report_invalid",
+        "contract_failed",
+        "recovery_required",
+        "timed_out",
+        "gc",
+        "ghost",
+        "stalled",
+        "killed_by_operator",
+        "process_dead",
+    ];
+    let state = run.display_state().to_ascii_lowercase();
+    if TERMINAL_STATES.contains(&state.as_str()) {
+        return true;
+    }
+    let liveness = run
+        .extra
+        .get("liveness")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if liveness == "terminal" {
+        return true;
+    }
+    run.extra.get("exit_code").is_some_and(|v| !v.is_null())
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MissionControlState {
     pub generated_at: String,
+    pub settlement: SettlementBoardCounts,
     pub active_dispatches: Vec<ActiveDispatch>,
     pub wave_atlas: Vec<WaveSegment>,
     pub agent_stats: Vec<AgentStatsRow>,
@@ -328,9 +475,12 @@ impl MissionControlState {
         let failures = failure_board_from_meta(&meta_records, state, now);
         let fleet_health = fleet_health_from_inputs(state, artifact_root, &data_quality);
         let action_queue = action_queue_from_inputs(state, &failures, &meta_records, intents, now);
+        let settlement =
+            SettlementBoardCounts::from_snapshots(&state.runs, active_dispatches.len());
 
         Self {
             generated_at: now.to_rfc3339(),
+            settlement,
             active_dispatches,
             wave_atlas,
             agent_stats,
@@ -2489,6 +2639,70 @@ mod tests {
                 .any(|item| item.kind == ActionQueueKind::StalledRun
                     && item.summary.contains("lost"))
         );
+    }
+
+    fn run_with_settlement(
+        run_id: &str,
+        state: &str,
+        verdict: Option<&str>,
+        exit_code: Option<i64>,
+    ) -> RunSnapshot {
+        let mut extra = HashMap::new();
+        if let Some(v) = verdict {
+            extra.insert(
+                "settlement_verdict".to_string(),
+                Value::String(v.to_string()),
+            );
+        }
+        if let Some(code) = exit_code {
+            extra.insert("exit_code".to_string(), Value::from(code));
+        }
+        RunSnapshot {
+            run_id: run_id.to_string(),
+            session_id: None,
+            agent: Some("claude".to_string()),
+            skill: Some("implement".to_string()),
+            mode: None,
+            state: Some(state.to_string()),
+            status: None,
+            started_at: None,
+            updated_at: None,
+            last_heartbeat: None,
+            root: None,
+            operator_session: None,
+            latest_report: None,
+            latest_transcript: None,
+            last_error: None,
+            extra,
+        }
+    }
+
+    #[test]
+    fn settlement_board_counts_fxn_and_unsettled_terminal_fallback() {
+        // Mirrors SettlementBoard::from_snapshots: f/x/n + invalid-in-x +
+        // unsettled terminal → n; live unsettled ignored.
+        let runs = vec![
+            run_with_settlement("f1", "report_validated", Some("finalized"), Some(0)),
+            run_with_settlement("x1", "failed", Some("failed"), Some(1)),
+            run_with_settlement("inv", "failed", Some("invalid"), Some(1)),
+            run_with_settlement("n1", "report_validated", Some("needs_attention"), Some(0)),
+            // terminal, no verdict → n
+            run_with_settlement("n2", "completed", None, Some(0)),
+            // live, no verdict → ignored
+            run_with_settlement("live", "running", None, None),
+        ];
+        let board = SettlementBoardCounts::from_snapshots(&runs, 1);
+        assert_eq!(board.f, 1);
+        assert_eq!(board.x, 2); // failed + invalid
+        assert_eq!(board.invalid, 1);
+        assert_eq!(board.n, 2); // needs_attention + unsettled terminal
+        assert_eq!(board.total_settled, 5);
+        assert_eq!(board.active, 1);
+        assert!(board.scope.contains("retained"));
+        let strip = board.render_strip();
+        assert!(strip.contains("f=1"));
+        assert!(strip.contains("x=2"));
+        assert!(strip.contains("n=2"));
     }
 
     #[test]
