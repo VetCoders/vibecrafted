@@ -273,23 +273,6 @@ def _wire_one(
                 return
         except OSError:
             pass
-        # Healthy other store/dev target — still skip unless force
-        if channel in {"store-current", "dev-checkout"} and not force:
-            try:
-                current = view_path.resolve()
-                # If it already resolves under store or checkout, skip
-                for base in (store_current, checkout):
-                    if base is None:
-                        continue
-                    try:
-                        current.relative_to(base.resolve() if base.exists() else base)
-                        actions.append(WireAction("skip", str(view_path), channel))
-                        return
-                    except ValueError:
-                        continue
-            except OSError:
-                pass
-
     if channel == "foreign" and view_path.is_symlink() and not force:
         actions.append(
             WireAction("skip", str(view_path), "user-managed foreign symlink")
@@ -386,7 +369,9 @@ def plan_delivery(
         base = source
 
     checkout = source if use_repo else None
-    store_anchor = current / "config" / "vc-frame"
+    # Ownership is the complete current runtime, while exact-target equality
+    # decides whether an existing owned link is current or needs migration.
+    store_anchor = current
     for name in ("config.kdl", "layouts", "themes"):
         _wire_one(
             view_root / name,

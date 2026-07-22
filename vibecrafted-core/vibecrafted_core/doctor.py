@@ -167,7 +167,7 @@ def _vc_frame_delivery_findings(
     findings: list[_Finding] = []
     view = vc_frame_user_config_dir(home)
     current = tools_current_path(tools_home)
-    store_cfg = current / "config" / "vc-frame"
+    store_cfg = current
     checkout = None
     try:
         from .frontier_assets import vc_frame_config_source

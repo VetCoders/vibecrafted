@@ -252,6 +252,27 @@ def test_config_refresh_preserves_runtime_pointer_and_view_paths(
     assert view_cfg.resolve().is_file()
 
 
+def test_stage_rewires_legacy_store_view_to_generated_assets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    runtime = _seed_complete_runtime(tools)
+    legacy = runtime / "config" / "vc-frame"
+    legacy.mkdir(parents=True)
+    (legacy / "config.kdl").write_text('theme "legacy"\n', encoding="utf-8")
+    view = home / ".config" / "vc-frame"
+    view.mkdir(parents=True)
+    (view / "config.kdl").symlink_to(legacy / "config.kdl")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+
+    stage_vc_frame_config(home=home, tools_home=tools, prefer_repo=False)
+
+    generated = runtime / "runtime" / "generated" / "vc-frame" / "config.kdl"
+    assert (view / "config.kdl").resolve() == generated.resolve()
+
+
 def test_dev_mode_targets_checkout(tmp_path: Path, monkeypatch) -> None:
     home = tmp_path / "home"
     home.mkdir()
