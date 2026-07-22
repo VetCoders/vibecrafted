@@ -168,6 +168,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="print the would-kill table with ownership evidence, signal nothing",
     )
     reap.add_argument("--json", action="store_true")
+    reap.add_argument(
+        "--resettle",
+        action="store_true",
+        help=(
+            "re-run settlement over retained control_plane/runs snapshots "
+            "(honest: never fabricates FINALIZED without proof/seal)"
+        ),
+    )
+    settle = sub.add_parser(
+        "settle",
+        help="settlement board maintenance (resettle retained snapshots)",
+    )
+    settle.add_argument(
+        "--resettle",
+        action="store_true",
+        help="re-classify retained snapshots from existing axes (no invented f)",
+    )
+    settle.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="count would-rewrite only; do not write snapshots",
+    )
+    settle.add_argument("--json", action="store_true")
     procs = sub.add_parser(
         "procs",
         help="identity-qualified process snapshot/terminate for vc-procs TUI",
@@ -574,6 +597,39 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
     return 1
 
 
+def _cmd_resettle(args: argparse.Namespace) -> int:
+    """Honest re-settlement of retained control_plane/runs snapshots."""
+    from .lifecycle_delivery import resettle_retained_snapshots
+
+    result = resettle_retained_snapshots(
+        force=True,
+        dry_run=bool(getattr(args, "dry_run", False)),
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ok") else 1
+    before = result.get("before") or {}
+    after = result.get("after") or {}
+    print(
+        "resettle "
+        f"scanned={result.get('scanned', 0)} "
+        f"rewritten={result.get('rewritten', 0)} "
+        f"unchanged={result.get('unchanged', 0)} "
+        f"skipped={result.get('skipped', 0)}"
+        + (" (dry-run)" if result.get("dry_run") else "")
+    )
+    print(
+        f"before: f={before.get('f', 0)} x={before.get('x', 0)} "
+        f"n={before.get('n', 0)} invalid={before.get('invalid', 0)}"
+    )
+    print(
+        f"after:  f={after.get('f', 0)} x={after.get('x', 0)} "
+        f"n={after.get('n', 0)} invalid={after.get('invalid', 0)}"
+    )
+    print("note: history without proof/seal stays n/x — FINALIZED is never fabricated")
+    return 0 if result.get("ok") else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
     invoked_as = Path(sys.argv[0]).name if argv is None else "vibecrafted"
@@ -602,6 +658,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "paste",
         "procs",
         "reap",
+        "settle",
         "stop",
     } | set(LAUNCHERS)
     agent_python_verbs = {"observe", "await", "stop"}
@@ -723,6 +780,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         return 0 if summary["failures"] == 0 else 1
     if args.command == "reap":
+        if getattr(args, "resettle", False):
+            return _cmd_resettle(args)
         from .run_reaper import main as reap_main
 
         reap_argv: list[str] = []
@@ -731,6 +790,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.json:
             reap_argv.append("--json")
         return reap_main(reap_argv)
+    if args.command == "settle":
+        if not getattr(args, "resettle", False):
+            print(
+                "usage: vibecrafted settle --resettle [--dry-run] [--json]",
+                file=sys.stderr,
+            )
+            return 2
+        return _cmd_resettle(args)
     if args.command == "procs":
         from .process_control import main as procs_main
 
