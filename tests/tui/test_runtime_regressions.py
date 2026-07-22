@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -14,6 +15,217 @@ SHELL_SH = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 def _write_fake_command(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
+
+
+def _probe_codex_resume_contract(
+    tmp_path: Path,
+    args: list[str],
+    *,
+    operator_available: bool = True,
+) -> tuple[subprocess.CompletedProcess[str], str, bool]:
+    home = tmp_path / "home"
+    context_file = tmp_path / "aicx-context.md"
+    command_capture = tmp_path / "command.txt"
+    aicx_capture = tmp_path / "aicx-called.txt"
+    home.mkdir(parents=True)
+    context_file.write_text("AICX OVERLAY BODY\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    for key in (
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+    ):
+        env.pop(key, None)
+    env["HOME"] = str(home)
+    env["VIBECRAFTED_HOME"] = str(home / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["TEST_AICX_CONTEXT"] = str(context_file)
+    env["TEST_AICX_CAPTURE"] = str(aicx_capture)
+    env["TEST_COMMAND_CAPTURE"] = str(command_capture)
+    env["TEST_OPERATOR_AVAILABLE"] = "1" if operator_available else ""
+    if operator_available:
+        # Headless requests only enter the visible-host branch when an operator
+        # surface is already known; interactive Codex may also prepare one.
+        env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-session"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            "\n".join(
+                [
+                    f'source "{SHELL_SH}"',
+                    "codex() {",
+                    "  {",
+                    "    printf 'codex'",
+                    "    printf ' %s' \"$@\"",
+                    "    printf '\\n'",
+                    '  } > "$TEST_COMMAND_CAPTURE"',
+                    "}",
+                    "_vetcoders_aicx_resume_fallback() {",
+                    "  printf 'called\\n' > \"$TEST_AICX_CAPTURE\"",
+                    "  printf 'SESSION_ID=historical-codex-session\\n'",
+                    "  printf 'CONTEXT_FILE=%s\\n' \"$TEST_AICX_CONTEXT\"",
+                    "  printf 'MODE=native_resume\\n'",
+                    "}",
+                    "_vetcoders_prepare_operator_runtime() {",
+                    '  if [[ -n "$TEST_OPERATOR_AVAILABLE" ]]; then',
+                    "    export VIBECRAFTED_OPERATOR_SESSION=operator-session",
+                    "  else",
+                    "    unset VIBECRAFTED_OPERATOR_SESSION",
+                    "  fi",
+                    "}",
+                    "_vetcoders_spawn_into_operator_session() {",
+                    '  printf \'%s\\n\' "$2" > "$TEST_COMMAND_CAPTURE"',
+                    "}",
+                    "vc-resume codex --runtime terminal " + shlex.join(args),
+                ]
+            ),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    command = (
+        command_capture.read_text(encoding="utf-8").strip()
+        if command_capture.exists()
+        else ""
+    )
+    return result, command, aicx_capture.exists()
+
+
+def test_bare_codex_resume_uses_aicx_pack_in_fresh_interactive_session(
+    tmp_path: Path,
+) -> None:
+    result, command, aicx_called = _probe_codex_resume_contract(tmp_path, [])
+
+    assert result.returncode == 0, result.stderr
+    assert aicx_called
+    assert command.startswith("codex ")
+    assert "AICX OVERLAY BODY" in command
+    assert "codex exec" not in command
+    assert "codex resume" not in command
+    assert "historical-codex-session" not in command
+
+
+def test_codex_session_only_is_exact_interactive_resume(tmp_path: Path) -> None:
+    result, command, aicx_called = _probe_codex_resume_contract(
+        tmp_path, ["--session", "sess-123"]
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not aicx_called
+    assert command == "codex resume sess-123"
+
+
+def test_codex_explicit_prompt_and_file_are_fresh_noninteractive_runs(
+    tmp_path: Path,
+) -> None:
+    prompt_result, prompt_command, prompt_aicx = _probe_codex_resume_contract(
+        tmp_path / "prompt", ["--prompt", "carry on"]
+    )
+    input_file = tmp_path / "file" / "input.md"
+    input_file.parent.mkdir(parents=True)
+    input_file.write_text("FILE INPUT\n", encoding="utf-8")
+    file_result, file_command, file_aicx = _probe_codex_resume_contract(
+        tmp_path / "file", ["--file", str(input_file)]
+    )
+
+    assert prompt_result.returncode == 0, prompt_result.stderr
+    assert file_result.returncode == 0, file_result.stderr
+    assert not prompt_aicx and not file_aicx
+    assert prompt_command.startswith(
+        "codex exec --dangerously-bypass-approvals-and-sandbox "
+    )
+    assert "carry on" in prompt_command
+    assert file_command.startswith(
+        "codex exec --dangerously-bypass-approvals-and-sandbox "
+    )
+    assert "FILE INPUT" in file_command
+
+
+def test_codex_session_with_explicit_file_is_noninteractive_continuation(
+    tmp_path: Path,
+) -> None:
+    input_file = tmp_path / "input.md"
+    input_file.write_text("SESSION FILE INPUT\n", encoding="utf-8")
+
+    result, command, aicx_called = _probe_codex_resume_contract(
+        tmp_path / "probe",
+        ["--session", "sess-file-123", "--file", str(input_file)],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not aicx_called
+    assert command.startswith("codex exec --dangerously-bypass-approvals-and-sandbox ")
+    assert "resume sess-file-123" in command
+    assert "SESSION FILE INPUT" in command
+
+
+def test_codex_positional_resume_compatibility_preserves_mode_contract(
+    tmp_path: Path,
+) -> None:
+    session_id = "019ec264-0b50-7bb2-9336-0aae5c841209"
+    session_result, session_command, _ = _probe_codex_resume_contract(
+        tmp_path / "session", [session_id]
+    )
+    continuation_result, continuation_command, _ = _probe_codex_resume_contract(
+        tmp_path / "continuation", [session_id, "carry", "on"]
+    )
+    prompt_result, prompt_command, prompt_aicx = _probe_codex_resume_contract(
+        tmp_path / "prompt", ["carry", "on"]
+    )
+
+    assert session_result.returncode == 0, session_result.stderr
+    assert session_command == f"codex resume {session_id}"
+    assert continuation_result.returncode == 0, continuation_result.stderr
+    assert "codex exec" in continuation_command
+    assert f"resume {session_id}" in continuation_command
+    assert "carry on" in continuation_command
+    assert prompt_result.returncode == 0, prompt_result.stderr
+    assert "codex exec" in prompt_command
+    assert " resume " not in prompt_command
+    assert not prompt_aicx
+
+
+def test_interactive_codex_resume_fails_without_operator_surface(
+    tmp_path: Path,
+) -> None:
+    result, command, aicx_called = _probe_codex_resume_contract(
+        tmp_path, ["--session", "sess-123"], operator_available=False
+    )
+
+    assert result.returncode != 0
+    assert not command
+    assert not aicx_called
+    assert "requires a vc-frame operator session" in result.stderr
+    assert "refusing to downgrade to codex exec" in result.stderr
+
+
+def test_public_and_packaged_resume_help_describe_codex_mode_contract() -> None:
+    launchers = (
+        REPO_ROOT / "scripts" / "vibecrafted",
+        REPO_ROOT / "vibecrafted-core" / "vibecrafted_core" / "deck" / "vibecrafted",
+    )
+
+    for launcher in launchers:
+        result = subprocess.run(
+            ["bash", str(launcher), "resume", "--help"],
+            check=True,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert "Codex always starts a NEW interactive session" in result.stdout
+        assert "Explicit --prompt/--file starts a non-interactive Codex run" in (
+            result.stdout
+        )
+        assert "native-resumes it with the pack as prompt" not in result.stdout
 
 
 def test_resume_terminal_runtime_routes_codex_resume_into_vc_frame(

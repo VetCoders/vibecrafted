@@ -803,8 +803,9 @@ cmd_resume_help() {
   printf '\n'
   printf '%bWithout --session:%b\n' "$_bold" "$_reset"
   printf '  Builds a bounded continuity pack from aicx sessions list + intents + overlay\n'
-  printf '  for the last 48h (all agents). If a same-agent session for this cwd is found,\n'
-  printf '  native-resumes it with the pack as prompt; otherwise starts a NEW session.\n'
+  printf '  for the last 48h (all agents). Codex always starts a NEW interactive session\n'
+  printf '  with that pack. Other agents retain their provider-specific fallback behavior.\n'
+  printf '  Explicit --prompt/--file starts a non-interactive Codex run instead.\n'
   printf '  Override window: VIBECRAFTED_RESUME_AICX_HOURS=72\n'
   printf '\n'
   printf '%bExamples:%b\n' "$_bold" "$_reset"

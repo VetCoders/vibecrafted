@@ -24,7 +24,9 @@ _vetcoders_prompt_file() {
 
 _vetcoders_contract_reset() {
   _vetcoders_contract_prompt=""
+  _vetcoders_contract_prompt_explicit=""
   _vetcoders_contract_file=""
+  _vetcoders_contract_file_explicit=""
   _vetcoders_contract_task=""
   _vetcoders_contract_session=""
   _vetcoders_contract_count=""
@@ -53,6 +55,7 @@ _vetcoders_parse_contract() {
       -p|--prompt)
         shift
         [[ $# -gt 0 ]] || { echo "Missing value for --prompt" >&2; return 1; }
+        _vetcoders_contract_prompt_explicit=1
         # Greedy: everything after --prompt is the prompt text.
         # Flags must come BEFORE --prompt.
         _vetcoders_contract_prompt="$*"
@@ -61,6 +64,7 @@ _vetcoders_parse_contract() {
       -f|--file)
         shift
         [[ $# -gt 0 ]] || { echo "Missing value for --file" >&2; return 1; }
+        _vetcoders_contract_file_explicit=1
         _vetcoders_contract_file="$1"
         ;;
       --task)
