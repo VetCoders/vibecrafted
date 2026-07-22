@@ -199,7 +199,8 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     assert payload["tokens_input"] == 12
     assert payload["tokens_cached_input"] == 3
     assert payload["tokens_output"] == 7
-    assert payload["tokens_total"] == 22
+    # input + output only; cached is subset of input
+    assert payload["tokens_total"] == 19
     assert "tokens_cache_write" not in payload
     assert payload["cost_usd"] == 0.045
     assert payload["artifact_contract"] == "vibecrafted.agent-artifact.v1"
@@ -308,7 +309,7 @@ def test_finalize_artifacts_maps_junie_json_stream_receipt(tmp_path: Path) -> No
     assert payload["tokens_input"] == 1200
     assert payload["tokens_cached_input"] == 300
     assert payload["tokens_output"] == 125
-    assert payload["tokens_total"] == 1625
+    assert payload["tokens_total"] == 1325
     assert payload["cost_usd"] == 0.01925
     report_text = report.read_text(encoding="utf-8")
     assert "session_id: junie-session-123" in report_text
@@ -346,7 +347,8 @@ def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
         "tokens_output: 1680\n"
         "tokens_total: 650348\n"
     )
-    assert _extract_tokens(gemini_transcript)["total"] == 650348
+    # 648618 in + 1680 out; footer tokens_total was old double-count (650348)
+    assert _extract_tokens(gemini_transcript)["total"] == 650298
 
     claude_footer = (
         "tokens_input: 100\n"
@@ -355,6 +357,7 @@ def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
         "tokens_output: 30\n"
     )
     claude_tokens = _extract_tokens(claude_footer)
+    # fixture has cached (400) > input (100) → additive (junie-like shape)
     assert claude_tokens["total"] == 530
     assert claude_tokens["cache_write"] == 25
 

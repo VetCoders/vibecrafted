@@ -89,23 +89,23 @@ scrollback_lines_to_serialize 5000
 
 // ─── Plugin Aliases ─────────────────────────────────────────────────────────────
 plugins {
-    tab-bar location="zellij:tab-bar"
-    status-bar location="zellij:status-bar"
-    compact-bar location="zellij:compact-bar"
-    session-manager location="zellij:session-manager"
-    welcome-screen location="zellij:session-manager" {
+    tab-bar location="vc-frame:tab-bar"
+    status-bar location="vc-frame:status-bar"
+    compact-bar location="vc-frame:compact-bar"
+    session-manager location="vc-frame:session-manager"
+    welcome-screen location="vc-frame:session-manager" {
         welcome_screen true
     }
-    strider location="zellij:strider" {
+    strider location="vc-frame:strider" {
         pane_title "Files"
     }
-    filepicker location="zellij:strider" {
+    filepicker location="vc-frame:strider" {
         cwd "/"
         pane_title "Files"
     }
-    configuration location="zellij:configuration"
-    plugin-manager location="zellij:plugin-manager"
-    about location="zellij:about"
+    configuration location="vc-frame:configuration"
+    plugin-manager location="vc-frame:plugin-manager"
+    about location="vc-frame:about"
 }
 
 // ─── Keybindings ────────────────────────────────────────────────────────────────

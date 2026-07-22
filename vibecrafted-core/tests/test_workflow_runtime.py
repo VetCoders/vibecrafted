@@ -18,7 +18,10 @@ def _fake_agent(bin_dir: Path, name: str) -> None:
         "printf '[12:00:01] tokens: 10 in (3 cached) / 5 out\\n'\n"
         "printf 'cost_usd: $0.015\\n'\n"
         "printf 'fake worker ok\\n'\n"
-        'printf "%s\\n" "---" "status: completed" "---" "report for $0" > "$VIBECRAFTED_REPORT_PATH"\n',
+        'printf "%s\\n" "---" "run_id: ${VIBECRAFTED_RUN_ID:-unknown}" '
+        f'"agent: {name}" "skill: test" "status: completed" '
+        '"claim_status: completed" "---" "report for $0" '
+        '> "$VIBECRAFTED_REPORT_PATH"\n',
         encoding="utf-8",
     )
     path.chmod(0o755)
@@ -538,7 +541,8 @@ def test_marbles_runtime_supervises_loops(monkeypatch, tmp_path: Path) -> None:
     assert "agent_session_id: codex-session" in report
     assert "agent_model: codex-model" in report
     assert "session_id: aggregated" in report
-    assert "tokens_total: 36" in report
+    # parent: input 20 + output 10; cached 6 subset (not double-counted)
+    assert "tokens_total: 30" in report
     assert "cost_usd: 0.03" in report
     assert "cost_source: children_sum" in report
     assert "codex resume codex-session" in report
@@ -547,10 +551,10 @@ def test_marbles_runtime_supervises_loops(monkeypatch, tmp_path: Path) -> None:
     assert meta["tokens_input"] == 20
     assert meta["tokens_cached_input"] == 6
     assert meta["tokens_output"] == 10
-    assert meta["tokens_total"] == 36
+    assert meta["tokens_total"] == 30
     assert meta["cost_usd"] == 0.03
     assert meta["cost_source"] == "children_sum"
-    assert meta["children"][0]["tokens_total"] == 18
+    assert meta["children"][0]["tokens_total"] == 15
     assert meta["children"][1]["cost_usd"] == 0.015
     assert (home / "marb-test-children" / "marbles-L1.md").is_file()
     assert (home / "marb-test-children" / "marbles-L2.md").is_file()

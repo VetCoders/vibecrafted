@@ -417,6 +417,86 @@ print(f"MODE={meta['mode']}")
 PY
 }
 
+# Resolve a Python that can import vibecrafted_core.agent_stream and print a
+# shell-safe filter pipeline fragment for non-interactive streaming-json agents.
+_vetcoders_agent_stream_filter_cmd() {
+  local agent="$1"
+  local raw_file="${2:-}"
+  local py="" candidate package_parent quoted_agent quoted_raw quoted_parent
+  for candidate in \
+    "${VIBECRAFTED_PYTHON:-}" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/uv/tools/vibecrafted-core/bin/python3" \
+    python3.13 python3.12 python3.11 python3; do
+    [[ -n "$candidate" ]] || continue
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' \
+      >/dev/null 2>&1; then
+      py="$candidate"
+      break
+    fi
+  done
+  [[ -n "$py" ]] || py="python3"
+  quoted_agent="$(_vetcoders_shell_quote "$agent")"
+  if [[ -n "$raw_file" ]]; then
+    quoted_raw="$(_vetcoders_shell_quote "$raw_file")"
+  else
+    quoted_raw=""
+  fi
+  if "$py" -c 'import vibecrafted_core.agent_stream' >/dev/null 2>&1; then
+    if [[ -n "$quoted_raw" ]]; then
+      printf '%s -m vibecrafted_core.agent_stream --agent %s --raw-file %s\n' \
+        "$py" "$quoted_agent" "$quoted_raw"
+    else
+      printf '%s -m vibecrafted_core.agent_stream --agent %s\n' "$py" "$quoted_agent"
+    fi
+    return 0
+  fi
+  # Packaged layout: shell/lib → … → vibecrafted-core (parent of vibecrafted_core).
+  package_parent="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd 2>/dev/null || true)"
+  if [[ -n "$package_parent" && -d "$package_parent/vibecrafted_core" ]]; then
+    quoted_parent="$(_vetcoders_shell_quote "$package_parent")"
+    if [[ -n "$quoted_raw" ]]; then
+      printf 'PYTHONPATH=%s %s -m vibecrafted_core.agent_stream --agent %s --raw-file %s\n' \
+        "$quoted_parent" "$py" "$quoted_agent" "$quoted_raw"
+    else
+      printf 'PYTHONPATH=%s %s -m vibecrafted_core.agent_stream --agent %s\n' \
+        "$quoted_parent" "$py" "$quoted_agent"
+    fi
+    return 0
+  fi
+  echo "AgentStreamParser unavailable (cannot import vibecrafted_core.agent_stream)" >&2
+  return 1
+}
+
+# Path for raw streaming-json transcript (human pane sees filtered text only).
+_vetcoders_resume_raw_transcript_path() {
+  local agent="$1"
+  local home_dir="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}"
+  local stamp
+  stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo now)"
+  printf '%s/artifacts/resume/%s-%s.stream.jsonl\n' "$home_dir" "$agent" "$stamp"
+}
+
+# Wrap a headless agent command so streaming-json is rendered via AgentStreamParser.
+# Grok always uses this path. Other agents pass through unchanged unless they emit
+# streaming-json in the headless resume builders.
+_vetcoders_wrap_with_agent_stream() {
+  local agent="$1"
+  local cmd="$2"
+  local raw_file="${3:-}"
+  local filter_cmd
+  case "$agent" in
+    grok)
+      filter_cmd="$(_vetcoders_agent_stream_filter_cmd "$agent" "$raw_file")" || return 1
+      # Keep raw transcript when requested (tee is inside the filter via --raw-file).
+      printf 'set -o pipefail; { %s; } 2>&1 | %s\n' "$cmd" "$filter_cmd"
+      ;;
+    *)
+      printf '%s\n' "$cmd"
+      ;;
+  esac
+}
+
 # Fresh provider session (no native --resume). Used when AICX fallback cannot
 # pick a same-agent session in the window.
 _vetcoders_fresh_session_command() {
@@ -589,11 +669,47 @@ _vetcoders_resume_agent() {
     aicx_fallback_mode="${aicx_fallback_mode:-new_session}"
   fi
 
-  # prepare_operator_runtime can create or attach an operator surface only when
-  # we are already in vc_frame, know an operator session, or have an interactive
-  # terminal. Plain headless resume falls back to the agent CLI directly.
-  if [[ "$runtime" =~ ^(terminal|visible)$ ]] && {
-    [[ "$tool" == codex && "$resume_mode" == interactive ]] ||
+  # CONTRACT (G7): non-interactive resume ALWAYS lands in the worker host
+  # (right column), never the human operator seat. Interactive bare resume
+  # stays on the operator surface. AgentStreamParser renders streaming-json
+  # for grok so the worker pane is human-readable; raw stream is teed aside.
+  local stream_raw=""
+  if [[ "$resume_mode" == headless ]]; then
+    stream_raw="$(_vetcoders_resume_raw_transcript_path "$tool")"
+    resume_cmd="$(_vetcoders_wrap_with_agent_stream "$tool" "$resume_cmd" "$stream_raw")" || return 1
+  fi
+
+  if [[ "$resume_mode" == headless ]] && [[ "$runtime" =~ ^(terminal|visible)$ ]] && {
+    _vetcoders_in_vc_frame ||
+      [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] ||
+      [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" ]] ||
+      [[ -t 0 && -t 1 ]]
+  }; then
+    local worker_host
+    worker_host="$(_vetcoders_effective_worker_session 2>/dev/null || true)"
+    if [[ -n "$worker_host" ]]; then
+      export VIBECRAFTED_WORKER_SESSION="${VIBECRAFTED_WORKER_SESSION:-$worker_host}"
+      _vetcoders_spawn_into_operator_session "resume-${tool}" "$resume_cmd" || return 1
+      printf 'Resume launched in worker session: %s\n' "$VIBECRAFTED_WORKER_SESSION"
+      printf '  agent:   %s\n' "$tool"
+      printf '  mode:    headless (G7 workers column)\n'
+      if [[ -n "$_vetcoders_contract_session" ]]; then
+        printf '  session: %s\n' "$_vetcoders_contract_session"
+      elif [[ "$tool" == codex && -n "$codex_explicit_input" ]]; then
+        printf '  session: (new — explicit non-interactive run)\n'
+      else
+        printf '  session: (new — aicx 48h multi-agent continuity)\n'
+      fi
+      [[ -n "$aicx_fallback_mode" ]] && printf '  aicx:    %s\n' "$aicx_fallback_mode"
+      [[ -n "$aicx_context_file" ]] && printf '  pack:    %s\n' "$aicx_context_file"
+      [[ -n "$stream_raw" && "$tool" == grok ]] && printf '  raw:     %s\n' "$stream_raw"
+      return 0
+    fi
+  fi
+
+  # Interactive resume: prepare operator seat and land there.
+  if [[ "$resume_mode" == interactive ]] && [[ "$runtime" =~ ^(terminal|visible)$ ]] && {
+    [[ "$tool" == codex ]] ||
       _vetcoders_in_vc_frame ||
       [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] ||
       [[ -t 0 && -t 1 ]]
@@ -605,8 +721,6 @@ _vetcoders_resume_agent() {
       printf '  agent:   %s\n' "$tool"
       if [[ -n "$_vetcoders_contract_session" ]]; then
         printf '  session: %s\n' "$_vetcoders_contract_session"
-      elif [[ "$tool" == codex && -n "$codex_explicit_input" ]]; then
-        printf '  session: (new — explicit non-interactive run)\n'
       else
         printf '  session: (new — aicx 48h multi-agent continuity)\n'
       fi
@@ -621,7 +735,7 @@ _vetcoders_resume_agent() {
     return 1
   fi
 
-  # No operator surface (piped / async-supervisor baton-pass): run the agent's
+  # No vc-frame surface (piped / async-supervisor baton-pass): run the agent's
   # NON-INTERACTIVE resume invocation directly. Recompute in headless mode so we
   # don't eval an interactive command that would hang without a tty.
   if [[ -n "$_vetcoders_contract_session" ]]; then
@@ -629,6 +743,8 @@ _vetcoders_resume_agent() {
   else
     resume_cmd="$(_vetcoders_fresh_session_command "$tool" "$resume_prompt" headless)" || return 1
   fi
+  stream_raw="$(_vetcoders_resume_raw_transcript_path "$tool")"
+  resume_cmd="$(_vetcoders_wrap_with_agent_stream "$tool" "$resume_cmd" "$stream_raw")" || return 1
   eval "$resume_cmd"
 }
 

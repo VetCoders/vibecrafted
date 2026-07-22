@@ -211,7 +211,18 @@ def _optional_float(value: object) -> float | None:
 def _tokens_total(
     input_tokens: int, cached_input_tokens: int, output_tokens: int
 ) -> int:
-    return input_tokens + cached_input_tokens + output_tokens
+    """Sum usage without double-counting provider-specific cache shapes.
+
+    Claude/Codex: ``input`` already includes cache hits (cached ≤ input).
+    Junie-style: ``input`` is non-cached only and ``cached`` is additive
+    (cached can exceed input). Detect by comparing magnitudes.
+    """
+    inp = max(0, int(input_tokens or 0))
+    cached = max(0, int(cached_input_tokens or 0))
+    out = max(0, int(output_tokens or 0))
+    if cached and cached > inp:
+        return inp + cached + out
+    return inp + out
 
 
 def _child_tokens_total(result: ChildResult) -> int:

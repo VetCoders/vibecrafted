@@ -4,6 +4,7 @@ pub mod launch;
 pub mod mission_control;
 pub mod mux;
 pub mod polarize;
+pub mod procs;
 pub mod run_detail;
 pub mod skills_catalog;
 pub mod state;

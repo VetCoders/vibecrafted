@@ -144,6 +144,8 @@ def test_grok_resume_uses_resume_flag_not_session_id_and_streams_json() -> None:
     - MUST use --resume (never -s/--session-id for resume per help)
     - headless uses --output-format streaming-json for parseable transcript
     - --single for prompt continuation; --permission-mode and --no-alt-screen
+    - non-interactive wraps streaming-json through AgentStreamParser
+    - non-interactive lands in G7 worker host (not operator seat)
     Source-of-truth is the grok case in marbles.sh (shell resume builder).
     """
     marbles_path = (
@@ -151,9 +153,11 @@ def test_grok_resume_uses_resume_flag_not_session_id_and_streams_json() -> None:
     )
     src = marbles_path.read_text(encoding="utf-8")
 
-    # Isolate the grok) case block
-    assert "    grok)" in src
-    grok_block = src.split("    grok)")[1].split(";;")[0]
+    # Isolate the resume_command grok) block (not fresh_session_command).
+    assert "_vetcoders_resume_command()" in src
+    resume_fn = src.split("_vetcoders_resume_command()", 1)[1]
+    assert "    grok)" in resume_fn
+    grok_block = resume_fn.split("    grok)", 1)[1].split(";;", 1)[0]
 
     # resume flag shape
     assert "grok --resume " in grok_block
@@ -172,6 +176,14 @@ def test_grok_resume_uses_resume_flag_not_session_id_and_streams_json() -> None:
     assert "--permission-mode bypassPermissions" in grok_block
     assert "--no-alt-screen" in grok_block
     assert "--cwd " in grok_block
+
+    # AgentStreamParser + G7 worker host are resume-agent contracts (not only
+    # inside the grok case of the command builder).
+    assert "_vetcoders_wrap_with_agent_stream" in src
+    assert "vibecrafted_core.agent_stream" in src
+    assert "Resume launched in worker session:" in src
+    assert "_vetcoders_effective_worker_session" in src
+    assert "headless (G7 workers column)" in src
 
     # Fixture-based unit test for spawn.py extraction against grok 0.2.97 streaming-json shape
     # (no real grok call). Covers session-id (sessionId in end event) + JSON_TOKEN_PATTERNS usage.

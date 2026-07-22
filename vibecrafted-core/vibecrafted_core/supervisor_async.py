@@ -82,13 +82,54 @@ def _fallback_report_body(transcript_text: str) -> str:
 def _tokens_total(
     input_tokens: int, cached_input_tokens: int, output_tokens: int
 ) -> int:
-    return input_tokens + cached_input_tokens + output_tokens
+    """Sum usage without double-counting provider-specific cache shapes.
+
+    Claude/Codex: ``input`` already includes cache hits (cached ≤ input).
+    Junie-style: ``input`` is non-cached only and ``cached`` is additive
+    (cached can exceed input). Detect by comparing magnitudes.
+    """
+    inp = max(0, int(input_tokens or 0))
+    cached = max(0, int(cached_input_tokens or 0))
+    out = max(0, int(output_tokens or 0))
+    if cached and cached > inp:
+        return inp + cached + out
+    return inp + out
 
 
 def _handle_tokens_total(handle: AsyncRunHandle) -> int:
     return _tokens_total(
         handle.tokens_input, handle.tokens_cached_input, handle.tokens_output
     )
+
+
+def _origin_fields_from_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Durable origin identity for post-run triage (dispatcher has no pane env)."""
+    source = env if env is not None else os.environ
+
+    def _get(*names: str) -> str:
+        for name in names:
+            value = str(source.get(name, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    fields: dict[str, str] = {}
+    session = _get(
+        "VIBECRAFTED_WORKER_SESSION",
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ_SESSION_NAME",
+    )
+    if session:
+        fields["origin_session"] = session
+        fields["operator_session"] = session
+    tab = _get("VC_FRAME_TAB_NAME", "VIBECRAFTED_RUN_ID", "SPAWN_RUN_ID")
+    if tab:
+        fields["origin_tab"] = tab
+    pane = _get("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID")
+    if pane:
+        fields["origin_pane_id"] = pane
+    return fields
 
 
 def _cache_write_line(prefix: str, value: int | None) -> str:
@@ -107,26 +148,43 @@ def _render_fallback_report(handle: AsyncRunHandle, transcript_text: str) -> str
         if handle.completed_at
         else _utc_now().isoformat()
     )
+    from .report_contract import render_minimal_frontmatter
+
+    skill = str(
+        os.environ.get("VIBECRAFTED_SKILL_NAME")
+        or os.environ.get("VIBECRAFTED_SKILL_CODE")
+        or "unknown"
+    )
+    header = render_minimal_frontmatter(
+        run_id=handle.run_id,
+        agent=handle.agent or "unknown",
+        skill=skill,
+        status="completed",
+        extra={
+            "claim_status": "completed",
+            "claim_kind": skill,
+            "session_id": handle.agent_session_id or "unknown",
+            "tokens_input": handle.tokens_input,
+            "tokens_cached_input": handle.tokens_cached_input,
+            "tokens_output": handle.tokens_output,
+            "tokens_total": _handle_tokens_total(handle),
+            "cost_usd": handle.cost_usd if handle.cost_usd is not None else "unknown",
+            "completed_at": now,
+            "fallback_report": "true",
+            **(
+                {"tokens_cache_write": handle.tokens_cache_write}
+                if handle.tokens_cache_write is not None
+                else {}
+            ),
+        },
+    )
     return (
-        "---\n"
-        "status: completed\n"
-        f"run_id: {handle.run_id}\n"
-        f"agent: {handle.agent}\n"
-        f"session_id: {handle.agent_session_id or 'unknown'}\n"
-        f"tokens_input: {handle.tokens_input}\n"
-        f"tokens_cached_input: {handle.tokens_cached_input}\n"
-        f"{_cache_write_line('', handle.tokens_cache_write)}"
-        f"tokens_output: {handle.tokens_output}\n"
-        f"tokens_total: {_handle_tokens_total(handle)}\n"
-        f"cost_usd: {handle.cost_usd if handle.cost_usd is not None else 'unknown'}\n"
-        f"completed_at: {now}\n"
-        "fallback_report: true\n"
-        "---\n\n"
-        f"{body}\n"
-        "## Runtime fallback\n\n"
-        "The worker exited with code 0 but did not write "
-        "`VIBECRAFTED_REPORT_PATH`; Vibecrafted salvaged this report from the "
-        "captured transcript.\n"
+        header
+        + f"{body}\n"
+        + "## Runtime fallback\n\n"
+        + "The worker exited with code 0 but did not write "
+        + "`VIBECRAFTED_REPORT_PATH`; Vibecrafted salvaged this report from the "
+        + "captured transcript.\n"
     )
 
 
@@ -334,6 +392,42 @@ class AsyncSupervisor:
         except ProcessLookupError:
             handle.pgid = None
         self._runs[run_id] = handle
+        # Seed durable origin identity as soon as the worker exists so triage
+        # still works when the finisher has no ambient VC_FRAME pane env.
+        if handle.meta_path is not None:
+            try:
+                seed: dict[str, object] = {}
+                if handle.meta_path.exists():
+                    loaded = json.loads(handle.meta_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        seed.update(loaded)
+                origin = _origin_fields_from_env(merged_env)
+                if (
+                    origin.get("origin_session")
+                    and not str(seed.get("origin_session") or "").strip()
+                ):
+                    seed["origin_session"] = origin["origin_session"]
+                    seed["operator_session"] = origin.get(
+                        "operator_session", origin["origin_session"]
+                    )
+                if not str(seed.get("origin_tab") or "").strip():
+                    seed["origin_tab"] = origin.get("origin_tab") or run_id
+                if (
+                    origin.get("origin_pane_id")
+                    and not str(seed.get("origin_pane_id") or "").strip()
+                ):
+                    seed["origin_pane_id"] = origin["origin_pane_id"]
+                seed.setdefault("run_id", run_id)
+                seed.setdefault("root", str(cwd))
+                seed.setdefault("agent", agent)
+                handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
+                handle.meta_path.write_text(
+                    json.dumps(seed, indent=2, ensure_ascii=False, sort_keys=True)
+                    + "\n",
+                    encoding="utf-8",
+                )
+            except (OSError, json.JSONDecodeError, TypeError):
+                pass
         await self._transition(
             handle,
             RunState.PROCESS_SPAWNED,
@@ -590,6 +684,23 @@ class AsyncSupervisor:
             if handle.exit_code == 0
             else ("failed" if handle.exit_code is not None else "running"),
         }
+        # Stamp origin for triage-run: dispatcher finishes outside the worker
+        # pane, so ambient VC_FRAME_* is often empty at triage time. Prefer
+        # values already in meta (launch path) over live env.
+        origin = _origin_fields_from_env()
+        if not str(payload.get("origin_session") or "").strip():
+            if origin.get("origin_session"):
+                summary["origin_session"] = origin["origin_session"]
+                summary["operator_session"] = origin.get(
+                    "operator_session", origin["origin_session"]
+                )
+        if not str(payload.get("origin_tab") or "").strip():
+            summary["origin_tab"] = origin.get("origin_tab") or handle.run_id
+        if (
+            origin.get("origin_pane_id")
+            and not str(payload.get("origin_pane_id") or "").strip()
+        ):
+            summary["origin_pane_id"] = origin["origin_pane_id"]
         if handle.model_requested:
             summary["model_requested"] = handle.model_requested
             summary["model_override_supported"] = handle.model_override_supported

@@ -37,7 +37,7 @@ def test_async_supervisor_emits_lifecycle_and_validates_artifacts(
     script = tmp_path / "worker.py"
     script.write_text(
         "from pathlib import Path\n"
-        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n"
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n"
         "print('hello from async supervisor')\n"
     )
     run_id = "asup-test-1"
@@ -80,7 +80,7 @@ def test_dispatcher_cli_runs_full_lifecycle(
     script = tmp_path / "worker.py"
     script.write_text(
         "from pathlib import Path\n"
-        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n"
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n"
         "print('dispatcher lifecycle hello')\n",
         encoding="utf-8",
     )
@@ -129,7 +129,17 @@ def test_dispatcher_cli_delivers_prompt_file_on_stdin(
         "import os, sys\n"
         "body = sys.stdin.read()\n"
         "assert body == Path(os.environ['VIBECRAFTED_PROMPT_PATH']).read_text()\n"
-        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text(body, encoding='utf-8')\n"
+        "report = (\n"
+        "  '---\\n'\n"
+        "  'run_id: disp-test-prompt-file\\n'\n"
+        "  'agent: python\\n'\n"
+        "  'skill: test\\n'\n"
+        "  'status: completed\\n'\n"
+        "  'claim_status: completed\\n'\n"
+        "  '---\\n'\n"
+        "  + body\n"
+        ")\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text(report, encoding='utf-8')\n"
         "print('stdin prompt ok')\n",
         encoding="utf-8",
     )
@@ -158,7 +168,9 @@ def test_dispatcher_cli_delivers_prompt_file_on_stdin(
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["artifact_ok"] is True
-    assert report.read_text(encoding="utf-8") == "line one\nline two\n"
+    report_text = report.read_text(encoding="utf-8")
+    assert report_text.startswith("---\n")
+    assert "line one\nline two\n" in report_text
     assert "stdin prompt ok" in transcript.read_text(encoding="utf-8")
 
 
@@ -171,7 +183,7 @@ def test_dispatcher_cli_tees_visible_worker_output(
     script = tmp_path / "worker.py"
     script.write_text(
         "from pathlib import Path\n"
-        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n"
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n"
         "print('visible worker line')\n",
         encoding="utf-8",
     )
@@ -212,7 +224,7 @@ def test_dispatcher_cli_quiet_suppresses_final_summary(
     script = tmp_path / "worker.py"
     script.write_text(
         "from pathlib import Path\n"
-        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n",
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n",
         encoding="utf-8",
     )
 
@@ -252,7 +264,7 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
         "import json, os\n"
         "from pathlib import Path\n"
         "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        "'---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n', encoding='utf-8'"
         ")\n"
         "print(json.dumps({'type': 'system', 'session_id': 'sess-123', "
         "'model': 'claude-opus-4-8'}))\n"
@@ -291,7 +303,8 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     assert "model: claude-opus-4-8" in out
     assert "visible text from claude" in out
     assert "tokens_cache_write: 2" in out
-    assert "tokens_total: 18" in out
+    # input 10 + output 5; cached 3 is subset of input (not double-counted)
+    assert "tokens_total: 15" in out
     assert '"type": "assistant"' not in out
     transcript_text = transcript.read_text(encoding="utf-8")
     assert '"type": "assistant"' in transcript_text
@@ -303,7 +316,7 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     assert meta_payload["agent_model"] == "claude-opus-4-8"
     assert meta_payload["tokens_cached_input"] == 3
     assert meta_payload["tokens_cache_write"] == 2
-    assert meta_payload["tokens_total"] == 18
+    assert meta_payload["tokens_total"] == 15
     assert meta_payload["resume_command"].endswith("claude --resume sess-123")
 
 
@@ -321,7 +334,7 @@ def test_async_supervisor_uses_env_model_for_codex_thread_banner(
         "import json, os\n"
         "from pathlib import Path\n"
         "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        "'---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n', encoding='utf-8'"
         ")\n"
         "print(json.dumps({'type': 'thread.started', 'thread_id': 'codex-thread'}))\n"
         "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'codex text'}}))\n",
@@ -365,7 +378,7 @@ def test_async_supervisor_records_requested_model_next_to_reported_model(
         "import os\n"
         "from pathlib import Path\n"
         "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        "'---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n', encoding='utf-8'"
         ")\n"
         "print('model: gemini-real')\n",
         encoding="utf-8",
@@ -474,7 +487,7 @@ def test_async_supervisor_survives_large_single_json_line_from_mcp(
         "import json, os\n"
         "from pathlib import Path\n"
         "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        "'---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n', encoding='utf-8'"
         ")\n"
         "print(json.dumps({'type': 'thread.started', 'thread_id': 'codex-thread'}))\n"
         "huge = 'x' * 120000\n"

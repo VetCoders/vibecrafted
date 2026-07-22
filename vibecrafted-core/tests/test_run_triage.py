@@ -14,6 +14,7 @@ from typing import Any, Sequence
 
 import pytest
 
+from vibecrafted_core.report_contract import render_minimal_frontmatter
 from vibecrafted_core.run_triage import (
     BUCKET_FAILED,
     BUCKET_FINALIZED,
@@ -120,7 +121,13 @@ def write_meta(tmp_path: Path, **overrides: Any) -> Path:
     one signal it is bending.
     """
     report = tmp_path / "agent.md"
-    report.write_text("# report\n", encoding="utf-8")
+    report.write_text(
+        render_minimal_frontmatter(
+            run_id="r1", agent="codex", skill="scaffold", status="completed"
+        )
+        + "# report\n",
+        encoding="utf-8",
+    )
     transcript = tmp_path / "agent.transcript.log"
     transcript.write_text("x" * (MINIMAL_TRANSCRIPT_BYTES * 4), encoding="utf-8")
 
@@ -333,7 +340,13 @@ def test_every_verdict_carries_a_reason() -> None:
 
 def test_signals_are_read_from_the_artifacts_on_disk(tmp_path: Path) -> None:
     report = tmp_path / "r.md"
-    report.write_text("body", encoding="utf-8")
+    report.write_text(
+        render_minimal_frontmatter(
+            run_id="r1", agent="codex", skill="scaffold", status="completed"
+        )
+        + "body\n",
+        encoding="utf-8",
+    )
     transcript = tmp_path / "t.log"
     transcript.write_text("xyz", encoding="utf-8")
 
@@ -347,8 +360,9 @@ def test_signals_are_read_from_the_artifacts_on_disk(tmp_path: Path) -> None:
     )
 
     assert signals.report_exists is True
-    assert signals.report_bytes == 4
+    assert signals.report_bytes is not None and signals.report_bytes >= 4
     assert signals.transcript_bytes == 3
+    assert signals.report_frontmatter_ok is True
     assert signals.classify().verdict == VERDICT_FINALIZED
 
 
@@ -433,6 +447,39 @@ def test_headless_run_is_skipped_not_failed() -> None:
     plan = plan_triage({"run_id": "r1", "exit_code": 0}, {"PATH": "/usr/bin"})
     assert plan.should_run is False
     assert plan.skip_reason == "no_session"
+
+
+def test_meta_stamped_origin_session_enables_dispatcher_triage() -> None:
+    """Python dispatcher finishes outside the pane; origin lives on meta."""
+    plan = plan_triage(
+        {
+            "run_id": "scaf-1",
+            "exit_code": 0,
+            "origin_session": "vibecrafted workers",
+            "origin_tab": "scaf-1",
+            "status": "completed",
+            "report": "/tmp/report.md",
+        },
+        {"PATH": "/usr/bin"},
+    )
+    assert plan.should_run is True
+    assert plan.origin_session == "vibecrafted workers"
+    assert plan.origin_tab == "scaf-1"
+    assert plan.pane_id == ""
+
+
+def test_operator_session_meta_alias_is_accepted() -> None:
+    plan = plan_triage(
+        {
+            "run_id": "work-1",
+            "exit_code": 0,
+            "operator_session": "vibecrafted",
+        },
+        {"PATH": "/usr/bin"},
+    )
+    assert plan.should_run is True
+    assert plan.origin_session == "vibecrafted"
+    assert plan.origin_tab == "work-1"
 
 
 def test_pane_env_without_session_name_is_skipped() -> None:
@@ -921,7 +968,13 @@ def test_corrupt_kernel_receipt_fails_closed_never_raises(tmp_path: Path) -> Non
 def test_read_run_signals_picks_up_meta_axes(tmp_path: Path) -> None:
     """Lifecycle/ship write the three axis keys onto the run receipt."""
     report = tmp_path / "r.md"
-    report.write_text("body", encoding="utf-8")
+    report.write_text(
+        render_minimal_frontmatter(
+            run_id="r1", agent="codex", skill="scaffold", status="completed"
+        )
+        + "body\n",
+        encoding="utf-8",
+    )
     # Tiny transcript would block legacy finalized; axes must win.
     transcript = tmp_path / "t.log"
     transcript.write_text("x" * TINY, encoding="utf-8")

@@ -819,6 +819,7 @@ def source_skills_root(repo_root: Path) -> Path:
 
 
 def get_framework_version(repo_root: Path) -> str:
+    """Base semver from VERSION (no local git slug)."""
     return read_version_file(repo_root)
 
 
@@ -831,6 +832,78 @@ def get_repo_commit(repo_root: Path) -> str:
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "unknown"
+
+
+def get_install_version(repo_root: Path) -> str:
+    """Version shown and stamped by ``make install``: ``X.Y.Z+gSHORTSHA``.
+
+    Source VERSION stays plain semver for version-bump; install always appends
+    the commit slug so installed runtimes are attributable.
+    """
+    base = get_framework_version(repo_root).strip()
+    if not base or base == "unknown":
+        return base or "unknown"
+    # Drop a prior local version segment if re-installing from a stamped tree.
+    base = base.split("+", 1)[0].strip()
+    sha = get_repo_commit(repo_root)
+    if not sha or sha == "unknown":
+        return base
+    return f"{base}+g{sha}"
+
+
+_INSTALL_VERSION_TARGETS = (
+    Path("VERSION"),
+    Path("vibecrafted-core/vibecrafted_core/VERSION"),
+    Path("vibecrafted-mcp/vibecrafted_mcp/VERSION"),
+    Path("vibecrafted-core/pyproject.toml"),
+    Path("vibecrafted-mcp/pyproject.toml"),
+)
+
+
+def stamp_install_version(root: Path, version: str) -> list[Path]:
+    """Write ``version`` (with +gSHA) into every VERSION / [project] version under root.
+
+    Returns the list of files actually updated. Missing paths are skipped so a
+    partial distribution payload still stamps what it has.
+    """
+    import re
+
+    project_version_re = re.compile(
+        r'^(?P<prefix>\s*version\s*=\s*")(?P<version>[^"]+)(?P<suffix>".*)$'
+    )
+    stamped: list[Path] = []
+    for relative in _INSTALL_VERSION_TARGETS:
+        path = root / relative
+        if not path.is_file():
+            continue
+        if path.name == "VERSION":
+            path.write_text(version + "\n", encoding="utf-8")
+            stamped.append(path)
+            continue
+        if path.name == "pyproject.toml":
+            text = path.read_text(encoding="utf-8")
+            in_project = False
+            lines: list[str] = []
+            replaced = False
+            for line in text.splitlines(keepends=True):
+                stripped = line.strip()
+                if stripped.startswith("[") and stripped.endswith("]"):
+                    in_project = stripped == "[project]"
+                if in_project and not replaced:
+                    body = line.rstrip("\r\n")
+                    newline = line[len(body) :]
+                    match = project_version_re.match(body)
+                    if match:
+                        line = (
+                            f"{match.group('prefix')}{version}"
+                            f"{match.group('suffix')}{newline}"
+                        )
+                        replaced = True
+                lines.append(line)
+            if replaced:
+                path.write_text("".join(lines), encoding="utf-8")
+                stamped.append(path)
+    return stamped
 
 
 def get_repo_url(repo_root: Path) -> str:
@@ -2477,6 +2550,9 @@ def refresh_current_tools(
     if current_link.exists() or current_link.is_symlink():
         try:
             if current_link.resolve(strict=False) == repo_root:
+                # Dev/portable: tools link points at the checkout. Do NOT write
+                # +gSHA into the live git tree (would dirty VERSION files).
+                # Display still uses get_install_version() at banner time.
                 return current_link
         except OSError:
             pass
@@ -2489,6 +2565,10 @@ def refresh_current_tools(
         return target
 
     sync_control_plane_tree(repo_root, target, dry_run=dry_run, mirror=mirror)
+    # Staged install tree must carry X.Y.Z+gSHA on every VERSION surface.
+    # Source checkout stays plain semver for version-bump / git cleanliness.
+    if not dry_run:
+        stamp_install_version(target, get_install_version(repo_root))
     return current_link
 
 
@@ -4293,7 +4373,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     # --- Header ---
     sep = brand_separator(33)
     print()
-    fw_ver = get_framework_version(repo_root)
+    fw_ver = get_install_version(repo_root)
     print(f"  \u2692 {VAPOR_HEADER} \u2692")
     print()
     print(f"  {brand_version_line(fw_ver)}")
@@ -4740,7 +4820,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     state = InstallState(
         installed_at=now,
         updated_at=now,
-        framework_version=get_framework_version(repo_root),
+        framework_version=get_install_version(repo_root),
         repo_commit=get_repo_commit(repo_root),
         repo_url=get_repo_url(repo_root),
         skills=selected_skills,
@@ -4882,7 +4962,7 @@ def _print_unicode_summary(
 ) -> None:
     """Print the unicode summary box. If out is given, write there instead of stdout."""
     _out = out or sys.stdout
-    fw_ver_display = get_framework_version(repo_root)
+    fw_ver_display = get_install_version(repo_root)
     skill_count = len(skills)
     current_runtime = _current_tools_link(store_path) / "runtime"
 
@@ -4949,7 +5029,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     dry_run = args.dry_run
     mirror = args.mirror
     cli_with_shell = args.with_shell
-    fw_ver = get_framework_version(repo_root)
+    fw_ver = get_install_version(repo_root)
 
     shared_home = vibecrafted_home()
     store_path = _canonical_store_path(shared_home, create=not dry_run)
@@ -5268,7 +5348,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     # --- Finish card (CLI_PRODUCT_SPEC §6.1): result, key facts, one next step. ---
     _clear_compact_status(sys.stdout)
     _compact_checkpoint(sys.stdout, 4, "Onboarding")
-    fw_ver_display = get_framework_version(repo_root)
+    fw_ver_display = get_install_version(repo_root)
     store_display = str(vibecrafted_home()).replace(str(Path.home()), "~")
     agent_str = " ".join(agent_names) if agent_names else "none"
     missing_fnd = [f for f in FOUNDATIONS if f.required and not f.is_installed()]

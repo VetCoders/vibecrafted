@@ -587,3 +587,89 @@ class AgentStreamParser:
         if not text or text == "None":
             return ""
         return text + "\n"
+
+
+def filter_stream(
+    agent: str,
+    *,
+    stdin=None,
+    stdout=None,
+    raw_file: str | Path | None = None,
+    default_model: str = "",
+) -> int:
+    """Read agent streaming-json from stdin, emit human text to stdout.
+
+    Optional ``raw_file`` tees the unparsed stream for await/transcript parse
+    while the pane only sees AgentStreamParser output.
+    """
+    import sys as _sys
+
+    in_stream = stdin if stdin is not None else _sys.stdin.buffer
+    out_stream = stdout if stdout is not None else _sys.stdout.buffer
+    parser = AgentStreamParser(
+        agent, default_model=default_model or resolve_default_model(agent)
+    )
+    raw_handle = None
+    try:
+        if raw_file:
+            raw_path = Path(raw_file).expanduser()
+            raw_path.parent.mkdir(parents=True, exist_ok=True)
+            raw_handle = raw_path.open("ab")
+        while True:
+            chunk = in_stream.readline()
+            if not chunk:
+                break
+            if raw_handle is not None:
+                raw_handle.write(chunk)
+                raw_handle.flush()
+            display = parser.feed_line(chunk)
+            if display:
+                out_stream.write(display.encode("utf-8"))
+                out_stream.flush()
+    finally:
+        if raw_handle is not None:
+            raw_handle.close()
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI: ``python -m vibecrafted_core.agent_stream --agent grok``."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="vibecrafted_core.agent_stream",
+        description=(
+            "Filter agent streaming-json (stdin) into human-readable pane text "
+            "(stdout). Used by non-interactive resume and worker pane launches."
+        ),
+    )
+    parser.add_argument(
+        "--agent",
+        required=True,
+        help="Agent family: grok, claude, codex, gemini, junie, agy",
+    )
+    parser.add_argument(
+        "--raw-file",
+        default="",
+        help="Optional path to tee the raw streaming-json transcript",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Optional default model id for telemetry lines",
+    )
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    agent = str(args.agent or "").strip().lower()
+    if not agent:
+        print("error: --agent is required", file=sys.stderr)
+        return 2
+    return filter_stream(
+        agent,
+        raw_file=args.raw_file or None,
+        default_model=str(args.model or ""),
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

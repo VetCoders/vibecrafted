@@ -311,6 +311,8 @@ def classify_run(
     transcript_bytes: int | None,
     *,
     kernel_axes: KernelAxes | None = None,
+    report_claim_status: str = "",
+    report_frontmatter_ok: bool | None = None,
 ) -> RunClassification:
     """Decide a finished run's drawer from its signals.
 
@@ -327,14 +329,16 @@ def classify_run(
     When no kernel receipt is present (``kernel_axes is None``), the legacy
     five-signal conjunction applies:
 
-    * **finalized** — exit 0, a state asserting delivery, and a non-empty report
-      actually on disk. All three, or it is not finalized.
+    * **finalized** — exit 0, a state asserting delivery, a non-empty report
+      with valid frontmatter claim, and claim not contradicting death. Agent
+      claim alone never finalizes.
     * **failed** — exit non-zero, a state asserting death, no report, and a
       transcript too small to contain work. A run that died before doing any.
     * **needs_attention** — everything else. Every contradiction between signals
       (exit 0 with no report, non-zero exit *with* a report, a state that
       disagrees with the exit code, ``report_invalid``/``contract_failed``/
-      ``ghost``/``timed_out``), and every signal we could not read.
+      ``ghost``/``timed_out``), missing/invalid report frontmatter, claim
+      vs evidence conflicts, and every signal we could not read.
 
     The last clause is the point: an unreadable signal fails closed, to a human,
     never to a confident drawer. ``report_exists=None`` and
@@ -365,6 +369,17 @@ def classify_run(
             return _attention("report_size_unreadable")
         if report_bytes < MINIMAL_REPORT_BYTES:
             return _attention("report_empty")
+        # Mandatory frontmatter when checked (False). None = not evaluated (unit tests).
+        if report_frontmatter_ok is False:
+            return _attention("report_frontmatter_invalid")
+
+    claim = str(report_claim_status or "").strip().lower()
+    from .report_contract import (
+        CLAIM_COMPLETED,
+        CLAIM_FAILED,
+        CLAIM_BLOCKED,
+        CLAIM_PARTIAL,
+    )
 
     if code == 0:
         if not delivered:
@@ -372,10 +387,24 @@ def classify_run(
             return _attention("exit_0_without_report")
         if state not in _STATES_DELIVERED:
             return _attention(f"exit_0_but_state_{state}")
+        if claim in CLAIM_FAILED:
+            return _attention("exit_0_but_claim_failed")
+        if claim in CLAIM_BLOCKED or claim in CLAIM_PARTIAL:
+            return _attention(f"exit_0_claim_{claim or 'partial'}")
+        # claim completed / empty: empty allowed only if frontmatter_ok is True
+        # (required keys present including status). Missing claim after ok FM
+        # should not happen; treat unrecognized as attention.
+        if claim and claim not in CLAIM_COMPLETED:
+            return _attention(f"exit_0_claim_unrecognized:{claim}")
         return RunClassification(VERDICT_FINALIZED, "exit_0_report_delivered")
 
     # Non-zero exit from here down.
     if delivered:
+        # Claim can admit failure while still leaving a report for the board.
+        if claim in CLAIM_FAILED:
+            return RunClassification(
+                VERDICT_FAILED, f"exit_{code}_claim_failed_with_report"
+            )
         # The mirror specimen: the run says it died, the artifacts say otherwise.
         return _attention(f"exit_{code}_with_report")
     if state not in _STATES_DIED:
@@ -407,6 +436,9 @@ class RunSignals:
     report_bytes: int | None
     transcript_bytes: int | None
     kernel_axes: KernelAxes | None = None
+    # Agent claim from report frontmatter (claim_status/status). Empty = absent.
+    report_claim_status: str = ""
+    report_frontmatter_ok: bool | None = None
 
     def classify(self) -> RunClassification:
         return classify_run(
@@ -416,6 +448,8 @@ class RunSignals:
             self.report_bytes,
             self.transcript_bytes,
             kernel_axes=self.kernel_axes,
+            report_claim_status=self.report_claim_status,
+            report_frontmatter_ok=self.report_frontmatter_ok,
         )
 
 
@@ -452,6 +486,20 @@ def read_run_signals(meta: Mapping[str, Any]) -> RunSignals:
     # `state` is the control-plane spelling, `status` the launcher meta's. Either
     # is the run's own account of how it ended.
     run_state = str(meta.get("state") or meta.get("status") or "").strip()
+
+    claim_status = str(meta.get("report_claim_status") or "").strip()
+    frontmatter_ok: bool | None = None
+    report_path = str(meta.get("report") or "").strip()
+    if report_exists and report_path:
+        from .report_contract import validate_report_file
+
+        fm = validate_report_file(report_path, require_frontmatter=True)
+        frontmatter_ok = fm.ok
+        if not claim_status:
+            claim_status = fm.claim_status
+    elif report_exists is False:
+        frontmatter_ok = None
+
     return RunSignals(
         exit_code=meta.get("exit_code"),
         run_state=run_state,
@@ -459,6 +507,8 @@ def read_run_signals(meta: Mapping[str, Any]) -> RunSignals:
         report_bytes=report_bytes,
         transcript_bytes=transcript_bytes,
         kernel_axes=read_kernel_axes(meta),
+        report_claim_status=claim_status,
+        report_frontmatter_ok=frontmatter_ok,
     )
 
 
@@ -599,22 +649,54 @@ def plan_triage(
     if not run_id:
         return TriagePlan(should_run=False, skip_reason="no_run_id")
 
-    # Headless / CI / detached (setsid) runs have no pane env at all. Not an
-    # error — there is simply no terminal to triage.
+    def _meta_str(*names: str) -> str:
+        for name in names:
+            value = str(meta.get(name, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    # Origin identity: prefer durable meta fields (dispatcher path stamps them
+    # at finish; shell launchers may already have them). Fall back to live pane
+    # env for the classic in-tab finish path.
+    origin_session = _meta_str(
+        "origin_session",
+        "vc_frame_session",
+        "operator_session",
+        "worker_session",
+    ) or _env(
+        "VIBECRAFTED_WORKER_SESSION",
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ_SESSION_NAME",
+    )
+    tab_name = (
+        _meta_str("origin_tab", "vc_frame_tab", "tab_name")
+        or _env("VC_FRAME_TAB_NAME")
+        or run_id
+    )
+    pane_id = _meta_str("origin_pane_id", "vc_frame_pane_id", "pane_id") or _env(
+        "VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID"
+    )
+
+    # Headless / CI / detached (setsid) runs have no pane env and no stamped
+    # host session. Not an error — there is simply no terminal to triage.
+    # Meta-stamped origin_session is enough for the Python dispatcher path:
+    # triage-run targets that session by name without needing ambient pane env.
     in_frame = bool(
-        _env("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID")
+        pane_id
+        or origin_session
+        or _env("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID")
         or "VC_FRAME" in env
         or "ZELLIJ" in env
     )
-    origin_session = _env("VC_FRAME_SESSION_NAME", "ZELLIJ_SESSION_NAME")
     if not in_frame or not origin_session:
         return TriagePlan(should_run=False, skip_reason="no_session")
 
     # The run tab is named by run id (lib/vc_frame.sh). A marbles run instead
     # shares one tab with its siblings, so closing it would destroy their
     # scrollback along with ours. Refuse rather than guess.
-    marbles_tab = _env("VIBECRAFTED_MARBLES_TAB_NAME")
-    tab_name = _env("VC_FRAME_TAB_NAME") or run_id
+    marbles_tab = _meta_str("marbles_tab_name") or _env("VIBECRAFTED_MARBLES_TAB_NAME")
     if marbles_tab and tab_name == marbles_tab and marbles_tab != run_id:
         return TriagePlan(should_run=False, skip_reason="shared_tab")
 
@@ -647,7 +729,7 @@ def plan_triage(
         verdict_reason=classification.reason,
         origin_session=origin_session,
         origin_tab=tab_name,
-        pane_id=_env("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID"),
+        pane_id=pane_id,
         cwd=str(meta.get("root", "") or "") or _env("SPAWN_ROOT"),
         command=command,
     )

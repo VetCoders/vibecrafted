@@ -300,7 +300,18 @@ def _extract_session(text: str) -> str:
 def _tokens_total(
     input_tokens: int, cached_input_tokens: int, output_tokens: int
 ) -> int:
-    return input_tokens + cached_input_tokens + output_tokens
+    """Sum usage without double-counting provider-specific cache shapes.
+
+    Claude/Codex: ``input`` already includes cache hits (cached ≤ input).
+    Junie-style: ``input`` is non-cached only and ``cached`` is additive
+    (cached can exceed input). Detect by comparing magnitudes.
+    """
+    inp = max(0, int(input_tokens or 0))
+    cached = max(0, int(cached_input_tokens or 0))
+    out = max(0, int(output_tokens or 0))
+    if cached and cached > inp:
+        return inp + cached + out
+    return inp + out
 
 
 def _extract_tokens(text: str) -> dict[str, int | None]:
@@ -635,9 +646,12 @@ def _render_frontmatter(data: dict[str, object]) -> str:
         "prompt_id",
         "agent",
         "skill",
+        "project",
         "model",
         "model_requested",
         "status",
+        "claim_status",
+        "claim_kind",
         "date",
         "session_id",
         "artifact_stem",
@@ -797,13 +811,19 @@ def _normalize_markdown_artifact(
         return
     fm, body = _parse_frontmatter(text)
     frontmatter: dict[str, object] = dict(fm)
+    skill_value = payload.get("skill_code") or payload.get("skill") or "unknown"
+    status_value = payload.get("status", "unknown")
     frontmatter_update = {
         "run_id": payload.get("run_id", "unknown"),
         "prompt_id": payload.get("prompt_id", "unknown"),
         "agent": payload.get("agent", "unknown"),
-        "skill": payload.get("skill_code") or payload.get("skill") or "unknown",
+        "skill": skill_value,
         "model": payload.get("model", "unknown"),
-        "status": payload.get("status", "unknown"),
+        "status": status_value,
+        # claim_status mirrors status for board triangulation; agent may have
+        # set a more specific claim already in frontmatter — only fill if empty.
+        "claim_status": frontmatter.get("claim_status") or status_value,
+        "claim_kind": frontmatter.get("claim_kind") or skill_value,
         "date": payload.get("date", "unknown"),
         "session_id": payload.get("session_id") or "unknown",
         "artifact_stem": payload.get("artifact_stem", "unknown"),

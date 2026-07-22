@@ -139,6 +139,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="print the would-kill table with ownership evidence, signal nothing",
     )
     reap.add_argument("--json", action="store_true")
+    procs = sub.add_parser(
+        "procs",
+        help="identity-qualified process snapshot/terminate for vc-procs TUI",
+    )
+    procs_sub = procs.add_subparsers(dest="procs_action")
+    procs_sub.add_parser("snapshot", help="JSON process snapshot")
+    term = procs_sub.add_parser("terminate", help="TERM→KILL with identity proof")
+    term.add_argument("--pid", type=int, required=True)
+    term.add_argument("--expected-start", required=True)
+    term.add_argument("--expected-command-sha256", required=True)
+    term.add_argument("--expected-run-id", default="")
     for name in LAUNCHERS:
         _add_launch_parser(sub, name)
     return parser
@@ -559,6 +570,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "dispatch",
         "doctor",
         "paste",
+        "procs",
         "reap",
         "stop",
     } | set(LAUNCHERS)
@@ -667,6 +679,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.json:
             reap_argv.append("--json")
         return reap_main(reap_argv)
+    if args.command == "procs":
+        from .process_control import main as procs_main
+
+        action = getattr(args, "procs_action", None) or "snapshot"
+        if action == "snapshot":
+            return procs_main(["snapshot", "--json"])
+        if action == "terminate":
+            return procs_main(
+                [
+                    "terminate",
+                    "--pid",
+                    str(args.pid),
+                    "--expected-start",
+                    args.expected_start,
+                    "--expected-command-sha256",
+                    args.expected_command_sha256,
+                    "--expected-run-id",
+                    args.expected_run_id or "",
+                    "--json",
+                ]
+            )
+        print("usage: vibecrafted procs {snapshot|terminate}", file=sys.stderr)
+        return 2
     if args.command == "capabilities":
         from .workflow_capabilities import (
             render_capabilities_lines,
