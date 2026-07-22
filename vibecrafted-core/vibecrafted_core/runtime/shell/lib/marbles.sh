@@ -456,10 +456,12 @@ _vetcoders_fresh_session_command() {
       printf 'junie --task=%s --project=. --skip-update-check\n' "$quoted_prompt"
       ;;
     grok)
+      # Interactive: positional PROMPT into the TUI (stays open).
+      # Headless: --single is one-shot stdout (fleet / await / baton-pass only).
       if [[ "$mode" == headless ]]; then
         printf 'grok --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json --single %s\n' "$quoted_prompt"
       else
-        printf 'grok --cwd . --permission-mode bypassPermissions --no-alt-screen --single %s\n' "$quoted_prompt"
+        printf 'grok --cwd . --permission-mode bypassPermissions --no-alt-screen %s\n' "$quoted_prompt"
       fi
       ;;
     *)
@@ -493,9 +495,24 @@ _vetcoders_resume_agent() {
     fi
   fi
 
+  # Preserve the operator's input intent before an internally-generated AICX
+  # pack is attached as a file. Codex mode selection is based on this original
+  # intent, never on the transport used for continuity context.
+  local codex_explicit_input=""
+  if [[ "$tool" == codex ]] && {
+    [[ -n "${_vetcoders_contract_prompt_explicit:-}" ]] ||
+      [[ -n "${_vetcoders_contract_file_explicit:-}" ]] ||
+      [[ -n "$_vetcoders_contract_prompt" ]] ||
+      [[ -n "$_vetcoders_contract_file" ]]
+  }; then
+    codex_explicit_input=1
+  fi
+
   local aicx_fallback_mode=""
   local aicx_context_file=""
-  if [[ -z "$_vetcoders_contract_session" ]]; then
+  if [[ -z "$_vetcoders_contract_session" ]] && {
+    [[ "$tool" != codex ]] || [[ -z "$codex_explicit_input" ]]
+  }; then
     # No session id: compose multi-agent continuity from AICX (48h default).
     local root_dir fallback_lines
     root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
@@ -507,7 +524,11 @@ _vetcoders_resume_agent() {
       key="${line%%=*}"
       val="${line#*=}"
       case "$key" in
-        SESSION_ID) _vetcoders_contract_session="$val" ;;
+        SESSION_ID)
+          # Bare Codex resume is continuity into a fresh interactive session.
+          # A same-provider historical candidate is evidence, not a target.
+          [[ "$tool" == codex ]] || _vetcoders_contract_session="$val"
+          ;;
         CONTEXT_FILE) aicx_context_file="$val" ;;
         MODE) aicx_fallback_mode="$val" ;;
       esac
@@ -529,6 +550,7 @@ _vetcoders_resume_agent() {
         printf '  no same-agent session in window → NEW session with continuity pack\n' >&2
       fi
     fi
+    [[ "$tool" != codex ]] || aicx_fallback_mode="new_session"
   fi
 
   [[ -z "$_vetcoders_contract_count" ]] || {
@@ -549,11 +571,13 @@ _vetcoders_resume_agent() {
   # An explicit --prompt/--file means "continue the job", not "open me a TUI":
   # the resume must run the agent's NON-INTERACTIVE invocation even when a
   # visible operator tab hosts it, so it finishes, exits, and can be triaged.
-  # Only a bare resume (no input) parks an interactive session in the tab.
-  # AICX fallback always carries a file → treat as headless job unless the
-  # operator only wants an interactive shell with empty prompt (rare).
+  # Only a bare resume (no operator input) parks an interactive session in the
+  # tab. For Codex, an internal AICX file is continuity transport and does not
+  # count as operator input; legacy providers retain their existing behavior.
   resume_mode="interactive"
-  if [[ -n "$_vetcoders_contract_prompt" || -n "$_vetcoders_contract_file" ]]; then
+  if [[ "$tool" == codex ]]; then
+    [[ -z "$codex_explicit_input" ]] || resume_mode="headless"
+  elif [[ -n "$_vetcoders_contract_prompt" || -n "$_vetcoders_contract_file" ]]; then
     resume_mode="headless"
   fi
 
@@ -569,7 +593,10 @@ _vetcoders_resume_agent() {
   # we are already in vc_frame, know an operator session, or have an interactive
   # terminal. Plain headless resume falls back to the agent CLI directly.
   if [[ "$runtime" =~ ^(terminal|visible)$ ]] && {
-    _vetcoders_in_vc_frame || [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] || [[ -t 0 && -t 1 ]]
+    [[ "$tool" == codex && "$resume_mode" == interactive ]] ||
+      _vetcoders_in_vc_frame ||
+      [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]] ||
+      [[ -t 0 && -t 1 ]]
   }; then
     _vetcoders_prepare_operator_runtime "$runtime" || return 1
     if [[ -n "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
@@ -578,6 +605,8 @@ _vetcoders_resume_agent() {
       printf '  agent:   %s\n' "$tool"
       if [[ -n "$_vetcoders_contract_session" ]]; then
         printf '  session: %s\n' "$_vetcoders_contract_session"
+      elif [[ "$tool" == codex && -n "$codex_explicit_input" ]]; then
+        printf '  session: (new — explicit non-interactive run)\n'
       else
         printf '  session: (new — aicx 48h multi-agent continuity)\n'
       fi
@@ -585,6 +614,11 @@ _vetcoders_resume_agent() {
       [[ -n "$aicx_context_file" ]] && printf '  pack:    %s\n' "$aicx_context_file"
       return 0
     fi
+  fi
+
+  if [[ "$tool" == codex && "$resume_mode" == interactive ]]; then
+    printf 'Interactive Codex resume requires a vc-frame operator session; refusing to downgrade to codex exec.\n' >&2
+    return 1
   fi
 
   # No operator surface (piped / async-supervisor baton-pass): run the agent's
@@ -685,14 +719,20 @@ _vetcoders_resume_command() {
       fi
       ;;
     grok)
-      # grok --single is one-shot non-interactive. NEVER pass --restore-code: it
-      # checks out the original session's commit and would clobber the working tree.
-      # Use streaming-json (matching verified python lane + grok 0.2.97 headless)
-      # so session/usage parse via JSON_TOKEN_PATTERNS works from transcript.
-      if [[ -n "$resume_prompt" ]]; then
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json --single %s\n' "$quoted_session" "$quoted_prompt"
+      # NEVER pass --restore-code: it checks out the original session's commit
+      # and would clobber the working tree.
+      # Interactive: --resume into TUI (optional seed prompt as positional).
+      # Headless: --single + streaming-json for fleet/await transcript parse.
+      if [[ "$mode" == headless ]]; then
+        if [[ -n "$resume_prompt" ]]; then
+          printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json --single %s\n' "$quoted_session" "$quoted_prompt"
+        else
+          printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json --single "Continue."\n' "$quoted_session"
+        fi
+      elif [[ -n "$resume_prompt" ]]; then
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen %s\n' "$quoted_session" "$quoted_prompt"
       else
-        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen --output-format streaming-json\n' "$quoted_session"
+        printf 'grok --resume %s --cwd . --permission-mode bypassPermissions --no-alt-screen\n' "$quoted_session"
       fi
       ;;
     *)

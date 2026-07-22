@@ -458,7 +458,8 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
         ("junie", "junie --task="),
         (
             "grok",
-            "grok --cwd . --permission-mode bypassPermissions --no-alt-screen --single ",
+            # Interactive TUI: positional prompt, NO --single (one-shot headless).
+            "grok --cwd . --permission-mode bypassPermissions --no-alt-screen ",
         ),
     ],
 )
@@ -520,6 +521,61 @@ def test_init_fleet_agents_resolve_skill_init_helpers(
     script_body = command_script.read_text(encoding="utf-8")
     assert command_needle in script_body
     assert "/vc-init" in script_body
+    if agent == "grok":
+        assert " --single " not in script_body
+        assert "--single" not in script_body
+
+
+def test_init_grok_is_interactive_tui_not_single_shot(tmp_path: Path) -> None:
+    """Regression: vibecrafted init grok must open the TUI like codex/claude.
+
+    --single is one-shot headless (prints + exits). That belongs only to
+    fleet/await non-interactive lanes, never vc-init / bare resume.
+    """
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    session_state_file = tmp_path / "session-state.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
+    _write_fake_osascript(fake_bin, capture_file, session_state_file)
+    _write_fake_agent(fake_bin, "grok", tmp_path / "unused-grok.txt")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["SESSION_STATE_FILE"] = str(session_state_file)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "init", "grok"],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    script_body = _spawned_command_script(
+        capture_file.read_text(encoding="utf-8")
+    ).read_text(encoding="utf-8")
+    assert (
+        "grok --cwd . --permission-mode bypassPermissions --no-alt-screen"
+        in script_body
+    )
+    assert "/vc-init" in script_body
+    assert "--single" not in script_body
+    assert "streaming-json" not in script_body
 
 
 def test_init_gemini_returns_actionable_agy_migration() -> None:
@@ -2078,23 +2134,28 @@ def test_resume_wrapper_accepts_positional_session_id(tmp_path: Path) -> None:
 
 
 def test_resume_wrapper_accepts_bare_positional_session_id(tmp_path: Path) -> None:
-    """`vc-resume <agent> <session_id>` with no prompt resumes that session."""
+    """A positional Codex session id is the interactive `--session` alias."""
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "codex-args.txt"
+    capture_file = tmp_path / "vc-frame-args.txt"
     wrapper = tmp_path / "vc-resume"
 
     home.mkdir()
     fake_bin.mkdir()
     wrapper.symlink_to(LAUNCHER)
-    _write_fake_agent(fake_bin, "codex", capture_file)
+    _write_fake_vc_frame_with_live_session(fake_bin, capture_file, "operator-test")
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_RUNTIME_BIN"] = str(fake_bin)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["VETCODERS_SPAWN_RUNTIME"] = "terminal"
+    env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-test"
     env["CAPTURE_FILE"] = str(capture_file)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", str(wrapper), "codex", "resume-session-789"],
@@ -2104,12 +2165,12 @@ def test_resume_wrapper_accepts_bare_positional_session_id(tmp_path: Path) -> No
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert payload == [
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "resume",
-        "resume-session-789",
-    ]
+    assert payload[:4] == ["--session", "operator-test", "action", "new-tab"]
+    separator = payload.index("--")
+    command_script = Path(payload[separator + 1])
+    command_body = command_script.read_text(encoding="utf-8")
+    assert "codex resume resume-session-789" in command_body
+    assert "codex exec" not in command_body
 
 
 def test_vc_dashboard_wrapper_dispatches_to_dashboard(tmp_path: Path) -> None:
