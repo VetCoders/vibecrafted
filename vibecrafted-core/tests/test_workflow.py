@@ -925,8 +925,11 @@ def test_runtime_prompt_keeps_metadata_runtime_owned(tmp_path: Path) -> None:
     prompt = workflow._runtime_prompt(spec)
 
     assert "Write your final report to the path in VIBECRAFTED_REPORT_PATH" in prompt
-    assert "non-empty `run_id`, `agent`," in prompt
-    assert "`skill`, and `status` keys" in prompt
+    assert "`run_id` and `session_id`" in prompt
+    assert "preserve those values and never copy or guess identity" in prompt
+    assert "keeping `finalized: false`" in prompt
+    assert "`finalized: true` plus a non-empty `claim`" in prompt
+    assert "non-empty `agent`, `skill`, and `status` keys" in prompt
     assert "Preserve an honest blocked/partial/failed status" in prompt
     assert "runtime owns VIBECRAFTED_META_PATH" in prompt
     assert "If you create or update run metadata" not in prompt

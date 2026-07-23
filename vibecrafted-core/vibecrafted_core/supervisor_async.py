@@ -327,6 +327,7 @@ class AsyncSupervisor:
         skill = str(
             merged_env.get("VIBECRAFTED_SKILL_NAME")
             or merged_env.get("VIBECRAFTED_SKILL_CODE")
+            or merged_env.get("VIBECRAFTED_SKILL")
             or "unknown"
         )
         agent_model = resolve_default_model(agent, command=command, env=merged_env)
@@ -334,6 +335,15 @@ class AsyncSupervisor:
             agent, str(merged_env.get("VIBECRAFTED_MODEL_REQUESTED") or "")
         )
         started_at = _utc_now()
+        if report_path is not None:
+            from .report_contract import materialize_launcher_report_template
+
+            materialize_launcher_report_template(
+                report_path,
+                run_id=run_id,
+                agent=agent,
+                skill=skill,
+            )
 
         await self._emit(
             run_id,
@@ -597,7 +607,24 @@ class AsyncSupervisor:
                 with handle.transcript_path.open("ab") as transcript:
                     transcript.write(chunk)
             display_text = parser.feed_line(chunk)
+            previous_agent_session_id = handle.agent_session_id
             self._sync_stream_summary(handle, parser)
+            if (
+                handle.report_path is not None
+                and handle.agent_session_id
+                and handle.agent_session_id != previous_agent_session_id
+            ):
+                from .report_contract import stamp_launcher_report_identity
+
+                stamp_launcher_report_identity(
+                    handle.report_path,
+                    run_id=handle.run_id,
+                    session_id=handle.agent_session_id,
+                    agent=handle.agent,
+                    skill=handle.skill,
+                    status="pending",
+                    model=handle.agent_model,
+                )
             if tee_output:
                 if display_text:
                     sys.stdout.buffer.write(display_text.encode("utf-8"))
@@ -655,22 +682,39 @@ class AsyncSupervisor:
             text = report.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return
-        from .report_contract import ensure_frontmatter_on_text
+        from .report_contract import parse_report_text, stamp_launcher_report_identity
+
+        fields, _, has_frontmatter = parse_report_text(text)
+        if (
+            handle.exit_code == 0
+            and handle.agent == "grok"
+            and has_frontmatter
+            and fields.get("launcher_template", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+        ):
+            transcript_text = ""
+            if handle.transcript_path is not None and handle.transcript_path.exists():
+                try:
+                    transcript_text = handle.transcript_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    transcript_text = ""
+            report.write_text(
+                _render_fallback_report(handle, transcript_text),
+                encoding="utf-8",
+            )
 
         status = "completed" if handle.exit_code == 0 else "failed"
-        normalized = ensure_frontmatter_on_text(
-            text,
+        stamp_launcher_report_identity(
+            report,
             run_id=handle.run_id,
+            session_id=handle.agent_session_id,
             agent=handle.agent or "unknown",
             skill=handle.skill or "unknown",
             status=status,
-            extra={
-                "session_id": handle.agent_session_id or "unknown",
-                "model": handle.agent_model or "unknown",
-            },
+            model=handle.agent_model,
         )
-        if normalized != text:
-            report.write_text(normalized, encoding="utf-8")
 
     def _sync_stream_summary(
         self, handle: AsyncRunHandle, parser: AgentStreamParser

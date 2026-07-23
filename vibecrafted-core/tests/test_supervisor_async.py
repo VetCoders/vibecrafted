@@ -170,6 +170,58 @@ def test_dispatcher_normalizes_bare_codex_report_before_validation(
     assert "# Worker handoff\n\nSubstantive body.\n" in report_text
 
 
+def test_async_supervisor_preseeds_and_stamps_launcher_owned_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_SKILL", "implement")
+    report = tmp_path / "identity.md"
+    meta = tmp_path / "meta.json"
+    worker = tmp_path / "codex"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "report = Path(os.environ['VIBECRAFTED_REPORT_PATH'])\n"
+        "template = report.read_text(encoding='utf-8')\n"
+        "assert 'run_id: identity-run' in template\n"
+        "assert 'session_id: pending-unset' in template\n"
+        "assert 'finalized: false' in template\n"
+        "assert 'launcher_template: true' in template\n"
+        "report.write_text("
+        "'---\\nrun_id: copied-wrong\\nsession_id: copied-wrong\\nagent: codex\\n"
+        "skill: implement\\nstatus: completed\\nfinalized: true\\n"
+        "claim: identity was launcher-stamped\\n---\\n# Evidence\\n', "
+        "encoding='utf-8')\n"
+        "print(json.dumps({'type': 'thread.started', 'thread_id': 'codex-child'}))\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="identity-run",
+            command=[str(worker)],
+            root=tmp_path,
+            meta_path=meta,
+            report_path=report,
+        )
+    )
+
+    assert handle.artifact_validation is not None
+    assert handle.artifact_validation.ok
+    assert handle.agent_session_id == "codex-child"
+    report_text = report.read_text(encoding="utf-8")
+    assert "run_id: identity-run" in report_text
+    assert "session_id: codex-child" in report_text
+    assert "copied-wrong" not in report_text
+    assert "launcher_template:" not in report_text
+    assert "finalized: true" in report_text
+    assert "claim: identity was launcher-stamped" in report_text
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload["agent_session_id"] == "codex-child"
+
+
 def test_async_supervisor_preserves_blocked_claim_while_filling_identity(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -673,6 +725,11 @@ def test_dispatcher_cli_fails_missing_report_contract(
     assert payload["artifact_ok"] is False
     assert payload["artifact_errors"] == ["report_missing"]
     assert payload["state"] == "report_missing"
+    template = (tmp_path / "missing.md").read_text(encoding="utf-8")
+    assert "run_id: disp-test-2" in template
+    assert "session_id: pending-unset" in template
+    assert "finalized: false" in template
+    assert "launcher_template: true" in template
 
 
 def test_dispatcher_cli_records_lifecycle_worker_death(

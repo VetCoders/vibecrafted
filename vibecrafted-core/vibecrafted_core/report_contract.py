@@ -50,6 +50,9 @@ CLAIM_PARTIAL = frozenset(
 )
 
 _VALID_STATUS = CLAIM_COMPLETED | CLAIM_FAILED | CLAIM_BLOCKED | CLAIM_PARTIAL
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_LAUNCHER_TEMPLATE_KEY = "launcher_template"
+_PENDING_TEMPLATE_STATUS = "pending-unset"
 
 _FRONTMATTER_RE = re.compile(
     r"\A---\s*\n(?P<body>.*?)\n---\s*(?:\n|\Z)",
@@ -200,6 +203,12 @@ def validate_frontmatter_fields(
         if value.lower() in {"unknown", "none", "null", "pending-unset"}:
             warnings.append(f"report_frontmatter_placeholder:{key}")
 
+    # A launcher template is transport scaffolding, not worker evidence. Keep
+    # the historical ``report_missing`` signal even though the runtime has
+    # materialized a file, so exit-0-without-report still parks at n.
+    if normalized.get(_LAUNCHER_TEMPLATE_KEY, "").strip().lower() in _TRUTHY:
+        errors.append("report_missing")
+
     status = (
         (normalized.get("claim_status") or normalized.get("status") or "")
         .strip()
@@ -320,6 +329,119 @@ def render_minimal_frontmatter(
         lines.append(f"{key}: {data[key]}")
     lines.extend(["---", ""])
     return "\n".join(lines)
+
+
+def _render_frontmatter_fields(fields: Mapping[str, str], body: str) -> str:
+    return render_minimal_frontmatter(
+        run_id=fields.get("run_id", ""),
+        agent=fields.get("agent", ""),
+        skill=fields.get("skill", ""),
+        status=fields.get("status", "completed"),
+        extra={
+            key: value
+            for key, value in fields.items()
+            if key not in REQUIRED_KEYS and key != "status"
+        },
+    ) + body.lstrip("\n")
+
+
+def materialize_launcher_report_template(
+    path: str | Path,
+    *,
+    run_id: str,
+    agent: str,
+    skill: str,
+) -> bool:
+    """Create the machine-owned identity shell before the worker writes.
+
+    The marker makes the untouched shell fail artifact validation as
+    ``report_missing``. The worker must add evidence or an explicit claim; the
+    launcher later removes the marker and stamps the child agent session.
+    """
+
+    report = Path(path)
+    try:
+        if report.is_file() and report.stat().st_size > 0:
+            return False
+    except OSError:
+        return False
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(
+        render_minimal_frontmatter(
+            run_id=run_id,
+            agent=agent,
+            skill=skill,
+            status=_PENDING_TEMPLATE_STATUS,
+            extra={
+                "claim_status": "pending",
+                "finalized": "false",
+                "session_id": _PENDING_TEMPLATE_STATUS,
+                _LAUNCHER_TEMPLATE_KEY: "true",
+            },
+        ),
+        encoding="utf-8",
+    )
+    return True
+
+
+def stamp_launcher_report_identity(
+    path: str | Path,
+    *,
+    run_id: str,
+    session_id: str,
+    agent: str,
+    skill: str,
+    status: str,
+    model: str = "",
+) -> bool:
+    """Authoritatively stamp launcher-owned identity without clobbering claims."""
+
+    report = Path(path)
+    try:
+        text = report.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+    fields, body, has_fm = parse_report_text(text)
+    if not has_fm:
+        fields = {}
+        body = text
+
+    # run_id/session_id are runtime facts, never agent claims. Always replace
+    # copied or guessed values. An unavailable child session stays explicit.
+    fields["run_id"] = run_id or "unknown"
+    fields["session_id"] = session_id or _PENDING_TEMPLATE_STATUS
+    if agent and not fields.get("agent"):
+        fields["agent"] = agent
+    if skill and not fields.get("skill"):
+        fields["skill"] = skill
+    if model and not fields.get("model"):
+        fields["model"] = model
+    if not fields.get("status"):
+        fields["status"] = status or "completed"
+    if not fields.get("claim_status"):
+        fields["claim_status"] = fields["status"]
+    if "finalized" not in fields:
+        fields["finalized"] = "false"
+
+    template_pending = fields.get(_LAUNCHER_TEMPLATE_KEY, "").strip().lower() in _TRUTHY
+    worker_touched = any(
+        (
+            bool(body.strip()),
+            fields.get("finalized", "").strip().lower() in _TRUTHY,
+            bool(fields.get("claim", "").strip()),
+            fields.get("status", "").strip().lower()
+            not in {"", _PENDING_TEMPLATE_STATUS},
+        )
+    )
+    if template_pending and worker_touched:
+        fields.pop(_LAUNCHER_TEMPLATE_KEY, None)
+
+    normalized = _render_frontmatter_fields(fields, body)
+    if normalized == text:
+        return False
+    report.write_text(normalized, encoding="utf-8")
+    return True
 
 
 def ensure_frontmatter_on_text(

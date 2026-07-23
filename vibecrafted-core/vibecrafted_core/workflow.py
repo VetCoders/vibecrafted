@@ -1222,8 +1222,12 @@ Contract:
 - Do not launch or delegate to external agent fleets.
 - Do not call legacy Vibecrafted skill launchers or runtime/scripts launchers.
 - Write your final report to the path in VIBECRAFTED_REPORT_PATH ({report_hint}).
-- Begin that report with YAML frontmatter containing non-empty `run_id`, `agent`,
-  `skill`, and `status` keys. Preserve an honest blocked/partial/failed status.
+- The launcher pre-seeds that report's YAML frontmatter with machine-owned
+  `run_id` and `session_id`; preserve those values and never copy or guess identity.
+- Edit the existing frontmatter, keeping `finalized: false` until you deliberately
+  attest success with `finalized: true` plus a non-empty `claim`.
+- Keep non-empty `agent`, `skill`, and `status` keys.
+- Preserve an honest blocked/partial/failed status.
 - Let stdout/stderr form the transcript captured at VIBECRAFTED_TRANSCRIPT_PATH ({transcript_hint}).
 - Do not create, overwrite, or summarize run metadata yourself. The runtime owns VIBECRAFTED_META_PATH.
 {WORKER_SIGNAL_DISCIPLINE.rstrip()}

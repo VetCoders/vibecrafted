@@ -139,7 +139,9 @@ def validate_artifacts(
         warnings.append("meta_missing")
 
     # Frontmatter errors invalidate the report for board purposes even if non-empty.
-    if any(e.startswith("report_frontmatter_") for e in errors):
+    if any(e.startswith("report_frontmatter_") for e in errors) or (
+        "report_missing" in errors
+    ):
         report_valid = False
 
     return ArtifactValidation(
