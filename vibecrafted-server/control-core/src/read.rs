@@ -584,10 +584,11 @@ impl ControlPlane {
             if !merged.iter().any(|r| r.run_id == run.run_id)
                 && (run.is_terminal() || run.health == "active")
             {
-                // Lifecycle containers remain discoverable in recent/stalled,
-                // but only their dispatched workers carry process liveness.
+                // Lifecycle containers remain discoverable in `recent`, but
+                // they are neither workers nor heartbeat sources. Only their
+                // dispatched worker runs may enter active/stalled projections.
                 if !run.is_terminal() {
-                    run.health = "stalled".to_string();
+                    run.health = "unknown".to_string();
                 }
                 merged.push(run);
             }

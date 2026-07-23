@@ -146,9 +146,15 @@ fn compute_view_surfaces_lifecycle_projection() {
     assert!(
         view.active_runs
             .iter()
-            .chain(view.recent_runs.iter())
-            .any(|run| run.run_id == run_id && run.source == "lifecycle_runs"),
-        "compute_view includes lifecycle run projections"
+            .chain(view.stalled_runs.iter())
+            .all(|run| run.run_id != run_id),
+        "lifecycle containers do not claim worker liveness"
+    );
+    assert!(
+        view.recent_runs.iter().any(|run| run.run_id == run_id
+            && run.source == "lifecycle_runs"
+            && run.health == "unknown"),
+        "compute_view keeps lifecycle containers discoverable as recent/unknown"
     );
 }
 
