@@ -1202,7 +1202,7 @@ def record_stage_worker_completion(
         from .control_plane import sync_state
 
         board = sync_state(target)
-        synced = next(
+        synced: dict[str, Any] = next(
             (
                 item
                 for item in board.get("recent_runs") or []

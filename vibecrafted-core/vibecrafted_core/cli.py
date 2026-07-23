@@ -173,7 +173,8 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "re-run settlement over retained control_plane/runs snapshots "
-            "(honest: never fabricates FINALIZED without proof/seal)"
+            "(honest: FINALIZED only from a sealed delivery or an explicit "
+            "worker attestation — never from bare exit 0)"
         ),
     )
     settle = sub.add_parser(
@@ -626,7 +627,10 @@ def _cmd_resettle(args: argparse.Namespace) -> int:
         f"after:  f={after.get('f', 0)} x={after.get('x', 0)} "
         f"n={after.get('n', 0)} invalid={after.get('invalid', 0)}"
     )
-    print("note: history without proof/seal stays n/x — FINALIZED is never fabricated")
+    print(
+        "note: FINALIZED comes only from a sealed delivery or an explicit "
+        "worker attestation (finalized: true + claim) — never from bare exit 0"
+    )
     return 0 if result.get("ok") else 1
 
 
