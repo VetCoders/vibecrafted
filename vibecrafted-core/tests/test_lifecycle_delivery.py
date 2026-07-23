@@ -30,6 +30,10 @@ def _valid_report(
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _event_sink(kind: str, run_id: str, message: str, payload: dict) -> dict:
+    return {"kind": kind, "run_id": run_id, "message": message, "payload": payload}
+
+
 def test_grant_seal_on_validated_report_with_claim_match(tmp_path: Path) -> None:
     mission = "ship settlement board truth"
     digest = claim_digest_for_text(mission)
@@ -61,12 +65,24 @@ def test_grant_seal_on_validated_report_with_claim_match(tmp_path: Path) -> None
         mission_digest=digest,
         artifact_ok=True,
         exit_code=0,
+        repo_root=tmp_path,
+        event_sink=_event_sink,
     )
     assert result.granted is True
     assert result.proof_state == "passed"
     assert result.delivery_state == "sealed"
     assert (run_dir / "proof" / "result.json").is_file()
     assert (run_dir / "delivery-seal.json").is_file()
+    assert (run_dir / "execution-envelope.json").is_file()
+    assert (run_dir / "delivery-proof-contract.json").is_file()
+    assert (run_dir / "delivery-record.json").is_file()
+    proof = json.loads((run_dir / "proof" / "result.json").read_text())
+    assert proof["subject_executed"] is True
+    assert proof["assertion_consumed_subject_output"] is True
+    assert proof["negative_control_results"][0]["detected_falsehood"] is True
+    seal = json.loads((run_dir / "delivery-seal.json").read_text())
+    assert seal["issuer"] == "vc-ship"
+    assert seal["delivery_proof_contract_sha256"] != "sha256:" + "0" * 64
 
     # Settlement path: kernel axes + claim → finalized without operator action.
     payload = {
@@ -165,6 +181,31 @@ def test_refuse_report_without_claim_match(tmp_path: Path) -> None:
     assert settlement.tui_key == "n"
 
 
+def test_refuse_report_without_explicit_claim_digest(tmp_path: Path) -> None:
+    mission = "expected mission text"
+    digest = claim_digest_for_text(mission)
+    run_dir = tmp_path / "runtime_runs" / "missing-digest"
+    run_dir.mkdir(parents=True)
+    report = run_dir / "report.md"
+    _valid_report(report)
+
+    result = try_grant_lifecycle_stage_seal(
+        run_dir,
+        run_id="missing-digest",
+        report_path=report,
+        mission_text=mission,
+        mission_digest=digest,
+        artifact_ok=True,
+        exit_code=0,
+        repo_root=tmp_path,
+        event_sink=_event_sink,
+    )
+
+    assert result.granted is False
+    assert result.reason == "report_claim_digest_missing"
+    assert not (run_dir / "delivery-seal.json").exists()
+
+
 def test_resettle_is_honest_and_idempotent(tmp_path: Path) -> None:
     runs = tmp_path / "runs"
     runs.mkdir()
@@ -200,13 +241,33 @@ def test_resettle_is_honest_and_idempotent(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (tmp_path / "r.md").write_text("# report\n", encoding="utf-8")
+    (runs / "hist-invalid.json").write_text(
+        json.dumps(
+            {
+                "run_id": "hist-invalid",
+                "state": "report_invalid",
+                "exit_code": 1,
+                "liveness": "terminal",
+                "proof_state": "invalid",
+                "delivery_state": "unverified",
+                "settlement_verdict": "invalid",
+                "settlement_reason": "report_invalid",
+                "settlement_tui": "x",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     first = resettle_retained_snapshots(runs_dir=runs, force=True, dry_run=False)
     assert first["ok"] is True
-    assert first["scanned"] == 2
+    assert first["scanned"] == 3
     assert first["after"]["f"] == 1
     assert first["after"]["n"] >= 1
     assert first["after"]["f"] != 2  # never invent second f
+    assert first["before"]["x"] == 1
+    assert first["before"]["invalid"] == 1
+    assert first["after"]["x"] == 1
+    assert first["after"]["invalid"] == 1
 
     hist_n = json.loads((runs / "hist-n.json").read_text(encoding="utf-8"))
     assert hist_n.get("settlement_verdict") == "needs_attention"

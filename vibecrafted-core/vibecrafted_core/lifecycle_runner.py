@@ -77,6 +77,7 @@ def _maybe_seal_awaited_stage(
     await_result: dict[str, Any],
     lifecycle_id: str,
     mission_text: str,
+    repo_root: Path,
 ) -> Any:
     """Drive the delivery kernel after a stage await completes.
 
@@ -88,14 +89,20 @@ def _maybe_seal_awaited_stage(
 
     stage_run_id = str(await_result.get("run_id") or "").strip()
     if not stage_run_id:
-        launch = record.get("launch") if isinstance(record.get("launch"), dict) else {}
+        launch_value = record.get("launch")
+        launch: dict[str, Any] = launch_value if isinstance(launch_value, dict) else {}
         stage_run_id = str(launch.get("run_id") or "").strip()
     if not stage_run_id:
         return None
 
-    report_path = str(await_result.get("report") or "").strip()
-    transcript_path = str(await_result.get("transcript") or "").strip()
-    run = await_result.get("run") if isinstance(await_result.get("run"), dict) else {}
+    launch_value = record.get("launch")
+    launch = launch_value if isinstance(launch_value, dict) else {}
+    report_path = str(await_result.get("report") or launch.get("report") or "").strip()
+    transcript_path = str(
+        await_result.get("transcript") or launch.get("transcript") or ""
+    ).strip()
+    run_value = await_result.get("run")
+    run: dict[str, Any] = run_value if isinstance(run_value, dict) else {}
     exit_code = run.get("exit_code")
     if exit_code is None:
         exit_code = await_result.get("exit_code")
@@ -104,7 +111,7 @@ def _maybe_seal_awaited_stage(
     # meta parent when the launch announced an absolute meta path.
     run_dir = control_plane_home() / "runtime_runs" / stage_run_id
     if not run_dir.is_dir():
-        meta_path = str(await_result.get("meta") or "").strip()
+        meta_path = str(await_result.get("meta") or launch.get("meta") or "").strip()
         if meta_path:
             candidate = Path(meta_path).expanduser().resolve().parent
             if candidate.is_dir():
@@ -122,6 +129,16 @@ def _maybe_seal_awaited_stage(
         mission_digest=mission_digest,
         artifact_ok=bool(await_result.get("artifact_ok")),
         exit_code=exit_code,
+        repo_root=repo_root,
+        agent=str(record.get("agent") or ""),
+        baseline_head=str(record.get("commit_before") or ""),
+        final_head=str(record.get("commit_after") or ""),
+        scoped_dirty_paths=tuple(
+            str(item) for item in record.get("changed_files") or ()
+        ),
+        baseline_status_lines=tuple(
+            str(item) for item in record.get("git_before") or ()
+        ),
     )
 
 
@@ -716,24 +733,6 @@ class LifecycleRunner:
             record["status"] = (
                 "completed" if await_result.get("artifact_ok") else "failed"
             )
-            # Delivery kernel: only when report validated. Never from bare exit 0.
-            seal_result = _maybe_seal_awaited_stage(
-                record=record,
-                await_result=await_result,
-                lifecycle_id=str(state.get("run_id") or ""),
-                mission_text=source_prompt,
-            )
-            if seal_result is not None:
-                record["lifecycle_seal"] = seal_result.to_payload()
-                await_result.update(seal_result.axes_payload())
-                await_result["claim_digest"] = seal_result.claim_digest
-            record.update(delivery_axes_for_receipt(record["status"], await_result))
-            state.update(delivery_axes_for_receipt(record["status"], record))
-            if seal_result is not None and seal_result.granted:
-                # Propagate seal to the lifecycle run receipt (final stage wins).
-                state.update(seal_result.axes_payload())
-                state["claim_digest"] = seal_result.claim_digest
-                state["lifecycle_seal"] = seal_result.to_payload()
             reported_dou = _surfaced_dou_index(await_result)
             if reported_dou is not None:
                 record["dou_index"] = reported_dou
@@ -773,6 +772,27 @@ class LifecycleRunner:
                     record["changed_files"]
                 )
                 break
+            # Delivery kernel: only after report validation and after the
+            # stage's actual commit/worktree provenance is captured. Never
+            # promote from bare exit 0.
+            seal_result = _maybe_seal_awaited_stage(
+                record=record,
+                await_result=await_result,
+                lifecycle_id=str(state.get("run_id") or ""),
+                mission_text=source_prompt,
+                repo_root=root,
+            )
+            if seal_result is not None:
+                record["lifecycle_seal"] = seal_result.to_payload()
+                await_result.update(seal_result.axes_payload())
+                await_result["claim_digest"] = seal_result.claim_digest
+            record.update(delivery_axes_for_receipt(record["status"], await_result))
+            state.update(delivery_axes_for_receipt(record["status"], record))
+            if seal_result is not None and seal_result.granted:
+                # Propagate seal to the lifecycle run receipt (final stage wins).
+                state.update(seal_result.axes_payload())
+                state["claim_digest"] = seal_result.claim_digest
+                state["lifecycle_seal"] = seal_result.to_payload()
             if record["launch"].get("report"):
                 previous_reports.append(str(record["launch"]["report"]))
             self._write_state(state_path, state)
@@ -893,6 +913,7 @@ class LifecycleRunner:
         allowed_artifacts = ", ".join(stage.allowed_artifacts) or "none"
         human_controls = ", ".join(manifest.human_controls) or "none"
         known_agents = ", ".join(sorted(SUPPORTED_AGENTS))
+        claim_digest = claim_digest_for_text(source_prompt)
         dou_contract = ""
         if stage.workflow == "dou":
             dou_contract = (
@@ -926,6 +947,11 @@ Lifecycle steering (optional, via your report YAML frontmatter):
   stage ids are ignored (manifest-validated). No key = manifest order.
 - next_agent: <agent-id> — hand the baton to that agent for the following
   stages ({known_agents}); unknown agents are ignored.{dou_contract}
+
+Delivery claim binding (required for automatic settlement FINALIZED):
+- mission claim digest: {claim_digest}
+- write `claim_digest: {claim_digest}` in the report YAML frontmatter exactly;
+  a validated report without this exact digest remains needs_attention.
 
 Previous stage reports:
 {previous}
