@@ -111,7 +111,7 @@ def _proof(
 
 def _evidence(root: Path, **overrides: Any) -> ScopeEvidence:
     base: dict[str, Any] = {
-        "repo": "VetCoders/vibecrafted",
+        "repo": "vetcoders/vibecrafted",
         "repo_root": str(root),
         "branch": "feat/reduce-wrong-assumptions",
         "baseline_head": "a" * 40,
@@ -141,7 +141,7 @@ def _components(**overrides: Any) -> SealComponents:
         "oracle_evidence_sha256": None,
         "assertion_evidence_sha256": ZERO,
         "negative_control_evidence_sha256": (ZERO,),
-        "repo": "VetCoders/vibecrafted",
+        "repo": "vetcoders/vibecrafted",
         "branch": "feat/reduce-wrong-assumptions",
         "baseline_head": "a" * 40,
         "final_head": "b" * 40,
@@ -170,7 +170,7 @@ def test_checkout_scope_delivers_on_passed_proof(tmp_path: Path) -> None:
     assert record.checked_scope == "checkout"
     assert record.refusal_reasons == ()
     assert record.commit_provenance["final_head"] == "b" * 40
-    assert record.target_identity["repo"] == "VetCoders/vibecrafted"
+    assert record.target_identity["repo"] == "vetcoders/vibecrafted"
 
 
 @pytest.mark.parametrize(

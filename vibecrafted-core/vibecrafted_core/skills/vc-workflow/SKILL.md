@@ -1,34 +1,33 @@
 ---
 name: vc-workflow
-version: 1.0.0
+version: 3.6.0
 description: >
   This skill should be used when the user asks to "examine and implement",
-  "research then implement", "zbadaj i zaimplementuj", "workflow", "pipeline",
-  "examine → research → implement", "full workflow", "ERi pipeline", "ERi",
-  "plan and implement", "analyze then build", "structured implementation",
-  "przebadaj repo i zaimplementuj", or describes a task that requires
-  understanding code structure before making changes. Orchestrates a
-  three-phase pipeline: Examine (loctree), Research (Brave Search / web),
-  Implement (subagents). Each phase feeds context to the next.
+  "research then implement", "workflow", "pipeline", "examine → research → implement", "full workflow", "ERi pipeline", "native fleet workflow",
+  "plan and implement", "analyze then build", "structured implementation"
+  or describes a task that requires understanding code structure before making changes. Orchestrates a three-phase pipeline: Examine (loctree), Research (Brave Search / web), Implement (subagents). Each phase feeds context to the next.
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
+native_fleet: "use native fleet delegation widely"
 ---
 
-<!-- fleet-imperative: v2 -->
+<!-- fleet-imperative: v3 -->
 
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
+> **Invocation, Execution, and Delegation Model**
 >
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
+> Execution authority, interactive session rules, CLI worker dispatches, and
+> the boundary between native in-process subagents and external fleet workers
+> are governed by the canonical [Delegation Matrix](../DELEGATION_MATRIX.md).
 >
-> The sole native in-process carve-out is `vc-delegate`.
+> Direct links to model sections:
+>
+> - [1. User-Launched Worker](../DELEGATION_MATRIX.md#1-user-launched-worker)
+> - [2. Interactive Skill Invocation](../DELEGATION_MATRIX.md#2-interactive-skill-invocation)
+> - [3. Agent-Operator Delegation](../DELEGATION_MATRIX.md#3-agent-operator-delegation)
+> - [Execution Mandate and Lifecycles](../DELEGATION_MATRIX.md#execution-mandate-and-lifecycles)
+> - [Native Subagents vs External Workflow](../DELEGATION_MATRIX.md#native-subagents-vs-external-workflow)
+> - [Exceptions and References](../DELEGATION_MATRIX.md#exceptions-and-references)
 
 <!-- /fleet-imperative -->
 

@@ -16,7 +16,7 @@ fn temp_home(name: &str) -> PathBuf {
 }
 
 fn plan_root(home: &Path, plan_id: &str) -> PathBuf {
-    home.join("artifacts/VetCoders/vibecrafted/2026_0720/plans")
+    home.join("artifacts/vetcoders/vibecrafted/2026_0720/plans")
         .join(plan_id)
 }
 
@@ -26,7 +26,7 @@ fn write_plan(home: &Path, plan_id: &str, artifacts: serde_json::Value) -> PathB
     let manifest = json!({
         "schema_version": "1",
         "plan_id": plan_id,
-        "org": "VetCoders",
+        "org": "Vetcoders",
         "repo": "vibecrafted",
         "day": "2026_0720",
         "artifacts": artifacts,
@@ -103,7 +103,7 @@ fn doctor_rejects_invalid_driver_atlas_tracker_and_frontmatter_drift() {
     .expect("brief");
 
     let report = ScaffoldArtifactStore::new(&home)
-        .doctor("VetCoders", "vibecrafted", "2026_0720", "plan-a")
+        .doctor("Vetcoders", "vibecrafted", "2026_0720", "plan-a")
         .expect("doctor");
     let codes = report
         .errors
@@ -127,7 +127,7 @@ fn manifest_plan_is_discovered_without_operator_mirror_and_roles_are_explicit() 
 
     let store = ScaffoldArtifactStore::new(&home);
     let plans = store
-        .plans("VetCoders", "vibecrafted", "2026_0720")
+        .plans("Vetcoders", "vibecrafted", "2026_0720")
         .expect("plans");
     assert_eq!(
         plans
@@ -138,7 +138,7 @@ fn manifest_plan_is_discovered_without_operator_mirror_and_roles_are_explicit() 
     );
 
     let workspace = store
-        .workspace("VetCoders", "vibecrafted", "2026_0720", Some("plan-a"))
+        .workspace("Vetcoders", "vibecrafted", "2026_0720", Some("plan-a"))
         .expect("workspace");
     assert_eq!(workspace.plan_id, "plan-a");
     assert_eq!(workspace.artifacts.len(), 4);
@@ -162,12 +162,12 @@ fn plan_selection_is_explicit_when_more_than_one_manifest_exists() {
     let store = ScaffoldArtifactStore::new(&home);
 
     let error = store
-        .workspace("VetCoders", "vibecrafted", "2026_0720", None)
+        .workspace("Vetcoders", "vibecrafted", "2026_0720", None)
         .expect_err("ambiguous plan selection must fail");
     assert!(matches!(error, ScaffoldError::SelectionRequired { .. }));
     assert_eq!(
         store
-            .workspace("VetCoders", "vibecrafted", "2026_0720", Some("plan-b"))
+            .workspace("Vetcoders", "vibecrafted", "2026_0720", Some("plan-b"))
             .expect("explicit plan")
             .plan_id,
         "plan-b"
@@ -186,7 +186,7 @@ fn canonical_write_requires_hash_rejects_unlisted_and_scopes_history() {
     }
     let store = ScaffoldArtifactStore::new(&home);
     let before = store
-        .workspace("VetCoders", "vibecrafted", "2026_0720", Some("plan-a"))
+        .workspace("Vetcoders", "vibecrafted", "2026_0720", Some("plan-a"))
         .expect("workspace");
     let brief = before
         .artifacts
@@ -196,7 +196,7 @@ fn canonical_write_requires_hash_rejects_unlisted_and_scopes_history() {
 
     let edited = store
         .write_artifact(
-            "VetCoders",
+            "Vetcoders",
             "vibecrafted",
             "2026_0720",
             "plan-a",
@@ -216,7 +216,7 @@ fn canonical_write_requires_hash_rejects_unlisted_and_scopes_history() {
 
     let conflict = store
         .write_artifact(
-            "VetCoders",
+            "Vetcoders",
             "vibecrafted",
             "2026_0720",
             "plan-a",
@@ -230,7 +230,7 @@ fn canonical_write_requires_hash_rejects_unlisted_and_scopes_history() {
     assert!(matches!(conflict, ScaffoldError::Conflict { .. }));
 
     let unlisted = store.write_artifact(
-        "VetCoders",
+        "Vetcoders",
         "vibecrafted",
         "2026_0720",
         "plan-a",
@@ -247,21 +247,21 @@ fn canonical_write_requires_hash_rejects_unlisted_and_scopes_history() {
 
     assert_eq!(
         store
-            .changes("VetCoders", "vibecrafted", "2026_0720", "plan-a")
+            .changes("Vetcoders", "vibecrafted", "2026_0720", "plan-a")
             .expect("plan-a changes")
             .len(),
         1
     );
     assert!(
         store
-            .changes("VetCoders", "vibecrafted", "2026_0720", "plan-b")
+            .changes("Vetcoders", "vibecrafted", "2026_0720", "plan-b")
             .expect("plan-b changes")
             .is_empty()
     );
 
     store
         .checkpoint(
-            "VetCoders",
+            "Vetcoders",
             "vibecrafted",
             "2026_0720",
             "plan-a",
@@ -301,7 +301,7 @@ fn writable_symlink_and_escaping_symlink_are_rejected() {
 
     let store = ScaffoldArtifactStore::new(&home);
     let report = store
-        .doctor("VetCoders", "vibecrafted", "2026_0720", "plan-a")
+        .doctor("Vetcoders", "vibecrafted", "2026_0720", "plan-a")
         .expect("doctor report");
     assert!(!report.valid);
     assert!(
@@ -312,7 +312,7 @@ fn writable_symlink_and_escaping_symlink_are_rejected() {
     );
     assert!(
         store
-            .workspace("VetCoders", "vibecrafted", "2026_0720", Some("plan-a"))
+            .workspace("Vetcoders", "vibecrafted", "2026_0720", Some("plan-a"))
             .is_err()
     );
 
@@ -358,7 +358,7 @@ fn doctor_and_server_return_identical_manifest_order_for_twenty_four_artifacts()
     let store = ScaffoldArtifactStore::new(&home);
     let workspace = store
         .workspace(
-            "VetCoders",
+            "Vetcoders",
             "vibecrafted",
             "2026_0720",
             Some("aicx-product-convergence-v1"),
@@ -366,7 +366,7 @@ fn doctor_and_server_return_identical_manifest_order_for_twenty_four_artifacts()
         .expect("workspace");
     let doctor = store
         .doctor(
-            "VetCoders",
+            "Vetcoders",
             "vibecrafted",
             "2026_0720",
             "aicx-product-convergence-v1",
@@ -389,12 +389,12 @@ fn doctor_and_server_return_identical_manifest_order_for_twenty_four_artifacts()
 #[test]
 fn legacy_operator_workspace_is_read_only() {
     let home = temp_home("legacy");
-    let operator = home.join("artifacts/VetCoders/vibecrafted/2026_0720/operator");
+    let operator = home.join("artifacts/vetcoders/vibecrafted/2026_0720/operator");
     fs::create_dir_all(&operator).expect("operator");
     fs::write(operator.join("master-dispatch.md"), "# Legacy\n").expect("legacy");
     let store = ScaffoldArtifactStore::new(&home);
     let workspace = store
-        .workspace("VetCoders", "vibecrafted", "2026_0720", None)
+        .workspace("Vetcoders", "vibecrafted", "2026_0720", None)
         .expect("legacy readable");
     assert!(workspace.legacy_read_only);
     assert!(!workspace.artifacts[0].editable);

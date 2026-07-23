@@ -10,7 +10,7 @@
 //
 // Contract: every tab keeps the left Sessions rail (default_tab_template).
 //
-// 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 LibraxisAI
+// 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI
 layout {
     default_tab_template {
         pane size=1 borderless=true {

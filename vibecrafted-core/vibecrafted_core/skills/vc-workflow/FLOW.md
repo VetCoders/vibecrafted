@@ -1,3 +1,11 @@
+---
+title: vc-workflow Flow
+kind: workflow_flowchart
+skill: vc-workflow
+version: 3.6.0
+description: "Mermaid flowchart, CLI routes, escalation edges, and session artifact paths for vc-workflow."
+---
+
 # `vc-workflow` Flow
 
 ## Flow

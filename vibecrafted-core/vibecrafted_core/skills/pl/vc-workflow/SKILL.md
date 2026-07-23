@@ -15,6 +15,25 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Model Wywoływania, Wykonywania i Delegacji**
+>
+> Uprawnienia wykonawcze, zasady sesji interaktywnej, dyspozycje workerów CLI
+> oraz granica między natywnymi subagentami w procesie a zewnętrzną flotą
+> regulowane są przez kanoniczną [Matrycę Delegacji](../DELEGATION_MATRIX.md).
+>
+> Bezpośrednie odnośniki do sekcji modelu:
+>
+> - [1. User-Launched Worker](../DELEGATION_MATRIX.md#1-user-launched-worker)
+> - [2. Interactive Skill Invocation](../DELEGATION_MATRIX.md#2-interactive-skill-invocation)
+> - [3. Agent-Operator Delegation](../DELEGATION_MATRIX.md#3-agent-operator-delegation)
+> - [Mandat Wykonawczy i Cykle Życia](../DELEGATION_MATRIX.md#mandat-wykonawczy-i-cykle-życia)
+> - [Natywne Subagenty vs Zewnętrzny Workflow](../DELEGATION_MATRIX.md#natywne-subagenty-vs-zewnętrzny-workflow)
+> - [Wyjątki i Odnośniki](../DELEGATION_MATRIX.md#wyjątki-i-odnośniki)
+
+<!-- /fleet-imperative -->
+
 # 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Workflow — pipeline ERi
 
 ## Wejście operatora

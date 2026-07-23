@@ -1,3 +1,12 @@
+---
+title: Living Tree Rule
+kind: core_rule
+version: 2.0.0
+description: "Single-checkout living tree rule: zero worktrees by default, continuous adaptation to live changes."
+scope: framework
+status: active
+---
+
 # Living Tree Rule
 
 Vetcoders work in one shared repository checkout.

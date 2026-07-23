@@ -64,6 +64,12 @@ def delivery_axes_for_receipt(
 
     def enum_value(name: str, enum_type: type[Any], default: Any) -> str:
         raw = source.get(name)
+        if (
+            name == "execution_state"
+            and str(status) == "failed"
+            and raw in ("launched", "running")
+        ):
+            return ExecutionState.FAILED.value
         try:
             return enum_type(raw).value if raw is not None else default.value
         except ValueError:

@@ -17,7 +17,7 @@ def valid_envelope_payload() -> dict[str, object]:
     return {
         "schema": "vibecrafted.execution-envelope.v1",
         "agent": "agy",
-        "repo": "VetCoders/vibecrafted",
+        "repo": "vetcoders/vibecrafted",
         "root": "/repo",
         "branch": "feat/reduce-wrong-assumptions",
         "expected_head": "a" * 40,
@@ -38,7 +38,7 @@ def valid_proof_payload() -> dict[str, object]:
         "id": "dpk-w5a-doctor",
         "execution_envelope_sha256": "sha256:envelope",
         "subject": {
-            "producer_id": "VetCoders/vibecrafted",
+            "producer_id": "vetcoders/vibecrafted",
             "public_surface": "uv run pytest python -m pytest tests/delivery/test_delivery_doctor.py",
             "expected_exit": 0,
         },

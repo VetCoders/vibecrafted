@@ -32,7 +32,7 @@ wyprowadzać jednego z drugiego.
 Rozpoznanie wykonano w checkoutcie:
 
 ```text
-repo: VetCoders/vibecrafted
+repo: vetcoders/vibecrafted
 path: /Volumes/vc-workspace/vetcoders/vibecrafted
 branch: feat/reduce-wrong-assumptions
 observed HEAD: 15a35e8dc4825e8e1b6869f57212681913da6e8f
@@ -561,7 +561,7 @@ proof:
     expected_outcome: normalized-session-record-v1
 
   oracle:
-    producer_id: VetCoders/transcript-builder
+    producer_id: vetcoders/transcript-builder
     argv: [python3, -m, tb_core, ...]
     version_probe: [python3, -m, tb_core, --version]
     output: <run-artifact>/oracle/session_record.json

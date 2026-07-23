@@ -203,8 +203,14 @@ def _normalize_axis_value(raw: Any) -> str | None:
 
 
 def _kernel_axes_from_mapping(source: Mapping[str, Any]) -> KernelAxes:
+    execution = _normalize_axis_value(source.get("execution_state"))
+    if (
+        execution in ("launched", "running")
+        and str(source.get("status") or "") == "failed"
+    ):
+        execution = "failed"
     return KernelAxes(
-        execution_state=_normalize_axis_value(source.get("execution_state")),
+        execution_state=execution,
         proof_state=_normalize_axis_value(source.get("proof_state")),
         delivery_state=_normalize_axis_value(source.get("delivery_state")),
         corrupt=False,

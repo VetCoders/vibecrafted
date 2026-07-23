@@ -124,7 +124,7 @@ def _envelope(repo: Path, contract_id: str) -> ExecutionEnvelope:
     return ExecutionEnvelope(
         schema=ExecutionEnvelope.SCHEMA,
         agent="codex",
-        repo="VetCoders/vibecrafted",
+        repo="vetcoders/vibecrafted",
         root=str(repo),
         branch="master",
         expected_head=head,

@@ -1,3 +1,12 @@
+---
+title: Verification Rule
+kind: core_rule
+version: 2.0.0
+description: "Walk around the truck verification rule: real artifact execution over synthetic green CI."
+scope: framework
+status: active
+---
+
 # Verification Rule — walk around the truck
 
 Vetcoders ship by proof, not by gates. Before any worker says "done",
