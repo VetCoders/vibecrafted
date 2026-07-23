@@ -151,6 +151,7 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_CLAIM_DIGEST", "ambient-wrong")
     source = _source_dir(tmp_path)
     spec = workflow.normalize_launch_spec(
         {"skill": "workflow", "agent": "claude", "prompt": "go"},
@@ -221,9 +222,32 @@ def test_launch_workflow_preseeds_machine_owned_claim_digest(
 
     payload = workflow.launch_workflow(spec, source)
 
+    truth = workflow.await_launch_truth(
+        payload,
+        timeout_seconds=10,
+        interval_seconds=0.05,
+        require_transcript_output=False,
+    )
+    assert truth["completed"] is True
     meta = json.loads(Path(payload["meta"]).read_text(encoding="utf-8"))
     assert meta["run_id"] == payload["run_id"]
     assert meta["claim_digest"] == digest
+    assert f"claim_digest: {digest}" in Path(payload["report"]).read_text(
+        encoding="utf-8"
+    )
+    assert "ambient-wrong" not in Path(payload["report"]).read_text(encoding="utf-8")
+    exports = workflow._runtime_script_exports(
+        run_id=payload["run_id"],
+        prompt_path=Path(payload["prompt_file"]),
+        report_path=Path(payload["report"]),
+        transcript_path=Path(payload["transcript"]),
+        meta_path=Path(payload["meta"]),
+        agent="codex",
+        skill="implement",
+        runtime="terminal",
+        claim_digest=digest,
+    )
+    assert exports["VIBECRAFTED_CLAIM_DIGEST"] == digest
 
 
 def test_launch_workflow_never_runs_global_sync_after_spawn(
@@ -820,6 +844,8 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
         },
         source,
     )
+    digest = "9e0d59e1dc48bc42"
+    spec = workflow.WorkflowLaunchSpec(**{**spec.to_payload(), "claim_digest": digest})
     monkeypatch.setattr(
         workflow.shutil,
         "which",
@@ -885,6 +911,7 @@ def test_research_terminal_runtime_uses_vc_frame_research_layout(
     assert "export VIBECRAFTED_TRANSCRIPT_PATH=" in lane_bodies
     assert "export VIBECRAFTED_META_PATH=" in lane_bodies
     assert "export VIBECRAFTED_PROMPT_PATH=" in lane_bodies
+    assert f"export VIBECRAFTED_CLAIM_DIGEST={digest}" in lane_bodies
     assert "export VIBECRAFTED_CANONICAL_REPORT_DIR=" in lane_bodies
     assert "export VIBECRAFTED_ARTIFACT_SLUG=map-it" in lane_bodies
     assert (

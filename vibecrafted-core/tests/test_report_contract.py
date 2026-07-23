@@ -7,8 +7,10 @@ from pathlib import Path
 from vibecrafted_core.artifacts import validate_artifacts
 from vibecrafted_core.report_contract import (
     ensure_frontmatter_on_text,
+    materialize_launcher_report_template,
     parse_report_text,
     render_minimal_frontmatter,
+    stamp_launcher_report_identity,
     validate_report_file,
 )
 from vibecrafted_core.run_triage import classify_run
@@ -74,6 +76,40 @@ def test_existing_positive_attestation_is_preserved() -> None:
     fields, _, _ = parse_report_text(text)
     assert fields["finalized"] == "true"
     assert fields["claim"] == "lifecycle settled"
+
+
+def test_launcher_claim_digest_overrides_worker_copy(tmp_path: Path) -> None:
+    digest = "9e0d59e1dc48bc42"
+    report = tmp_path / "report.md"
+
+    assert materialize_launcher_report_template(
+        report,
+        run_id="bound-run",
+        agent="codex",
+        skill="polarize",
+        claim_digest=digest,
+    )
+    assert f"claim_digest: {digest}" in report.read_text(encoding="utf-8")
+
+    report.write_text(
+        "---\nrun_id: copied\nsession_id: copied\nagent: codex\n"
+        "skill: polarize\nstatus: completed\nfinalized: true\n"
+        "claim: cut completed\nclaim_digest: deadbeefdeadbeef\n---\nbody\n",
+        encoding="utf-8",
+    )
+    assert stamp_launcher_report_identity(
+        report,
+        run_id="bound-run",
+        session_id="provider-session",
+        agent="codex",
+        skill="polarize",
+        status="completed",
+        claim_digest=digest,
+    )
+    fields, _, _ = parse_report_text(report.read_text(encoding="utf-8"))
+    assert fields["run_id"] == "bound-run"
+    assert fields["session_id"] == "provider-session"
+    assert fields["claim_digest"] == digest
 
 
 def test_classify_exit_0_claim_failed_is_attention() -> None:

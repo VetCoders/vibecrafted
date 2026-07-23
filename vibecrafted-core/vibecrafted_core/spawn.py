@@ -16,6 +16,7 @@ from .agent_dispatch import extract_session_id, sandbox_supported
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
 from .report_contract import (
+    CLAIM_DIGEST_ENV,
     materialize_launcher_report_template,
     stamp_launcher_report_identity,
 )
@@ -595,6 +596,11 @@ def finish_meta(
         payload = json.loads(_read_text(meta))
     except json.JSONDecodeError:
         return None
+    launcher_claim_digest = str(
+        payload.get("claim_digest") or os.environ.get(CLAIM_DIGEST_ENV, "")
+    ).strip()
+    if launcher_claim_digest:
+        payload["claim_digest"] = launcher_claim_digest
 
     completed_at = dt.datetime.now(dt.timezone.utc)
     started_dt = _parse_dt(payload.get("created_at") or payload.get("updated_at"))
@@ -875,6 +881,11 @@ def finalize_artifacts(
         payload = json.loads(_read_text(meta))
     except json.JSONDecodeError:
         return None
+    launcher_claim_digest = str(
+        payload.get("claim_digest") or os.environ.get(CLAIM_DIGEST_ENV, "")
+    ).strip()
+    if launcher_claim_digest:
+        payload["claim_digest"] = launcher_claim_digest
 
     report = Path(str(report_path or payload.get("report", "")))
     transcript = Path(str(transcript_path or payload.get("transcript", "")))
@@ -1049,6 +1060,7 @@ def finalize_artifacts(
             skill=str(payload.get("skill_code") or payload.get("skill") or ""),
             status=str(payload.get("status") or ""),
             model=str(payload.get("model") or ""),
+            claim_digest=launcher_claim_digest,
         )
         _normalize_markdown_artifact(report, footer_payload)
     return meta
@@ -1469,6 +1481,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_id=args.run_id,
             agent=args.agent,
             skill=args.skill,
+            claim_digest=os.environ.get(CLAIM_DIGEST_ENV, ""),
         )
         return 0
     return 2

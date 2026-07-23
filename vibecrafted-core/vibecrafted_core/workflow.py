@@ -30,6 +30,7 @@ from .delivery.store import atomic_write_json
 from .package_resources import deck_path as package_deck_path
 from .events import append_event
 from .model_overrides import _model_override_receipt, _with_model_override
+from .report_contract import CLAIM_DIGEST_ENV
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .spawn import _stdin_command
 from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE
@@ -344,6 +345,7 @@ def _runtime_script_exports(
     artifact_slug: str = "",
     artifact_ts: str = "",
     artifact_suffix: str = "",
+    claim_digest: str = "",
 ) -> dict[str, str]:
     pythonpath = os.pathsep.join(
         dict.fromkeys(
@@ -378,6 +380,8 @@ def _runtime_script_exports(
         exports["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
     if artifact_suffix:
         exports["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
+    if claim_digest:
+        exports[CLAIM_DIGEST_ENV] = claim_digest
     if runtime in {"terminal", "visible"}:
         exports["VIBECRAFTED_TEE_OUTPUT"] = "1"
     return exports
@@ -402,6 +406,7 @@ def _write_research_lane_scripts(
     artifact_suffix: str,
     research_selection: ResearchAgentSelection,
     model_requested: str = "",
+    claim_digest: str = "",
 ) -> dict[str, Path]:
     scripts: dict[str, Path] = {}
     for agent in research_selection.agents:
@@ -434,6 +439,7 @@ def _write_research_lane_scripts(
             artifact_slug=artifact_slug,
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
+            claim_digest=claim_digest,
         )
         export_lines = "".join(
             f"export {key}={shlex.quote(value)}\n" for key, value in exports.items()
@@ -698,6 +704,7 @@ def _launch_transport_command(
             artifact_slug=artifact_slug,
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
+            claim_digest=spec.claim_digest,
         ),
     )
     definition = workflow_registry.workflow_definition(spec.skill)
@@ -722,6 +729,7 @@ def _launch_transport_command(
             artifact_suffix=artifact_suffix,
             research_selection=selection,
             model_requested=spec.model,
+            claim_digest=spec.claim_digest,
         )
         layout_file = _write_research_layout(
             path=launch_dir / f"{run_id}-research.kdl",
@@ -1411,6 +1419,7 @@ def launch_workflow(
     merged_env = dict(os.environ)
     if env:
         merged_env.update(env)
+    merged_env.pop(CLAIM_DIGEST_ENV, None)
     _prepend_pythonpath(merged_env, _core_package_root())
     session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
     merged_env["VIBECRAFTED_RUN_ID"] = run_id
@@ -1422,6 +1431,8 @@ def launch_workflow(
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
+    if claim_digest:
+        merged_env[CLAIM_DIGEST_ENV] = claim_digest
     if spec.model:
         merged_env["VIBECRAFTED_MODEL_REQUESTED"] = spec.model
     if research_selection is not None:
@@ -1498,6 +1509,7 @@ def launch_workflow(
             "report": str(report_path),
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
+            **({"claim_digest": claim_digest} if claim_digest else {}),
             "workflow": _workflow_metadata(spec.skill),
             **(
                 {

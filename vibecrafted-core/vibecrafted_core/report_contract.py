@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 CONTRACT_ID = "vibecrafted.report-frontmatter.v1"
+CLAIM_DIGEST_ENV = "VIBECRAFTED_CLAIM_DIGEST"
 
 # Required keys for a steerable, dashboard-visible report.
 REQUIRED_KEYS: tuple[str, ...] = (
@@ -37,6 +38,7 @@ RECOMMENDED_KEYS: tuple[str, ...] = (
     "claim_kind",
     "finalized",
     "claim",
+    "claim_digest",
     "repo_path",
     "model",
 )
@@ -351,6 +353,7 @@ def materialize_launcher_report_template(
     run_id: str,
     agent: str,
     skill: str,
+    claim_digest: str = "",
 ) -> bool:
     """Create the machine-owned identity shell before the worker writes.
 
@@ -366,18 +369,22 @@ def materialize_launcher_report_template(
     except OSError:
         return False
     report.parent.mkdir(parents=True, exist_ok=True)
+    extra = {
+        "claim_status": "pending",
+        "finalized": "false",
+        "session_id": _PENDING_TEMPLATE_STATUS,
+        _LAUNCHER_TEMPLATE_KEY: "true",
+    }
+    launcher_digest = str(claim_digest or "").strip()
+    if launcher_digest:
+        extra["claim_digest"] = launcher_digest
     report.write_text(
         render_minimal_frontmatter(
             run_id=run_id,
             agent=agent,
             skill=skill,
             status=_PENDING_TEMPLATE_STATUS,
-            extra={
-                "claim_status": "pending",
-                "finalized": "false",
-                "session_id": _PENDING_TEMPLATE_STATUS,
-                _LAUNCHER_TEMPLATE_KEY: "true",
-            },
+            extra=extra,
         ),
         encoding="utf-8",
     )
@@ -393,6 +400,7 @@ def stamp_launcher_report_identity(
     skill: str,
     status: str,
     model: str = "",
+    claim_digest: str = "",
 ) -> bool:
     """Authoritatively stamp launcher-owned identity without clobbering claims."""
 
@@ -411,6 +419,9 @@ def stamp_launcher_report_identity(
     # copied or guessed values. An unavailable child session stays explicit.
     fields["run_id"] = run_id or "unknown"
     fields["session_id"] = session_id or _PENDING_TEMPLATE_STATUS
+    launcher_digest = str(claim_digest or "").strip()
+    if launcher_digest:
+        fields["claim_digest"] = launcher_digest
     if agent and not fields.get("agent"):
         fields["agent"] = agent
     if skill and not fields.get("skill"):
