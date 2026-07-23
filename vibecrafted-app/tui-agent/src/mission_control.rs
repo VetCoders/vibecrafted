@@ -76,8 +76,10 @@ pub struct SettlementBoardCounts {
     pub n: usize,
     /// Diagnostic detail inside `x`, not a fourth total bucket.
     pub invalid: usize,
-    /// Canonical runtime-aware active + stalled runs (not part of `total_settled`).
+    /// Canonical runtime-aware live runs (not part of `total_settled`).
     pub active: usize,
+    /// Non-terminal runs without current live activity evidence.
+    pub stalled: usize,
     /// Legacy `Untitled*.md` artifacts, reported separately from retained f/x/n.
     pub orphans: usize,
     pub total_settled: usize,
@@ -93,10 +95,11 @@ impl SettlementBoardCounts {
     /// missing verdict contributes `n` only when the run is terminal; live
     /// unsettled runs are ignored. No exit/process signal promotes to `f`.
     #[must_use]
-    pub fn from_snapshots(runs: &[RunSnapshot], active: usize) -> Self {
+    pub fn from_snapshots(runs: &[RunSnapshot], active: usize, stalled: usize) -> Self {
         let mut board = Self {
             scope: Self::SCOPE_RETAINED_SNAPSHOTS.to_string(),
             active,
+            stalled,
             f: 0,
             x: 0,
             n: 0,
@@ -125,12 +128,13 @@ impl SettlementBoardCounts {
     #[must_use]
     pub fn render_strip(&self) -> String {
         format!(
-            "settlement  f={} x={} n={} (+invalid={}) · active={} · orphans={} · total_settled={} · scope: {}",
+            "settlement  f={} x={} n={} (+invalid={}) · active={} · stalled={} · orphans={} · total_settled={} · scope: {}",
             self.f,
             self.x,
             self.n,
             self.invalid,
             self.active,
+            self.stalled,
             self.orphans,
             self.total_settled,
             self.scope
@@ -490,6 +494,7 @@ impl MissionControlState {
         let mut settlement = SettlementBoardCounts::from_snapshots(
             &state.retained_runs,
             state.canonical_active_count(),
+            state.canonical_stalled_count(),
         );
         settlement.orphans = cached_orphan_markdown_count(artifact_root);
 
@@ -2769,19 +2774,22 @@ mod tests {
             // live, no verdict → ignored
             run_with_settlement("live", "running", None, None),
         ];
-        let board = SettlementBoardCounts::from_snapshots(&runs, 1);
+        let board = SettlementBoardCounts::from_snapshots(&runs, 1, 2);
         assert_eq!(board.f, 1);
         assert_eq!(board.x, 2); // failed + invalid
         assert_eq!(board.invalid, 1);
         assert_eq!(board.n, 2); // needs_attention + unsettled terminal
         assert_eq!(board.total_settled, 5);
         assert_eq!(board.active, 1);
+        assert_eq!(board.stalled, 2);
         assert_eq!(board.orphans, 0);
         assert!(board.scope.contains("retained"));
         let strip = board.render_strip();
         assert!(strip.contains("f=1"));
         assert!(strip.contains("x=2"));
         assert!(strip.contains("n=2"));
+        assert!(strip.contains("active=1"));
+        assert!(strip.contains("stalled=2"));
         assert!(strip.contains("orphans=0"));
     }
 

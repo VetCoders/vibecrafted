@@ -33,16 +33,21 @@ impl ControlPlaneState {
         let retained_runs = root.load_runs()?;
         let canonical =
             ControlPlane::from_control_plane_home(root.as_path()).compute_view(Utc::now());
-        let canonical_runtime_authority =
-            root.as_path().join("events.jsonl").is_file() || !canonical.active_runs.is_empty();
+        let canonical_runtime_authority = root.as_path().join("events.jsonl").is_file()
+            || !canonical.active_runs.is_empty()
+            || !canonical.stalled_runs.is_empty();
         let mut runs = retained_runs
             .iter()
             .filter(|snapshot| !archived_run_ids.contains(&snapshot.run_id))
-            .filter(|snapshot| !canonical_runtime_authority || !snapshot.is_runtime_active())
+            .filter(|snapshot| !canonical_runtime_authority || !snapshot.is_runtime_inflight())
             .cloned()
             .map(|snapshot| (snapshot.run_id.clone(), snapshot))
             .collect::<HashMap<_, _>>();
-        for run in canonical.active_runs {
+        for run in canonical
+            .active_runs
+            .into_iter()
+            .chain(canonical.stalled_runs)
+        {
             if !archived_run_ids.contains(&run.run_id) {
                 runs.insert(run.run_id.clone(), canonical_run_snapshot(run));
             }
@@ -76,6 +81,13 @@ impl ControlPlaneState {
         self.runs
             .iter()
             .filter(|snapshot| snapshot.is_runtime_active())
+            .count()
+    }
+
+    pub fn canonical_stalled_count(&self) -> usize {
+        self.runs
+            .iter()
+            .filter(|snapshot| snapshot.is_runtime_stalled())
             .count()
     }
 }
@@ -162,7 +174,7 @@ impl RunSnapshot {
             .to_string()
     }
 
-    fn is_runtime_active(&self) -> bool {
+    fn is_runtime_inflight(&self) -> bool {
         let state = self.display_state().to_lowercase();
         let terminal = is_final_state(&state)
             || self
@@ -181,6 +193,24 @@ impl RunSnapshot {
             return matches!(health, "active" | "stalled");
         }
         is_active_state(&state)
+    }
+
+    fn is_runtime_active(&self) -> bool {
+        self.is_runtime_inflight()
+            && self
+                .extra
+                .get("health")
+                .and_then(Value::as_str)
+                .is_none_or(|health| health == "active")
+    }
+
+    fn is_runtime_stalled(&self) -> bool {
+        self.is_runtime_inflight()
+            && self
+                .extra
+                .get("health")
+                .and_then(Value::as_str)
+                .is_some_and(|health| health == "stalled")
     }
 }
 
@@ -230,6 +260,7 @@ pub fn render_runs(state: &ControlPlaneState) -> Vec<RenderedRun> {
 
 pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
     let state = snapshot.display_state().to_lowercase();
+    let canonical_health = snapshot.extra.get("health").and_then(Value::as_str);
     let heartbeat = snapshot
         .last_heartbeat
         .as_deref()
@@ -239,7 +270,7 @@ pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
     if snapshot.last_error.is_some() || state.contains("fail") || state.contains("error") {
         return RunKind::Failed;
     }
-    if state.contains("stalled") {
+    if canonical_health == Some("stalled") || state.contains("stalled") {
         return RunKind::Stalled;
     }
     if state.contains("pause") {
@@ -627,5 +658,71 @@ mod tests {
         assert_eq!(projected[0].state.as_deref(), Some("completed"));
         assert_eq!(state.retained_runs.len(), 1);
         assert_eq!(state.canonical_active_count(), 0);
+    }
+
+    #[test]
+    fn canonical_counts_keep_active_and_stalled_as_separate_labels() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("control_plane");
+        fs::create_dir_all(&root).expect("control plane");
+        let now = chrono::Utc::now();
+        let events = [
+            serde_json::json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "live-worker",
+                "kind": "lifecycle:active",
+                "message": "heartbeat",
+                "payload": {
+                    "state": "active",
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                    "launcher_pid": std::process::id()
+                }
+            }),
+            serde_json::json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "definitely-missing",
+                "kind": "state",
+                "message": "stale event only",
+                "payload": {
+                    "state": "running",
+                    "health": "active",
+                    "heartbeat_at": (now - chrono::Duration::hours(2)).to_rfc3339(),
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted"
+                }
+            }),
+            serde_json::json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "pytest-fixture-run",
+                "kind": "lifecycle:active",
+                "message": "fixture leak",
+                "payload": {
+                    "state": "active",
+                    "root": "/private/tmp/pytest-of-operator/pytest-1/test_board0"
+                }
+            }),
+        ];
+        let encoded = events
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(root.join("events.jsonl"), format!("{encoded}\n")).expect("event stream");
+
+        let state = ControlPlaneState::load(&root).expect("runtime state");
+
+        assert_eq!(state.canonical_active_count(), 1);
+        assert_eq!(state.canonical_stalled_count(), 1);
+        let projected = super::render_runs(&state);
+        assert!(projected.iter().any(|run| {
+            run.snapshot.run_id == "live-worker" && run.kind == super::RunKind::Active
+        }));
+        assert!(projected.iter().any(|run| {
+            run.snapshot.run_id == "definitely-missing" && run.kind == super::RunKind::Stalled
+        }));
+        assert!(
+            projected
+                .iter()
+                .all(|run| run.snapshot.run_id != "pytest-fixture-run")
+        );
     }
 }
