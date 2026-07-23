@@ -6,9 +6,7 @@ use std::time::Instant;
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use super::gpu::probe_gpu;
-use super::model::{
-    sort_by_rss, FamilyAggregate, FamilyTag, MonitorSnapshot, ProcessRow,
-};
+use super::model::{FamilyAggregate, FamilyTag, MonitorSnapshot, ProcessRow, sort_by_rss};
 
 pub struct Sampler {
     system: System,
@@ -58,7 +56,11 @@ impl Sampler {
             if family == FamilyTag::Other && *pid != self.self_pid {
                 continue;
             }
-            let identity = format!("{}:{}", pid.as_u32(), &display_cmd.chars().take(48).collect::<String>());
+            let identity = format!(
+                "{}:{}",
+                pid.as_u32(),
+                display_cmd.chars().take(48).collect::<String>()
+            );
             processes.push(ProcessRow {
                 pid: pid.as_u32(),
                 ppid: proc.parent().map(|p| p.as_u32()).unwrap_or(0),
@@ -85,7 +87,7 @@ impl Sampler {
             agg.rss += row.rss;
         }
         let mut families: Vec<_> = fam.into_values().collect();
-        families.sort_by(|a, b| b.rss.cmp(&a.rss));
+        families.sort_by_key(|family| std::cmp::Reverse(family.rss));
 
         let gpu = probe_gpu();
         snap.gpu_util_percent = gpu.util_percent;

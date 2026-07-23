@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
-use super::model::{format_bytes, MonitorSnapshot};
+use super::model::{MonitorSnapshot, format_bytes};
 use super::sampler::Sampler;
 use super::ui;
 
@@ -157,15 +157,15 @@ impl ProcsApp {
             }
             KeyCode::Char('K') => {
                 let idxs = self.filtered_indices();
-                if let Some(&i) = idxs.get(self.selected) {
-                    if let Some(row) = self.snapshot.processes.get(i) {
-                        self.confirm_kill = Some(row.pid);
-                        self.status = format!(
-                            "Confirm kill pid {} ({})? y=yes n=cancel — signals go through vibecrafted procs",
-                            row.pid,
-                            row.family.as_str()
-                        );
-                    }
+                if let Some(&i) = idxs.get(self.selected)
+                    && let Some(row) = self.snapshot.processes.get(i)
+                {
+                    self.confirm_kill = Some(row.pid);
+                    self.status = format!(
+                        "Confirm kill pid {} ({})? y=yes n=cancel — signals go through vibecrafted procs",
+                        row.pid,
+                        row.family.as_str()
+                    );
                 }
             }
             KeyCode::Char('r') => {
@@ -202,12 +202,11 @@ impl ProcsApp {
             loop {
                 self.tick_sample();
                 terminal.draw(|f| ui::draw(f, &self))?;
-                if event::poll(Duration::from_millis(100))? {
-                    if let Event::Key(key) = event::read()? {
-                        if self.handle_key(key) {
-                            break;
-                        }
-                    }
+                if event::poll(Duration::from_millis(100))?
+                    && let Event::Key(key) = event::read()?
+                    && self.handle_key(key)
+                {
+                    break;
                 }
             }
             Ok(())
