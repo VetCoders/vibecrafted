@@ -20,6 +20,7 @@
 #   - Substitutes placeholders in every text file:
 #       {{SKILL_NAME}}            → user-supplied name (e.g. vc-foo-bar)
 #       {{SKILL_NAME_NO_PREFIX}}  → name with "vc-" stripped (e.g. foo-bar)
+#       {{LAUNCHER}}              → same as no-prefix (matrix / CLI literal)
 #       {{CREATED_DATE}}          → today's date in ISO-8601 (UTC)
 #   - Sets executable bit on any scaffolded scripts/*.sh.
 #   - Prints discoverability hints (doctor + read the skill).
@@ -132,6 +133,7 @@ substitute_file() {
     # would be safer but two passes with sed is portable and clear.
     sed \
         -e "s|{{SKILL_NAME_NO_PREFIX}}|${SKILL_NAME_NO_PREFIX}|g" \
+        -e "s|{{LAUNCHER}}|${SKILL_NAME_NO_PREFIX}|g" \
         -e "s|{{SKILL_NAME}}|${SKILL_NAME}|g" \
         -e "s|{{CREATED_DATE}}|${CREATED_DATE}|g" \
         "$file" >"$tmp"
@@ -170,13 +172,16 @@ vc-skill-new: scaffolded $SKILL_NAME at skills/$SKILL_NAME/
 
 Next moves:
   1. Edit skills/$SKILL_NAME/SKILL.md and replace every TODO marker.
-  2. Edit skills/$SKILL_NAME/README.md and tick the authoring checklist.
-  3. Drop a realistic example into skills/$SKILL_NAME/examples/.
-  4. Verify it parses cleanly:
+  2. Classify launcher vs foundation via skills/DELEGATION_MATRIX.md
+     (literals for this skill: vibecrafted $SKILL_NAME_NO_PREFIX <agent>).
+  3. Edit skills/$SKILL_NAME/README.md and tick the authoring checklist
+     in docs/CONTRIBUTING-SKILLS.md (matrix gate + progressive disclosure).
+  4. Drop a realistic example into skills/$SKILL_NAME/examples/.
+  5. Verify it parses cleanly:
 
        make test-skills
 
-  5. Verify operator discoverability:
+  6. Verify operator discoverability:
 
        make doctor | grep $SKILL_NAME
 

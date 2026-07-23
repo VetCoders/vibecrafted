@@ -8,6 +8,13 @@ yet, do that first. Every contribution lands on a Living Tree branch under
 concurrent agent activity, and the skill you author will run inside that same
 discipline.
 
+**Also read** [`skills/DELEGATION_MATRIX.md`](../skills/DELEGATION_MATRIX.md)
+before writing invocation rails. The matrix is the operator canon for
+**per-launcher** literals (`vibecrafted review <agent>`, not a generic
+`vibecrafted <workflow> <agent>` placeholder). Progressive disclosure:
+catalogue + rules live in the matrix; each skill carries only a short
+fleet-imperative rail with **its** literals.
+
 ---
 
 ## What is a "skill"?
@@ -69,9 +76,33 @@ substitutes:
 | -------------------------- | ---------------------------------- |
 | `{{SKILL_NAME}}`           | `vc-my-new-skill`                  |
 | `{{SKILL_NAME_NO_PREFIX}}` | `my-new-skill`                     |
+| `{{LAUNCHER}}`             | same as no-prefix (`my-new-skill`) |
 | `{{CREATED_DATE}}`         | today's date in `YYYY-MM-DD` (UTC) |
 
 It also prints operator next-steps and the discoverability commands.
+
+---
+
+## Delegation Matrix gate (invocation craft)
+
+Classify the skill **before** filling the fleet-imperative block:
+
+| Class             | When                                                    | Worker form                  | Interactive              |
+| ----------------- | ------------------------------------------------------- | ---------------------------- | ------------------------ |
+| **Core launcher** | Will be `vibecrafted <name> <agent>` in `cli.LAUNCHERS` | `vibecrafted <name> <agent>` | `/vc-<name>`             |
+| **Meta**          | `init`, `ship`, `dispatch`, operator posture            | documented special form      | load skill / slash       |
+| **Foundation**    | Perception/doctrine only (loctree, aicx, …)             | **none** — no fake worker    | load inside other skills |
+
+Rules (same semantic delta as the workflow revolution):
+
+1. Name **this** launcher in every path. Never paste `workflow` literals onto a non-workflow skill.
+2. Interactive `/vc-<name>` executes **in session**; freer native subagents when depth is required; do **not** externalize merely because a CLI worker exists.
+3. External fleet stays first-party. Freer native ≠ abandon `vc-dispatch` / worker launchers.
+4. `vc-dispatch` stays dyspozytura; `vc-ship` stays lifecycle umbrella; do not rewrite identity.
+5. Keep the SKILL.md rail short; link the matrix for catalogue and shared mandate.
+6. Progressive disclosure (skill-development): lean `SKILL.md` body; put long procedures in `references/`; do not duplicate the full matrix into the skill.
+
+See worked examples in the matrix: workflow vs review vs ship.
 
 ---
 
@@ -124,6 +155,15 @@ Before opening a PR:
       `examples/`.
 - [ ] At least one realistic `examples/*.md` pair (trigger phrase +
       expected agent behavior).
+- [ ] **Matrix class chosen** (core launcher / meta / foundation) and
+      fleet-imperative rail uses **this** skill's literals only.
+- [ ] No residual `vibecrafted <workflow> <agent>` or `/vc-<workflow>` as a
+      fake universal placeholder (use `<launcher>` only in meta-docs, or the
+      concrete name in the skill body).
+- [ ] Description is third-person with concrete trigger phrases (skill-development).
+- [ ] Body stays lean; heavy procedure lives under `references/` when needed.
+- [ ] Closing path points at [`VERIFICATION_RULE.md`](../skills/VERIFICATION_RULE.md)
+      when the skill can claim "done".
 - [ ] `make test-skills` passes green from a clean checkout.
 - [ ] `make doctor` lists your skill cleanly.
 - [ ] If you added executable scripts under `scripts/`, they are `chmod +x`,
@@ -200,6 +240,14 @@ across ubuntu + macos. Open the PR against `develop`.
 
 - **Cargo-cult cloning** — copying `vc-init` and find-replacing the name.
   `vc-init` is the most complex skill in the repo. Use the scaffolder.
+- **Workflow paste** — copying the `vc-workflow` fleet rail or ERi pipeline into
+  a skill that is not workflow. Use the matrix per-launcher rule instead.
+- **Fake universal CLI** — documenting `vibecrafted <workflow> <agent>` as if
+  every skill were named "workflow". Write the real launcher name.
+- **Mass matrix dump** — pasting the full DELEGATION_MATRIX into every skill
+  body. Progressive disclosure: short rail + link.
+- **Native-only flip** — removing external worker paths because interactive
+  native is freer. Freer native is optional depth, not fleet abandonment.
 - **Multi-purpose skills** — if your `When To Use` section has more than three
   bullets describing fundamentally different situations, split the skill.
 - **Vague triggers** — `"do the thing"` is not a trigger phrase. Be specific.

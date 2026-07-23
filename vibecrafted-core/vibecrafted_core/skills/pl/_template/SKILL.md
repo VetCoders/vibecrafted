@@ -108,8 +108,10 @@ ukończony — powiedz to wprost w raporcie końcowym.
 
 - TODO — typowy tryb porażki #1 (np. uruchomienie tego skilla przed `vc-init`)
 - TODO — typowy tryb porażki #2 (np. rozszerzanie scope poza jedną ostrą oś)
-- Pominięcie ponownego odczytu Living Tree przed edycją, gdy aktywni są współbieżni agenci
-- Ogłaszanie „gotowe" bez odhaczenia powyższych kryteriów akceptacji
+- Wklejanie raili `workflow` / ERi, gdy ten skill nie jest `vc-workflow`
+- Wymyślanie fałszywego workera `vibecrafted <name> <agent>` dla skilla fundamentu
+- Pominięcie ponownego odczytu Living Tree przed edycją przy współbieżnych agentach
+- Ogłaszanie „gotowe" bez odhaczenia kryteriów akceptacji
 
 ---
 
@@ -117,6 +119,17 @@ ukończony — powiedz to wprost w raporcie końcowym.
 
 Zobacz [`examples/example-prompt.md`](examples/example-prompt.md) — minimalna para
 fraza-trigger + oczekiwane zachowanie.
+
+---
+
+## Zweryfikuj przed przekazaniem
+
+Zanim ogłosisz „done", obejdź ciężarówkę — zobacz
+[Regułę Weryfikacji](../VERIFICATION_RULE.md): realny artefakt, nie same zielone bramki;
+nigdy nie ufaj upstream verification jako dowodowi; sprawdź własny instrument.
+
+Progressive disclosure: trzymaj SKILL.md chudy; długie procedury w `references/`
+([Matryca Delegacji](../DELEGATION_MATRIX.md), CONTRIBUTING-SKILLS).
 
 ---
 
