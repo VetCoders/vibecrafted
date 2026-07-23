@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -68,7 +69,7 @@ def test_compact_help_uses_release_engine_contract(tmp_path: Path) -> None:
         "scaffold → implement → review → workflow → followup → marbles → "
         "audit → polarize → dou → hydrate → release"
     ) in output
-    assert "14 more skills: vibecrafted help --all" in output
+    assert "More workflows: vibecrafted help --all" in output
     assert 'vibecrafted implement codex -p "Ship dark mode"' in output
     assert "justdo" not in output
     assert "compatibility alias" not in output
@@ -101,6 +102,23 @@ def test_implement_help_is_canonical_and_names_alias(tmp_path: Path) -> None:
     assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in output
     assert "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]" in output
     assert 'vibecrafted implement codex --prompt "Ship the feature"' in output
+
+
+def test_shell_and_core_render_the_same_workflow_help(tmp_path: Path) -> None:
+    shell_output = _run_launcher_help(tmp_path, "marbles", "--help")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(REPO_ROOT / "vibecrafted-core")
+
+    core = subprocess.run(
+        [sys.executable, "-m", "vibecrafted_core.cli", "marbles", "--help"],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert shell_output == ANSI_RE.sub("", core.stdout)
 
 
 def test_update_ref_pair_reaches_make_branch(tmp_path: Path) -> None:

@@ -408,6 +408,15 @@ _vibecrafted_python() {
   command -v python3 2>/dev/null || command -v python 2>/dev/null || printf 'python3\n'
 }
 
+_run_core_help() {
+  local core_dir python_bin
+  core_dir="$(_core_module_dir 2>/dev/null || true)"
+  [[ -n "$core_dir" ]] || return 1
+  python_bin="$(_vibecrafted_python)"
+  PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}" \
+    "$python_bin" -m vibecrafted_core.cli help "$@"
+}
+
 _sync_control_plane_best_effort() {
   local script_path
   script_path="$(_control_plane_script 2>/dev/null || true)"
@@ -511,6 +520,12 @@ cmd_skill_help() {
   local wrapper="vc-$skill"
   local display_skill="$skill"
   local version=""
+
+  # Core owns the public workflow contract.  Keep the embedded renderer below
+  # as a bootstrap fallback for a checkout/package missing vibecrafted_core.
+  if _run_core_help "$skill"; then
+    return 0
+  fi
 
   if [[ "$skill" == "research" ]]; then
     agent=""
@@ -1580,6 +1595,9 @@ cmd_help() {
   local topic
   if [[ "$raw_topic" == "-h" || "$raw_topic" == "--help" ]]; then
     raw_topic=""
+  fi
+  if [[ -z "$raw_topic" ]] && _run_core_help; then
+    return 0
   fi
   topic="$(_help_topic_alias "$raw_topic")"
   case "$topic" in

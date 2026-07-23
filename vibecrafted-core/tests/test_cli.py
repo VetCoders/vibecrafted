@@ -24,10 +24,63 @@ def _accepted_launch_payload() -> dict[str, object]:
     }
 
 
-def test_root_cli_without_command_returns_help_error(capsys) -> None:
-    assert cli.main([]) == 2
+def test_root_cli_without_command_returns_product_help(capsys) -> None:
+    assert cli.main([]) == 0
 
-    assert "Vibecrafted core command surface" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "release engine for AI-developed software" in output
+    assert "Ship cycle:" in output
+    assert "Vibecrafted core command surface" not in output
+
+
+@pytest.mark.parametrize("launcher", cli.LAUNCHERS)
+def test_every_workflow_help_uses_the_core_product_surface(
+    launcher: str, capsys
+) -> None:
+    assert cli.main([launcher, "--help"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Usage:" in output
+    assert "Flow:" in output
+    assert "Examples:" in output
+    assert f"launch vc-{launcher} through core runtime" not in output
+
+
+def test_help_topic_and_direct_flag_render_identically(capsys) -> None:
+    assert cli.main(["help", "marbles"]) == 0
+    topic_output = capsys.readouterr().out
+
+    assert cli.main(["marbles", "codex", "--help"]) == 0
+    direct_output = capsys.readouterr().out
+
+    assert topic_output == direct_output
+    assert "one dedicated orchestrator tab" in topic_output
+    assert "L1…LN" in topic_output
+
+
+def test_core_parser_accepts_the_short_prompt_and_file_flags() -> None:
+    parser = cli._build_parser()
+
+    prompt = parser.parse_args(["implement", "codex", "-p", "ship it"])
+    file_input = parser.parse_args(["review", "claude", "-f", "brief.md"])
+
+    assert prompt.prompt == "ship it"
+    assert file_input.file == "brief.md"
+
+
+def test_literal_help_prompt_still_launches(monkeypatch, capsys) -> None:
+    seen = {}
+
+    def fake_launch(spec, _source_dir):
+        seen["prompt"] = spec.prompt
+        return _accepted_launch_payload()
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+
+    assert cli.main(["implement", "codex", "--prompt", "help"]) == 0
+
+    assert seen["prompt"] == "help"
+    assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(

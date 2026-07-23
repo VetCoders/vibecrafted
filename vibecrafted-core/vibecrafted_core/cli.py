@@ -91,8 +91,8 @@ def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
         run.add_argument("--dry-run", action="store_true")
         run.add_argument("--json", action="store_true")
         return
-    run.add_argument("--prompt", default="")
-    run.add_argument("--file", default="")
+    run.add_argument("-p", "--prompt", default="")
+    run.add_argument("-f", "--file", default="")
     run.add_argument("--runtime", default="")
     run.add_argument("--root", default="")
     run.add_argument("--mode", default="")
@@ -650,6 +650,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"vibecrafted {__version__}")
         return 0
 
+    # Help is a product surface, not argparse fallout.  Resolve it before the
+    # shell-deck compatibility router or any workflow runtime is imported so
+    # every installed entrypoint teaches the same contract.  ``help --all``
+    # deliberately stays with the deck: it is the long operational reference.
+    from . import __version__
+    from .help_surface import (
+        has_workflow_help,
+        render_root_help,
+        render_workflow_help,
+    )
+
+    if not raw_args or raw_args[0] in {"-h", "--help"}:
+        print(render_root_help(__version__), end="")
+        return 0
+    if raw_args[0] == "help":
+        if len(raw_args) == 1:
+            print(render_root_help(__version__), end="")
+            return 0
+        topic = raw_args[1].removeprefix("vc-")
+        if topic not in {"--all", "--full"} and has_workflow_help(topic):
+            print(render_workflow_help(topic), end="")
+            return 0
+    if raw_args[0] in LAUNCHERS:
+        workflow_args = raw_args[1:]
+        help_requested = (
+            bool(workflow_args)
+            and workflow_args[0] == "help"
+            or any(arg in {"-h", "--help"} for arg in workflow_args)
+        )
+        if help_requested:
+            print(render_workflow_help(raw_args[0]), end="")
+            return 0
+
     python_commands = {
         "capabilities",
         "config",
@@ -713,7 +746,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(raw_args)
     if not args.command:
         parser.print_help()
-        return 0 if invoked_as in {"vc-help", "vc-dashboard"} else 2
+        return 0
     if args.command == "config":
         from .vc_frame_delivery import ensure_zshrc, stage_vc_frame_config
 

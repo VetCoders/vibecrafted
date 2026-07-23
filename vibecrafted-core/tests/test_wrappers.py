@@ -86,6 +86,48 @@ def test_supervised_skill_main_routes_runtime_launch_through_dispatcher(
     ]
 
 
+def test_supervised_wrapper_help_uses_core_renderer_without_subprocess(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "call",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("help must not delegate to another CLI brain")
+        ),
+    )
+
+    assert wrappers.supervised_skill_main("review", ["codex", "--help"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Bounded PR, branch, commit-range, or artifact-pack review" in output
+    assert "Flow:" in output
+
+
+def test_lifecycle_and_research_wrapper_help_use_core_renderer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        subprocess,
+        "call",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("help must not delegate to the shell deck")
+        ),
+    )
+
+    assert wrappers.workflow_main(["codex", "--help"]) == 0
+    workflow_output = capsys.readouterr().out
+    assert "Examine → Research → Implement" in workflow_output
+
+    assert wrappers.marbles_main(["--help"]) == 0
+    marbles_output = capsys.readouterr().out
+    assert "one dedicated orchestrator tab" in marbles_output
+
+    assert wrappers.research_main(["--help"]) == 0
+    research_output = capsys.readouterr().out
+    assert "Multi-agent research pass" in research_output
+
+
 def test_print_completed_rejects_live_worker_completion_payload(capsys) -> None:
     rc = wrappers._print_completed(
         "impl-live",

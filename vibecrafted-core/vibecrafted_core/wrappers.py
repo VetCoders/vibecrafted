@@ -41,8 +41,21 @@ def deck_path() -> Path:
     return package_deck_path()
 
 
+def _print_workflow_help(workflow_id: str) -> int:
+    from .help_surface import render_workflow_help
+
+    print(render_workflow_help(workflow_id), end="")
+    return 0
+
+
 def _has_flag(args: Sequence[str], name: str) -> bool:
     return name in args or any(arg.startswith(f"{name}=") for arg in args)
+
+
+def _help_requested(args: Sequence[str]) -> bool:
+    return (
+        bool(args) and args[0] == "help" or any(arg in {"-h", "--help"} for arg in args)
+    )
 
 
 def _consume_sandbox_flags(args: Sequence[str]) -> tuple[list[str], bool, str | None]:
@@ -198,11 +211,8 @@ def supervised_skill_main(skill: str, argv: Sequence[str] | None = None) -> int:
     args, sandbox, sandbox_policy = _consume_sandbox_flags(
         list(sys.argv[1:] if argv is None else argv)
     )
-    if args and args[0] in {"-h", "--help", "help"}:
-        # Direct python path (bypasses legacy deck) so --help and later --file are parsed by core argparse.
-        return subprocess.call(
-            [sys.executable, "-m", "vibecrafted_core.cli", skill, "--help"]
-        )
+    if _help_requested(args):
+        return _print_workflow_help(skill)
     if sandbox and args and args[0] not in AGENTS:
         skill_code = SKILL_PREFIX.get(skill, skill[:4])
         run_id = os.environ.get("VIBECRAFTED_RUN_ID") or _run_id(skill_code)
@@ -281,9 +291,13 @@ def implement_main(argv: Sequence[str] | None = None) -> int:
 
 
 def _lifecycle_main(workflow_id: str, argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if _help_requested(args):
+        return _print_workflow_help(workflow_id)
+
     from .lifecycle_runner import lifecycle_main
 
-    return lifecycle_main(workflow_id, argv)
+    return lifecycle_main(workflow_id, args)
 
 
 def audit_main(argv: Sequence[str] | None = None) -> int:
@@ -301,9 +315,6 @@ def hydrate_main(argv: Sequence[str] | None = None) -> int:
 def marbles_main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] in {
-        "-h",
-        "--help",
-        "help",
         "pause",
         "stop",
         "resume",
@@ -399,8 +410,8 @@ def research_main(argv: Sequence[str] | None = None) -> int:
     args, sandbox, sandbox_policy = _consume_sandbox_flags(
         list(sys.argv[1:] if argv is None else argv)
     )
-    if any(arg in {"-h", "--help", "help"} for arg in args):
-        return subprocess.call([str(deck_path()), "research", "--help"])
+    if _help_requested(args):
+        return _print_workflow_help("research")
     run_id = os.environ.get("VIBECRAFTED_RUN_ID") or _run_id("rsch")
     code, output = _prepare_research(args, run_id)
     if code != 0:
