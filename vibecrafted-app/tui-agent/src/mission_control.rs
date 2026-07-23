@@ -58,6 +58,7 @@ const LOCTREE_SNAPSHOT_FRESHNESS_JSON_ENV: &str = "VIBECRAFTED_LOCTREE_SNAPSHOT_
 static TAILSCALE_STATUS_CACHE: OnceLock<Mutex<ProbeCache<Result<String, String>>>> =
     OnceLock::new();
 static AICX_HEALTH_CACHE: OnceLock<Mutex<ProbeCache<Result<String, String>>>> = OnceLock::new();
+static ORPHAN_COUNT_CACHE: OnceLock<Mutex<HashMap<PathBuf, (Instant, usize)>>> = OnceLock::new();
 
 /// Settlement f/x/n board for retained control-plane snapshots.
 ///
@@ -76,6 +77,8 @@ pub struct SettlementBoardCounts {
     pub invalid: usize,
     /// Live unsettled runs (not part of `total_settled`).
     pub active: usize,
+    /// Legacy `Untitled*.md` artifacts, reported separately from retained f/x/n.
+    pub orphans: usize,
     pub total_settled: usize,
 }
 
@@ -97,6 +100,7 @@ impl SettlementBoardCounts {
             x: 0,
             n: 0,
             invalid: 0,
+            orphans: 0,
             total_settled: 0,
         };
         for run in runs {
@@ -120,8 +124,15 @@ impl SettlementBoardCounts {
     #[must_use]
     pub fn render_strip(&self) -> String {
         format!(
-            "settlement  f={} x={} n={} (+invalid={}) · active={} · total_settled={} · scope: {}",
-            self.f, self.x, self.n, self.invalid, self.active, self.total_settled, self.scope
+            "settlement  f={} x={} n={} (+invalid={}) · active={} · orphans={} · total_settled={} · scope: {}",
+            self.f,
+            self.x,
+            self.n,
+            self.invalid,
+            self.active,
+            self.orphans,
+            self.total_settled,
+            self.scope
         )
     }
 }
@@ -475,8 +486,9 @@ impl MissionControlState {
         let failures = failure_board_from_meta(&meta_records, state, now);
         let fleet_health = fleet_health_from_inputs(state, artifact_root, &data_quality);
         let action_queue = action_queue_from_inputs(state, &failures, &meta_records, intents, now);
-        let settlement =
-            SettlementBoardCounts::from_snapshots(&state.runs, active_dispatches.len());
+        let mut settlement =
+            SettlementBoardCounts::from_snapshots(&state.retained_runs, active_dispatches.len());
+        settlement.orphans = cached_orphan_markdown_count(artifact_root);
 
         Self {
             generated_at: now.to_rfc3339(),
@@ -623,6 +635,67 @@ fn walk_meta_files(dir: &Path, out: &mut Vec<PathBuf>, window_floor: &NaiveDate)
             out.push(path);
         }
     }
+}
+
+fn cached_orphan_markdown_count(artifact_root: &Path) -> usize {
+    let now = Instant::now();
+    let cache = ORPHAN_COUNT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut cache) = cache.lock() else {
+        return count_orphan_markdown_files(artifact_root);
+    };
+    if let Some((last_run, count)) = cache.get(artifact_root)
+        && now
+            .checked_duration_since(*last_run)
+            .is_some_and(|age| age < Duration::from_secs(PROBE_CACHE_TTL_SECS))
+    {
+        return *count;
+    }
+    let count = count_orphan_markdown_files(artifact_root);
+    if cache.len() >= 64 {
+        cache.retain(|_, (last_run, _)| {
+            now.checked_duration_since(*last_run)
+                .is_some_and(|age| age < Duration::from_secs(PROBE_CACHE_TTL_SECS))
+        });
+    }
+    cache.insert(artifact_root.to_path_buf(), (now, count));
+    count
+}
+
+fn count_orphan_markdown_files(artifact_root: &Path) -> usize {
+    fn walk(dir: &Path, count: &mut usize) {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                walk(&path, count);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let is_orphan = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_ascii_lowercase)
+                .is_some_and(|name| name.starts_with("untitled") && name.ends_with(".md"));
+            if is_orphan {
+                *count += 1;
+            }
+        }
+    }
+
+    let mut count = 0;
+    walk(artifact_root, &mut count);
+    count
 }
 
 fn directory_within_window(path: &Path, window_floor: &NaiveDate) -> bool {
@@ -2367,6 +2440,7 @@ mod tests {
     fn empty_state(root: &Path) -> ControlPlaneState {
         ControlPlaneState {
             root: root.to_path_buf(),
+            retained_runs: Vec::new(),
             runs: Vec::new(),
             events: Vec::new(),
             archived_run_ids: Default::default(),
@@ -2623,6 +2697,7 @@ mod tests {
         };
         let state = ControlPlaneState {
             root: PathBuf::from("/tmp/state"),
+            retained_runs: vec![active.clone(), stalled.clone()],
             runs: vec![active, stalled],
             events: Vec::<RunEvent>::new(),
             archived_run_ids: Default::default(),
@@ -2698,11 +2773,46 @@ mod tests {
         assert_eq!(board.n, 2); // needs_attention + unsettled terminal
         assert_eq!(board.total_settled, 5);
         assert_eq!(board.active, 1);
+        assert_eq!(board.orphans, 0);
         assert!(board.scope.contains("retained"));
         let strip = board.render_strip();
         assert!(strip.contains("f=1"));
         assert!(strip.contains("x=2"));
         assert!(strip.contains("n=2"));
+        assert!(strip.contains("orphans=0"));
+    }
+
+    #[test]
+    fn settlement_board_uses_all_retained_snapshots_and_reports_orphans() {
+        let dir = tempdir().unwrap();
+        let artifact_root = dir.path().join("artifacts");
+        fs::create_dir_all(artifact_root.join("nested")).unwrap();
+        fs::write(artifact_root.join("Untitled.md"), "legacy\n").unwrap();
+        fs::write(
+            artifact_root.join("nested/Untitled report.MD"),
+            "legacy nested\n",
+        )
+        .unwrap();
+        fs::write(artifact_root.join("nested/titled.md"), "not orphan\n").unwrap();
+
+        let archived_finalized =
+            run_with_settlement("archived-f", "report_validated", Some("finalized"), Some(0));
+        let state = ControlPlaneState {
+            root: dir.path().join("control-plane"),
+            retained_runs: vec![archived_finalized],
+            runs: Vec::new(),
+            events: Vec::new(),
+            archived_run_ids: Default::default(),
+        };
+        let board =
+            MissionControlState::build_at(&state, &artifact_root, ts("2026-05-20T00:00:00Z"))
+                .settlement;
+
+        assert_eq!(board.f, 1);
+        assert_eq!(board.x, 0);
+        assert_eq!(board.n, 0);
+        assert_eq!(board.orphans, 2);
+        assert!(board.render_strip().contains("orphans=2"));
     }
 
     #[test]

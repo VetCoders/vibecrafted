@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct ControlPlaneState {
     pub root: PathBuf,
+    /// Every retained `runs/*.json` snapshot, including operator-archived IDs.
+    /// Mission Control settlement counts use this complete retained scope.
+    pub retained_runs: Vec<RunSnapshot>,
+    /// Operator-visible live/recent runs after archive-marker filtering.
     pub runs: Vec<RunSnapshot>,
     pub events: Vec<RunEvent>,
     pub archived_run_ids: HashSet<String>,
@@ -22,14 +26,16 @@ impl ControlPlaneState {
             return Ok(Self::empty(requested_root));
         };
         let archived_run_ids = root.load_archived_run_ids()?;
-        let runs = root
-            .load_runs()?
-            .into_iter()
+        let retained_runs = root.load_runs()?;
+        let runs = retained_runs
+            .iter()
             .filter(|snapshot| !archived_run_ids.contains(&snapshot.run_id))
+            .cloned()
             .collect();
         let events = root.load_events()?;
         Ok(Self {
             root: root.as_path().to_path_buf(),
+            retained_runs,
             runs,
             events,
             archived_run_ids,
@@ -39,6 +45,7 @@ impl ControlPlaneState {
     pub fn empty(root: impl AsRef<Path>) -> Self {
         Self {
             root: root.as_ref().to_path_buf(),
+            retained_runs: Vec::new(),
             runs: Vec::new(),
             events: Vec::new(),
             archived_run_ids: HashSet::new(),

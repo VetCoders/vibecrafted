@@ -7,7 +7,7 @@ control plane: [PATH]
 artifact root: [PATH]
 
 == Settlement board (0) ==
-settlement  f=0 x=0 n=0 (+invalid=0) · active=0 · total_settled=0 · scope: retained control_plane/runs snapshots (≠ full meta history)
+settlement  f=0 x=0 n=0 (+invalid=0) · active=0 · orphans=0 · total_settled=0 · scope: retained control_plane/runs snapshots (≠ full meta history)
 note: f/x/n reads settlement_verdict on retained snapshots only; Python sync_state may also fold meta-derived runs (different scope).
 
 == Active dispatches (0) ==

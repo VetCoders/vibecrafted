@@ -230,6 +230,7 @@ fn archived_run_markers_hide_runs_from_operator_board() {
     let state = ControlPlaneState::load(root).unwrap();
 
     assert_eq!(state.archived_run_ids.len(), 1);
+    assert_eq!(state.retained_runs.len(), 2);
     assert_eq!(state.runs.len(), 1);
     assert_eq!(state.runs[0].run_id, "run-b");
 }
@@ -1807,6 +1808,7 @@ fn mission_control_defaults_to_live_runs_across_roots_with_root_labels() {
 
     let state = ControlPlaneState {
         root: control_plane_root,
+        retained_runs: Vec::new(),
         runs: vec![
             RunSnapshot {
                 run_id: "wflw-foreign-launching".to_string(),

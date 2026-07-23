@@ -53,6 +53,7 @@ fn populated_mission_state() -> MissionControlState {
             n: 5,
             invalid: 0,
             active: 2,
+            orphans: 1,
             total_settled: 7,
         },
         active_dispatches: vec![
