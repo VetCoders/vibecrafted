@@ -22,7 +22,8 @@ run sit on the operator board (f/x/n)?" Those axes are deliberately separate.
 
 Terminals (1:1 to TUI f/x/n; INVALID folds into ``x`` with reason):
 
-- ``finalized`` (f) — claim evidence + report path + proof/seal, or explicit waive
+- ``finalized`` (f) — claim evidence + report path + proof/seal, explicit
+  worker self-attestation, or explicit operator waive
 - ``failed`` (x) — proof failed, death without delivery, or INVALID folded
 - ``needs_attention`` (n) — default for unsealed reports, stalls, contradictions,
   orphans, and every unreadable signal
@@ -43,6 +44,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .report_contract import validate_report_file
 from .run_triage import (
     VERDICT_FAILED,
     VERDICT_FINALIZED,
@@ -209,6 +211,34 @@ def _proof_failed(payload: Mapping[str, Any]) -> bool:
     return delivery == "invalidated"
 
 
+def _report_self_attestation(
+    payload: Mapping[str, Any],
+) -> tuple[bool, str]:
+    """Return (accepted, claim_digest) for an explicit report attestation.
+
+    Identity is fail-closed: when the run projection has a run id, the report
+    must carry the same launcher-stamped id. The claim text itself is allowed
+    to be pragmatic; this tier is intentionally weaker than a kernel seal.
+    """
+    report_path = str(
+        payload.get("report") or payload.get("latest_report") or ""
+    ).strip()
+    if not report_path:
+        return False, ""
+    frontmatter = validate_report_file(report_path, require_frontmatter=True)
+    if not frontmatter.ok or not frontmatter.finalized or not frontmatter.claim:
+        return False, ""
+    run_id = str(payload.get("run_id") or "").strip()
+    if run_id and frontmatter.run_id != run_id:
+        return False, ""
+    digest = (
+        (frontmatter.fields.get("claim_digest") or "").strip()
+        or claim_digest_from_payload(payload)
+        or hashlib.sha256(frontmatter.claim.encode("utf-8")).hexdigest()[:16]
+    )
+    return True, digest
+
+
 def _is_terminal(payload: Mapping[str, Any]) -> bool:
     state = str(payload.get("state") or payload.get("status") or "").strip().lower()
     if state in {
@@ -305,14 +335,24 @@ def settle_payload(
     """
     existing = settlement_from_payload(payload)
     if existing is not None and not force:
-        # Operator waive and await-persisted settlements are sticky.
+        # Operator waives and orphan findings are sticky. Awaited/attested n
+        # may acquire stronger evidence later; self-attested f may upgrade to
+        # sealed provenance (or be refuted by kernel proof).
         if (
-            existing.source in {"operator_waive", "await", "orphan_scan"}
+            existing.source in {"operator_waive", "orphan_scan", "sealed"}
             or existing.waived
         ):
             return existing
+        if (
+            existing.source == "await"
+            and existing.verdict is not SettlementVerdict.NEEDS_ATTENTION
+        ):
+            return existing
+        if existing.source == "self_attested":
+            if not (_proof_passed(payload) or _proof_failed(payload)):
+                return existing
         # Auto settlements may be recomputed as more evidence lands (seal late).
-        if existing.source not in {"auto", "persisted", ""}:
+        elif existing.source not in {"auto", "persisted", "await", ""}:
             return existing
 
     if not _is_terminal(payload):
@@ -349,6 +389,7 @@ def settle_payload(
             signal_payload["transcript"] = alt
     signals = read_run_signals(signal_payload)
     classification = signals.classify()
+    self_attested, attested_claim_digest = _report_self_attestation(signal_payload)
 
     if waived:
         return Settlement(
@@ -358,6 +399,35 @@ def settle_payload(
             source="operator_waive",
             claim_digest=claim_digest,
             waived=True,
+        )
+
+    # Sealed provenance is stronger than the pragmatic attestation tier.
+    if classification.verdict == VERDICT_FINALIZED and _proof_passed(payload):
+        if not claim_digest:
+            return Settlement(
+                verdict=SettlementVerdict.NEEDS_ATTENTION,
+                reason="finalized_candidate_without_claim",
+                settled_at=settled_at,
+                source=source,
+                claim_digest="",
+            )
+        return Settlement(
+            verdict=SettlementVerdict.FINALIZED,
+            reason="claim_report_and_seal",
+            settled_at=settled_at,
+            source="sealed",
+            claim_digest=claim_digest,
+        )
+
+    # Pragmatic tier from the operator addendum: a validated, run-bound report
+    # must contain both deliberate fields. Process exit alone never enters it.
+    if self_attested:
+        return Settlement(
+            verdict=SettlementVerdict.FINALIZED,
+            reason="report_self_attested",
+            settled_at=settled_at,
+            source="self_attested",
+            claim_digest=attested_claim_digest,
         )
 
     if classification.verdict == VERDICT_FAILED:
@@ -401,24 +471,16 @@ def settle_payload(
                 source=source,
                 claim_digest="",
             )
-        if not _proof_passed(payload):
-            # Axes path never finalizes without delivery=sealed; this demotion
-            # is legacy-only. Keep the legacy token only when no kernel receipt.
-            demote_reason = (
-                classification.reason
-                if signals.kernel_axes is not None
-                else "report_without_seal"
-            )
-            return Settlement(
-                verdict=SettlementVerdict.NEEDS_ATTENTION,
-                reason=demote_reason,
-                settled_at=settled_at,
-                source=source,
-                claim_digest=claim_digest,
-            )
+        # The sealed branch returned above. What remains is an unsealed legacy
+        # finalized candidate, which stays n without explicit attestation.
+        demote_reason = (
+            classification.reason
+            if signals.kernel_axes is not None
+            else "report_without_seal"
+        )
         return Settlement(
-            verdict=SettlementVerdict.FINALIZED,
-            reason="claim_report_and_seal",
+            verdict=SettlementVerdict.NEEDS_ATTENTION,
+            reason=demote_reason,
             settled_at=settled_at,
             source=source,
             claim_digest=claim_digest,

@@ -31,6 +31,8 @@ def test_parse_and_validate_minimal_frontmatter(tmp_path: Path) -> None:
     assert fm.ok
     assert fm.claim_status == "completed"
     assert fm.fields["agent"] == "codex"
+    assert fm.fields["finalized"] == "false"
+    assert fm.finalized is False
 
 
 def test_missing_frontmatter_fails_artifact_validation(tmp_path: Path) -> None:
@@ -60,7 +62,18 @@ def test_ensure_frontmatter_prepends_block() -> None:
     fields, body, has_fm = parse_report_text(text)
     assert has_fm
     assert fields["run_id"] == "r1"
+    assert fields["finalized"] == "false"
     assert "Hello" in body
+
+
+def test_existing_positive_attestation_is_preserved() -> None:
+    text = ensure_frontmatter_on_text(
+        "---\nrun_id: r1\nagent: codex\nskill: workflow\nstatus: completed\n"
+        "finalized: true\nclaim: lifecycle settled\n---\nbody\n",
+    )
+    fields, _, _ = parse_report_text(text)
+    assert fields["finalized"] == "true"
+    assert fields["claim"] == "lifecycle settled"
 
 
 def test_classify_exit_0_claim_failed_is_attention() -> None:

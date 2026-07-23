@@ -592,6 +592,9 @@ def test_lifecycle_runner_injects_context_atlas_into_stage_prompt(
     digest = claim_digest_for_text("audit readiness")
     assert f"mission claim digest: {digest}" in prompts[0]
     assert f"claim_digest: {digest}" in prompts[0]
+    assert "finalized: false" in prompts[0]
+    assert "finalized: true" in prompts[0]
+    assert "claim: <what succeeded>" in prompts[0]
     assert "Human controls: accept_dou, force_audit, interrupt_workflow" in prompts[0]
     assert "next_stage: <stage-id>" in prompts[0]
     assert "next_agent: <agent-id>" in prompts[0]

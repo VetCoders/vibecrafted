@@ -977,6 +977,12 @@ Delivery claim binding (required for automatic settlement FINALIZED):
 - write `claim_digest: {claim_digest}` in the report YAML frontmatter exactly;
   a validated report without this exact digest remains needs_attention.
 
+Worker self-attestation (explicit pragmatic tier, separate from a kernel seal):
+- start the report YAML frontmatter with `finalized: false`;
+- only when this stage genuinely succeeded, flip it to `finalized: true` and add
+  one non-empty `claim: <what succeeded>` line; otherwise leave it false;
+- a bare process exit never finalizes, and sealed proof wins provenance.
+
 Previous stage reports:
 {previous}
 

@@ -3,7 +3,8 @@
 Philosophy (dashboard-ready):
 
 * Frontmatter is **mandatory** on every agent report markdown.
-* Agent fields are a **claim**, never a self-issued Finalized verdict.
+* Agent fields are a **claim**. ``finalized: true`` plus a non-empty ``claim``
+  is an explicit self-attestation tier, never a delivery-kernel seal.
 * Runtime triangulates claim against exit code, report/transcript artifacts,
   optional declared artifact paths, and delivery-kernel axes when present.
 
@@ -34,6 +35,8 @@ RECOMMENDED_KEYS: tuple[str, ...] = (
     "session_id",
     "claim_status",
     "claim_kind",
+    "finalized",
+    "claim",
     "repo_path",
     "model",
 )
@@ -94,6 +97,21 @@ class ReportFrontmatter:
     def claim_kind(self) -> str:
         return (self.fields.get("claim_kind") or self.fields.get("skill") or "").strip()
 
+    @property
+    def finalized(self) -> bool:
+        """Whether the worker deliberately asserted successful completion."""
+        return (self.fields.get("finalized") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    @property
+    def claim(self) -> str:
+        """Human-readable claim attached to a positive self-attestation."""
+        return (self.fields.get("claim") or "").strip()
+
     def as_payload(self) -> dict[str, Any]:
         return {
             "contract": CONTRACT_ID,
@@ -102,6 +120,8 @@ class ReportFrontmatter:
             "fields": dict(self.fields),
             "claim_status": self.claim_status,
             "claim_kind": self.claim_kind,
+            "finalized": self.finalized,
+            "claim": self.claim,
             "errors": list(self.errors),
             "warnings": list(self.warnings),
         }
@@ -267,6 +287,9 @@ def render_minimal_frontmatter(
         "skill": skill or "unknown",
         "status": status or "completed",
         "claim_status": status or "completed",
+        # The worker must flip this deliberately and add ``claim``. A fallback
+        # or launcher-normalized report never self-finalizes by construction.
+        "finalized": "false",
     }
     if extra:
         for key, value in extra.items():
@@ -280,6 +303,8 @@ def render_minimal_frontmatter(
         "status",
         "claim_status",
         "claim_kind",
+        "finalized",
+        "claim",
         "date",
         "session_id",
         "model",
@@ -324,6 +349,9 @@ def ensure_frontmatter_on_text(
             changed = True
         if not fields.get("claim_status") and fields.get("status"):
             fields["claim_status"] = fields["status"]
+            changed = True
+        if "finalized" not in fields:
+            fields["finalized"] = "false"
             changed = True
         if extra:
             for key, extra_value in extra.items():

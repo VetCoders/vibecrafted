@@ -102,9 +102,15 @@ def test_legacy_report_without_seal_when_no_kernel_axes(tmp_path: Path) -> None:
 
 def test_claim_report_and_seal_is_finalized(tmp_path: Path) -> None:
     report = tmp_path / "report.md"
-    report.write_text("# done\n", encoding="utf-8")
+    report.write_text(
+        "---\nrun_id: sealed-1\nagent: codex\nskill: workflow\n"
+        "status: completed\nfinalized: true\nclaim: sealed delivery succeeded\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
     settlement = settle_payload(
         {
+            "run_id": "sealed-1",
             "state": "report_validated",
             "exit_code": 0,
             "report": str(report),
@@ -119,6 +125,85 @@ def test_claim_report_and_seal_is_finalized(tmp_path: Path) -> None:
     assert settlement.verdict is SettlementVerdict.FINALIZED
     assert settlement.tui_key == "f"
     assert settlement.reason == "claim_report_and_seal"
+    assert settlement.source == "sealed"
+
+
+def test_validated_report_can_self_attest_without_kernel_seal(tmp_path: Path) -> None:
+    report = tmp_path / "report.md"
+    report.write_text(
+        "---\nrun_id: attested-1\nagent: codex\nskill: marbles\n"
+        "status: completed\nfinalized: true\nclaim: settlement pipe is truthful\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+    settlement = settle_payload(
+        {
+            "run_id": "attested-1",
+            "state": "report_validated",
+            "exit_code": 0,
+            "report": str(report),
+            "proof_state": "undeclared",
+            "delivery_state": "unverified",
+        }
+    )
+    assert settlement is not None
+    assert settlement.verdict is SettlementVerdict.FINALIZED
+    assert settlement.source == "self_attested"
+    assert settlement.reason == "report_self_attested"
+    assert settlement.claim_digest
+
+
+@pytest.mark.parametrize(
+    ("finalized", "claim", "report_run_id"),
+    (
+        ("false", "settlement pipe is truthful", "attested-2"),
+        ("true", "", "attested-2"),
+        ("true", "settlement pipe is truthful", "different-run"),
+    ),
+)
+def test_incomplete_self_attestation_stays_needs_attention(
+    tmp_path: Path, finalized: str, claim: str, report_run_id: str
+) -> None:
+    report = tmp_path / "report.md"
+    report.write_text(
+        f"---\nrun_id: {report_run_id}\nagent: codex\nskill: marbles\n"
+        f"status: completed\nfinalized: {finalized}\nclaim: {claim}\n---\nbody\n",
+        encoding="utf-8",
+    )
+    settlement = settle_payload(
+        {
+            "run_id": "attested-2",
+            "state": "report_validated",
+            "exit_code": 0,
+            "report": str(report),
+            "prompt": "settle the layer",
+            "proof_state": "undeclared",
+            "delivery_state": "unverified",
+        }
+    )
+    assert settlement is not None
+    assert settlement.verdict is SettlementVerdict.NEEDS_ATTENTION
+
+
+def test_kernel_failure_refutes_self_attestation(tmp_path: Path) -> None:
+    report = tmp_path / "report.md"
+    report.write_text(
+        "---\nrun_id: attested-3\nagent: codex\nskill: marbles\n"
+        "status: completed\nfinalized: true\nclaim: claimed success\n---\nbody\n",
+        encoding="utf-8",
+    )
+    settlement = settle_payload(
+        {
+            "run_id": "attested-3",
+            "state": "report_validated",
+            "exit_code": 0,
+            "report": str(report),
+            "proof_state": "failed",
+            "delivery_state": "unverified",
+        }
+    )
+    assert settlement is not None
+    assert settlement.verdict is SettlementVerdict.FAILED
 
 
 def test_operator_waive_finalizes_without_seal(tmp_path: Path) -> None:
