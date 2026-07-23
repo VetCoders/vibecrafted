@@ -158,6 +158,15 @@ def _as_bool(value: Any) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on", "waived"}
 
 
+def _expected_claim_digest(payload: Mapping[str, Any]) -> str:
+    """Return the machine-owned mission binding, when the launcher supplied one."""
+    for key in ("claim_digest", "mission_digest", "brief_digest"):
+        digest = str(payload.get(key) or "").strip()
+        if digest:
+            return digest
+    return ""
+
+
 def claim_digest_from_payload(payload: Mapping[str, Any]) -> str:
     """Stable digest of the run's claim surface (brief / mission / prompt).
 
@@ -231,8 +240,16 @@ def _report_self_attestation(
     run_id = str(payload.get("run_id") or "").strip()
     if run_id and frontmatter.run_id != run_id:
         return False, ""
+    report_digest = (frontmatter.fields.get("claim_digest") or "").strip()
+    expected_digest = _expected_claim_digest(payload)
+    # A lifecycle launcher stamps the expected mission digest into run metadata
+    # before the worker starts. Pragmatic attestation may be weaker than a seal,
+    # but it must still close that exact mission rather than a report-selected one.
+    if expected_digest and report_digest != expected_digest:
+        return False, ""
     digest = (
-        (frontmatter.fields.get("claim_digest") or "").strip()
+        report_digest
+        or expected_digest
         or claim_digest_from_payload(payload)
         or hashlib.sha256(frontmatter.claim.encode("utf-8")).hexdigest()[:16]
     )
@@ -349,7 +366,13 @@ def settle_payload(
         ):
             return existing
         if existing.source == "self_attested":
-            if not (_proof_passed(payload) or _proof_failed(payload)):
+            expected_digest = _expected_claim_digest(payload)
+            binding_changed = bool(
+                expected_digest and existing.claim_digest != expected_digest
+            )
+            if not binding_changed and not (
+                _proof_passed(payload) or _proof_failed(payload)
+            ):
                 return existing
         # Auto settlements may be recomputed as more evidence lands (seal late).
         elif existing.source not in {"auto", "persisted", "await", ""}:

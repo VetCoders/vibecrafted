@@ -847,6 +847,15 @@ def test_default_no_await_dispatcher_reconciles_finalized_and_refusals(
             runtime_dir.mkdir(parents=True)
             artifact_dir.mkdir(parents=True)
             seen_state_paths.append(spec.lifecycle_state_path)
+            meta.write_text(
+                json.dumps(
+                    {
+                        "run_id": stage_run_id,
+                        "claim_digest": spec.claim_digest,
+                    }
+                ),
+                encoding="utf-8",
+            )
             return {
                 "accepted": True,
                 "run_id": stage_run_id,
@@ -881,6 +890,8 @@ def test_default_no_await_dispatcher_reconciles_finalized_and_refusals(
                     "skill: implement",
                     "status: completed",
                     "claim_status: completed",
+                    "finalized: true",
+                    "claim: default lifecycle stage completed",
                     f"claim_digest: {report_digest}",
                     "---",
                     "",

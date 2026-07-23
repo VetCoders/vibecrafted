@@ -154,6 +154,76 @@ def test_validated_report_can_self_attest_without_kernel_seal(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
+    ("report_digest", "expected_verdict"),
+    (
+        ("9e0d59e1dc48bc42", SettlementVerdict.FINALIZED),
+        ("deadbeefdeadbeef", SettlementVerdict.NEEDS_ATTENTION),
+        ("", SettlementVerdict.NEEDS_ATTENTION),
+    ),
+)
+def test_lifecycle_self_attestation_must_match_machine_bound_claim(
+    tmp_path: Path,
+    report_digest: str,
+    expected_verdict: SettlementVerdict,
+) -> None:
+    report = tmp_path / "report.md"
+    digest_line = f"claim_digest: {report_digest}\n" if report_digest else ""
+    report.write_text(
+        "---\nrun_id: attested-bound\nagent: codex\nskill: polarize\n"
+        "status: completed\nfinalized: true\nclaim: exact mission completed\n"
+        f"{digest_line}---\nbody\n",
+        encoding="utf-8",
+    )
+
+    settlement = settle_payload(
+        {
+            "run_id": "attested-bound",
+            "state": "report_validated",
+            "exit_code": 0,
+            "report": str(report),
+            "claim_digest": "9e0d59e1dc48bc42",
+            "proof_state": "undeclared",
+            "delivery_state": "unverified",
+        }
+    )
+
+    assert settlement is not None
+    assert settlement.verdict is expected_verdict
+    if expected_verdict is SettlementVerdict.FINALIZED:
+        assert settlement.source == "self_attested"
+        assert settlement.claim_digest == "9e0d59e1dc48bc42"
+
+
+def test_machine_binding_refutes_persisted_self_attestation_for_another_claim(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "report.md"
+    report.write_text(
+        "---\nrun_id: rebound\nagent: codex\nskill: polarize\n"
+        "finalized: true\nclaim: wrong mission\nclaim_digest: deadbeefdeadbeef\n"
+        "---\nbody\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "run_id": "rebound",
+        "state": "report_validated",
+        "exit_code": 0,
+        "report": str(report),
+        "claim_digest": "9e0d59e1dc48bc42",
+        "settlement_verdict": "finalized",
+        "settlement_reason": "report_self_attested",
+        "settlement_source": "self_attested",
+        "settlement_claim_digest": "deadbeefdeadbeef",
+    }
+
+    settlement = settle_payload(payload)
+
+    assert settlement is not None
+    assert settlement.verdict is SettlementVerdict.NEEDS_ATTENTION
+    assert settlement.claim_digest == "9e0d59e1dc48bc42"
+
+
+@pytest.mark.parametrize(
     ("finalized", "claim", "report_run_id"),
     (
         ("false", "settlement pipe is truthful", "attested-2"),

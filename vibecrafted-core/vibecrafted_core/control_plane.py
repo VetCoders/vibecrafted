@@ -1566,8 +1566,17 @@ def _project_run_payload(
     kernel_claim_digest = _kernel_claim_digest_from_run_dir(
         run_dir if run_dir.is_dir() else None
     )
+    launcher_claim_digest = ""
+    if run_dir.is_dir():
+        launcher_claim_digest = str(
+            _read_json(run_dir / "meta.json").get("claim_digest") or ""
+        ).strip()
     if kernel_claim_digest:
         payload["claim_digest"] = kernel_claim_digest
+    elif launcher_claim_digest:
+        # The launcher owns mission identity; report self-attestation may close
+        # this digest, but it must never select a different mission itself.
+        payload["claim_digest"] = launcher_claim_digest
     payload["failure_card"] = _failure_card(payload)
     payload["health"] = _state_health(
         str(payload.get("state") or ""), str(payload.get("updated_at") or "")
