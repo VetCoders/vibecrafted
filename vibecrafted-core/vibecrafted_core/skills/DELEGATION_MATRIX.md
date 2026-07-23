@@ -1,7 +1,7 @@
 ---
 title: Delegation Matrix
 kind: doctrine_matrix
-version: 3.1.0
+version: 3.2.0
 description: "Canonical invocation, execution, and delegation model for Vibecrafted runtime launchers and their skills."
 scope: framework
 status: active
@@ -96,33 +96,33 @@ Grounded in `vibecrafted_core.cli.LAUNCHERS` + shell wrappers + lifecycle meta. 
 
 ### Ship-cycle launchers (canonical order)
 
-| Launcher    | Skill                                         | Worker CLI                      | Interactive     | Notes                                    |
-| ----------- | --------------------------------------------- | ------------------------------- | --------------- | ---------------------------------------- |
-| `scaffold`  | [`vc-scaffold`](vc-scaffold/SKILL.md)         | `vibecrafted scaffold <agent>`  | `/vc-scaffold`  | Plan / briefs from intent                |
-| `implement` | [`vc-implement`](vc-implement/SKILL.md)       | `vibecrafted implement <agent>` | `/vc-implement` | Alias: `justdo` → same skill             |
-| `justdo`    | [`vc-justdo`](vc-justdo/SKILL.md) / implement | `vibecrafted justdo <agent>`    | `/vc-justdo`    | **Alias of implement** — same pipeline   |
-| `review`    | [`vc-review`](vc-review/SKILL.md)             | `vibecrafted review <agent>`    | `/vc-review`    | READ; bounded review                     |
-| `workflow`  | [`vc-workflow`](vc-workflow/SKILL.md)         | `vibecrafted workflow <agent>`  | `/vc-workflow`  | ERi: Examine → Research → Implement      |
-| `followup`  | [`vc-followup`](vc-followup/SKILL.md)         | `vibecrafted followup <agent>`  | `/vc-followup`  | Trajectory / gap audit                   |
-| `marbles`   | [`vc-marbles`](vc-marbles/SKILL.md)           | `vibecrafted marbles <agent>`   | `/vc-marbles`   | WRITE convergence; `--count` / `--depth` |
-| `audit`     | [`vc-audit`](vc-audit/SKILL.md)               | `vibecrafted audit <agent>`     | `/vc-audit`     | Plan-vs-code falsification               |
-| `polarize`  | [`vc-polarize`](vc-polarize/SKILL.md)         | `vibecrafted polarize <agent>`  | `/vc-polarize`  | One-axis product truth                   |
-| `dou`       | [`vc-dou`](vc-dou/SKILL.md)                   | `vibecrafted dou <agent>`       | `/vc-dou`       | Definition of Undone                     |
-| `decorate`  | [`vc-decorate`](vc-decorate/SKILL.md)         | `vibecrafted decorate <agent>`  | `/vc-decorate`  | Visual / UX finish                       |
-| `hydrate`   | [`vc-hydrate`](vc-hydrate/SKILL.md)           | `vibecrafted hydrate <agent>`   | `/vc-hydrate`   | Packaging / GTM                          |
-| `release`   | [`vc-release`](vc-release/SKILL.md)           | `vibecrafted release <agent>`   | `/vc-release`   | Outward ship mechanics                   |
+| Launcher    | Skill                                   | Worker CLI                      | Interactive     | Notes                                                                  |
+| ----------- | --------------------------------------- | ------------------------------- | --------------- | ---------------------------------------------------------------------- |
+| `scaffold`  | [`vc-scaffold`](vc-scaffold/SKILL.md)   | `vibecrafted scaffold <agent>`  | `/vc-scaffold`  | Plan / briefs from intent                                              |
+| `implement` | [`vc-implement`](vc-implement/SKILL.md) | `vibecrafted implement <agent>` | `/vc-implement` | **Ship WRITE stage** — structured e2e delivery with followup + marbles |
+| `review`    | [`vc-review`](vc-review/SKILL.md)       | `vibecrafted review <agent>`    | `/vc-review`    | READ; bounded review                                                   |
+| `workflow`  | [`vc-workflow`](vc-workflow/SKILL.md)   | `vibecrafted workflow <agent>`  | `/vc-workflow`  | ERi: Examine → Research → Implement                                    |
+| `followup`  | [`vc-followup`](vc-followup/SKILL.md)   | `vibecrafted followup <agent>`  | `/vc-followup`  | Trajectory / gap audit                                                 |
+| `marbles`   | [`vc-marbles`](vc-marbles/SKILL.md)     | `vibecrafted marbles <agent>`   | `/vc-marbles`   | WRITE convergence; `--count` / `--depth`                               |
+| `audit`     | [`vc-audit`](vc-audit/SKILL.md)         | `vibecrafted audit <agent>`     | `/vc-audit`     | Plan-vs-code falsification                                             |
+| `polarize`  | [`vc-polarize`](vc-polarize/SKILL.md)   | `vibecrafted polarize <agent>`  | `/vc-polarize`  | One-axis product truth                                                 |
+| `dou`       | [`vc-dou`](vc-dou/SKILL.md)             | `vibecrafted dou <agent>`       | `/vc-dou`       | Definition of Undone                                                   |
+| `decorate`  | [`vc-decorate`](vc-decorate/SKILL.md)   | `vibecrafted decorate <agent>`  | `/vc-decorate`  | Visual / UX finish                                                     |
+| `hydrate`   | [`vc-hydrate`](vc-hydrate/SKILL.md)     | `vibecrafted hydrate <agent>`   | `/vc-hydrate`   | Packaging / GTM                                                        |
+| `release`   | [`vc-release`](vc-release/SKILL.md)     | `vibecrafted release <agent>`   | `/vc-release`   | Outward ship mechanics                                                 |
 
 ### Additional skill launchers
 
-| Launcher    | Skill                                   | Worker CLI                      | Interactive     | Notes                                       |
-| ----------- | --------------------------------------- | ------------------------------- | --------------- | ------------------------------------------- |
-| `research`  | [`vc-research`](vc-research/SKILL.md)   | `vibecrafted research …`        | `/vc-research`  | Swarm-capable; default multi-agent research |
-| `ownership` | [`vc-ownership`](vc-ownership/SKILL.md) | `vibecrafted ownership <agent>` | `/vc-ownership` | Full-spectrum ownership delivery            |
-| `partner`   | [`vc-partner`](vc-partner/SKILL.md)     | `vibecrafted partner <agent>`   | `/vc-partner`   | Shared steering with operator               |
-| `prune`     | [`vc-prune`](vc-prune/SKILL.md)         | `vibecrafted prune <agent>`     | `/vc-prune`     | Runtime cone / silencer strip               |
-| `intents`   | [`vc-intents`](vc-intents/SKILL.md)     | `vibecrafted intents <agent>`   | `/vc-intents`   | Plan-to-runtime truth                       |
-| `delegate`  | [`vc-delegate`](vc-delegate/SKILL.md)   | `vibecrafted delegate <agent>`  | `/vc-delegate`  | **Native** subagent doctrine (bounded)      |
-| `paste`     | (runtime helper)                        | `vibecrafted paste …`           | —               | Prompt/paste helper; not a full ERi skill   |
+| Launcher    | Skill                                   | Worker CLI                      | Interactive     | Notes                                                                                           |
+| ----------- | --------------------------------------- | ------------------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
+| `justdo`    | [`vc-justdo`](vc-justdo/SKILL.md)       | `vibecrafted justdo <agent>`    | `/vc-justdo`    | **Standalone posture** — not a ship stage; not `implement`. Task type from the prompt. ADR-0001 |
+| `research`  | [`vc-research`](vc-research/SKILL.md)   | `vibecrafted research …`        | `/vc-research`  | Swarm-capable; default multi-agent research                                                     |
+| `ownership` | [`vc-ownership`](vc-ownership/SKILL.md) | `vibecrafted ownership <agent>` | `/vc-ownership` | Full-spectrum ownership delivery                                                                |
+| `partner`   | [`vc-partner`](vc-partner/SKILL.md)     | `vibecrafted partner <agent>`   | `/vc-partner`   | Shared steering with operator                                                                   |
+| `prune`     | [`vc-prune`](vc-prune/SKILL.md)         | `vibecrafted prune <agent>`     | `/vc-prune`     | Runtime cone / silencer strip                                                                   |
+| `intents`   | [`vc-intents`](vc-intents/SKILL.md)     | `vibecrafted intents <agent>`   | `/vc-intents`   | Plan-to-runtime truth                                                                           |
+| `delegate`  | [`vc-delegate`](vc-delegate/SKILL.md)   | `vibecrafted delegate <agent>`  | `/vc-delegate`  | **Native** subagent doctrine (bounded)                                                          |
+| `paste`     | (runtime helper)                        | `vibecrafted paste …`           | —               | Prompt/paste helper; not a full ERi skill                                                       |
 
 ### Meta and orientation (not the same shape as skill workers)
 
@@ -174,6 +174,20 @@ For each launcher `L` with skill `vc-L`:
 | 1 Worker      | `vibecrafted review <agent>`                       |
 | 2 Interactive | `/vc-review`                                       |
 | 3 Operator    | `vibecrafted review <agent>` via dispatch/operator |
+
+### Worked example: implement vs justdo (precision — not the same cell)
+
+|             | `implement`                                                 | `justdo`                                                                                            |
+| ----------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Matrix cell | **Ship-cycle** WRITE stage                                  | **Additional** posture launcher                                                                     |
+| Skill id    | `implement` / `vc-implement`                                | `justdo` / `vc-justdo`                                                                              |
+| Mandate     | Structured e2e implementation (followup + marbles built in) | No-ceremony delivery; **task type is the prompt** (implement / review / audit / research / fix / …) |
+| Pipeline    | Yes — VC-ship stage                                         | **No** — stands beside ship (ADR-0001)                                                              |
+| Worker      | `vibecrafted implement <agent>`                             | `vibecrafted justdo <agent>`                                                                        |
+| Interactive | `/vc-implement`                                             | `/vc-justdo`                                                                                        |
+| Not         | Not a posture alias for everything                          | Not an alias of `implement`                                                                         |
+
+Pick the cell by intent: ship-stage delivery → `implement`. Daily rescue / prompt-typed work with ownership posture → `justdo`.
 
 ### Worked example: ship (meta — different product)
 

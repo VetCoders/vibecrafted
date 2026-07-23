@@ -165,8 +165,9 @@ vibecrafted init claude
 vibecrafted implement codex --prompt "Add JWT authentication"
 ```
 
-Existing `vibecrafted justdo` / `vc-justdo` calls remain compatibility aliases,
-but new docs and scripts should use `implement`.
+`vibecrafted justdo` / `vc-justdo` is a **standalone** Just Do posture launcher
+(task type from the prompt; not a ship stage). Use `implement` for the VC-ship
+WRITE stage. They are not aliases (ADR-0001).
 
 Type `vibecrafted help` for the command deck, or `vc-` and hit tab once the shell helpers are installed.
 

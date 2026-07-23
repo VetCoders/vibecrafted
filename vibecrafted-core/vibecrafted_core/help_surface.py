@@ -104,7 +104,7 @@ WORKFLOW_HELP: dict[str, WorkflowHelp] = {
         ),
     ),
     "implement": WorkflowHelp(
-        "Autonomous end-to-end implementation with followup and marbles built in.",
+        "VC-ship WRITE stage: structured end-to-end implementation with followup and marbles built in.",
         (
             "vc-init and target the runtime owner",
             "implement the complete cut",
@@ -116,7 +116,8 @@ WORKFLOW_HELP: dict[str, WorkflowHelp] = {
             "vc-implement claude --file /path/to/brief.md",
         ),
         (
-            f"Alias: vibecrafted justdo {AGENT_SELECTOR} [flags] / vc-justdo {AGENT_SELECTOR} [flags]",
+            "Ship-cycle stage (lifecycle_order=20). Not the same skill as justdo.",
+            f"Launcher: vibecrafted implement {AGENT_SELECTOR} [flags] / vc-implement {AGENT_SELECTOR} [flags]",
         ),
     ),
     "intents": WorkflowHelp(
@@ -133,21 +134,20 @@ WORKFLOW_HELP: dict[str, WorkflowHelp] = {
         ),
     ),
     "justdo": WorkflowHelp(
-        "Convenient alias for vc-implement, kept for existing agents and scripts.",
+        "Standalone Just Do posture: take the task, no ceremony, no best-of-n — type defined by the prompt.",
         (
-            "vc-init and target the runtime owner",
-            "implement the complete cut",
-            "verify the real path",
-            "run followup and converge if needed",
+            "vc-init (orientation without interrogation)",
+            "infer the task type from the prompt",
+            "act under ownership posture",
+            "prove done (walk-around / DoU), do not claim on words alone",
         ),
         (
-            'vibecrafted implement codex --prompt "Ship the feature"',
-            'vibecrafted justdo codex --prompt "Ship the feature"',
+            'vibecrafted justdo codex --prompt "Review the last five commits for X"',
             "vc-justdo claude --file /path/to/brief.md",
         ),
         (
-            f"Alias: vibecrafted justdo {AGENT_SELECTOR} [flags] / vc-justdo {AGENT_SELECTOR} [flags]",
-            "Runs the same workflow as implement; it is not a second implementation engine.",
+            "Non-pipeline escape hatch (ADR-0001). Not a VC-ship stage. Not implement.",
+            f"Launcher: vibecrafted justdo {AGENT_SELECTOR} [flags] / vc-justdo {AGENT_SELECTOR} [flags]",
         ),
     ),
     "marbles": WorkflowHelp(
@@ -360,14 +360,10 @@ def _usage_lines(topic: str) -> list[str]:
         ]
     if topic == "paste":
         return ["  vibecrafted paste [--skill <workflow>] [flags]"]
-    canonical = "implement" if topic == "justdo" else topic
-    wrapper = "vc-implement" if topic == "justdo" else f"vc-{topic}"
     lines = [
-        f"  vibecrafted {canonical} {AGENT_SELECTOR} [flags]",
-        f"  {wrapper} {AGENT_SELECTOR} [flags]",
+        f"  vibecrafted {topic} {AGENT_SELECTOR} [flags]",
+        f"  vc-{topic} {AGENT_SELECTOR} [flags]",
     ]
-    if topic == "justdo":
-        lines.append(f"  vibecrafted justdo {AGENT_SELECTOR} [flags]")
     if topic == "marbles":
         lines.extend(
             [

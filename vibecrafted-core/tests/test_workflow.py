@@ -63,13 +63,13 @@ def test_normalize_launch_spec_uses_registry_for_marbles_defaults(
     assert spec.depth == 3
 
 
-def test_normalize_launch_spec_maps_justdo_to_implement(tmp_path: Path) -> None:
+def test_normalize_launch_spec_keeps_justdo_as_own_skill(tmp_path: Path) -> None:
     spec = workflow.normalize_launch_spec(
         {"skill": "justdo", "agent": "codex", "prompt": "ship"},
         tmp_path,
     )
 
-    assert spec.skill == "implement"
+    assert spec.skill == "justdo"
     assert spec.agent == "codex"
 
 

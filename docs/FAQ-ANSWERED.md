@@ -104,7 +104,7 @@ Answers from the trenches. This is the truth as of April 2026.
   you through the process.
 
 - **Why is there no `vc-test` skill?**
-  Testing isn't a "skill"—it's a requirement of _every_ skill. `vc-workflow`, `vc-implement` (alias `vc-justdo`),
+  Testing isn't a "skill"—it's a requirement of _every_ skill. `vc-workflow`, `vc-implement`, `vc-justdo`,
   and `vc-marbles` all have testing and validation baked into their "Execution" and "Validate" phases.
 
 - **What is the Definition of Undone and why is it not the Definition of Done?**
@@ -185,10 +185,11 @@ Answers from the trenches. This is the truth as of April 2026.
   A single iteration (followup + fix) takes 2-5 minutes. A task typically converges in 2-4 loops. Massive refactors
   might take 10+.
 
-- **When should I use `vc-implement` (alias `vc-justdo`) vs running individual skills manually?**
-  Use `vc-implement` when the task is clear and you want the agent to take full ownership from research to final
-  convergence. Use individual skills (init → workflow → followup) when you want to supervise the architectural "cuts" at
-  each step. The `vc-justdo` name still resolves to the same skill, so already-trained agents keep working.
+- **When should I use `vc-implement` vs `vc-justdo` vs running individual skills manually?**
+  Use `vc-implement` when the task is a clear **ship WRITE** cut and you want structured e2e delivery (followup +
+  marbles built in). Use `vc-justdo` for **standalone Just Do posture**: no ceremony, task type defined by the prompt
+  (implement / review / audit / research / fix / …) — not a ship stage and not an implement alias (ADR-0001). Use
+  individual skills (init → workflow → followup) when you want to supervise the architectural "cuts" at each step.
 
 - **What is the difference between `vc-review` and `vc-followup`?**
   `vc-review` is bounded: give it a PR, branch diff, commit range, or review artifact pack and expect findings-first

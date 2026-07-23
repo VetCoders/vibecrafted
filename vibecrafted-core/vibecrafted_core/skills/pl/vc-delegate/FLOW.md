@@ -24,7 +24,7 @@ flowchart TD
 
 - Równoległa praca zewnętrzna jest uzasadniona -> `vc-agents`
 - Potrzebne jest współdzielone sterowanie przed podziałem -> `vc-partner`
-- Delegowane cięcie krzepnie w przebieg implementacyjny -> `vc-implement` (alias `vc-justdo`) lub `vc-workflow`
+- Delegowane cięcie krzepnie w przebieg implementacyjny -> `vc-implement` lub `vc-workflow`; postawa Just Do -> `vc-justdo`
 
 ### Artefakty sesji
 

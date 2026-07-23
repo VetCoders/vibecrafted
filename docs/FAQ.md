@@ -54,10 +54,10 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 
 ## Workflow and Operations
 
-- **When should I use `vc-implement` (alias `vc-justdo`)?**
-  Use it when the task is clear and you want the agent to take ownership end-to-end. `vc-implement` is the default
-  name; `vc-justdo` keeps working for agents already wired to it. Use the phase skills individually when you want more
-  supervisory control.
+- **When should I use `vc-implement` vs `vc-justdo`?**
+  Use `vc-implement` for a clear **ship WRITE** cut with structured e2e delivery (followup + marbles). Use
+  `vc-justdo` for **standalone Just Do posture**: task type from the prompt, no ship-stage ceremony — not an
+  implement alias (ADR-0001). Use phase skills individually when you want more supervisory control.
 
 - **When should I use `vc-review` instead of `vc-followup`?**
   Use `vc-review` for a bounded review target: a PR, branch diff, commit range, or artifact pack. Use `vc-followup`

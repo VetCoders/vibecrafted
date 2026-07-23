@@ -1,6 +1,8 @@
 # ADR-0001 — `vc-justdo`: od aliasu `vc-implement` do samodzielnego skilla+launchera „Just Do"
 
-- **Status:** Proposed (operator-decided — Vetcoders, 2026-06-04). Czeka na ratyfikację + cut migracyjny.
+- **Status:** Accepted (operator-decided 2026-06-04; runtime+matrix cut 2026-07-23).
+  `justdo` is its own skill id in registry/cli/help; matrix v3.2 places it under
+  Additional launchers; `implement` is ship WRITE only.
 - **Deprecates:** obecne stanowisko „`justdo` = compatibility alias `vc-implement`; implement is the public face"
   (`docs/runtime/CONTRACT_v1.5.0.md:534`, `docs/SKILLS.md:60-61`).
 - **Kontekst pierwszy:** to nie jest pierwszy ADR projektu jako konwencji — w repo nie istniał katalog

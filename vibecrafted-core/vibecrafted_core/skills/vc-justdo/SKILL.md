@@ -1,17 +1,16 @@
 ---
 name: vc-justdo
-version: 3.0.0
+version: 3.1.0
 description: >
-  "Nie pierdol, po prostu zrób." Standalone posture skill + launcher — NOT an
-  alias of vc-implement. No question, take the task, just do it — regardless of
-  task type (implement, review, audit, research, fix, anything). The task type is
-  defined by the PROMPT, not by the skill. No best-offer / best-of-n deliberation.
-  Daily rescue of a tired founder: at 4am nobody answers, so don't ask — act, and
-  proactively explore when context is thin. Carries the vc-ownership posture.
-  Non-pipeline (it is NOT a VC-ship cadence phase, unlike vc-implement).
-  Trigger phrases: "just do", "just do it", "vc-justdo", "nie pierdol tylko zrób",
-  "weź i zrób", "zrób to", "ogarnij to", "nie mam siły ale zrób", "take the task",
-  "no questions just do it", "zrób review/audyt/research <X>".
+  Standalone Just Do posture skill + launcher — not an alias of vc-implement.
+  No ceremony, no best-of-n: take the task and deliver. Task type is defined by
+  the PROMPT (implement, review, audit, research, fix, recon — anything), not by
+  this skill. Carries the vc-ownership posture. Non-pipeline: not a VC-ship
+  cadence phase (unlike vc-implement). Daily rescue when the founder is tired
+  and still needs the work done — orient, act, prove.
+  Trigger phrases: "just do", "just do it", "vc-justdo", "weź i zrób", "zrób to",
+  "ogarnij to", "take the task", "no questions just do it",
+  "zrób review/audyt/research <X>", "bez gadania zrób".
 compatibility:
   tools:
     - exec_command
@@ -37,6 +36,7 @@ dogfooding: "required for repo-impacting work"
 > - [Launcher catalogue](../DELEGATION_MATRIX.md#launcher-catalogue-core-runtime)
 > - [Per-launcher rule](../DELEGATION_MATRIX.md#per-launcher-rule-the-semantic-delta)
 > - [Native vs external](../DELEGATION_MATRIX.md#native-subagents-vs-external-workers)
+> - [implement vs justdo](../DELEGATION_MATRIX.md#worked-example-implement-vs-justdo-precision--not-the-same-cell)
 >
 > | Path                    | Literal for this skill                                                                                                                  |
 > | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
@@ -44,103 +44,114 @@ dogfooding: "required for repo-impacting work"
 > | 2. Interactive          | `/vc-justdo` — execute **in this session**; use native subagents when required; do **not** externalize merely because a launcher exists |
 > | 3. Agent-operator       | may dispatch the worker form above via `vc-dispatch` / operator lines while preserving this skill's identity                            |
 >
-> **Note:** Alias of **implement** — same pipeline; prefer `implement` in new briefs.
+> **Not** `implement`. Own skill id, own matrix cell (Additional launchers), ADR-0001.
 
 > Freer native on some runs ≠ abandon external fleet. `vc-dispatch` and `vc-ship` keep their own identities.
 
 <!-- /fleet-imperative -->
 
-# vc-justdo — „Nie pierdol, po prostu zrób"
+# vc-justdo — Just Do
 
-> Standalone. Non-pipeline. Daily rescue zmęczonego foundera.
-> Bierzesz zadanie i robisz — bez pytań, bez trybu best-offer.
+> Standalone. Non-pipeline. Daily rescue when energy is low and the work is not.
+> Take the task. Deliver. Prove it.
 
 ## Taxonomy
 
 ```yaml
 vc-justdo:
   kind: standalone_posture_skill
-  pipeline: none # NON-pipeline — NIE jest fazą cadence VC-ship (w przeciwieństwie do vc-implement)
-  posture: vc-ownership # niesie postawę vc-ownership
+  pipeline: none # NON-pipeline — not a VC-ship cadence phase (vc-implement is)
+  posture: vc-ownership
   task_type: defined_by_prompt # implement | review | audit | research | fix | anything
   scope: interactive_or_headless_session
-  questions: none # interactive: proaktywna eksploracja zamiast pytań
+  questions: none # interactive: explore instead of interrogating
 ```
 
-Skill invocation ≠ runtime invocation. `$vc-justdo` w rozmowie = agent przyjmuje postawę „just do".
-`vibecrafted justdo <agent>` / `vc-justdo <agent>` = osobny run runtime.
+Skill invocation ≠ runtime invocation. `$vc-justdo` in chat = agent adopts the
+Just Do posture. `vibecrafted justdo <agent>` / `vc-justdo <agent>` = separate
+runtime run with skill id `justdo`.
 
 ## Living Tree / Worktree Rule
 
-Działa w bieżącym checkout i branchu operatora. Nie twórz/nie przełączaj worktree, chyba że operator
-jawnie o to prosi w tym prompcie. Re-read przed edycją; substrate-failure jeśli drzewo zatrute.
+Runs in the operator's current checkout and branch. Do not create or switch
+worktrees unless the operator explicitly asks in this prompt. Re-read before
+edit; report substrate failure if the tree is too poisoned to continue safely.
 See [Living Tree Rule](../LIVING_TREE_RULE.md).
 
 ## Canonical Orientation Gate (no-question ≠ no-orientation)
 
-„Nie pytaj" NIE znaczy „nie orientuj się". Przed repo-specyficzną pracą uruchom/skonsumuj `vc-init`.
-`Loctree:loctree` to domyślna percepcja strukturalna — użyj jej przed grepem (`context`/`slice`/`impact`/`find`), by zbudować lub odświeżyć **Code-Derived Application Map**.
-Brak `vc-init`/Loctree evidence = process failure. No-repo/no-code → zadeklaruj no-repo exception.
+Not asking the operator does **not** mean skipping orientation. Before
+repo-specific work, run or consume `vc-init`. Loctree is the default structural
+perception — use it before broad grep (`context` / `slice` / `impact` / `find`)
+to build or refresh the Code-Derived Application Map. Missing `vc-init`/Loctree
+evidence is a process failure. No-repo/no-code tasks: state the no-repo exception.
 
 ## Repository Work Doctrine
 
-For repository work, start with Loctree as the map: use `loct context`,
+For repository work, start with Loctree as the map: `loct context`,
 `loct occurrences`, `loct body`, and `loct find --literal` before broad manual
 search. Use AICX for intent and session context. Use rg/grep as fallback or
 local magnifier, not as a replacement for structural mapping. If Loctree fails
 or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`.
 
-## Postawa (rdzeń)
+## Posture (core)
 
-**No question — take the task — just do it.** „Nie ważne jakie zadanie" = nieważne czy to implementacja
-funkcjonalności, czy review/audyt — **użytkownik pewnie i tak już wszystko przekazał 8 razy w tym albo
-poprzednim prompcie.** To nie jest pole do interpretacji i zadawania pytań. Bierzesz i traktujesz godnie.
+**No ceremony — take the task — just do it.** Whatever the task is (feature,
+review, audit, research, fix), the operator has usually already said it — often
+more than once. This is not a surface for re-litigating scope. Infer, act, deliver.
 
-**Bez trybu best-offer / best-of-n.** Nie stawiasz się w deliberację „która z opcji". Wybierasz przez
-inference, nie przez interrogation, i dowozisz.
+**No best-offer / best-of-n deliberation.** Do not stall in option theatre.
+Choose by inference, not by interrogation, and finish.
 
-## Niezależne od typu zadania
+## Task type is the prompt
 
-Typ definiuje **prompt**, nie skill. „Just Do" obsługuje implement · review · audit · research · fix ·
-recon · cokolwiek. Skill nie zawęża rodzaju zadania — przyjmuje opis i wykonuje.
+This skill does **not** narrow the work kind. The prompt defines implement ·
+review · audit · research · fix · recon · anything. The skill accepts the
+description and executes under ownership posture.
 
-## Dwa tryby
+## Two modes
 
-**1. Non-interactive (zasada wbita w launcher `justdo`):** skill **nie** definiuje rodzaju zadania —
-zadanie jest w prompcie. Traktuje je jako „to naprawdę nie jest pole do pytań" i wykonuje godnie.
+**1. Non-interactive (launcher `justdo`):** the skill does not invent a task
+type — it is in the prompt. Treat the prompt as closed for questions and execute.
 
 ```bash
-vc-justdo claude --prompt 'zrób review moich ostatnich 5 komitów pod kątem X'
+vc-justdo claude --prompt 'Review my last five commits for X'
 vc-justdo codex  --file  <broad-implementation-plan>.md
+vibecrafted justdo gemini --prompt 'Audit the install path only'
 ```
 
-**2. Interactive (`/vc-justdo` / `$vc-justdo`):** po inwokacji **nie zadaje się więcej pytań** — bierze do
-implementacji/researchu/auditu/czegokolwiek i **proaktywnie eksploruje temat**, jeśli informacji
-kontekstowych jest zbyt mało. Eksploracja zastępuje pytanie.
+**2. Interactive (`/vc-justdo` / `$vc-justdo`):** after invocation, no further
+operator questions. Explore proactively when context is thin — exploration
+replaces interrogation.
 
-## Niesie postawę `vc-ownership`
+## Carries `vc-ownership`
 
-Granice bierzesz z [`../vc-ownership/SKILL.md`](../vc-ownership/SKILL.md): **rusz od razu** (edycje kodu,
-testy, docs, scoped refactor, lokalny smoke, recovery-commit); **pauza i realign** przed nieodwracalnym
-(destructive git, push/merge/deploy/publish, wydatki, sekrety/auth, dane produkcyjne). Ownership = jesteś
-odpowiedzialny za outcome, nie tylko za edycję.
+Boundaries from [`../vc-ownership/SKILL.md`](../vc-ownership/SKILL.md): **move
+immediately** on reversible work (edits, tests, docs, scoped refactor, local
+smoke, recovery-commit); **pause and realign** before irreversible moves
+(destructive git, push/merge/deploy/publish, spend, secrets/auth, production
+data). Ownership means outcome responsibility, not only file edits.
 
-## Miejsce w VC-ship: NON-pipeline
+## Place on the matrix: NON-pipeline
 
-`vc-justdo` stoi **obok** pipeline'u VC-ship, **nie jest jego fazą** — w przeciwieństwie do `vc-implement`,
-które JEST fazą WRITE read/write cadence. To daily-rescue escape-hatch, nie krok w autonomicznej kadencji.
+`vc-justdo` stands **beside** the VC-ship pipeline. It is **not** a ship phase.
+`vc-implement` **is** the ship WRITE stage. Use `implement` when you want that
+structured delivery lane. Use `justdo` when you want posture-first rescue with
+prompt-defined task type. See ADR-0001 and the matrix worked example.
 
-## „Just do" ≠ „nie weryfikuj"
+## Just do ≠ skip proof
 
-„Nie pierdol, zrób" **nie** znaczy „nie sprawdzaj". Delivery wciąż podlega measure-core: kończysz `[x]`
-przez verifier (Definition of Undone pass — read-only przed ogłoszeniem „done"), **nie** `[~]` na słowo.
-Postawa zdejmuje pytania i ceremonię, **nie** dowód.
+Removing ceremony does **not** remove verification. Delivery still ends `[x]`
+via measure-core / walk-around / DoU — never `[~]` on words alone. See
+[Verification Rule](../VERIFICATION_RULE.md).
 
-## Wartość
+## Value
 
-Daily rescue zmęczonego foundera. O 4:00 nikt nie odpowie — więc nie pytasz, tylko bierzesz i dowozisz,
-godnie i zweryfikowanie.
+Daily rescue for a tired founder. When nobody will answer another clarifying
+round, do not ask — orient, act, deliver, prove.
 
 ---
 
-_"Nie pierdol, tylko zrób — niezależnie od zadania, bez best-offer. I udowodnij, że nie jest undone."_
+_"Stop talking. Do the work. Prove it is not undone."_
+
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 The LibraxisAI Team_

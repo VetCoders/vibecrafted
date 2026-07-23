@@ -64,8 +64,17 @@ WORKFLOW_DEFINITIONS: dict[str, WorkflowDefinition] = {
         id="implement",
         cadence="write",
         lifecycle_order=20,
-        aliases=("justdo",),
         tooling=("vc-init", "vc-operator", "vc-agents"),
+    ),
+    # Standalone posture launcher (ADR-0001). NOT an alias of implement; NOT a
+    # VC-ship stage (absent from SHIP_STAGES). Task type is defined by the
+    # prompt, not by this id. Order sits with ownership-family launchers, not
+    # between ship WRITE stages.
+    "justdo": WorkflowDefinition(
+        id="justdo",
+        cadence="write",
+        lifecycle_order=16,
+        tooling=("vc-init", "vc-justdo", "vc-ownership"),
     ),
     "intents": _direct(
         "intents",

@@ -57,7 +57,10 @@ def test_payload_rows_for_single_agent_and_research(isolated_config: Path) -> No
         assert rows[name]["execution_target"] == "single_agent"
         assert rows[name]["requested_agent_policy"] == "honored"
         assert rows[name]["default_agent"] == "claude"
-    assert rows["implement"]["aliases"] == ["justdo"]
+    assert rows["implement"]["aliases"] == []
+    assert "justdo" in rows
+    assert rows["justdo"]["aliases"] == []
+    assert rows["justdo"]["name"] == "justdo"
 
     research = rows["research"]
     assert research["runtime_kind"] == "supervised_research"

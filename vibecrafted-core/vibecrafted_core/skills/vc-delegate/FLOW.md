@@ -24,7 +24,7 @@ flowchart TD
 
 - Parallel external work is justified -> `vc-agents`
 - Shared steering is needed before splitting -> `vc-partner`
-- The delegated cut hardens into an implementation pass -> `vc-implement` (alias `vc-justdo`) or `vc-workflow`
+- The delegated cut hardens into an implementation pass -> `vc-implement` or `vc-workflow`; posture-first rescue -> `vc-justdo` (distinct skill)
 
 ### Session artifacts
 

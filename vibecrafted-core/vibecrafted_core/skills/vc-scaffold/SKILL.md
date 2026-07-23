@@ -292,7 +292,7 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
 ## Cross-References
 
 - **vc-init** — bootstraps agent context after scaffolding (the orientation gate).
-- **vc-implement** (alias **vc-justdo**) / **vc-workflow** — WRITE phases that consume scaffold plans.
+- **vc-implement** / **vc-workflow** — ship WRITE phases that consume scaffold plans. **vc-justdo** — standalone posture (prompt-typed; not implement).
 - **vc-review · vc-followup · vc-audit · vc-dou** — the READ phases that falsify each WRITE artifact.
 - **vc-operator** — reads the plan's `state` column and conducts the dispatch (trigger/stop).
 - **vc-research** — triple-agent research for unknowns found during Orient/Falsify.

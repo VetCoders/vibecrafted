@@ -24,7 +24,7 @@ flowchart TD
 ### Krawędzie eskalacji
 
 - Potrzebne wspólne sterowanie przed implementacją -> `vibecrafted partner <agent>`
-- Najlepszy kształt jest już oczywisty i należy go dowieźć bezpośrednio -> `vibecrafted implement <agent>` (alias: `justdo`)
+- Najlepszy kształt jest już oczywisty i należy go dowieźć bezpośrednio -> `vibecrafted implement <agent>` (ship WRITE); postawa Just Do -> `vibecrafted justdo <agent>`
 - Walidacja znajduje pozostałe P0/P1 -> `vibecrafted marbles <agent>`
 
 ### Artefakty sesji

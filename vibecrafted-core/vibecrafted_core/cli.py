@@ -45,9 +45,9 @@ LAUNCHERS = (
     "scaffold",
     "workflow",
 )
-LAUNCH_ALIASES = {
-    "justdo": "implement",
-}
+# No skill aliases: each LAUNCHERS name is its own skill id (ADR-0001: justdo
+# is not implement). Keep the map only for legacy shell-wrapper renames if any.
+LAUNCH_ALIASES: dict[str, str] = {}
 # These installed names are symlinks to the ``vibecrafted`` Python entrypoint,
 # but their behavior is still owned by the shell deck. Preserve the invoked
 # name as an explicit deck verb instead of silently treating the first user

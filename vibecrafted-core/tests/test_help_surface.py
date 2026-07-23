@@ -55,10 +55,13 @@ def test_registry_controls_count_and_depth_visibility() -> None:
         assert ("--depth <n>" in output) is definition.supports_depth
 
 
-def test_implement_and_justdo_name_one_execution_engine() -> None:
+def test_implement_and_justdo_are_distinct_skills() -> None:
     implement = render_workflow_help("implement")
     justdo = render_workflow_help("justdo")
 
-    assert "Alias: vibecrafted justdo" in implement
-    assert "Runs the same workflow as implement" in justdo
-    assert "vibecrafted implement <claude|codex|agy|junie|grok>" in justdo
+    assert "Not the same skill as justdo" in implement
+    assert "Not implement" in justdo or "Not a VC-ship stage" in justdo
+    assert "vibecrafted justdo" in justdo
+    assert "vibecrafted implement" in implement
+    assert "Alias: vibecrafted justdo" not in implement
+    assert "Runs the same workflow as implement" not in justdo

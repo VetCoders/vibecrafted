@@ -23,7 +23,8 @@ flowchart TD
 
 - Następne w kolejce planowanie -> `vibecrafted scaffold <agent>` lub `workflow`
 - Potrzebne wspólne sterowanie -> `vibecrafted partner <agent>`
-- Następne w kolejce bezpośrednie dowiezienie -> `vibecrafted implement <agent>` (alias: `justdo`)
+- Następne w kolejce ship WRITE -> `vibecrafted implement <agent>`
+- Postawa Just Do (typ z promptu) -> `vibecrafted justdo <agent>` (nie alias implement)
 
 ### Artefakty sesji
 

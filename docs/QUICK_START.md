@@ -84,8 +84,9 @@ Your agent now has orientation instead of assumptions.
 vibecrafted implement codex --prompt "Add user authentication with JWT"
 ```
 
-`vibecrafted implement` runs the autonomous delivery contract in `vc-implement`
-(`justdo` remains an alias for existing prompts and shell environments):
+`vibecrafted implement` runs the ship WRITE delivery contract in `vc-implement`.
+For prompt-typed Just Do posture (not a ship stage), use `vibecrafted justdo`
+instead (ADR-0001 — not an implement alias):
 
 - **Orient** — map the repo, load prior intent, and choose the smallest shape that works
 - **Implement** — make the change, add tests, and integrate with the live runtime

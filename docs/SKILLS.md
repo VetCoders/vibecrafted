@@ -65,11 +65,13 @@ surface.
   supervisor lane is `vibecrafted dispatch`, not a public `vibecrafted operator`
   command.
 
-## Compatibility aliases
+## Distinct launchers (not aliases)
 
-| Alias       | Canonical command       | Why it remains                                       |
-| ----------- | ----------------------- | ---------------------------------------------------- |
-| `vc-justdo` | `vc-implement`          | Existing agents and shell environments know it.      |
-| `justdo`    | `vibecrafted implement` | Internal run IDs and compatibility still use `just`. |
+| Launcher    | Skill id    | Matrix cell               | Notes                                                                                                            |
+| ----------- | ----------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `implement` | `implement` | Ship-cycle WRITE stage    | Structured e2e delivery with followup + marbles.                                                                 |
+| `justdo`    | `justdo`    | Additional skill launcher | Standalone Just Do posture; task type from the prompt. ADR-0001. Run-id prefix `just-` (implement uses `impl-`). |
+
+Do **not** treat `justdo` as a rename of `implement`. See [Delegation Matrix](../vibecrafted-core/vibecrafted_core/skills/DELEGATION_MATRIX.md) and [ADR-0001](./adr/0001-vc-justdo-standalone.md).
 
 The framework-level chaining map lives in [WORKFLOWS](./WORKFLOWS.md).

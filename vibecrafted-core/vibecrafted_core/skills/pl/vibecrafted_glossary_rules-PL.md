@@ -200,14 +200,16 @@ vc-justdo
 
 Zostaje: vc-justdo albo justdo
 
-Status: alias / starsza nazwa względem implement, jeśli tak wynika z aktualnego repo.
+Status: **samodzielny** skill + launcher postawy Just Do (ADR-0001). **Nie** alias
+`vc-implement`. Typ zadania definiuje prompt; non-pipeline (nie faza ship).
 
-Nie tłumaczyć jako “po prostu zrób”.
+Nie tłumaczyć nazwy skilla jako “po prostu zrób” — w prozie można opisać postawę:
+“bez gadania, zrób”.
 
 Dobre:
 
-- “justdo traktujemy jako compatibility alias.”
-- “W nowych docs preferuj implement, jeśli repo tak stanowi.”
+- “justdo to osobna postawa, nie alias implement.”
+- “Ship WRITE → implement. Daily rescue / typ z promptu → justdo.”
 
 ⸻
 

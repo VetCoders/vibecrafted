@@ -184,7 +184,7 @@ def test_version_reads_installed_package_never_delegates_to_deck(
         assert capsys.readouterr().out.strip() == f"vibecrafted {expected}"
 
 
-def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
+def test_root_cli_accepts_justdo_as_own_skill(monkeypatch, capsys) -> None:
     seen = {}
 
     def fake_launch(spec, source_dir):
@@ -197,7 +197,7 @@ def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
 
     assert cli.main(["justdo", "codex", "--prompt", "ship it"]) == 0
 
-    assert seen["skill"] == "implement"
+    assert seen["skill"] == "justdo"
     assert seen["agent"] == "codex"
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
