@@ -75,7 +75,7 @@ Ta karta jest na moment **przed** tymi decyzjami.
 
 **TWARDA ZASADA (egzekwowanie osi Siły):** Gdy agent zamierza zdispatchować zewnętrzną
 flotę (Codex / Claude / Gemini jako równoległych workerów produkujących artefakty-dostawy
-— raporty, kod, plany), domyślną powierzchnią wykonania jest **`vibecrafted <workflow>
+— raporty, kod, plany), domyślną powierzchnią wykonania jest **`vibecrafted <launcher>
 <agent>` przez Bash**, NIGDY natywne narzędzie `Agent`. Natywny `Agent` jest
 zarezerwowany dla zwiadu w procesie (Explore, ogólny lookup, szybki research tylko do
 odczytu), nie dla workerów-dostawców.
@@ -140,7 +140,7 @@ harmonogram fallback, jawny warunek stopu).
 
 **Złożenie z zewnętrznym dispatchem:**
 
-- Zewnętrzny dispatch (`vibecrafted <workflow> <agent>`) produkuje pracę asynchroniczną,
+- Zewnętrzny dispatch (`vibecrafted <launcher> <agent>`) produkuje pracę asynchroniczną,
   która wymaga `await`. Wejdź w `/loop`, aby utrzymać heartbeat między zdarzeniami
   `task-notification` z harnessu.
 - `/loop` + `vibecrafted` = kanoniczny wzorzec autonomicznego operatora. Jeden deklaruje

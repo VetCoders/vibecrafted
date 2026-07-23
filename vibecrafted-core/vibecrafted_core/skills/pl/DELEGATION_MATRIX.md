@@ -1,8 +1,8 @@
 ---
 title: Matryca Delegacji
 kind: doctrine_matrix
-version: 3.0.0
-description: "Kanoniczny model wywoływania, wykonywania i delegacji dla floty Vibecrafted."
+version: 3.1.0
+description: "Kanoniczny model wywoływania, wykonywania i delegacji dla launcherów runtime Vibecrafted i odpowiadających skilli."
 scope: framework
 status: active
 language: pl
@@ -10,59 +10,156 @@ language: pl
 
 # 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Matryca Delegacji (Delegation Matrix)
 
-> Model wywoływania, wykonywania i delegacji dla floty Vibecrafted.
+> Wywoływanie, wykonanie i delegacja floty — **per launcher**, nie jako jeden rozmyty szablon.
 
 <!-- fleet-imperative: v3 -->
 
-## Model Wywoływania, Wykonywania i Delegacji
+## Wspólne trzy ścieżki
 
-Skill lub workflow `vibecrafted` może zostać wywołany na trzy odrębne sposoby:
+Każdy **core runtime launcher** (`vibecrafted <launcher> <agent>`, skill oparty o core runtime) wywołuje się w tym samym _kształcie_ trzech ścieżek. **Literały** zmieniają się per launcher; reguły władzy — nie.
 
 ### 1. User-Launched Worker
 
-Użytkownik może wywołać `vibecrafted workflow <agent>` z poziomu CLI (launchera). Tworzy to osobny, nieinteraktywny przebieg workera odpowiedzialny za wykonanie pełnego pipeline'u.
+Użytkownik uruchamia **nazwany** launcher z CLI. Tworzy to osobny, nieinteraktywny przebieg workera odpowiedzialny za pełny pipeline **tego** skilla.
+
+```text
+vibecrafted <launcher> <agent> [-p|--prompt … | -f|--file …]
+```
+
+Przykład (tylko workflow — nie uogólniaj słowa `workflow` na każdy skill):
+
+```bash
+vibecrafted workflow claude --prompt 'Examine auth surface and implement fixes'
+```
 
 ### 2. Interactive Skill Invocation
 
-Użytkownik może wywołać `/vc-workflow` lub załadować skill wewnątrz istniejącej sesji agenta. W takim przypadku bieżący agent musi załadować i wykonać pełny skill w ramach tej samej sesji. Nie wolno mu zewnętrzniać workflow do osobnego workera `vibecrafted` tylko dlatego, że delegacja jest dostępna. Może — a gdy to wymagane, musi — użyć swojej natywnej floty subagentów w procesie do dokładnego dokończenia workflow.
+Użytkownik wywołuje `/vc-<launcher>` albo ładuje ten skill w istniejącej sesji. Bieżący agent **musi** załadować i wykonać pełny skill **w tej samej sesji**. **Nie wolno** zewnętrzniać przebiegu do osobnego workera `vibecrafted` tylko dlatego, że external dispatch istnieje. Może — a gdy wymagane **musi** — użyć **natywnej floty subagentów w procesie**.
+
+Przykład:
+
+```text
+/vc-workflow
+```
 
 ### 3. Agent-Operator Delegation
 
-Podczas prowadzenia szerszej orkiestracji agent-operator może użyć `vibecrafted workflow <agent>` jako agent `vc-dispatch`, tak samo jak użytkownik. Uruchamia to osobną sesję workflow przez runtime `vibecrafted` i deleguje pełny pipeline do zewnętrznego agenta floty.
+Przy szerszej orkiestracji agent-operator może odpalić **ten sam nazwany launcher** co użytkownik — zwykle przez `vc-dispatch` / linie operatora — tak by osobna sesja pod runtime Vibecrafted wykonała pipeline tego skilla.
+
+```bash
+vibecrafted <launcher> <agent> --file <brief.md>
+```
 
 ---
 
-## Mandat Wykonawczy i Cykle Życia
+## Czym ta matryca nie jest
 
-Niezależnie od tego, czy agent działa w ramach wywołania interaktywnego, czy nieinteraktywnego, ma ten sam mandat: kompleksowo wykonać instrukcje pipeline'u z danego skilla i użyć dostępnych natywnych subagentów, gdy to konieczne.
+- **Nie** twierdzi, że każdy skill to `vibecrafted workflow <agent>`.
+- **Nie** jest masowym wklejeniem jednego bloku do każdego `SKILL.md` bez nazwania launchera.
+- **Nie** jest flipem floty na native-only. Zewnętrzni workerzy zostają first-party.
+- **Nie** kasuje tożsamości: `vc-dispatch` zostaje dyspozyturą; `vc-ship` zostaje scaffold→release; każdy skill ma swój mandat.
 
-Różnica polega wyłącznie na tym:
+Rewolucja operatora przy `vc-workflow` to **precyzja literałów + swobodniejszy native pod tym skillem**. Reszta runtime dostaje **tę samą precyzję**, każdy pod własną nazwą.
 
-- **gdzie** wykonuje się workflow
+---
+
+## Mandat wykonawczy i cykle życia
+
+Niezależnie od interactive vs worker, agent pod launcherem ma **ten sam mandat**: kompleksowo wykonać pipeline skilla i użyć natywnych subagentów, gdy trzeba.
+
+Różnica to tylko:
+
+- **gdzie** skill się wykonuje
 - **czyją uwagę** zajmuje
 
-Niemniej jednak:
+Niemniej:
 
-- **Headless worker** zachowuje prawo do tworzenia i koordynowania własnych natywnych subagentów — bycie workerem ogranicza zakres i cykl życia jego przebiegu, ale nie odbiera mu uprawnień delegacji.
-- **Agent otrzymujący skill interaktywnie** musi wykonać go lokalnie w ramach bieżącej sesji, używając w razie potrzeby natywnych subagentów.
-
----
-
-## Natywne Subagenty vs Zewnętrzny Workflow
-
-Subagent działający jako część natywnej floty agenta może przypominać osobnego workera, ale różni się integracją i cyklem życia kontekstu:
-
-- **Natywne Subagenty (Native Subagents)**: żyją w tym samym procesie co agent orkiestrujący. Dzielą tę samą pamięć, konfigurację i kontekst wykonawczy.
-- **Zewnętrzni Workerzy (External Workers)**: są uruchamiani jako osobne procesy `vibecrafted`. Komunikują się z orkiestratorem przez zdefiniowane interfejsy i mają niezależne cykle życia.
-
-Decyzja o użyciu natywnych subagentów lub delegacji do zewnętrznego workera zależy od przypadku użycia, ale fundamentalna zasada pozostaje niezmienna: **uprawnienie do wykonania workflow zachowuje agent, chyba że wyraźnie oddelegował je zdefiniowanymi kanałami.**
+- **Headless worker** zachowuje prawo do własnych natywnych subagentów.
+- **Agent z interaktywnym skillem** wykonuje go lokalnie w sesji, z native gdy wypada.
+- **Swobodniejszy native** na niektórych biegach = dokończ skill native zamiast odruchowo re-dispatchować external. To **nie** znaczy porzucić external launchery.
 
 ---
 
-## Wyjątki i Odnośniki
+## Natywne subagenty vs zewnętrzni workerzy
 
-- **Wyjątki Natywnych Subagentów**: Zdefiniowane ze szczegółowymi ograniczeniami w [`vc-delegate`](../vc-delegate/SKILL.md).
-- **Dyspozytura Zewnętrznej Floty**: Zdefiniowana w [`vc-dispatch`](../vc-dispatch/SKILL.md).
-- **Wielofalowa Orkiestracja Operatora**: Zdefiniowana w [`vc-operator`](../vc-operator/SKILL.md).
+| Rodzaj                  | Cykl życia                   | Kontekst                                   |
+| ----------------------- | ---------------------------- | ------------------------------------------ |
+| **Natywne subagenty**   | Ten sam proces               | Wspólna pamięć, config, rozmowa            |
+| **Zewnętrzni workerzy** | Osobne procesy `vibecrafted` | Control-plane / report / transcript / meta |
+
+**Reguła:** władza wykonania skilla zostaje u agenta, który trzyma skill, chyba że jawnie oddelegowano zdefiniowanymi kanałami.
+
+---
+
+## Katalog launcherów (core runtime)
+
+Oparty o `vibecrafted_core.cli.LAUNCHERS` + shell wrappers + meta lifecycle.
+
+### Launchery cyklu ship (kolejność kanoniczna)
+
+| Launcher    | Skill                                      | Worker CLI                      | Interactive     | Notatki                    |
+| ----------- | ------------------------------------------ | ------------------------------- | --------------- | -------------------------- |
+| `scaffold`  | [`vc-scaffold`](../vc-scaffold/SKILL.md)   | `vibecrafted scaffold <agent>`  | `/vc-scaffold`  | Plan / briefy              |
+| `implement` | [`vc-implement`](../vc-implement/SKILL.md) | `vibecrafted implement <agent>` | `/vc-implement` | Alias: `justdo`            |
+| `justdo`    | implement                                  | `vibecrafted justdo <agent>`    | `/vc-justdo`    | **Alias implement**        |
+| `review`    | [`vc-review`](../vc-review/SKILL.md)       | `vibecrafted review <agent>`    | `/vc-review`    | READ                       |
+| `workflow`  | [`vc-workflow`](vc-workflow/SKILL.md)      | `vibecrafted workflow <agent>`  | `/vc-workflow`  | ERi                        |
+| `followup`  | [`vc-followup`](../vc-followup/SKILL.md)   | `vibecrafted followup <agent>`  | `/vc-followup`  | Trajektoria                |
+| `marbles`   | [`vc-marbles`](../vc-marbles/SKILL.md)     | `vibecrafted marbles <agent>`   | `/vc-marbles`   | WRITE; `--count`/`--depth` |
+| `audit`     | [`vc-audit`](../vc-audit/SKILL.md)         | `vibecrafted audit <agent>`     | `/vc-audit`     | Falsyfikacja planu         |
+| `polarize`  | [`vc-polarize`](../vc-polarize/SKILL.md)   | `vibecrafted polarize <agent>`  | `/vc-polarize`  | Jedna oś                   |
+| `dou`       | [`vc-dou`](../vc-dou/SKILL.md)             | `vibecrafted dou <agent>`       | `/vc-dou`       | Definition of Undone       |
+| `decorate`  | [`vc-decorate`](../vc-decorate/SKILL.md)   | `vibecrafted decorate <agent>`  | `/vc-decorate`  | Wykończenie UX             |
+| `hydrate`   | [`vc-hydrate`](../vc-hydrate/SKILL.md)     | `vibecrafted hydrate <agent>`   | `/vc-hydrate`   | Packaging / GTM            |
+| `release`   | [`vc-release`](../vc-release/SKILL.md)     | `vibecrafted release <agent>`   | `/vc-release`   | Outward ship               |
+
+### Dodatkowe launchery skilli
+
+| Launcher    | Skill                                      | Worker CLI                      | Interactive     | Notatki             |
+| ----------- | ------------------------------------------ | ------------------------------- | --------------- | ------------------- |
+| `research`  | [`vc-research`](../vc-research/SKILL.md)   | `vibecrafted research …`        | `/vc-research`  | Swarm               |
+| `ownership` | [`vc-ownership`](../vc-ownership/SKILL.md) | `vibecrafted ownership <agent>` | `/vc-ownership` | Ownership delivery  |
+| `partner`   | [`vc-partner`](../vc-partner/SKILL.md)     | `vibecrafted partner <agent>`   | `/vc-partner`   | Wspólne sterowanie  |
+| `prune`     | [`vc-prune`](../vc-prune/SKILL.md)         | `vibecrafted prune <agent>`     | `/vc-prune`     | Runtime cone        |
+| `intents`   | [`vc-intents`](../vc-intents/SKILL.md)     | `vibecrafted intents <agent>`   | `/vc-intents`   | Plan→runtime        |
+| `delegate`  | [`vc-delegate`](../vc-delegate/SKILL.md)   | `vibecrafted delegate <agent>`  | `/vc-delegate`  | Doktryna **native** |
+| `paste`     | (helper)                                   | `vibecrafted paste …`           | —               | Nie pełny ERi       |
+
+### Meta i orientacja
+
+| Powierzchnia | Skill                                    | Wywołanie                                         | Rola                                    |
+| ------------ | ---------------------------------------- | ------------------------------------------------- | --------------------------------------- |
+| **init**     | [`vc-init`](vc-init/SKILL.md)            | `vibecrafted init [agent]`, `vc-init`, `/vc-init` | Orientacja sesji                        |
+| **ship**     | [`vc-ship`](../vc-ship/SKILL.md)         | `vibecrafted ship <agent>`, `vc-ship`             | **Parasol lifecycle**, nie single-stage |
+| **dispatch** | [`vc-dispatch`](vc-dispatch/SKILL.md)    | `vibecrafted dispatch …`                          | Dyspozytura floty                       |
+| **operator** | [`vc-operator`](../vc-operator/SKILL.md) | interactive / postawa                             | Multi-wave                              |
+| **agents**   | [`vc-agents`](vc-agents/SKILL.md)        | doktryna floty                                    | Kontrakt external                       |
+
+### Fundament (bez własnego workera `vibecrafted <name> <agent>`)
+
+`vc-loctree`, `vc-aicx`, `vc-prview`, `vc-screenscribe`, `vc-skillaunch`, `vibecraftsmanship` — ładują się **wewnątrz** innych skilli / sesji. Nie wymyślamy im fałszywego launchera dla symetrii.
+
+---
+
+## Reguła per-launcher (delta semantyczna)
+
+Dla launchera `L` i skilla `vc-L`:
+
+1. **Worker:** tylko `vibecrafted L <agent>` (lub udokumentowany alias). Nigdy `vibecrafted <workflow> <agent>` jako placeholder na wszystkie skille.
+2. **Interactive:** tylko `/vc-L`. W sesji; swobodniejszy native gdy bieg tego wymaga.
+3. **Operator dispatch:** może odpalić `vibecrafted L <agent>`; tożsamość `L` w briefie zostaje.
+4. **Nie** zewnętrzniaj interaktywnego `/vc-L` tylko dlatego, że launcher istnieje.
+5. **Nie** zamieniaj każdego skilla w workflow-ERi; ERi ma tylko `workflow`.
+
+---
+
+## Wyjątki i odnośniki
+
+- **Granice native:** [`vc-delegate`](../vc-delegate/SKILL.md)
+- **Dyspozytura:** [`vc-dispatch`](vc-dispatch/SKILL.md)
+- **Operator:** [`vc-operator`](../vc-operator/SKILL.md)
+- **Flota:** [`vc-agents`](vc-agents/SKILL.md)
+- **Weryfikacja:** [`../VERIFICATION_RULE.md`](../VERIFICATION_RULE.md)
+- **Living Tree:** [`LIVING_TREE_RULE.md`](LIVING_TREE_RULE.md)
 
 <!-- /fleet-imperative -->

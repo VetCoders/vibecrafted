@@ -7,19 +7,17 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-<!-- fleet-imperative: v2 -->
+<!-- fleet-imperative: v3 -->
 
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching through the Vibecrafted
-> launcher.
+> **Invocation (template)** — replace `{{LAUNCHER}}` with the real launcher from the
+> [Delegation Matrix](../DELEGATION_MATRIX.md). Do **not** paste `workflow` literals
+> unless this skill is `vc-workflow`.
 >
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread unless the operator explicitly asks for runtime
-> launch, dispatch, or native delegation.
->
-> Native in-process subagents are allowed only through the bounded
-> `vc-delegate` doctrine.
+> | Path           | Literal                                               |
+> | -------------- | ----------------------------------------------------- |
+> | 1. Worker      | `vibecrafted {{LAUNCHER}} <agent>`                    |
+> | 2. Interactive | `/vc-{{LAUNCHER}}` — in-session; native when required |
+> | 3. Operator    | same worker form via `vc-dispatch` / operator lines   |
 
 <!-- /fleet-imperative -->
 

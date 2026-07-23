@@ -3,20 +3,27 @@ name: vc-dispatch
 description: "Operate external Vibecrafted fleet lines with prompt assembly, await/observe, reports, and recovery."
 ---
 
-<!-- fleet-imperative: v2 -->
+<!-- fleet-imperative: v3 -->
 
-> **Warstwa operatorskiego CLI / slash-command:** wywołanie `/vc-<workflow>` albo
-> `vibecrafted <workflow> <agent>` oznacza dispatch zewnętrznej floty Vibecrafted
-> przez launcher. W tej warstwie wywołanie to imperatyw do
-> działania, nie no-op, i nie natywne in-process subagenty.
+> **Wywołanie dla `vc-dispatch` (launcher `dispatch`)**
 >
-> **Warstwa ładowania skilla / chatu:** załadowanie tego `SKILL.md` wewnątrz Codeksa, Claude'a,
-> Gemini czy innego lokalnego agenta nie oznacza self-dispatchu. Przeczytaj i zastosuj
-> skill w bieżącym wątku; nie spawnuj kolejnego agenta, chyba że operator
-> wprost prosi, żeby launchować, dispatchować, uruchomić flotę, albo podaje konkretną
-> komendę w stylu `vc-init codex` / `vibecrafted init claude`.
+> Ten sam _kształt_ trzech ścieżek floty, z **literałami tego** skilla — zobacz
+> kanoniczną [Matrycę Delegacji](../DELEGATION_MATRIX.md):
 >
-> Jedyny natywny in-process wyjątek to `vc-delegate`.
+> - [Wspólne trzy ścieżki](../DELEGATION_MATRIX.md#wspólne-trzy-ścieżki)
+> - [Katalog launcherów](../DELEGATION_MATRIX.md#katalog-launcherów-core-runtime)
+> - [Reguła per-launcher](../DELEGATION_MATRIX.md#reguła-per-launcher-delta-semantyczna)
+> - [Native vs external](../DELEGATION_MATRIX.md#natywne-subagenty-vs-zewnętrzni-workerzy)
+>
+> | Ścieżka               | Literał tego skilla                                                                                                                                             |
+> | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. Worker użytkownika | `vibecrafted dispatch …` / `vc-dispatch`                                                                                                                        |
+> | 2. Interactive        | załaduj `vc-dispatch` (skill metody operatora) — wykonaj **w tej sesji**; native subagenty gdy trzeba; **nie** zewnętrzniaj tylko dlatego, że launcher istnieje |
+> | 3. Agent-operator     | może odpalić formę workera powyżej przez `vc-dispatch` / linie operatora, zachowując tożsamość tego skilla                                                      |
+>
+> **Uwaga:** External fleet **dyspozytura** — runs lines/plans; does not become implement/workflow.
+
+> Swobodniejszy native na niektórych biegach ≠ porzucenie floty external. `vc-dispatch` i `vc-ship` zachowują własne tożsamości.
 
 <!-- /fleet-imperative -->
 

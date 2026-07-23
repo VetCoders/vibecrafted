@@ -26,6 +26,30 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Invocation for `vc-justdo` (launcher `justdo`)**
+>
+> Same three-path _shape_ as the fleet, with **this** skill's literals — see the
+> canonical [Delegation Matrix](../DELEGATION_MATRIX.md):
+>
+> - [Shared three paths](../DELEGATION_MATRIX.md#shared-three-paths)
+> - [Launcher catalogue](../DELEGATION_MATRIX.md#launcher-catalogue-core-runtime)
+> - [Per-launcher rule](../DELEGATION_MATRIX.md#per-launcher-rule-the-semantic-delta)
+> - [Native vs external](../DELEGATION_MATRIX.md#native-subagents-vs-external-workers)
+>
+> | Path                    | Literal for this skill                                                                                                                  |
+> | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. User-launched worker | `vibecrafted justdo <agent>`                                                                                                            |
+> | 2. Interactive          | `/vc-justdo` — execute **in this session**; use native subagents when required; do **not** externalize merely because a launcher exists |
+> | 3. Agent-operator       | may dispatch the worker form above via `vc-dispatch` / operator lines while preserving this skill's identity                            |
+>
+> **Note:** Alias of **implement** — same pipeline; prefer `implement` in new briefs.
+
+> Freer native on some runs ≠ abandon external fleet. `vc-dispatch` and `vc-ship` keep their own identities.
+
+<!-- /fleet-imperative -->
+
 # vc-justdo — „Nie pierdol, po prostu zrób"
 
 > Standalone. Non-pipeline. Daily rescue zmęczonego foundera.

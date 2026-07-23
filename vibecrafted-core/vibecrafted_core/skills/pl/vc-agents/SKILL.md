@@ -11,6 +11,30 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Wywołanie dla `vc-agents` (launcher `agents`)**
+>
+> Ten sam _kształt_ trzech ścieżek floty, z **literałami tego** skilla — zobacz
+> kanoniczną [Matrycę Delegacji](../DELEGATION_MATRIX.md):
+>
+> - [Wspólne trzy ścieżki](../DELEGATION_MATRIX.md#wspólne-trzy-ścieżki)
+> - [Katalog launcherów](../DELEGATION_MATRIX.md#katalog-launcherów-core-runtime)
+> - [Reguła per-launcher](../DELEGATION_MATRIX.md#reguła-per-launcher-delta-semantyczna)
+> - [Native vs external](../DELEGATION_MATRIX.md#natywne-subagenty-vs-zewnętrzni-workerzy)
+>
+> | Ścieżka               | Literał tego skilla                                                                                                                                |
+> | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. Worker użytkownika | (kontrakt floty — tryby external wg udokumentowanych spawn path)                                                                                   |
+> | 2. Interactive        | załaduj `vc-agents` jako doktrynę — wykonaj **w tej sesji**; native subagenty gdy trzeba; **nie** zewnętrzniaj tylko dlatego, że launcher istnieje |
+> | 3. Agent-operator     | może odpalić formę workera powyżej przez `vc-dispatch` / linie operatora, zachowując tożsamość tego skilla                                         |
+>
+> **Uwaga:** External fleet **contract**; interactive skills still execute in-session.
+
+> Swobodniejszy native na niektórych biegach ≠ porzucenie floty external. `vc-dispatch` i `vc-ship` zachowują własne tożsamości.
+
+<!-- /fleet-imperative -->
+
 # vc-agents — Zewnętrzna flota wykonawcza
 
 ## Wejście operatora
@@ -42,20 +66,20 @@ vc-start
 operatora, którą founder wpisuje jako pierwszą. Entrypoint dla operatora pozostaje:
 
 ```bash
-vibecrafted <workflow> <agent> \
+vibecrafted <launcher> <agent> \
   --<options> <values> \
   --<parameters> <values> \
   --file '/path/to/plan.md'
 ```
 
 ```bash
-vc-<workflow> <agent> \
+vc-<launcher> <agent> \
   --<options> <values> \
   --<parameters> <values> \
   --prompt '<prompt>'
 ```
 
-Jeśli `vc-<workflow> <agent>` zostanie wywołany poza Zellij, framework podłączy się do
+Jeśli `vc-<launcher> <agent>` zostanie wywołany poza Zellij, framework podłączy się do
 istniejącej sesji operatora lub utworzy nową i uruchomi ten workflow w nowej zakładce.
 `vc-agents` definiuje, jak ten workflow rozkłada się na zewnętrznych workerów.
 
@@ -204,7 +228,7 @@ Living tree note:
 ## Komendy spawnu
 
 Ścieżka launchu dla operatora przy delegacji out-of-process prowadzi przez
-command deck `vibecrafted` lub helper `vc-<workflow>`. Skrypty spawnu należące do
+command deck `vibecrafted` lub helper `vc-<launcher>`. Skrypty spawnu należące do
 repo pozostają wewnętrznym silnikiem stojącym za tą ścieżką.
 
 ### Codex

@@ -79,7 +79,7 @@ This charter is for the moment **before** those calls.
 **HARD RULE (Power axis enforcement):** When the agent intends to dispatch
 external fleet (Codex / Claude / Gemini as parallel workers producing
 deliverable artifacts — reports, code, plans), the default execution surface
-is **`vibecrafted <workflow> <agent>` via Bash**, NEVER the native `Agent`
+is **`vibecrafted <launcher> <agent>` via Bash**, NEVER the native `Agent`
 tool. Native `Agent` is reserved for in-process scouting (Explore,
 general-purpose lookup, quick read-only research), not for deliverable
 workers.
@@ -145,7 +145,7 @@ schedule, explicit stop condition).
 
 **Composition with external dispatch:**
 
-- External dispatch (`vibecrafted <workflow> <agent>`) produces async work
+- External dispatch (`vibecrafted <launcher> <agent>`) produces async work
   that needs `await`. Enter `/loop` to keep heartbeat alive between
   `task-notification` events from the harness.
 - `/loop` + `vibecrafted` = canonical autonomous-operator pattern. One

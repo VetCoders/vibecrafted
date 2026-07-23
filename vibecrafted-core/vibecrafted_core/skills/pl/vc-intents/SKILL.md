@@ -15,6 +15,28 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Wywołanie dla `vc-intents` (launcher `intents`)**
+>
+> Ten sam _kształt_ trzech ścieżek floty, z **literałami tego** skilla — zobacz
+> kanoniczną [Matrycę Delegacji](../DELEGATION_MATRIX.md):
+>
+> - [Wspólne trzy ścieżki](../DELEGATION_MATRIX.md#wspólne-trzy-ścieżki)
+> - [Katalog launcherów](../DELEGATION_MATRIX.md#katalog-launcherów-core-runtime)
+> - [Reguła per-launcher](../DELEGATION_MATRIX.md#reguła-per-launcher-delta-semantyczna)
+> - [Native vs external](../DELEGATION_MATRIX.md#natywne-subagenty-vs-zewnętrzni-workerzy)
+>
+> | Ścieżka               | Literał tego skilla                                                                                                            |
+> | --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+> | 1. Worker użytkownika | `vibecrafted intents <agent>`                                                                                                  |
+> | 2. Interactive        | `/vc-intents` — wykonaj **w tej sesji**; native subagenty gdy trzeba; **nie** zewnętrzniaj tylko dlatego, że launcher istnieje |
+> | 3. Agent-operator     | może odpalić formę workera powyżej przez `vc-dispatch` / linie operatora, zachowując tożsamość tego skilla                     |
+
+> Swobodniejszy native na niektórych biegach ≠ porzucenie floty external. `vc-dispatch` i `vc-ship` zachowują własne tożsamości.
+
+<!-- /fleet-imperative -->
+
 # vc-intents — Od intencji do prawdy runtime'u
 
 ## Wejście operatora
@@ -33,7 +55,7 @@ Zanim ten workflow wykona analizę specyficzną dla repo, planowanie, implementa
 
 Chodzi o znalezienie zaczepów: węzłów nośnych, twins (duplikaty), martwego kodu, dryfu, entrypointów runtime'u oraz pułapek o dużym zasięgu zmiany. Jeśli zadanie jawnie nie dotyczy repo lub nie dotyczy kodu, odnotuj w raporcie wyjątek „bez repo". W przeciwnym razie brak dowodów z `vc-init`/Loctree to błąd procesu.
 
-Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<workflow> <agent> [--prompt|--file ...]`).
+Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<launcher> <agent> [--prompt|--file ...]`).
 Preferuj `--prompt` dla świeżego audytu, a `--file` wtedy, gdy istniejący plan, raport
 lub wyekstrahowany bundle intencji ma być porównany z drzewem.
 

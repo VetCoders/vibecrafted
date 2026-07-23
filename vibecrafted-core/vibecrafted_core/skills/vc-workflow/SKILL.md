@@ -14,20 +14,25 @@ native_fleet: "use native fleet delegation widely"
 
 <!-- fleet-imperative: v3 -->
 
-> **Invocation, Execution, and Delegation Model**
+> **Invocation for `vc-workflow` (launcher `workflow`)**
 >
-> Execution authority, interactive session rules, CLI worker dispatches, and
-> the boundary between native in-process subagents and external fleet workers
-> are governed by the canonical [Delegation Matrix](../DELEGATION_MATRIX.md).
+> Same three-path _shape_ as the fleet, with **this** skill's literals — see the
+> canonical [Delegation Matrix](../DELEGATION_MATRIX.md):
 >
-> Direct links to model sections:
+> - [Shared three paths](../DELEGATION_MATRIX.md#shared-three-paths)
+> - [Launcher catalogue](../DELEGATION_MATRIX.md#launcher-catalogue-core-runtime)
+> - [Per-launcher rule](../DELEGATION_MATRIX.md#per-launcher-rule-the-semantic-delta)
+> - [Native vs external](../DELEGATION_MATRIX.md#native-subagents-vs-external-workers)
 >
-> - [1. User-Launched Worker](../DELEGATION_MATRIX.md#1-user-launched-worker)
-> - [2. Interactive Skill Invocation](../DELEGATION_MATRIX.md#2-interactive-skill-invocation)
-> - [3. Agent-Operator Delegation](../DELEGATION_MATRIX.md#3-agent-operator-delegation)
-> - [Execution Mandate and Lifecycles](../DELEGATION_MATRIX.md#execution-mandate-and-lifecycles)
-> - [Native Subagents vs External Workflow](../DELEGATION_MATRIX.md#native-subagents-vs-external-workflow)
-> - [Exceptions and References](../DELEGATION_MATRIX.md#exceptions-and-references)
+> | Path                    | Literal for this skill                                                                                                                    |
+> | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. User-launched worker | `vibecrafted workflow <agent>`                                                                                                            |
+> | 2. Interactive          | `/vc-workflow` — execute **in this session**; use native subagents when required; do **not** externalize merely because a launcher exists |
+> | 3. Agent-operator       | may dispatch the worker form above via `vc-dispatch` / operator lines while preserving this skill's identity                              |
+>
+> **Note:** ERi pipeline only. Other skills are not ERi by paste.
+
+> Freer native on some runs ≠ abandon external fleet. `vc-dispatch` and `vc-ship` keep their own identities.
 
 <!-- /fleet-imperative -->
 
@@ -49,7 +54,7 @@ Before this workflow performs repo-specific analysis, planning, implementation, 
 
 The point is to find the hooks: load-bearing hubs, twins, dead code, drift, runtime entrypoints, and blast-radius traps. If the task is explicitly non-repo or no-code, state the no-repo exception in the report. Otherwise, missing `vc-init`/Loctree evidence is a process failure.
 
-Standard launcher (`vibecrafted start` / `vc-start`, then `vc-<workflow> <agent> [--prompt|--file ...]`).
+Standard launcher (`vibecrafted start` / `vc-start`, then `vc-<launcher> <agent> [--prompt|--file ...]`).
 
 ```bash
 vibecrafted workflow claude --prompt 'Examine auth surface and implement fixes'

@@ -19,6 +19,28 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Wywołanie dla `vc-prune` (launcher `prune`)**
+>
+> Ten sam _kształt_ trzech ścieżek floty, z **literałami tego** skilla — zobacz
+> kanoniczną [Matrycę Delegacji](../DELEGATION_MATRIX.md):
+>
+> - [Wspólne trzy ścieżki](../DELEGATION_MATRIX.md#wspólne-trzy-ścieżki)
+> - [Katalog launcherów](../DELEGATION_MATRIX.md#katalog-launcherów-core-runtime)
+> - [Reguła per-launcher](../DELEGATION_MATRIX.md#reguła-per-launcher-delta-semantyczna)
+> - [Native vs external](../DELEGATION_MATRIX.md#natywne-subagenty-vs-zewnętrzni-workerzy)
+>
+> | Ścieżka               | Literał tego skilla                                                                                                          |
+> | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+> | 1. Worker użytkownika | `vibecrafted prune <agent>`                                                                                                  |
+> | 2. Interactive        | `/vc-prune` — wykonaj **w tej sesji**; native subagenty gdy trzeba; **nie** zewnętrzniaj tylko dlatego, że launcher istnieje |
+> | 3. Agent-operator     | może odpalić formę workera powyżej przez `vc-dispatch` / linie operatora, zachowując tożsamość tego skilla                   |
+
+> Swobodniejszy native na niektórych biegach ≠ porzucenie floty external. `vc-dispatch` i `vc-ship` zachowują własne tożsamości.
+
+<!-- /fleet-imperative -->
+
 # vc-prune — Kuratorstwo, nie wycinka
 
 > Nie pal domu. Zdejmij wszystko aż do nośnych ścian i zdaj raport z tego, co znalazłeś za tapetą.

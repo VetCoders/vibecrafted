@@ -14,6 +14,28 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Wywołanie dla `vc-scaffold` (launcher `scaffold`)**
+>
+> Ten sam _kształt_ trzech ścieżek floty, z **literałami tego** skilla — zobacz
+> kanoniczną [Matrycę Delegacji](../DELEGATION_MATRIX.md):
+>
+> - [Wspólne trzy ścieżki](../DELEGATION_MATRIX.md#wspólne-trzy-ścieżki)
+> - [Katalog launcherów](../DELEGATION_MATRIX.md#katalog-launcherów-core-runtime)
+> - [Reguła per-launcher](../DELEGATION_MATRIX.md#reguła-per-launcher-delta-semantyczna)
+> - [Native vs external](../DELEGATION_MATRIX.md#natywne-subagenty-vs-zewnętrzni-workerzy)
+>
+> | Ścieżka               | Literał tego skilla                                                                                                             |
+> | --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. Worker użytkownika | `vibecrafted scaffold <agent>`                                                                                                  |
+> | 2. Interactive        | `/vc-scaffold` — wykonaj **w tej sesji**; native subagenty gdy trzeba; **nie** zewnętrzniaj tylko dlatego, że launcher istnieje |
+> | 3. Agent-operator     | może odpalić formę workera powyżej przez `vc-dispatch` / linie operatora, zachowując tożsamość tego skilla                      |
+
+> Swobodniejszy native na niektórych biegach ≠ porzucenie floty external. `vc-dispatch` i `vc-ship` zachowują własne tożsamości.
+
+<!-- /fleet-imperative -->
+
 # vc-scaffold: Planowanie founder-first — Pancerna Latarnia
 
 ## Czym to jest
@@ -153,7 +175,7 @@ MUSI zawierać wszystkie pięć:
    następne; dlaczego para jest **SEQUENCE** (współdzielona domena plików → konflikt Living Tree) vs **PARALLEL**
    (rozłączne domeny → bezpieczne współbieżnie); i gdzie siedzi każdy **⛔ operator-button STOP** (push/merge,
    decyzje produktowe). Graf bez `why` to diagram, nie driver.
-3. **Gotowe komendy** — dokładna linia launchera (`vibecrafted <workflow> <agent> --file <brief>`) dla
+3. **Gotowe komendy** — dokładna linia launchera następnego stage'u (np. `vibecrafted implement <agent> --file <brief>`, nigdy fałszywy generyczny skill) dla
    KAŻDEGO pozostałego cięcia, w kolejności dispatchu, otagowana SEQUENCE / PARALLEL / STOP, każda z następującą po niej
    komendą verify per cięcie. Człowiek wkleja je verbatim, jeśli pętla padnie.
 4. **Alfabet stanów + reguła `[ ]→[x]`, odtworzone verbatim** (lustro Pomiaru):

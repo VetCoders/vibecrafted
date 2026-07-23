@@ -31,20 +31,25 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-<!-- fleet-imperative: v2 -->
+<!-- fleet-imperative: v3 -->
 
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching the external Vibecrafted
-> fleet through the launcher. In that layer, the invocation is an imperative to
-> act, not a no-op, and not native in-process subagents.
+> **Invocation for `vc-audit` (launcher `audit`)**
 >
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread; do not spawn another agent unless the operator
-> explicitly asks you to launch, dispatch, run the fleet, or gives a concrete
-> command such as `vc-init codex` / `vibecrafted init claude`.
+> Same three-path _shape_ as the fleet, with **this** skill's literals — see the
+> canonical [Delegation Matrix](../DELEGATION_MATRIX.md):
 >
-> The sole native in-process carve-out is `vc-delegate`.
+> - [Shared three paths](../DELEGATION_MATRIX.md#shared-three-paths)
+> - [Launcher catalogue](../DELEGATION_MATRIX.md#launcher-catalogue-core-runtime)
+> - [Per-launcher rule](../DELEGATION_MATRIX.md#per-launcher-rule-the-semantic-delta)
+> - [Native vs external](../DELEGATION_MATRIX.md#native-subagents-vs-external-workers)
+>
+> | Path                    | Literal for this skill                                                                                                                 |
+> | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. User-launched worker | `vibecrafted audit <agent>`                                                                                                            |
+> | 2. Interactive          | `/vc-audit` — execute **in this session**; use native subagents when required; do **not** externalize merely because a launcher exists |
+> | 3. Agent-operator       | may dispatch the worker form above via `vc-dispatch` / operator lines while preserving this skill's identity                           |
+
+> Freer native on some runs ≠ abandon external fleet. `vc-dispatch` and `vc-ship` keep their own identities.
 
 <!-- /fleet-imperative -->
 

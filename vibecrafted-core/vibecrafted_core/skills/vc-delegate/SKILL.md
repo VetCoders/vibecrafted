@@ -16,6 +16,30 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Invocation for `vc-delegate` (launcher `delegate`)**
+>
+> Same three-path _shape_ as the fleet, with **this** skill's literals — see the
+> canonical [Delegation Matrix](../DELEGATION_MATRIX.md):
+>
+> - [Shared three paths](../DELEGATION_MATRIX.md#shared-three-paths)
+> - [Launcher catalogue](../DELEGATION_MATRIX.md#launcher-catalogue-core-runtime)
+> - [Per-launcher rule](../DELEGATION_MATRIX.md#per-launcher-rule-the-semantic-delta)
+> - [Native vs external](../DELEGATION_MATRIX.md#native-subagents-vs-external-workers)
+>
+> | Path                    | Literal for this skill                                                                                                                    |
+> | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. User-launched worker | `vibecrafted delegate <agent>`                                                                                                            |
+> | 2. Interactive          | `/vc-delegate` — execute **in this session**; use native subagents when required; do **not** externalize merely because a launcher exists |
+> | 3. Agent-operator       | may dispatch the worker form above via `vc-dispatch` / operator lines while preserving this skill's identity                              |
+>
+> **Note:** Native subagent **bounds**; freer native under other skills still points here for limits.
+
+> Freer native on some runs ≠ abandon external fleet. `vc-dispatch` and `vc-ship` keep their own identities.
+
+<!-- /fleet-imperative -->
+
 # vc-delegate
 
 ## Operator Entry
@@ -46,11 +70,11 @@ vc-start
 Do not launch `vc-delegate` directly. Its operator-facing replacement is:
 
 ```bash
-vibecrafted <workflow> <agent> --file '/path/to/plan.md'
+vibecrafted <launcher> <agent> --file '/path/to/plan.md'
 ```
 
 ```bash
-vc-<workflow> <agent> --prompt '<prompt>'
+vc-<launcher> <agent> --prompt '<prompt>'
 ```
 
 This skill is not the external fleet itself. It is the operator doctrine for
