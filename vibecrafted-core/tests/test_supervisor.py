@@ -158,7 +158,28 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     transcript = reports / "announced.transcript.log"
     meta = reports / "announced.meta.json"
 
-    report.write_text("# Report\n\nDone.\n", encoding="utf-8")
+    report.write_text(
+        "\n".join(
+            [
+                "---",
+                "run_id: copied-by-worker",
+                "session_id: copied-by-worker",
+                "agent: codex",
+                "skill: implement",
+                "status: completed",
+                "finalized: true",
+                "claim: the bounded implementation passed its gates",
+                "launcher_template: true",
+                "---",
+                "",
+                "# Report",
+                "",
+                "Done.",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     transcript.write_text(
         "[12:40:43] session: codex-finalize-001\n"
         "tokens: 12 in (3 cached) / 7 out\n"
@@ -211,6 +232,13 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     assert final_report.is_file()
     assert final_transcript.is_file()
     report_text = final_report.read_text(encoding="utf-8")
+    assert "run_id: finalize-test-001" in report_text
+    assert "session_id: codex-finalize-001" in report_text
+    assert "run_id: copied-by-worker" not in report_text
+    assert "session_id: copied-by-worker" not in report_text
+    assert "finalized: true" in report_text
+    assert "claim: the bounded implementation passed its gates" in report_text
+    assert "launcher_template:" not in report_text
     assert "model_requested: gpt-5.5" in report_text
     assert report.exists()
     assert transcript.exists()

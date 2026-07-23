@@ -15,6 +15,10 @@ from typing import Any, Callable, Sequence
 from .agent_dispatch import extract_session_id, sandbox_supported
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
+from .report_contract import (
+    materialize_launcher_report_template,
+    stamp_launcher_report_identity,
+)
 from .settlement import BareMarkdownError, require_bound_markdown
 from .telemetry import estimate_cost_usd
 
@@ -1037,6 +1041,15 @@ def finalize_artifacts(
         and report.exists()
         and report.suffix.lower() in {".md", ".markdown"}
     ):
+        stamp_launcher_report_identity(
+            report,
+            run_id=str(payload.get("run_id") or ""),
+            session_id=str(payload.get("session_id") or ""),
+            agent=str(payload.get("agent") or ""),
+            skill=str(payload.get("skill_code") or payload.get("skill") or ""),
+            status=str(payload.get("status") or ""),
+            model=str(payload.get("model") or ""),
+        )
         _normalize_markdown_artifact(report, footer_payload)
     return meta
 
@@ -1404,6 +1417,14 @@ def _build_parser() -> argparse.ArgumentParser:
     finalize.add_argument("meta")
     finalize.add_argument("report", nargs="?")
     finalize.add_argument("transcript", nargs="?")
+    prepare = sub.add_parser(
+        "prepare-report",
+        help="Materialize the launcher-owned report identity template.",
+    )
+    prepare.add_argument("report")
+    prepare.add_argument("run_id")
+    prepare.add_argument("agent")
+    prepare.add_argument("skill")
     finish = sub.add_parser(
         "finish-meta",
         help="Mark launcher meta terminal and persist completion telemetry.",
@@ -1441,6 +1462,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "finalize-artifacts":
         finalize_artifacts(args.meta, args.report, args.transcript)
+        return 0
+    if args.command == "prepare-report":
+        materialize_launcher_report_template(
+            args.report,
+            run_id=args.run_id,
+            agent=args.agent,
+            skill=args.skill,
+        )
         return 0
     return 2
 

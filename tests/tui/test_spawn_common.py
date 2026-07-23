@@ -606,6 +606,51 @@ def test_generated_launcher_preserves_marbles_watcher_mode(tmp_path: Path) -> No
     )
 
 
+def test_generated_launcher_preseeds_and_stamps_report_identity(
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "launch.sh"
+    meta = tmp_path / "run.meta.json"
+    report = tmp_path / "report.md"
+    observed_template = tmp_path / "observed-template.md"
+    transcript = tmp_path / "transcript.log"
+
+    _bash(
+        f'''
+        set -euo pipefail
+        export VIBECRAFTED_HOME="{tmp_path / ".vibecrafted"}"
+        export VIBECRAFTED_INLINE_STARTUP_WATCH=0
+        source "{COMMON_SH}"
+        export SPAWN_ROOT="{tmp_path}"
+        export SPAWN_AGENT=codex
+        export SPAWN_PROMPT_ID=prompt
+        export SPAWN_RUN_ID=marb-identity-001
+        export SPAWN_RUN_LOCK="{tmp_path / "marb-identity.lock"}"
+        export SPAWN_LOOP_NR=3
+        export SPAWN_SKILL_CODE=marb
+        export SPAWN_SKILL_NAME=marbles
+        cmd='cp "{report}" "{observed_template}"; printf "# Worker evidence\\n" >> "{report}"; printf "[12:40:43] session: codex-shell-session-001\\n" >> "{transcript}"'
+        spawn_write_meta "{meta}" "launching" "codex" "marbles" "{tmp_path}" "{launcher}" "{report}" "{transcript}" "{launcher}"
+        spawn_generate_launcher "{launcher}" "{meta}" "{report}" "{transcript}" "{COMMON_SH}" "$cmd"
+        chmod +x "{launcher}"
+        bash "{launcher}"
+        '''
+    )
+
+    template = observed_template.read_text(encoding="utf-8")
+    assert "run_id: marb-identity-001" in template
+    assert "session_id: pending-unset" in template
+    assert "finalized: false" in template
+    assert "launcher_template: true" in template
+
+    finalized = report.read_text(encoding="utf-8")
+    assert "run_id: marb-identity-001" in finalized
+    assert "session_id: codex-shell-session-001" in finalized
+    assert "finalized: false" in finalized
+    assert "launcher_template:" not in finalized
+    assert "# Worker evidence" in finalized
+
+
 def test_generated_launcher_preloads_curated_agent_tool_paths(tmp_path: Path) -> None:
     launcher = tmp_path / "launch.sh"
     meta = tmp_path / "run.meta.json"
@@ -651,6 +696,9 @@ def test_runtime_prompt_includes_vc_agents_worker_charter(tmp_path: Path) -> Non
 
     payload = runtime_file.read_text(encoding="utf-8")
     assert "## VC Agents Worker Charter" in payload
+    assert "finalized: false" in payload
+    assert "already created the report file with machine-owned" in payload
+    assert "Only when you believe the run succeeded" in payload
     assert "Do NOT invoke vc-agents" in payload
     assert "do not reinterpret it" in payload
     assert "record the boundary clearly in your report" in payload
@@ -757,6 +805,8 @@ def test_research_runtime_prompt_forbids_commits_and_source_mutation(
 
     payload = runtime_file.read_text(encoding="utf-8")
     assert "## Research Safety Contract" in payload
+    assert "finalized: false" in payload
+    assert "claim:" in payload
     assert "**GIT WRITES forbidden**" in payload
     assert "do not stage, commit, amend" in payload
     assert "**SOURCE MUTATION**: forbidden" in payload

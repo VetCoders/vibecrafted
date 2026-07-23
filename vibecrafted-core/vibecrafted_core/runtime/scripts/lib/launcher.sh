@@ -76,6 +76,14 @@ spawn_update_meta_pid "\$meta" \$\$
 
 rm -f "\$transcript" "\$report"
 spawn_write_frontmatter "\$transcript" "\$SPAWN_AGENT" "\${SPAWN_MODEL:-unknown}" "transcript"
+# Machine identity exists before the worker starts. The template marker keeps
+# an untouched file equivalent to report_missing; only the worker may turn its
+# explicit finalized/claim fields into self-attested settlement evidence.
+spawn_python_module vibecrafted_core.spawn prepare-report \
+  "\$report" \
+  "\$SPAWN_RUN_ID" \
+  "\$SPAWN_AGENT" \
+  "\${SPAWN_SKILL_CODE:-unknown}"
 if [[ -n "\${SPAWN_ROOT:-}" ]]; then
   cd "\$SPAWN_ROOT"
 fi
@@ -149,7 +157,28 @@ fi
 # Lifecycle truth: the spawner wrote "launching"; the launcher owns the run
 # from here, so the agent command starting is the launching->running edge.
 spawn_mark_meta_running "$meta"
-if bash -c "$SPAWN_CMD"; then
+command_status=0
+bash -c "$SPAWN_CMD" || command_status=$?
+report_template_untouched=0
+if spawn_report_template_untouched "$report"; then
+  report_template_untouched=1
+fi
+# Research requires a first-class worker report. Preserve its established
+# exit-65 contract even though the launcher now materializes an identity shell.
+if [[ "$command_status" -eq 0 && "$report_template_untouched" -eq 1 ]] && {
+  [[ "${VIBECRAFTED_RESEARCH_MODE:-0}" == "1" ]] ||
+  [[ "${SPAWN_SKILL_NAME:-}" == "research" ]] ||
+  [[ "${SPAWN_SKILL_CODE:-}" == "rsch" ]]
+}; then
+  command_status=65
+fi
+# Legacy provider hooks use file presence as their salvage gate. Remove only a
+# provably untouched launcher shell so those hooks keep their existing fallback
+# behavior; worker-written evidence remains intact.
+if [[ "$report_template_untouched" -eq 1 ]]; then
+  rm -f "$report"
+fi
+if [[ "$command_status" -eq 0 ]]; then
   spawn_finish_meta "$meta" "completed" "0"
 EOF_LAUNCH
 
@@ -167,7 +196,7 @@ EOF_LAUNCH
   # Last: a successful transfer closes this very tab.
   spawn_triage_run "$meta"
 else
-  exit_code=$?
+  exit_code=$command_status
   spawn_finish_meta "$meta" "failed" "$exit_code"
 EOF_LAUNCH
 
