@@ -198,6 +198,30 @@ keybinds {
         bind "q" { Quit; }
     }
 
+    // ─── Tab mode (Ctrl+t): spatial navigation ──────────────────────────────
+    // ←/→ walk the TOP tab bar; ↑/↓ walk the LEFT Sessions rail. The pipe
+    // target is the plugin URL "vc-frame:session-manager" — a "session-rail"
+    // alias named in older docs was never defined anywhere, so alias-form
+    // binds piped into the void. Every rail instance resolves the same
+    // relative target (wrap-around, idempotent) — see
+    // relative_session_target() in default-plugins/session-manager.
+    tab {
+        bind "h" "Left" { GoToPreviousTab; }
+        bind "l" "Right" { GoToNextTab; }
+        bind "k" "Up" {
+            MessagePlugin "vc-frame:session-manager" {
+                name "vc_rail_nav"
+                payload "up"
+            };
+        }
+        bind "j" "Down" {
+            MessagePlugin "vc-frame:session-manager" {
+                name "vc_rail_nav"
+                payload "down"
+            };
+        }
+    }
+
     // ─── Copy mode (inside Ctrl+s SCROLL) ───────────────────────────────────
     // vc-frame has no keyboard text-region selection — `Copy` only copies a
     // mouse-made selection, useless without a mouse. The mouseless copy path
