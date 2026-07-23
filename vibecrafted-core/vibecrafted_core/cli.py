@@ -173,8 +173,9 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "re-run settlement over retained control_plane/runs snapshots "
-            "(honest: FINALIZED only from a sealed delivery or an explicit "
-            "worker attestation — never from bare exit 0)"
+            "(honest: automatic FINALIZED only from a sealed delivery or an "
+            "explicit worker attestation; a traced operator waive remains an "
+            "override; never from bare exit 0)"
         ),
     )
     settle = sub.add_parser(
@@ -628,8 +629,9 @@ def _cmd_resettle(args: argparse.Namespace) -> int:
         f"n={after.get('n', 0)} invalid={after.get('invalid', 0)}"
     )
     print(
-        "note: FINALIZED comes only from a sealed delivery or an explicit "
-        "worker attestation (finalized: true + claim) — never from bare exit 0"
+        "note: automatic FINALIZED comes only from a sealed delivery or an "
+        "explicit worker attestation (finalized: true + claim); a traced "
+        "operator waive remains an explicit override; never from bare exit 0"
     )
     return 0 if result.get("ok") else 1
 

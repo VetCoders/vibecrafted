@@ -527,11 +527,12 @@ def resettle_retained_snapshots(
 ) -> dict[str, Any]:
     """Re-run settlement over retained control-plane snapshots.
 
-    Honest backfill: does not invent either legitimate FINALIZED source.
+    Honest backfill: does not invent either automatic FINALIZED evidence source.
     Sealed finalization requires existing proof/seal evidence; self-attested
     finalization requires an existing validated, run-bound report carrying the
-    worker's explicit ``finalized: true`` and non-empty ``claim``. Bare exit 0
-    remains needs_attention. Idempotent when re-run after convergence.
+    worker's explicit ``finalized: true`` and non-empty ``claim``. A traced
+    operator waive remains a separate explicit override. Bare exit 0 remains
+    needs_attention. Idempotent when re-run after convergence.
     """
     from .control_plane import control_plane_home, run_snapshot_dir
     from .settlement import settle_payload

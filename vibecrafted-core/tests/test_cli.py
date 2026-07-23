@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vibecrafted_core import cli
+from vibecrafted_core import cli, lifecycle_delivery
 
 
 def _accepted_launch_payload() -> dict[str, object]:
@@ -66,6 +66,32 @@ def test_core_parser_accepts_the_short_prompt_and_file_flags() -> None:
 
     assert prompt.prompt == "ship it"
     assert file_input.file == "brief.md"
+
+
+def test_resettle_names_automatic_sources_and_explicit_override(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        lifecycle_delivery,
+        "resettle_retained_snapshots",
+        lambda **_kwargs: {
+            "ok": True,
+            "scanned": 1,
+            "rewritten": 0,
+            "unchanged": 1,
+            "skipped": 0,
+            "dry_run": True,
+            "before": {"f": 1, "x": 0, "n": 0, "invalid": 0},
+            "after": {"f": 1, "x": 0, "n": 0, "invalid": 0},
+        },
+    )
+
+    assert cli._cmd_resettle(SimpleNamespace(dry_run=True, json=False)) == 0
+
+    output = capsys.readouterr().out
+    assert "automatic FINALIZED" in output
+    assert "operator waive remains an explicit override" in output
+    assert "never from bare exit 0" in output
 
 
 def test_literal_help_prompt_still_launches(monkeypatch, capsys) -> None:
