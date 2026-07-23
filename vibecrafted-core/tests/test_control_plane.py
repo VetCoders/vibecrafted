@@ -546,7 +546,7 @@ def test_sync_state_gc_terminalizes_old_stalled_dead_launcher(
     assert persisted["state"] == "gc"
 
 
-def test_sync_state_keeps_stalled_dead_launcher_active_before_gc_grace(
+def test_sync_state_separates_stalled_dead_launcher_before_gc_grace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / ".vibecrafted"
@@ -577,8 +577,95 @@ def test_sync_state_keeps_stalled_dead_launcher_active_before_gc_grace(
     assert run["state"] == "stalled"
     assert run["health"] == "stalled"
     assert run["liveness"] == "pid_gone"
-    assert run["run_id"] in {item["run_id"] for item in snapshot["active_runs"]}
+    assert run["run_id"] not in {item["run_id"] for item in snapshot["active_runs"]}
+    assert run["run_id"] in {item["run_id"] for item in snapshot["stalled_runs"]}
     assert "garbage-collected" not in run["last_error"]
+
+
+def test_sync_state_active_truth_quarantines_pytest_events_and_separates_stalls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tempfile
+
+    now = dt.datetime(2026, 7, 23, 10, 0, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(control_plane, "_now", lambda: now)
+    with tempfile.TemporaryDirectory(prefix="vibecrafted-production-home-") as raw_home:
+        home = Path(raw_home) / ".vibecrafted"
+        monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+        events = home / "control_plane" / "events.jsonl"
+        events.parent.mkdir(parents=True)
+        records = [
+            {
+                "ts": now.isoformat(),
+                "run_id": "live-worker",
+                "kind": "lifecycle:active",
+                "message": "worker heartbeat",
+                "payload": {
+                    "state": "active",
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                    "launcher_pid": os.getpid(),
+                    "liveness": "pid_alive",
+                    "heartbeat_at": now.isoformat(),
+                },
+            },
+            {
+                "ts": now.isoformat(),
+                "run_id": "definitely-missing",
+                "kind": "state",
+                "message": "stale event only",
+                "payload": {
+                    "state": "running",
+                    "health": "active",
+                    "liveness": "pid_alive",
+                    "heartbeat_at": (now - dt.timedelta(hours=2)).isoformat(),
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                },
+            },
+            {
+                "ts": now.isoformat(),
+                "run_id": "pytest-fixture-run",
+                "kind": "lifecycle:active",
+                "message": "fixture leak",
+                "payload": {
+                    "state": "active",
+                    "root": "/private/tmp/pytest-of-operator/pytest-1/test_board0",
+                    "launcher_pid": os.getpid(),
+                },
+            },
+        ]
+        events.write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+
+        snapshot = control_plane.sync_state()
+
+        assert [run["run_id"] for run in snapshot["active_runs"]] == ["live-worker"]
+        assert [run["run_id"] for run in snapshot["stalled_runs"]] == [
+            "definitely-missing"
+        ]
+        projected_ids = {
+            run["run_id"]
+            for bucket in ("active_runs", "stalled_runs", "recent_runs")
+            for run in snapshot[bucket]
+        }
+        assert "pytest-fixture-run" not in projected_ids
+        assert all(
+            event["run_id"] != "pytest-fixture-run" for event in snapshot["events"]
+        )
+        assert snapshot["settlement_counts"] == {
+            "f": 0,
+            "x": 0,
+            "n": 0,
+            "total_settled": 0,
+            "orphans": 0,
+        }
+
+        replayed = control_plane.sync_state()
+        assert [run["run_id"] for run in replayed["active_runs"]] == ["live-worker"]
+        assert [run["run_id"] for run in replayed["stalled_runs"]] == [
+            "definitely-missing"
+        ]
 
 
 def test_sync_state_reconciles_dead_launcher_success_evidence_to_completed(

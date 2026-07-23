@@ -318,6 +318,33 @@ def normalize_run_root(
     return str(Path(raw).expanduser().resolve())
 
 
+def _is_pytest_temp_path(raw: Any) -> bool:
+    value = str(raw or "").strip()
+    if not value:
+        return False
+    return any(part.startswith("pytest-of-") for part in Path(value).parts)
+
+
+def _event_has_test_provenance(event: dict[str, Any]) -> bool:
+    """Reject pytest-owned event records from a production control plane.
+
+    Pytest fixtures legitimately use an isolated temporary VIBECRAFTED_HOME, so
+    quarantine is disabled inside that sandbox. The production home must never
+    replay an event whose declared root/artifact paths belong to a pytest temp
+    tree into the operator board.
+    """
+
+    if _is_pytest_temp_path(vibecrafted_home()):
+        return False
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    return any(
+        _is_pytest_temp_path(payload.get(key))
+        for key in ("root", "source_dir", "report", "transcript", "meta")
+    )
+
+
 def ensure_session_id(session_id: Any = "") -> str:
     raw = str(session_id or "").strip()
     if raw.lower() not in MISSING_SESSION_IDS:
@@ -1001,6 +1028,8 @@ def _merge_event_stream(
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if _event_has_test_provenance(event):
+            continue
         run_id = str(event.get("run_id") or "").strip()
         if not run_id:
             continue
@@ -1114,6 +1143,12 @@ def _merge_event_stream(
                 else ""
             )
         )
+        declared_health = str(payload.get("health") or "")
+        activity_at = str(payload.get("heartbeat_at") or updated_at)
+        if declared_health in {"stalled", "final", "unknown"}:
+            health = declared_health
+        else:
+            health = _state_health(state, activity_at)
 
         incoming = RunStatus(
             run_id=run_id,
@@ -1128,7 +1163,7 @@ def _merge_event_stream(
             last_error=last_error,
             updated_at=updated_at,
             started_at=started_at,
-            health=_state_health(state, updated_at),
+            health=health,
             source="event-stream",
             lock_present=existing.lock_present if existing is not None else False,
             exit_code=exit_code,
@@ -1489,12 +1524,17 @@ def read_event_tail(limit: int = EVENT_TAIL_LIMIT) -> list[dict[str, Any]]:
     if not stream.exists():
         return []
     events = []
-    for line in stream.read_text(encoding="utf-8").splitlines()[-limit:]:
+    for line in reversed(stream.read_text(encoding="utf-8").splitlines()):
         try:
-            events.append(json.loads(line))
+            event = json.loads(line)
         except json.JSONDecodeError:
             continue
-    return list(reversed(events))
+        if _event_has_test_provenance(event):
+            continue
+        events.append(event)
+        if len(events) >= limit:
+            break
+    return events
 
 
 def subscribe_events(
@@ -1578,9 +1618,24 @@ def _project_run_payload(
         # this digest, but it must never select a different mission itself.
         payload["claim_digest"] = launcher_claim_digest
     payload["failure_card"] = _failure_card(payload)
-    payload["health"] = _state_health(
-        str(payload.get("state") or ""), str(payload.get("updated_at") or "")
-    )
+    state = str(payload.get("state") or "")
+    # Launcher PIDs are ephemeral and can be reused by an unrelated process
+    # months later. A current worker PID is durable process evidence; the
+    # launch window is covered independently by a fresh heartbeat.
+    has_live_process = _worker_is_alive(payload)
+    if _run_is_terminal(payload):
+        payload["health"] = "final"
+    elif state == "stalled":
+        payload["health"] = "stalled"
+    elif has_live_process:
+        payload["health"] = "active"
+    else:
+        # Synthetic state events legitimately refresh `updated_at`; they do not
+        # prove worker activity. Heartbeat is the canonical temporal evidence.
+        payload["health"] = _state_health(
+            state,
+            str(payload.get("heartbeat_at") or payload.get("updated_at") or ""),
+        )
     if not payload.get("liveness"):
         payload["liveness"] = "terminal" if _run_is_terminal(payload) else "heartbeat"
     payload["lifecycle"] = _lifecycle_controls(payload)
@@ -1718,8 +1773,12 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
     active_runs = [
         run
         for run in payload_runs
-        if run.get("health") in {"active", "stalled"}
-        and run.get("state") not in FINAL_STATES
+        if run.get("health") == "active" and run.get("state") not in FINAL_STATES
+    ]
+    stalled_runs = [
+        run
+        for run in payload_runs
+        if run.get("health") == "stalled" and run.get("state") not in FINAL_STATES
     ]
     # Contract rule 6: legacy Untitled*.md under artifacts/ lands as n.
     # Full board only — scoped single-run polls must not pay the rglob cost.
@@ -1740,6 +1799,7 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
     return {
         "generated_at": _now().isoformat(),
         "active_runs": active_runs,
+        "stalled_runs": stalled_runs,
         "recent_runs": recent_runs,
         "warnings": _warnings_for_runs(payload_runs),
         "events": read_event_tail(),

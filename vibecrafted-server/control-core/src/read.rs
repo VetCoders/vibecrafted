@@ -13,8 +13,10 @@
 //!   active/recent/warnings without ever depending on the Python sync having
 //!   run. This is what lets the web/TUI frontends be self-sufficient.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use chrono::{DateTime, Utc};
 
@@ -65,8 +67,10 @@ pub struct ControlPlane {
 /// return payload, minus `generated_at` (callers stamp their own clock).
 #[derive(Debug, Clone)]
 pub struct StateView {
-    /// In-flight runs (health active/stalled and not in a final state).
+    /// Runs with current live activity evidence.
     pub active_runs: Vec<RunStatus>,
+    /// Non-terminal runs whose last activity crossed the stall threshold.
+    pub stalled_runs: Vec<RunStatus>,
     /// Up to [`RECENT_RUN_LIMIT`] most-recently-updated runs.
     pub recent_runs: Vec<RunStatus>,
     /// Human-readable warnings (stalls, locks without reports).
@@ -542,6 +546,16 @@ impl ControlPlane {
             .read_all()
             .map(|batch| batch.events)
             .unwrap_or_default();
+        events.retain(|event| !event_has_test_provenance(event, &self.home));
+        let worker_pid_candidates: HashSet<(String, i64)> = events
+            .iter()
+            .flat_map(|event| event_worker_pids(event).map(|pid| (event.run_id.clone(), pid)))
+            .collect();
+        let live_worker_runs: HashSet<String> = worker_pid_candidates
+            .into_iter()
+            .filter(|(_, pid)| pid_is_alive(*pid))
+            .map(|(run_id, _)| run_id)
+            .collect();
         for event in &events {
             if event.run_id.trim().is_empty() {
                 continue;
@@ -549,6 +563,11 @@ impl ControlPlane {
             let existing = merged.iter().find(|run| run.run_id == event.run_id);
             let status = normalize_event(event, existing, now);
             absorb_status(&mut merged, status);
+        }
+        for run in &mut merged {
+            if live_worker_runs.contains(&run.run_id) && !run.is_terminal() {
+                run.health = "active".to_string();
+            }
         }
         // runtime_runs/: a just-launched run no richer source has surfaced yet.
         // Read-follows-write — keeps the dashboard from a silent gap before the
@@ -561,10 +580,15 @@ impl ControlPlane {
                 merged.push(run);
             }
         }
-        for run in self.iter_lifecycle_run_status() {
+        for mut run in self.iter_lifecycle_run_status() {
             if !merged.iter().any(|r| r.run_id == run.run_id)
                 && (run.is_terminal() || run.health == "active")
             {
+                // Lifecycle containers remain discoverable in recent/stalled,
+                // but only their dispatched workers carry process liveness.
+                if !run.is_terminal() {
+                    run.health = "stalled".to_string();
+                }
                 merged.push(run);
             }
         }
@@ -610,15 +634,19 @@ impl ControlPlane {
         let warnings = warnings_for_runs(&runs);
         let active_runs: Vec<RunStatus> = runs
             .iter()
-            .filter(|run| {
-                matches!(run.health.as_str(), "active" | "stalled") && !is_final_state(&run.state)
-            })
+            .filter(|run| run.health == "active" && !is_final_state(&run.state))
+            .cloned()
+            .collect();
+        let stalled_runs: Vec<RunStatus> = runs
+            .iter()
+            .filter(|run| run.health == "stalled" && !is_final_state(&run.state))
             .cloned()
             .collect();
         settlement_counts.active = active_runs.len();
         let recent_runs = runs.into_iter().take(RECENT_RUN_LIMIT).collect();
         StateView {
             active_runs,
+            stalled_runs,
             recent_runs,
             warnings,
             events,
@@ -760,6 +788,18 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
     } else {
         String::new()
     };
+    let declared_health = payload_string("health");
+    let heartbeat_at = payload_string("heartbeat_at");
+    let activity_at = if heartbeat_at.is_empty() {
+        updated_at.as_str()
+    } else {
+        heartbeat_at.as_str()
+    };
+    let health = if matches!(declared_health.as_str(), "stalled" | "final" | "unknown") {
+        declared_health
+    } else {
+        state_health(&state, activity_at, now).as_str().to_string()
+    };
 
     RunStatus {
         run_id: event.run_id.trim().to_string(),
@@ -784,7 +824,7 @@ fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Ut
         last_error,
         updated_at: updated_at.clone(),
         started_at,
-        health: state_health(&state, &updated_at, now).as_str().to_string(),
+        health,
         source: "event-stream".to_string(),
         lock_present: existing.is_some_and(|run| run.lock_present),
         exit_code,
@@ -824,6 +864,45 @@ fn json_scalar_string(value: &serde_json::Value) -> String {
         serde_json::Value::String(value) => value.clone(),
         other => other.to_string(),
     }
+}
+
+fn event_has_test_provenance(event: &Event, home: &Path) -> bool {
+    if is_pytest_temp_path(home) {
+        return false;
+    }
+    ["root", "source_dir", "report", "transcript", "meta"]
+        .into_iter()
+        .filter_map(|key| event.payload.get(key))
+        .filter_map(serde_json::Value::as_str)
+        .any(|value| is_pytest_temp_path(Path::new(value)))
+}
+
+fn event_worker_pids(event: &Event) -> impl Iterator<Item = i64> + '_ {
+    ["worker_pid", "worker_pgid"]
+        .into_iter()
+        .filter_map(|key| event.payload.get(key))
+        .filter_map(coerce_int_value)
+}
+
+fn pid_is_alive(pid: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn is_pytest_temp_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|part| part.starts_with("pytest-of-"))
+    })
 }
 
 fn sort_recent_first(runs: &mut [RunStatus]) {
@@ -1112,5 +1191,103 @@ impl MarblesState {
             delivery_state: None,
             seal: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ControlPlane;
+    use chrono::{Duration, Utc};
+    use serde_json::json;
+    use std::fs;
+
+    #[test]
+    fn active_truth_separates_stalls_and_quarantines_pytest_events() {
+        let unique = format!(
+            "control-core-active-truth-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let home = std::env::temp_dir().join(unique);
+        let control_plane = home.join("control_plane");
+        fs::create_dir_all(&control_plane).expect("control plane");
+        let now = Utc::now();
+        let records = [
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "live-worker",
+                "kind": "lifecycle:active",
+                "message": "worker heartbeat",
+                "payload": {
+                    "state": "active",
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                    "worker_pid": std::process::id(),
+                    "liveness": "pid_alive",
+                    "heartbeat_at": (now - Duration::hours(2)).to_rfc3339()
+                }
+            }),
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "definitely-missing",
+                "kind": "state",
+                "message": "stale event only",
+                "payload": {
+                    "state": "running",
+                    "health": "active",
+                    "liveness": "pid_alive",
+                    "heartbeat_at": (now - Duration::hours(2)).to_rfc3339(),
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted"
+                }
+            }),
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "pytest-fixture-run",
+                "kind": "lifecycle:active",
+                "message": "fixture leak",
+                "payload": {
+                    "state": "active",
+                    "root": "/private/tmp/pytest-of-operator/pytest-1/test_board0",
+                    "launcher_pid": std::process::id()
+                }
+            }),
+        ];
+        let encoded = records
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(control_plane.join("events.jsonl"), format!("{encoded}\n"))
+            .expect("event stream");
+
+        let view = ControlPlane::new(&home).compute_view(now);
+
+        assert_eq!(
+            view.active_runs
+                .iter()
+                .map(|run| run.run_id.as_str())
+                .collect::<Vec<_>>(),
+            ["live-worker"]
+        );
+        assert_eq!(
+            view.stalled_runs
+                .iter()
+                .map(|run| run.run_id.as_str())
+                .collect::<Vec<_>>(),
+            ["definitely-missing"]
+        );
+        assert!(
+            view.recent_runs
+                .iter()
+                .all(|run| run.run_id != "pytest-fixture-run")
+        );
+        assert!(
+            view.events
+                .iter()
+                .all(|event| event.run_id != "pytest-fixture-run")
+        );
+        assert_eq!(view.settlement_counts.active, 1);
+        assert_eq!(view.settlement_counts.total_settled, 0);
+
+        fs::remove_dir_all(home).ok();
     }
 }
