@@ -20,15 +20,15 @@ Skill lub workflow `vibecrafted` może zostać wywołany na trzy odrębne sposob
 
 ### 1. User-Launched Worker
 
-Użytkownik może wywołać `vibecrafted <workflow> <agent>` z poziomu CLI (launchera). Tworzy to osobny, nieinteraktywny przebieg workera odpowiedzialny za wykonanie pełnego pipeline'u.
+Użytkownik może wywołać `vibecrafted workflow <agent>` z poziomu CLI (launchera). Tworzy to osobny, nieinteraktywny przebieg workera odpowiedzialny za wykonanie pełnego pipeline'u.
 
 ### 2. Interactive Skill Invocation
 
-Użytkownik może wywołać `/vc-<workflow>` lub załadować skill wewnątrz istniejącej sesji agenta. W takim przypadku bieżący agent musi załadować i wykonać pełny skill w ramach tej samej sesji. Nie wolno mu zewnętrzniać workflow do osobnego workera `vibecrafted` tylko dlatego, że delegacja jest dostępna. Może — a gdy to wymagane, musi — użyć swojej natywnej floty subagentów w procesie do dokładnego dokończenia workflow.
+Użytkownik może wywołać `/vc-workflow` lub załadować skill wewnątrz istniejącej sesji agenta. W takim przypadku bieżący agent musi załadować i wykonać pełny skill w ramach tej samej sesji. Nie wolno mu zewnętrzniać workflow do osobnego workera `vibecrafted` tylko dlatego, że delegacja jest dostępna. Może — a gdy to wymagane, musi — użyć swojej natywnej floty subagentów w procesie do dokładnego dokończenia workflow.
 
 ### 3. Agent-Operator Delegation
 
-Podczas prowadzenia szerszej orkiestracji agent-operator może użyć `vibecrafted <workflow> <agent>` jako agent `vc-dispatch`, tak samo jak użytkownik. Uruchamia to osobną sesję workflow przez runtime `vibecrafted` i deleguje pełny pipeline do zewnętrznego agenta floty.
+Podczas prowadzenia szerszej orkiestracji agent-operator może użyć `vibecrafted workflow <agent>` jako agent `vc-dispatch`, tak samo jak użytkownik. Uruchamia to osobną sesję workflow przez runtime `vibecrafted` i deleguje pełny pipeline do zewnętrznego agenta floty.
 
 ---
 

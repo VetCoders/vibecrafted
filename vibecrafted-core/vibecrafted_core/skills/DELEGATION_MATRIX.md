@@ -19,15 +19,15 @@ A `vibecrafted` skill or workflow may be invoked through three distinct paths:
 
 ### 1. User-Launched Worker
 
-The user may invoke `vibecrafted <workflow> <agent>` through the launcher CLI. This creates a separate, non-interactive worker run responsible for executing the complete pipeline.
+The user may invoke `vibecrafted workflow <agent>` through the launcher CLI. This creates a separate, non-interactive worker run responsible for executing the complete pipeline.
 
 ### 2. Interactive Skill Invocation
 
-The user may invoke `/vc-<workflow>` or load the skill inside an existing agent session. In this case, the current agent must load and execute the complete skill within that same session. It must not externalize the workflow itself to a separate `vibecrafted` worker merely because delegation is available. It may, and when required must, use its native in-process subagent fleet to complete the workflow thoroughly.
+The user may invoke `/vc-workflow` or load the skill inside an existing agent session. In this case, the current agent must load and execute the complete skill within that same session. It must not externalize the workflow itself to a separate `vibecrafted` worker merely because delegation is available. It may, and when required must, use its native in-process subagent fleet to complete the workflow thoroughly.
 
 ### 3. Agent-Operator Delegation
 
-While conducting broader orchestration, an agent operator may use `vibecrafted <workflow> <agent>` as a `vc-dispatch` agent, just as the user can. This launches a separate workflow session through the `vibecrafted` runtime and delegates the full pipeline to the external fleet agent.
+While conducting broader orchestration, an agent operator may use `vibecrafted workflow <agent>` as a `vc-dispatch` agent, just as the user can. This launches a separate workflow session through the `vibecrafted` runtime and delegates the full pipeline to the external fleet agent.
 
 ---
 
