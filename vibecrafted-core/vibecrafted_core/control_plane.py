@@ -1925,8 +1925,16 @@ def _legacy_execution_state(state: str, exit_code: int | None) -> ExecutionState
         "process_dead",
         "recovery_required",
         "report_invalid",
-        "report_missing",
     }:
+        return ExecutionState.FAILED
+    if normalized == "report_missing":
+        # Delivering nothing is not the same as delivering garbage.
+        # report_invalid stays an execution failure (the recovery lane), but a
+        # worker that exited 0 and simply produced no report is the contract's
+        # exit_0_without_report specimen — needs_attention, never a fabricated
+        # execution failure (x instead of n).
+        if exit_code is not None:
+            return ExecutionState.EXITED if exit_code == 0 else ExecutionState.FAILED
         return ExecutionState.FAILED
     if exit_code is not None:
         return ExecutionState.EXITED if exit_code == 0 else ExecutionState.FAILED

@@ -52,6 +52,15 @@ def delivery_axes_for_receipt(
         "running": ExecutionState.RUNNING,
         "completed": ExecutionState.EXITED,
     }.get(str(status), ExecutionState.FAILED)
+    # The execution axis states what the PROCESS did, not what the artifact
+    # gate concluded. A worker that exited 0 without a report is the contract's
+    # exit_0_without_report specimen — needs_attention, never a fabricated
+    # execution failure (which would settle x instead of n).
+    exit_code = source.get("exit_code")
+    if isinstance(exit_code, int) and str(status) not in ("launching", "running"):
+        execution_default = (
+            ExecutionState.EXITED if exit_code == 0 else ExecutionState.FAILED
+        )
 
     def enum_value(name: str, enum_type: type[Any], default: Any) -> str:
         raw = source.get(name)
@@ -140,6 +149,49 @@ def _maybe_seal_awaited_stage(
             str(item) for item in record.get("git_before") or ()
         ),
     )
+
+
+def _capture_stage_completion(
+    record: dict[str, Any],
+    await_result: dict[str, Any],
+    repo_root: Path,
+) -> bool:
+    """Attach terminal worker truth and return whether a READ stage mutated.
+
+    Both lifecycle modes must derive provenance the same way.  The synchronous
+    runner used to own this block exclusively, which made the default
+    launch-and-return dispatcher path structurally unable to reach proof/seal.
+    """
+    record["await"] = await_result
+    record["status"] = "completed" if await_result.get("artifact_ok") else "failed"
+    record["commit_after"] = _git_head(repo_root)
+    record["git_after"] = _git_status(repo_root)
+    record["git_snapshot_after"] = _git_worktree_snapshot(
+        repo_root, list(record.get("git_after") or [])
+    )
+    status_changed_files = _changed_paths_between(
+        list(record.get("git_before") or []),
+        list(record.get("git_after") or []),
+        dict(record.get("git_snapshot_before") or {}),
+        dict(record.get("git_snapshot_after") or {}),
+    )
+    committed_changed_files = _committed_paths_between(
+        repo_root,
+        str(record.get("commit_before") or ""),
+        str(record.get("commit_after") or ""),
+    )
+    record["changed_files"] = sorted(
+        set(status_changed_files) | set(committed_changed_files)
+    )
+    record["new_commits"] = _commits_between(
+        repo_root,
+        str(record.get("commit_before") or ""),
+        str(record.get("commit_after") or ""),
+    )
+    read_violation = record.get("phase") == "read" and bool(record["changed_files"])
+    if read_violation:
+        record["read_phase_violation"] = True
+    return read_violation
 
 
 @dataclass(frozen=True)
@@ -729,10 +781,7 @@ class LifecycleRunner:
             state["status"] = "running"
             self._write_state(state_path, state)
             await_result = await asyncio.to_thread(self.awaiter, record["launch"])
-            record["await"] = await_result
-            record["status"] = (
-                "completed" if await_result.get("artifact_ok") else "failed"
-            )
+            read_violation = _capture_stage_completion(record, await_result, root)
             reported_dou = _surfaced_dou_index(await_result)
             if reported_dou is not None:
                 record["dou_index"] = reported_dou
@@ -741,32 +790,7 @@ class LifecycleRunner:
                     "stage": stage.id,
                     "report": str(record["launch"].get("report") or ""),
                 }
-            record["commit_after"] = _git_head(root)
-            record["git_after"] = _git_status(root)
-            record["git_snapshot_after"] = _git_worktree_snapshot(
-                root, list(record.get("git_after") or [])
-            )
-            status_changed_files = _changed_paths_between(
-                list(record.get("git_before") or []),
-                list(record.get("git_after") or []),
-                dict(record.get("git_snapshot_before") or {}),
-                dict(record.get("git_snapshot_after") or {}),
-            )
-            committed_changed_files = _committed_paths_between(
-                root,
-                str(record.get("commit_before") or ""),
-                str(record.get("commit_after") or ""),
-            )
-            record["changed_files"] = sorted(
-                set(status_changed_files) | set(committed_changed_files)
-            )
-            record["new_commits"] = _commits_between(
-                root,
-                str(record.get("commit_before") or ""),
-                str(record.get("commit_after") or ""),
-            )
-            if record["phase"] == "read" and record["changed_files"]:
-                record["read_phase_violation"] = True
+            if read_violation:
                 state["status"] = "failed"
                 state["error"] = f"READ stage {stage.id} changed files: " + ", ".join(
                     record["changed_files"]
@@ -1082,6 +1106,199 @@ def record_stage_worker_exit(
     except OSError:
         return False
     return True
+
+
+def record_stage_worker_completion(
+    state_path: str | Path,
+    stage_run_id: str,
+    completion_payload: dict[str, Any],
+) -> bool:
+    """Reconcile a no-await stage through terminal truth and settlement.
+
+    The dispatcher is the process that observes completion in the default
+    lifecycle mode.  Replays are a no-op once ``worker_completion.processed``
+    is present, and the final merge re-reads ``state.json`` so an operator
+    action written while the proof engine ran is not overwritten.
+    """
+    target = str(stage_run_id or "").strip()
+    path = Path(state_path).expanduser()
+    if not target:
+        return False
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(state, dict):
+        return False
+    stages = state.get("stages")
+    if not isinstance(stages, list) or not stages:
+        return False
+
+    matched_index: int | None = None
+    for index in range(len(stages) - 1, -1, -1):
+        stage = stages[index]
+        if not isinstance(stage, dict):
+            continue
+        launch = stage.get("launch") or {}
+        if str(launch.get("run_id") or "") == target:
+            matched_index = index
+            break
+    if matched_index is None:
+        return False
+
+    existing = stages[matched_index].get("worker_completion")
+    if isinstance(existing, dict) and existing.get("processed"):
+        sync = existing.get("settlement_sync")
+        return not isinstance(sync, dict) or bool(sync.get("ok"))
+
+    working_record = dict(stages[matched_index])
+    root = Path(str(state.get("root") or ".")).expanduser().resolve()
+    completion = dict(completion_payload)
+    completion.setdefault("run_id", target)
+    read_violation = _capture_stage_completion(working_record, completion, root)
+    exit_code = completion.get("exit_code")
+    failed = (isinstance(exit_code, int) and exit_code != 0) or not completion.get(
+        "artifact_ok"
+    )
+    if failed:
+        working_record["worker_exit"] = {
+            "state": completion.get("state"),
+            "exit_code": exit_code,
+            "artifact_ok": bool(completion.get("artifact_ok")),
+            "artifact_errors": list(completion.get("artifact_errors") or []),
+            "report": str(completion.get("report") or ""),
+            "transcript": str(completion.get("transcript") or ""),
+            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+
+    seal_result = None
+    if not read_violation:
+        spec = state.get("spec")
+        spec_payload = spec if isinstance(spec, dict) else {}
+        seal_result = _maybe_seal_awaited_stage(
+            record=working_record,
+            await_result=completion,
+            lifecycle_id=str(state.get("run_id") or ""),
+            mission_text=str(spec_payload.get("prompt") or ""),
+            repo_root=root,
+        )
+        if seal_result is not None:
+            working_record["lifecycle_seal"] = seal_result.to_payload()
+            completion.update(seal_result.axes_payload())
+            completion["claim_digest"] = seal_result.claim_digest
+
+    working_record.update(
+        delivery_axes_for_receipt(str(working_record.get("status") or ""), completion)
+    )
+
+    settlement_sync: dict[str, Any]
+    try:
+        from .control_plane import sync_state
+
+        board = sync_state(target)
+        synced = next(
+            (
+                item
+                for item in board.get("recent_runs") or []
+                if str(item.get("run_id") or "") == target
+            ),
+            {},
+        )
+        settlement_sync = {
+            "ok": True,
+            "verdict": str(synced.get("settlement_verdict") or ""),
+            "tui": str(synced.get("settlement_tui") or ""),
+        }
+    except Exception as exc:  # noqa: BLE001 — persist the failed projection
+        settlement_sync = {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    # Proof execution can take long enough for a human control to land. Merge
+    # completion-owned fields into the latest state instead of restoring the
+    # stale pre-proof document.
+    try:
+        latest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        latest = state
+    if not isinstance(latest, dict):
+        return False
+    latest_stages = latest.get("stages")
+    if not isinstance(latest_stages, list) or matched_index >= len(latest_stages):
+        return False
+    latest_record = latest_stages[matched_index]
+    if not isinstance(latest_record, dict):
+        return False
+    latest_launch = latest_record.get("launch") or {}
+    if str(latest_launch.get("run_id") or "") != target:
+        return False
+
+    completion_keys = (
+        "await",
+        "status",
+        "commit_after",
+        "git_after",
+        "git_snapshot_after",
+        "changed_files",
+        "new_commits",
+        "read_phase_violation",
+        "lifecycle_seal",
+        "worker_exit",
+        "execution_state",
+        "proof_state",
+        "delivery_state",
+    )
+    for key in completion_keys:
+        if key in working_record:
+            latest_record[key] = working_record[key]
+
+    completion_receipt = {
+        "processed": True,
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "run_id": target,
+        "state": completion.get("state"),
+        "exit_code": completion.get("exit_code"),
+        "artifact_ok": bool(completion.get("artifact_ok")),
+        "settlement_sync": settlement_sync,
+    }
+    latest_record["worker_completion"] = completion_receipt
+    latest["stage_completion"] = {
+        **completion_receipt,
+        "stage": str(latest_record.get("id") or ""),
+    }
+    if (
+        failed
+        and matched_index == len(latest_stages) - 1
+        and latest.get("status") == "launching"
+    ):
+        latest["stage_worker_exit"] = {
+            **dict(latest_record.get("worker_exit") or {}),
+            "stage": str(latest_record.get("id") or ""),
+            "run_id": target,
+        }
+    latest.update(
+        delivery_axes_for_receipt(str(latest.get("status") or ""), latest_record)
+    )
+    if seal_result is not None and seal_result.granted:
+        latest.update(seal_result.axes_payload())
+        latest["claim_digest"] = seal_result.claim_digest
+        latest["lifecycle_seal"] = seal_result.to_payload()
+    if read_violation:
+        latest["status"] = "failed"
+        latest["error"] = (
+            f"READ stage {latest_record.get('id')} changed files: "
+            + ", ".join(latest_record.get("changed_files") or [])
+        )
+
+    try:
+        write_lifecycle_state(path, latest)
+        report_path = str(latest.get("report_path") or "").strip()
+        if report_path:
+            write_lifecycle_report(Path(report_path), latest)
+    except OSError:
+        return False
+    return bool(settlement_sync.get("ok"))
 
 
 def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:

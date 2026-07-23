@@ -77,30 +77,18 @@ def _normalize_worker(argv: Sequence[str]) -> list[str]:
 def _maybe_record_lifecycle_worker_exit(
     state_path: str, summary: dict[str, Any]
 ) -> None:
-    """Push-side report-on-death (docs/runtime/AGENT_OPS.md, Class 2).
+    """Push terminal truth into the lifecycle that launched this worker.
 
-    Only failures are written back: a healthy no-await handoff already leaves
-    its truth in the report file, and keeping the write rare keeps the window
-    for racing an operator verb on state.json effectively closed.
+    Failures retain the report-on-death alarm. Healthy default-mode exits are
+    reconciled through the lifecycle proof/seal/settlement path here because
+    no synchronous ``LifecycleRunner`` await exists to do it later.
     """
-    exit_code = summary.get("exit_code")
-    failed = (isinstance(exit_code, int) and exit_code != 0) or not summary.get(
-        "artifact_ok"
-    )
-    if not failed:
-        return
-    from .lifecycle_runner import record_stage_worker_exit
+    from .lifecycle_runner import record_stage_worker_completion
 
-    record_stage_worker_exit(
+    summary["lifecycle_reconciled"] = record_stage_worker_completion(
         state_path,
         str(summary.get("run_id") or ""),
-        {
-            "state": summary.get("state"),
-            "exit_code": exit_code,
-            "artifact_ok": bool(summary.get("artifact_ok")),
-            "artifact_errors": list(summary.get("artifact_errors") or []),
-            "transcript": str(summary.get("transcript") or ""),
-        },
+        summary,
     )
 
 
