@@ -20,6 +20,7 @@ from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
 from .lifecycle import EventKind, RunState
 from .model_overrides import _model_override_receipt
+from .report_contract import CLAIM_DIGEST_ENV
 
 STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 
@@ -266,6 +267,7 @@ class AsyncRunHandle:
     skill: str = ""
     agent_session_id: str = ""
     agent_model: str = ""
+    claim_digest: str = ""
     model_requested: str = ""
     model_override_supported: bool = False
     model_override_skipped: bool = False
@@ -330,6 +332,7 @@ class AsyncSupervisor:
             or merged_env.get("VIBECRAFTED_SKILL")
             or "unknown"
         )
+        claim_digest = str(merged_env.get(CLAIM_DIGEST_ENV) or "").strip()
         agent_model = resolve_default_model(agent, command=command, env=merged_env)
         model_receipt = _model_override_receipt(
             agent, str(merged_env.get("VIBECRAFTED_MODEL_REQUESTED") or "")
@@ -343,6 +346,7 @@ class AsyncSupervisor:
                 run_id=run_id,
                 agent=agent,
                 skill=skill,
+                claim_digest=claim_digest,
             )
 
         await self._emit(
@@ -362,6 +366,7 @@ class AsyncSupervisor:
                 "agent": agent,
                 "skill": skill,
                 "agent_model": agent_model,
+                **({"claim_digest": claim_digest} if claim_digest else {}),
                 **model_receipt,
             },
         )
@@ -396,6 +401,7 @@ class AsyncSupervisor:
             agent=agent,
             skill=skill,
             agent_model=agent_model,
+            claim_digest=claim_digest,
             model_requested=str(model_receipt.get("model_requested") or ""),
             model_override_supported=bool(
                 model_receipt.get("model_override_supported")
@@ -439,6 +445,8 @@ class AsyncSupervisor:
                 seed.setdefault("root", str(cwd))
                 seed.setdefault("agent", agent)
                 seed.setdefault("skill", skill)
+                if claim_digest:
+                    seed["claim_digest"] = claim_digest
                 handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
                 handle.meta_path.write_text(
                     json.dumps(seed, indent=2, ensure_ascii=False, sort_keys=True)
@@ -624,6 +632,7 @@ class AsyncSupervisor:
                     skill=handle.skill,
                     status="pending",
                     model=handle.agent_model,
+                    claim_digest=handle.claim_digest,
                 )
             if tee_output:
                 if display_text:
@@ -714,6 +723,7 @@ class AsyncSupervisor:
             skill=handle.skill or "unknown",
             status=status,
             model=handle.agent_model,
+            claim_digest=handle.claim_digest,
         )
 
     def _sync_stream_summary(

@@ -16,6 +16,7 @@ from vibecrafted_core.lifecycle_runner import (
     LifecycleRunSpec,
     record_stage_worker_completion,
 )
+from vibecrafted_core.report_contract import CLAIM_DIGEST_ENV
 from vibecrafted_core.supervisor_async import AsyncSupervisor
 
 
@@ -175,6 +176,8 @@ def test_async_supervisor_preseeds_and_stamps_launcher_owned_identity(
 ) -> None:
     monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("VIBECRAFTED_SKILL", "implement")
+    digest = "9e0d59e1dc48bc42"
+    monkeypatch.setenv(CLAIM_DIGEST_ENV, digest)
     report = tmp_path / "identity.md"
     meta = tmp_path / "meta.json"
     worker = tmp_path / "codex"
@@ -188,10 +191,12 @@ def test_async_supervisor_preseeds_and_stamps_launcher_owned_identity(
         "assert 'session_id: pending-unset' in template\n"
         "assert 'finalized: false' in template\n"
         "assert 'launcher_template: true' in template\n"
+        f"assert 'claim_digest: {digest}' in template\n"
         "report.write_text("
         "'---\\nrun_id: copied-wrong\\nsession_id: copied-wrong\\nagent: codex\\n"
         "skill: implement\\nstatus: completed\\nfinalized: true\\n"
-        "claim: identity was launcher-stamped\\n---\\n# Evidence\\n', "
+        "claim: identity was launcher-stamped\\n"
+        "claim_digest: deadbeefdeadbeef\\n---\\n# Evidence\\n', "
         "encoding='utf-8')\n"
         "print(json.dumps({'type': 'thread.started', 'thread_id': 'codex-child'}))\n",
         encoding="utf-8",
@@ -218,8 +223,11 @@ def test_async_supervisor_preseeds_and_stamps_launcher_owned_identity(
     assert "launcher_template:" not in report_text
     assert "finalized: true" in report_text
     assert "claim: identity was launcher-stamped" in report_text
+    assert f"claim_digest: {digest}" in report_text
+    assert "deadbeefdeadbeef" not in report_text
     meta_payload = json.loads(meta.read_text(encoding="utf-8"))
     assert meta_payload["agent_session_id"] == "codex-child"
+    assert meta_payload["claim_digest"] == digest
 
 
 def test_async_supervisor_preserves_blocked_claim_while_filling_identity(
