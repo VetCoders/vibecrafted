@@ -24,6 +24,7 @@ name = "vc-procs"
 path = "src/bin/vc_procs.rs"
 
 [dependencies]
+control-core = { path = "../../vibecrafted-server/control-core" }
 rmcp-mux = { path = "../mux-agent", version = "0.4.0", package = "rmcp-mux" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }
 anyhow = "1"

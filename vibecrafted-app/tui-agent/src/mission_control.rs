@@ -64,8 +64,9 @@ static ORPHAN_COUNT_CACHE: OnceLock<Mutex<HashMap<PathBuf, (Instant, usize)>>> =
 ///
 /// Source of truth for counting semantics:
 /// `vibecrafted-server/control-core/src/model.rs` — `SettlementBoard::from_snapshots`.
-/// Replicated here (not linked) so `vc-admin` stays free of the control-core crate graph.
-/// Scope is honest: retained `control_plane/runs/*.json` only — not meta-folded history.
+/// The local projection preserves arbitrary future snapshot fields while the
+/// linked control-core reader owns active/stalled runtime reconciliation.
+/// Scope is honest: f/x/n uses retained `control_plane/runs/*.json` only.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SettlementBoardCounts {
     /// Human-readable scope boundary (never claim full meta history).
@@ -75,7 +76,7 @@ pub struct SettlementBoardCounts {
     pub n: usize,
     /// Diagnostic detail inside `x`, not a fourth total bucket.
     pub invalid: usize,
-    /// Live unsettled runs (not part of `total_settled`).
+    /// Canonical runtime-aware active + stalled runs (not part of `total_settled`).
     pub active: usize,
     /// Legacy `Untitled*.md` artifacts, reported separately from retained f/x/n.
     pub orphans: usize,
@@ -486,8 +487,10 @@ impl MissionControlState {
         let failures = failure_board_from_meta(&meta_records, state, now);
         let fleet_health = fleet_health_from_inputs(state, artifact_root, &data_quality);
         let action_queue = action_queue_from_inputs(state, &failures, &meta_records, intents, now);
-        let mut settlement =
-            SettlementBoardCounts::from_snapshots(&state.retained_runs, active_dispatches.len());
+        let mut settlement = SettlementBoardCounts::from_snapshots(
+            &state.retained_runs,
+            state.canonical_active_count(),
+        );
         settlement.orphans = cached_orphan_markdown_count(artifact_root);
 
         Self {

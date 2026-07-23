@@ -193,7 +193,13 @@ pub const EVENT_TAIL_LIMIT: usize = 16;
 pub const RECENT_RUN_LIMIT: usize = 12;
 
 /// States that count as "in flight". Mirrors `control_plane.ACTIVE_STATES`.
-pub const ACTIVE_STATES: [&str; 7] = [
+pub const ACTIVE_STATES: [&str; 13] = [
+    "created",
+    "process_spawned",
+    "first_output_seen",
+    "active",
+    "artifact_seen",
+    "report_started",
     "initialized",
     "launching",
     "promise",
@@ -204,11 +210,18 @@ pub const ACTIVE_STATES: [&str; 7] = [
 ];
 
 /// Terminal states. Mirrors `control_plane.FINAL_STATES`.
-pub const FINAL_STATES: [&str; 7] = [
+pub const FINAL_STATES: [&str; 14] = [
+    "report_validated",
     "completed",
+    "closed",
     "converged",
     "stopped",
+    "blocked",
     "failed",
+    "report_missing",
+    "report_invalid",
+    "contract_failed",
+    "recovery_required",
     "timed_out",
     "gc",
     "ghost",

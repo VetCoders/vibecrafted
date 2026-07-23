@@ -1,4 +1,8 @@
 use chrono::{DateTime, TimeZone, Utc};
+use control_core::{
+    ControlPlane, Event as CanonicalEvent, RunStatus as CanonicalRunStatus, is_active_state,
+    is_final_state,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::cmp::Ordering;
@@ -27,12 +31,28 @@ impl ControlPlaneState {
         };
         let archived_run_ids = root.load_archived_run_ids()?;
         let retained_runs = root.load_runs()?;
-        let runs = retained_runs
+        let canonical =
+            ControlPlane::from_control_plane_home(root.as_path()).compute_view(Utc::now());
+        let canonical_runtime_authority =
+            root.as_path().join("events.jsonl").is_file() || !canonical.active_runs.is_empty();
+        let mut runs = retained_runs
             .iter()
             .filter(|snapshot| !archived_run_ids.contains(&snapshot.run_id))
+            .filter(|snapshot| !canonical_runtime_authority || !snapshot.is_runtime_active())
             .cloned()
+            .map(|snapshot| (snapshot.run_id.clone(), snapshot))
+            .collect::<HashMap<_, _>>();
+        for run in canonical.active_runs {
+            if !archived_run_ids.contains(&run.run_id) {
+                runs.insert(run.run_id.clone(), canonical_run_snapshot(run));
+            }
+        }
+        let runs = runs.into_values().collect();
+        let events = canonical
+            .events
+            .into_iter()
+            .map(canonical_run_event)
             .collect();
-        let events = root.load_events()?;
         Ok(Self {
             root: root.as_path().to_path_buf(),
             retained_runs,
@@ -50,6 +70,13 @@ impl ControlPlaneState {
             events: Vec::new(),
             archived_run_ids: HashSet::new(),
         }
+    }
+
+    pub fn canonical_active_count(&self) -> usize {
+        self.runs
+            .iter()
+            .filter(|snapshot| snapshot.is_runtime_active())
+            .count()
     }
 }
 
@@ -133,6 +160,27 @@ impl RunSnapshot {
             .or(self.status.as_deref())
             .unwrap_or("unknown")
             .to_string()
+    }
+
+    fn is_runtime_active(&self) -> bool {
+        let state = self.display_state().to_lowercase();
+        let terminal = is_final_state(&state)
+            || self
+                .extra
+                .get("liveness")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value == "terminal")
+            || self
+                .extra
+                .get("exit_code")
+                .is_some_and(|value| !value.is_null());
+        if terminal {
+            return false;
+        }
+        if let Some(health) = self.extra.get("health").and_then(Value::as_str) {
+            return matches!(health, "active" | "stalled");
+        }
+        is_active_state(&state)
     }
 }
 
@@ -297,10 +345,6 @@ impl SafeControlPlaneRoot {
         self.path.join("runs")
     }
 
-    fn event_stream_path(&self) -> PathBuf {
-        self.path.join("events.jsonl")
-    }
-
     fn archived_dir(&self) -> PathBuf {
         self.runs_dir().join(".archived")
     }
@@ -369,23 +413,6 @@ impl SafeControlPlaneRoot {
         Ok(archived)
     }
 
-    fn load_events(&self) -> io::Result<Vec<RunEvent>> {
-        let path = self.event_stream_path();
-        let Some(path) = self.safe_file(&path)? else {
-            return Ok(Vec::new());
-        };
-        let Ok(text) = fs::read_to_string(&path) else {
-            return Ok(Vec::new());
-        };
-        let mut events = Vec::new();
-        for line in text.lines().filter(|line| !line.trim().is_empty()) {
-            if let Ok(event) = serde_json::from_str::<RunEvent>(line) {
-                events.push(event);
-            }
-        }
-        Ok(events)
-    }
-
     fn safe_file(&self, path: &Path) -> io::Result<Option<PathBuf>> {
         let meta = match fs::symlink_metadata(path) {
             Ok(meta) => meta,
@@ -406,6 +433,65 @@ impl SafeControlPlaneRoot {
         } else {
             Ok(None)
         }
+    }
+}
+
+fn canonical_run_snapshot(run: CanonicalRunStatus) -> RunSnapshot {
+    let mut extra = HashMap::new();
+    extra.insert("health".to_string(), Value::String(run.health.clone()));
+    extra.insert("source".to_string(), Value::String(run.source.clone()));
+    if !run.liveness.is_empty() {
+        extra.insert("liveness".to_string(), Value::String(run.liveness.clone()));
+    }
+    if let Some(exit_code) = run.exit_code {
+        extra.insert("exit_code".to_string(), Value::from(exit_code));
+    }
+    if let Some(current_loop) = run.current_loop {
+        extra.insert("current_loop".to_string(), Value::from(current_loop));
+    }
+    if let Some(total_loops) = run.total_loops {
+        extra.insert("total_loops".to_string(), Value::from(total_loops));
+    }
+
+    RunSnapshot {
+        run_id: run.run_id,
+        session_id: nonempty(run.session_id),
+        agent: nonempty(run.agent),
+        skill: nonempty(run.skill),
+        mode: nonempty(run.mode),
+        state: nonempty(run.state),
+        status: None,
+        started_at: nonempty(run.started_at),
+        updated_at: nonempty(run.updated_at),
+        last_heartbeat: None,
+        root: nonempty(run.root),
+        operator_session: nonempty(run.operator_session),
+        latest_report: nonempty(run.latest_report),
+        latest_transcript: nonempty(run.latest_transcript),
+        last_error: nonempty(run.last_error),
+        extra,
+    }
+}
+
+fn canonical_run_event(event: CanonicalEvent) -> RunEvent {
+    RunEvent {
+        ts: event.ts,
+        run_id: nonempty(event.run_id),
+        kind: event.kind,
+        message: nonempty(event.message),
+        payload: if event.payload.is_empty() {
+            None
+        } else {
+            Some(Value::Object(event.payload.into_iter().collect()))
+        },
+    }
+}
+
+fn nonempty(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -472,4 +558,74 @@ fn is_active_like(state: &str) -> bool {
         || state.contains("in-progress")
         || state.contains("progress")
         || state.contains("loop")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ControlPlaneState;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn runtime_only_run_is_active_until_retained_terminal_snapshot_supersedes_it() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("control_plane");
+        let run_id = "pola-runtime-only-L1";
+        let runtime_dir = root.join("runtime_runs").join(run_id);
+        fs::create_dir_all(&runtime_dir).expect("runtime dir");
+        fs::write(runtime_dir.join("transcript.log"), "working\n").expect("transcript");
+
+        let state = ControlPlaneState::load(&root).expect("runtime state");
+        assert_eq!(state.canonical_active_count(), 1);
+        let projected = state
+            .runs
+            .iter()
+            .filter(|run| run.run_id == run_id)
+            .collect::<Vec<_>>();
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].state.as_deref(), Some("launching"));
+
+        fs::create_dir_all(root.join("runs")).expect("runs dir");
+        fs::write(
+            root.join("runs").join(format!("{run_id}.json")),
+            format!(
+                r#"{{
+                    "run_id":"{run_id}",
+                    "state":"completed",
+                    "agent":"codex",
+                    "skill":"polarize",
+                    "mode":"headless",
+                    "root":"/tmp/repo",
+                    "operator_session":"",
+                    "latest_report":"",
+                    "latest_transcript":"",
+                    "last_error":"",
+                    "updated_at":"2026-07-23T08:00:00Z",
+                    "started_at":"2026-07-23T07:59:00Z",
+                    "health":"final",
+                    "source":"agent-meta",
+                    "lock_present":false,
+                    "exit_code":0,
+                    "liveness":"terminal",
+                    "launcher_pid":null,
+                    "completed_at":"2026-07-23T08:00:00Z",
+                    "session_id":"",
+                    "current_loop":null,
+                    "total_loops":null
+                }}"#
+            ),
+        )
+        .expect("terminal snapshot");
+
+        let state = ControlPlaneState::load(&root).expect("terminal state");
+        let projected = state
+            .runs
+            .iter()
+            .filter(|run| run.run_id == run_id)
+            .collect::<Vec<_>>();
+        assert_eq!(projected.len(), 1, "one run id, never a state twin");
+        assert_eq!(projected[0].state.as_deref(), Some("completed"));
+        assert_eq!(state.retained_runs.len(), 1);
+        assert_eq!(state.canonical_active_count(), 0);
+    }
 }
