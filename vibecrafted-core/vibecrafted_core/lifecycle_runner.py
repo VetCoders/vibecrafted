@@ -899,6 +899,7 @@ class LifecycleRunner:
             ),
             model=model,
             lifecycle_state_path=str(state_path or ""),
+            claim_digest=claim_digest_for_text(source_prompt),
         )
         commit_before = _git_head(root)
         git_before = _git_status(root)

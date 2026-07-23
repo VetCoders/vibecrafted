@@ -26,6 +26,7 @@ from .control_plane import (
     run_snapshot_dir,
     sync_state,
 )
+from .delivery.store import atomic_write_json
 from .package_resources import deck_path as package_deck_path
 from .events import append_event
 from .model_overrides import _model_override_receipt, _with_model_override
@@ -71,6 +72,9 @@ class WorkflowLaunchSpec:
     # launch belongs to a lifecycle run, this carries the lifecycle state.json
     # path so the dispatcher can write the worker's terminal truth into it.
     lifecycle_state_path: str = ""
+    # Machine-owned mission binding for lifecycle stage reports. The worker may
+    # attest success, but it cannot choose which mission that attestation closes.
+    claim_digest: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -1373,6 +1377,15 @@ def launch_workflow(
         artifact_suffix=artifact_suffix,
     )
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
+    claim_digest = str(spec.claim_digest or "").strip()
+    if claim_digest:
+        atomic_write_json(
+            artifacts["meta"],
+            {
+                "run_id": run_id,
+                "claim_digest": claim_digest,
+            },
+        )
     safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
     worker_command = build_launch_command(spec, source_dir, prompt_file=prompt_path)
     model_receipt = _model_override_receipt(spec.agent, spec.model)

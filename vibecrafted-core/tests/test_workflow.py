@@ -196,6 +196,36 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
     }
 
 
+def test_launch_workflow_preseeds_machine_owned_claim_digest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    source = _source_dir(tmp_path)
+    digest = "9e0d59e1dc48bc42"
+    spec = workflow.WorkflowLaunchSpec(
+        agent="codex",
+        mode="implement",
+        skill="implement",
+        prompt="close the bound mission",
+        file="",
+        runtime="headless",
+        root=str(source),
+        lifecycle_state_path="/control-plane/lifecycle/state.json",
+        claim_digest=digest,
+    )
+    monkeypatch.setattr(
+        workflow,
+        "_stdin_command",
+        lambda _agent: [sys.executable, "-c", "pass"],
+    )
+
+    payload = workflow.launch_workflow(spec, source)
+
+    meta = json.loads(Path(payload["meta"]).read_text(encoding="utf-8"))
+    assert meta["run_id"] == payload["run_id"]
+    assert meta["claim_digest"] == digest
+
+
 def test_launch_workflow_never_runs_global_sync_after_spawn(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
