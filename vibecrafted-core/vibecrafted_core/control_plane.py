@@ -1563,6 +1563,11 @@ def _project_run_payload(
             exit_code=_coerce_int(payload.get("exit_code")),
         )
         payload.update(axes.to_payload())
+    kernel_claim_digest = _kernel_claim_digest_from_run_dir(
+        run_dir if run_dir.is_dir() else None
+    )
+    if kernel_claim_digest:
+        payload["claim_digest"] = kernel_claim_digest
     payload["failure_card"] = _failure_card(payload)
     payload["health"] = _state_health(
         str(payload.get("state") or ""), str(payload.get("updated_at") or "")
@@ -1597,7 +1602,16 @@ def _project_run_payload(
         ):
             if key in previous and key not in payload:
                 payload[key] = previous[key]
-    settlement = settle_payload(payload)
+    nested_settlement = payload.get("settlement")
+    projected_claim_digest = str(payload.get("settlement_claim_digest") or "")
+    if isinstance(nested_settlement, dict) and not projected_claim_digest:
+        projected_claim_digest = str(nested_settlement.get("claim_digest") or "")
+    repair_sealed_claim_binding = bool(
+        kernel_claim_digest
+        and axes.delivery_state is DeliveryState.SEALED
+        and projected_claim_digest != kernel_claim_digest
+    )
+    settlement = settle_payload(payload, force=repair_sealed_claim_binding)
     if settlement is not None:
         payload.update(settlement.to_payload())
         payload["settlement"] = {
@@ -1909,6 +1923,19 @@ def _delivery_axes_from_run_dir(
         proof_state=proof_state,
         delivery_state=delivery_state,
     )
+
+
+def _kernel_claim_digest_from_run_dir(run_dir: Path | None) -> str:
+    """Read the claim digest that the lifecycle proof actually verified.
+
+    ``proof/mission-claim.json`` is materialized only after the validated
+    report's digest matches the mission digest. It therefore outranks a
+    projection fallback synthesized later from prompt/agent metadata.
+    """
+    if run_dir is None:
+        return ""
+    payload = _read_json(run_dir / "proof" / "mission-claim.json")
+    return str(payload.get("claim_digest") or "").strip()
 
 
 def _legacy_execution_state(state: str, exit_code: int | None) -> ExecutionState:

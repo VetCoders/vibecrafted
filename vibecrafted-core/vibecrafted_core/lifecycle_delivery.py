@@ -527,9 +527,11 @@ def resettle_retained_snapshots(
 ) -> dict[str, Any]:
     """Re-run settlement over retained control-plane snapshots.
 
-    Honest backfill: does NOT invent seals or fabricate FINALIZED for history
-    that still lacks proof/seal. Only re-classifies from existing axes and
-    settlement inputs. Idempotent when re-run after convergence.
+    Honest backfill: does not invent either legitimate FINALIZED source.
+    Sealed finalization requires existing proof/seal evidence; self-attested
+    finalization requires an existing validated, run-bound report carrying the
+    worker's explicit ``finalized: true`` and non-empty ``claim``. Bare exit 0
+    remains needs_attention. Idempotent when re-run after convergence.
     """
     from .control_plane import control_plane_home, run_snapshot_dir
     from .settlement import settle_payload

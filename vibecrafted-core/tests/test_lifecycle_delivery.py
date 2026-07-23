@@ -5,6 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from vibecrafted_core import control_plane
 from vibecrafted_core.lifecycle_delivery import (
     claim_digest_for_text,
     resettle_retained_snapshots,
@@ -34,26 +37,33 @@ def _event_sink(kind: str, run_id: str, message: str, payload: dict) -> dict:
     return {"kind": kind, "run_id": run_id, "message": message, "payload": payload}
 
 
-def test_grant_seal_on_validated_report_with_claim_match(tmp_path: Path) -> None:
+def test_grant_seal_on_validated_report_with_claim_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     mission = "ship settlement board truth"
     digest = claim_digest_for_text(mission)
-    run_dir = tmp_path / "runtime_runs" / "stage-run-1"
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_dir = home / "control_plane" / "runtime_runs" / "stage-run-1"
     run_dir.mkdir(parents=True)
     report = run_dir / "report.md"
     _valid_report(report, claim_digest=digest)
-    (run_dir / "transcript.log").write_text("ok\n", encoding="utf-8")
-    (run_dir / "meta.json").write_text(
-        json.dumps(
-            {
-                "run_id": "stage-run-1",
-                "state": "report_validated",
-                "exit_code": 0,
-                "agent": "grok",
-                "skill": "implement",
-            }
-        ),
-        encoding="utf-8",
-    )
+    transcript = run_dir / "transcript.log"
+    transcript.write_text("ok\n", encoding="utf-8")
+    meta_payload = {
+        "run_id": "stage-run-1",
+        "status": "report_validated",
+        "state": "report_validated",
+        "exit_code": 0,
+        "agent": "grok",
+        "skill": "implement",
+        "report": str(report),
+        "transcript": str(transcript),
+    }
+    (run_dir / "meta.json").write_text(json.dumps(meta_payload), encoding="utf-8")
+    artifact_meta = home / "artifacts" / "stage-run-1.meta.json"
+    artifact_meta.parent.mkdir(parents=True)
+    artifact_meta.write_text(json.dumps(meta_payload), encoding="utf-8")
 
     result = try_grant_lifecycle_stage_seal(
         run_dir,
@@ -100,6 +110,37 @@ def test_grant_seal_on_validated_report_with_claim_match(tmp_path: Path) -> None
     assert settlement is not None
     assert settlement.verdict.value == "finalized"
     assert settlement.tui_key == "f"
+
+    # Regression contract: the board projection must carry the exact digest
+    # verified by the kernel, even when repairing an older sticky sealed
+    # settlement that synthesized a different fallback digest.
+    snapshots = home / "control_plane" / "runs"
+    snapshots.mkdir(parents=True)
+    (snapshots / "stage-run-1.json").write_text(
+        json.dumps(
+            {
+                "run_id": "stage-run-1",
+                "state": "report_validated",
+                "settlement_verdict": "finalized",
+                "settlement_source": "sealed",
+                "settlement_claim_digest": "deadbeefdeadbeef",
+                "settlement": {
+                    "verdict": "finalized",
+                    "source": "sealed",
+                    "claim_digest": "deadbeefdeadbeef",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    board = control_plane.sync_state("stage-run-1")
+    projected = next(
+        run for run in board["recent_runs"] if run["run_id"] == "stage-run-1"
+    )
+    assert projected["claim_digest"] == digest
+    assert projected["settlement_claim_digest"] == digest
+    assert projected["settlement"]["claim_digest"] == digest
+    assert projected["settlement_source"] == "sealed"
 
 
 def test_refuse_exit_zero_without_report(tmp_path: Path) -> None:
