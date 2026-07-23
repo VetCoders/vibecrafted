@@ -174,6 +174,31 @@ Supported roles are `driver`, `wave-atlas`, `brief`, `design-doc`, `traceability
 `falsification`, `report`, and `other`. Register every generated artifact before handoff. Filenames
 never imply roles. Do not create an `operator/` mirror, compatibility copy, naming alias, or symlink.
 
+### 5.7 YAML frontmatter on EVERY artifact (HARD-GATE — no bare markdown)
+
+Every markdown artifact this skill produces — MISSION, ATLAS, DRIVER, tracker, falsification,
+every brief, every design doc — opens with YAML frontmatter, no exceptions:
+
+```yaml
+---
+plan_id: <plan_id>
+run_id: <scaffold run id, when running under a lifecycle>
+session_id: <agent session_id from `aicx sessions current` or raw `.jsonl` filename read>
+role: driver | wave-atlas | brief | tracker | falsification | design-doc | mission | other
+agent: <author agent>
+date: YYYY-MM-DD
+project: <org>/<repo>
+---
+```
+
+Why this is a hard-gate, not decoration: the settlement contract's rule 6 ("no bare markdown —
+artifact without run_id lands as needs-attention"), retrieval (search/index engines rank and
+scope by these fields), and provenance (an artifact found loose on disk must identify its plan
+and author without archaeology). A plan package with bare-markdown members fails scaffold review
+the same way a missing brief does. Operator flagged this live 2026-07-23 after receiving a
+package with frontmatter on some members and none on others — mixed is worse than missing,
+because it teaches readers to stop checking.
+
 ### 6. Serve & review (editable artifacts via vibecrafted-server)
 
 The plan + briefs are **editable artifacts**, not a wall of inline questions. The flow is:
