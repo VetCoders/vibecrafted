@@ -163,15 +163,18 @@ command_status=0
 bash -c "$SPAWN_CMD" || command_status=$?
 report_template_untouched=0
 if spawn_report_template_untouched "$report"; then
+  report_template_untouched=1
   last_message="${transcript%.log}.last-message.md"
-  if [[ -s "$last_message" ]]; then
+  if [[ -s "$last_message" ]] &&
+    [[ "${VIBECRAFTED_RESEARCH_MODE:-0}" != "1" ]] &&
+    [[ "${SPAWN_SKILL_NAME:-}" != "research" ]] &&
+    [[ "${SPAWN_SKILL_CODE:-}" != "rsch" ]]; then
     # Provider commands write their final message before returning. Preserve
     # the launcher-owned identity shell and attach that message as worker
     # evidence; finalization will stamp the terminal status without losing IDs.
     printf '\n' >> "$report"
     cat "$last_message" >> "$report"
-  else
-    report_template_untouched=1
+    report_template_untouched=0
   fi
 fi
 # Research requires a first-class worker report. Preserve its established
