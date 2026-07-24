@@ -93,6 +93,52 @@ _(No longer guessing the architecture, but seeing it)._
 
 ---
 
+## The Operator Cockpit — vc-frame
+
+The runtime ships with **vc-frame**, the terminal cockpit every launcher and
+lifecycle runs inside. One window is one session with a fixed chrome:
+
+<p align="center">
+  <img alt="vc-frame anatomy — Start here map of the workspace" src="docs/assets/vc-frame-anatomy.png" width="900" />
+</p>
+
+- **TOP** — tabs of this session (`Start here` · `Shell` · one tab per worker run)
+- **LEFT** — the sessions rail: other sessions and agent rooms, click to jump
+- **CENTER** — the work surface (guide, shell, live worker streams)
+- **BOTTOM** — status bar with modes (`Ctrl+t` TAB · `Ctrl+p` PANE · `Ctrl+o` SESSION)
+  and the settlement counters **f / x / n** (Finalized · Failed · Needs-attention)
+  fed straight from the control plane
+
+Under load it looks like this — parallel agent rooms, a grok worker streaming a
+review, monitors armed, and voice dictation feeding the prompt line:
+
+<p align="center">
+  <img alt="vc-frame live operator cockpit — multi-session, streaming workers" src="docs/assets/vc-frame-cockpit.png" width="900" />
+</p>
+
+Every tab is a first-class control-plane run: it has a `run_id`, a report, a
+transcript, and a settlement verdict. Close the laptop, come back, resume —
+the truth lives in artifacts, not in the terminal scrollback.
+
+---
+
+## Foundations & Where They Ship
+
+The framework stands on product-managed foundations, each with its own public
+distribution channel:
+
+| Foundation           | What it does                                        | Channel                                                                              |
+| -------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Loctree** (`loct`) | Structural code perception — maps, impact, findings | `0.14.x` · [npm](https://www.npmjs.com/package/loctree) · GitHub releases            |
+| **AICX** (`aicx`)    | Agent-session memory — catalog, search, intents     | [npm `@loctree/aicx`](https://www.npmjs.com/package/@loctree/aicx) · GitHub releases |
+| **prview**           | PR review artifact generator                        | [crates.io](https://crates.io/crates/prview)                                         |
+| **screenscribe**     | Screencast → structured engineering findings        | [PyPI](https://pypi.org/project/screenscribe/)                                       |
+
+The installer verifies these foundations on every run (`vibecrafted doctor`)
+and never silently replaces a product-managed binary with a stale copy.
+
+---
+
 ## The Three Marks
 
 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. has three typographic signatures — one for each layer of craft:
