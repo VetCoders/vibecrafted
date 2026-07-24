@@ -4186,20 +4186,43 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
 
             channel_data = _json.loads(channel_raw.stdout)
             available_ver = channel_data.get("version", "")
-            if available_ver and available_ver != installed_ver:
-                findings.append(
-                    DoctorFinding(
-                        "warn",
-                        "update-available",
-                        f"installed {installed_ver}, available {available_ver} — run 'vibecrafted update'",
+
+            def _semver_key(raw: str) -> tuple[int, ...]:
+                # "3.6.0+g66c0958b" -> (3, 6, 0); non-numeric parts end the key
+                # so a malformed version never outranks a real one.
+                core = raw.split("+", 1)[0].split("-", 1)[0]
+                parts: list[int] = []
+                for chunk in core.split("."):
+                    if not chunk.isdigit():
+                        break
+                    parts.append(int(chunk))
+                return tuple(parts)
+
+            if available_ver:
+                installed_key = _semver_key(installed_ver)
+                available_key = _semver_key(available_ver)
+                if available_key > installed_key:
+                    findings.append(
+                        DoctorFinding(
+                            "warn",
+                            "update-available",
+                            f"installed {installed_ver}, available {available_ver} — run 'vibecrafted update'",
+                        )
                     )
-                )
-            elif available_ver:
-                findings.append(
-                    DoctorFinding(
-                        "ok", "update-available", f"{installed_ver} is current"
+                elif installed_key > available_key:
+                    findings.append(
+                        DoctorFinding(
+                            "ok",
+                            "update-available",
+                            f"{installed_ver} is ahead of the published channel ({available_ver}) — never downgrade",
+                        )
                     )
-                )
+                else:
+                    findings.append(
+                        DoctorFinding(
+                            "ok", "update-available", f"{installed_ver} is current"
+                        )
+                    )
     except (OSError, ValueError):
         pass  # network unavailable — skip silently
 
