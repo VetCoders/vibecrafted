@@ -1,4 +1,8 @@
 use chrono::{DateTime, TimeZone, Utc};
+use control_core::{
+    ControlPlane, Event as CanonicalEvent, RunStatus as CanonicalRunStatus, is_active_state,
+    is_final_state,
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::cmp::Ordering;
@@ -10,6 +14,10 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct ControlPlaneState {
     pub root: PathBuf,
+    /// Every retained `runs/*.json` snapshot, including operator-archived IDs.
+    /// Mission Control settlement counts use this complete retained scope.
+    pub retained_runs: Vec<RunSnapshot>,
+    /// Operator-visible live/recent runs after archive-marker filtering.
     pub runs: Vec<RunSnapshot>,
     pub events: Vec<RunEvent>,
     pub archived_run_ids: HashSet<String>,
@@ -22,14 +30,37 @@ impl ControlPlaneState {
             return Ok(Self::empty(requested_root));
         };
         let archived_run_ids = root.load_archived_run_ids()?;
-        let runs = root
-            .load_runs()?
-            .into_iter()
+        let retained_runs = root.load_runs()?;
+        let canonical =
+            ControlPlane::from_control_plane_home(root.as_path()).compute_view(Utc::now());
+        let canonical_runtime_authority = root.as_path().join("events.jsonl").is_file()
+            || !canonical.active_runs.is_empty()
+            || !canonical.stalled_runs.is_empty();
+        let mut runs = retained_runs
+            .iter()
             .filter(|snapshot| !archived_run_ids.contains(&snapshot.run_id))
+            .filter(|snapshot| !canonical_runtime_authority || !snapshot.is_runtime_inflight())
+            .cloned()
+            .map(|snapshot| (snapshot.run_id.clone(), snapshot))
+            .collect::<HashMap<_, _>>();
+        for run in canonical
+            .active_runs
+            .into_iter()
+            .chain(canonical.stalled_runs)
+        {
+            if !archived_run_ids.contains(&run.run_id) {
+                runs.insert(run.run_id.clone(), canonical_run_snapshot(run));
+            }
+        }
+        let runs = runs.into_values().collect();
+        let events = canonical
+            .events
+            .into_iter()
+            .map(canonical_run_event)
             .collect();
-        let events = root.load_events()?;
         Ok(Self {
             root: root.as_path().to_path_buf(),
+            retained_runs,
             runs,
             events,
             archived_run_ids,
@@ -39,10 +70,25 @@ impl ControlPlaneState {
     pub fn empty(root: impl AsRef<Path>) -> Self {
         Self {
             root: root.as_ref().to_path_buf(),
+            retained_runs: Vec::new(),
             runs: Vec::new(),
             events: Vec::new(),
             archived_run_ids: HashSet::new(),
         }
+    }
+
+    pub fn canonical_active_count(&self) -> usize {
+        self.runs
+            .iter()
+            .filter(|snapshot| snapshot.is_runtime_active())
+            .count()
+    }
+
+    pub fn canonical_stalled_count(&self) -> usize {
+        self.runs
+            .iter()
+            .filter(|snapshot| snapshot.is_runtime_stalled())
+            .count()
     }
 }
 
@@ -127,6 +173,45 @@ impl RunSnapshot {
             .unwrap_or("unknown")
             .to_string()
     }
+
+    fn is_runtime_inflight(&self) -> bool {
+        let state = self.display_state().to_lowercase();
+        let terminal = is_final_state(&state)
+            || self
+                .extra
+                .get("liveness")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value == "terminal")
+            || self
+                .extra
+                .get("exit_code")
+                .is_some_and(|value| !value.is_null());
+        if terminal {
+            return false;
+        }
+        if let Some(health) = self.extra.get("health").and_then(Value::as_str) {
+            return matches!(health, "active" | "stalled");
+        }
+        is_active_state(&state)
+    }
+
+    fn is_runtime_active(&self) -> bool {
+        self.is_runtime_inflight()
+            && self
+                .extra
+                .get("health")
+                .and_then(Value::as_str)
+                .is_none_or(|health| health == "active")
+    }
+
+    fn is_runtime_stalled(&self) -> bool {
+        self.is_runtime_inflight()
+            && self
+                .extra
+                .get("health")
+                .and_then(Value::as_str)
+                .is_some_and(|health| health == "stalled")
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -175,16 +260,29 @@ pub fn render_runs(state: &ControlPlaneState) -> Vec<RenderedRun> {
 
 pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
     let state = snapshot.display_state().to_lowercase();
+    let canonical_health = snapshot.extra.get("health").and_then(Value::as_str);
     let heartbeat = snapshot
         .last_heartbeat
         .as_deref()
         .and_then(parse_timestamp)
         .or_else(|| snapshot.updated_at.as_deref().and_then(parse_timestamp));
+    // Recency for completed success uses completed_at when present so a
+    // watchdog restamp of updated_at cannot keep a day-old finish "fresh".
+    let success_ts = completed_at_timestamp(snapshot).or(heartbeat);
 
+    // Success evidence beats a stale last_error left by the heartbeat
+    // watchdog. Order: success > last_error/fail > stalled > active.
+    if has_success_evidence(snapshot) {
+        return if is_recent(success_ts, now) {
+            RunKind::Recent
+        } else {
+            RunKind::Completed
+        };
+    }
     if snapshot.last_error.is_some() || state.contains("fail") || state.contains("error") {
         return RunKind::Failed;
     }
-    if state.contains("stalled") {
+    if canonical_health == Some("stalled") || state.contains("stalled") {
         return RunKind::Stalled;
     }
     if state.contains("pause") {
@@ -197,7 +295,7 @@ pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
         || state.contains("stopped")
         || state.contains("gc")
     {
-        return if is_recent(heartbeat, now) {
+        return if is_recent(success_ts, now) {
             RunKind::Recent
         } else {
             RunKind::Completed
@@ -213,6 +311,68 @@ pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
         return RunKind::Recent;
     }
     RunKind::Unknown
+}
+
+/// Disk/process proof that a run finished successfully, even if the watchdog
+/// stamped `last_error` / `recovery_required` during the heartbeat gap.
+fn has_success_evidence(snapshot: &RunSnapshot) -> bool {
+    if snapshot
+        .extra
+        .get("artifact_ok")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return false;
+    }
+    if let Some(Value::Array(errors)) = snapshot.extra.get("artifact_errors")
+        && !errors.is_empty()
+    {
+        return false;
+    }
+
+    let exit_code = coerce_exit_code(snapshot);
+    if matches!(exit_code, Some(code) if code != 0) {
+        return false;
+    }
+    // exit 0 is hard success evidence — beats stale last_error.
+    if exit_code == Some(0) {
+        return true;
+    }
+
+    let state = snapshot.display_state().to_lowercase();
+    if matches!(
+        state.as_str(),
+        "report_validated" | "completed" | "closed" | "converged"
+    ) {
+        return true;
+    }
+    if completed_at_timestamp(snapshot).is_some() {
+        return true;
+    }
+    snapshot
+        .extra
+        .get("liveness")
+        .and_then(Value::as_str)
+        == Some("terminal")
+}
+
+fn coerce_exit_code(snapshot: &RunSnapshot) -> Option<i64> {
+    let value = snapshot.extra.get("exit_code")?;
+    if value.is_null() {
+        return None;
+    }
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().map(|code| code as i64))
+        .or_else(|| value.as_str().and_then(|raw| raw.trim().parse().ok()))
+}
+
+fn completed_at_timestamp(snapshot: &RunSnapshot) -> Option<DateTime<Utc>> {
+    snapshot
+        .extra
+        .get("completed_at")
+        .and_then(Value::as_str)
+        .and_then(parse_timestamp)
 }
 
 fn compare_runs(left: &RenderedRun, right: &RenderedRun) -> Ordering {
@@ -290,10 +450,6 @@ impl SafeControlPlaneRoot {
         self.path.join("runs")
     }
 
-    fn event_stream_path(&self) -> PathBuf {
-        self.path.join("events.jsonl")
-    }
-
     fn archived_dir(&self) -> PathBuf {
         self.runs_dir().join(".archived")
     }
@@ -362,23 +518,6 @@ impl SafeControlPlaneRoot {
         Ok(archived)
     }
 
-    fn load_events(&self) -> io::Result<Vec<RunEvent>> {
-        let path = self.event_stream_path();
-        let Some(path) = self.safe_file(&path)? else {
-            return Ok(Vec::new());
-        };
-        let Ok(text) = fs::read_to_string(&path) else {
-            return Ok(Vec::new());
-        };
-        let mut events = Vec::new();
-        for line in text.lines().filter(|line| !line.trim().is_empty()) {
-            if let Ok(event) = serde_json::from_str::<RunEvent>(line) {
-                events.push(event);
-            }
-        }
-        Ok(events)
-    }
-
     fn safe_file(&self, path: &Path) -> io::Result<Option<PathBuf>> {
         let meta = match fs::symlink_metadata(path) {
             Ok(meta) => meta,
@@ -399,6 +538,65 @@ impl SafeControlPlaneRoot {
         } else {
             Ok(None)
         }
+    }
+}
+
+fn canonical_run_snapshot(run: CanonicalRunStatus) -> RunSnapshot {
+    let mut extra = HashMap::new();
+    extra.insert("health".to_string(), Value::String(run.health.clone()));
+    extra.insert("source".to_string(), Value::String(run.source.clone()));
+    if !run.liveness.is_empty() {
+        extra.insert("liveness".to_string(), Value::String(run.liveness.clone()));
+    }
+    if let Some(exit_code) = run.exit_code {
+        extra.insert("exit_code".to_string(), Value::from(exit_code));
+    }
+    if let Some(current_loop) = run.current_loop {
+        extra.insert("current_loop".to_string(), Value::from(current_loop));
+    }
+    if let Some(total_loops) = run.total_loops {
+        extra.insert("total_loops".to_string(), Value::from(total_loops));
+    }
+
+    RunSnapshot {
+        run_id: run.run_id,
+        session_id: nonempty(run.session_id),
+        agent: nonempty(run.agent),
+        skill: nonempty(run.skill),
+        mode: nonempty(run.mode),
+        state: nonempty(run.state),
+        status: None,
+        started_at: nonempty(run.started_at),
+        updated_at: nonempty(run.updated_at),
+        last_heartbeat: None,
+        root: nonempty(run.root),
+        operator_session: nonempty(run.operator_session),
+        latest_report: nonempty(run.latest_report),
+        latest_transcript: nonempty(run.latest_transcript),
+        last_error: nonempty(run.last_error),
+        extra,
+    }
+}
+
+fn canonical_run_event(event: CanonicalEvent) -> RunEvent {
+    RunEvent {
+        ts: event.ts,
+        run_id: nonempty(event.run_id),
+        kind: event.kind,
+        message: nonempty(event.message),
+        payload: if event.payload.is_empty() {
+            None
+        } else {
+            Some(Value::Object(event.payload.into_iter().collect()))
+        },
+    }
+}
+
+fn nonempty(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
     }
 }
 
@@ -465,4 +663,140 @@ fn is_active_like(state: &str) -> bool {
         || state.contains("in-progress")
         || state.contains("progress")
         || state.contains("loop")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ControlPlaneState;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn runtime_only_run_is_active_until_retained_terminal_snapshot_supersedes_it() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("control_plane");
+        let run_id = "pola-runtime-only-L1";
+        let runtime_dir = root.join("runtime_runs").join(run_id);
+        fs::create_dir_all(&runtime_dir).expect("runtime dir");
+        fs::write(runtime_dir.join("transcript.log"), "working\n").expect("transcript");
+
+        let state = ControlPlaneState::load(&root).expect("runtime state");
+        assert_eq!(state.canonical_active_count(), 1);
+        let projected = state
+            .runs
+            .iter()
+            .filter(|run| run.run_id == run_id)
+            .collect::<Vec<_>>();
+        assert_eq!(projected.len(), 1);
+        assert_eq!(projected[0].state.as_deref(), Some("launching"));
+
+        fs::create_dir_all(root.join("runs")).expect("runs dir");
+        fs::write(
+            root.join("runs").join(format!("{run_id}.json")),
+            format!(
+                r#"{{
+                    "run_id":"{run_id}",
+                    "state":"completed",
+                    "agent":"codex",
+                    "skill":"polarize",
+                    "mode":"headless",
+                    "root":"/tmp/repo",
+                    "operator_session":"",
+                    "latest_report":"",
+                    "latest_transcript":"",
+                    "last_error":"",
+                    "updated_at":"2026-07-23T08:00:00Z",
+                    "started_at":"2026-07-23T07:59:00Z",
+                    "health":"final",
+                    "source":"agent-meta",
+                    "lock_present":false,
+                    "exit_code":0,
+                    "liveness":"terminal",
+                    "launcher_pid":null,
+                    "completed_at":"2026-07-23T08:00:00Z",
+                    "session_id":"",
+                    "current_loop":null,
+                    "total_loops":null
+                }}"#
+            ),
+        )
+        .expect("terminal snapshot");
+
+        let state = ControlPlaneState::load(&root).expect("terminal state");
+        let projected = state
+            .runs
+            .iter()
+            .filter(|run| run.run_id == run_id)
+            .collect::<Vec<_>>();
+        assert_eq!(projected.len(), 1, "one run id, never a state twin");
+        assert_eq!(projected[0].state.as_deref(), Some("completed"));
+        assert_eq!(state.retained_runs.len(), 1);
+        assert_eq!(state.canonical_active_count(), 0);
+    }
+
+    #[test]
+    fn canonical_counts_keep_active_and_stalled_as_separate_labels() {
+        let dir = tempdir().expect("tempdir");
+        let root = dir.path().join("control_plane");
+        fs::create_dir_all(&root).expect("control plane");
+        let now = chrono::Utc::now();
+        let events = [
+            serde_json::json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "live-worker",
+                "kind": "lifecycle:active",
+                "message": "heartbeat",
+                "payload": {
+                    "state": "active",
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                    "launcher_pid": std::process::id()
+                }
+            }),
+            serde_json::json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "definitely-missing",
+                "kind": "state",
+                "message": "stale event only",
+                "payload": {
+                    "state": "running",
+                    "health": "active",
+                    "heartbeat_at": (now - chrono::Duration::hours(2)).to_rfc3339(),
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted"
+                }
+            }),
+            serde_json::json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "pytest-fixture-run",
+                "kind": "lifecycle:active",
+                "message": "fixture leak",
+                "payload": {
+                    "state": "active",
+                    "root": "/private/tmp/pytest-of-operator/pytest-1/test_board0"
+                }
+            }),
+        ];
+        let encoded = events
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(root.join("events.jsonl"), format!("{encoded}\n")).expect("event stream");
+
+        let state = ControlPlaneState::load(&root).expect("runtime state");
+
+        assert_eq!(state.canonical_active_count(), 1);
+        assert_eq!(state.canonical_stalled_count(), 1);
+        let projected = super::render_runs(&state);
+        assert!(projected.iter().any(|run| {
+            run.snapshot.run_id == "live-worker" && run.kind == super::RunKind::Active
+        }));
+        assert!(projected.iter().any(|run| {
+            run.snapshot.run_id == "definitely-missing" && run.kind == super::RunKind::Stalled
+        }));
+        assert!(
+            projected
+                .iter()
+                .all(|run| run.snapshot.run_id != "pytest-fixture-run")
+        );
+    }
 }

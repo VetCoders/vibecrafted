@@ -1,7 +1,26 @@
+"""Public package surface for vibecrafted-mcp.
+
+``build_server`` / ``main`` are lazy-loaded so ``server.py`` can import sibling
+modules (``version``, ``synthesis``) without a breaking import cycle through
+this package root.
+"""
+
 from __future__ import annotations
 
-from .server import build_server, main
+from typing import Any
 
-__version__ = "0.1.0"
+from .version import __version__
 
-__all__ = ["build_server", "main", "__version__"]
+__all__ = ["__version__", "build_server", "main"]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"build_server", "main"}:
+        from . import server as _server
+
+        return getattr(_server, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *__all__})

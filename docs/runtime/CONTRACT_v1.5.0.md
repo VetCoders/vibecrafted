@@ -531,7 +531,8 @@ vibecrafted <agent> implement <plan.md>
 <agent>-implement <plan.md>
 ```
 
-`justdo` remains a compatibility alias. `implement` is the public face.
+`justdo` is a **standalone** skill id (Just Do posture; non-pipeline). `implement`
+is the ship WRITE stage. They are not aliases of each other (ADR-0001 Accepted).
 
 ## First Implementation Slice
 
@@ -561,7 +562,7 @@ Claude, Gemini, vc-frame, or Ghostty.
 v1.5.0 is acceptable when:
 
 - Existing shell launchers still work.
-- Existing compatibility aliases still work.
+- `implement` and `justdo` remain distinct skill ids (not collapsed aliases).
 - A human can inspect all active/recent runs through the operator surface.
 - An agent can inspect all active/recent runs through JSON commands.
 - Control-plane state is the preferred read model for UIs.

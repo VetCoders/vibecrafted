@@ -95,7 +95,7 @@ def is_url(s: str) -> bool:
     try:
         p = urlparse(s)
         return p.scheme in ("http", "https")
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -147,7 +147,7 @@ def internet_search(query: str, timeout: float = 6.0) -> str:
             data = json.loads(resp.read().decode("utf-8", "strict"))
     except (TimeoutError, HTTPError, URLError) as e:
         return f"Search failed: {e}"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return f"Search failed: {e}"
 
     result = data.get("AbstractText") or ""
@@ -189,7 +189,7 @@ def sse_post(
                     continue
                 try:
                     decoded = line.decode("utf-8", "replace").strip()
-                except Exception:
+                except (UnicodeError, ValueError, TypeError, KeyError):
                     continue
                 if not decoded.startswith("data:"):
                     continue
@@ -202,7 +202,7 @@ def sse_post(
                     content = delta.get("content")
                     if isinstance(content, str) and content:
                         yield content
-                except Exception:
+                except (UnicodeError, ValueError, TypeError, KeyError):
                     continue
     except TimeoutError as e:
         raise TimeoutError(f"Request timed out after {timeout}s") from e
@@ -233,7 +233,7 @@ def build_user_content(
         try:
             url = img if is_url(img) else file_to_data_url(img)
             parts.append({"type": "image_url", "image_url": {"url": url}})
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             parts.append({"type": "text", "text": f"[Image attach failed: {e}]"})
     for a in audios:
         try:
@@ -241,7 +241,7 @@ def build_user_content(
             parts.append(
                 {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}}
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             parts.append({"type": "text", "text": f"[Audio attach failed: {e}]"})
     return parts
 
@@ -395,7 +395,7 @@ Created by vetcoders (c)2024-2026
                     print(chunk, end="", flush=True)
                     full += chunk
                 print()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 print()
                 print_system(f"Error: {e}\n")
                 continue
@@ -405,12 +405,12 @@ Created by vetcoders (c)2024-2026
                 resp = post_once(
                     f"{base_url}/chat/completions", headers, data, timeout=args.timeout
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 print_system(f"Error: {e}\n")
                 continue
             try:
                 content = resp["choices"][0]["message"]["content"]
-            except Exception:
+            except Exception:  # noqa: BLE001
                 content = json.dumps(resp)
             print(f"{C.ASSISTANT}Assistant: {C.RESET}{content}\n")
             messages.append({"role": "assistant", "content": content})
@@ -419,6 +419,6 @@ Created by vetcoders (c)2024-2026
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"{C.SYSTEM}Fatal error: {e}{C.RESET}", file=sys.stderr)
         sys.exit(1)

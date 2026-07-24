@@ -1,0 +1,14 @@
+# vibecrafted host zshrc template — minimal, guarded optionals
+# Installed by vibecrafted ensure_zshrc / make install
+
+export PATH="$HOME/.local/bin:$HOME/.vibecrafted/bin:$HOME/.cargo/bin:$PATH"
+export VETCODERS_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vetcoders"
+if [ -f "$VETCODERS_CONFIG_DIR/vc-skills.sh" ]; then
+  # shellcheck source=/dev/null
+  source "$VETCODERS_CONFIG_DIR/vc-skills.sh"
+fi
+
+# Optional tooling (no hard failure if absent)
+command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"
+command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"
+command -v mise >/dev/null 2>&1 && eval "$(mise activate zsh)"

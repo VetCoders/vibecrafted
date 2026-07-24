@@ -81,13 +81,7 @@ def test_spanko_awaits_verifies_flips_tracker_and_runs_then(
     root.mkdir()
     report = tmp_path / "worker-report.md"
     report.write_text(
-        "\n".join(
-            [
-                "# Worker Report",
-                "commit: abc1234",
-                "gates: pytest green",
-            ]
-        ),
+        "# Worker Report\ncommit: abc1234\ngates: pytest green",
         encoding="utf-8",
     )
     tracker = tmp_path / "tracker.md"

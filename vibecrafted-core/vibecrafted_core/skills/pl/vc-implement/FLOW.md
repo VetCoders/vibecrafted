@@ -1,7 +1,7 @@
-# Przepływ `vc-implement`
+# Przepływ `vc-implement` — faza WRITE ship
 
-> Fasada: `vc-implement`. Alias: `vc-justdo`. Obie nazwy trafiają do tego
-> samego dispatchera.
+> Skill id `implement`. Faza WRITE VC-ship. Nie alias `vc-justdo`.
+> Prefiks run-id: `impl-` (osobny od `just-` justdo).
 
 ## Flow
 
@@ -27,20 +27,21 @@ flowchart TD
 | Wejście                         | Argumenty               | Produkuje                               | Wyjście            |
 | ------------------------------- | ----------------------- | --------------------------------------- | ------------------ |
 | `vibecrafted implement <agent>` | `--prompt` lub `--file` | raport implementacji, transkrypt i meta | `0` przy dispatchu |
-| `vibecrafted justdo <agent>`    | alias `implement`       | to samo                                 | `0` przy dispatchu |
 | `vc-implement <agent>`          | to samo                 | to samo                                 | `0` przy dispatchu |
-| `vc-justdo <agent>`             | alias                   | to samo                                 | `0` przy dispatchu |
+
+Nie trasy tego skilla: `vibecrafted justdo …` / `vc-justdo` (`vc-justdo`).
 
 ### Krawędzie eskalacji
 
-- Scope jest wciąż architektoniczny -> `vibecrafted scaffold <agent>`
-- Potrzebne wspólne sterowanie -> `vibecrafted partner <agent>`
-- Pozostają problemy P0/P1 -> `vibecrafted marbles <agent>`
+- Scope jest wciąż architektoniczny → `vibecrafted scaffold <agent>`
+- Potrzebne wspólne sterowanie → `vibecrafted partner <agent>`
+- Pozostają problemy P0/P1 → `vibecrafted marbles <agent>`
 
-### Artefakty sesji
+### Tożsamość runtime
 
-- Katalog artefaktów: `$VIBECRAFTED_HOME/artifacts/<org>/<repo>/<YYYY_MMDD>/`
-- Lock: `$VIBECRAFTED_HOME/locks/<org>/<repo>/<run_id>.lock`
-- Wyjścia: `reports/<timestamp>_<slug>_<agent>.md` z odpowiadającymi `.transcript.log` i `.meta.json`
-- Wewnętrzny identyfikator skilla pozostaje `justdo` (prefiks run_id `just-`), żeby istniejące
-  helpery, locki i ścieżki dispatchu działały dalej bez zmian.
+| Powierzchnia    | Wartość                           |
+| --------------- | --------------------------------- |
+| Skill id        | `implement`                       |
+| Komórka matrycy | Cykl ship — faza WRITE            |
+| Prefiks run-id  | `impl-`                           |
+| Faza ship?      | Tak — w `SHIP_STAGES` po scaffold |

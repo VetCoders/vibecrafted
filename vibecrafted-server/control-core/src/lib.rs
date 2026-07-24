@@ -8,8 +8,10 @@
 //! re-parsing JSON ad hoc.
 //!
 //! The scaffold editor is the deliberate exception to the read-only rule: it
-//! edits operator-authored Markdown artifacts under `artifacts/**/operator/`
-//! and records change/checkpoint sidecars there. It never writes Python
+//! edits manifest-declared Markdown artifacts under canonical
+//! `artifacts/<org>/<repo>/<day>/plans/<plan_id>/` roots and records
+//! change/checkpoint sidecars there. Legacy `operator/` roots are read-only.
+//! It never writes Python
 //! control-plane snapshots.
 //!
 //! Three layers:
@@ -43,14 +45,19 @@ pub mod scaffold;
 
 pub use events::{EventBatch, EventStream};
 pub use model::{
-    ACTIVE_STATES, AgentMeta, EVENT_TAIL_LIMIT, Event, FINAL_STATES, Health, LifecycleBaton,
-    LifecycleDouIndex, LifecycleOperatorAction, LifecycleRun, LifecycleRunSummary, LifecycleStage,
-    LifecycleTransition, RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, SKILL_CODE_MAP,
-    StateClass, classify_state, coerce_int_value, is_active_state, is_final_state, merge_status,
-    operator_session_name, parse_iso, skill_from_code, state_health,
+    ACTIVE_STATES, AgentMeta, DeliveryAxes, DeliverySealRef, DeliveryState, EVENT_TAIL_LIMIT,
+    Event, ExecutionState, FINAL_STATES, Health, LifecycleBaton, LifecycleDouIndex,
+    LifecycleOperatorAction, LifecycleRun, LifecycleRunSummary, LifecycleStage,
+    LifecycleTransition, ProofState, RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus,
+    SKILL_CODE_MAP, SettlementBoard, SettlementScope, SettlementTui, SettlementVerdict, StateClass,
+    classify_state, coerce_int_value, delivery_axes_for_receipt, is_active_state, is_final_state,
+    merge_status, operator_session_name, parse_iso, skill_from_code, state_health,
 };
 pub use read::{ControlPlane, StateView, vibecrafted_home};
 pub use scaffold::{
-    ScaffoldArtifact, ScaffoldArtifactKind, ScaffoldArtifactPatch, ScaffoldArtifactStore,
-    ScaffoldChange, ScaffoldCheckpoint, ScaffoldCheckpointPatch, ScaffoldWorkspace,
+    SCAFFOLD_MANIFEST_SCHEMA_JSON, SCAFFOLD_SCHEMA_VERSION, ScaffoldArtifact,
+    ScaffoldArtifactDeclaration, ScaffoldArtifactPatch, ScaffoldArtifactRole,
+    ScaffoldArtifactStore, ScaffoldChange, ScaffoldCheckpoint, ScaffoldCheckpointPatch,
+    ScaffoldDoctorError, ScaffoldDoctorReport, ScaffoldError, ScaffoldManifest,
+    ScaffoldPlanSummary, ScaffoldResult, ScaffoldWorkspace,
 };

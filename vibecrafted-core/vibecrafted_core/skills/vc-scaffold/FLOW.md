@@ -32,7 +32,7 @@ Each WRITE leaves an artifact; the next READ falsifies it. See `references/caden
 
 ### Escalation edges
 
-- Plan ready for execution -> `vibecrafted implement <agent>` (alias `justdo`) or `workflow`
+- Plan ready for ship WRITE execution -> `vibecrafted implement <agent>` or `workflow`; posture-first prompt work -> `vibecrafted justdo <agent>`
 - Conduct a multi-wave dispatch -> `$vc-operator` posture plus `vibecrafted dispatch` or workflow lanes
 - Shared steering still needed -> `vibecrafted partner <agent>`
 - Repo already exists and needs truth before planning -> `vibecrafted init <agent>`

@@ -1,0 +1,73 @@
+"""Typed delivery-proof kernel contracts and atomic persistence.
+
+The package owns data shape, state legality, and the canonical run-directory
+layout. Execution and shipping authority remain outside this package.
+"""
+
+from .model import (
+    ALLOWED_TRANSITIONS,
+    DELIVERY_TRANSITIONS,
+    EXECUTION_TRANSITIONS,
+    PROOF_TRANSITIONS,
+    ContractError,
+    ContractValidationError,
+    DeliveryProofContract,
+    DeliveryRecord,
+    DeliverySeal,
+    DeliveryState,
+    ExecutionEnvelope,
+    ExecutionEvidence,
+    ExecutionState,
+    ProofResult,
+    ProofState,
+    UnsupportedSchemaError,
+    delivery_transition_allowed,
+)
+from .store import (
+    ASSERTIONS_PATH,
+    ASSERTIONS_SCHEMA,
+    DELIVERY_RECORD_PATH,
+    DELIVERY_SEAL_PATH,
+    EXECUTION_ENVELOPE_PATH,
+    NEGATIVE_CONTROLS_PATH,
+    NEGATIVE_CONTROLS_SCHEMA,
+    PROOF_CONTRACT_PATH,
+    PROOF_RESULT_PATH,
+    DeliveryStore,
+    DeliveryStoreError,
+    atomic_write_json,
+    read_json,
+)
+
+__all__ = [
+    "ALLOWED_TRANSITIONS",
+    "ASSERTIONS_PATH",
+    "ASSERTIONS_SCHEMA",
+    "DELIVERY_RECORD_PATH",
+    "DELIVERY_SEAL_PATH",
+    "DELIVERY_TRANSITIONS",
+    "EXECUTION_ENVELOPE_PATH",
+    "EXECUTION_TRANSITIONS",
+    "NEGATIVE_CONTROLS_PATH",
+    "NEGATIVE_CONTROLS_SCHEMA",
+    "PROOF_CONTRACT_PATH",
+    "PROOF_RESULT_PATH",
+    "PROOF_TRANSITIONS",
+    "ContractError",
+    "ContractValidationError",
+    "DeliveryProofContract",
+    "DeliveryRecord",
+    "DeliverySeal",
+    "DeliveryState",
+    "DeliveryStore",
+    "DeliveryStoreError",
+    "ExecutionEnvelope",
+    "ExecutionEvidence",
+    "ExecutionState",
+    "ProofResult",
+    "ProofState",
+    "UnsupportedSchemaError",
+    "atomic_write_json",
+    "delivery_transition_allowed",
+    "read_json",
+]

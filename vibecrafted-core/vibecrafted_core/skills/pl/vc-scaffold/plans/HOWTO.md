@@ -12,27 +12,34 @@ Czytaj razem z [vc-scaffold SKILL](../SKILL.md), [vc-operator EMIL](../../vc-ope
 
 ---
 
-## 1) Trzy artefakty
+## 1) Root planu oparty na manifeście
 
-Każdy solidny plan dowozi się jako trzy połączone pliki:
+Każdy solidny plan jest jednym kanonicznym katalogiem z jawnym manifestem:
 
-| Artefakt    | Nazwa pliku                     | Rola                                                                                |
-| ----------- | ------------------------------- | ----------------------------------------------------------------------------------- |
-| **MASTER**  | `00-master-dispatch.md`         | Atlas: dlaczego-budujemy + struktura fal + protokół dispatchu + reguły odzyskiwania |
-| **plans/**  | `01-<slug>.md` … `0N-<slug>.md` | Jedno ciało promptu Iter-3 na każdy zdispatchowany prompt                           |
-| **TRACKER** | `tracker.md` (jeden żywy plik)  | Append-only, stan checkboxów fala po fali                                           |
+| Artefakt     | Nazwa pliku                     | Rola                                                                                |
+| ------------ | ------------------------------- | ----------------------------------------------------------------------------------- |
+| **MANIFEST** | `manifest.json`                 | Uporządkowane ID, jawne role, ścieżki, edytowalność, wymaganie i zależności         |
+| **DRIVER**   | `DRIVER.md`                     | Wykonywalne przekazanie dla zimnego operatora                                       |
+| **MASTER**   | `00_ATLAS.md`                   | Atlas: dlaczego-budujemy + struktura fal + protokół dispatchu + reguły odzyskiwania |
+| **plans/**   | `01-<slug>.md` … `0N-<slug>.md` | Jedno ciało promptu Iter-3 na każdy zdispatchowany prompt                           |
+| **TRACKER**  | `tracker.md` (jeden żywy plik)  | Append-only, stan checkboxów fala po fali                                           |
 
 Wszystkie trzy żyją pod domyślną ścieżką artefaktów:
 
 ```text
-~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/dispatch/
-├── 00-master-dispatch.md
-├── 01-<wave>-<slug>.md
-├── 02-<wave>-<slug>.md
+~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan_id>/
+├── manifest.json
+├── DRIVER.md
+├── 00_ATLAS.md
+├── briefs/01-<wave>-<slug>.md
+├── briefs/02-<wave>-<slug>.md
 ├── ...
-├── 0N-<wave>-<slug>.md
+├── briefs/0N-<wave>-<slug>.md
 └── tracker.md
 ```
+
+`manifest.json` jest obowiązkowy i jest jedynym inwentarzem. Role nigdy nie wynikają z nazw plików.
+Nie twórz lustra `operator/`, duplikatu ani symlinka.
 
 Numeracja to kolejność dispatchu (z góry na dół = kolejność odpalania). Slug w nazwie
 pliku niesie literę fali, dzięki czemu `ls` daje się skanować ludzkim okiem.

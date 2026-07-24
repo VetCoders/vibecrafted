@@ -31,11 +31,12 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
+
+import tomllib
 
 try:
     import termios
@@ -99,7 +100,7 @@ class Phase:
 class Manifest:
     title: str
     version: str
-    log_pattern: Optional[str]
+    log_pattern: str | None
     persist: bool
     phases: list[Phase]
     path: Path
@@ -109,7 +110,7 @@ class Manifest:
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: Path) -> "Manifest":
+    def load(cls, path: Path) -> Manifest:
         raw = path.read_text(encoding="utf-8")
         data = tomllib.loads(raw)
         repo_root = path.parent.resolve()
@@ -132,7 +133,7 @@ class Manifest:
 
         phases_data = data.get("phase", [])
         if not isinstance(phases_data, list):
-            raise ValueError("install.toml: [[phase]] must be an array of tables")
+            raise TypeError("install.toml: [[phase]] must be an array of tables")
 
         phases: list[Phase] = []
         for i, pd in enumerate(phases_data):
@@ -204,7 +205,7 @@ def _resolve_version(data: dict[str, Any], repo_root: Path) -> str:
 class _PlainConsole:
     """Minimal drop-in for rich.console.Console when rich is unavailable."""
 
-    def print(self, *args: Any, **_kwargs: Any) -> None:  # noqa: D401
+    def print(self, *args: Any, **_kwargs: Any) -> None:
         msg = " ".join(str(a) for a in args)
         msg = re.sub(r"\[/?[a-zA-Z0-9 #_]+\]", "", msg)
         print(msg)
@@ -297,8 +298,10 @@ def run_phase(
     phase: Phase,
     progress: Any,
     task_id: Any,
-    log_handle: Optional[Any],
+    log_handle: Any | None,
     quiet: bool,
+    *,
+    non_interactive: bool = False,
 ) -> int:
     """Execute one phase; stream subprocess output above the sticky bar.
 
@@ -320,6 +323,9 @@ def run_phase(
         progress.update(task_id, cur="starting…")
 
     try:
+        phase_env = os.environ.copy()
+        if non_interactive:
+            phase_env["VIBECRAFTED_INSTALL_NONINTERACTIVE"] = "1"
         proc = subprocess.Popen(
             phase.cmd,
             stdout=subprocess.PIPE,
@@ -327,6 +333,7 @@ def run_phase(
             text=True,
             bufsize=1,
             cwd=str(phase.cwd),
+            env=phase_env,
         )
     except FileNotFoundError as exc:
         console.print(f"  [red]✗ command not found: {exc}[/]")
@@ -491,9 +498,7 @@ def _interpolate_mock(text: str, manifest: Manifest) -> str:
     return text
 
 
-def _load_mock_screen(
-    docs_dir: Path, name: str, *, manifest: Manifest
-) -> Optional[str]:
+def _load_mock_screen(docs_dir: Path, name: str, *, manifest: Manifest) -> str | None:
     """Return the body of a mock screen from ``docs/installer/<name>``.
 
     Strips only the ``` shell fence — the banner, content, footer hint,
@@ -550,7 +555,7 @@ def _show_mock_screen(console: Any, body: str, *, can_back: bool = False) -> str
     # Clear screen and move cursor to top-left.
     print("\033[2J\033[H", end="", flush=True)
 
-    cols, rows = shutil.get_terminal_size((80, 24))
+    _cols, rows = shutil.get_terminal_size((80, 24))
 
     # -- Sticky header at top --
     if header:
@@ -676,9 +681,9 @@ def _show_intro_flow(
                     console.print("\n  [yellow]Cancelled — no changes were made.[/]\n")
                     return "cancelled"
                 return "completed"
-            except Exception:
+            except Exception as _textual_exc:  # noqa: BLE001
                 # Textual crashed -- fall through to the manual path.
-                pass
+                _ = _textual_exc
 
     # -- Manual ANSI path --
     # Re-assemble bodies from layers for _show_mock_screen.
@@ -728,7 +733,7 @@ def _print_summary(
     console: Any,
     manifest: Manifest,
     results: list[tuple[str, str, int]],
-    log_path: Optional[Path],
+    log_path: Path | None,
     *,
     compact: bool = False,
 ) -> None:
@@ -902,10 +907,10 @@ def _is_interactive() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def _open_log(manifest: Manifest) -> tuple[Optional[Path], Optional[Any]]:
+def _open_log(manifest: Manifest) -> tuple[Path | None, Any | None]:
     if not manifest.log_pattern:
         return None, None
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     expanded = os.path.expanduser(manifest.log_pattern.format(ts=ts))
     log_path = Path(expanded)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -951,9 +956,7 @@ def run(
     intro_will_run = not (auto_yes or dry_run)
     if intro_will_run:
         tui_status = _show_intro_flow(console, manifest, auto_yes, advanced)
-        if tui_status == "cancelled":
-            return 0
-        elif tui_status == "completed":
+        if tui_status == "cancelled" or tui_status == "completed":
             return 0
     elif not compact_stdout:
         _print_title(console, manifest)
@@ -1047,7 +1050,15 @@ def run(
                 progress.update(task_id, description=phase.label)
                 progress.start()
 
-            rc = run_phase(console, phase, progress, task_id, log_handle, quiet)
+            rc = run_phase(
+                console,
+                phase,
+                progress,
+                task_id,
+                log_handle,
+                quiet,
+                non_interactive=auto_yes or not _is_interactive(),
+            )
 
             if HAS_RICH and not compact_stdout:
                 progress.update(task_id, advance=1)
@@ -1195,7 +1206,7 @@ def main() -> int:
 
     try:
         manifest = Manifest.load(manifest_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"error: failed to parse {manifest_path}: {exc}", file=sys.stderr)
         return 2
 

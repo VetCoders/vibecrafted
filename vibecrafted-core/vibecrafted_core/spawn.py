@@ -8,13 +8,20 @@ import re
 import shlex
 import subprocess
 import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from .agent_dispatch import extract_session_id, sandbox_supported
 from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
+from .report_contract import (
+    CLAIM_DIGEST_ENV,
+    materialize_launcher_report_template,
+    stamp_launcher_report_identity,
+)
+from .settlement import BareMarkdownError, require_bound_markdown
 from .telemetry import estimate_cost_usd
 
 EventCallback = Callable[[dict[str, Any]], None]
@@ -210,8 +217,10 @@ def _stdin_command(agent: str) -> list[str]:
         return [
             "bash",
             "-c",
-            "agy --dangerously-skip-permissions --add-dir . "
-            '--print-timeout 30m --print "$(cat)"',
+            (
+                "agy --dangerously-skip-permissions --add-dir . "
+                '--print-timeout 30m --print "$(cat)"'
+            ),
         ]
     if agent == "junie":
         return [
@@ -299,7 +308,18 @@ def _extract_session(text: str) -> str:
 def _tokens_total(
     input_tokens: int, cached_input_tokens: int, output_tokens: int
 ) -> int:
-    return input_tokens + cached_input_tokens + output_tokens
+    """Sum usage without double-counting provider-specific cache shapes.
+
+    Claude/Codex: ``input`` already includes cache hits (cached ≤ input).
+    Junie-style: ``input`` is non-cached only and ``cached`` is additive
+    (cached can exceed input). Detect by comparing magnitudes.
+    """
+    inp = max(0, int(input_tokens or 0))
+    cached = max(0, int(cached_input_tokens or 0))
+    out = max(0, int(output_tokens or 0))
+    if cached and cached > inp:
+        return inp + cached + out
+    return inp + out
 
 
 def _extract_tokens(text: str) -> dict[str, int | None]:
@@ -579,6 +599,11 @@ def finish_meta(
         payload = json.loads(_read_text(meta))
     except json.JSONDecodeError:
         return None
+    launcher_claim_digest = str(
+        payload.get("claim_digest") or os.environ.get(CLAIM_DIGEST_ENV, "")
+    ).strip()
+    if launcher_claim_digest:
+        payload["claim_digest"] = launcher_claim_digest
 
     completed_at = dt.datetime.now(dt.timezone.utc)
     started_dt = _parse_dt(payload.get("created_at") or payload.get("updated_at"))
@@ -634,9 +659,12 @@ def _render_frontmatter(data: dict[str, object]) -> str:
         "prompt_id",
         "agent",
         "skill",
+        "project",
         "model",
         "model_requested",
         "status",
+        "claim_status",
+        "claim_kind",
         "date",
         "session_id",
         "artifact_stem",
@@ -796,13 +824,19 @@ def _normalize_markdown_artifact(
         return
     fm, body = _parse_frontmatter(text)
     frontmatter: dict[str, object] = dict(fm)
+    skill_value = payload.get("skill_code") or payload.get("skill") or "unknown"
+    status_value = payload.get("status", "unknown")
     frontmatter_update = {
         "run_id": payload.get("run_id", "unknown"),
         "prompt_id": payload.get("prompt_id", "unknown"),
         "agent": payload.get("agent", "unknown"),
-        "skill": payload.get("skill_code") or payload.get("skill") or "unknown",
+        "skill": skill_value,
         "model": payload.get("model", "unknown"),
-        "status": payload.get("status", "unknown"),
+        "status": status_value,
+        # claim_status mirrors status for board triangulation; agent may have
+        # set a more specific claim already in frontmatter — only fill if empty.
+        "claim_status": frontmatter.get("claim_status") or status_value,
+        "claim_kind": frontmatter.get("claim_kind") or skill_value,
         "date": payload.get("date", "unknown"),
         "session_id": payload.get("session_id") or "unknown",
         "artifact_stem": payload.get("artifact_stem", "unknown"),
@@ -850,6 +884,11 @@ def finalize_artifacts(
         payload = json.loads(_read_text(meta))
     except json.JSONDecodeError:
         return None
+    launcher_claim_digest = str(
+        payload.get("claim_digest") or os.environ.get(CLAIM_DIGEST_ENV, "")
+    ).strip()
+    if launcher_claim_digest:
+        payload["claim_digest"] = launcher_claim_digest
 
     report = Path(str(report_path or payload.get("report", "")))
     transcript = Path(str(transcript_path or payload.get("transcript", "")))
@@ -857,7 +896,7 @@ def finalize_artifacts(
     announced_transcript = transcript
     transcript_text = _read_text(transcript) if str(transcript) else ""
     report_text = _read_text(report) if str(report) else ""
-    combined_text = "\n".join([transcript_text, report_text])
+    combined_text = f"{transcript_text}\n{report_text}"
 
     session_id = payload.get("session_id") or _extract_session(combined_text)
     tokens = _extract_tokens(combined_text)
@@ -937,6 +976,12 @@ def finalize_artifacts(
         final_report = reports_dir / f"{stem}.md"
         final_transcript = reports_dir / f"{stem}.transcript.log"
         final_meta = reports_dir / f"{stem}.meta.json"
+        # Contract rule 6: refuse bare Untitled*.md and unbound report paths.
+        require_bound_markdown(
+            final_report,
+            run_id=str(payload.get("run_id") or ""),
+            claim_digest=str(payload.get("claim_digest") or ""),
+        )
 
         report = _move_artifact(report, final_report)
         transcript = _move_artifact(transcript, final_transcript)
@@ -1010,6 +1055,16 @@ def finalize_artifacts(
         and report.exists()
         and report.suffix.lower() in {".md", ".markdown"}
     ):
+        stamp_launcher_report_identity(
+            report,
+            run_id=str(payload.get("run_id") or ""),
+            session_id=str(payload.get("session_id") or ""),
+            agent=str(payload.get("agent") or ""),
+            skill=str(payload.get("skill_code") or payload.get("skill") or ""),
+            status=str(payload.get("status") or ""),
+            model=str(payload.get("model") or ""),
+            claim_digest=launcher_claim_digest,
+        )
         _normalize_markdown_artifact(report, footer_payload)
     return meta
 
@@ -1039,6 +1094,18 @@ def _ensure_failed_report_artifact(
 
     if not report.exists():
         report.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            require_bound_markdown(
+                report,
+                run_id=str(payload.get("run_id") or handle.run_id or ""),
+            )
+        except BareMarkdownError:
+            # Fall back to a bound name rather than writing Untitled*.md.
+            report = report.with_name(
+                f"{payload.get('run_id') or handle.run_id or 'run'}-failed-report.md"
+            )
+            payload["report"] = str(report)
+            _write_meta(handle.meta_path, payload)
         transcript_ref = str(transcript or payload.get("transcript") or "")
         report.write_text(
             "\n".join(
@@ -1171,12 +1238,14 @@ class Supervisor:
             thread.start()
             return handle
 
+        # start_new_session puts the child in its own process group (same intent
+        # as setpgid) without the PLW1509 preexec_fn hazard in threaded hosts.
         process = subprocess.Popen(
             command_list,
             cwd=str(root_path),
             env=child_env,
             text=True,
-            preexec_fn=_set_child_pgid if hasattr(os, "setpgid") else None,
+            start_new_session=hasattr(os, "setpgid"),
         )
         try:
             pgid = os.getpgid(process.pid)
@@ -1240,7 +1309,7 @@ class Supervisor:
                 on_event=on_event,
             )
             handle.exit_code = result.exit_code
-        except Exception as exc:  # pragma: no cover - defensive event path
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive event path
             handle.exit_code = 1
             self._emit(
                 "spawn-failed",
@@ -1365,6 +1434,14 @@ def _build_parser() -> argparse.ArgumentParser:
     finalize.add_argument("meta")
     finalize.add_argument("report", nargs="?")
     finalize.add_argument("transcript", nargs="?")
+    prepare = sub.add_parser(
+        "prepare-report",
+        help="Materialize the launcher-owned report identity template.",
+    )
+    prepare.add_argument("report")
+    prepare.add_argument("run_id")
+    prepare.add_argument("agent")
+    prepare.add_argument("skill")
     finish = sub.add_parser(
         "finish-meta",
         help="Mark launcher meta terminal and persist completion telemetry.",
@@ -1402,6 +1479,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "finalize-artifacts":
         finalize_artifacts(args.meta, args.report, args.transcript)
+        return 0
+    if args.command == "prepare-report":
+        materialize_launcher_report_template(
+            args.report,
+            run_id=args.run_id,
+            agent=args.agent,
+            skill=args.skill,
+            claim_digest=os.environ.get(CLAIM_DIGEST_ENV, ""),
+        )
         return 0
     return 2
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -8,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from scripts import distribution_manifest as manifest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -50,6 +50,22 @@ def _minimal_payload(root: Path) -> None:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"runtime sentinel for {relative}\n", encoding="utf-8")
+    # The repo's top-level runtime/ and skills/ are symlinks into the canonical
+    # package path; sshfs-backed mounts (colima containers) drop those symlinks
+    # entirely. Mirror every aliased requirement under its canonical path so
+    # fixtures can exercise the projection with real content behind it.
+    for relative in manifest.REQUIRED_DIRECTORIES:
+        parts = Path(relative).parts
+        if parts and parts[0] in manifest.CANONICAL_PROJECTIONS:
+            canonical = manifest.CANONICAL_PROJECTIONS[parts[0]]
+            (root / canonical.joinpath(*parts[1:])).mkdir(parents=True, exist_ok=True)
+    for relative in manifest.REQUIRED_SURFACE_FILES.values():
+        parts = Path(relative).parts
+        if parts and parts[0] in manifest.CANONICAL_PROJECTIONS:
+            canonical = manifest.CANONICAL_PROJECTIONS[parts[0]]
+            path = root / canonical.joinpath(*parts[1:])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"canonical sentinel for {relative}\n", encoding="utf-8")
 
 
 def test_manifest_names_complete_runtime_and_forbidden_junk() -> None:
@@ -122,6 +138,41 @@ def test_stage_payload_filters_junk_and_mirrors_destination(tmp_path: Path) -> N
     assert not (destination / "scripts" / "tests").exists()
     assert not (destination / ".gitignore").exists()
     assert not (destination / "orphan.txt").exists()
+
+
+def test_stage_payload_projects_canonical_runtime_when_mount_hides_symlink(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "payload"
+    _minimal_payload(source)
+    shutil.rmtree(source / "runtime")
+
+    manifest.stage_payload(source, destination, mirror=True)
+
+    runtime_projection = destination / "runtime"
+    assert runtime_projection.is_symlink()
+    assert runtime_projection.readlink() == manifest.CANONICAL_RUNTIME
+    assert (runtime_projection / "scripts" / "README.md").is_file()
+    assert (runtime_projection / "shell" / "lib" / "core.sh").is_file()
+    manifest.validate_payload(destination)
+
+
+def test_stage_payload_projects_canonical_skills_when_mount_hides_symlink(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "payload"
+    _minimal_payload(source)
+    shutil.rmtree(source / "skills")
+
+    manifest.stage_payload(source, destination, mirror=True)
+
+    skills_projection = destination / "skills"
+    assert skills_projection.is_symlink()
+    assert skills_projection.readlink() == manifest.CANONICAL_SKILLS
+    assert (skills_projection / "vc-init" / "SKILL.md").is_file()
+    manifest.validate_payload(destination)
 
 
 def test_validate_payload_reports_missing_and_forbidden_paths(tmp_path: Path) -> None:

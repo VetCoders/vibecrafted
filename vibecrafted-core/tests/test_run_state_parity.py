@@ -12,7 +12,6 @@ from typing import Any
 
 from vibecrafted_core import control_plane
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CORE_ROOT = REPO_ROOT / "vibecrafted-core"
 SCRIPT_DIR = CORE_ROOT / "vibecrafted_core" / "runtime" / "scripts"
@@ -223,15 +222,17 @@ def _launch_shell_meta_path(
                 "export SPAWN_PROMPT_ID=prompt-red",
                 "export SPAWN_LOOP_NR=0",
                 "export SPAWN_SKILL_CODE=impl",
-                "spawn_write_meta "
-                f"{shlex.quote(str(meta))} "
-                "launching codex implement "
-                f"{shlex.quote(str(tmp_path))} "
-                f"{shlex.quote(str(prompt))} "
-                f"{shlex.quote(str(report))} "
-                f"{shlex.quote(str(transcript))} "
-                f"{shlex.quote(str(tmp_path / 'legacy-launcher.sh'))} "
-                "codex-cli-default",
+                (
+                    "spawn_write_meta "
+                    f"{shlex.quote(str(meta))} "
+                    "launching codex implement "
+                    f"{shlex.quote(str(tmp_path))} "
+                    f"{shlex.quote(str(prompt))} "
+                    f"{shlex.quote(str(report))} "
+                    f"{shlex.quote(str(transcript))} "
+                    f"{shlex.quote(str(tmp_path / 'legacy-launcher.sh'))} "
+                    "codex-cli-default"
+                ),
             ]
         )
         try:

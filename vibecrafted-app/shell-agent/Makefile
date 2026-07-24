@@ -35,6 +35,8 @@ app: bindings xcode
 		fi; \
 		cp -R "$$BUILT_APP" build/Vibecrafted.app
 	@/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile icon1" build/Vibecrafted.app/Contents/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string icon1" build/Vibecrafted.app/Contents/Info.plist
+	@mkdir -p build/Vibecrafted.app/Contents/Resources
+	@cp ../icon1.icns build/Vibecrafted.app/Contents/Resources/icon1.icns
 	@./scripts/fix-dylib-install-names.sh build/Vibecrafted.app
 	@codesign --force --deep --sign - build/Vibecrafted.app
 	@echo "App built: build/Vibecrafted.app"
@@ -52,7 +54,7 @@ app-debug: bindings xcode
 	if [ -n "$$BUILT_APP" ]; then \
 		cp ../target/release/rmcp-mux "$$BUILT_APP/Contents/MacOS/vc-mux-daemon"; \
 		cp ../target/release/vc-mux-tray "$$BUILT_APP/Contents/MacOS/vc-mux-tray"; \
-		cp ../target/release/vc-tui "$$BUILT_APP/Contents/MacOS/vc-tui"; \
+		cp ../target/release/voc "$$BUILT_APP/Contents/MacOS/voc"; \
 		chmod +x "$$BUILT_APP/Contents/MacOS/"*; \
 		./scripts/fix-dylib-install-names.sh "$$BUILT_APP"; \
 		codesign --force --deep --sign - "$$BUILT_APP"; \

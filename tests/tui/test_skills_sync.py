@@ -12,7 +12,7 @@ INSTALL_SHELL = REPO_ROOT / "runtime" / "scripts" / "install-shell.sh"
 def _write_stub_command(bin_dir: Path, name: str, body: str) -> None:
     path = bin_dir / name
     path.write_text(
-        "\n".join(["#!/usr/bin/env bash", "set -euo pipefail", body]) + "\n",
+        f"#!/usr/bin/env bash\nset -euo pipefail\n{body}" + "\n",
         encoding="utf-8",
     )
     path.chmod(0o755)

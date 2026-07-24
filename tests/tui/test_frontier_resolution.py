@@ -33,16 +33,7 @@ def _write_capture_binary(bin_dir: Path, name: str, capture_file: Path) -> None:
     for script_name in script_names:
         script = bin_dir / script_name
         script.write_text(
-            "\n".join(
-                [
-                    "#!/usr/bin/env bash",
-                    "set -euo pipefail",
-                    "{",
-                    '  printf "%s\\n" "$@"',
-                    '  printf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}"',
-                    '} > "$CAPTURE_FILE"',
-                ]
-            )
+            '#!/usr/bin/env bash\nset -euo pipefail\n{\n  printf "%s\\n" "$@"\n  printf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}"\n} > "$CAPTURE_FILE"'
             + "\n",
             encoding="utf-8",
         )
@@ -262,19 +253,23 @@ def test_vc_dashboard_uses_base_run_id_session_without_layout_suffix(
     )
 
 
-def test_zsh_skill_wrappers_do_not_depend_on_external_has_agent(
+def test_zsh_command_backed_skill_does_not_depend_on_external_has_agent(
     tmp_path: Path,
 ) -> None:
     if shutil.which("zsh") is None:
         pytest.skip("zsh required")
 
     home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
     capture_file = tmp_path / "wrapper-args.txt"
     home.mkdir()
+    fake_bin.mkdir()
+    _write_capture_binary(fake_bin, "vc-review", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["CAPTURE_FILE"] = str(capture_file)
+    env["FAKE_BIN"] = str(fake_bin)
 
     subprocess.run(
         [
@@ -282,11 +277,11 @@ def test_zsh_skill_wrappers_do_not_depend_on_external_has_agent(
             "-lc",
             (
                 f'source "{HELPER_SCRIPT}"; '
+                'export PATH="$FAKE_BIN:$PATH"; '
                 "unfunction _has_agent >/dev/null 2>&1 || true; "
-                '_vetcoders_skill_entry() { printf "%s\\n" "$@" > "$CAPTURE_FILE"; }; '
-                # vc-intents is now a command-backed skill (command vibecrafted
-                # intents); use vc-review, which still routes through the shell
-                # skill-wrapper, to exercise the wrapper machinery under zsh.
+                "unfunction vc-review >/dev/null 2>&1 || true; "
+                # vc-review is command-backed. PATH must own the test boundary;
+                # shell helper stubs cannot intercept the installed executable.
                 'vc-review codex --prompt "hello"'
             ),
         ],
@@ -295,12 +290,13 @@ def test_zsh_skill_wrappers_do_not_depend_on_external_has_agent(
         env=env,
     )
 
-    assert capture_file.read_text(encoding="utf-8").splitlines() == [
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert payload[:-1] == [
         "codex",
-        "review",
         "--prompt",
         "hello",
     ]
+    assert payload[-1].startswith("VC_FRAME_CONFIG_DIR=")
 
 
 def test_operator_session_name_compacts_long_repo_scope_for_vc_frame_limit(
@@ -358,23 +354,23 @@ def test_operator_session_name_supports_folder_scope(
     assert result.stdout.strip() == "feature-lab"
 
 
-def test_zsh_skill_wrapper_accepts_runtime_without_bad_substitution(
+def test_zsh_command_backed_skill_forwards_runtime_without_bad_substitution(
     tmp_path: Path,
 ) -> None:
     if shutil.which("zsh") is None:
         pytest.skip("zsh required")
 
     home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
     capture_file = tmp_path / "spawn-plan.txt"
-    fake_spawn = tmp_path / "fake_spawn.sh"
     home.mkdir()
-    fake_spawn.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    fake_spawn.chmod(0o755)
+    fake_bin.mkdir()
+    _write_capture_binary(fake_bin, "vc-review", capture_file)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["CAPTURE_FILE"] = str(capture_file)
-    env["FAKE_SPAWN"] = str(fake_spawn)
+    env["FAKE_BIN"] = str(fake_bin)
 
     subprocess.run(
         [
@@ -382,11 +378,8 @@ def test_zsh_skill_wrapper_accepts_runtime_without_bad_substitution(
             "-lc",
             (
                 f'source "{HELPER_SCRIPT}"; '
-                "_vetcoders_ensure_run_context() { :; }; "
-                '_vetcoders_prepare_operator_runtime() { printf "%s\\n" "$1" > "$CAPTURE_FILE"; }; '
-                '_vetcoders_spawn_script() { printf "%s" "$FAKE_SPAWN"; }; '
-                # vc-intents is command-backed now; vc-review still routes through
-                # the shell skill-wrapper that parses --runtime under zsh.
+                'export PATH="$FAKE_BIN:$PATH"; '
+                "unfunction vc-review >/dev/null 2>&1 || true; "
                 'vc-review codex --runtime visible --prompt "hello"'
             ),
         ],
@@ -395,7 +388,15 @@ def test_zsh_skill_wrapper_accepts_runtime_without_bad_substitution(
         env=env,
     )
 
-    assert capture_file.read_text(encoding="utf-8").splitlines() == ["visible"]
+    payload = capture_file.read_text(encoding="utf-8").splitlines()
+    assert payload[:-1] == [
+        "codex",
+        "--runtime",
+        "visible",
+        "--prompt",
+        "hello",
+    ]
+    assert payload[-1].startswith("VC_FRAME_CONFIG_DIR=")
 
 
 def test_sourcing_helper_exports_frontier_sidecars_per_asset(

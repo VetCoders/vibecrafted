@@ -16,8 +16,96 @@
 use std::collections::BTreeSet;
 
 use chrono::Duration;
-use control_core::model::{AgentMeta, Health, coerce_int_value};
+use control_core::model::{
+    AgentMeta, DeliveryAxes, DeliverySealRef, DeliveryState, ExecutionState, Health, ProofState,
+    SettlementTui, SettlementVerdict, coerce_int_value, delivery_axes_for_receipt,
+};
 use control_core::{EventStream, LifecycleRun, RunStatus, parse_iso, state_health};
+
+// ---------------------------------------------------------------------------
+// Delivery-proof kernel axes — fixtures produced by the Python kernel
+// (PYTHONPATH=vibecrafted-core python -c with delivery.model / DeliveryAxes /
+// lifecycle_runner.delivery_axes_for_receipt). Do not hand-author these
+// string values; they are the on-wire contract from the Python source of truth.
+// ---------------------------------------------------------------------------
+
+/// `DeliveryAxes(ExecutionState.EXITED, ProofState.PASSED, DeliveryState.SEALED).to_payload()`
+const PYTHON_KERNEL_AXES_SEALED: &str = r#"{
+  "execution_state": "exited",
+  "proof_state": "passed",
+  "delivery_state": "sealed"
+}"#;
+
+/// Enum value inventory from `list(ExecutionState|ProofState|DeliveryState)`.
+const PYTHON_EXECUTION_STATES: &[&str] = &[
+    "created",
+    "launched",
+    "running",
+    "exited",
+    "interrupted",
+    "timed_out",
+    "failed",
+];
+const PYTHON_PROOF_STATES: &[&str] = &[
+    "undeclared",
+    "declared",
+    "running",
+    "passed",
+    "failed",
+    "invalid",
+    "stale",
+];
+const PYTHON_DELIVERY_STATES: &[&str] = &["unverified", "delivered", "sealed", "invalidated"];
+
+/// `delivery_axes_for_receipt("completed", {})` — completed is execution only.
+const PYTHON_COMPLETED_RECEIPT_AXES: &str = r#"{
+  "execution_state": "exited",
+  "proof_state": "undeclared",
+  "delivery_state": "unverified"
+}"#;
+
+/// Run snapshot with kernel axes present (Python `_project_run_payload` shape).
+const GOLDEN_RUN_WITH_DELIVERY_AXES: &str = r#"{
+  "run_id": "impl-axes-001",
+  "state": "completed",
+  "agent": "codex",
+  "skill": "implement",
+  "mode": "implement",
+  "root": "/Users/you/vc-workspace/vetcoders/vibecrafted",
+  "operator_session": "vibecrafted-impl-axes-001",
+  "latest_report": "/Users/you/.vibecrafted/artifacts/report.md",
+  "latest_transcript": "/Users/you/.vibecrafted/artifacts/report.transcript.log",
+  "last_error": "",
+  "updated_at": "2026-07-21T06:00:00.000000+00:00",
+  "started_at": "2026-07-21T05:55:00.000000+00:00",
+  "health": "final",
+  "source": "agent-meta",
+  "lock_present": false,
+  "exit_code": 0,
+  "liveness": "terminal",
+  "launcher_pid": null,
+  "completed_at": "2026-07-21T06:00:00.000000+00:00",
+  "session_id": "",
+  "current_loop": null,
+  "total_loops": null,
+  "execution_state": "exited",
+  "proof_state": "passed",
+  "delivery_state": "sealed",
+  "seal": {
+    "schema": "vibecrafted.delivery-seal.v1",
+    "seal_id": "seal-impl-axes-001",
+    "issued_at": "2026-07-21T06:00:01.000000+00:00",
+    "issuer": "vibecrafted_core.ship",
+    "run_id": "impl-axes-001",
+    "lifecycle_id": "",
+    "cut_id": "cut-1",
+    "proof_id": "proof-1",
+    "repo": "Vetcoders/vibecrafted",
+    "branch": "feat/reduce-wrong-assumptions",
+    "final_head": "deadbeef",
+    "report_sha256": "sha256:abc"
+  }
+}"#;
 
 /// Real `runs/marb-000.json` — a terminal run (exit_code present, lock absent).
 const GOLDEN_RUN_FINAL: &str = r#"{
@@ -211,6 +299,34 @@ fn active_run_snapshot_roundtrips() {
 }
 
 #[test]
+fn settlement_fields_deserialise_typed_without_breaking_legacy_snapshots() {
+    let legacy = assert_run_roundtrips_without_loss(GOLDEN_RUN_FINAL);
+    assert_eq!(legacy.settlement_verdict, None);
+    assert_eq!(legacy.settlement_tui, None);
+
+    let mut settled: serde_json::Value =
+        serde_json::from_str(GOLDEN_RUN_FINAL).expect("golden JSON");
+    let object = settled.as_object_mut().expect("run object");
+    object.insert(
+        "settlement_verdict".to_string(),
+        serde_json::Value::String("invalid".to_string()),
+    );
+    object.insert(
+        "settlement_tui".to_string(),
+        serde_json::Value::String("x".to_string()),
+    );
+
+    let run: RunStatus = serde_json::from_value(settled.clone()).expect("settled snapshot");
+    assert_eq!(run.settlement_verdict, Some(SettlementVerdict::Invalid));
+    assert_eq!(run.settlement_tui, Some(SettlementTui::X));
+    assert_eq!(
+        serde_json::to_value(run).expect("settled snapshot serialises"),
+        settled,
+        "typed settlement fields must preserve the Python snapshot wire shape"
+    );
+}
+
+#[test]
 fn meta_normalizes_to_runstatus() {
     let meta: AgentMeta = serde_json::from_str(GOLDEN_META).expect("AgentMeta deserialises");
     let updated = parse_iso("2026-06-01T01:45:09.807447+00:00").expect("parse updated_at");
@@ -351,4 +467,194 @@ fn event_cursor_advances_and_skips_partial_tail() {
     assert_eq!(filtered.cursor, expected_cursor);
 
     std::fs::remove_file(&path).ok();
+}
+
+// ---------------------------------------------------------------------------
+// G1 — three-axis delivery projection fidelity (Python kernel = source of truth)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn python_kernel_axes_payload_deserialises_1_to_1() {
+    let axes: DeliveryAxes =
+        serde_json::from_str(PYTHON_KERNEL_AXES_SEALED).expect("kernel axes payload");
+    assert_eq!(axes.execution_state, ExecutionState::Exited);
+    assert_eq!(axes.proof_state, ProofState::Passed);
+    assert_eq!(axes.delivery_state, DeliveryState::Sealed);
+
+    let reserialised = serde_json::to_value(axes).expect("serialize");
+    let original: serde_json::Value =
+        serde_json::from_str(PYTHON_KERNEL_AXES_SEALED).expect("original");
+    assert_eq!(
+        reserialised, original,
+        "DeliveryAxes must round-trip the Python to_payload() shape"
+    );
+}
+
+#[test]
+fn python_enum_variants_match_string_wire_values() {
+    for raw in PYTHON_EXECUTION_STATES {
+        let parsed: ExecutionState =
+            serde_json::from_value(serde_json::Value::String((*raw).to_string()))
+                .unwrap_or_else(|e| panic!("ExecutionState::{raw}: {e}"));
+        assert_eq!(parsed.as_str(), *raw);
+    }
+    for raw in PYTHON_PROOF_STATES {
+        let parsed: ProofState =
+            serde_json::from_value(serde_json::Value::String((*raw).to_string()))
+                .unwrap_or_else(|e| panic!("ProofState::{raw}: {e}"));
+        assert_eq!(parsed.as_str(), *raw);
+    }
+    for raw in PYTHON_DELIVERY_STATES {
+        let parsed: DeliveryState =
+            serde_json::from_value(serde_json::Value::String((*raw).to_string()))
+                .unwrap_or_else(|e| panic!("DeliveryState::{raw}: {e}"));
+        assert_eq!(parsed.as_str(), *raw);
+    }
+}
+
+#[test]
+fn run_with_kernel_axes_and_seal_deserialises() {
+    let run: RunStatus =
+        serde_json::from_str(GOLDEN_RUN_WITH_DELIVERY_AXES).expect("run with axes");
+    assert_eq!(run.execution_state, Some(ExecutionState::Exited));
+    assert_eq!(run.proof_state, Some(ProofState::Passed));
+    assert_eq!(run.delivery_state, Some(DeliveryState::Sealed));
+    let seal = run.seal.expect("seal present");
+    assert_eq!(seal.seal_id, "seal-impl-axes-001");
+    assert_eq!(seal.schema, "vibecrafted.delivery-seal.v1");
+    assert_eq!(seal.run_id, "impl-axes-001");
+    // completed + exit 0 must not be misread as inventing delivery: delivery
+    // comes from the explicit field (sealed), not from state.
+    assert_eq!(run.state, "completed");
+    assert_eq!(run.delivery_state, Some(DeliveryState::Sealed));
+}
+
+#[test]
+fn legacy_run_without_delivery_section_has_absent_axes() {
+    // GOLDEN_RUN_FINAL is a pre-kernel snapshot: no execution_state/proof/delivery.
+    let run: RunStatus = serde_json::from_str(GOLDEN_RUN_FINAL).expect("legacy final");
+    assert_eq!(run.state, "completed");
+    assert_eq!(run.exit_code, Some(0));
+    assert_eq!(
+        run.execution_state, None,
+        "legacy snapshot must not invent execution_state"
+    );
+    assert_eq!(
+        run.proof_state, None,
+        "legacy snapshot must not invent proof_state"
+    );
+    assert_eq!(
+        run.delivery_state, None,
+        "legacy snapshot must not invent delivery_state from completed"
+    );
+    assert_eq!(run.seal, None);
+
+    // Round-trip must not inject null axes keys (skip_serializing_if).
+    let reserialised = serde_json::to_value(&run).expect("serialize");
+    let obj = reserialised.as_object().expect("object");
+    assert!(
+        !obj.contains_key("execution_state")
+            && !obj.contains_key("proof_state")
+            && !obj.contains_key("delivery_state")
+            && !obj.contains_key("seal"),
+        "absent axes must stay absent on serialise, got keys {:?}",
+        obj.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn delivery_axes_for_receipt_never_promotes_completed_to_delivered() {
+    // Verbatim Python: delivery_axes_for_receipt("completed", {}) →
+    // execution=exited, proof=undeclared, delivery=unverified.
+    let expected: DeliveryAxes =
+        serde_json::from_str(PYTHON_COMPLETED_RECEIPT_AXES).expect("python fixture");
+    let projected = delivery_axes_for_receipt("completed", None, None, None);
+    assert_eq!(projected, expected);
+    assert_ne!(projected.delivery_state, DeliveryState::Delivered);
+    assert_ne!(projected.delivery_state, DeliveryState::Sealed);
+
+    // artifact_ok is not a delivery signal — explicit None axes only.
+    let with_artifact_hint = delivery_axes_for_receipt("completed", None, None, None);
+    assert_eq!(with_artifact_hint.delivery_state, DeliveryState::Unverified);
+    assert_eq!(with_artifact_hint.proof_state, ProofState::Undeclared);
+
+    // Explicit seal fields on the receipt win.
+    let explicit = delivery_axes_for_receipt(
+        "completed",
+        Some(ExecutionState::Exited),
+        Some(ProofState::Passed),
+        Some(DeliveryState::Sealed),
+    );
+    assert_eq!(explicit.delivery_state, DeliveryState::Sealed);
+    assert_eq!(explicit.proof_state, ProofState::Passed);
+}
+
+#[test]
+fn lifecycle_state_projects_axes_per_stage_and_run() {
+    let mut lifecycle: LifecycleRun =
+        serde_json::from_str(GOLDEN_LIFECYCLE_STATE).expect("LifecycleRun");
+    // On-disk lifecycle state has no axes section (verified against real
+    // control_plane/lifecycle_runs/*/state.json). Projection fills them.
+    assert_eq!(lifecycle.execution_state, None);
+    assert_eq!(lifecycle.stages[0].execution_state, None);
+
+    lifecycle.project_delivery_axes();
+
+    // Run status "launching" → execution launched; proof/delivery stay safe defaults.
+    assert_eq!(lifecycle.execution_state, Some(ExecutionState::Launched));
+    assert_eq!(lifecycle.proof_state, Some(ProofState::Undeclared));
+    assert_eq!(lifecycle.delivery_state, Some(DeliveryState::Unverified));
+
+    // Stage status "completed" → execution exited, NOT delivery sealed.
+    let stage = &lifecycle.stages[0];
+    assert_eq!(stage.status, "completed");
+    assert_eq!(stage.execution_state, Some(ExecutionState::Exited));
+    assert_eq!(stage.proof_state, Some(ProofState::Undeclared));
+    assert_eq!(stage.delivery_state, Some(DeliveryState::Unverified));
+}
+
+#[test]
+fn seal_ref_deserialises_kernel_subset() {
+    let seal: DeliverySealRef = serde_json::from_str(
+        r#"{
+          "schema": "vibecrafted.delivery-seal.v1",
+          "seal_id": "s1",
+          "issued_at": "2026-07-21T00:00:00+00:00",
+          "issuer": "ship",
+          "run_id": "r1",
+          "lifecycle_id": "life-1",
+          "cut_id": "c1",
+          "proof_id": "p1",
+          "repo": "Vetcoders/vibecrafted",
+          "branch": "main",
+          "final_head": "abc",
+          "report_sha256": "sha256:x"
+        }"#,
+    )
+    .expect("seal ref");
+    assert_eq!(seal.seal_id, "s1");
+    assert_eq!(seal.lifecycle_id, "life-1");
+}
+
+#[test]
+fn source_has_no_completed_to_delivery_mapping() {
+    // Grep-gate: control-core must never map completed → delivered/sealed.
+    let model = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/model.rs"));
+    let read = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/read.rs"));
+    for (name, src) in [("model.rs", model), ("read.rs", read)] {
+        for bad in [
+            "completed\" => DeliveryState::Delivered",
+            "completed\" => DeliveryState::Sealed",
+            "\"completed\" => Some(DeliveryState::Delivered)",
+            "\"completed\" => Some(DeliveryState::Sealed)",
+            "state == \"completed\" && delivery",
+            "DeliveryState::Delivered // completed",
+            "DeliveryState::Sealed // completed",
+        ] {
+            assert!(
+                !src.contains(bad),
+                "{name} must not contain completed→delivery mapping: {bad}"
+            );
+        }
+    }
 }

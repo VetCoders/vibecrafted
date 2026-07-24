@@ -66,7 +66,7 @@ pub fn handle_menu_event(event_id: &MenuId, menu_ids: &MenuIds, socket_path: &Pa
             send_menu_event(TrayMenuEvent::ShowMuxDashboard);
             let _ = Command::new("sh")
                 .arg("-lc")
-                .arg("command -v vc-tui >/dev/null 2>&1 && open -a Terminal vc-tui")
+                .arg("command -v voc >/dev/null 2>&1 && open -a Terminal voc")
                 .spawn();
         }
         Some(MenuRoute::OpenLogs) => {

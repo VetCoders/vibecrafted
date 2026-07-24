@@ -14,6 +14,28 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Invocation for `vc-scaffold` (launcher `scaffold`)**
+>
+> Same three-path _shape_ as the fleet, with **this** skill's literals — see the
+> canonical [Delegation Matrix](../DELEGATION_MATRIX.md):
+>
+> - [Shared three paths](../DELEGATION_MATRIX.md#shared-three-paths)
+> - [Launcher catalogue](../DELEGATION_MATRIX.md#launcher-catalogue-core-runtime)
+> - [Per-launcher rule](../DELEGATION_MATRIX.md#per-launcher-rule-the-semantic-delta)
+> - [Native vs external](../DELEGATION_MATRIX.md#native-subagents-vs-external-workers)
+>
+> | Path                    | Literal for this skill                                                                                                                    |
+> | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. User-launched worker | `vibecrafted scaffold <agent>`                                                                                                            |
+> | 2. Interactive          | `/vc-scaffold` — execute **in this session**; use native subagents when required; do **not** externalize merely because a launcher exists |
+> | 3. Agent-operator       | may dispatch the worker form above via `vc-dispatch` / operator lines while preserving this skill's identity                              |
+
+> Freer native on some runs ≠ abandon external fleet. `vc-dispatch` and `vc-ship` keep their own identities.
+
+<!-- /fleet-imperative -->
+
 # vc-scaffold: Founder-First Planning — Pancerna Latarnia
 
 ## What this is
@@ -152,7 +174,7 @@ It MUST contain all five:
    the next; why a pair is **SEQUENCE** (shared file domain → Living Tree conflict) vs **PARALLEL**
    (disjoint domains → safe concurrent); and where every **⛔ operator-button STOP** sits (push/merge,
    product decisions). A graph without `why` is a diagram, not a driver.
-3. **Ready commands** — the exact launcher line (`vibecrafted <workflow> <agent> --file <brief>`) for
+3. **Ready commands** — the exact launcher line for the next stage (e.g. `vibecrafted implement <agent> --file <brief>`, never a fake generic skill name) for
    EVERY remaining cut, in dispatch order, tagged SEQUENCE / PARALLEL / STOP, each followed by its
    per-cut verify command. A human pastes these verbatim if the loop fails.
 4. **The state alphabet + the `[ ]→[x]` rule, reproduced verbatim** (mirrors Measurement):
@@ -162,6 +184,42 @@ It MUST contain all five:
    without re-running the verifier. That promotion-without-proof is the single failure mode that
    wrecks an operator run ("się zajebiemy"). Encode it where the dispatcher's eyes are.
 5. **Live status snapshot** + `dou-index = |[x]| / total`.
+
+### 5.6 manifest.json (HARD-GATE — canonical artifact inventory)
+
+Create one plan root at
+`~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan_id>/` and write
+`manifest.json` there as mandatory output. Schema version `"1"` declares `plan_id`, `org`, `repo`,
+`day`, and an ordered `artifacts` array. Every artifact entry declares a stable `id`, explicit
+`role`, relative `path`, `editable`, and `required`; optional `dependencies` contain artifact IDs.
+Supported roles are `driver`, `wave-atlas`, `brief`, `design-doc`, `traceability`, `tracker`,
+`falsification`, `report`, and `other`. Register every generated artifact before handoff. Filenames
+never imply roles. Do not create an `operator/` mirror, compatibility copy, naming alias, or symlink.
+
+### 5.7 YAML frontmatter on EVERY artifact (HARD-GATE — no bare markdown)
+
+Every markdown artifact this skill produces — MISSION, ATLAS, DRIVER, tracker, falsification,
+every brief, every design doc — opens with YAML frontmatter, no exceptions:
+
+```yaml
+---
+plan_id: <plan_id>
+run_id: <scaffold run id, when running under a lifecycle>
+session_id: <agent session_id from `aicx sessions current` or raw `.jsonl` filename read>
+role: driver | wave-atlas | brief | tracker | falsification | design-doc | mission | other
+agent: <author agent>
+date: YYYY-MM-DD
+project: <org>/<repo>
+---
+```
+
+Why this is a hard-gate, not decoration: the settlement contract's rule 6 ("no bare markdown —
+artifact without run_id lands as needs-attention"), retrieval (search/index engines rank and
+scope by these fields), and provenance (an artifact found loose on disk must identify its plan
+and author without archaeology). A plan package with bare-markdown members fails scaffold review
+the same way a missing brief does. Operator flagged this live 2026-07-23 after receiving a
+package with frontmatter on some members and none on others — mixed is worse than missing,
+because it teaches readers to stop checking.
 
 ### 6. Serve & review (editable artifacts via vibecrafted-server)
 
@@ -179,7 +237,10 @@ twenty questions mid-scaffold. Refine WITH the operator on the served artifacts.
 must be multi-tab + editable from day one, not a static dump.
 
 **scaffold-doctor (the gate, machine-checked):** a deterministic validator in
-`vibecrafted-server/control-core` that refuses the scaffold→implement baton until: master-dispatch
+`vibecrafted-server/control-core` that loads the same typed `manifest.json` used by the server and
+refuses the scaffold→implement baton until: the manifest identity matches its canonical plan root;
+all declared required artifacts exist; IDs and paths are unique; dependencies resolve; editable
+paths are non-symlinked and remain inside the plan root; briefs on disk are declared; and the atlas
 has a wave atlas + dependency graph; every cut has a `briefs/<wave>-<slot>_<slug>.md` with all 12
 sections; acceptance bullets are atomic + verifier-backed; a design doc exists for every cut flagged
 `needs_design`; **a `DRIVER.md` exists and carries all five (full paths · why-annotated graph ·
@@ -206,8 +267,11 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
   gate. A plan a human can't drive from one file when the loop dies is not handoff-ready.
 - **Durable artifacts NEVER go to `/tmp`.** `/tmp` is ephemeral scratch only — it is wiped, untracked,
   and invisible to the operator's tooling and sync. Every plan, brief, DRIVER, tracker, journal, report,
-  and design doc lands in the **canonical store**: `~/.vibecrafted/artifacts/<org>/<repo>/<DATE>/plans/`
+  and design doc lands in the **canonical plan root**:
+  `~/.vibecrafted/artifacts/<org>/<repo>/<DATE>/plans/<plan_id>/`
   (mirrors the reports layout). Writing a durable artifact to `/tmp` is a process failure, not a shortcut.
+- **manifest.json is mandatory.** It is the only artifact inventory and role contract. No `operator/`
+  mirror, duplicate, filename-role inference, or compatibility symlink may become a second writable truth.
 - **Serve, don't interrogate.** Render editable artifacts and review them through `vibecrafted-server`;
   the operator edits the plan, not answers twenty mid-scaffold questions.
 - **Measure, don't claim.** A cut is done when its verifier is green, never when an agent says so.
@@ -228,7 +292,7 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
 ## Cross-References
 
 - **vc-init** — bootstraps agent context after scaffolding (the orientation gate).
-- **vc-implement** (alias **vc-justdo**) / **vc-workflow** — WRITE phases that consume scaffold plans.
+- **vc-implement** / **vc-workflow** — ship WRITE phases that consume scaffold plans. **vc-justdo** — standalone posture (prompt-typed; not implement).
 - **vc-review · vc-followup · vc-audit · vc-dou** — the READ phases that falsify each WRITE artifact.
 - **vc-operator** — reads the plan's `state` column and conducts the dispatch (trigger/stop).
 - **vc-research** — triple-agent research for unknowns found during Orient/Falsify.
@@ -252,6 +316,9 @@ it triggers a recovery-vector** (fallback/failover/handsoff). Full alphabet + ma
 ---
 
 ## Verification carries into the prompt
+
+Delivery-proof semantics live in `vibecrafted_core.delivery`; see
+`docs/runtime/DELIVERY_PROOF_KERNEL_v1.md`.
 
 Every prompt this skill composes must carry the [Verification Rule](../VERIFICATION_RULE.md) into the worker's dispatch: walk-around verification (gates green ≠ works) + loct literal-vs-semantic. See `vc-operator/DISPATCH_TEMPLATE.md` Sections 6 + 9.
 

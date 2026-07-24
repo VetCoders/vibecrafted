@@ -5,7 +5,8 @@ import asyncio
 import json
 import os
 import sys
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from .supervisor_async import AsyncSupervisor
 
@@ -77,30 +78,18 @@ def _normalize_worker(argv: Sequence[str]) -> list[str]:
 def _maybe_record_lifecycle_worker_exit(
     state_path: str, summary: dict[str, Any]
 ) -> None:
-    """Push-side report-on-death (docs/runtime/AGENT_OPS.md, Class 2).
+    """Push terminal truth into the lifecycle that launched this worker.
 
-    Only failures are written back: a healthy no-await handoff already leaves
-    its truth in the report file, and keeping the write rare keeps the window
-    for racing an operator verb on state.json effectively closed.
+    Failures retain the report-on-death alarm. Healthy default-mode exits are
+    reconciled through the lifecycle proof/seal/settlement path here because
+    no synchronous ``LifecycleRunner`` await exists to do it later.
     """
-    exit_code = summary.get("exit_code")
-    failed = (isinstance(exit_code, int) and exit_code != 0) or not summary.get(
-        "artifact_ok"
-    )
-    if not failed:
-        return
-    from .lifecycle_runner import record_stage_worker_exit
+    from .lifecycle_runner import record_stage_worker_completion
 
-    record_stage_worker_exit(
+    summary["lifecycle_reconciled"] = record_stage_worker_completion(
         state_path,
         str(summary.get("run_id") or ""),
-        {
-            "state": summary.get("state"),
-            "exit_code": exit_code,
-            "artifact_ok": bool(summary.get("artifact_ok")),
-            "artifact_errors": list(summary.get("artifact_errors") or []),
-            "transcript": str(summary.get("transcript") or ""),
-        },
+        summary,
     )
 
 
@@ -137,6 +126,23 @@ async def _run(args: argparse.Namespace) -> int:
     if lifecycle_state:
         _maybe_record_lifecycle_worker_exit(lifecycle_state, summary)
 
+    # Shell spawners call spawn_triage_run after finalize. The Python dispatcher
+    # path historically skipped it — SESSIONS rail f/x/n stayed at · 0 forever
+    # for scaffold/workflow/codex runs. Triage is fail-open decoration.
+    if handle.meta_path is not None and handle.exit_code is not None:
+        try:
+            from .run_triage import triage_finished_run
+
+            triage_outcome = triage_finished_run(handle.meta_path)
+            summary["triage"] = triage_outcome.outcome
+            if triage_outcome.bucket:
+                summary["triage_bucket"] = triage_outcome.bucket
+            if triage_outcome.reason:
+                summary["triage_reason"] = triage_outcome.reason
+        except Exception as exc:  # noqa: BLE001 — never fail a finished run on triage
+            summary["triage"] = "error"
+            summary["triage_reason"] = f"dispatcher_hook: {type(exc).__name__}: {exc}"
+
     if args.quiet:
         pass
     elif args.json:
@@ -148,6 +154,11 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"artifact_ok: {str(summary['artifact_ok']).lower()}")
         if artifact_errors:
             print("artifact_errors: " + ",".join(artifact_errors))
+        if summary.get("triage"):
+            line = f"triage: {summary['triage']}"
+            if summary.get("triage_bucket"):
+                line += f" → {summary['triage_bucket']}"
+            print(line)
 
     exit_code = handle.exit_code
     if isinstance(exit_code, int) and exit_code != 0:

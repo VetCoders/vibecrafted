@@ -1,17 +1,29 @@
 ---
 name: vc-skillaunch
 description: >
-  Distills a completed user workflow, session interaction or pattern
-  into a reusable agent skill. Use when the user asks to turn their workflow,
-  interaction, or multi-step process into a skill, or when they say "make
-  this a skill", "create a skill from what we just did", "package this
-  workflow" or similar.
-  Do not use for creating skills from scratch without an existing workflow
-  (use a generic skill-creator for that).
+  This skill should be used when the user asks to "make this a skill",
+  "create a skill from what we just did", "package this workflow",
+  "distill this session into a skill", "turn this into a vc- skill",
+  or "przepuść przez matrycę" for skill packaging. Distills a completed
+  interaction or pattern into a reusable agent skill under the Delegation
+  Matrix. Do not use for greenfield skills with no completed workflow
+  (use the scaffolder + CONTRIBUTING-SKILLS instead).
 loctree_value: "primary repo map for structural/literal repository work"
 aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
+
+<!-- fleet-imperative: v3 -->
+
+> **Invocation for `vc-skillaunch` (foundation skill)**
+>
+> Not a core `vibecrafted skillaunch <agent>` worker. Load interactively and
+> execute in-session. Package other skills under the
+> [Delegation Matrix](../DELEGATION_MATRIX.md) — per-launcher literals, no
+> workflow paste, freer native when packaging needs depth, external fleet
+> unchanged. See [Foundation skills](../DELEGATION_MATRIX.md#foundation-no-core-vibecrafted-name-agent-worker-of-their-own).
+
+<!-- /fleet-imperative -->
 
 # Workflow-to-Skill Distiller
 
@@ -87,12 +99,19 @@ new skill **MUST** reference it — do not offer a self-contained option.
     example datasets, or domain-specific notes. If so, please share them and I
     will incorporate their content into the skill's reference materials."
 
-### Round 4: Scope and Shape
+### Round 4: Scope, Shape, and Matrix Class
 
 1.  "Our workflow covered [X, Y, Z]. Should I distill all of these into the
     skill, or is there additional functionality that's important to include?
     Conversely, should any of these be left out?"
-2.  Determine whether the skill needs any code. If any step involves calling an
+2.  **Delegation Matrix class** — decide before naming the launcher:
+    - **Core launcher** — will ship as `vibecrafted <name> <agent>` / `/vc-<name>`
+    - **Meta** — init / ship / dispatch / operator-style surface
+    - **Foundation** — no worker CLI; loaded inside other skills
+      Confirm the class and the exact literals with the user. Never invent
+      `vibecrafted <workflow> <agent>` as a universal placeholder. Read
+      [`DELEGATION_MATRIX.md`](../DELEGATION_MATRIX.md).
+3.  Determine whether the skill needs any code. If any step involves calling an
     API, processing data, reading/writing files, or computing results, the skill
     **needs code** and you should default to the CLI pattern. Only use a
     text-only instruction skill when every step is purely about reasoning,
@@ -108,11 +127,12 @@ new skill **MUST** reference it — do not offer a self-contained option.
       of steps and using existing tools — no new code is needed. I'll write it
       as a set of clear instructions the agent follows. Does that sound
       right?"
-3.  If a helper script will be created: "I'm thinking the script should have
+4.  If a helper script will be created: "I'm thinking the script should have
     these commands: [proposed commands in plain English, e.g. 'search for
     proteins', 'fetch results', 'compare sequences']. What would you add or
     change?"
-4.  "What should the skill be called? Proposed name: `[suggestion]`."
+5.  "What should the skill be called? Proposed name: `[suggestion]`."
+    If core launcher: proposed CLI `vibecrafted <launcher> <agent>` must match.
 
 ### Round 5: Testing (Optional)
 
@@ -134,6 +154,7 @@ You are ready to move to Phase 2 when you can confidently answer ALL of:
 - [ ] How should errors be handled?
 - [ ] Does the workflow need any code? (If yes → CLI pattern; if no →
       instruction-only)
+- [ ] Matrix class (core launcher / meta / foundation) and exact literals?
 - [ ] Is there a sample query/answer for validation?
 
 ## Phase 2: Skill Design
@@ -142,12 +163,15 @@ Produce a **design document** (as an artifact / implementation plan) and present
 it to the user for approval. The document must include:
 
 1.  **Skill name and description** (following YAML frontmatter rules: name ≤64
-    chars, lowercase + hyphens; description ≤1024 chars).
-2.  **Directory structure** showing all planned files.
-3.  **Existing skills referenced** with rationale for each.
-4.  **New scripts** (if any) with proposed subcommands and arguments.
-5.  **Rate limiting strategy** for any APIs not covered by existing skills.
-6.  **Error handling strategy** per step.
+    chars, lowercase + hyphens; description ≤1024 chars; third-person triggers).
+2.  **Matrix class + invocation table** (worker / interactive / operator) with
+    concrete literals for **this** skill only.
+3.  **Directory structure** showing all planned files (prefer progressive
+    disclosure: lean SKILL.md, detail in `references/`).
+4.  **Existing skills referenced** with rationale for each.
+5.  **New scripts** (if any) with proposed subcommands and arguments.
+6.  **Rate limiting strategy** for any APIs not covered by existing skills.
+7.  **Error handling strategy** per step.
 
 **Wait for explicit user approval before proceeding to Phase 3.**
 
@@ -252,14 +276,24 @@ instead. Produce a SKILL.md with a structured workflow section:
 
 ### Rule 6: SKILL.md Structure
 
-Every generated SKILL.md must follow this structure:
+Every generated SKILL.md must follow this structure (imperative body language;
+third-person `description` with concrete triggers):
 
 ```markdown
 ---
 name: { skill-name }
 description: >-
-  {description}
+  This skill should be used when the user asks to "…", "…". {outcome}.
+version: 0.1.0
 ---
+
+<!-- fleet-imperative: v3 -->
+
+> **Invocation for `vc-{name}` (launcher `{name}`)** — table of three paths
+> with **this** skill's literals. Link [DELEGATION_MATRIX.md](../DELEGATION_MATRIX.md).
+> Foundation skills: state "no worker CLI" explicitly.
+
+<!-- /fleet-imperative -->
 
 # {Skill Title}
 
@@ -273,7 +307,7 @@ description: >-
 
 ## Quick Start
 
-{Minimal example to get started.}
+{Minimal example using the real launcher literals.}
 
 ## Utility Scripts (if CLI-based)
 
@@ -289,15 +323,31 @@ description: >-
 
 ## Common Mistakes
 
-{List 2-3 common pitfalls.}
+{List 2-3 common pitfalls — include "workflow paste" if relevant.}
+
+## Verify before the handoff
+
+{Link VERIFICATION_RULE.md when the skill can claim done.}
 ```
+
+### Rule 7: Progressive Disclosure
+
+- Keep SKILL.md lean (~1.5–3k words). Move long procedures to `references/`.
+- Do **not** copy the full Delegation Matrix into the skill body.
+- Do **not** paste ERi / `vc-workflow` rails onto non-workflow skills.
+- Prefer `tools/vc-skill-new.sh` for greenfield scaffolding; this skill distills
+  completed interactions.
 
 ## Phase 4: Validation
 
 After implementation is complete:
 
-1.  **Test the skill manually** by invoking the agent with a natural-language
+1.  **Matrix check** — invocation rail matches class; no generic
+    `vibecrafted <workflow>` blur; literals match skill name.
+2.  **Skill-development check** — third-person triggers, imperative body,
+    progressive disclosure, examples present.
+3.  **Test the skill manually** by invoking the agent with a natural-language
     prompt that should trigger the new skill.
-
-2.  **If a sample query/answer was provided** during brainstorming, run it
+4.  **If a sample query/answer was provided** during brainstorming, run it
     through the skill and verify the output matches expectations.
+5.  **`make test-skills`** when packaging into the vibecrafted skills tree.

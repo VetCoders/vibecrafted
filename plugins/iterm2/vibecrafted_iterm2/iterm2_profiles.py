@@ -31,9 +31,10 @@ from __future__ import annotations
 import json
 import sys
 import uuid
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from .vc_triggers import VIBECRAFTED_TRIGGERS, triggers_as_iterm2_payload
 

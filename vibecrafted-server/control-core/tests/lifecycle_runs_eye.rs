@@ -1,7 +1,7 @@
 //! Read-only Rust eye on lifecycle runs written by the Python lifecycle runner.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use control_core::ControlPlane;
@@ -15,7 +15,7 @@ fn temp_home(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("control-core-{name}-{nanos}"))
 }
 
-fn write_lifecycle_run(home: &PathBuf, run_id: &str, state_dou: Option<i64>) {
+fn write_lifecycle_run(home: &Path, run_id: &str, state_dou: Option<i64>) {
     let run_dir = home
         .join("control_plane")
         .join("lifecycle_runs")
@@ -146,9 +146,15 @@ fn compute_view_surfaces_lifecycle_projection() {
     assert!(
         view.active_runs
             .iter()
-            .chain(view.recent_runs.iter())
-            .any(|run| run.run_id == run_id && run.source == "lifecycle_runs"),
-        "compute_view includes lifecycle run projections"
+            .chain(view.stalled_runs.iter())
+            .all(|run| run.run_id != run_id),
+        "lifecycle containers do not claim worker liveness"
+    );
+    assert!(
+        view.recent_runs.iter().any(|run| run.run_id == run_id
+            && run.source == "lifecycle_runs"
+            && run.health == "unknown"),
+        "compute_view keeps lifecycle containers discoverable as recent/unknown"
     );
 }
 

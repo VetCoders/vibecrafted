@@ -3,8 +3,7 @@
 Where :mod:`vibecrafted_core.capabilities` is *read-only by contract* — it only
 probes whether ``loct`` / ``loctree-mcp`` are runnable — this module owns the
 one mutation the runtime is allowed to make on the perception layer: keeping
-**exactly one** ``loct watch`` alive per repository root, and exposing its
-streamable-HTTP MCP surface as the canonical transport for runs.
+**exactly one** scan-only ``loct watch`` alive per repository root.
 
 The single-instance guarantee is *not* invented here. ``loct watch`` already
 enforces it with a kernel-level advisory lock at ``<root>/.loctree/scan.lock``
@@ -15,16 +14,12 @@ with ``EX_TEMPFAIL`` (75). This module's job is therefore narrow and honest:
   the same lock file (``watcher_running``); if one already holds the root, skip;
 * handle contention *gently* — if our spawn loses the race anyway, the child
   exits 75 and we report ``already_running`` instead of crashing;
-* prefer the streamable-HTTP transport — ``loct watch --http`` co-spawns
-  ``loctree-mcp`` over streamable-http at ``127.0.0.1:<port>/mcp`` so a run
-  connects to one shared MCP per root instead of a fresh stdio server per run.
+* never make a watcher own MCP transport — agent MCP routing belongs to the
+  shared runtime supervisor, not to every repository root.
 
-Ports are derived per root (:func:`port_for_root`) so the *same* root is served
-by one watcher on one port (shared by every agent shell on that root), while
-*different* roots never collide on the default ``5174`` — the operator works
-across many roots at once. The MCP config emitted for a run
-(:func:`loctree_mcp_config_entry`) uses the same derivation, so the URL a run is
-told to dial always matches the watcher that is actually listening.
+The historical HTTP helpers remain available for explicit callers while the
+runtime migrates, but they are not the watcher default and are never selected
+implicitly by an agent launch.
 
 Everything here is best-effort: a missing or broken ``loct`` yields an
 ``unavailable`` outcome, never an exception. The runtime hot path treats a
@@ -39,10 +34,11 @@ import os
 import subprocess
 import time
 import zlib
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 try:  # pragma: no cover - exercised on every supported (POSIX) platform
     import fcntl
@@ -55,9 +51,14 @@ from .capabilities import _resolve_executable as _resolve_foundation
 # Transport canon
 # ---------------------------------------------------------------------------
 
-#: Default MCP transport for runs. ``loctree-mcp`` defaults to ``stdio`` for
-#: editor clients, but the canon for *agent runs* is streamable HTTP so a single
-#: shared server per root replaces a stdio server spawned per run.
+#: Per-root maintenance is scan-only. MCP process ownership is deliberately
+#: separate and remains with the client's configured transport or an explicit
+#: supervisor; this module does not pretend that such a supervisor is present.
+DEFAULT_WATCH_MODE = "scan"
+
+#: Compatibility default for callers that explicitly ask this legacy helper to
+#: build a Loctree MCP entry. Runtime launches must obtain MCP routing from an
+#: explicit caller instead of inferring it from a repository watcher.
 DEFAULT_MCP_TRANSPORT = "http"
 
 #: Loopback host the co-spawned MCP binds on. ``loct watch --http`` defaults to
@@ -214,7 +215,7 @@ def build_watch_command(
     loct: str,
     root: str | Path,
     *,
-    transport: str = DEFAULT_MCP_TRANSPORT,
+    transport: str = DEFAULT_WATCH_MODE,
     port: int | None = None,
 ) -> list[str]:
     """Compose the canonical ``loct watch`` invocation.
@@ -238,14 +239,14 @@ def _resolve_loct() -> str | None:
     return _resolve_foundation("loct")
 
 
-def _default_spawner(cmd: Sequence[str]) -> "subprocess.Popen[bytes]":
+def _default_spawner(cmd: Sequence[str]) -> subprocess.Popen[bytes]:
     """Launch a detached ``loct watch`` in its own session.
 
     Output is discarded — loctree keeps its own ``.loctree/watch.log``; our
     truth signals are the lock and the bound port, not this process's stdout.
     ``start_new_session`` detaches it so the watcher outlives the spawn pipeline.
     """
-    return subprocess.Popen(  # noqa: S603 - canonical perception command
+    return subprocess.Popen(
         list(cmd),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -285,7 +286,7 @@ class WatchOutcome:
 def ensure_watch(
     root: str | Path,
     *,
-    transport: str = DEFAULT_MCP_TRANSPORT,
+    transport: str = DEFAULT_WATCH_MODE,
     port: int | None = None,
     spawner: Spawner | None = None,
     resolver: Callable[[], str | None] = _resolve_loct,
@@ -308,7 +309,11 @@ def ensure_watch(
       contention (reported, not raised).
     """
     canonical = canonical_root(root)
-    resolved_port = port if port is not None else port_for_root(canonical)
+    resolved_port = (
+        (port if port is not None else port_for_root(canonical))
+        if transport == "http"
+        else None
+    )
     endpoint = (
         mcp_endpoint(canonical, port=resolved_port) if transport == "http" else None
     )
@@ -394,22 +399,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vibecrafted-perception",
         description=(
-            "Maintain exactly one loct watch (+ streamable-HTTP loctree-mcp) "
-            "per repository root for an agent run."
+            "Maintain exactly one scan-only loct watch per repository root "
+            "for an agent run. MCP transport is supervised separately."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_ensure = sub.add_parser(
         "ensure-watch",
-        help="Ensure a single watcher + streamable MCP is maintained for a root.",
+        help="Ensure a single scan watcher is maintained for a root.",
     )
     p_ensure.add_argument("--root", default=".", help="Repository root (default: .)")
     p_ensure.add_argument(
         "--transport",
-        default=DEFAULT_MCP_TRANSPORT,
-        choices=("http", "stdio"),
-        help="MCP transport for the run (default: http / streamable).",
+        default=DEFAULT_WATCH_MODE,
+        choices=("scan", "http", "stdio"),
+        help="Watcher mode (default: scan; http is an explicit legacy mode).",
     )
     p_ensure.add_argument(
         "--port",
@@ -424,9 +429,9 @@ def main(argv: list[str] | None = None) -> int:
     p_status.add_argument("--root", default=".", help="Repository root (default: .)")
     p_status.add_argument(
         "--transport",
-        default=DEFAULT_MCP_TRANSPORT,
-        choices=("http", "stdio"),
-        help="Transport to report the endpoint for (default: http).",
+        default=DEFAULT_WATCH_MODE,
+        choices=("scan", "http", "stdio"),
+        help="Watcher mode to report (default: scan).",
     )
 
     args = parser.parse_args(argv)
@@ -444,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         "running": running,
         "transport": args.transport,
         "endpoint": (mcp_endpoint(canonical) if args.transport == "http" else None),
-        "port": port_for_root(canonical),
+        "port": (port_for_root(canonical) if args.transport == "http" else None),
         "checked_at": _now_iso(),
     }
     print(json.dumps(payload, indent=2))

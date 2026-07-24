@@ -7,7 +7,6 @@ import subprocess
 import sys
 
 import pytest
-
 from vibecrafted_iterm2 import iterm2_osc as osc
 
 

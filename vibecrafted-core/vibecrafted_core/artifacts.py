@@ -111,6 +111,25 @@ def validate_artifacts(
     elif require_report and not report_valid:
         errors.append("report_empty")
 
+    # Mandatory frontmatter on every non-empty agent report (dashboard + triage).
+    # Missing claim block is a contract failure, not a soft warning: vc-server
+    # and SESSIONS f/x/n need steerable structure, not free-form markdown only.
+    if report_exists and report_valid and report is not None:
+        from .report_contract import validate_report_file
+
+        fm = validate_report_file(report, require_frontmatter=True)
+        for err in fm.errors:
+            errors.append(err)
+        for warn in fm.warnings:
+            warnings.append(warn)
+        if fm.fields:
+            meta_payload = {
+                **meta_payload,
+                "report_frontmatter": fm.as_payload(),
+            }
+            if fm.claim_status:
+                meta_payload.setdefault("report_claim_status", fm.claim_status)
+
     if require_transcript_output and not transcript_exists:
         errors.append("transcript_missing")
     elif require_transcript_output and not transcript_has_output:
@@ -118,6 +137,12 @@ def validate_artifacts(
 
     if meta is not None and not meta_exists:
         warnings.append("meta_missing")
+
+    # Frontmatter errors invalidate the report for board purposes even if non-empty.
+    if any(e.startswith("report_frontmatter_") for e in errors) or (
+        "report_missing" in errors
+    ):
+        report_valid = False
 
     return ArtifactValidation(
         meta_path=meta,

@@ -47,10 +47,10 @@ surface.
 - `vc-marbles` uses the same root but nests loop artifacts under `marbles/`.
 - `vc-init` is interactive-only and prepares the operator session; it does not
   guarantee a report on its own.
-- `vc-implement` / `vibecrafted implement` is the official autonomous delivery
-  face. `vc-justdo`, `vibecrafted justdo`, and per-agent `*-justdo` helpers are
-  compatibility aliases only; they stay listed here so installed operator
-  environments do not silently break.
+- `vc-implement` / `vibecrafted implement` is the official ship-cycle WRITE
+  delivery face. `vc-justdo`, `vibecrafted justdo`, and per-agent `*-justdo`
+  helpers expose the standalone Just Do posture under skill id `justdo`; they
+  are not aliases of `implement`.
 - Every `vc-*` workflow skill inherits the Living Tree rule: stay in the
   operator's current checkout and branch; do not create or move into git
   worktrees unless the operator explicitly asks for a worktree in that prompt.
@@ -65,11 +65,13 @@ surface.
   supervisor lane is `vibecrafted dispatch`, not a public `vibecrafted operator`
   command.
 
-## Compatibility aliases
+## Distinct launchers (not aliases)
 
-| Alias       | Canonical command       | Why it remains                                       |
-| ----------- | ----------------------- | ---------------------------------------------------- |
-| `vc-justdo` | `vc-implement`          | Existing agents and shell environments know it.      |
-| `justdo`    | `vibecrafted implement` | Internal run IDs and compatibility still use `just`. |
+| Launcher    | Skill id    | Matrix cell               | Notes                                                                                                            |
+| ----------- | ----------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `implement` | `implement` | Ship-cycle WRITE stage    | Structured e2e delivery with followup + marbles.                                                                 |
+| `justdo`    | `justdo`    | Additional skill launcher | Standalone Just Do posture; task type from the prompt. ADR-0001. Run-id prefix `just-` (implement uses `impl-`). |
+
+Do **not** treat `justdo` as a rename of `implement`. See [Delegation Matrix](../vibecrafted-core/vibecrafted_core/skills/DELEGATION_MATRIX.md) and [ADR-0001](./adr/0001-vc-justdo-standalone.md).
 
 The framework-level chaining map lives in [WORKFLOWS](./WORKFLOWS.md).

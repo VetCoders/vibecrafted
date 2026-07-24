@@ -12,27 +12,34 @@ Read alongside the [vc-scaffold SKILL](../SKILL.md), [vc-operator EMIL](../../vc
 
 ---
 
-## 1) The three artifacts
+## 1) The manifest-backed plan root
 
-Every robust plan ships as three connected files:
+Every robust plan ships as one canonical directory with an explicit manifest:
 
-| Artifact    | Filename                          | Role                                                                      |
-| ----------- | --------------------------------- | ------------------------------------------------------------------------- |
-| **MASTER**  | `00-master-dispatch.md`           | Atlas: why-we-build + wave structure + dispatch protocol + recovery rules |
-| **plans/**  | `01-<slug>.md` … `0N-<slug>.md`   | One Iter-3 prompt body per dispatched prompt                              |
-| **TRACKER** | `tracker.md` (single living file) | Append-only wave-by-wave checkbox state                                   |
+| Artifact     | Filename                          | Role                                                                        |
+| ------------ | --------------------------------- | --------------------------------------------------------------------------- |
+| **MANIFEST** | `manifest.json`                   | Ordered IDs, explicit roles, paths, editability, requiredness, dependencies |
+| **DRIVER**   | `DRIVER.md`                       | Cold-operator executable handoff                                            |
+| **MASTER**   | `00_ATLAS.md`                     | Atlas: why-we-build + wave structure + dispatch protocol + recovery rules   |
+| **plans/**   | `01-<slug>.md` … `0N-<slug>.md`   | One Iter-3 prompt body per dispatched prompt                                |
+| **TRACKER**  | `tracker.md` (single living file) | Append-only wave-by-wave checkbox state                                     |
 
 All three live under the default artifact path:
 
 ```text
-~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/dispatch/
-├── 00-master-dispatch.md
-├── 01-<wave>-<slug>.md
-├── 02-<wave>-<slug>.md
+~/.vibecrafted/artifacts/<org>/<repo>/<YYYY_MMDD>/plans/<plan_id>/
+├── manifest.json
+├── DRIVER.md
+├── 00_ATLAS.md
+├── briefs/01-<wave>-<slug>.md
+├── briefs/02-<wave>-<slug>.md
 ├── ...
-├── 0N-<wave>-<slug>.md
+├── briefs/0N-<wave>-<slug>.md
 └── tracker.md
 ```
+
+`manifest.json` is mandatory and is the only inventory. Roles are never inferred from filenames.
+Do not create an `operator/` mirror, duplicate, or symlink.
 
 The numbering is dispatch-order (top to bottom = fire order). The filename
 slug carries the wave letter so `ls` is human-scannable.

@@ -5,10 +5,10 @@ import json
 import os
 import signal
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
 
 from .agent_stream import (
     AgentStreamParser,
@@ -20,6 +20,7 @@ from .control_plane import ensure_session_id, normalize_run_root
 from .events import append_event
 from .lifecycle import EventKind, RunState
 from .model_overrides import _model_override_receipt
+from .report_contract import CLAIM_DIGEST_ENV
 
 STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 
@@ -82,13 +83,54 @@ def _fallback_report_body(transcript_text: str) -> str:
 def _tokens_total(
     input_tokens: int, cached_input_tokens: int, output_tokens: int
 ) -> int:
-    return input_tokens + cached_input_tokens + output_tokens
+    """Sum usage without double-counting provider-specific cache shapes.
+
+    Claude/Codex: ``input`` already includes cache hits (cached ≤ input).
+    Junie-style: ``input`` is non-cached only and ``cached`` is additive
+    (cached can exceed input). Detect by comparing magnitudes.
+    """
+    inp = max(0, int(input_tokens or 0))
+    cached = max(0, int(cached_input_tokens or 0))
+    out = max(0, int(output_tokens or 0))
+    if cached and cached > inp:
+        return inp + cached + out
+    return inp + out
 
 
 def _handle_tokens_total(handle: AsyncRunHandle) -> int:
     return _tokens_total(
         handle.tokens_input, handle.tokens_cached_input, handle.tokens_output
     )
+
+
+def _origin_fields_from_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Durable origin identity for post-run triage (dispatcher has no pane env)."""
+    source = env if env is not None else os.environ
+
+    def _get(*names: str) -> str:
+        for name in names:
+            value = str(source.get(name, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    fields: dict[str, str] = {}
+    session = _get(
+        "VIBECRAFTED_WORKER_SESSION",
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VC_FRAME_SESSION_NAME",
+        "ZELLIJ_SESSION_NAME",
+    )
+    if session:
+        fields["origin_session"] = session
+        fields["operator_session"] = session
+    tab = _get("VC_FRAME_TAB_NAME", "VIBECRAFTED_RUN_ID", "SPAWN_RUN_ID")
+    if tab:
+        fields["origin_tab"] = tab
+    pane = _get("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID")
+    if pane:
+        fields["origin_pane_id"] = pane
+    return fields
 
 
 def _cache_write_line(prefix: str, value: int | None) -> str:
@@ -107,26 +149,43 @@ def _render_fallback_report(handle: AsyncRunHandle, transcript_text: str) -> str
         if handle.completed_at
         else _utc_now().isoformat()
     )
+    from .report_contract import render_minimal_frontmatter
+
+    skill = handle.skill or str(
+        os.environ.get("VIBECRAFTED_SKILL_NAME")
+        or os.environ.get("VIBECRAFTED_SKILL_CODE")
+        or "unknown"
+    )
+    header = render_minimal_frontmatter(
+        run_id=handle.run_id,
+        agent=handle.agent or "unknown",
+        skill=skill,
+        status="completed",
+        extra={
+            "claim_status": "completed",
+            "claim_kind": skill,
+            "session_id": handle.agent_session_id or "unknown",
+            "tokens_input": handle.tokens_input,
+            "tokens_cached_input": handle.tokens_cached_input,
+            "tokens_output": handle.tokens_output,
+            "tokens_total": _handle_tokens_total(handle),
+            "cost_usd": handle.cost_usd if handle.cost_usd is not None else "unknown",
+            "completed_at": now,
+            "fallback_report": "true",
+            **(
+                {"tokens_cache_write": handle.tokens_cache_write}
+                if handle.tokens_cache_write is not None
+                else {}
+            ),
+        },
+    )
     return (
-        "---\n"
-        "status: completed\n"
-        f"run_id: {handle.run_id}\n"
-        f"agent: {handle.agent}\n"
-        f"session_id: {handle.agent_session_id or 'unknown'}\n"
-        f"tokens_input: {handle.tokens_input}\n"
-        f"tokens_cached_input: {handle.tokens_cached_input}\n"
-        f"{_cache_write_line('', handle.tokens_cache_write)}"
-        f"tokens_output: {handle.tokens_output}\n"
-        f"tokens_total: {_handle_tokens_total(handle)}\n"
-        f"cost_usd: {handle.cost_usd if handle.cost_usd is not None else 'unknown'}\n"
-        f"completed_at: {now}\n"
-        "fallback_report: true\n"
-        "---\n\n"
-        f"{body}\n"
-        "## Runtime fallback\n\n"
-        "The worker exited with code 0 but did not write "
-        "`VIBECRAFTED_REPORT_PATH`; Vibecrafted salvaged this report from the "
-        "captured transcript.\n"
+        header
+        + f"{body}\n"
+        + "## Runtime fallback\n\n"
+        + "The worker exited with code 0 but did not write "
+        + "`VIBECRAFTED_REPORT_PATH`; Vibecrafted salvaged this report from the "
+        + "captured transcript.\n"
     )
 
 
@@ -205,8 +264,10 @@ class AsyncRunHandle:
     first_output_seen: bool = False
     session_id: str = ""
     agent: str = ""
+    skill: str = ""
     agent_session_id: str = ""
     agent_model: str = ""
+    claim_digest: str = ""
     model_requested: str = ""
     model_override_supported: bool = False
     model_override_skipped: bool = False
@@ -265,11 +326,28 @@ class AsyncSupervisor:
         if prompt_file is not None:
             merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_file)
         agent = str(merged_env.get("VIBECRAFTED_AGENT") or _infer_agent(command))
+        skill = str(
+            merged_env.get("VIBECRAFTED_SKILL_NAME")
+            or merged_env.get("VIBECRAFTED_SKILL_CODE")
+            or merged_env.get("VIBECRAFTED_SKILL")
+            or "unknown"
+        )
+        claim_digest = str(merged_env.get(CLAIM_DIGEST_ENV) or "").strip()
         agent_model = resolve_default_model(agent, command=command, env=merged_env)
         model_receipt = _model_override_receipt(
             agent, str(merged_env.get("VIBECRAFTED_MODEL_REQUESTED") or "")
         )
         started_at = _utc_now()
+        if report_path is not None:
+            from .report_contract import materialize_launcher_report_template
+
+            materialize_launcher_report_template(
+                report_path,
+                run_id=run_id,
+                agent=agent,
+                skill=skill,
+                claim_digest=claim_digest,
+            )
 
         await self._emit(
             run_id,
@@ -286,7 +364,9 @@ class AsyncSupervisor:
                 "session_id": session_id,
                 "identity_required": True,
                 "agent": agent,
+                "skill": skill,
                 "agent_model": agent_model,
+                **({"claim_digest": claim_digest} if claim_digest else {}),
                 **model_receipt,
             },
         )
@@ -319,7 +399,9 @@ class AsyncSupervisor:
             transcript_path=transcript,
             session_id=session_id,
             agent=agent,
+            skill=skill,
             agent_model=agent_model,
+            claim_digest=claim_digest,
             model_requested=str(model_receipt.get("model_requested") or ""),
             model_override_supported=bool(
                 model_receipt.get("model_override_supported")
@@ -334,6 +416,45 @@ class AsyncSupervisor:
         except ProcessLookupError:
             handle.pgid = None
         self._runs[run_id] = handle
+        # Seed durable origin identity as soon as the worker exists so triage
+        # still works when the finisher has no ambient VC_FRAME pane env.
+        if handle.meta_path is not None:
+            try:
+                seed: dict[str, object] = {}
+                if handle.meta_path.exists():
+                    loaded = json.loads(handle.meta_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        seed.update(loaded)
+                origin = _origin_fields_from_env(merged_env)
+                if (
+                    origin.get("origin_session")
+                    and not str(seed.get("origin_session") or "").strip()
+                ):
+                    seed["origin_session"] = origin["origin_session"]
+                    seed["operator_session"] = origin.get(
+                        "operator_session", origin["origin_session"]
+                    )
+                if not str(seed.get("origin_tab") or "").strip():
+                    seed["origin_tab"] = origin.get("origin_tab") or run_id
+                if (
+                    origin.get("origin_pane_id")
+                    and not str(seed.get("origin_pane_id") or "").strip()
+                ):
+                    seed["origin_pane_id"] = origin["origin_pane_id"]
+                seed.setdefault("run_id", run_id)
+                seed.setdefault("root", str(cwd))
+                seed.setdefault("agent", agent)
+                seed.setdefault("skill", skill)
+                if claim_digest:
+                    seed["claim_digest"] = claim_digest
+                handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
+                handle.meta_path.write_text(
+                    json.dumps(seed, indent=2, ensure_ascii=False, sort_keys=True)
+                    + "\n",
+                    encoding="utf-8",
+                )
+            except (OSError, json.JSONDecodeError, TypeError):
+                pass
         await self._transition(
             handle,
             RunState.PROCESS_SPAWNED,
@@ -494,11 +615,28 @@ class AsyncSupervisor:
                 with handle.transcript_path.open("ab") as transcript:
                     transcript.write(chunk)
             display_text = parser.feed_line(chunk)
+            previous_agent_session_id = handle.agent_session_id
             self._sync_stream_summary(handle, parser)
-            if tee_output:
-                if display_text:
-                    sys.stdout.buffer.write(display_text.encode("utf-8"))
-                    sys.stdout.buffer.flush()
+            if (
+                handle.report_path is not None
+                and handle.agent_session_id
+                and handle.agent_session_id != previous_agent_session_id
+            ):
+                from .report_contract import stamp_launcher_report_identity
+
+                stamp_launcher_report_identity(
+                    handle.report_path,
+                    run_id=handle.run_id,
+                    session_id=handle.agent_session_id,
+                    agent=handle.agent,
+                    skill=handle.skill,
+                    status="pending",
+                    model=handle.agent_model,
+                    claim_digest=handle.claim_digest,
+                )
+            if tee_output and display_text:
+                sys.stdout.buffer.write(display_text.encode("utf-8"))
+                sys.stdout.buffer.flush()
             if not handle.first_output_seen:
                 handle.first_output_seen = True
                 await self._transition(
@@ -522,24 +660,70 @@ class AsyncSupervisor:
         self._sync_stream_summary(handle, parser)
 
     def _write_report_fallback(self, handle: AsyncRunHandle) -> None:
-        if (
-            handle.report_path is None
-            or handle.report_path.exists()
-            or handle.exit_code != 0
-            or handle.agent != "grok"
-        ):
+        report = handle.report_path
+        if report is None:
             return
-        transcript_text = ""
-        if handle.transcript_path is not None and handle.transcript_path.exists():
-            try:
-                transcript_text = handle.transcript_path.read_text(
-                    encoding="utf-8", errors="replace"
-                )
-            except OSError:
-                transcript_text = ""
-        rendered = _render_fallback_report(handle, transcript_text)
-        handle.report_path.parent.mkdir(parents=True, exist_ok=True)
-        handle.report_path.write_text(rendered, encoding="utf-8")
+        if not report.exists():
+            if handle.exit_code != 0 or handle.agent != "grok":
+                return
+            transcript_text = ""
+            if handle.transcript_path is not None and handle.transcript_path.exists():
+                try:
+                    transcript_text = handle.transcript_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    transcript_text = ""
+            rendered = _render_fallback_report(handle, transcript_text)
+            report.parent.mkdir(parents=True, exist_ok=True)
+            report.write_text(rendered, encoding="utf-8")
+            return
+
+        # Reports are worker-authored evidence, but the runtime owns their
+        # transport contract. Normalize an existing substantive report before
+        # strict validation so a good handoff cannot become report_invalid only
+        # because the worker omitted the dashboard frontmatter. Preserve the
+        # body and any explicit claim (blocked/partial/failed) verbatim.
+        try:
+            if report.stat().st_size == 0:
+                return
+            text = report.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        from .report_contract import parse_report_text, stamp_launcher_report_identity
+
+        fields, _, has_frontmatter = parse_report_text(text)
+        if (
+            handle.exit_code == 0
+            and handle.agent == "grok"
+            and has_frontmatter
+            and fields.get("launcher_template", "").strip().lower()
+            in {"1", "true", "yes", "on"}
+        ):
+            transcript_text = ""
+            if handle.transcript_path is not None and handle.transcript_path.exists():
+                try:
+                    transcript_text = handle.transcript_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except OSError:
+                    transcript_text = ""
+            report.write_text(
+                _render_fallback_report(handle, transcript_text),
+                encoding="utf-8",
+            )
+
+        status = "completed" if handle.exit_code == 0 else "failed"
+        stamp_launcher_report_identity(
+            report,
+            run_id=handle.run_id,
+            session_id=handle.agent_session_id,
+            agent=handle.agent or "unknown",
+            skill=handle.skill or "unknown",
+            status=status,
+            model=handle.agent_model,
+            claim_digest=handle.claim_digest,
+        )
 
     def _sync_stream_summary(
         self, handle: AsyncRunHandle, parser: AgentStreamParser
@@ -590,6 +774,24 @@ class AsyncSupervisor:
             if handle.exit_code == 0
             else ("failed" if handle.exit_code is not None else "running"),
         }
+        # Stamp origin for triage-run: dispatcher finishes outside the worker
+        # pane, so ambient VC_FRAME_* is often empty at triage time. Prefer
+        # values already in meta (launch path) over live env.
+        origin = _origin_fields_from_env()
+        if not str(payload.get("origin_session") or "").strip() and origin.get(
+            "origin_session"
+        ):
+            summary["origin_session"] = origin["origin_session"]
+            summary["operator_session"] = origin.get(
+                "operator_session", origin["origin_session"]
+            )
+        if not str(payload.get("origin_tab") or "").strip():
+            summary["origin_tab"] = origin.get("origin_tab") or handle.run_id
+        if (
+            origin.get("origin_pane_id")
+            and not str(payload.get("origin_pane_id") or "").strip()
+        ):
+            summary["origin_pane_id"] = origin["origin_pane_id"]
         if handle.model_requested:
             summary["model_requested"] = handle.model_requested
             summary["model_override_supported"] = handle.model_override_supported

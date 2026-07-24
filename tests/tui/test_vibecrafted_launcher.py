@@ -1,3 +1,6 @@
+# ruff: noqa: FLY002,PLW1510
+# Fixture-heavy launcher harness builds shell/python stubs via "\n".join; FLY002
+# and bare subprocess.run (PLW1510) are intentional and predate this cut.
 from __future__ import annotations
 
 import hashlib
@@ -449,6 +452,133 @@ def test_init_codex_uses_interactive_tab_without_exec_mode(tmp_path: Path) -> No
     assert "codex --dangerously-bypass-approvals-and-sandbox " in script_body
     assert "/vc-init" in script_body
     assert "codex exec" not in script_body
+
+
+@pytest.mark.parametrize(
+    ("agent", "command_needle"),
+    [
+        ("agy", "agy --dangerously-skip-permissions --add-dir . --prompt-interactive "),
+        ("junie", "junie --task="),
+        (
+            "grok",
+            # Interactive TUI: positional prompt, NO --single (one-shot headless).
+            "grok --cwd . --permission-mode bypassPermissions --no-alt-screen ",
+        ),
+    ],
+)
+def test_init_fleet_agents_resolve_skill_init_helpers(
+    agent: str, command_needle: str, tmp_path: Path
+) -> None:
+    """Regression: vibecrafted init <agent> must not fail with Missing helper
+    <agent>-skill-init. Fleet surface is five agents; wrappers for only
+    claude/codex used to brick agy/junie/grok at the launcher.
+    """
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    session_state_file = tmp_path / "session-state.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
+    _write_fake_osascript(fake_bin, capture_file, session_state_file)
+    _write_fake_agent(fake_bin, agent, tmp_path / f"unused-{agent}.txt")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["SESSION_STATE_FILE"] = str(session_state_file)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "init", agent],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, (
+        f"init {agent} failed:\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert "Missing helper" not in result.stderr
+    assert f"{agent}-skill-init" not in result.stderr or "Missing helper" not in (
+        result.stdout + result.stderr
+    )
+
+    payload = capture_file.read_text(encoding="utf-8")
+    assert (
+        f"VC_FRAME --session {_expected_operator_session()} action new-tab" in payload
+    )
+
+    command_script = _spawned_command_script(payload)
+    script_body = command_script.read_text(encoding="utf-8")
+    assert command_needle in script_body
+    assert "/vc-init" in script_body
+    if agent == "grok":
+        assert " --single " not in script_body
+        assert "--single" not in script_body
+
+
+def test_init_grok_is_interactive_tui_not_single_shot(tmp_path: Path) -> None:
+    """Regression: vibecrafted init grok must open the TUI like codex/claude.
+
+    --single is one-shot headless (prints + exits). That belongs only to
+    fleet/await non-interactive lanes, never vc-init / bare resume.
+    """
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    session_state_file = tmp_path / "session-state.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_stateful_vc_frame(fake_bin, capture_file, session_state_file)
+    _write_fake_osascript(fake_bin, capture_file, session_state_file)
+    _write_fake_agent(fake_bin, "grok", tmp_path / "unused-grok.txt")
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["SESSION_STATE_FILE"] = str(session_state_file)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["VIBECRAFTED_OSASCRIPT_BIN"] = str(fake_bin / "osascript")
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["FAKE_VC_FRAME_SESSION"] = _expected_operator_session()
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "init", "grok"],
+        check=False,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    script_body = _spawned_command_script(
+        capture_file.read_text(encoding="utf-8")
+    ).read_text(encoding="utf-8")
+    assert (
+        "grok --cwd . --permission-mode bypassPermissions --no-alt-screen"
+        in script_body
+    )
+    assert "/vc-init" in script_body
+    assert "--single" not in script_body
+    assert "streaming-json" not in script_body
 
 
 def test_init_gemini_returns_actionable_agy_migration() -> None:
@@ -998,9 +1128,10 @@ def test_installed_launcher_gui_uses_python_control_plane_surface(
     assert "Press Ctrl-C to stop." in result.stdout
 
 
-def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
+def test_installed_launcher_tui_uses_shared_state_and_voc_binary(
     tmp_path: Path,
 ) -> None:
+    """Product contract: `vibecrafted tui` launches `voc` (install-app-binaries)."""
     home = tmp_path / "home"
     installed_root = home / ".vibecrafted"
     launcher = home / ".local" / "bin" / "vibecrafted"
@@ -1017,11 +1148,15 @@ def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
     launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
     launcher.chmod(0o755)
     (current_root / "scripts").mkdir(parents=True, exist_ok=True)
-    (current_root / "operator-tui" / "target" / "debug").mkdir(
-        parents=True, exist_ok=True
+    app_root = current_root / "vibecrafted-app"
+    (app_root / "tui-agent").mkdir(parents=True, exist_ok=True)
+    (app_root / "target" / "debug").mkdir(parents=True, exist_ok=True)
+    (app_root / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["tui-agent"]\n',
+        encoding="utf-8",
     )
-    (current_root / "operator-tui" / "Cargo.toml").write_text(
-        '[package]\nname = "vibecrafted-operator"\nversion = "0.0.0"\nedition = "2021"\n',
+    (app_root / "tui-agent" / "Cargo.toml").write_text(
+        '[package]\nname = "voc"\nversion = "0.0.0"\nedition = "2021"\n',
         encoding="utf-8",
     )
     (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
@@ -1032,14 +1167,13 @@ def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
         "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
     )
     _write_fake_python3(fake_bin, python_capture)
-    _write_capture_script(
-        current_root / "operator-tui" / "target" / "debug" / "vibecrafted-operator",
-        tui_capture,
-    )
+    _write_capture_script(app_root / "target" / "debug" / "voc", tui_capture)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    # Isolate PATH so a host ~/.local/bin/voc cannot steal resolution from the
+    # local vibecrafted-app debug fixture. Keep /bin for bash/coreutils.
+    env["PATH"] = f"{fake_bin}:/bin:/usr/bin"
     env["CAPTURE_FILE"] = str(python_capture)
 
     subprocess.run(
@@ -1059,9 +1193,10 @@ def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
     assert "--tick-ms 500" in tui_args
 
 
-def test_tui_uses_vc_operator_from_path_when_local_build_missing(
+def test_tui_uses_voc_from_path_when_local_build_missing(
     tmp_path: Path,
 ) -> None:
+    """When no local vibecrafted-app build exists, PATH `voc` is the product bin."""
     home = tmp_path / "home"
     launcher = home / ".local" / "bin" / "vibecrafted"
     current_root = (
@@ -1077,9 +1212,6 @@ def test_tui_uses_vc_operator_from_path_when_local_build_missing(
     launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
     launcher.chmod(0o755)
     (current_root / "scripts").mkdir(parents=True, exist_ok=True)
-    (current_root / "operator-tui" / "target" / "debug").mkdir(
-        parents=True, exist_ok=True
-    )
     (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
     (current_root / "scripts" / "control_plane_state.py").write_text(
         "#!/usr/bin/env python3\n", encoding="utf-8"
@@ -1090,9 +1222,10 @@ def test_tui_uses_vc_operator_from_path_when_local_build_missing(
     _write_fake_python3(fake_bin, python_capture)
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    # Product install path: only PATH-owned voc (no local app tree build).
+    env["PATH"] = f"{fake_bin}:/bin:/usr/bin"
     env["CAPTURE_FILE"] = str(python_capture)
-    _write_capture_script(fake_bin / "vc-operator", tui_capture)
+    _write_capture_script(fake_bin / "voc", tui_capture)
 
     subprocess.run(
         ["bash", str(launcher), "tui", "--runtime", "headless"],
@@ -1214,18 +1347,15 @@ def test_implement_help_is_the_canonical_autonomous_delivery_surface() -> None:
     )
 
     assert "implement" in result.stdout
-    assert "Autonomous end-to-end implementation" in result.stdout
+    assert "VC-ship WRITE stage: structured end-to-end implementation" in result.stdout
     assert (
         "vibecrafted implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
     )
     assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
-    assert (
-        "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]"
-        in result.stdout
-    )
+    assert "Not the same skill as justdo." in result.stdout
 
 
-def test_justdo_help_points_back_to_implement() -> None:
+def test_justdo_help_is_a_distinct_standalone_posture() -> None:
     result = subprocess.run(
         [str(LAUNCHER), "justdo", "--help"],
         check=True,
@@ -1235,15 +1365,10 @@ def test_justdo_help_points_back_to_implement() -> None:
     )
 
     assert "justdo" in result.stdout
-    assert "Convenient alias for vc-implement" in result.stdout
-    assert (
-        "vibecrafted implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
-    )
-    assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
-    assert (
-        "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]"
-        in result.stdout
-    )
+    assert "Standalone Just Do posture" in result.stdout
+    assert "vibecrafted justdo <claude|codex|agy|junie|grok> [flags]" in result.stdout
+    assert "vc-justdo <claude|codex|agy|junie|grok> [flags]" in result.stdout
+    assert "Not implement." in result.stdout
 
 
 @pytest.mark.parametrize("skill", ["implement", "justdo"])
@@ -1865,7 +1990,7 @@ def test_resume_subcommand_forwards_session_and_prompt_to_agent(
     ]
 
 
-def test_resume_subcommand_wraps_terminal_runtime_in_vc_frame_operator_session(
+def test_resume_subcommand_wraps_headless_codex_in_vc_frame_worker_session(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -1883,6 +2008,7 @@ def test_resume_subcommand_wraps_terminal_runtime_in_vc_frame_operator_session(
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
     env["VETCODERS_SPAWN_RUNTIME"] = "terminal"
     env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-test"
+    env["VIBECRAFTED_WORKER_SESSION"] = "worker-test"
     env["CAPTURE_FILE"] = str(capture_file)
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
@@ -1910,7 +2036,8 @@ def test_resume_subcommand_wraps_terminal_runtime_in_vc_frame_operator_session(
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "--session" in payload
-    assert "operator-test" in payload
+    assert "worker-test" in payload
+    assert "operator-test" not in payload
     assert "action" in payload
     assert "new-tab" in payload
     assert "--name" in payload
@@ -2007,23 +2134,28 @@ def test_resume_wrapper_accepts_positional_session_id(tmp_path: Path) -> None:
 
 
 def test_resume_wrapper_accepts_bare_positional_session_id(tmp_path: Path) -> None:
-    """`vc-resume <agent> <session_id>` with no prompt resumes that session."""
+    """A positional Codex session id is the interactive `--session` alias."""
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
-    capture_file = tmp_path / "codex-args.txt"
+    capture_file = tmp_path / "vc-frame-args.txt"
     wrapper = tmp_path / "vc-resume"
 
     home.mkdir()
     fake_bin.mkdir()
     wrapper.symlink_to(LAUNCHER)
-    _write_fake_agent(fake_bin, "codex", capture_file)
+    _write_fake_vc_frame_with_live_session(fake_bin, capture_file, "operator-test")
 
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["VIBECRAFTED_RUNTIME_BIN"] = str(fake_bin)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+    env["VETCODERS_SPAWN_RUNTIME"] = "terminal"
+    env["VIBECRAFTED_OPERATOR_SESSION"] = "operator-test"
     env["CAPTURE_FILE"] = str(capture_file)
+    env.pop("VC_FRAME", None)
+    env.pop("VC_FRAME_PANE_ID", None)
+    env.pop("VC_FRAME_SESSION_NAME", None)
 
     subprocess.run(
         ["bash", str(wrapper), "codex", "resume-session-789"],
@@ -2033,12 +2165,12 @@ def test_resume_wrapper_accepts_bare_positional_session_id(tmp_path: Path) -> No
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert payload == [
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "resume",
-        "resume-session-789",
-    ]
+    assert payload[:4] == ["--session", "operator-test", "action", "new-tab"]
+    separator = payload.index("--")
+    command_script = Path(payload[separator + 1])
+    command_body = command_script.read_text(encoding="utf-8")
+    assert "codex resume resume-session-789" in command_body
+    assert "codex exec" not in command_body
 
 
 def test_vc_dashboard_wrapper_dispatches_to_dashboard(tmp_path: Path) -> None:

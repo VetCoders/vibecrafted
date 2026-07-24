@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import sys
-import tomllib
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
+
+import tomllib
 
 from .runtime_paths import vibecrafted_home
 

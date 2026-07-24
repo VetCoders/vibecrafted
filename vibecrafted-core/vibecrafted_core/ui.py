@@ -16,6 +16,7 @@ import os
 import sys
 import threading
 from types import TracebackType
+from typing import Self
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 SPINNER_INTERVAL = 0.08
@@ -103,7 +104,7 @@ class Spinner:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-    def __enter__(self) -> "Spinner":
+    def __enter__(self) -> Self:
         if not self._animated:
             print(f"▸ {self.message}", file=self.stream, flush=True)
             return self

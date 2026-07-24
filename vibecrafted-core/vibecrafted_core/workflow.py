@@ -8,27 +8,29 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from .artifacts import validate_artifacts
-from .cron import parse_frontmatter
 from .control_plane import (
     await_run,
     control_plane_home,
     ensure_session_id,
     lookup_run,
     normalize_run_root,
-    operator_session_name,
     record_stop_transition,
     run_snapshot_dir,
     sync_state,
 )
-from .package_resources import deck_path as package_deck_path
+from .cron import parse_frontmatter
+from .delivery.store import atomic_write_json
 from .events import append_event
 from .model_overrides import _model_override_receipt, _with_model_override
+from .package_resources import deck_path as package_deck_path
+from .report_contract import CLAIM_DIGEST_ENV
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .spawn import _stdin_command
 from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE
@@ -71,6 +73,13 @@ class WorkflowLaunchSpec:
     # launch belongs to a lifecycle run, this carries the lifecycle state.json
     # path so the dispatcher can write the worker's terminal truth into it.
     lifecycle_state_path: str = ""
+    # Machine-owned mission binding for lifecycle stage reports. The worker may
+    # attest success, but it cannot choose which mission that attestation closes.
+    claim_digest: str = ""
+    # Adapters that must expose the execution identity before launch (ACP's
+    # session/new) may reserve one through reserve_run_id(). Empty keeps the
+    # historical launch-time allocation path.
+    run_id: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -80,11 +89,17 @@ def vibecrafted_launcher(source_dir: str | Path) -> Path:
     return package_deck_path()
 
 
-def _run_id(skill: str) -> str:
+def reserve_run_id(skill: str) -> str:
+    """Return a safe control-plane run id without creating runtime state."""
     stamp = time.strftime("%y%m%d-%H%M%S")
     code = (skill or "run")[:4].ljust(4, "x")
     entropy = int(time.time_ns() % 100000)
     return f"{code}-{stamp}-{entropy:05d}"
+
+
+def _run_id(skill: str) -> str:
+    """Backward-compatible internal alias for the run-id allocator."""
+    return reserve_run_id(skill)
 
 
 def _artifact_org_repo(root: str | Path) -> tuple[str, str] | None:
@@ -178,7 +193,7 @@ def _canonical_report_dir(root: str | Path, skill: str) -> Path:
 
 
 def _artifact_slug(text: str, fallback: str) -> str:
-    frontmatter = re.match(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", text, re.S)
+    frontmatter = re.match(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", text, re.DOTALL)
     if frontmatter:
         for key in ("slug", "title"):
             match = re.search(
@@ -340,6 +355,7 @@ def _runtime_script_exports(
     artifact_slug: str = "",
     artifact_ts: str = "",
     artifact_suffix: str = "",
+    claim_digest: str = "",
 ) -> dict[str, str]:
     pythonpath = os.pathsep.join(
         dict.fromkeys(
@@ -374,6 +390,8 @@ def _runtime_script_exports(
         exports["VIBECRAFTED_ARTIFACT_TS"] = artifact_ts
     if artifact_suffix:
         exports["VIBECRAFTED_ARTIFACT_SUFFIX"] = artifact_suffix
+    if claim_digest:
+        exports[CLAIM_DIGEST_ENV] = claim_digest
     if runtime in {"terminal", "visible"}:
         exports["VIBECRAFTED_TEE_OUTPUT"] = "1"
     return exports
@@ -398,6 +416,7 @@ def _write_research_lane_scripts(
     artifact_suffix: str,
     research_selection: ResearchAgentSelection,
     model_requested: str = "",
+    claim_digest: str = "",
 ) -> dict[str, Path]:
     scripts: dict[str, Path] = {}
     for agent in research_selection.agents:
@@ -430,6 +449,7 @@ def _write_research_lane_scripts(
             artifact_slug=artifact_slug,
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
+            claim_digest=claim_digest,
         )
         export_lines = "".join(
             f"export {key}={shlex.quote(value)}\n" for key, value in exports.items()
@@ -491,16 +511,29 @@ def _write_research_layout(
 
 
 _ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+_SESSION_NOT_FOUND_RE = re.compile(
+    r"Session ['\"][^'\"]+['\"] not found|There is no active session!",
+    re.IGNORECASE,
+)
+
+
+def _vc_frame_stderr_is_session_not_found(text: str) -> bool:
+    """True when stderr carries vc-frame's missing-host-session diagnostic.
+
+    Some builds exit 0 while still printing this message — exit code alone is
+    not sufficient (G3 recon, 2026-07-21).
+    """
+    return bool(_SESSION_NOT_FOUND_RE.search(text or ""))
 
 
 def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
-    """True only if `session` is a live vc-frame session.
+    """True only if `session` is a live (non-EXITED) vc-frame session.
 
     A terminal-runtime launch opens a new tab in an existing operator session
     (`vc-frame --session <name> action new-tab`). If that session does not
     exist, vc-frame prints "Session '<name>' not found" and the tab — and the
-    dispatcher inside it — never runs, leaving the worker dead. Probe the live
-    session list first so the caller can degrade to headless instead.
+    dispatcher inside it — never runs. EXITED sessions are not spawn targets
+    (parity with bash ``spawn_session_is_live``).
     """
     if not session:
         return False
@@ -510,6 +543,7 @@ def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -517,9 +551,120 @@ def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
         return False
     for line in result.stdout.splitlines():
         clean = _ANSI_SGR.sub("", line).strip()
-        if clean and clean.split()[0] == session:
+        if not clean:
+            continue
+        if "EXITED" in clean.upper():
+            continue
+        # Strip trailing status tags so multi-word hosts (G7: "<repo> workers") match.
+        name = re.sub(r"\s+\[.*$", "", clean)
+        name = re.sub(r"\s+\([^)]*\)$", "", name).rstrip()
+        if name == session:
             return True
     return False
+
+
+def _vc_frame_create_background(vc_frame: str, session: str) -> tuple[bool, str]:
+    """One-shot ``attach --create-background`` for a missing host session."""
+    try:
+        result = subprocess.run(
+            [vc_frame, "attach", "--create-background", session],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+    combined = "\n".join(
+        part for part in (result.stderr or "", result.stdout or "") if part
+    ).strip()
+    if _vc_frame_session_active(vc_frame, session):
+        return True, combined
+    if result.returncode == 0:
+        # Some builds report success before the session is listable; accept
+        # zero exit when the message is not a hard failure.
+        return True, combined
+    return False, combined or f"attach --create-background exit {result.returncode}"
+
+
+@dataclass(frozen=True)
+class _HostActionResult:
+    ok: bool
+    pid: int | None
+    error: str
+    stderr: str
+    resurrected: bool = False
+
+
+def _vc_frame_run_host_action(
+    command: list[str],
+    *,
+    operator_session: str,
+    timeout: float = 30.0,
+) -> _HostActionResult:
+    """Run a vc-frame host action with one create-background retry on not-found.
+
+    Treats "Session 'X' not found" as failure even when the binary exits 0.
+    """
+    if not command:
+        return _HostActionResult(False, None, "empty vc-frame command", "", False)
+
+    resurrected = False
+
+    def _run_once() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout, check=False
+        )
+
+    # CompletedProcess has no .pid; host actions are short-lived, so pid is
+    # informational only. Use os.getpid() of the parent as a stable handle for
+    # receipt fields that require an int.
+    action_pid = os.getpid()
+
+    try:
+        result = _run_once()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _HostActionResult(False, None, f"{type(exc).__name__}: {exc}", "", False)
+
+    combined = "\n".join(
+        part for part in (result.stderr or "", result.stdout or "") if part
+    ).strip()
+
+    if _vc_frame_stderr_is_session_not_found(combined):
+        if not operator_session:
+            return _HostActionResult(False, action_pid, combined, combined, False)
+        ok_create, create_err = _vc_frame_create_background(
+            command[0], operator_session
+        )
+        resurrected = True
+        if not ok_create:
+            err = "\n".join(
+                part
+                for part in (combined, create_err, "attach --create-background failed")
+                if part
+            )
+            return _HostActionResult(False, action_pid, err, err, True)
+        try:
+            result = _run_once()
+        except (OSError, subprocess.SubprocessError) as exc:
+            return _HostActionResult(
+                False, None, f"{type(exc).__name__}: {exc}", "", True
+            )
+        combined = "\n".join(
+            part for part in (result.stderr or "", result.stdout or "") if part
+        ).strip()
+        if _vc_frame_stderr_is_session_not_found(combined) or result.returncode != 0:
+            err = (
+                combined
+                or f"vc-frame action failed after host resurrect (exit {result.returncode})"
+            )
+            return _HostActionResult(False, action_pid, err, err, True)
+
+    elif result.returncode != 0:
+        err = combined or f"vc-frame action exit {result.returncode}"
+        return _HostActionResult(False, action_pid, err, err, False)
+
+    return _HostActionResult(True, action_pid, "", combined, resurrected)
 
 
 def _launch_transport_command(
@@ -546,10 +691,11 @@ def _launch_transport_command(
     if not vc_frame:
         return dispatch_command, "headless", None
 
-    # Degrade-not-die: a terminal launch into a non-existent operator session
-    # would open no tab and silently strand the worker. Fall back to headless.
-    if not _vc_frame_session_active(vc_frame, operator_session):
-        return dispatch_command, "headless", None
+    # G3: missing host sessions are handled at launch time via one-shot
+    # `attach --create-background` + action retry (`_vc_frame_run_host_action`).
+    # Do not silently degrade to headless here — that path left runs in
+    # process_spawned→stalled with no last_error. Always emit the vc-frame
+    # transport when the binary exists; the spawn step fails loud on double-fail.
 
     command_script = _write_command_script(
         launch_dir / f"{run_id}-dispatcher.sh",
@@ -567,6 +713,7 @@ def _launch_transport_command(
             artifact_slug=artifact_slug,
             artifact_ts=artifact_ts,
             artifact_suffix=artifact_suffix,
+            claim_digest=spec.claim_digest,
         ),
     )
     definition = workflow_registry.workflow_definition(spec.skill)
@@ -591,6 +738,7 @@ def _launch_transport_command(
             artifact_suffix=artifact_suffix,
             research_selection=selection,
             model_requested=spec.model,
+            claim_digest=spec.claim_digest,
         )
         layout_file = _write_research_layout(
             path=launch_dir / f"{run_id}-research.kdl",
@@ -642,48 +790,37 @@ def _launch_transport_command(
 
 
 def _effective_operator_session(*, root: str, run_id: str, env: dict[str, str]) -> str:
-    """Resolve the LIVE vc-frame session that can host a visible run tab.
+    """Resolve the vc-frame session that hosts worker tabs (G7).
 
-    Python mirror of the bash runtime's ``spawn_effective_operator_session``
-    (``runtime/scripts/lib/vc_frame.sh``). The ``vibecrafted <skill>`` workflow
-    dispatch routes through ``launch_workflow`` here — NOT the bash ``*_spawn.sh``
-    path — so the two fixes already landed on the bash side (eb346da, 2952f05)
-    have to be mirrored, or a CLI/headless/nested dispatch from OUTSIDE a pane
-    degrades to an invisible headless orphan even when a live operator session
-    exists. Two guards, both empirically the source of the outside→headless gap:
+    Python mirror of bash ``spawn_effective_operator_session``
+    (``runtime/scripts/lib/vc_frame.sh``). The launch-log field
+    ``operator_session`` records this host (truthful worker target), not the
+    human operator's interactive seat.
 
-    1. Honour an env-provided session ONLY when it names a LIVE session. The
-       dispatcher propagates ``VIBECRAFTED_OPERATOR_SESSION`` = a per-run tracking
-       id (``operator_session_name`` = ``"<repo>-<run_id>"``) which is NOT a live
-       session; targeting a tab at it lands nowhere (the 2952f05 bug).
-    2. With no live env session, discover the repo-bound operator session — named
-       after ``basename("$root")`` — and accept it only when live. This is what
-       lets an outside dispatch land as a visible tab (the eb346da fix). Only
-       when no live session exists at all do we return the per-run id, so the
-       caller (``_launch_transport_command``) honestly degrades to headless —
-       the correct fallback when there is nothing live to host a tab.
+    Rules (exact order):
+
+    1. ``VIBECRAFTED_WORKER_SESSION`` if set — explicit override wins.
+    2. ``basename(root)`` — per-project host session for workers.
+    3. If that equals the dispatcher seat (``VC_FRAME_SESSION_NAME`` /
+       ``ZELLIJ_SESSION_NAME``), use ``"<repo> workers"`` so the operator
+       session never receives a worker tab — even when repo name == seat name.
+
+    Missing hosts are resurrected by G3 (``attach --create-background``). The
+    ``run_id`` argument is retained for call-site compatibility only.
     """
-    vc_frame = shutil.which("vc-frame") or ""
+    _ = run_id  # call-site compatibility; not part of G7 host rules
+    override = str(env.get("VIBECRAFTED_WORKER_SESSION") or "").strip()
+    if override:
+        return override
 
-    def _live(name: str) -> bool:
-        return (
-            bool(name) and bool(vc_frame) and _vc_frame_session_active(vc_frame, name)
-        )
-
-    for key in (
-        "VIBECRAFTED_OPERATOR_SESSION",
-        "VC_FRAME_SESSION_NAME",
-        "ZELLIJ_SESSION_NAME",
-    ):
-        session_name = str(env.get(key) or "").strip()
-        if session_name and _live(session_name):
-            return session_name
-
-    repo_session = operator_session_name(root, "")
-    if _live(repo_session):
-        return repo_session
-
-    return operator_session_name(root, run_id)
+    host = Path(root or ".").name or "vibecrafted"
+    dispatcher = (
+        str(env.get("VC_FRAME_SESSION_NAME") or "").strip()
+        or str(env.get("ZELLIJ_SESSION_NAME") or "").strip()
+    )
+    if dispatcher and host == dispatcher:
+        return f"{host} workers"
+    return host
 
 
 def _run_is_terminal(run: dict[str, Any]) -> bool:
@@ -1029,6 +1166,10 @@ def normalize_launch_spec(
         payload.get("depth"), 3 if definition.supports_depth else None
     )
     model = str(payload.get("model") or payload.get("model_requested") or "").strip()
+    if not model and file_path:
+        # Brief frontmatter is the plan's voice: `model: <id>` pins the worker
+        # tier without an explicit --model flag. Flag always wins over brief.
+        model = parse_frontmatter(Path(file_path).expanduser()).get("model", "").strip()
     research_agents: tuple[str, ...] = ()
     research_synthesizer = ""
     research_synthesizer_model = str(
@@ -1069,6 +1210,7 @@ def normalize_launch_spec(
         research_agents=research_agents,
         research_synthesizer=research_synthesizer,
         research_synthesizer_model=research_synthesizer_model,
+        run_id=str(payload.get("run_id") or "").strip(),
     )
 
 
@@ -1102,6 +1244,12 @@ Contract:
 - Do not launch or delegate to external agent fleets.
 - Do not call legacy Vibecrafted skill launchers or runtime/scripts launchers.
 - Write your final report to the path in VIBECRAFTED_REPORT_PATH ({report_hint}).
+- The launcher pre-seeds that report's YAML frontmatter with machine-owned
+  `run_id` and `session_id`; preserve those values and never copy or guess identity.
+- Edit the existing frontmatter, keeping `finalized: false` until you deliberately
+  attest success with `finalized: true` plus a non-empty `claim`.
+- Keep non-empty `agent`, `skill`, and `status` keys.
+- Preserve an honest blocked/partial/failed status.
 - Let stdout/stderr form the transcript captured at VIBECRAFTED_TRANSCRIPT_PATH ({transcript_hint}).
 - Do not create, overwrite, or summarize run metadata yourself. The runtime owns VIBECRAFTED_META_PATH.
 {WORKER_SIGNAL_DISCIPLINE.rstrip()}
@@ -1190,6 +1338,16 @@ def build_launch_command(
     return _with_model_override(worker_agent, _stdin_command(worker_agent), spec.model)
 
 
+def _sweep_stale_runs() -> None:
+    """Reap survivors of terminal runs. Never raises, never blocks a launch."""
+    try:
+        from .run_reaper import sweep_quietly
+
+        sweep_quietly()
+    except Exception as _sweep_exc:  # noqa: BLE001
+        _ = _sweep_exc  # best-effort reaper sweep
+
+
 def launch_workflow(
     spec: WorkflowLaunchSpec,
     source_dir: str | Path,
@@ -1197,7 +1355,15 @@ def launch_workflow(
     env: dict[str, str] | None = None,
     retry_of: str = "",
 ) -> dict[str, Any]:
-    run_id = _run_id(spec.skill)
+    # Opportunistic pre-flight: before adding a run to the machine, take the dead
+    # ones' survivors off it. Every spawn is the natural sweep point — it needs no
+    # daemon, and it is exactly when the residue starts costing the new run cores.
+    # Silent and best-effort; a reaper problem must never block a launch.
+    _sweep_stale_runs()
+
+    run_id = spec.run_id or reserve_run_id(spec.skill)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
+        raise ValueError("run_id must be a safe 1-128 character identifier")
     artifacts = _run_artifact_paths(run_id)
     runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
     research_selection = (
@@ -1231,6 +1397,15 @@ def launch_workflow(
         artifact_suffix=artifact_suffix,
     )
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
+    claim_digest = str(spec.claim_digest or "").strip()
+    if claim_digest:
+        atomic_write_json(
+            artifacts["meta"],
+            {
+                "run_id": run_id,
+                "claim_digest": claim_digest,
+            },
+        )
     safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
     worker_command = build_launch_command(spec, source_dir, prompt_file=prompt_path)
     model_receipt = _model_override_receipt(spec.agent, spec.model)
@@ -1256,6 +1431,7 @@ def launch_workflow(
     merged_env = dict(os.environ)
     if env:
         merged_env.update(env)
+    merged_env.pop(CLAIM_DIGEST_ENV, None)
     _prepend_pythonpath(merged_env, _core_package_root())
     session_id = ensure_session_id(merged_env.get("VIBECRAFTED_SESSION_ID"))
     merged_env["VIBECRAFTED_RUN_ID"] = run_id
@@ -1267,6 +1443,8 @@ def launch_workflow(
     merged_env["VIBECRAFTED_AGENT"] = spec.agent
     merged_env["VIBECRAFTED_SKILL"] = spec.skill
     merged_env["VIBECRAFTED_RUNTIME"] = spec.runtime
+    if claim_digest:
+        merged_env[CLAIM_DIGEST_ENV] = claim_digest
     if spec.model:
         merged_env["VIBECRAFTED_MODEL_REQUESTED"] = spec.model
     if research_selection is not None:
@@ -1343,6 +1521,7 @@ def launch_workflow(
             "report": str(report_path),
             "transcript": str(artifacts["transcript"]),
             "meta": str(artifacts["meta"]),
+            **({"claim_digest": claim_digest} if claim_digest else {}),
             "workflow": _workflow_metadata(spec.skill),
             **(
                 {
@@ -1387,16 +1566,89 @@ def launch_workflow(
             )
             + "\n"
         )
+        launcher_pid: int | None = None
         try:
-            proc = subprocess.Popen(
-                command,
-                cwd=Path(source_dir).resolve(),
-                env=merged_env,
-                stdout=handle,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                text=True,
-            )
+            if transport == "vc-frame":
+                # G3: run action synchronously so "Session not found" cannot
+                # leave a silent process_spawned receipt. One create-background
+                # retry lives inside _vc_frame_run_host_action.
+                host = _vc_frame_run_host_action(
+                    command, operator_session=operator_session
+                )
+                handle.write(
+                    json.dumps(
+                        {
+                            "ts": stamp,
+                            "event": "vc_frame_host_action",
+                            "ok": host.ok,
+                            "resurrected": host.resurrected,
+                            "error": host.error,
+                            "stderr": host.stderr[:2000] if host.stderr else "",
+                        }
+                    )
+                    + "\n"
+                )
+                if not host.ok:
+                    append_event(
+                        kind="launch",
+                        run_id=run_id,
+                        message=f"vc-frame host session launch failed: {host.error}",
+                        payload={
+                            "state": "failed",
+                            "agent": spec.agent,
+                            "skill": spec.skill,
+                            "mode": spec.mode,
+                            "runtime": spec.runtime,
+                            "root": spec.root,
+                            "operator_session": operator_session,
+                            "session_id": session_id,
+                            "error": host.error,
+                            "last_error": host.error,
+                            "retry_of": retry_of,
+                            **model_receipt,
+                        },
+                    )
+                    return {
+                        "accepted": False,
+                        "message": f"Failed to launch {spec.skill}: {host.error}",
+                        "command": command,
+                        "worker_command": worker_command,
+                        "dispatch_command": dispatch_command,
+                        "transport": transport,
+                        "command_script": str(command_script or ""),
+                        "launch_log": str(launch_log),
+                        "spec": safe_spec,
+                        "error": host.error,
+                        "last_error": host.error,
+                        "run_id": run_id,
+                        "operator_session": operator_session,
+                        "retry_of": retry_of,
+                        **model_receipt,
+                        "control_plane": sync_state(),
+                    }
+                launcher_pid = host.pid
+            else:
+                proc = subprocess.Popen(
+                    command,
+                    cwd=Path(source_dir).resolve(),
+                    env=merged_env,
+                    stdout=handle,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    text=True,
+                )
+                launcher_pid = proc.pid
+                # The launch is intentionally asynchronous, but dropping the
+                # Popen object without waiting leaves a completed launcher as a
+                # zombie.  ``kill(pid, 0)`` then reports it alive and canonical
+                # await cannot distinguish finalization from stale OS state.
+                wait_for_launcher = getattr(proc, "wait", None)
+                if callable(wait_for_launcher):
+                    threading.Thread(
+                        target=wait_for_launcher,
+                        name=f"vibecrafted-reap-{run_id}",
+                        daemon=True,
+                    ).start()
         except OSError as exc:
             handle.write(
                 json.dumps(
@@ -1426,6 +1678,7 @@ def launch_workflow(
                     "operator_session": operator_session,
                     "session_id": session_id,
                     "error": f"{type(exc).__name__}: {exc}",
+                    "last_error": f"{type(exc).__name__}: {exc}",
                     "retry_of": retry_of,
                     **model_receipt,
                 },
@@ -1452,7 +1705,7 @@ def launch_workflow(
             message="dispatcher process spawned",
             payload={
                 "state": "process_spawned",
-                "launcher_pid": proc.pid,
+                "launcher_pid": launcher_pid,
                 "agent": spec.agent,
                 "skill": spec.skill,
                 "mode": spec.mode,
@@ -1479,7 +1732,7 @@ def launch_workflow(
             },
         )
         handle.write(
-            json.dumps({"ts": stamp, "event": "spawned", "pid": proc.pid}) + "\n"
+            json.dumps({"ts": stamp, "event": "spawned", "pid": launcher_pid}) + "\n"
         )
 
     return {
@@ -1490,7 +1743,7 @@ def launch_workflow(
         "worker_command": worker_command,
         "transport": transport,
         "command_script": str(command_script or ""),
-        "pid": proc.pid,
+        "pid": launcher_pid,
         "run_id": run_id,
         "agent": spec.agent,
         "skill": spec.skill,

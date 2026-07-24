@@ -10,7 +10,18 @@ from vibecrafted_core.workflows import registry
 
 def test_registry_keeps_supported_workflows_explicit() -> None:
     assert registry.workflow_definition("workflow") is not None
-    assert registry.workflow_definition("justdo").id == "implement"
+    justdo = registry.workflow_definition("justdo")
+    implement = registry.workflow_definition("implement")
+    assert justdo is not None
+    assert implement is not None
+    assert justdo.id == "justdo"
+    assert implement.id == "implement"
+    assert justdo.id != implement.id
+    assert tuple(implement.aliases) == ()
+    ship = registry.workflow_manifest("vc-ship")
+    assert ship is not None
+    assert "justdo" not in {stage.id for stage in ship.stages}
+    assert "implement" in {stage.id for stage in ship.stages}
     assert registry.SUPPORTED_WORKFLOWS == workflow.SUPPORTED_WORKFLOWS
 
 

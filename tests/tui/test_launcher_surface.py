@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -68,7 +68,7 @@ def test_compact_help_uses_release_engine_contract(tmp_path: Path) -> None:
         "scaffold → implement → review → workflow → followup → marbles → "
         "audit → polarize → dou → hydrate → release"
     ) in output
-    assert "14 more skills: vibecrafted help --all" in output
+    assert "More workflows: vibecrafted help --all" in output
     assert 'vibecrafted implement codex -p "Ship dark mode"' in output
     assert "justdo" not in output
     assert "compatibility alias" not in output
@@ -87,20 +87,37 @@ def test_full_help_examples_keep_decorate_between_dou_and_hydrate(
     assert "vibecrafted dou claude" in output
     assert "vibecrafted decorate codex" in output
     assert "vibecrafted hydrate codex" in output
-    assert "justdo = alias for implement" in output
+    assert "justdo = Just Do posture (not implement)" in output
 
 
-def test_implement_help_is_canonical_and_names_alias(tmp_path: Path) -> None:
+def test_implement_help_is_ship_write_and_distinct_from_justdo(tmp_path: Path) -> None:
     output = _run_launcher_help(tmp_path, "implement", "--help")
 
     assert (
-        "Autonomous end-to-end implementation with followup and marbles built in."
-        in output
+        "VC-ship WRITE stage: structured end-to-end implementation with followup "
+        "and marbles built in." in output
     )
     assert "vibecrafted implement <claude|codex|agy|junie|grok> [flags]" in output
     assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in output
-    assert "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]" in output
+    assert "Not the same skill as justdo." in output
     assert 'vibecrafted implement codex --prompt "Ship the feature"' in output
+
+
+def test_shell_and_core_render_the_same_workflow_help(tmp_path: Path) -> None:
+    shell_output = _run_launcher_help(tmp_path, "marbles", "--help")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(REPO_ROOT / "vibecrafted-core")
+
+    core = subprocess.run(
+        [sys.executable, "-m", "vibecrafted_core.cli", "marbles", "--help"],
+        cwd=REPO_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert shell_output == ANSI_RE.sub("", core.stdout)
 
 
 def test_update_ref_pair_reaches_make_branch(tmp_path: Path) -> None:
@@ -136,14 +153,15 @@ def test_docs_skill_index_locks_command_semantics() -> None:
     workflows = (REPO_ROOT / "docs" / "WORKFLOWS.md").read_text(encoding="utf-8")
 
     assert (
-        "`vc-implement` / `vibecrafted implement` is the official autonomous delivery"
+        "`vc-implement` / `vibecrafted implement` is the official ship-cycle WRITE"
         in skills
     )
     assert "`vc-justdo`" in skills
-    assert "`justdo`    | `vibecrafted implement`" in skills
+    assert "`justdo`    | `justdo`" in skills
+    assert "Standalone Just Do posture" in skills
     assert (
         "Findings-first review over a bounded PR, branch, commit range, or artifact pack."
         in skills
     )
     assert "Post-implementation direction audit" in skills
-    assert "`justdo` command and `vc-justdo` helper remain aliases" in workflows
+    assert "`vibecrafted justdo` / `vc-justdo` is a **standalone**" in workflows

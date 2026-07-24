@@ -3,9 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core.dispatch.doctor import diagnose_file, main
-
 
 FIXTURES = Path(__file__).parent / "fixtures"
 INVALID = FIXTURES / "invalid"

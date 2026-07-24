@@ -16,6 +16,30 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Wywołanie dla `vc-delegate` (launcher `delegate`)**
+>
+> Ten sam _kształt_ trzech ścieżek floty, z **literałami tego** skilla — zobacz
+> kanoniczną [Matrycę Delegacji](../DELEGATION_MATRIX.md):
+>
+> - [Wspólne trzy ścieżki](../DELEGATION_MATRIX.md#wspólne-trzy-ścieżki)
+> - [Katalog launcherów](../DELEGATION_MATRIX.md#katalog-launcherów-core-runtime)
+> - [Reguła per-launcher](../DELEGATION_MATRIX.md#reguła-per-launcher-delta-semantyczna)
+> - [Native vs external](../DELEGATION_MATRIX.md#natywne-subagenty-vs-zewnętrzni-workerzy)
+>
+> | Ścieżka               | Literał tego skilla                                                                                                             |
+> | --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. Worker użytkownika | `vibecrafted delegate <agent>`                                                                                                  |
+> | 2. Interactive        | `/vc-delegate` — wykonaj **w tej sesji**; native subagenty gdy trzeba; **nie** zewnętrzniaj tylko dlatego, że launcher istnieje |
+> | 3. Agent-operator     | może odpalić formę workera powyżej przez `vc-dispatch` / linie operatora, zachowując tożsamość tego skilla                      |
+>
+> **Uwaga:** Native subagent **bounds**; freer native under other skills still points here for limits.
+
+> Swobodniejszy native na niektórych biegach ≠ porzucenie floty external. `vc-dispatch` i `vc-ship` zachowują własne tożsamości.
+
+<!-- /fleet-imperative -->
+
 # vc-delegate
 
 ## Wejście operatora
@@ -46,11 +70,11 @@ vc-start
 Nie uruchamiaj `vc-delegate` bezpośrednio. Jego zamiennik od strony operatora to:
 
 ```bash
-vibecrafted <workflow> <agent> --file '/path/to/plan.md'
+vibecrafted <launcher> <agent> --file '/path/to/plan.md'
 ```
 
 ```bash
-vc-<workflow> <agent> --prompt '<prompt>'
+vc-<launcher> <agent> --prompt '<prompt>'
 ```
 
 Ten skill nie jest samą zewnętrzną flotą. To doktryna operatora dla

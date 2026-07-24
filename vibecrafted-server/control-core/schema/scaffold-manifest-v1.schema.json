@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vetcoders.io/schemas/scaffold-manifest-v1.schema.json",
+  "title": "Vibecrafted Scaffold Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "plan_id", "org", "repo", "day", "artifacts"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "plan_id": { "type": "string", "minLength": 1 },
+    "org": { "type": "string", "minLength": 1 },
+    "repo": { "type": "string", "minLength": 1 },
+    "day": { "type": "string", "pattern": "^[0-9]{4}_[0-9]{4}$" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "role", "path", "editable", "required"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "role": {
+            "enum": ["driver", "wave-atlas", "brief", "design-doc", "traceability", "tracker", "falsification", "report", "other"]
+          },
+          "path": { "type": "string", "pattern": "^[^/\\\\].*\\.md$" },
+          "editable": { "type": "boolean" },
+          "required": { "type": "boolean" },
+          "dependencies": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+        }
+      }
+    }
+  }
+}

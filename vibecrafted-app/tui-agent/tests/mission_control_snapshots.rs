@@ -46,6 +46,17 @@ const TERM_HEIGHT: u16 = 40;
 fn populated_mission_state() -> MissionControlState {
     MissionControlState {
         generated_at: "2026-06-10T12:00:00+00:00".to_string(),
+        settlement: voc::SettlementBoardCounts {
+            scope: voc::SettlementBoardCounts::SCOPE_RETAINED_SNAPSHOTS.to_string(),
+            f: 0,
+            x: 2,
+            n: 5,
+            invalid: 0,
+            active: 2,
+            stalled: 3,
+            orphans: 1,
+            total_settled: 7,
+        },
         active_dispatches: vec![
             ActiveDispatch {
                 run_id: "just-091500-11111".to_string(),
@@ -675,7 +686,10 @@ fn vc_admin_status_renders_all_panels_from_disk_fixtures() {
     let two_hours_ago = (now - chrono::Duration::hours(2)).to_rfc3339();
     let three_hours_ago = (now - chrono::Duration::hours(3)).to_rfc3339();
 
-    let bucket = artifact_root.join("vetcoders/vibecrafted/2026_0610/reports");
+    // Dated bucket must sit inside STATS_WINDOW_DAYS (30d) of wall clock, or
+    // directory_within_window prunes the walk and the snapshot goes silent.
+    let bucket_day = now.format("%Y_%m%d").to_string();
+    let bucket = artifact_root.join(format!("vetcoders/vibecrafted/{bucket_day}/reports"));
     write_meta(
         &bucket.join("just-001.meta.json"),
         &format!(

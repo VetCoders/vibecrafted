@@ -82,7 +82,7 @@ def _run_with_tty(
 
         output.extend(chunk)
         if not sent_response and b"Proceed? [y/N]" in output:
-            os.write(fd, f"{response}\n".encode("utf-8"))
+            os.write(fd, f"{response}\n".encode())
             sent_response = True
 
     while True:
@@ -325,13 +325,7 @@ def test_install_sh_archive_install_runs_local_make_target(tmp_path: Path) -> No
 
     _write_executable(
         fake_bin / "make",
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'printf "%s\\n" "$@" > "$MAKE_CAPTURE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > "$MAKE_CAPTURE"'
         + "\n",
     )
     _write_executable(
@@ -399,13 +393,7 @@ def test_install_sh_gui_bootstrap_runs_local_guided_installer(tmp_path: Path) ->
 
     _write_executable(
         fake_bin / "make",
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'printf "%s\\n" "$@" > "$MAKE_CAPTURE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > "$MAKE_CAPTURE"'
         + "\n",
     )
     _write_executable(

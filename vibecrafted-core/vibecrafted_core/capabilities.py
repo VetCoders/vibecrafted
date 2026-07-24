@@ -23,10 +23,11 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from .runtime_paths import vibecrafted_launcher_bin
 
@@ -98,7 +99,7 @@ def _now_iso() -> str:
 def _default_runner(timeout: float) -> Runner:
     def run(cmd: Sequence[str]) -> ProbeResult:
         try:
-            completed = subprocess.run(  # noqa: S603 - product foundation probe
+            completed = subprocess.run(
                 list(cmd),
                 capture_output=True,
                 text=True,
@@ -200,7 +201,7 @@ def _extract_capabilities(help_text: str) -> list[str]:
             in_section = True
             continue
         # A new non-indented heading ends the commands section.
-        if in_section and not (raw.startswith(" ") or raw.startswith("\t")):
+        if in_section and not (raw.startswith((" ", "\t"))):
             if line.strip().endswith(":"):
                 in_section = False
             continue

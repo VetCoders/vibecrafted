@@ -26,6 +26,14 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
   Use `make install-auto` for the direct non-interactive path, or
   `python3 scripts/vetcoders_install.py install --source "$PWD" --non-interactive` when you want full CLI control.
 
+- **I pulled new commits — is my install updated?**
+  No. The daily CLI runs the **staged tools home**
+  (`~/.local/share/vibecrafted/tools/vibecrafted-current/`), not the floating git
+  checkout. Re-run `make install` (or `install-auto`) and confirm
+  `VERSION` / `vibecrafted --version` show the same `+g<sha>` as
+  `git rev-parse --short HEAD`. See [INSTALL.md](INSTALL.md) and
+  [runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md).
+
 ## Skills, Agents, Foundations
 
 - **What is the difference between a skill and an agent?**
@@ -46,10 +54,10 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 
 ## Workflow and Operations
 
-- **When should I use `vc-implement` (alias `vc-justdo`)?**
-  Use it when the task is clear and you want the agent to take ownership end-to-end. `vc-implement` is the default
-  name; `vc-justdo` keeps working for agents already wired to it. Use the phase skills individually when you want more
-  supervisory control.
+- **When should I use `vc-implement` vs `vc-justdo`?**
+  Use `vc-implement` for a clear **ship WRITE** cut with structured e2e delivery (followup + marbles). Use
+  `vc-justdo` for **standalone Just Do posture**: task type from the prompt, no ship-stage ceremony — not an
+  implement alias (ADR-0001). Use phase skills individually when you want more supervisory control.
 
 - **When should I use `vc-review` instead of `vc-followup`?**
   Use `vc-review` for a bounded review target: a PR, branch diff, commit range, or artifact pack. Use `vc-followup`
@@ -63,6 +71,13 @@ For the long-form answer bank, see [FAQ-ANSWERED.md](FAQ-ANSWERED.md).
 - **What lives in `$VIBECRAFTED_ROOT/.vibecrafted/artifacts/`?**
   Plans, reports, transcripts, and metadata from major runs. The artifact store exists so agent work leaves durable
   evidence.
+
+- **Why is the SESSIONS rail still `f · 0 x · 0 n · 0` when many runs completed?**
+  Those counters count **tabs in bucket sessions** (`Finalized runs` /
+  `Failed runs` / `Needs attention`) after `vc-frame triage-run`, not
+  control-plane `completed` rows. Settlement without triage leaves finished
+  tabs in the work session. See
+  [runtime/TRIAGE_AND_SESSIONS.md](runtime/TRIAGE_AND_SESSIONS.md).
 
 - **What is Definition of Undone?**
   DoU is the audit that checks whether people can discover, understand, install, trust, and adopt the thing, not only

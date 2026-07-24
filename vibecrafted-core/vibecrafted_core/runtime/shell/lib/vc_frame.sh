@@ -210,6 +210,28 @@ _vetcoders_operator_session_name() {
   _vetcoders_operator_session_name_for_run_id "$run_id"
 }
 
+# G7 twin of spawn_effective_operator_session (scripts/lib/vc_frame.sh).
+# Worker host session: override → basename(root) → collision suffix. Never the
+# human operator seat (VC_FRAME_SESSION_NAME / ZELLIJ_SESSION_NAME).
+_vetcoders_effective_worker_session() {
+  if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" ]]; then
+    printf '%s\n' "${VIBECRAFTED_WORKER_SESSION}"
+    return 0
+  fi
+  local root_dir="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-${_vetcoders_contract_root:-}}}"
+  if [[ -z "$root_dir" ]]; then
+    root_dir="$(_vetcoders_repo_root 2>/dev/null || pwd)"
+  fi
+  local host=""
+  host="$(basename "$root_dir")"
+  [[ -n "$host" ]] || return 1
+  local dispatcher="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
+  if [[ -n "$dispatcher" && "$host" == "$dispatcher" ]]; then
+    host="${host} workers"
+  fi
+  printf '%s\n' "$host"
+}
+
 _vetcoders_vc_frame_gc_script() {
   _vetcoders_workflow_script "vc-operator" "mission-control/vc-frame-gc.sh"
 }
@@ -413,6 +435,93 @@ _vetcoders_prepare_operator_runtime() {
   return 1
 }
 
+# G3 twin of spawn_vc_frame_session_action (scripts/lib/vc_frame.sh).
+# Same contract: session-not-found → one attach --create-background + retry;
+# unrecoverable host failure returns 2. Idiomatic to this file (no shared source).
+_vetcoders_vc_frame_stderr_is_session_not_found() {
+  local text="${1:-}"
+  [[ -n "$text" ]] || return 1
+  printf '%s' "$text" | command grep -qiE \
+    "Session ['\"][^'\"]+['\"] not found|There is no active session!"
+}
+
+_vetcoders_vc_frame_create_host_session() {
+  local vc_frame_bin="${1:-}"
+  local session_name="${2:-}"
+  [[ -n "$vc_frame_bin" && -n "$session_name" ]] || return 1
+  local out="" status=0
+  out="$("$vc_frame_bin" attach --create-background "$session_name" 2>&1)" || status=$?
+  if [[ -n "$out" ]]; then
+    printf '%s\n' "$out" >&2
+  fi
+  if [[ "$(_vetcoders_vc_frame_session_state "$session_name")" == "live" ]]; then
+    return 0
+  fi
+  [[ "$status" -eq 0 ]] || return "$status"
+  return 1
+}
+
+_vetcoders_vc_frame_session_action() {
+  local vc_frame_bin="${1:-}"
+  local session_name="${2:-}"
+  shift 2 || true
+  VETCODERS_VC_FRAME_LAST_ERROR=""
+  [[ -n "$vc_frame_bin" ]] || return 1
+  [[ "$#" -ge 1 ]] || return 1
+
+  local err_file out_file status=0 err=""
+  err_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.err")"
+  out_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.out")"
+
+  _vetcoders_vc_frame_action_invoke() {
+    if [[ -n "$session_name" ]]; then
+      "$vc_frame_bin" --session "$session_name" "$@" >"$out_file" 2>"$err_file"
+    else
+      "$vc_frame_bin" "$@" >"$out_file" 2>"$err_file"
+    fi
+  }
+
+  status=0
+  _vetcoders_vc_frame_action_invoke "$@" || status=$?
+  err="$(cat "$err_file" 2>/dev/null || true)"
+  if [[ -n "$err" ]]; then
+    printf '%s\n' "$err" >&2
+  fi
+
+  if _vetcoders_vc_frame_stderr_is_session_not_found "$err"; then
+    VETCODERS_VC_FRAME_LAST_ERROR="$err"
+    if [[ -z "$session_name" ]]; then
+      rm -f "$err_file" "$out_file"
+      return 2
+    fi
+    printf 'hosting session missing; one-shot attach --create-background %s\n' \
+      "$session_name" >&2
+    if ! _vetcoders_vc_frame_create_host_session "$vc_frame_bin" "$session_name"; then
+      VETCODERS_VC_FRAME_LAST_ERROR="${VETCODERS_VC_FRAME_LAST_ERROR}"$'\n'"attach --create-background '${session_name}' failed"
+      rm -f "$err_file" "$out_file"
+      return 2
+    fi
+    status=0
+    _vetcoders_vc_frame_action_invoke "$@" || status=$?
+    err="$(cat "$err_file" 2>/dev/null || true)"
+    if [[ -n "$err" ]]; then
+      printf '%s\n' "$err" >&2
+    fi
+    if _vetcoders_vc_frame_stderr_is_session_not_found "$err" || [[ "$status" -ne 0 ]]; then
+      VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action failed after host resurrect (exit ${status})}"
+      rm -f "$err_file" "$out_file"
+      return 2
+    fi
+  elif [[ "$status" -ne 0 ]]; then
+    VETCODERS_VC_FRAME_LAST_ERROR="${err:-vc-frame action exit ${status}}"
+    rm -f "$err_file" "$out_file"
+    return "$status"
+  fi
+
+  rm -f "$err_file" "$out_file"
+  return 0
+}
+
 _vetcoders_spawn_into_operator_session() {
   vc_raise_launcher_limits
   local PATH="${PATH:-}"
@@ -420,7 +529,17 @@ _vetcoders_spawn_into_operator_session() {
   export PATH
   local tab_name="$1"
   local command_text="$2"
-  local session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
+  # Operator-UI path (vc-init / operator agent / resume): land in the prepared
+  # operator seat. Skill *workers* use scripts/lib spawn_launch (G7 per-project
+  # host). Optional: VIBECRAFTED_WORKER_SESSION forces the G7 worker host here
+  # too (marbles fleets that share this entrypoint).
+  local session_name=""
+  if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" ]]; then
+    session_name="$(_vetcoders_effective_worker_session 2>/dev/null || true)"
+  else
+    session_name="${VIBECRAFTED_OPERATOR_SESSION:-$(_vetcoders_operator_session_name)}"
+  fi
+  [[ -n "$session_name" ]] || return 1
   local root_dir="${_vetcoders_contract_root:-$(_vetcoders_repo_root)}"
   local layout_file state
   local cmd_script
@@ -447,10 +566,20 @@ _vetcoders_spawn_into_operator_session() {
   # readable trail for debugging.
   cmd_script="$(_vetcoders_tmp_script_path "vc-spawn-cmd" "$root_dir")"
   _vetcoders_write_command_script "$cmd_script" "$command_text" || return 1
-  if "$vc_frame_bin" --session "$session_name" action new-tab \
+  # --after-base (W2-B-4c): run tabs grow from the base card, newest right of
+  # it, instead of drifting to the rail's far end. Probe the binary — a stale
+  # install without the flag degrades to the old append placement.
+  local placement_flag=""
+  if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--after-base'; then
+    placement_flag="--after-base"
+  fi
+  # G3: check exit + stderr; one create-background on session-not-found.
+  if _vetcoders_vc_frame_session_action "$vc_frame_bin" "$session_name" \
+    action new-tab \
+    ${placement_flag:+"$placement_flag"} \
     --name "$tab_name" \
     --cwd "$root_dir" \
-    -- "$cmd_script" >/dev/null; then
+    -- "$cmd_script"; then
     printf 'launch accepted: run_id=%s target=%s/%s watch=vc-frame attach %s\n' \
       "$run_id" "$session_name" "$tab_name" "$session_name"
     return 0
@@ -460,5 +589,8 @@ _vetcoders_spawn_into_operator_session() {
 
   printf 'launch failed: run_id=%s target=%s/%s status=%s\n' \
     "$run_id" "$session_name" "$tab_name" "$status" >&2
+  if [[ -n "${VETCODERS_VC_FRAME_LAST_ERROR:-}" ]]; then
+    printf '%s\n' "$VETCODERS_VC_FRAME_LAST_ERROR" >&2
+  fi
   return "$status"
 }

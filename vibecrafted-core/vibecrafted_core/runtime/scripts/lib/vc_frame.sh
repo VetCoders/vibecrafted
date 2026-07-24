@@ -23,6 +23,12 @@ spawn_current_vc_frame_session_name() {
   printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
 }
 
+# Session the dispatcher is attached to (pane env). Empty when outside vc-frame.
+# G7: this seat must NEVER receive worker tabs.
+spawn_dispatcher_session_name() {
+  printf '%s\n' "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
+}
+
 # A vc-frame session is a usable spawn target only when it is actually live.
 # Guards against the dispatcher's per-run tracking id (operator_session_name() =
 # "<repo>-<run_id>", see control_plane.py) being treated as a real session.
@@ -35,72 +41,57 @@ spawn_session_is_live() {
   local sessions=""
   sessions="$("$bin" list-sessions 2>/dev/null || true)"
   [[ -n "$sessions" ]] || sessions="$("$bin" ls 2>/dev/null || true)"
+  # Match full session name (G7 may use multi-word hosts like "<repo> workers").
+  # Strip trailing status tags: [Created], (current), EXITED markers.
   printf '%s\n' "$sessions" \
     | sed 's/\x1b\[[0-9;]*m//g' \
-    | awk -v s="$name" '$1 == s && $0 !~ /EXITED/ { hit = 1 } END { exit hit ? 0 : 1 }'
+    | awk -v s="$name" '
+        {
+          if ($0 ~ /EXITED/) next
+          line = $0
+          sub(/[[:space:]]+\[.*$/, "", line)
+          sub(/[[:space:]]+\([^)]*\)$/, "", line)
+          gsub(/[[:space:]]+$/, "", line)
+          if (line == s) hit = 1
+        }
+        END { exit hit ? 0 : 1 }
+      '
 }
 
+# G7 (2026-07-21): resolve the WORKER host session — never the human operator seat.
+# Name kept for call-site compatibility; launch-log field operator_session records
+# this host (truthful target), not the dispatcher's interactive session.
+#
+# Rules (exact order):
+#   1. VIBECRAFTED_WORKER_SESSION if set — explicit override wins.
+#   2. basename of SPAWN_ROOT / VIBECRAFTED_ROOT / cwd = per-project host.
+#   3. If host == dispatcher seat (VC_FRAME_SESSION_NAME / ZELLIJ_SESSION_NAME),
+#      use "<repo> workers" so the operator session never gets a worker tab.
+# Missing host sessions are resurrected by G3 (attach --create-background).
 spawn_effective_operator_session() {
   spawn_normalize_ambient_context
 
-  local session_name=""
-
-  local vc_frame_bin=""
-  vc_frame_bin="$(spawn_vc_frame_bin)" || return 1
-
-  # Honour an explicitly-provided operator session FIRST when it names a LIVE
-  # vc-frame session (restores pre-W1-06 precedence so `vc-resume`/marbles land in
-  # the session the caller asked for). The liveness gate still keeps a STALE
-  # ambient VIBECRAFTED_OPERATOR_SESSION from stealing the visible tab.
-  local explicit=""
-  for explicit in "${VIBECRAFTED_OPERATOR_SESSION:-}" \
-    "${VC_FRAME_SESSION_NAME:-}" "${ZELLIJ_SESSION_NAME:-}"; do
-    if [[ -n "$explicit" ]] && spawn_session_is_live "$explicit"; then
-      printf '%s\n' "$explicit"
-      return 0
-    fi
-  done
-
-  local repo_root_hint="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-}}"
-  if [[ -z "${VC_FRAME_SESSION_NAME:-}" && -n "$repo_root_hint" ]]; then
-    session_name="$(basename "$repo_root_hint")"
-    printf '%s\n' "$session_name"
+  if [[ -n "${VIBECRAFTED_WORKER_SESSION:-}" ]]; then
+    printf '%s\n' "${VIBECRAFTED_WORKER_SESSION}"
     return 0
   fi
 
-  # Attached-pane marker: vc-frame tags the session you are currently in.
-  local sessions=""
-  sessions="$("$vc_frame_bin" list-sessions 2>/dev/null || true)"
-  [[ -n "$sessions" ]] || sessions="$("$vc_frame_bin" ls 2>/dev/null || true)"
-  session_name="$(
-    printf '%s\n' "$sessions" \
-      | sed 's/\x1b\[[0-9;]*m//g' \
-      | awk '/\(current\)/ {print $1; exit}'
-  )"
+  local repo_root="${SPAWN_ROOT:-${VIBECRAFTED_ROOT:-}}"
+  local host=""
+  if [[ -n "$repo_root" ]]; then
+    host="$(basename "$repo_root")"
+  else
+    host="$(basename "$(pwd)")"
+  fi
+  [[ -n "$host" ]] || return 1
 
-  # No (current) marker → dispatched from OUTSIDE any vc-frame pane (plain
-  # terminal, headless agent, nested dispatch). The operator session is repo-bound
-  # — named after `basename "$root"` (see dispatch.sh). Try that deterministic
-  # target first; if the action fails, the caller degrades to headless. This keeps
-  # stale ambient VIBECRAFTED_OPERATOR_SESSION values from stealing the visible tab.
-  if [[ -z "$session_name" ]]; then
-    local repo_session=""
-    repo_session="$(basename "${SPAWN_ROOT:-$(pwd)}")"
-    session_name="$repo_session"
+  local dispatcher=""
+  dispatcher="$(spawn_dispatcher_session_name)"
+  if [[ -n "$dispatcher" && "$host" == "$dispatcher" ]]; then
+    host="${host} workers"
   fi
 
-  # Final fallback for explicitly supplied live operator sessions. This is last
-  # on purpose: it keeps external launches visible-by-default in the repo-bound
-  # frame and prevents stale ambient env from stealing the tab.
-  if [[ -z "$session_name" ]]; then
-    session_name="${VIBECRAFTED_OPERATOR_SESSION:-}"
-    if [[ -n "$session_name" ]] && ! spawn_session_is_live "$session_name"; then
-      session_name=""
-    fi
-  fi
-
-  [[ -n "$session_name" ]] || return 1
-  printf '%s\n' "$session_name"
+  printf '%s\n' "$host"
 }
 
 spawn_in_target_vc_frame_session() {
@@ -446,6 +437,149 @@ spawn_in_marbles_tab() {
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# Host-session action wrapper (G3): never swallow "Session not found".
+#
+# Observed failure mode: `vc-frame --session X action ...` prints
+# "Session 'X' not found" while some builds still exit 0. The launcher then
+# records process_spawned and later stalls as pid_gone with no receipt error.
+#
+# Contract:
+#   1. Run the action, capture stderr (still re-emit it).
+#   2. On session-not-found diagnostics: ONE `attach --create-background NAME`
+#      then retry the action once.
+#   3. On second failure: return 2 and set SPAWN_VC_FRAME_LAST_ERROR so the
+#      caller can fail the control-plane receipt immediately.
+# Happy path (session live, action ok): no create-background, same argv.
+# ---------------------------------------------------------------------------
+
+SPAWN_VC_FRAME_LAST_ERROR=""
+
+spawn_vc_frame_stderr_is_session_not_found() {
+  local text="${1:-}"
+  [[ -n "$text" ]] || return 1
+  printf '%s' "$text" | command grep -qiE \
+    "Session ['\"][^'\"]+['\"] not found|There is no active session!"
+}
+
+spawn_vc_frame_create_host_session() {
+  local vc_frame_bin="${1:-}"
+  local session_name="${2:-}"
+  [[ -n "$vc_frame_bin" && -n "$session_name" ]] || return 1
+  local out="" status=0
+  out="$("$vc_frame_bin" attach --create-background "$session_name" 2>&1)" || status=$?
+  if [[ -n "$out" ]]; then
+    printf '%s\n' "$out" >&2
+  fi
+  # Prefer liveness over bare exit: create-background may report odd codes.
+  if spawn_session_is_live "$session_name"; then
+    return 0
+  fi
+  [[ "$status" -eq 0 ]] || return "$status"
+  return 1
+}
+
+spawn_record_host_session_failure() {
+  local err="${SPAWN_VC_FRAME_LAST_ERROR:-hosting session launch failed}"
+  SPAWN_VC_FRAME_LAST_ERROR="$err"
+  printf 'host session launch failed: %s\n' "$err" >&2
+  local meta_path="${SPAWN_META:-}"
+  [[ -n "$meta_path" && -f "$meta_path" ]] || return 0
+  python3 - "$meta_path" "$err" <<'PY' 2>/dev/null || true
+import datetime as dt
+import json
+import os
+import sys
+
+meta_path, err = sys.argv[1], sys.argv[2]
+try:
+    with open(meta_path, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+except (OSError, json.JSONDecodeError):
+    sys.exit(0)
+
+now = dt.datetime.now(dt.timezone.utc).isoformat()
+payload["status"] = "failed"
+payload["last_error"] = err
+payload["updated_at"] = now
+payload["completed_at"] = now
+payload["exit_code"] = 1
+payload["liveness"] = "terminal"
+tmp = f"{meta_path}.tmp.{os.getpid()}"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(payload, fh, indent=2, ensure_ascii=False)
+    fh.write("\n")
+os.replace(tmp, meta_path)
+PY
+  if command -v spawn_sync_control_plane >/dev/null 2>&1; then
+    spawn_sync_control_plane 2>/dev/null || true
+  fi
+}
+
+# Run `vc-frame [--session NAME] <action...>` with one host-resurrect retry.
+# Args: <vc_frame_bin> <session_name_or_empty> <action args...>
+# Returns 0 ok, 2 unrecoverable host-session failure, else action exit status.
+spawn_vc_frame_session_action() {
+  local vc_frame_bin="${1:-}"
+  local session_name="${2:-}"
+  shift 2 || true
+  SPAWN_VC_FRAME_LAST_ERROR=""
+  [[ -n "$vc_frame_bin" ]] || return 1
+  [[ "$#" -ge 1 ]] || return 1
+
+  local err_file out_file status=0 err=""
+  err_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.err")"
+  out_file="$(mktemp "${TMPDIR:-/tmp}/vc-frame-action.XXXXXX.out")"
+
+  _spawn_vc_frame_action_invoke() {
+    if [[ -n "$session_name" ]]; then
+      "$vc_frame_bin" --session "$session_name" "$@" >"$out_file" 2>"$err_file"
+    else
+      "$vc_frame_bin" "$@" >"$out_file" 2>"$err_file"
+    fi
+  }
+
+  status=0
+  _spawn_vc_frame_action_invoke "$@" || status=$?
+  err="$(cat "$err_file" 2>/dev/null || true)"
+  if [[ -n "$err" ]]; then
+    printf '%s\n' "$err" >&2
+  fi
+
+  if spawn_vc_frame_stderr_is_session_not_found "$err"; then
+    SPAWN_VC_FRAME_LAST_ERROR="$err"
+    if [[ -z "$session_name" ]]; then
+      rm -f "$err_file" "$out_file"
+      return 2
+    fi
+    printf 'hosting session missing; one-shot attach --create-background %s\n' \
+      "$session_name" >&2
+    if ! spawn_vc_frame_create_host_session "$vc_frame_bin" "$session_name"; then
+      SPAWN_VC_FRAME_LAST_ERROR="${SPAWN_VC_FRAME_LAST_ERROR}"$'\n'"attach --create-background '${session_name}' failed"
+      rm -f "$err_file" "$out_file"
+      return 2
+    fi
+    status=0
+    _spawn_vc_frame_action_invoke "$@" || status=$?
+    err="$(cat "$err_file" 2>/dev/null || true)"
+    if [[ -n "$err" ]]; then
+      printf '%s\n' "$err" >&2
+    fi
+    if spawn_vc_frame_stderr_is_session_not_found "$err" || [[ "$status" -ne 0 ]]; then
+      SPAWN_VC_FRAME_LAST_ERROR="${err:-vc-frame action failed after host resurrect (exit ${status})}"
+      rm -f "$err_file" "$out_file"
+      return 2
+    fi
+  elif [[ "$status" -ne 0 ]]; then
+    SPAWN_VC_FRAME_LAST_ERROR="${err:-vc-frame action exit ${status}}"
+    rm -f "$err_file" "$out_file"
+    return "$status"
+  fi
+
+  rm -f "$err_file" "$out_file"
+  return 0
+}
+
 spawn_in_vc_frame_pane() {
   vc_raise_launcher_limits
   local launcher="$1"
@@ -455,6 +589,7 @@ spawn_in_vc_frame_pane() {
   local cmd_script
   local launch_lock=""
   local vc_frame_bin=""
+  local host_session=""
 
   if spawn_in_vc_frame_context && vc_frame_bin="$(spawn_vc_frame_bin)"; then
     # If the operator explicitly targets another vc-frame session, do not open a
@@ -471,7 +606,8 @@ spawn_in_vc_frame_pane() {
       fi
     fi
 
-    launch_lock="$(spawn_acquire_vc_frame_launch_slot "${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-local}}" 2>/dev/null || true)"
+    host_session="${VC_FRAME_SESSION_NAME:-${ZELLIJ_SESSION_NAME:-}}"
+    launch_lock="$(spawn_acquire_vc_frame_launch_slot "${host_session:-local}" 2>/dev/null || true)"
 
     cmd_script="$(spawn_tmp_script_path "vc-spawn-cmd" "${SPAWN_ROOT:-$(pwd)}")"
     spawn_write_visible_launch_script "$cmd_script" "$launcher"
@@ -482,28 +618,44 @@ spawn_in_vc_frame_pane() {
       local run_tab_id=""
       run_tab_id="$(spawn_tab_id_by_name "$run_tab_name" 2>/dev/null || true)"
       if [[ -z "$run_tab_id" ]]; then
-        "$vc_frame_bin" action new-tab \
+        # --after-base (W2-B-4c): run tabs grow from the base card. Probe the
+        # binary — a stale install without the flag keeps append placement.
+        local placement_flag=""
+        if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--after-base'; then
+          placement_flag="--after-base"
+        fi
+        spawn_vc_frame_session_action "$vc_frame_bin" "$host_session" \
+          action new-tab \
+          ${placement_flag:+"$placement_flag"} \
           --name "$run_tab_name" \
           --cwd "${SPAWN_ROOT:-$(pwd)}" \
-          -- "$cmd_script" >/dev/null || launch_status=$?
+          -- "$cmd_script" || launch_status=$?
       else
         local operator_tab_id=""
         operator_tab_id="$(spawn_current_tab_id 2>/dev/null || true)"
-        "$vc_frame_bin" action new-pane --tab-id "$run_tab_id" \
+        spawn_vc_frame_session_action "$vc_frame_bin" "$host_session" \
+          action new-pane --tab-id "$run_tab_id" \
           --stacked \
           --close-on-exit \
           --name "$pane_name" \
           --cwd "${SPAWN_ROOT:-$(pwd)}" \
-          -- "$cmd_script" >/dev/null || launch_status=$?
+          -- "$cmd_script" || launch_status=$?
         if [[ -n "$operator_tab_id" ]]; then
           "$vc_frame_bin" action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
         fi
       fi
     else
-      "$vc_frame_bin" action new-pane --direction "$direction" --name "$pane_name" --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" >/dev/null || launch_status=$? # OPERATOR_TAB_OK: explicit same-tab grid spawn.
+      spawn_vc_frame_session_action "$vc_frame_bin" "$host_session" \
+        action new-pane --direction "$direction" --name "$pane_name" \
+        --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" || launch_status=$? # OPERATOR_TAB_OK: explicit same-tab grid spawn.
     fi
     spawn_release_vc_frame_launch_slot "$launch_lock"
-    [[ "$launch_status" == "0" ]] || return "$launch_status"
+    if [[ "$launch_status" != "0" ]]; then
+      if [[ "$launch_status" -eq 2 ]]; then
+        spawn_record_host_session_failure
+      fi
+      return "$launch_status"
+    fi
 
     # Auto-tail-await side pane in the same run tab. Silent no-op if the
     # helper is missing, jq is unavailable, or we are not in new-tab mode
@@ -606,34 +758,50 @@ spawn_in_operator_session() {
   spawn_write_visible_launch_script "$cmd_script" "$launcher"
 
   # External spawn into existing operator session — route as pane or new tab per grid policy.
+  # G3: action exit + "Session not found" → one create-background + retry; never silent.
   local launch_status=0
   if [[ "$effective_direction" == "new-tab" ]]; then
     local run_tab_name="${SPAWN_RUN_ID:-${VIBECRAFTED_RUN_ID:-$pane_name}}"
     local run_tab_id=""
     run_tab_id="$(spawn_tab_id_by_name "$run_tab_name" "$session_name" 2>/dev/null || true)"
     if [[ -z "$run_tab_id" ]]; then
-      "$vc_frame_bin" --session "$session_name" action new-tab \
+      # --after-base probe (parity with spawn_in_vc_frame_pane / shell twin).
+      local placement_flag=""
+      if "$vc_frame_bin" action new-tab --help 2>&1 | command grep -q -- '--after-base'; then
+        placement_flag="--after-base"
+      fi
+      spawn_vc_frame_session_action "$vc_frame_bin" "$session_name" \
+        action new-tab \
+        ${placement_flag:+"$placement_flag"} \
         --name "$run_tab_name" \
         --cwd "${SPAWN_ROOT:-$(pwd)}" \
-        -- "$cmd_script" >/dev/null || launch_status=$?
+        -- "$cmd_script" || launch_status=$?
     else
       local operator_tab_id=""
       operator_tab_id="$(spawn_current_tab_id "$session_name" 2>/dev/null || true)"
-      "$vc_frame_bin" --session "$session_name" action new-pane --tab-id "$run_tab_id" \
+      spawn_vc_frame_session_action "$vc_frame_bin" "$session_name" \
+        action new-pane --tab-id "$run_tab_id" \
         --stacked \
         --close-on-exit \
         --name "$pane_name" \
         --cwd "${SPAWN_ROOT:-$(pwd)}" \
-        -- "$cmd_script" >/dev/null || launch_status=$?
+        -- "$cmd_script" || launch_status=$?
       if [[ -n "$operator_tab_id" ]]; then
         "$vc_frame_bin" --session "$session_name" action go-to-tab-by-id "$operator_tab_id" >/dev/null 2>&1 || true
       fi
     fi
   else
-    "$vc_frame_bin" --session "$session_name" action new-pane --direction "$effective_direction" --name "$pane_name" --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" >/dev/null || launch_status=$? # OPERATOR_TAB_OK: explicit same-tab grid spawn.
+    spawn_vc_frame_session_action "$vc_frame_bin" "$session_name" \
+      action new-pane --direction "$effective_direction" --name "$pane_name" \
+      --cwd "${SPAWN_ROOT:-$(pwd)}" -- "$cmd_script" || launch_status=$? # OPERATOR_TAB_OK: explicit same-tab grid spawn.
   fi
   spawn_release_vc_frame_launch_slot "$launch_lock"
-  [[ "$launch_status" == "0" ]] || return "$launch_status"
+  if [[ "$launch_status" != "0" ]]; then
+    if [[ "$launch_status" -eq 2 ]]; then
+      spawn_record_host_session_failure
+    fi
+    return "$launch_status"
+  fi
   if [[ "$effective_direction" == "new-tab" ]]; then
     spawn_await_watch_pane "${run_tab_id:-}" "${run_tab_name:-}" "$pane_name"
   fi

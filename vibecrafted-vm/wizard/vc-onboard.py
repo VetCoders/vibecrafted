@@ -365,6 +365,7 @@ def ping_host(hostname: str) -> bool:
             ["ping", "-c", "3", "-W", "3", hostname],
             capture_output=True,
             timeout=10,
+            check=False,
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -510,7 +511,7 @@ def build_and_run(state: WizardState) -> int:
         str(repo_root / "docker-compose.yml"),
         "build",
     ]
-    rc = subprocess.run(build_cmd, cwd=repo_root).returncode
+    rc = subprocess.run(build_cmd, cwd=repo_root, check=False).returncode
     if rc != 0:
         return rc
 
@@ -523,7 +524,7 @@ def build_and_run(state: WizardState) -> int:
         "up",
         "-d",
     ]
-    rc = subprocess.run(run_cmd, cwd=repo_root).returncode
+    rc = subprocess.run(run_cmd, cwd=repo_root, check=False).returncode
     if rc != 0:
         return rc
 
@@ -537,7 +538,7 @@ def build_and_run(state: WizardState) -> int:
         "dev",
         "zsh",
     ]
-    return subprocess.run(exec_cmd, cwd=repo_root).returncode
+    return subprocess.run(exec_cmd, cwd=repo_root, check=False).returncode
 
 
 # ── Main ───────────────────────────────────────────────────────────────────

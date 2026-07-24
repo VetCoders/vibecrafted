@@ -23,19 +23,7 @@ def _org_repo() -> str:
 
 def _write_fake_spawn(script_path: Path) -> None:
     script_path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf "RUN_ID=%s\\n" "${VIBECRAFTED_RUN_ID:-}"',
-                '  printf "SKILL_CODE=%s\\n" "${VIBECRAFTED_SKILL_CODE:-}"',
-                '  printf "SKILL_NAME=%s\\n" "${VIBECRAFTED_SKILL_NAME:-}"',
-                '  printf "RUN_LOCK=%s\\n" "${VIBECRAFTED_RUN_LOCK:-}"',
-                '  printf "ARGS=%s\\n" "$*"',
-                '} > "$CAPTURE_FILE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\n{\n  printf "RUN_ID=%s\\n" "${VIBECRAFTED_RUN_ID:-}"\n  printf "SKILL_CODE=%s\\n" "${VIBECRAFTED_SKILL_CODE:-}"\n  printf "SKILL_NAME=%s\\n" "${VIBECRAFTED_SKILL_NAME:-}"\n  printf "RUN_LOCK=%s\\n" "${VIBECRAFTED_RUN_LOCK:-}"\n  printf "ARGS=%s\\n" "$*"\n} > "$CAPTURE_FILE"'
         + "\n",
         encoding="utf-8",
     )
@@ -151,16 +139,7 @@ def test_workflow_skill_helpers_reuse_one_run_id_from_prompt_to_spawn(
 
     home.mkdir(parents=True)
     fake_spawn.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf "SPAWN_RUN_ID=%s\\n" "${VIBECRAFTED_RUN_ID:-}"',
-                '  printf "SPAWN_RUN_LOCK=%s\\n" "${VIBECRAFTED_RUN_LOCK:-}"',
-                '} >> "$CAPTURE_FILE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\n{\n  printf "SPAWN_RUN_ID=%s\\n" "${VIBECRAFTED_RUN_ID:-}"\n  printf "SPAWN_RUN_LOCK=%s\\n" "${VIBECRAFTED_RUN_LOCK:-}"\n} >> "$CAPTURE_FILE"'
         + "\n",
         encoding="utf-8",
     )

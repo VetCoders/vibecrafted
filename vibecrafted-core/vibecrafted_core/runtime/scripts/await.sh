@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 usage() {
   cat <<'EOF_USAGE'
-Usage: await.sh [claude|codex|gemini|agy|junie|grok] [--last] [--run-id <id>] [--research] [--auto-synthesize] [--describe] [--interval <sec>] [--timeout <sec>] [--startup-grace <sec>] [targets...]
+Usage: await.sh [claude|codex|agy|junie|grok] [--last] [--run-id <id>] [--research] [--auto-synthesize] [--describe] [--interval <sec>] [--timeout <sec>] [--startup-grace <sec>] [targets...]
 
 Targets may be:
   - *.meta.json
@@ -19,7 +19,7 @@ Examples:
   await.sh codex --last
   await.sh claude --run-id impl-123456
   await.sh --research --run-id rsch-123456
-  await.sh --describe /tmp/vc-research-claude.sh /tmp/vc-research-codex.sh /tmp/vc-research-gemini.sh
+  await.sh --describe /tmp/vc-research-claude.sh /tmp/vc-research-codex.sh /tmp/vc-research-agy.sh
   await.sh /path/to/report.meta.json /path/to/other.meta.json
 EOF_USAGE
 }
@@ -44,7 +44,7 @@ from pathlib import Path
 
 def usage() -> None:
     print(
-        "Usage: await.sh [claude|codex|gemini|agy|junie|grok] [--last] [--run-id <id>] "
+        "Usage: await.sh [claude|codex|agy|junie|grok] [--last] [--run-id <id>] "
         "[--research] [--auto-synthesize] [--describe] [--interval <sec>] [--timeout <sec>] "
         "[--startup-grace <sec>] [targets...]"
     )
@@ -65,7 +65,7 @@ targets: list[str] = []
 i = 0
 while i < len(argv):
     arg = argv[i]
-    if arg in {"claude", "codex", "gemini", "agy", "junie", "grok"} and not agent:
+    if arg in {"claude", "codex", "agy", "junie", "grok"} and not agent:
         agent = arg
     elif arg == "--last":
         use_last = True

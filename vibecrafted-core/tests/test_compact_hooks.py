@@ -24,6 +24,7 @@ def test_precompact_extracts_conversation_and_user_only(
     aicx.chmod(0o755)
 
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(home / ".codex"))
     monkeypatch.setenv("PATH", f"{fake_bin}:/usr/bin:/bin")
     monkeypatch.setenv("AICX_CAPTURE", str(capture))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home / ".vibecrafted"))
@@ -93,6 +94,7 @@ def test_precompact_resolves_codex_session_from_sessions_dir(
     aicx.chmod(0o755)
 
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CODEX_HOME", str(home / ".codex"))
     monkeypatch.setenv("PATH", f"{fake_bin}:/usr/bin:/bin")
     monkeypatch.setenv("AICX_CAPTURE", str(capture))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(home / ".vibecrafted"))

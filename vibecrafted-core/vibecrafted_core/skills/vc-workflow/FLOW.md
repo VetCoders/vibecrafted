@@ -1,3 +1,11 @@
+---
+title: vc-workflow Flow
+kind: workflow_flowchart
+skill: vc-workflow
+version: 3.6.0
+description: "Mermaid flowchart, CLI routes, escalation edges, and session artifact paths for vc-workflow."
+---
+
 # `vc-workflow` Flow
 
 ## Flow
@@ -24,7 +32,7 @@ flowchart TD
 ### Escalation edges
 
 - Shared steering is needed before implementation -> `vibecrafted partner <agent>`
-- The best shape is already obvious and should be shipped directly -> `vibecrafted implement <agent>` (alias: `justdo`)
+- The best shape is already obvious and should be shipped directly -> `vibecrafted implement <agent>` (ship WRITE); posture-first rescue -> `vibecrafted justdo <agent>`
 - Validation finds remaining P0/P1s -> `vibecrafted marbles <agent>`
 
 ### Session artifacts

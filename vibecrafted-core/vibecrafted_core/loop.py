@@ -3,14 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import signal
 import shlex
+import signal
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from . import control_plane, cron, ui
 
@@ -128,7 +129,15 @@ def _run_report_path(run: dict[str, Any]) -> Path | None:
 def _run_from_resolved(run_id: str) -> dict[str, Any] | None:
     try:
         resolved = control_plane.resolve_run(run_id)
-    except Exception:
+    except (
+        control_plane.RunNotResolved,
+        OSError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+    ):
         return None
     payload: dict[str, Any] = {}
     meta = getattr(resolved, "meta", None)

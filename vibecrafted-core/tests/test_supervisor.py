@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import control_plane
 from vibecrafted_core.agent_dispatch import extract_session_id
 from vibecrafted_core.events import append_event
@@ -158,7 +157,10 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     transcript = reports / "announced.transcript.log"
     meta = reports / "announced.meta.json"
 
-    report.write_text("# Report\n\nDone.\n", encoding="utf-8")
+    report.write_text(
+        "---\nrun_id: copied-by-worker\nsession_id: copied-by-worker\nagent: codex\nskill: implement\nstatus: completed\nfinalized: true\nclaim: the bounded implementation passed its gates\nlauncher_template: true\n---\n\n# Report\n\nDone.\n",
+        encoding="utf-8",
+    )
     transcript.write_text(
         "[12:40:43] session: codex-finalize-001\n"
         "tokens: 12 in (3 cached) / 7 out\n"
@@ -199,7 +201,8 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     assert payload["tokens_input"] == 12
     assert payload["tokens_cached_input"] == 3
     assert payload["tokens_output"] == 7
-    assert payload["tokens_total"] == 22
+    # input + output only; cached is subset of input
+    assert payload["tokens_total"] == 19
     assert "tokens_cache_write" not in payload
     assert payload["cost_usd"] == 0.045
     assert payload["artifact_contract"] == "vibecrafted.agent-artifact.v1"
@@ -210,6 +213,13 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     assert final_report.is_file()
     assert final_transcript.is_file()
     report_text = final_report.read_text(encoding="utf-8")
+    assert "run_id: finalize-test-001" in report_text
+    assert "session_id: codex-finalize-001" in report_text
+    assert "run_id: copied-by-worker" not in report_text
+    assert "session_id: copied-by-worker" not in report_text
+    assert "finalized: true" in report_text
+    assert "claim: the bounded implementation passed its gates" in report_text
+    assert "launcher_template:" not in report_text
     assert "model_requested: gpt-5.5" in report_text
     assert report.exists()
     assert transcript.exists()
@@ -308,7 +318,7 @@ def test_finalize_artifacts_maps_junie_json_stream_receipt(tmp_path: Path) -> No
     assert payload["tokens_input"] == 1200
     assert payload["tokens_cached_input"] == 300
     assert payload["tokens_output"] == 125
-    assert payload["tokens_total"] == 1625
+    assert payload["tokens_total"] == 1325
     assert payload["cost_usd"] == 0.01925
     report_text = report.read_text(encoding="utf-8")
     assert "session_id: junie-session-123" in report_text
@@ -346,7 +356,8 @@ def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
         "tokens_output: 1680\n"
         "tokens_total: 650348\n"
     )
-    assert _extract_tokens(gemini_transcript)["total"] == 650348
+    # 648618 in + 1680 out; footer tokens_total was old double-count (650348)
+    assert _extract_tokens(gemini_transcript)["total"] == 650298
 
     claude_footer = (
         "tokens_input: 100\n"
@@ -355,6 +366,7 @@ def test_extract_tokens_prefers_run_closure_footer_across_agents() -> None:
         "tokens_output: 30\n"
     )
     claude_tokens = _extract_tokens(claude_footer)
+    # fixture has cached (400) > input (100) → additive (junie-like shape)
     assert claude_tokens["total"] == 530
     assert claude_tokens["cache_write"] == 25
 

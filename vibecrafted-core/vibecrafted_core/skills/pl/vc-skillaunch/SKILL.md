@@ -13,6 +13,17 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Wywołanie dla `vc-skillaunch` (skill fundamentu)**
+>
+> To nie jest core worker `vibecrafted skillaunch <agent>`. Ładuj interaktywnie
+> i wykonuj w sesji. Pakuj inne skille pod
+> [Matrycę Delegacji](../DELEGATION_MATRIX.md) — literały per launcher, bez paste
+> workflow, swobodniejszy native gdy trzeba głębi, flota external bez zmian.
+
+<!-- /fleet-imperative -->
+
 # Workflow-to-Skill Distiller
 
 Zamienia ukończony workflow w wielokrotnego użytku skill agenta. Konkretnie ten skill
@@ -88,7 +99,7 @@ workflow. Jeśli istniejący skill z bundla science pokrywa jakiś krok, nowy sk
     przykładowe zbiory danych lub notatki dziedzinowe. Jeśli tak, podaj je, a
     uwzględnię ich treść w materiałach referencyjnych skilla."
 
-### Runda 4: Zakres i kształt
+### Runda 4: Zakres, kształt i klasa matrycy
 
 1.  „Nasz workflow obejmował [X, Y, Z]. Czy mam zdestylować je wszystkie do
     skilla, czy jest dodatkowa funkcjonalność, którą warto uwzględnić?
@@ -113,6 +124,7 @@ workflow. Jeśli istniejący skill z bundla science pokrywa jakiś krok, nowy sk
     te komendy: [proponowane komendy prostym językiem, np. 'wyszukaj
     białka', 'pobierz wyniki', 'porównaj sekwencje']. Co byś dodał lub
     zmienił?"
+    2b. **Klasa Matrycy Delegacji** — core launcher / meta / fundament; potwierdź literały (`vibecrafted <launcher> <agent>`). Nigdy uniwersalnego placeholdera `workflow`.
 4.  „Jak skill ma się nazywać? Proponowana nazwa: `[sugestia]`."
 
 ### Runda 5: Testowanie (opcjonalna)
@@ -135,6 +147,7 @@ Jesteś gotów przejść do Fazy 2, gdy potrafisz pewnie odpowiedzieć na WSZYST
 - [ ] Jak należy obsługiwać błędy?
 - [ ] Czy workflow potrzebuje jakiegokolwiek kodu? (Jeśli tak → wzorzec CLI; jeśli nie →
       instruction-only)
+- [ ] Klasa matrycy (core launcher / meta / fundament) i dokładne literały?
 - [ ] Czy jest przykładowe zapytanie/odpowiedź do walidacji?
 
 ## Faza 2: Projekt skilla

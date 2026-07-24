@@ -14,12 +14,12 @@ extend it.
 
 ```
 config/vc-frame/
-├── config.kdl                       # base config + neutral theme
+├── config.kdl                       # base config + monochrome chrome (flat UI)
 ├── auto-theme.sh                    # host detection -> theme name
 ├── themes/
 │   └── vetcoders-mesh.kdl           # 4 mesh themes (dragon/sztudio/silver/div0)
 └── layouts/
-    ├── operator.kdl                 # entrypoint  -- `vibecrafted start`
+    ├── operator.kdl                 # launch alias of built-in vibecrafted — `vibecrafted start`
     ├── dashboard.kdl                # mission control 2x2 grid
     ├── marbles.kdl                  # convergence workspace
     ├── research.kdl                 # triple-agent research swarm
@@ -65,12 +65,81 @@ and `mgbook16` is wired as an alias for `div0` because that is the value
 The `VIBECRAFTED_THEME` env var bypasses host detection outright, so an
 operator can pin a fleet baseline theme even when running on a mesh host.
 
+### Fleet chrome default (status-bar / tab-bar)
+
+Shipped `config.kdl` uses two eyes + flat tiles:
+
+```kdl
+theme "monochrome"
+theme_dark "monochrome"
+theme_light "vibecrafted-ivory"
+simplified_ui true
+```
+
+| Mode                           | Theme               | Feel                       |
+| ------------------------------ | ------------------- | -------------------------- |
+| dark (fallback + `theme_dark`) | `monochrome`        | greyscale graphite         |
+| light (`theme_light`)          | `vibecrafted-ivory` | kość słoniowa / warm paper |
+
+- **simplified_ui** — flat `Ctrl+<key> LABEL` tiles (no powerline ``)
+- Ivory lives in `themes/vibecrafted-ivory.kdl` (auto-loaded with mesh themes)
+- Brand block `vibecrafted` (graphite + amber) and mesh host accents are **opt-in**
+
+### Operator layout = vibecrafted standard
+
+`layouts/operator.kdl` (vc-start) is the same file content as built-in
+`default_layout "vibecrafted"` (tabs **Start here** + **Shell**, no spaces in
+layout _filenames_; never `Vibecrafted Operator.kdl`):
+
+- `default_tab_template` — compact-bar brand + **SESSIONS rail always** + status-bar
+- tab **Start here** — Mission Control (`about` / `guide_mode "mission-control"`)
+- tab **Shell** — operator work shell
+
+No strider split on the entrypoint.
+
+### SESSIONS rail and finished-run triage (`f` · `x` · `n`)
+
+The left **Sessions** column (session-manager plugin, `rail true` in shipped
+layouts) lists host sessions. Worker tabs open in **project / worker hosts**
+(see `docs/runtime/AGENT_OPS.md` G7), not in the human operator seat.
+
+When a supervised run finishes, the runtime calls **`vc-frame triage-run`**:
+
+1. Capture scrollback + run identity.
+2. Recreate a viewer/rerun tab in one of:
+   - `Finalized runs` (**f**)
+   - `Failed runs` (**x**)
+   - `Needs attention` (**n**)
+3. Only then close the origin tab in the work session.
+
+Board counters **`f · x · n` count tabs inside those three bucket sessions**,
+not “how many control-plane runs completed.” Settlement in meta
+(`status=completed`, exit 0, report path) is a different axis from triage.
+
+Full contract (classification, origin stamp, push≠install, research vs
+implement, backfill):
+**[`docs/runtime/TRIAGE_AND_SESSIONS.md`](runtime/TRIAGE_AND_SESSIONS.md)**.
+
+### Research layout (multi-pane ≠ multi-session)
+
+Static `layouts/research.kdl`:
+
+- Includes the same **session-manager** rail as operator/dashboard.
+- **One** research tab: synthesis left (~55%), agent stack right (claude /
+  codex / agy). Swap layouts: `grid`, `synthesis`.
+- Agents are **panes**, not separate SESSIONS board columns.
+
+Workflow-generated research KDL (`workflow._write_research_layout`) may omit
+the session-manager rail even though the static file has it — treat that as a
+layout-generator gap, not as research “learning” sessions over time. A finished
+research **run** still triages as one origin tab into a bucket when origin +
+install wire are present (see triage doc).
+
 ### Activating the host theme
 
-The shipped `config.kdl` defaults to the neutral `vibecrafted` theme so a fresh
-install looks the same on every machine. To activate the host accent, wire one
-of the following in your shell init or in a host-local `config/vc-frame/local.kdl`
-overlay:
+The shipped chrome default is monochrome (flat). To activate a host accent
+instead, wire one of the following in your shell init or in a host-local
+`config/vc-frame/local.kdl` overlay:
 
 ```bash
 # Shell init — print the matching theme name for diagnostics.
@@ -119,5 +188,7 @@ when the host doesn't have them.
 - Kronika 2026-04-12 — first vc-frame landing
 - `docs/plans/META_22_SCAFFOLD_TO_RELEASE.md` Plan 12 — full contract
 - `skills/vc-agents/SKILL.md` — operator-facing dispatch surface
+- [`docs/runtime/TRIAGE_AND_SESSIONS.md`](runtime/TRIAGE_AND_SESSIONS.md) — f/x/n, `triage-run`, origin stamp
+- [`docs/runtime/AGENT_OPS.md`](runtime/AGENT_OPS.md) — worker host sessions (G7)
 
 Vibecrafted with AI Agents (c)2024-2026 LibraxisAI

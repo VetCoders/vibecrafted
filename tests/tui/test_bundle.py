@@ -22,7 +22,7 @@ def test_parse_listing_metadata_reads_current_registry_fields() -> None:
 
 def test_mcp_config_uses_streamable_http_transport() -> None:
     # Canon transport for runs is streamable HTTP (one shared loctree-mcp per
-    # root via `loct watch --http`), not a stdio server spawned per run.
+    # root via `loct watch --bg`); MCP process ownership is separate.
     loctree = bundle.mcp_config()["mcpServers"]["loctree"]
     assert loctree["type"] == "http"
     assert loctree["url"] == "http://127.0.0.1:5174/mcp"

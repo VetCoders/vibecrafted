@@ -9,12 +9,29 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 
+from .delivery.model import (
+    ContractError,
+    DeliveryProofContract,
+    DeliverySeal,
+    DeliveryState,
+    ExecutionState,
+    ProofResult,
+    ProofState,
+)
 from .runtime_paths import vibecrafted_home
-
+from .settlement import (
+    board_fxn_counts,
+    can_archive,
+    orphan_settlement_payloads,
+    persist_await_verdict,
+    persist_settlement_to_meta,
+    settle_payload,
+)
 
 ACTIVE_STATES = {
     "created",
@@ -85,6 +102,8 @@ RUN_SNAPSHOT_RETENTION_SECONDS_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_SECONDS
 RUN_SNAPSHOT_RETENTION_COUNT = 2000
 RUN_SNAPSHOT_RETENTION_COUNT_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_COUNT"
 EVENT_TAIL_LIMIT = 16
+EVENTS_ROTATE_BYTES = 32 * 1024 * 1024
+EVENTS_ROTATE_BYTES_ENV = "VIBECRAFTED_EVENTS_ROTATE_BYTES"
 RECENT_RUN_LIMIT = 12
 MISSING_SESSION_IDS = {"", "pending", "none", "null", "unknown"}
 
@@ -124,6 +143,22 @@ class Event:
     message: str
     payload: dict[str, Any]
     cursor: int
+
+
+@dataclass(frozen=True)
+class DeliveryAxes:
+    """Read-only projection of execution, proof, and delivery state."""
+
+    execution_state: ExecutionState
+    proof_state: ProofState
+    delivery_state: DeliveryState
+
+    def to_payload(self) -> dict[str, str]:
+        return {
+            "execution_state": self.execution_state.value,
+            "proof_state": self.proof_state.value,
+            "delivery_state": self.delivery_state.value,
+        }
 
 
 def control_plane_home() -> Path:
@@ -202,8 +237,9 @@ def _sync_lock(
                 if time.monotonic() >= deadline:
                     raise ControlPlaneLockBusy(
                         f"control-plane {purpose} lock busy for > {budget:.0f}s "
-                        f"({lock_path}). Another process is holding it — look for "
-                        f"a stuck run instead of waiting on a silent hang."
+                        f"({lock_path}). Another process is holding it — usually a "
+                        f"full board rebuild (install/doctor sync in progress; retry "
+                        f"shortly) or a stuck run holding the lock."
                     ) from exc
                 time.sleep(_SYNC_LOCK_POLL_SECONDS)
         try:
@@ -285,6 +321,33 @@ def normalize_run_root(
     return str(Path(raw).expanduser().resolve())
 
 
+def _is_pytest_temp_path(raw: Any) -> bool:
+    value = str(raw or "").strip()
+    if not value:
+        return False
+    return any(part.startswith("pytest-of-") for part in Path(value).parts)
+
+
+def _event_has_test_provenance(event: dict[str, Any]) -> bool:
+    """Reject pytest-owned event records from a production control plane.
+
+    Pytest fixtures legitimately use an isolated temporary VIBECRAFTED_HOME, so
+    quarantine is disabled inside that sandbox. The production home must never
+    replay an event whose declared root/artifact paths belong to a pytest temp
+    tree into the operator board.
+    """
+
+    if _is_pytest_temp_path(vibecrafted_home()):
+        return False
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    return any(
+        _is_pytest_temp_path(payload.get(key))
+        for key in ("root", "source_dir", "report", "transcript", "meta")
+    )
+
+
 def ensure_session_id(session_id: Any = "") -> str:
     raw = str(session_id or "").strip()
     if raw.lower() not in MISSING_SESSION_IDS:
@@ -316,6 +379,10 @@ def _configured_snapshot_retention_count() -> int:
     return _configured_nonnegative_int(
         RUN_SNAPSHOT_RETENTION_COUNT_ENV, RUN_SNAPSHOT_RETENTION_COUNT
     )
+
+
+def _configured_events_rotate_bytes() -> int:
+    return _configured_nonnegative_int(EVENTS_ROTATE_BYTES_ENV, EVENTS_ROTATE_BYTES)
 
 
 def _configured_nonnegative_int(env_name: str, default: int) -> int:
@@ -484,6 +551,31 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         return result
     if _has_success_evidence(result):
         return _reconcile_successful_terminal(result)
+
+    exit_code = _coerce_int(result.get("exit_code"))
+    # Field 2026-07-22 (Pensieve scaffold): `_run_is_terminal` is True whenever
+    # exit_code is set, which previously short-circuited reconcile while leaving
+    # state=`active`/`running`. Board stayed "active" + pid_gone; await could
+    # disagree with projection. Normalize dead worker + nonzero exit → failed
+    # *before* the terminal early-return.
+    if exit_code is not None and exit_code != 0 and state in ACTIVE_STATES - {"paused"}:
+        now = _now()
+        result["state"] = "failed"
+        result["health"] = "final"
+        result["liveness"] = "pid_gone"
+        result["completed_at"] = str(result.get("completed_at") or now.isoformat())
+        result["updated_at"] = now.isoformat()
+        result["recovery_required"] = True
+        previous_error = str(result.get("last_error") or "").strip()
+        explanation = (
+            f"worker dead with exit_code={exit_code}; settled active→failed "
+            f"(pid_gone immediate settle)"
+        )
+        result["last_error"] = (
+            f"{previous_error}; {explanation}" if previous_error else explanation
+        )
+        return result
+
     if _run_is_terminal(result):
         return result
     if state not in ACTIVE_STATES - {"paused"}:
@@ -513,15 +605,30 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         artifact_failure_state = "report_invalid"
 
     gc_grace = _configured_run_gc_grace_seconds()
-    should_gc = not artifact_failure_state and age_seconds >= gc_grace
-    result["state"] = "gc" if should_gc else artifact_failure_state or "stalled"
-    result["health"] = "final" if artifact_failure_state or should_gc else "stalled"
-    result["liveness"] = "pid_gone"
-    result["updated_at"] = now.isoformat()
-    if should_gc:
+    past_gc_grace = not artifact_failure_state and age_seconds >= gc_grace
+    # Settlement precedes gc (contract §7): a collector must never erase a run
+    # that has no settlement terminal. Past grace without settlement parks as
+    # needs_attention (TUI n) instead of silent gc.
+    if past_gc_grace:
+        # Terminalize so settle_payload can classify; verdict is applied in
+        # _project_run_payload. State stays visible as stalled-with-n until
+        # settlement is written, then may become gc once settled.
+        result["state"] = "gc"
+        result["health"] = "final"
+        result["liveness"] = "pid_gone"
         result["completed_at"] = now.isoformat()
-    else:
+        result["settlement_park"] = "gc_blocked_until_settled"
+    elif artifact_failure_state:
+        result["state"] = artifact_failure_state
+        result["health"] = "final"
+        result["liveness"] = "pid_gone"
         result["recovery_required"] = True
+    else:
+        result["state"] = "stalled"
+        result["health"] = "stalled"
+        result["liveness"] = "pid_gone"
+        result["recovery_required"] = True
+    result["updated_at"] = now.isoformat()
     pid_detail = (
         f"launcher_pid {launcher_pid} is not alive"
         if launcher_pid is not None
@@ -537,11 +644,12 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
         if artifact_failure_state
         else ""
     )
-    if should_gc:
+    if past_gc_grace:
         explanation = (
             f"garbage-collected: dead launcher, heartbeat stale >{gc_grace}s; "
             f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
-            f"(threshold {threshold}s); no live launcher proof{lock_detail}"
+            f"(threshold {threshold}s); no live launcher proof{lock_detail}; "
+            f"settlement parks as needs_attention before archive"
         )
     else:
         explanation = (
@@ -573,6 +681,13 @@ def _has_success_evidence(run: dict[str, Any]) -> bool:
 
 
 def _reconcile_successful_terminal(run: dict[str, Any]) -> dict[str, Any]:
+    """Close a run that has success evidence, including after a stale watchdog stamp.
+
+    The heartbeat watchdog can set ``last_error`` / ``recovery_required`` while a
+    worker is still delivering. Once exit 0 / completed_at / terminal liveness is
+    present, those recovery marks are stale noise — clear them so the failure
+    board and action queue do not treat a green run as investigate-fodder.
+    """
     result = dict(run)
     completed_at = str(result.get("completed_at") or result.get("updated_at") or "")
     if not completed_at:
@@ -582,6 +697,56 @@ def _reconcile_successful_terminal(run: dict[str, Any]) -> dict[str, Any]:
     result["liveness"] = "terminal"
     result["completed_at"] = completed_at
     result["updated_at"] = completed_at
+    result.pop("recovery_required", None)
+    # Empty string matches _reconcile_repaired_report_terminal; consumers treat
+    # blank last_error as absent.
+    result["last_error"] = ""
+    return result
+
+
+def _reconcile_repaired_report_terminal(run: dict[str, Any]) -> dict[str, Any]:
+    """Heal a report contract terminal after its artifact was repaired.
+
+    A successful worker can only recover from report_missing/report_invalid.
+    Execution failures and proof/delivery invalidation remain terminal failures.
+    """
+    result = dict(run)
+    if str(result.get("state") or "") not in {"report_invalid", "report_missing"}:
+        return result
+    if _coerce_int(result.get("exit_code")) != 0:
+        return result
+    if str(result.get("proof_state") or "").lower() in {"failed", "invalid"}:
+        return result
+    if str(result.get("delivery_state") or "").lower() == "invalidated":
+        return result
+
+    report = str(result.get("latest_report") or result.get("report") or "").strip()
+    if not report:
+        return result
+    from .report_contract import validate_report_file
+
+    validation = validate_report_file(report, require_frontmatter=True)
+    if not validation.ok:
+        return result
+    if (
+        str(validation.fields.get("run_id") or "").strip()
+        != str(result.get("run_id") or "").strip()
+    ):
+        return result
+    errors = [str(item) for item in (result.get("artifact_errors") or []) if str(item)]
+    if any(not item.startswith("report_") for item in errors):
+        return result
+
+    completed_at = str(result.get("completed_at") or result.get("updated_at") or "")
+    result["state"] = "completed"
+    result["health"] = "final"
+    result["liveness"] = "terminal"
+    result["completed_at"] = completed_at or _now().isoformat()
+    result["artifact_ok"] = True
+    result["artifact_errors"] = []
+    result["artifact_gate"] = "validated"
+    result["operator_state"] = "completed"
+    result["last_error"] = ""
     result.pop("recovery_required", None)
     return result
 
@@ -630,6 +795,20 @@ def _worker_is_alive(run: dict[str, Any]) -> bool:
         if pid is not None and _pid_is_alive(pid):
             return True
     return False
+
+
+def _await_process_is_alive(run: dict[str, Any]) -> bool:
+    """True while either the worker or its launcher is still finalizing.
+
+    Launchers are intentionally ignored by the general liveness reconciler: a
+    dead ephemeral launcher must not invalidate a worker that continues on its
+    own.  Await has a narrower obligation.  It must not seal a delivered report
+    while a live launcher can still write the terminal metadata and projection.
+    """
+    if _worker_is_alive(run):
+        return True
+    launcher_pid = _coerce_int(run.get("launcher_pid"))
+    return launcher_pid is not None and _pid_is_alive(launcher_pid)
 
 
 def _has_retry_spec(run: dict[str, Any]) -> bool:
@@ -866,6 +1045,8 @@ def _merge_event_stream(
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if _event_has_test_provenance(event):
+            continue
         run_id = str(event.get("run_id") or "").strip()
         if not run_id:
             continue
@@ -979,6 +1160,12 @@ def _merge_event_stream(
                 else ""
             )
         )
+        declared_health = str(payload.get("health") or "")
+        activity_at = str(payload.get("heartbeat_at") or updated_at)
+        if declared_health in {"stalled", "final", "unknown"}:
+            health = declared_health
+        else:
+            health = _state_health(state, activity_at)
 
         incoming = RunStatus(
             run_id=run_id,
@@ -993,7 +1180,7 @@ def _merge_event_stream(
             last_error=last_error,
             updated_at=updated_at,
             started_at=started_at,
-            health=_state_health(state, updated_at),
+            health=health,
             source="event-stream",
             lock_present=existing.lock_present if existing is not None else False,
             exit_code=exit_code,
@@ -1062,6 +1249,78 @@ def _snapshot_path(run_id: str) -> Path:
 
 def _snapshot_archive_dir() -> Path:
     return run_snapshot_dir() / "archive"
+
+
+def _archived_run_ids() -> set[str]:
+    """Run ids already settled and archived — closed history, never rebuilt.
+
+    Snapshot filenames are ``<run_id>.json``, so a directory listing is enough;
+    no JSON parse. Used by the full board rebuild to stop archived runs from
+    resurrecting out of their (still present) launcher meta files or old event
+    lines — the resurrection loop is what let settlement debt grow without end.
+    """
+    archive_dir = _snapshot_archive_dir()
+    if not archive_dir.is_dir():
+        return set()
+    return {path.stem for path in archive_dir.glob("*.json")}
+
+
+def _events_archive_dir() -> Path:
+    return control_plane_home() / "events_archive"
+
+
+def _read_tail_lines(path: Path, limit: int, *, window_bytes: int = 65536) -> list[str]:
+    """Last ``limit`` complete lines of a large file without reading it whole."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(size - window_bytes, 0))
+            chunk = handle.read()
+    except OSError:
+        return []
+    lines = chunk.decode("utf-8", errors="replace").splitlines()
+    if size > window_bytes and lines:
+        # First line of the window is almost certainly a partial record.
+        lines = lines[1:]
+    return lines[-limit:]
+
+
+def _rotate_event_stream() -> Path | None:
+    """Rotate an oversized events.jsonl into events_archive/, keeping the tail.
+
+    The event stream is append-only and unbounded; every full board rebuild
+    re-parses it whole, so past ~1 GB a sync took a minute and starved every
+    await on the lock. Rotation is safe exactly at the end of an unscoped sync:
+    all information the stream carried has just been projected into per-run
+    snapshots, which are the durable state. The last ``EVENT_TAIL_LIMIT`` lines
+    are re-seeded into the fresh stream so the board's event tail stays
+    continuous. Caller must hold the sync lock.
+    """
+    threshold = _configured_events_rotate_bytes()
+    if threshold <= 0:
+        return None
+    stream_path = event_stream_path()
+    try:
+        if not stream_path.is_file() or stream_path.stat().st_size <= threshold:
+            return None
+    except OSError:
+        return None
+    tail = _read_tail_lines(stream_path, EVENT_TAIL_LIMIT)
+    archive_dir = _events_archive_dir()
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _now().strftime("%Y%m%dT%H%M%SZ")
+    target = archive_dir / f"events-{stamp}.jsonl"
+    counter = 0
+    while target.exists():
+        counter += 1
+        target = archive_dir / f"events-{stamp}-{counter}.jsonl"
+    try:
+        stream_path.replace(target)
+        if tail:
+            stream_path.write_text("\n".join(tail) + "\n", encoding="utf-8")
+    except OSError:
+        return None
+    return target
 
 
 def _load_existing_snapshots() -> dict[str, dict[str, Any]]:
@@ -1136,8 +1395,96 @@ def _archive_expired_snapshots() -> None:
     terminal_snapshots.sort(key=lambda item: item[0], reverse=True)
     expired_by_count = {path for _, path, _ in terminal_snapshots[retention_count:]}
     for path in sorted(expired_by_age | expired_by_count):
-        if path.exists():
-            _archive_snapshot(path)
+        if not path.exists():
+            continue
+        payload = _read_json(path)
+        # Settlement precedes gc: never erase without a written terminal.
+        # Settle first (default → needs_attention), then archive only once
+        # the settlement axis is present. Live/unreadable runs stay put.
+        if not can_archive(payload):
+            settlement = settle_payload(payload, source="auto")
+            if settlement is not None:
+                payload.update(settlement.to_payload())
+                payload["settlement"] = {
+                    "verdict": settlement.verdict.value,
+                    "reason": settlement.reason,
+                    "settled_at": settlement.settled_at,
+                    "source": settlement.source,
+                    "claim_digest": settlement.claim_digest,
+                    "waived": settlement.waived,
+                    "tui": settlement.tui_key,
+                }
+                _write_json(path, payload)
+            if not can_archive(payload):
+                continue
+        _archive_snapshot(path)
+
+
+def drain_settled_snapshots(
+    *, keep_hours: float = 24.0, batch_size: int = 50
+) -> dict[str, Any]:
+    """Settle-then-archive the parked terminal debt in ``runs/`` (canonical drain).
+
+    Settlement precedes gc (contract §7): every terminal snapshot first gets its
+    settlement terminal written (default → ``needs_attention``), then moves to
+    ``runs/archive/`` once it is older than ``keep_hours``. Recent terminals stay
+    retained so the board keeps showing the current day's f/x/n. Live runs are
+    never touched and nothing is deleted — archive is a rename.
+
+    Each batch (≤ ``batch_size`` snapshots) runs under its own bounded sync
+    lock, released between batches, so concurrent awaits never starve. The
+    operation is idempotent per run: a crashed drain resumes on the next call.
+    """
+    keep_seconds = max(float(keep_hours), 0.0) * 3600.0
+    step = max(int(batch_size), 1)
+    now = _now()
+    counts = {
+        "settled": 0,
+        "archived": 0,
+        "kept_recent": 0,
+        "skipped_live": 0,
+        "unreadable": 0,
+    }
+    paths = sorted(run_snapshot_dir().glob("*.json"))
+    for start in range(0, len(paths), step):
+        batch = paths[start : start + step]
+        with _sync_lock(purpose="drain"):
+            for path in batch:
+                if not path.exists():
+                    continue
+                payload = _read_json(path)
+                if not payload:
+                    counts["unreadable"] += 1
+                    continue
+                if not _run_is_terminal(payload):
+                    counts["skipped_live"] += 1
+                    continue
+                if not can_archive(payload):
+                    settlement = settle_payload(payload, source="auto")
+                    if settlement is None:
+                        counts["skipped_live"] += 1
+                        continue
+                    payload.update(settlement.to_payload())
+                    payload["settlement"] = {
+                        "verdict": settlement.verdict.value,
+                        "reason": settlement.reason,
+                        "settled_at": settlement.settled_at,
+                        "source": settlement.source,
+                        "claim_digest": settlement.claim_digest,
+                        "waived": settlement.waived,
+                        "tui": settlement.tui_key,
+                    }
+                    _write_json(path, payload)
+                    counts["settled"] += 1
+                age = _snapshot_age_seconds(payload, now)
+                if age is not None and age < keep_seconds:
+                    counts["kept_recent"] += 1
+                    continue
+                if can_archive(payload):
+                    _archive_snapshot(path)
+                    counts["archived"] += 1
+    counts["retained"] = len(list(run_snapshot_dir().glob("*.json")))
+    return counts
 
 
 def _select_run(snapshot: dict[str, Any], run_id: str) -> dict[str, Any] | None:
@@ -1151,6 +1498,9 @@ def _select_run(snapshot: dict[str, Any], run_id: str) -> dict[str, Any] | None:
     payload = _read_json(_snapshot_path(target))
     if str(payload.get("run_id") or "") == target:
         return payload
+    archived = _read_json(_snapshot_archive_dir() / f"{target}.json")
+    if str(archived.get("run_id") or "") == target:
+        return archived
     return None
 
 
@@ -1333,12 +1683,17 @@ def read_event_tail(limit: int = EVENT_TAIL_LIMIT) -> list[dict[str, Any]]:
     if not stream.exists():
         return []
     events = []
-    for line in stream.read_text(encoding="utf-8").splitlines()[-limit:]:
+    for line in reversed(stream.read_text(encoding="utf-8").splitlines()):
         try:
-            events.append(json.loads(line))
+            event = json.loads(line)
         except json.JSONDecodeError:
             continue
-    return list(reversed(events))
+        if _event_has_test_provenance(event):
+            continue
+        events.append(event)
+        if len(events) >= limit:
+            break
+    return events
 
 
 def subscribe_events(
@@ -1389,15 +1744,125 @@ def _project_run_payload(
     run_id: str, status: RunStatus, previous: dict[str, Any] | None
 ) -> dict[str, Any]:
     """Project one run's status to its snapshot payload (single-run, lockless)."""
-    payload = _artifact_projection(_status_to_payload(status), previous)
+    incoming = _status_to_payload(status)
+    # A settled gc park is sticky: the launcher meta that fed this status stays
+    # "running" forever, so without this guard every full sync re-parked the
+    # same dead run — restamping updated_at/completed_at (which made the drain
+    # keep-window immortal) and appending the park explanation to last_error on
+    # every pass. Fresh process evidence still reopens normal projection.
+    if (
+        previous is not None
+        and str(previous.get("state") or "") == "gc"
+        and str(previous.get("settlement_verdict") or "")
+        and not _worker_is_alive(incoming)
+        and _coerce_int(incoming.get("exit_code")) is None
+    ):
+        return dict(previous)
+    payload = _artifact_projection(incoming, previous)
     payload = _reconcile_dead_launcher(payload)
-    payload["failure_card"] = _failure_card(payload)
-    payload["health"] = _state_health(
-        str(payload.get("state") or ""), str(payload.get("updated_at") or "")
+    run_dir = _runtime_run_dir(run_id)
+    axes = _delivery_axes_from_run_dir(
+        run_dir if run_dir.is_dir() else None,
+        legacy_state=str(payload.get("state") or ""),
+        exit_code=_coerce_int(payload.get("exit_code")),
     )
+    payload.update(axes.to_payload())
+    previous_state = str(payload.get("state") or "")
+    payload = _reconcile_repaired_report_terminal(payload)
+    if previous_state != str(payload.get("state") or ""):
+        axes = _delivery_axes_from_run_dir(
+            run_dir if run_dir.is_dir() else None,
+            legacy_state=str(payload.get("state") or ""),
+            exit_code=_coerce_int(payload.get("exit_code")),
+        )
+        payload.update(axes.to_payload())
+    kernel_claim_digest = _kernel_claim_digest_from_run_dir(
+        run_dir if run_dir.is_dir() else None
+    )
+    launcher_claim_digest = ""
+    if run_dir.is_dir():
+        launcher_claim_digest = str(
+            _read_json(run_dir / "meta.json").get("claim_digest") or ""
+        ).strip()
+    if kernel_claim_digest:
+        payload["claim_digest"] = kernel_claim_digest
+    elif launcher_claim_digest:
+        # The launcher owns mission identity; report self-attestation may close
+        # this digest, but it must never select a different mission itself.
+        payload["claim_digest"] = launcher_claim_digest
+    payload["failure_card"] = _failure_card(payload)
+    state = str(payload.get("state") or "")
+    # Launcher PIDs are ephemeral and can be reused by an unrelated process
+    # months later. A current worker PID is durable process evidence; the
+    # launch window is covered independently by a fresh heartbeat.
+    has_live_process = _worker_is_alive(payload)
+    if _run_is_terminal(payload):
+        payload["health"] = "final"
+    elif state == "stalled":
+        payload["health"] = "stalled"
+    elif has_live_process:
+        payload["health"] = "active"
+    else:
+        # Synthetic state events legitimately refresh `updated_at`; they do not
+        # prove worker activity. Heartbeat is the canonical temporal evidence.
+        payload["health"] = _state_health(
+            state,
+            str(payload.get("heartbeat_at") or payload.get("updated_at") or ""),
+        )
     if not payload.get("liveness"):
         payload["liveness"] = "terminal" if _run_is_terminal(payload) else "heartbeat"
     payload["lifecycle"] = _lifecycle_controls(payload)
+    # Settlement axis (f/x/n). Written on every terminal projection so the
+    # board never renders silence for unfinished claim→proof work. Delivery
+    # kernel axes above stay orthogonal (unverified/sealed ≠ settled).
+    if previous:
+        for key in (
+            "settlement_verdict",
+            "settlement_reason",
+            "settlement_at",
+            "settlement_source",
+            "settlement_tui",
+            "settlement_waived",
+            "settlement_claim_digest",
+            "settlement",
+            "await_rc",
+            "await_outcome",
+            "await_reason",
+            "await_worker_alive",
+            "await_settled_at",
+            "settlement_waive",
+            "operator_waive",
+            "claim",
+            "mission",
+            "brief",
+            "claim_digest",
+        ):
+            if key in previous and key not in payload:
+                payload[key] = previous[key]
+    nested_settlement = payload.get("settlement")
+    projected_claim_digest = str(payload.get("settlement_claim_digest") or "")
+    if isinstance(nested_settlement, dict) and not projected_claim_digest:
+        projected_claim_digest = str(nested_settlement.get("claim_digest") or "")
+    repair_sealed_claim_binding = bool(
+        kernel_claim_digest
+        and axes.delivery_state is DeliveryState.SEALED
+        and projected_claim_digest != kernel_claim_digest
+    )
+    settlement = settle_payload(payload, force=repair_sealed_claim_binding)
+    if settlement is not None:
+        payload.update(settlement.to_payload())
+        payload["settlement"] = {
+            "verdict": settlement.verdict.value,
+            "reason": settlement.reason,
+            "settled_at": settlement.settled_at,
+            "source": settlement.source,
+            "claim_digest": settlement.claim_digest,
+            "waived": settlement.waived,
+            "tui": settlement.tui_key,
+        }
+        meta = run_dir / "meta.json" if run_dir.is_dir() else None
+        if meta is not None and meta.is_file():
+            persist_settlement_to_meta(meta, settlement)
     return payload
 
 
@@ -1422,6 +1887,7 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
     lock_ctx = contextlib.nullcontext() if scoped else _sync_lock(purpose="board-sync")
     with lock_ctx:
         previous_snapshots = _load_existing_snapshots()
+        archived_ids = set() if scoped else _archived_run_ids()
         merged: dict[str, RunStatus] = {}
 
         # The migraine was the exclusive GLOBAL LOCK, not the file walk: every
@@ -1455,13 +1921,32 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
         for run_id, status in merged.items():
             if not _in_scope(run_id):
                 continue
+            # Archived runs are closed history: settlement precedes gc, so an
+            # archived snapshot already carries its terminal. Rebuilding it from
+            # the launcher meta (which outlives the snapshot) resurrected every
+            # collected run each sync and made the settlement debt immortal.
+            # A demonstrably active status (fresh evidence) still projects.
+            if (
+                run_id in archived_ids
+                and run_id not in previous_snapshots
+                and status.health != "active"
+            ):
+                continue
             previous = previous_snapshots.get(run_id)
             payload = _project_run_payload(run_id, status, previous)
             _record_transition(previous, payload)
             _write_json(_snapshot_path(run_id), payload)
             payload_runs.append(payload)
         if not scoped:
+            # Retained snapshots whose source evidence went quiet (e.g. their
+            # event lines were rotated away) stay on the board until archived;
+            # the snapshot itself is the durable state.
+            seen_ids = {str(run.get("run_id") or "") for run in payload_runs}
+            for run_id, prev in previous_snapshots.items():
+                if run_id not in seen_ids:
+                    payload_runs.append(prev)
             _archive_expired_snapshots()
+            _rotate_event_stream()
 
     # A scoped pass only re-projects runs that had fresh events; quiet target/
     # child runs keep their last snapshot, which _select_run reads directly.
@@ -1481,16 +1966,48 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
     active_runs = [
         run
         for run in payload_runs
-        if run.get("health") in {"active", "stalled"}
-        and run.get("state") not in FINAL_STATES
+        if run.get("health") == "active" and run.get("state") not in FINAL_STATES
     ]
+    stalled_runs = [
+        run
+        for run in payload_runs
+        if run.get("health") == "stalled" and run.get("state") not in FINAL_STATES
+    ]
+    # Contract rule 6: legacy Untitled*.md under artifacts/ lands as n.
+    # Full board only — scoped single-run polls must not pay the rglob cost.
+    orphan_runs: list[dict[str, Any]] = []
+    if not scoped:
+        try:
+            orphan_runs = orphan_settlement_payloads(vibecrafted_home() / "artifacts")
+        except OSError:
+            orphan_runs = []
+        if orphan_runs:
+            # Count orphans on the settlement axis; surface a short list for
+            # the board without drowning recent_runs.
+            payload_runs = list(payload_runs) + orphan_runs
+
     recent_runs = payload_runs[:RECENT_RUN_LIMIT]
+    # TUI f/x/n reads the settlement axis only — never exit counters or raw states.
+    fxn = board_fxn_counts(payload_runs)
     return {
         "generated_at": _now().isoformat(),
         "active_runs": active_runs,
+        "stalled_runs": stalled_runs,
         "recent_runs": recent_runs,
         "warnings": _warnings_for_runs(payload_runs),
         "events": read_event_tail(),
+        "orphan_artifacts": [
+            str(run.get("orphan_path") or run.get("report") or "")
+            for run in orphan_runs
+            if str(run.get("orphan_path") or run.get("report") or "")
+        ],
+        "settlement_counts": {
+            "f": fxn.get("f", 0),
+            "x": fxn.get("x", 0),
+            "n": fxn.get("n", 0),
+            "total_settled": sum(fxn.values()),
+            "orphans": len(orphan_runs),
+        },
     }
 
 
@@ -1606,6 +2123,119 @@ def resolve_run(run_id: str) -> ResolvedRun:
     raise RunNotResolved(target)
 
 
+def read_delivery_axes(run_id: str) -> DeliveryAxes:
+    """Read the three independent state axes for any resolvable run.
+
+    Legacy metadata supplies execution only. Proof and delivery are never
+    inferred from ``completed``, report bytes, or ``artifact_ok``: absent proof
+    remains ``undeclared`` and absent seal remains ``unverified``.
+    """
+
+    resolved = resolve_run(run_id)
+    meta_payload = _read_json(resolved.meta) if resolved.meta is not None else {}
+    legacy_state = str(
+        meta_payload.get("state") or meta_payload.get("status") or "created"
+    )
+    return _delivery_axes_from_run_dir(
+        resolved.run_dir,
+        legacy_state=legacy_state,
+        exit_code=_coerce_int(meta_payload.get("exit_code")),
+    )
+
+
+def _delivery_axes_from_run_dir(
+    run_dir: Path | None,
+    *,
+    legacy_state: str,
+    exit_code: int | None,
+) -> DeliveryAxes:
+    execution_state = _legacy_execution_state(legacy_state, exit_code)
+    proof_state = ProofState.UNDECLARED
+    delivery_state = DeliveryState.UNVERIFIED
+
+    if run_dir is not None:
+        proof_result_path = run_dir / "proof" / "result.json"
+        proof_contract_path = run_dir / "delivery-proof-contract.json"
+        if proof_result_path.is_file():
+            try:
+                proof_state = ProofResult.from_payload(
+                    _read_json(proof_result_path)
+                ).state
+            except (ContractError, TypeError, ValueError):
+                proof_state = ProofState.INVALID
+        elif proof_contract_path.is_file():
+            try:
+                DeliveryProofContract.from_payload(_read_json(proof_contract_path))
+            except (ContractError, TypeError, ValueError):
+                proof_state = ProofState.INVALID
+            else:
+                proof_state = ProofState.DECLARED
+
+        seal_path = run_dir / "delivery-seal.json"
+        if seal_path.is_file():
+            try:
+                DeliverySeal.from_payload(_read_json(seal_path))
+            except (ContractError, TypeError, ValueError):
+                delivery_state = DeliveryState.INVALIDATED
+            else:
+                delivery_state = DeliveryState.SEALED
+
+    return DeliveryAxes(
+        execution_state=execution_state,
+        proof_state=proof_state,
+        delivery_state=delivery_state,
+    )
+
+
+def _kernel_claim_digest_from_run_dir(run_dir: Path | None) -> str:
+    """Read the claim digest that the lifecycle proof actually verified.
+
+    ``proof/mission-claim.json`` is materialized only after the validated
+    report's digest matches the mission digest. It therefore outranks a
+    projection fallback synthesized later from prompt/agent metadata.
+    """
+    if run_dir is None:
+        return ""
+    payload = _read_json(run_dir / "proof" / "mission-claim.json")
+    return str(payload.get("claim_digest") or "").strip()
+
+
+def _legacy_execution_state(state: str, exit_code: int | None) -> ExecutionState:
+    normalized = str(state or "").strip().lower()
+    if normalized == "timed_out":
+        return ExecutionState.TIMED_OUT
+    if normalized in {"interrupted", "partial", "stopped", "gc"}:
+        return ExecutionState.INTERRUPTED
+    if normalized in {
+        "blocked",
+        "contract_failed",
+        "failed",
+        "ghost",
+        "process_dead",
+        "recovery_required",
+        "report_invalid",
+    }:
+        return ExecutionState.FAILED
+    if normalized == "report_missing":
+        # Delivering nothing is not the same as delivering garbage.
+        # report_invalid stays an execution failure (the recovery lane), but a
+        # worker that exited 0 and simply produced no report is the contract's
+        # exit_0_without_report specimen — needs_attention, never a fabricated
+        # execution failure (x instead of n).
+        if exit_code is not None:
+            return ExecutionState.EXITED if exit_code == 0 else ExecutionState.FAILED
+        return ExecutionState.FAILED
+    if exit_code is not None:
+        return ExecutionState.EXITED if exit_code == 0 else ExecutionState.FAILED
+    if normalized in {"report_validated", "completed", "closed", "converged"}:
+        return ExecutionState.EXITED
+    if normalized in {"process_spawned", "initialized", "launching", "promise"}:
+        return ExecutionState.LAUNCHED
+    if normalized in ACTIVE_STATES - {"created"}:
+        return ExecutionState.RUNNING
+    return ExecutionState.CREATED
+
+
 def _await_progress_fingerprint(run: dict[str, Any] | None) -> tuple[Any, ...]:
     """Cheap movement signal for liveness-aware waits.
 
@@ -1675,6 +2305,92 @@ def _resolve_await_hard_cap(hard_cap_seconds: float | None) -> float | None:
     return cap if cap > 0 else None
 
 
+def _finalize_await_result(
+    run_id: str,
+    last_run: dict[str, Any] | None,
+    *,
+    completed: bool,
+    timed_out: bool,
+    reason: str,
+    worker_alive: bool,
+    attempts: int,
+) -> dict[str, Any]:
+    """Build the await return value and persist the supervisor verdict.
+
+    Contract §8: await verdicts (rc + 3-signal outcome + timestamp) are written
+    into the run meta so supervisor knowledge survives the supervisor process.
+    """
+    exit_code = _coerce_int((last_run or {}).get("exit_code"))
+    if timed_out and exit_code is None:
+        exit_code = 124
+    elif completed and exit_code is None:
+        exit_code = 0
+
+    outcome = "completed" if completed else ("timed_out" if timed_out else "unknown")
+    meta_path: Path | None = None
+    run_dir = _runtime_run_dir(run_id)
+    if run_dir.is_dir() and (run_dir / "meta.json").is_file():
+        meta_path = run_dir / "meta.json"
+    elif last_run is not None:
+        candidate = str(last_run.get("meta") or "").strip()
+        if candidate:
+            path = Path(candidate)
+            if path.is_file():
+                meta_path = path
+
+    await_fields = persist_await_verdict(
+        meta_path,
+        rc=exit_code,
+        outcome=outcome,
+        worker_alive=worker_alive,
+        reason=reason,
+    )
+
+    # Also stamp the board snapshot so TUI/readers see the await verdict without
+    # waiting for the next meta-driven projection.
+    snapshot_path = _snapshot_path(run_id)
+    if snapshot_path.is_file():
+        try:
+            snapshot = _read_json(snapshot_path)
+            if snapshot:
+                snapshot.update(await_fields)
+                # Re-settle with await evidence so unsealed reports stay n.
+                settlement = settle_payload(snapshot, force=True, source="await")
+                if settlement is not None:
+                    snapshot.update(settlement.to_payload())
+                    snapshot["settlement"] = {
+                        "verdict": settlement.verdict.value,
+                        "reason": settlement.reason,
+                        "settled_at": settlement.settled_at,
+                        "source": settlement.source,
+                        "claim_digest": settlement.claim_digest,
+                        "waived": settlement.waived,
+                        "tui": settlement.tui_key,
+                        "await_rc": exit_code,
+                        "await_outcome": outcome,
+                    }
+                    if meta_path is not None:
+                        persist_settlement_to_meta(meta_path, settlement)
+                _write_json(snapshot_path, snapshot)
+                last_run = snapshot
+        except OSError:
+            pass
+
+    return {
+        "run_id": run_id,
+        "found": last_run is not None,
+        "completed": completed,
+        "timed_out": timed_out,
+        "reason": reason,
+        "worker_alive": worker_alive,
+        "attempts": attempts,
+        "run": last_run,
+        "await_rc": exit_code,
+        "await_outcome": outcome,
+        **await_fields,
+    }
+
+
 def await_run(
     run_id: str,
     *,
@@ -1736,20 +2452,19 @@ def await_run(
             on_poll(last_run)
         children = _await_child_runs(snapshot, target)
         worker_alive = bool(
-            (last_run is not None and _worker_is_alive(last_run))
-            or any(_worker_is_alive(child) for child in children)
+            (last_run is not None and _await_process_is_alive(last_run))
+            or any(_await_process_is_alive(child) for child in children)
         )
         if last_run is not None and _run_is_terminal(last_run) and not worker_alive:
-            return {
-                "run_id": target,
-                "found": True,
-                "completed": True,
-                "timed_out": False,
-                "reason": "terminal",
-                "worker_alive": False,
-                "attempts": attempts,
-                "run": last_run,
-            }
+            return _finalize_await_result(
+                target,
+                last_run,
+                completed=True,
+                timed_out=False,
+                reason="terminal",
+                worker_alive=False,
+                attempts=attempts,
+            )
 
         delivered_report = str(
             report_path or (last_run.get("latest_report") if last_run else "") or ""
@@ -1763,16 +2478,15 @@ def await_run(
             and _report_file_written(delivered_report)
             and not worker_alive
         ):
-            return {
-                "run_id": target,
-                "found": last_run is not None,
-                "completed": True,
-                "timed_out": False,
-                "reason": "report_delivered",
-                "worker_alive": False,
-                "attempts": attempts,
-                "run": last_run,
-            }
+            return _finalize_await_result(
+                target,
+                last_run,
+                completed=True,
+                timed_out=False,
+                reason="report_delivered",
+                worker_alive=False,
+                attempts=attempts,
+            )
 
         now = time.monotonic()
         fingerprint = (
@@ -1793,27 +2507,25 @@ def await_run(
             idle_deadline = now + idle_window
 
         if hard_deadline is not None and now >= hard_deadline:
-            return {
-                "run_id": target,
-                "found": last_run is not None,
-                "completed": False,
-                "timed_out": True,
-                "reason": "hard_cap",
-                "worker_alive": worker_alive,
-                "attempts": attempts,
-                "run": last_run,
-            }
+            return _finalize_await_result(
+                target,
+                last_run,
+                completed=False,
+                timed_out=True,
+                reason="hard_cap",
+                worker_alive=worker_alive,
+                attempts=attempts,
+            )
         if now >= idle_deadline and not worker_alive:
-            return {
-                "run_id": target,
-                "found": last_run is not None,
-                "completed": False,
-                "timed_out": True,
-                "reason": "idle_stall",
-                "worker_alive": worker_alive,
-                "attempts": attempts,
-                "run": last_run,
-            }
+            return _finalize_await_result(
+                target,
+                last_run,
+                completed=False,
+                timed_out=True,
+                reason="idle_stall",
+                worker_alive=worker_alive,
+                attempts=attempts,
+            )
 
         sleep_for = interval_seconds
         if hard_deadline is not None:
@@ -1837,7 +2549,9 @@ def run_liveness(run_id: str) -> dict[str, Any]:
     if not target:
         return {"run_id": "", "found": False}
     try:
-        snapshot = sync_state()
+        # Scoped to the probed run: this is a supervisor-hot single-run probe
+        # and must never queue on the global board lock behind a full sync.
+        snapshot = sync_state(only_run_id=target)
     except OSError:
         return {"run_id": target, "found": False}
     run = _select_run(snapshot, target)
@@ -1861,11 +2575,31 @@ def cli(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="sync",
-        choices=("sync", "status"),
-        help="sync writes snapshots and prints the aggregate payload; status is an alias.",
+        choices=("sync", "status", "drain"),
+        help=(
+            "sync writes snapshots and prints the aggregate payload; status is "
+            "an alias; drain settles and archives parked terminal snapshots."
+        ),
     )
-    parser.parse_args(argv)
-    payload = sync_state()
+    parser.add_argument(
+        "--keep-hours",
+        type=float,
+        default=24.0,
+        help="drain: keep terminal snapshots newer than this many hours retained.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        help="drain: snapshots per lock acquisition (lock released between batches).",
+    )
+    args = parser.parse_args(argv)
+    if args.command == "drain":
+        payload: dict[str, Any] = drain_settled_snapshots(
+            keep_hours=args.keep_hours, batch_size=args.batch_size
+        )
+    else:
+        payload = sync_state()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 

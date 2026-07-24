@@ -4,11 +4,22 @@ import importlib.util
 import os
 import shutil
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from .package_resources import deck_path, runtime_path, skills_path
+from .vc_frame_delivery import (
+    classify_view_path,
+    frontier_root,
+    list_dangling_frontier_links,
+    prefer_repo_vc_frame,
+    resolve_clipboard_command,
+    resolve_pane_shell,
+    tools_current_path,
+    vc_frame_user_config_dir,
+)
 
 _INSTALLER_MODULE: Any | None = None
 
@@ -147,6 +158,189 @@ def _packaged_asset_findings() -> list[_Finding]:
     return findings
 
 
+def _vc_frame_delivery_findings(
+    *,
+    home: Path | None = None,
+    tools_home: Path | None = None,
+    path_env: str | None = None,
+) -> list[_Finding]:
+    """Config delivery health: view channel, themes, pane-shell, frontier zombies."""
+    findings: list[_Finding] = []
+    view = vc_frame_user_config_dir(home)
+    current = tools_current_path(tools_home)
+    store_cfg = current
+    checkout = None
+    try:
+        from .frontier_assets import vc_frame_config_source
+
+        checkout = vc_frame_config_source()
+    except FileNotFoundError:
+        pass
+
+    channels: list[str] = []
+    for name in ("config.kdl", "layouts", "themes"):
+        path = view / name
+        ch = classify_view_path(path, store_current=store_cfg, checkout=checkout)
+        channels.append(ch)
+        if ch == "DANGLING":
+            findings.append(
+                _Finding(
+                    "fail",
+                    "vc-frame:view",
+                    f"{path} is a dangling symlink — run `vibecrafted config install`",
+                )
+            )
+        elif ch == "STALE-FILE":
+            findings.append(
+                _Finding(
+                    "fail",
+                    "vc-frame:view",
+                    f"{path} is a regular file shadowing the store view — "
+                    f"run `vibecrafted config install` (backs up as .stale.*)",
+                )
+            )
+        elif ch == "missing":
+            findings.append(
+                _Finding(
+                    "warn",
+                    "vc-frame:view",
+                    f"{path} missing — run `vibecrafted config install`",
+                )
+            )
+        elif ch == "foreign":
+            findings.append(
+                _Finding(
+                    "warn",
+                    "vc-frame:view",
+                    f"{path} is user-managed (foreign) — not store/dev view",
+                )
+            )
+        else:
+            findings.append(_Finding("ok", "vc-frame:view", f"{name}: {ch} -> {path}"))
+
+    # themes presence under view or source
+    themes_dir = view / "themes"
+    if themes_dir.is_dir() or themes_dir.is_symlink():
+        try:
+            resolved = themes_dir.resolve(strict=True)
+            theme_files = list(resolved.glob("*.kdl"))
+            if theme_files:
+                findings.append(
+                    _Finding(
+                        "ok",
+                        "vc-frame:themes",
+                        f"{len(theme_files)} theme file(s) under {themes_dir}",
+                    )
+                )
+            else:
+                findings.append(
+                    _Finding(
+                        "warn",
+                        "vc-frame:themes",
+                        f"themes dir empty: {themes_dir}",
+                    )
+                )
+        except OSError:
+            findings.append(
+                _Finding(
+                    "fail",
+                    "vc-frame:themes",
+                    f"themes path does not resolve: {themes_dir}",
+                )
+            )
+    else:
+        findings.append(
+            _Finding(
+                "warn",
+                "vc-frame:themes",
+                f"themes view missing at {themes_dir}",
+            )
+        )
+
+    # Host commands: every shipped KDL must match the available shell/clipboard.
+    shell = resolve_pane_shell(path_env)
+    clipboard = resolve_clipboard_command(path_env)
+    layouts = view / "layouts"
+    unresolved: list[str] = []
+    kdl_files: list[Path] = []
+    config_file = view / "config.kdl"
+    if config_file.exists():
+        kdl_files.append(config_file)
+    if layouts.exists():
+        try:
+            kdl_files.extend(sorted(layouts.resolve().glob("*.kdl")))
+        except OSError:
+            pass
+    for kdl_file in kdl_files:
+        try:
+            text = kdl_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if shell != "zsh" and any(
+            token in text
+            for token in (
+                'command="zsh"',
+                'default_shell "zsh"',
+                "exec zsh -l",
+                "exec /bin/zsh -l",
+            )
+        ):
+            unresolved.append(f"{kdl_file.name}:zsh")
+        if clipboard is None and (
+            'copy_command "pbcopy"' in text or "pbcopy <" in text
+        ):
+            unresolved.append(f"{kdl_file.name}:pbcopy")
+    if unresolved:
+        findings.append(
+            _Finding(
+                "warn",
+                "vc-frame:pane-shell",
+                f"unresolved host commands for shell={shell!r}, "
+                f"clipboard={clipboard or 'internal'}: {', '.join(unresolved)}; "
+                "stage via config install",
+            )
+        )
+    else:
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:pane-shell",
+                f"host commands ok (shell={shell}, clipboard={clipboard or 'internal'})",
+            )
+        )
+
+    # frontier zombies
+    froot = frontier_root(home)
+    zombies = list_dangling_frontier_links(froot)
+    if zombies:
+        findings.append(
+            _Finding(
+                "fail",
+                "frontier:zombies",
+                f"{len(zombies)} dangling link(s) under {froot} — "
+                f"re-run install-frontier-config.sh or config install",
+            )
+        )
+    else:
+        findings.append(
+            _Finding(
+                "ok",
+                "frontier:zombies",
+                f"no dangling frontier links under {froot}",
+            )
+        )
+
+    if prefer_repo_vc_frame():
+        findings.append(
+            _Finding(
+                "ok",
+                "vc-frame:channel",
+                "VIBECRAFTED_PREFER_REPO_VC_FRAME=1 (dev-checkout preferred)",
+            )
+        )
+    return findings
+
+
 def doctor_run(
     store_path: str | Path | None = None,
     state: Any | None = None,
@@ -168,6 +362,7 @@ def doctor_run(
         findings = list(installer.run_doctor(resolved_store, resolved_state))
         findings.extend(_packaged_asset_findings())
     findings.extend(_launcher_shim_findings())
+    findings.extend(_vc_frame_delivery_findings())
     return findings
 
 

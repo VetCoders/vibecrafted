@@ -31,7 +31,7 @@ pub mod api {
     use axum::{Json, Router};
     use control_core::{
         ScaffoldArtifact, ScaffoldArtifactPatch, ScaffoldArtifactStore, ScaffoldCheckpointPatch,
-        ScaffoldWorkspace, vibecrafted_home,
+        ScaffoldError, ScaffoldWorkspace, vibecrafted_home,
     };
     use serde::Deserialize;
 
@@ -40,6 +40,7 @@ pub mod api {
         org: Option<String>,
         repo: Option<String>,
         day: Option<String>,
+        plan_id: Option<String>,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -47,8 +48,10 @@ pub mod api {
         org: String,
         repo: String,
         day: String,
+        plan_id: String,
         artifact_id: String,
         content: String,
+        expected_hash: String,
     }
 
     #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +59,7 @@ pub mod api {
         org: String,
         repo: String,
         day: String,
+        plan_id: String,
         artifact_id: String,
         #[serde(default)]
         approved: Option<String>,
@@ -66,6 +70,7 @@ pub mod api {
     pub fn scaffold_routes() -> Router<leptos::config::LeptosOptions> {
         Router::<leptos::config::LeptosOptions>::new()
             .route("/scaffold/editor", get(editor))
+            .route("/api/scaffold/plans", get(plans))
             .route("/api/scaffold/artifacts", get(artifacts))
             .route("/api/scaffold/changes", get(changes))
             .route("/api/scaffold/artifact", post(save_artifact))
@@ -75,6 +80,11 @@ pub mod api {
     async fn editor(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
         match load_workspace(query) {
             Ok(workspace) => Html(render_editor(&workspace)).into_response(),
+            Err(error @ ScaffoldError::SelectionRequired { .. }) => (
+                StatusCode::MULTIPLE_CHOICES,
+                Html(render_empty(&error.to_string())),
+            )
+                .into_response(),
             Err(error) => (
                 StatusCode::NOT_FOUND,
                 Html(render_empty(&format!(
@@ -85,21 +95,40 @@ pub mod api {
         }
     }
 
+    async fn plans(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
+        let Some((org, repo, day)) = explicit_day(&query) else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error":"org, repo, and day are required"})),
+            )
+                .into_response();
+        };
+        let store = ScaffoldArtifactStore::new(vibecrafted_home());
+        match store.plans(org, repo, day) {
+            Ok(plans) => Json(serde_json::json!({"plans": plans})).into_response(),
+            Err(error) => scaffold_error_response(error),
+        }
+    }
+
     async fn artifacts(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
         match load_workspace(query) {
             Ok(workspace) => Json(workspace).into_response(),
-            Err(error) => (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({ "error": error.to_string() })),
-            )
-                .into_response(),
+            Err(error) => scaffold_error_response(error),
         }
     }
 
     async fn changes(Query(query): Query<ScaffoldQuery>) -> impl IntoResponse {
         let store = ScaffoldArtifactStore::new(vibecrafted_home());
-        let (org, repo, day) = resolve_query(query, &store);
-        match store.changes(&org, &repo, &day) {
+        let workspace = match load_workspace(query) {
+            Ok(workspace) => workspace,
+            Err(error) => return scaffold_error_response(error),
+        };
+        match store.changes(
+            &workspace.org,
+            &workspace.repo,
+            &workspace.day,
+            &workspace.plan_id,
+        ) {
             Ok(changes) => Json(changes).into_response(),
             Err(error) => (
                 StatusCode::NOT_FOUND,
@@ -115,12 +144,20 @@ pub mod api {
             &form.org,
             &form.repo,
             &form.day,
+            &form.plan_id,
             ScaffoldArtifactPatch {
                 artifact_id: form.artifact_id,
                 content: form.content,
+                expected_hash: form.expected_hash,
             },
         );
-        redirect_after_mutation(&form.org, &form.repo, &form.day, result.err())
+        redirect_after_mutation(
+            &form.org,
+            &form.repo,
+            &form.day,
+            &form.plan_id,
+            result.err(),
+        )
     }
 
     async fn save_checkpoint(Form(form): Form<CheckpointForm>) -> impl IntoResponse {
@@ -129,58 +166,101 @@ pub mod api {
             &form.org,
             &form.repo,
             &form.day,
+            &form.plan_id,
             ScaffoldCheckpointPatch {
                 artifact_id: form.artifact_id,
                 approved: form.approved.is_some(),
                 note: form.note,
             },
         );
-        redirect_after_mutation(&form.org, &form.repo, &form.day, result.err())
+        redirect_after_mutation(
+            &form.org,
+            &form.repo,
+            &form.day,
+            &form.plan_id,
+            result.err(),
+        )
     }
 
     fn redirect_after_mutation(
         org: &str,
         repo: &str,
         day: &str,
-        error: Option<std::io::Error>,
+        plan_id: &str,
+        error: Option<ScaffoldError>,
     ) -> Response {
-        let status = if error.is_some() { "error" } else { "saved" };
+        let status = if let Some(error) = error {
+            eprintln!("scaffold mutation failed: {error}");
+            "status-error"
+        } else {
+            "status-saved"
+        };
         let location = format!(
-            "/scaffold/editor?org={}&repo={}&day={}#status-{status}",
+            "/scaffold/editor?org={}&repo={}&day={}&plan_id={}#{status}",
             url_component(org),
             url_component(repo),
-            url_component(day)
+            url_component(day),
+            url_component(plan_id),
         );
         (StatusCode::SEE_OTHER, [(header::LOCATION, location)]).into_response()
     }
 
-    fn load_workspace(query: ScaffoldQuery) -> std::io::Result<ScaffoldWorkspace> {
+    fn load_workspace(query: ScaffoldQuery) -> Result<ScaffoldWorkspace, ScaffoldError> {
         let store = ScaffoldArtifactStore::new(vibecrafted_home());
         if query.org.is_none() && query.repo.is_none() && query.day.is_none() {
             return store.latest_workspace();
         }
-        let (org, repo, day) = resolve_query(query, &store);
-        store.workspace(&org, &repo, &day)
+        let plan_id = query.plan_id.clone();
+        let (org, repo, day) = resolve_query(&query, &store);
+        store.workspace(&org, &repo, &day, plan_id.as_deref())
     }
 
     fn resolve_query(
-        query: ScaffoldQuery,
+        query: &ScaffoldQuery,
         store: &ScaffoldArtifactStore,
     ) -> (String, String, String) {
         let fallback = store.latest_workspace().ok();
         let org = query
             .org
+            .clone()
             .or_else(|| fallback.as_ref().map(|workspace| workspace.org.clone()))
             .unwrap_or_else(|| "Vetcoders".to_string());
         let repo = query
             .repo
+            .clone()
             .or_else(|| fallback.as_ref().map(|workspace| workspace.repo.clone()))
             .unwrap_or_else(|| "vibecrafted".to_string());
         let day = query
             .day
+            .clone()
             .or_else(|| fallback.as_ref().map(|workspace| workspace.day.clone()))
             .unwrap_or_else(|| "2026_0606".to_string());
         (org, repo, day)
+    }
+
+    fn explicit_day(query: &ScaffoldQuery) -> Option<(&str, &str, &str)> {
+        Some((
+            query.org.as_deref()?,
+            query.repo.as_deref()?,
+            query.day.as_deref()?,
+        ))
+    }
+
+    fn scaffold_error_response(error: ScaffoldError) -> Response {
+        let status = match error {
+            ScaffoldError::Conflict { .. } => StatusCode::CONFLICT,
+            ScaffoldError::SelectionRequired { .. } => StatusCode::MULTIPLE_CHOICES,
+            ScaffoldError::ArtifactNotFound { .. } => StatusCode::NOT_FOUND,
+            ScaffoldError::ReadOnly { .. }
+            | ScaffoldError::UnsafePath { .. }
+            | ScaffoldError::InvalidManifest { .. } => StatusCode::BAD_REQUEST,
+            ScaffoldError::Io(_) | ScaffoldError::Json(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (
+            status,
+            Json(serde_json::json!({"error": error.to_string()})),
+        )
+            .into_response()
     }
 
     fn render_editor(workspace: &ScaffoldWorkspace) -> String {
@@ -221,8 +301,8 @@ pub mod api {
       <span>{}</span>
     </div>
     <div class="tabs">{}</div>
-    <a class="api-link" href="/api/scaffold/artifacts?org={}&repo={}&day={}">artifact endpoint</a>
-    <a class="api-link" href="/api/scaffold/changes?org={}&repo={}&day={}">change endpoint</a>
+    <a class="api-link" href="/api/scaffold/artifacts?org={}&repo={}&day={}&plan_id={}">artifact endpoint</a>
+    <a class="api-link" href="/api/scaffold/changes?org={}&repo={}&day={}&plan_id={}">change endpoint</a>
   </nav>
   <section class="review-main">
     <div id="status-saved" class="status">Saved. Agent endpoint is current.</div>
@@ -242,9 +322,11 @@ pub mod api {
             url_component(&workspace.org),
             url_component(&workspace.repo),
             url_component(&workspace.day),
+            url_component(&workspace.plan_id),
             url_component(&workspace.org),
             url_component(&workspace.repo),
             url_component(&workspace.day),
+            url_component(&workspace.plan_id),
             panels,
             save_on_close_guard()
         )
@@ -273,7 +355,7 @@ pub mod api {
             checkpoint,
             escape_attr(&artifact.id),
             escape_html(&artifact.title),
-            artifact.kind.as_str()
+            artifact.role.as_str()
         )
     }
 
@@ -311,13 +393,13 @@ pub mod api {
   </form>
 </article>"#,
             escape_attr(&artifact.id),
-            artifact.kind.as_str(),
+            artifact.role.as_str(),
             escape_html(&artifact.title),
             escape_html(&artifact.relative_path),
             status,
-            hidden_context(workspace, &artifact.id),
+            hidden_context(workspace, artifact),
             escape_html(&artifact.content),
-            hidden_context(workspace, &artifact.id),
+            hidden_context(workspace, artifact),
             checked,
             escape_attr(&artifact.checkpoint.note)
         )
@@ -392,16 +474,20 @@ pub mod api {
 </script>"#
     }
 
-    fn hidden_context(workspace: &ScaffoldWorkspace, artifact_id: &str) -> String {
+    fn hidden_context(workspace: &ScaffoldWorkspace, artifact: &ScaffoldArtifact) -> String {
         format!(
             r#"<input type="hidden" name="org" value="{}">
 <input type="hidden" name="repo" value="{}">
 <input type="hidden" name="day" value="{}">
-<input type="hidden" name="artifact_id" value="{}">"#,
+<input type="hidden" name="plan_id" value="{}">
+<input type="hidden" name="artifact_id" value="{}">
+<input type="hidden" name="expected_hash" value="{}">"#,
             escape_attr(&workspace.org),
             escape_attr(&workspace.repo),
             escape_attr(&workspace.day),
-            escape_attr(artifact_id)
+            escape_attr(&workspace.plan_id),
+            escape_attr(&artifact.id),
+            escape_attr(&artifact.content_hash),
         )
     }
 
@@ -457,7 +543,7 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
     mod tests {
         use super::*;
         use control_core::{
-            ScaffoldArtifact, ScaffoldArtifactKind, ScaffoldCheckpoint, ScaffoldWorkspace,
+            ScaffoldArtifact, ScaffoldArtifactRole, ScaffoldCheckpoint, ScaffoldWorkspace,
         };
 
         fn fixture() -> ScaffoldWorkspace {
@@ -465,16 +551,21 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
                 org: "Vetcoders".into(),
                 repo: "vibecrafted".into(),
                 day: "2026_0615".into(),
-                operator_dir: "/tmp/op".into(),
+                plan_id: "plan-a".into(),
+                plan_root: "/tmp/plan-a".into(),
+                legacy_read_only: false,
                 changes_path: "/tmp/op/.scaffold-changes.jsonl".into(),
                 checkpoints_path: "/tmp/op/.scaffold-checkpoints.json".into(),
                 artifacts: vec![ScaffoldArtifact {
                     id: "master-dispatch".into(),
                     title: "Master Dispatch".into(),
-                    kind: ScaffoldArtifactKind::WaveAtlas,
+                    role: ScaffoldArtifactRole::WaveAtlas,
                     path: "/tmp/op/master-dispatch.md".into(),
                     relative_path: "operator/master-dispatch.md".into(),
+                    editable: true,
+                    required: true,
                     content: "# atlas".into(),
+                    content_hash: "sha256:test".into(),
                     bytes: 7,
                     modified_at: "2026-06-15T00:00:00Z".into(),
                     checkpoint: ScaffoldCheckpoint::default(),
@@ -519,6 +610,38 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
             assert!(
                 !guard.contains("checkpoint"),
                 "checkpoint approval is a deliberate action and must not auto-flush"
+            );
+        }
+
+        #[test]
+        fn conflict_maps_to_http_409_and_editor_carries_revision() {
+            let response = scaffold_error_response(ScaffoldError::Conflict {
+                expected: "sha256:old".into(),
+                actual: "sha256:new".into(),
+            });
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let html = render_editor(&fixture());
+            assert!(html.contains("name=\"plan_id\" value=\"plan-a\""));
+            assert!(html.contains("name=\"expected_hash\" value=\"sha256:test\""));
+        }
+
+        #[test]
+        fn form_mutation_error_redirects_back_to_editor_status() {
+            let response = redirect_after_mutation(
+                "Vetcoders",
+                "vibecrafted",
+                "2026_0615",
+                "plan-a",
+                Some(ScaffoldError::Conflict {
+                    expected: "sha256:old".into(),
+                    actual: "sha256:new".into(),
+                }),
+            );
+
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+            assert_eq!(
+                response.headers().get(header::LOCATION).unwrap(),
+                "/scaffold/editor?org=Vetcoders&repo=vibecrafted&day=2026_0615&plan_id=plan-a#status-error"
             );
         }
     }

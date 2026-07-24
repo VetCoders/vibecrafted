@@ -14,6 +14,13 @@ os.environ.setdefault("VIBECRAFTED_MARBLES_PROBE_NOTIFY", "0")
 os.environ.setdefault("VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME", "1")
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "e2e_delivery: full config delivery channel matrix (wheel/dev × shell)",
+    )
+
+
 @pytest.fixture(autouse=True)
 def _isolate_vibecrafted_runtime_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep root tests independent from the live Vibecrafted runtime."""

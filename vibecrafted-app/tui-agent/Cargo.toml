@@ -8,7 +8,7 @@ authors.workspace = true
 description = "Voc Agent — the Rust terminal cockpit for Vibecrafted"
 readme = "README.md"
 homepage = "https://vibecrafted.io"
-repository = "https://github.com/vetcoders/vc-tui"
+repository = "https://github.com/VetCoders/vibecrafted"
 documentation = "https://docs.rs/voc"
 
 [[bin]]
@@ -19,7 +19,12 @@ path = "src/main.rs"
 name = "vc-admin"
 path = "src/bin/vc_admin.rs"
 
+[[bin]]
+name = "vc-procs"
+path = "src/bin/vc_procs.rs"
+
 [dependencies]
+control-core = { path = "../../vibecrafted-server/control-core" }
 rmcp-mux = { path = "../mux-agent", version = "0.4.0", package = "rmcp-mux" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }
 anyhow = "1"
@@ -32,6 +37,7 @@ notify = "6"
 ratatui = "0.30"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sysinfo = "0.33"
 
 [dev-dependencies]
 insta = { version = "1", features = ["filters"] }

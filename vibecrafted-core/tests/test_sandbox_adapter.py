@@ -3,9 +3,9 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
-
 from vibecrafted_core import control_plane
 from vibecrafted_core.sandbox import SandboxAdapter, SandboxPolicy
 from vibecrafted_core.sandbox import adapter as adapter_module
@@ -48,9 +48,9 @@ class FakeCommand:
 
 class FakeSandbox:
     last_command = ""
-    last_args: list[str] = []
+    last_args: ClassVar[list[str]] = []
     last_timeout: int | None = None
-    started_with: dict[str, object] = {}
+    started_with: ClassVar[dict[str, object]] = {}
 
     def __init__(self, **kwargs: object) -> None:
         self.kwargs = kwargs
@@ -97,15 +97,7 @@ def test_policy_loads_operator_yaml(
     path = default_policy_path()
     path.parent.mkdir(parents=True)
     path.write_text(
-        "\n".join(
-            [
-                "cpu: 2",
-                "memory_mb: 1024",
-                "network: allow",
-                "allow_hosts:",
-                "  - example.com",
-            ]
-        ),
+        "cpu: 2\nmemory_mb: 1024\nnetwork: allow\nallow_hosts:\n  - example.com",
         encoding="utf-8",
     )
 

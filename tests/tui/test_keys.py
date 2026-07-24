@@ -1,9 +1,9 @@
-import pytest
 import sys
 from pathlib import Path
 
-from scripts import installer_gui
-from scripts import vetcoders_install
+import pytest
+
+from scripts import installer_gui, vetcoders_install
 from scripts.runtime_paths import read_version_file, vibecrafted_home
 
 
@@ -170,6 +170,9 @@ def test_install_launcher_leaves_shell_rc_untouched_without_consent(
     zshrc.write_text(original, encoding="utf-8")
 
     monkeypatch.setenv("HOME", str(home))
+    shim = vetcoders_install._uv_tool_shim()
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shim.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
 
     vetcoders_install._install_launcher(repo_root, dry_run=False)
 
@@ -177,6 +180,29 @@ def test_install_launcher_leaves_shell_rc_untouched_without_consent(
     canonical = home / ".local" / "bin" / "vibecrafted"
     assert canonical.is_symlink()
     assert canonical.readlink() == vetcoders_install._uv_tool_shim()
+
+
+def test_install_launcher_falls_back_to_deck_when_shim_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A python-only install has no uv-tool shim yet: the launcher must still
+    execute, so it points at the source deck instead of a dangling shim."""
+    home = tmp_path / "home"
+    repo_root = tmp_path / "repo"
+    launcher_src = repo_root / "scripts" / "vibecrafted"
+
+    launcher_src.parent.mkdir(parents=True)
+    launcher_src.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    home.mkdir()
+
+    monkeypatch.setenv("HOME", str(home))
+
+    vetcoders_install._install_launcher(repo_root, dry_run=False)
+
+    canonical = home / ".local" / "bin" / "vibecrafted"
+    assert canonical.is_symlink()
+    assert canonical.readlink() == launcher_src
+    assert canonical.resolve().exists()
 
 
 def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
@@ -200,6 +226,9 @@ def test_install_launcher_dedupes_zshrc_path_entries_with_consent(
     bashrc.write_text("", encoding="utf-8")
 
     monkeypatch.setenv("HOME", str(home))
+    shim = vetcoders_install._uv_tool_shim()
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shim.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
 
     vetcoders_install._install_launcher(repo_root, dry_run=False, update_rc=True)
 

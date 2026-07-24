@@ -6,20 +6,67 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from vibecrafted_core import ship, wrappers
+from vibecrafted_core import control_plane, ship, wrappers
+from vibecrafted_core.lifecycle_delivery import claim_digest_for_text
 from vibecrafted_core.lifecycle_runner import (
     LIFECYCLE_SCHEMA_ID,
-    LifecycleRunSpec,
     LifecycleRunner,
+    LifecycleRunSpec,
     LifecycleSupervisor,
 )
 from vibecrafted_core.workflows.model import WorkflowManifest, WorkflowStage
+
 from .lifecycle_schema_assertions import (
     assert_lifecycle_state_matches_packaged_schema,
     assert_worker_report_frontmatter_matches_packaged_schema,
     packaged_lifecycle_schema,
 )
+
+
+def test_lifecycle_runner_honors_reserved_parent_run_id(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+
+    def fake_launcher(spec, _source_dir):
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": "child-implement",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-implement",
+                agent="codex",
+                run_id="parent-session-123",
+                prompt="reserved identity",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert state["run_id"] == "parent-session-123"
+    assert Path(state["state_path"]).parent.name == "parent-session-123"
+    assert state["stages"][0]["launch"]["run_id"] == "child-implement"
 
 
 def test_lifecycle_runner_triggers_audit_after_marbles(
@@ -588,12 +635,140 @@ def test_lifecycle_runner_injects_context_atlas_into_stage_prompt(
         in prompts[0]
     )
     assert "Allowed artifacts: reports, cache, run_state, transcripts" in prompts[0]
+    digest = claim_digest_for_text("audit readiness")
+    assert f"mission claim digest: {digest}" in prompts[0]
+    assert f"claim_digest: {digest}" in prompts[0]
+    assert "finalized: false" in prompts[0]
+    assert "finalized: true" in prompts[0]
+    assert "claim: <what succeeded>" in prompts[0]
     assert "Human controls: accept_dou, force_audit, interrupt_workflow" in prompts[0]
     assert "next_stage: <stage-id>" in prompts[0]
     assert "next_agent: <agent-id>" in prompts[0]
     # DoU stages carry the index contract; other stages must not (see below).
     assert "dou_index: <int>" in prompts[0]
     assert "ZERO DoU index" in prompts[0]
+
+
+def test_lifecycle_runner_validated_report_reaches_finalized_snapshot(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=VC Test",
+            "-c",
+            "user.email=vc@example.test",
+            "commit",
+            "-m",
+            "initial",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    mission = "prove one lifecycle stage automatically"
+    digest = claim_digest_for_text(mission)
+    stage_run_id = "implement-proof-run"
+    runtime_dir = home / "control_plane" / "runtime_runs" / stage_run_id
+    artifact_dir = home / "artifacts" / "tests" / stage_run_id
+
+    def fake_launcher(spec, _source_dir):
+        runtime_dir.mkdir(parents=True)
+        artifact_dir.mkdir(parents=True)
+        report = artifact_dir / "report.md"
+        report.write_text(
+            "\n".join(
+                [
+                    "---",
+                    f"run_id: {stage_run_id}",
+                    "agent: codex",
+                    "skill: implement",
+                    "status: completed",
+                    "claim_status: completed",
+                    f"claim_digest: {digest}",
+                    "---",
+                    "",
+                    "Validated stage output.",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        transcript = artifact_dir / "transcript.log"
+        transcript.write_text("stage completed\n", encoding="utf-8")
+        meta = artifact_dir / "stage.meta.json"
+        meta.write_text(
+            json.dumps(
+                {
+                    "run_id": stage_run_id,
+                    "agent": "codex",
+                    "skill_code": "impl",
+                    "status": "report_validated",
+                    "state": "report_validated",
+                    "root": str(tmp_path),
+                    "prompt": mission,
+                    "report": str(report),
+                    "transcript": str(transcript),
+                    "exit_code": 0,
+                    "liveness": "terminal",
+                    "updated_at": "2026-07-23T12:00:00Z",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (runtime_dir / "meta.json").write_text(meta.read_text(), encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": stage_run_id,
+            "report": str(report),
+            "transcript": str(transcript),
+            "meta": str(meta),
+        }
+
+    def fake_awaiter(payload):
+        return {
+            "completed": True,
+            "artifact_ok": True,
+            "run_id": stage_run_id,
+            "report": payload["report"],
+            "transcript": payload["transcript"],
+            "meta": payload["meta"],
+            "run": {"exit_code": 0},
+        }
+
+    state = asyncio.run(
+        LifecycleRunner(launcher=fake_launcher, awaiter=fake_awaiter).run(
+            LifecycleRunSpec(
+                workflow_id="vc-implement",
+                agent="codex",
+                prompt=mission,
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert state["proof_state"] == "passed"
+    assert state["delivery_state"] == "sealed"
+    assert state["stages"][0]["lifecycle_seal"]["granted"] is True
+    control_plane.sync_state(stage_run_id)
+    snapshot = json.loads(
+        (control_plane.run_snapshot_dir() / f"{stage_run_id}.json").read_text()
+    )
+    assert snapshot["proof_state"] == "passed"
+    assert snapshot["delivery_state"] == "sealed"
+    assert snapshot["settlement_verdict"] == "finalized"
+    assert snapshot["settlement_tui"] == "f"
 
 
 def test_read_stage_detects_mutation_to_preexisting_dirty_file(
@@ -1024,11 +1199,9 @@ def test_vc_polarize_wrapper_uses_lifecycle_runner_with_loop_options(
 @pytest.mark.parametrize(
     ("wrapper_name", "workflow_id"),
     [
-        ("scaffold_main", "vc-scaffold"),
-        ("implement_main", "vc-implement"),
-        ("review_main", "vc-review"),
+        # scaffold/implement/review/followup: supervised_skill_main (one path
+        # with `vibecrafted <skill>`). Lifecycle stages remain under `ship`.
         ("workflow_main", "vc-workflow"),
-        ("followup_main", "vc-followup"),
         ("release_main", "vc-release"),
     ],
 )
@@ -1057,6 +1230,25 @@ def test_ship_stage_wrappers_route_to_lifecycle_runner(
     assert captured[0].workflow_id == workflow_id
     assert captured[0].agent == "codex"
     assert captured[0].prompt == "run the stage"
+
+
+def test_scaffold_main_uses_supervised_skill_not_lifecycle(monkeypatch) -> None:
+    """vc-scaffold binary must share the cli skill path, not a second lifecycle CLI."""
+    called: list[tuple[str, list[str] | None]] = []
+
+    def fake_supervised(skill: str, argv=None):
+        called.append((skill, list(argv) if argv is not None else None))
+        return 0
+
+    monkeypatch.setattr(wrappers, "supervised_skill_main", fake_supervised)
+    monkeypatch.setattr(
+        wrappers,
+        "_lifecycle_main",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("lifecycle must not run")),
+    )
+    rc = wrappers.scaffold_main(["codex", "--prompt", "plan auth"])
+    assert rc == 0
+    assert called == [("scaffold", ["codex", "--prompt", "plan auth"])]
 
 
 def test_lifecycle_console_scripts_are_packaged() -> None:

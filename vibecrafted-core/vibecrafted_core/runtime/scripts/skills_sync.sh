@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF_USAGE'
-Usage: skills_sync.sh <host> [--source <repo-root>] [--tool <codex|claude|gemini>]... [--dry-run] [--mirror] [--with-shell] [--no-zshrc] [--no-bashrc] [--no-verify]
+Usage: skills_sync.sh <host> [--source <repo-root>] [--tool <codex|claude|agy>]... [--dry-run] [--mirror] [--with-shell] [--no-zshrc] [--no-bashrc] [--no-verify]
 
 Sync canonical skill directories from this repo to the staged tools store:
   $HOME/.local/share/vibecrafted/tools/vibecrafted-current/skills
@@ -11,7 +11,7 @@ Sync canonical skill directories from this repo to the staged tools store:
 Then create symlink views inside the remote tool homes:
   $HOME/.codex/skills
   $HOME/.claude/skills
-  $HOME/.gemini/skills
+  $HOME/.agy/skills
 
 Examples:
   bash runtime/scripts/skills_sync.sh mgbook16
@@ -74,7 +74,7 @@ while [[ $# -gt 0 ]]; do
       shift
       [[ $# -gt 0 ]] || die "Missing value for --tool"
       case "$1" in
-        codex|claude|gemini) tools+=("$1") ;;
+        codex|claude|agy) tools+=("$1") ;;
         *) die "Unknown tool: $1" ;;
       esac
       ;;
@@ -143,7 +143,7 @@ done < <(
 [[ ${#skills[@]} -gt 0 ]] || die "No skill directories found under $skills_root"
 
 if [[ ${#tools[@]} -eq 0 ]]; then
-  tools=(codex claude gemini)
+  tools=(codex claude agy)
 fi
 
 rsync_args=(-az --exclude '.DS_Store' --exclude '.backup' --exclude '.loctree' -e ssh)

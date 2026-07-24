@@ -43,22 +43,24 @@ import http.client
 import json
 import logging
 import os
-import tomllib
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
+
+import tomllib
 
 __all__ = [
-    "MEMEX_AUTHORITY_LABEL",
     "DEFAULT_CONFIG_PATH",
     "DEFAULT_ENDPOINT",
     "DEFAULT_TIMEOUT_SECONDS",
+    "MEMEX_AUTHORITY_LABEL",
     "SPARSE_AICX_THRESHOLD",
     "MemexChunk",
-    "MemexConfig",
     "MemexClientError",
+    "MemexConfig",
     "load_config",
     "search",
 ]
@@ -165,8 +167,8 @@ def _read_toml(path: Path) -> dict[str, Any]:
 
 def load_config(
     *,
-    config_path: Optional[Path] = None,
-    environ: Optional[dict[str, str]] = None,
+    config_path: Path | None = None,
+    environ: dict[str, str] | None = None,
 ) -> MemexConfig:
     """Resolve memex configuration from config file, env, or defaults.
 
@@ -353,10 +355,10 @@ def _http_search(
 def search(
     query: str,
     *,
-    namespace: Optional[str] = None,
+    namespace: str | None = None,
     limit: int = 10,
-    config: Optional[MemexConfig] = None,
-    mcp_call: Optional[Callable[[str, str, int], dict[str, Any]]] = None,
+    config: MemexConfig | None = None,
+    mcp_call: Callable[[str, str, int], dict[str, Any]] | None = None,
 ) -> list[MemexChunk]:
     """Search memex for cross-session context. Always degrades gracefully.
 
@@ -383,7 +385,7 @@ def search(
     if mcp_call is not None:
         try:
             payload = mcp_call(query, ns, limit)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             _logger.warning("memex MCP call failed: %s", exc)
             return []
         return _parse_chunks(payload, namespace=ns, retrieved_at=retrieved_at)
@@ -408,7 +410,7 @@ def search(
     except MemexClientError as exc:
         _logger.warning("memex: %s — degrading to empty list", exc)
         return []
-    except Exception as exc:  # last-resort net: never raise to the caller
+    except Exception as exc:  # noqa: BLE001  # last-resort net: never raise to caller
         _logger.warning("memex: unexpected failure: %s — degrading", exc)
         return []
 

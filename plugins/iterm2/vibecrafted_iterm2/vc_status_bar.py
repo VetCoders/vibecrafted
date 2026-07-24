@@ -15,8 +15,9 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 try:
     import iterm2
@@ -57,7 +58,7 @@ class VcStatusBarState:
             result = self._refresh()
             if hasattr(result, "__await__"):
                 await result
-        except Exception:  # pragma: no cover - best-effort path
+        except Exception:  # pragma: no cover - best-effort path  # noqa: BLE001
             _LOG.debug("status bar refresh failed", exc_info=True)
 
 
@@ -92,13 +93,13 @@ async def register_status_bar(connection: Any, state: VcStatusBarState) -> Any:
     )
 
     @iterm2.StatusBarRPC  # type: ignore[attr-defined]
-    async def coroutine(  # noqa: D401 - iTerm2 RPC contract
+    async def coroutine(
         knobs: dict[str, Any],
     ) -> str:
         return state.render()
 
     @iterm2.RPC  # type: ignore[attr-defined]
-    async def on_click(session_id: str) -> None:  # noqa: D401 - iTerm2 RPC
+    async def on_click(session_id: str) -> None:
         opened = _open_transcript(state)
         if not opened:
             _LOG.info(

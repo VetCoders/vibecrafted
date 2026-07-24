@@ -1,4 +1,25 @@
 (function () {
+    /* Listener registry: pair every bind with pagehide teardown (mem/global-event-listener). */
+    var __vcListeners = [];
+    function vcListen(target, type, handler, options) {
+        if (!target || typeof target.addEventListener !== 'function') return handler;
+        target.addEventListener(type, handler, options);
+        __vcListeners.push({ target: target, type: type, handler: handler, options: options });
+        return handler;
+    }
+    function vcUnlistenAll() {
+        for (var i = 0; i < __vcListeners.length; i++) {
+            var e = __vcListeners[i];
+            try {
+                e.target.removeEventListener(e.type, e.handler, e.options);
+            } catch (_err) { /* best-effort teardown */ }
+        }
+        __vcListeners.length = 0;
+    }
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('pagehide', vcUnlistenAll);
+    }
+
     var prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     var DPR_CAP = prefersReducedMotion ? 1.25 : 2;
     var frameworkLocale = /^pl\b/i.test(document.documentElement.lang || '') ? 'pl' : 'en';
@@ -1772,14 +1793,14 @@
             buttonLabel.className = 'framework-playground__chip-label';
             buttonLabel.textContent = phaseDef.label;
             button.appendChild(buttonLabel);
-            button.addEventListener('click', function () {
+            vcListen(button, 'click', function () {
                 showPhase(index);
             });
             rail.appendChild(button);
             phaseButtons.push(button);
         });
 
-        window.addEventListener('resize', resize);
+        vcListen(window, 'resize', resize);
         phase = resolvePhaseIndex(startPhaseName);
         resize();
         updateUi(true);

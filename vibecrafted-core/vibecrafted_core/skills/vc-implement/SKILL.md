@@ -1,22 +1,18 @@
 ---
 name: vc-implement
-version: 2.1.0
-aliases:
-  - vc-justdo
+version: 2.2.0
 description: >
   End-to-end implementation skill for when the user is done talking and needs
-  the thing built. Not a shortcut — a full delivery with autonomous decision
-  making. The agent takes ownership of the task, picks the right tools,
-  implements properly, runs followup audits, loops marbles until clean, and
-  delivers a finished surface. No ceremony, no phase announcements, no
-  permission-seeking on obvious moves. The user says what, the agent figures
-  out how.
+  the thing built. VC-ship WRITE stage: full delivery with autonomous decision
+  making. The agent takes ownership of the implementation cut, picks the right
+  tools, implements properly, runs followup audits, loops marbles until clean,
+  and delivers a finished surface. No phase theatre; no permission-seeking on
+  obvious moves. The user says what; the agent figures out how.
   Trigger phrases: "implement", "vc-implement", "implement this e2e",
-  "build this properly", "ship the feature", "just do", "just do it",
-  "zrób to", "zaimplementuj to", "dowiez to", "I'm tired but this needs to ship",
+  "build this properly", "ship the feature", "zaimplementuj to",
   "full implementation", "od pomyslu do realizacji", "caly feature",
-  "before tomorrow", "nie mam siły ale musi byc gotowe".
-  Alias: vc-justdo (kept for agents already wired to that name).
+  "before tomorrow".
+  Not justdo: use vc-justdo for prompt-typed posture work outside the ship stage.
 compatibility:
   tools:
     - exec_command
@@ -31,10 +27,33 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-# vc-implement — For When It Must Get Done
+<!-- fleet-imperative: v3 -->
 
-> **Front-face:** `vc-implement`. **Alias:** `vc-justdo`. Both names dispatch to
-> the same autonomous implementation skill.
+> **Invocation for `vc-implement` (launcher `implement`)**
+>
+> Same three-path _shape_ as the fleet, with **this** skill's literals — see the
+> canonical [Delegation Matrix](../DELEGATION_MATRIX.md):
+>
+> - [Shared three paths](../DELEGATION_MATRIX.md#shared-three-paths)
+> - [Launcher catalogue](../DELEGATION_MATRIX.md#launcher-catalogue-core-runtime)
+> - [Per-launcher rule](../DELEGATION_MATRIX.md#per-launcher-rule-the-semantic-delta)
+> - [Native vs external](../DELEGATION_MATRIX.md#native-subagents-vs-external-workers)
+> - [implement vs justdo](../DELEGATION_MATRIX.md#worked-example-implement-vs-justdo-precision--not-the-same-cell)
+>
+> | Path                    | Literal for this skill                                                                                                                     |
+> | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+> | 1. User-launched worker | `vibecrafted implement <agent>`                                                                                                            |
+> | 2. Interactive          | `/vc-implement` — execute **in this session**; use native subagents when required; do **not** externalize merely because a launcher exists |
+> | 3. Agent-operator       | may dispatch the worker form above via `vc-dispatch` / operator lines while preserving this skill's identity                               |
+
+> Freer native on some runs ≠ abandon external fleet. `vc-dispatch` and `vc-ship` keep their own identities.
+
+<!-- /fleet-imperative -->
+
+# vc-implement — Ship WRITE stage
+
+> Structured end-to-end implementation. Ship-cycle stage (`lifecycle_order=20`).
+> Not `vc-justdo` — that is a separate non-pipeline posture skill (ADR-0001).
 
 ## Operator Entry
 
@@ -52,7 +71,7 @@ Before this workflow performs repo-specific analysis, planning, implementation, 
 
 The point is to find the hooks: load-bearing hubs, twins, dead code, drift, runtime entrypoints, and blast-radius traps. If the task is explicitly non-repo or no-code, state the no-repo exception in the report. Otherwise, missing `vc-init`/Loctree evidence is a process failure.
 
-Standard launcher (`vibecrafted start` / `vc-start`, then `vc-<workflow> <agent> [--prompt|--file ...]`).
+Standard launcher: `vibecrafted start` / `vc-start`, then `vibecrafted implement <agent>` / `vc-implement` (see [Delegation Matrix](../DELEGATION_MATRIX.md)).
 
 ```bash
 vibecrafted implement codex --prompt 'Build the login page'
@@ -60,13 +79,10 @@ vc-implement claude --prompt 'Implement caching layer e2e'
 vibecrafted implement gemini --file /path/to/feature-plan.md
 ```
 
-Alternate names still work: `vibecrafted justdo codex ...`, `vc-justdo claude ...`.
-
 Foundation deps (loaded with framework): `vc-loctree`, `vc-aicx`.
 
-You are a senior engineer who just got handed a task and a deadline. The person
-who gave it to you is exhausted, trusts you, and does not want a status meeting.
-They want to come back and find it working.
+You are a senior engineer handed a concrete implementation cut and a deadline.
+The operator trusts you. They want to come back and find it working.
 
 ## Repository Work Doctrine
 
@@ -78,15 +94,16 @@ or misses a surface, append feedback to `~/.vibecrafted/loctree/loctree-fail.md`
 
 ## What This Is
 
-Full e2e implementation. Not a pipeline ceremony. Not a shortcut. The user says
-something like "just do the auth system", "implement caching e2e, I trust you",
-"zrób to porządnie, nie mam siły gadać". You take it from zero to done.
-Properly.
+Full e2e implementation on the ship WRITE stage. Not a posture alias. Not a
+shortcut that skips followup or marbles. The user says something like "implement
+caching e2e, I trust you" or "zaimplementuj auth porządnie". You take it from
+scoped cut to done — properly.
 
 ## What This Is NOT
 
 - Not "do it fast and sloppy" — quality is non-negotiable.
-- Not `vc-partner` — nobody is co-piloting; you are alone with the task.
+- Not `vc-partner` — nobody is co-piloting; you own the cut.
+- Not `vc-justdo` — that skill is non-pipeline posture with prompt-defined task type.
 - Not an excuse to skip marbles — if implementation has gaps, loop.
 - Not an excuse to skip followup — if code has issues, find them.
 
@@ -101,11 +118,11 @@ plausible interpretations leading to different architectures), ask **ONE**
 clarifying question. Not three. One.
 
 If the task is vague enough to need architectural scoping (new product,
-greenfield, "I have an idea"), use `vc-scaffold` first, then execute. JustDo
+greenfield, "I have an idea"), use `vc-scaffold` first, then execute. Implement
 consumes scaffold plans directly.
 
-If the user said "I'm tired" or anything suggesting low energy, do not ask
-questions at all. Make the reasonable call and go.
+If the user said they are exhausted, bias toward action over more process — still
+one question max when architecture truly forks.
 
 ### 2. Get your bearings
 
@@ -159,7 +176,7 @@ While implementing:
 ### 5. Followup (mandatory)
 
 When implementation feels complete, run a followup audit on yourself. Not
-optional. This is where "just do" earns its trust.
+optional. This is where ship-stage delivery earns trust.
 
 - Do quality gates pass? Run them.
 - Does new code integrate cleanly with existing code?
@@ -177,7 +194,7 @@ you need to know the truth.
 
 If followup found only P2s: fix the obvious ones, document the rest.
 
-The marbles loop in justdo mode is tight:
+The marbles loop under implement is tight:
 
 ```
 while P0 > 0 or P1 > 0:
@@ -265,18 +282,20 @@ time than it costs.
 - Leaving the user to figure out what changed
 - Fixing unrelated code while the requested feature is incomplete
 - Going silent for 30 minutes without any progress signal
+- Treating this skill as interchangeable with `vc-justdo`
 
 ## The Contract
 
-The user trusted you with a task and walked away. Build it right. Check your
-own work. Fix what is broken. Deliver clean. When they come back, the thing works.
+The user trusted you with an implementation cut and walked away. Build it right.
+Check your own work. Fix what is broken. Deliver clean. When they come back, the
+thing works.
 
 ---
 
-_"Not sloppy. Not ceremonial. Just done."_
+_"Not sloppy. Not ceremonial. Implemented."_
 
 ## Verify before the handoff
 
 Before you report "done", walk around the truck — see [Verification Rule](../VERIFICATION_RULE.md): run the REAL artifact (launch the app/binary, not just `--version`), re-verify runtime, never trust upstream verification as proof, and check your own check. Gates green ≠ works.
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 The LibraxisAI Team_

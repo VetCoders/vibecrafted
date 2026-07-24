@@ -18,6 +18,84 @@ async fn main() {
     use vibecrafted_server_web::control::api::control_routes;
     use vibecrafted_server_web::scaffold::api::scaffold_routes;
 
+    /// Canonical default bind — matches Makefile `SERVER_ADDR` and
+    /// `Cargo.toml` leptos site-addr. Bare `vc-server` must not invent a
+    /// second product port (was 3000 for weeks while make server used 3024).
+    const DEFAULT_ADDR: &str = "127.0.0.1:3024";
+
+    fn print_help() {
+        println!(
+            "vc-server — Vibecrafted control-plane viewer (SSR)
+
+Usage:
+  vc-server [--addr <host:port>]
+
+Options:
+  --addr <host:port>   Bind address (default: {DEFAULT_ADDR})
+  --help, -h           Show this help and exit
+  --version, -V        Show version and exit
+
+Environment:
+  VC_SERVER_ADDR       Same as --addr
+  VC_SERVER_SITE_ROOT  Static site root override
+  LEPTOS_SITE_ADDR     Legacy bind address fallback
+  VIBECRAFTED_HOME     Control-plane root (~/.vibecrafted)
+
+Examples:
+  vc-server
+  vc-server --addr 127.0.0.1:3024
+  make server                  # foreground dev run on {DEFAULT_ADDR}
+  make install-server          # install real file into ~/.local/bin/vc-server
+"
+        );
+    }
+
+    fn print_version() {
+        println!(
+            "vc-server {} ({})",
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_NAME")
+        );
+    }
+
+    /// Fail-closed CLI surface: product binaries must not treat --help as
+    /// "start a listener and hang" (runtime contract for install-all bins).
+    fn consume_cli_meta() -> Option<i32> {
+        let mut args = std::env::args().skip(1);
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--help" | "-h" | "help" => {
+                    print_help();
+                    return Some(0);
+                }
+                "--version" | "-V" | "version" => {
+                    print_version();
+                    return Some(0);
+                }
+                "--addr" => {
+                    // value consumed in configured_addr; skip here
+                    let _ = args.next();
+                }
+                other if other.starts_with("--addr=") => {}
+                other if other.starts_with('-') => {
+                    eprintln!("vc-server: unknown option `{other}`");
+                    eprintln!("Try `vc-server --help` for usage.");
+                    return Some(2);
+                }
+                other => {
+                    eprintln!("vc-server: unexpected argument `{other}`");
+                    eprintln!("Try `vc-server --help` for usage.");
+                    return Some(2);
+                }
+            }
+        }
+        None
+    }
+
+    if let Some(code) = consume_cli_meta() {
+        std::process::exit(code);
+    }
+
     fn configured_addr() -> SocketAddr {
         let cli_addr = std::env::args()
             .skip(1)
@@ -34,13 +112,13 @@ async fn main() {
         let configured = cli_addr
             .or_else(|| std::env::var("VC_SERVER_ADDR").ok())
             .or_else(|| std::env::var("LEPTOS_SITE_ADDR").ok())
-            .unwrap_or_else(|| "127.0.0.1:3000".to_string());
+            .unwrap_or_else(|| DEFAULT_ADDR.to_string());
 
         configured.parse().unwrap_or_else(|err| {
             eprintln!(
-                "vc-server: invalid address `{configured}` ({err}); falling back to 127.0.0.1:3000"
+                "vc-server: invalid address `{configured}` ({err}); falling back to {DEFAULT_ADDR}"
             );
-            "127.0.0.1:3000"
+            DEFAULT_ADDR
                 .parse()
                 .expect("default vc-server address parses")
         })

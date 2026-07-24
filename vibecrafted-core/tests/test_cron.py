@@ -7,6 +7,20 @@ from pathlib import Path
 from vibecrafted_core import cron
 
 
+def test_parse_frontmatter_fails_soft_on_read_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    state = tmp_path / "brief.md"
+    state.write_text("---\nmodel: gpt-test\n---\n", encoding="utf-8")
+
+    def denied_read(*_args, **_kwargs):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "read_text", denied_read)
+
+    assert cron.parse_frontmatter(state) == {}
+
+
 def write_state(path: Path, *, updated_at: datetime) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

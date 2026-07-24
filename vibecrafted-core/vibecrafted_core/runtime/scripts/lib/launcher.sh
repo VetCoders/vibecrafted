@@ -16,7 +16,7 @@ spawn_generate_launcher() {
   [[ -f "$common_path" ]] || spawn_die "common.sh not found: $common_path"
   [[ -n "$command" ]] || spawn_die "Missing command payload for launcher."
 
-  local q_meta q_report q_transcript q_common q_ulimits q_cmd
+  local q_meta q_report q_transcript q_common q_ulimits q_cmd q_python
   local q_root q_agent q_model q_prompt_id q_run_id q_run_lock q_loop_nr q_skill_code
   local q_skill_name q_operator_session q_spawn_direction q_marbles_tab q_marbles_watcher
   q_meta="$(spawn_shell_quote "$meta_path")"
@@ -25,6 +25,7 @@ spawn_generate_launcher() {
   q_common="$(spawn_shell_quote "$common_path")"
   q_ulimits="$(spawn_shell_quote "$(dirname "$common_path")/lib/ulimits.sh")"
   q_cmd="$(spawn_shell_quote "$command")"
+  q_python="$(spawn_shell_quote "$(command -v "$(spawn_python_bin)")")"
   q_root="$(spawn_shell_quote "${SPAWN_ROOT:-}")"
   q_agent="$(spawn_shell_quote "${SPAWN_AGENT:-}")"
   q_model="$(spawn_shell_quote "$(spawn_read_meta_field "$meta_path" "model")")"
@@ -68,6 +69,7 @@ export VIBECRAFTED_OPERATOR_SESSION=\${VIBECRAFTED_OPERATOR_SESSION:-$q_operator
 export VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=\${VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION:-$q_spawn_direction}
 export VIBECRAFTED_MARBLES_TAB_NAME=\${VIBECRAFTED_MARBLES_TAB_NAME:-$q_marbles_tab}
 export VIBECRAFTED_MARBLES_WATCHER=\${VIBECRAFTED_MARBLES_WATCHER:-$q_marbles_watcher}
+export VIBECRAFTED_PYTHON=\${VIBECRAFTED_PYTHON:-$q_python}
 startup_watch_pid=""
 
 # Write this launcher's PID into meta.json so the watcher heartbeat and the
@@ -76,6 +78,14 @@ spawn_update_meta_pid "\$meta" \$\$
 
 rm -f "\$transcript" "\$report"
 spawn_write_frontmatter "\$transcript" "\$SPAWN_AGENT" "\${SPAWN_MODEL:-unknown}" "transcript"
+# Machine identity exists before the worker starts. The template marker keeps
+# an untouched file equivalent to report_missing; only the worker may turn its
+# explicit finalized/claim fields into self-attested settlement evidence.
+spawn_python_module vibecrafted_core.spawn prepare-report \
+  "\$report" \
+  "\$SPAWN_RUN_ID" \
+  "\$SPAWN_AGENT" \
+  "\${SPAWN_SKILL_CODE:-unknown}"
 if [[ -n "\${SPAWN_ROOT:-}" ]]; then
   cd "\$SPAWN_ROOT"
 fi
@@ -149,7 +159,40 @@ fi
 # Lifecycle truth: the spawner wrote "launching"; the launcher owns the run
 # from here, so the agent command starting is the launching->running edge.
 spawn_mark_meta_running "$meta"
-if bash -c "$SPAWN_CMD"; then
+command_status=0
+bash -c "$SPAWN_CMD" || command_status=$?
+report_template_untouched=0
+if spawn_report_template_untouched "$report"; then
+  report_template_untouched=1
+  last_message="${transcript%.log}.last-message.md"
+  if [[ -s "$last_message" ]] &&
+    [[ "${VIBECRAFTED_RESEARCH_MODE:-0}" != "1" ]] &&
+    [[ "${SPAWN_SKILL_NAME:-}" != "research" ]] &&
+    [[ "${SPAWN_SKILL_CODE:-}" != "rsch" ]]; then
+    # Provider commands write their final message before returning. Preserve
+    # the launcher-owned identity shell and attach that message as worker
+    # evidence; finalization will stamp the terminal status without losing IDs.
+    printf '\n' >> "$report"
+    cat "$last_message" >> "$report"
+    report_template_untouched=0
+  fi
+fi
+# Research requires a first-class worker report. Preserve its established
+# exit-65 contract even though the launcher now materializes an identity shell.
+if [[ "$command_status" -eq 0 && "$report_template_untouched" -eq 1 ]] && {
+  [[ "${VIBECRAFTED_RESEARCH_MODE:-0}" == "1" ]] ||
+  [[ "${SPAWN_SKILL_NAME:-}" == "research" ]] ||
+  [[ "${SPAWN_SKILL_CODE:-}" == "rsch" ]]
+}; then
+  command_status=65
+fi
+# Provider hooks use file presence as their fallback gate. Remove only a
+# provably untouched launcher shell; an available final message was attached
+# above and therefore remains worker evidence.
+if [[ "$report_template_untouched" -eq 1 ]]; then
+  rm -f "$report"
+fi
+if [[ "$command_status" -eq 0 ]]; then
   spawn_finish_meta "$meta" "completed" "0"
 EOF_LAUNCH
 
@@ -162,8 +205,12 @@ EOF_LAUNCH
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
+  # Before triage: triage may close this tab, and survivors must not outlive us.
+  spawn_reap_run
+  # Last: a successful transfer closes this very tab.
+  spawn_triage_run "$meta"
 else
-  exit_code=$?
+  exit_code=$command_status
   spawn_finish_meta "$meta" "failed" "$exit_code"
 EOF_LAUNCH
 
@@ -176,6 +223,10 @@ EOF_LAUNCH
   if [[ -n "$startup_watch_pid" ]]; then
     wait "$startup_watch_pid" 2>/dev/null || true
   fi
+  # Before triage: triage may close this tab, and survivors must not outlive us.
+  spawn_reap_run
+  # Last: a successful transfer closes this very tab.
+  spawn_triage_run "$meta"
   exit "$exit_code"
 fi
 EOF_LAUNCH
@@ -232,12 +283,13 @@ spawn_launch() {
   pane_name="${pane_name%-}"
   [[ -n "$pane_name" ]] || pane_name="agent"
 
-  if [[ -z "${VIBECRAFTED_OPERATOR_SESSION:-}" ]]; then
-    local discovered_session=""
-    discovered_session="$(spawn_effective_operator_session 2>/dev/null || true)"
-    if [[ -n "$discovered_session" ]]; then
-      export VIBECRAFTED_OPERATOR_SESSION="$discovered_session"
-    fi
+  # G7: always resolve the worker host session (per-project / override). Do not
+  # keep ambient VIBECRAFTED_OPERATOR_SESSION from the human seat — that is what
+  # dumped worker tabs into the operator interactive session.
+  local discovered_session=""
+  discovered_session="$(spawn_effective_operator_session 2>/dev/null || true)"
+  if [[ -n "$discovered_session" ]]; then
+    export VIBECRAFTED_OPERATOR_SESSION="$discovered_session"
   fi
 
   if (( dry_run )); then
@@ -247,44 +299,61 @@ spawn_launch() {
 
   case "$runtime" in
     terminal|visible)
+      # G3: host-session unrecoverable failure (return 2) must NOT degrade to
+      # headless — that path is how process_spawned→stalled pid_gone hid the
+      # "Session not found" death. Loud fail with receipt last_error instead.
+      local _pane_status=0
+      local _op_status=0
       if spawn_in_vc_frame_pane "$launcher" "$pane_name"; then
         :
-      elif spawn_in_operator_session "$launcher" "$pane_name"; then
-        :
       else
-        # Degrade, don't die. No vc-frame operator session exists to host a
-        # visible tab (e.g. dispatched from a plain terminal, outside vc-frame).
-        # AppleScript/iTerm fallback stays forbidden — but a hard failure is
-        # worse UX than running detached. Fall back to headless, show a short
-        # honest live tail so the operator sees real progress, then hand off to
-        # observe/await. Start from inside vc-start if you want a visible tab.
-        printf 'No vc-frame operator session for %s runtime — running headless instead.\n' "$runtime" >&2
-        spawn_launch_headless "$launcher"
-        local _vc_transcript="${SPAWN_TRANSCRIPT:-}"
-        local _vc_agent="${SPAWN_AGENT:-agent}"
-        local _vc_run_id="${SPAWN_RUN_ID:-${VIBECRAFTED_RUN_ID:-}}"
-        local _vc_tail_secs="${VIBECRAFTED_DEGRADE_TAIL_SECONDS:-10}"
-        # The live tail is for a human at an interactive terminal. Skip it when
-        # stderr is not a TTY (pipes, tests, CI, nested dispatch) so automated
-        # callers are not blocked for 10s.
-        if [[ -n "$_vc_transcript" && -t 2 && "$_vc_tail_secs" != "0" ]]; then
-          local _vc_wait=0
-          while [[ ! -s "$_vc_transcript" && $_vc_wait -lt 14 ]]; do
-            sleep 0.5
-            _vc_wait=$((_vc_wait + 1))
-          done
-          printf -- '--- live agent output (%ss) ------------------------------------\n' "$_vc_tail_secs" >&2
-          tail -n 40 -F "$_vc_transcript" >&2 2>/dev/null &
-          local _vc_tail_pid=$!
-          sleep "$_vc_tail_secs"
-          kill "$_vc_tail_pid" 2>/dev/null || true
-          wait "$_vc_tail_pid" 2>/dev/null || true
-          printf -- '----------------------------------------------------------------\n' >&2
+        _pane_status=$?
+        if [[ "$_pane_status" -eq 2 ]]; then
+          printf 'vc-frame host session launch failed (in-pane path); not degrading to headless.\n' >&2
+          return 1
         fi
-        printf 'Agent is still running headless. Continue to observe it:\n' >&2
-        printf '  vibecrafted %s observe --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
-        printf '  vibecrafted %s await   --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
-        return 0
+        if spawn_in_operator_session "$launcher" "$pane_name"; then
+          :
+        else
+          _op_status=$?
+          if [[ "$_op_status" -eq 2 ]]; then
+            printf 'vc-frame host session launch failed; not degrading to headless.\n' >&2
+            return 1
+          fi
+          # Degrade, don't die. No vc-frame operator session exists to host a
+          # visible tab (e.g. dispatched from a plain terminal, outside vc-frame).
+          # AppleScript/iTerm fallback stays forbidden — but a hard failure is
+          # worse UX than running detached. Fall back to headless, show a short
+          # honest live tail so the operator sees real progress, then hand off to
+          # observe/await. Start from inside vc-start if you want a visible tab.
+          printf 'No vc-frame operator session for %s runtime — running headless instead.\n' "$runtime" >&2
+          spawn_launch_headless "$launcher"
+          local _vc_transcript="${SPAWN_TRANSCRIPT:-}"
+          local _vc_agent="${SPAWN_AGENT:-agent}"
+          local _vc_run_id="${SPAWN_RUN_ID:-${VIBECRAFTED_RUN_ID:-}}"
+          local _vc_tail_secs="${VIBECRAFTED_DEGRADE_TAIL_SECONDS:-10}"
+          # The live tail is for a human at an interactive terminal. Skip it when
+          # stderr is not a TTY (pipes, tests, CI, nested dispatch) so automated
+          # callers are not blocked for 10s.
+          if [[ -n "$_vc_transcript" && -t 2 && "$_vc_tail_secs" != "0" ]]; then
+            local _vc_wait=0
+            while [[ ! -s "$_vc_transcript" && $_vc_wait -lt 14 ]]; do
+              sleep 0.5
+              _vc_wait=$((_vc_wait + 1))
+            done
+            printf -- '--- live agent output (%ss) ------------------------------------\n' "$_vc_tail_secs" >&2
+            tail -n 40 -F "$_vc_transcript" >&2 2>/dev/null &
+            local _vc_tail_pid=$!
+            sleep "$_vc_tail_secs"
+            kill "$_vc_tail_pid" 2>/dev/null || true
+            wait "$_vc_tail_pid" 2>/dev/null || true
+            printf -- '----------------------------------------------------------------\n' >&2
+          fi
+          printf 'Agent is still running headless. Continue to observe it:\n' >&2
+          printf '  vibecrafted %s observe --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
+          printf '  vibecrafted %s await   --run-id %s\n' "$_vc_agent" "$_vc_run_id" >&2
+          return 0
+        fi
       fi
       ;;
     headless|background|detached)

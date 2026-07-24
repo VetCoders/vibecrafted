@@ -7,18 +7,17 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-<!-- fleet-imperative: v2 -->
+<!-- fleet-imperative: v3 -->
 
-> **Warstwa operatorskiego CLI / slash-commandów:** wywołanie `/vc-<workflow>` lub
-> `vibecrafted <workflow> <agent>` oznacza dispatch przez launcher Vibecrafted.
+> **Wywołanie (szablon)** — podmień `{{LAUNCHER}}` na prawdziwy launcher z
+> [Matrycy Delegacji](../DELEGATION_MATRIX.md). Nie wklejaj literałów `workflow`,
+> jeśli ten skill nie jest `vc-workflow`.
 >
-> **Warstwa ładowania skilla / czatu:** załadowanie tego `SKILL.md` w Codeksie, Claude,
-> Gemini lub innym lokalnym agencie nie oznacza self-dispatchu. Przeczytaj i zastosuj
-> skill w bieżącym wątku, chyba że operator wprost prosi o runtime'owy launch, dispatch
-> lub natywną delegację.
->
-> Natywne in-process subagenty są dopuszczone wyłącznie przez bounded doktrynę
-> `vc-delegate`.
+> | Ścieżka        | Literał                                              |
+> | -------------- | ---------------------------------------------------- |
+> | 1. Worker      | `vibecrafted {{LAUNCHER}} <agent>`                   |
+> | 2. Interactive | `/vc-{{LAUNCHER}}` — w sesji; native gdy trzeba      |
+> | 3. Operator    | ten sam worker przez `vc-dispatch` / linie operatora |
 
 <!-- /fleet-imperative -->
 
@@ -109,8 +108,10 @@ ukończony — powiedz to wprost w raporcie końcowym.
 
 - TODO — typowy tryb porażki #1 (np. uruchomienie tego skilla przed `vc-init`)
 - TODO — typowy tryb porażki #2 (np. rozszerzanie scope poza jedną ostrą oś)
-- Pominięcie ponownego odczytu Living Tree przed edycją, gdy aktywni są współbieżni agenci
-- Ogłaszanie „gotowe" bez odhaczenia powyższych kryteriów akceptacji
+- Wklejanie raili `workflow` / ERi, gdy ten skill nie jest `vc-workflow`
+- Wymyślanie fałszywego workera `vibecrafted <name> <agent>` dla skilla fundamentu
+- Pominięcie ponownego odczytu Living Tree przed edycją przy współbieżnych agentach
+- Ogłaszanie „gotowe" bez odhaczenia kryteriów akceptacji
 
 ---
 
@@ -118,6 +119,17 @@ ukończony — powiedz to wprost w raporcie końcowym.
 
 Zobacz [`examples/example-prompt.md`](examples/example-prompt.md) — minimalna para
 fraza-trigger + oczekiwane zachowanie.
+
+---
+
+## Zweryfikuj przed przekazaniem
+
+Zanim ogłosisz „done", obejdź ciężarówkę — zobacz
+[Regułę Weryfikacji](../VERIFICATION_RULE.md): realny artefakt, nie same zielone bramki;
+nigdy nie ufaj upstream verification jako dowodowi; sprawdź własny instrument.
+
+Progressive disclosure: trzymaj SKILL.md chudy; długie procedury w `references/`
+([Matryca Delegacji](../DELEGATION_MATRIX.md), CONTRIBUTING-SKILLS).
 
 ---
 

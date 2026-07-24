@@ -5,13 +5,14 @@ import json
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from .doctor import diagnose_file
-from .model import Dispatch, STATE_VERIFIED
+from .model import STATE_VERIFIED, Dispatch
 from .schema import render_cell_prompt
 from .supervisor import DispatchResult, run_dispatch
 
@@ -231,6 +232,7 @@ def _git(repo: str, args: list[str]) -> str:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return ""

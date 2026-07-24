@@ -11,12 +11,173 @@
 //! the JSON disagree, fidelity tracks the JSON. Known divergences are recorded
 //! in `docs/superpowers/specs/2026-05-31-control-core-design.md` and exercised
 //! by `tests/schema_fidelity.rs`.
+//!
+//! Delivery-proof axes (`execution_state` / `proof_state` / `delivery_state`)
+//! are a **read projection** of the Python kernel
+//! (`vibecrafted_core.delivery.model` + `control_plane.DeliveryAxes`). This
+//! crate never runs proof, never seals, and never invents `delivery_state`
+//! from `completed` or `artifact_ok` (DELIVERY_PROOF_KERNEL_v1 §16/§17).
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Delivery-proof kernel axes — 1:1 with vibecrafted_core.delivery.model
+// ---------------------------------------------------------------------------
+
+/// Process-execution axis. Wire strings match `ExecutionState` in
+/// `vibecrafted_core.delivery.model` exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionState {
+    Created,
+    Launched,
+    Running,
+    Exited,
+    Interrupted,
+    TimedOut,
+    Failed,
+}
+
+impl ExecutionState {
+    /// Canonical on-wire string (Python `.value`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExecutionState::Created => "created",
+            ExecutionState::Launched => "launched",
+            ExecutionState::Running => "running",
+            ExecutionState::Exited => "exited",
+            ExecutionState::Interrupted => "interrupted",
+            ExecutionState::TimedOut => "timed_out",
+            ExecutionState::Failed => "failed",
+        }
+    }
+}
+
+/// Proof axis. Wire strings match `ProofState` in
+/// `vibecrafted_core.delivery.model` exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProofState {
+    Undeclared,
+    Declared,
+    Running,
+    Passed,
+    Failed,
+    Invalid,
+    Stale,
+}
+
+impl ProofState {
+    /// Canonical on-wire string (Python `.value`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProofState::Undeclared => "undeclared",
+            ProofState::Declared => "declared",
+            ProofState::Running => "running",
+            ProofState::Passed => "passed",
+            ProofState::Failed => "failed",
+            ProofState::Invalid => "invalid",
+            ProofState::Stale => "stale",
+        }
+    }
+}
+
+/// Delivery axis. Wire strings match `DeliveryState` in
+/// `vibecrafted_core.delivery.model` exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryState {
+    Unverified,
+    Delivered,
+    Sealed,
+    Invalidated,
+}
+
+impl DeliveryState {
+    /// Canonical on-wire string (Python `.value`).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeliveryState::Unverified => "unverified",
+            DeliveryState::Delivered => "delivered",
+            DeliveryState::Sealed => "sealed",
+            DeliveryState::Invalidated => "invalidated",
+        }
+    }
+}
+
+/// Orthogonal triple projected by `control_plane.DeliveryAxes.to_payload()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliveryAxes {
+    pub execution_state: ExecutionState,
+    pub proof_state: ProofState,
+    pub delivery_state: DeliveryState,
+}
+
+/// Compact seal section from a kernel `delivery-seal.json` (identity fields).
+///
+/// Full seal contracts stay Python-owned; this is a read projection of the
+/// fields an observer needs, not a seal issuer or verifier (§17).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DeliverySealRef {
+    #[serde(default)]
+    pub schema: String,
+    #[serde(default)]
+    pub seal_id: String,
+    #[serde(default)]
+    pub issued_at: String,
+    #[serde(default)]
+    pub issuer: String,
+    #[serde(default)]
+    pub run_id: String,
+    #[serde(default)]
+    pub lifecycle_id: String,
+    #[serde(default)]
+    pub cut_id: String,
+    #[serde(default)]
+    pub proof_id: String,
+    #[serde(default)]
+    pub repo: String,
+    #[serde(default)]
+    pub branch: String,
+    #[serde(default)]
+    pub final_head: String,
+    #[serde(default)]
+    pub report_sha256: String,
+}
+
+/// Project legacy lifecycle/receipt truth onto the three independent axes.
+///
+/// Mirrors `lifecycle_runner.delivery_axes_for_receipt`:
+/// - explicit axis fields win when present;
+/// - otherwise `status` supplies **execution** only (`completed` → `exited`);
+/// - proof defaults to `undeclared`, delivery to `unverified`;
+/// - **never** promotes `completed` / `artifact_ok` into `delivered`/`sealed`.
+#[must_use]
+pub fn delivery_axes_for_receipt(
+    status: &str,
+    execution_state: Option<ExecutionState>,
+    proof_state: Option<ProofState>,
+    delivery_state: Option<DeliveryState>,
+) -> DeliveryAxes {
+    let execution_default = match status {
+        "launching" => ExecutionState::Launched,
+        "running" => ExecutionState::Running,
+        "completed" => ExecutionState::Exited,
+        _ => ExecutionState::Failed,
+    };
+    DeliveryAxes {
+        execution_state: execution_state.unwrap_or(execution_default),
+        proof_state: proof_state.unwrap_or(ProofState::Undeclared),
+        delivery_state: delivery_state.unwrap_or(DeliveryState::Unverified),
+    }
+}
 
 /// Stall threshold in seconds. Mirrors `control_plane.RUN_STALL_SECONDS`
 /// (`20 * 60`). A non-final run whose `updated_at` is older than this is
@@ -32,7 +193,13 @@ pub const EVENT_TAIL_LIMIT: usize = 16;
 pub const RECENT_RUN_LIMIT: usize = 12;
 
 /// States that count as "in flight". Mirrors `control_plane.ACTIVE_STATES`.
-pub const ACTIVE_STATES: [&str; 7] = [
+pub const ACTIVE_STATES: [&str; 13] = [
+    "created",
+    "process_spawned",
+    "first_output_seen",
+    "active",
+    "artifact_seen",
+    "report_started",
     "initialized",
     "launching",
     "promise",
@@ -43,11 +210,18 @@ pub const ACTIVE_STATES: [&str; 7] = [
 ];
 
 /// Terminal states. Mirrors `control_plane.FINAL_STATES`.
-pub const FINAL_STATES: [&str; 7] = [
+pub const FINAL_STATES: [&str; 14] = [
+    "report_validated",
     "completed",
+    "closed",
     "converged",
     "stopped",
+    "blocked",
     "failed",
+    "report_missing",
+    "report_invalid",
+    "contract_failed",
+    "recovery_required",
     "timed_out",
     "gc",
     "ghost",
@@ -288,6 +462,37 @@ pub struct RunStatus {
     pub current_loop: Option<i64>,
     #[serde(default)]
     pub total_loops: Option<i64>,
+    /// Persisted Python settlement verdict. Absent on legacy and live snapshots.
+    /// Unknown future values are treated as absent, matching
+    /// `settlement_from_payload()` rather than rejecting the whole snapshot.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_optional_settlement_verdict"
+    )]
+    pub settlement_verdict: Option<SettlementVerdict>,
+    /// Persisted Python TUI cell. Carried for schema fidelity; board totals are
+    /// mapped from `settlement_verdict`, never inferred from process/proof data.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_optional_settlement_tui"
+    )]
+    pub settlement_tui: Option<SettlementTui>,
+    /// Process axis from the delivery-proof kernel. Absent on pre-kernel
+    /// snapshots — never invented from `state`/`completed` at read time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_state: Option<ExecutionState>,
+    /// Proof axis. Absent when the snapshot has no delivery section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_state: Option<ProofState>,
+    /// Delivery axis. Absent when the snapshot has no delivery section.
+    /// Never derived from `completed` or `artifact_ok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_state: Option<DeliveryState>,
+    /// Optional seal identity projection from `delivery-seal.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seal: Option<DeliverySealRef>,
 }
 
 impl RunStatus {
@@ -303,6 +508,184 @@ impl RunStatus {
     pub fn state_class(&self) -> StateClass {
         classify_state(&self.state)
     }
+
+    /// Bundle present axis fields, or `None` when the snapshot has no delivery
+    /// section at all (legacy runs).
+    #[must_use]
+    pub fn delivery_axes(&self) -> Option<DeliveryAxes> {
+        match (self.execution_state, self.proof_state, self.delivery_state) {
+            (Some(execution_state), Some(proof_state), Some(delivery_state)) => {
+                Some(DeliveryAxes {
+                    execution_state,
+                    proof_state,
+                    delivery_state,
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Python-owned terminal verdict written into retained run snapshots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlementVerdict {
+    Finalized,
+    Failed,
+    NeedsAttention,
+    Invalid,
+}
+
+impl SettlementVerdict {
+    /// Canonical f/x/n projection from `settlement.tui_key_for`.
+    #[must_use]
+    pub fn tui(self) -> SettlementTui {
+        match self {
+            Self::Finalized => SettlementTui::F,
+            Self::Failed | Self::Invalid => SettlementTui::X,
+            Self::NeedsAttention => SettlementTui::N,
+        }
+    }
+}
+
+/// Persisted one-character settlement cell written by Python.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SettlementTui {
+    F,
+    X,
+    N,
+}
+
+/// Declared time/scope boundary for a settlement aggregate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlementScope {
+    /// Every snapshot currently retained under `control_plane/runs/`.
+    RetainedControlPlaneSnapshots,
+}
+
+/// Typed f/x/n aggregate sourced only from persisted Python snapshots.
+///
+/// `invalid` is diagnostic detail inside `x`, not a fourth total bucket.
+/// `active` comes from the existing Rust live projection and is likewise not
+/// part of `total_settled`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettlementBoard {
+    pub scope: SettlementScope,
+    pub active: usize,
+    pub f: usize,
+    pub x: usize,
+    pub n: usize,
+    pub invalid: usize,
+    pub total_settled: usize,
+}
+
+impl SettlementBoard {
+    /// Count the Python settlement axis from retained snapshots.
+    ///
+    /// A missing/unreadable verdict contributes `n` only when Python's
+    /// settlement terminal predicate would consider the snapshot terminal.
+    /// Live unsettled snapshots are ignored. No exit/process/proof signal is
+    /// ever promoted to `f`, `x`, or `invalid`.
+    #[must_use]
+    pub fn from_snapshots(runs: &[RunStatus]) -> Self {
+        let mut board = Self {
+            scope: SettlementScope::RetainedControlPlaneSnapshots,
+            active: 0,
+            f: 0,
+            x: 0,
+            n: 0,
+            invalid: 0,
+            total_settled: 0,
+        };
+
+        for run in runs {
+            match run.settlement_verdict {
+                Some(SettlementVerdict::Finalized) => board.f += 1,
+                Some(SettlementVerdict::Failed) => board.x += 1,
+                Some(SettlementVerdict::Invalid) => {
+                    board.x += 1;
+                    board.invalid += 1;
+                }
+                Some(SettlementVerdict::NeedsAttention) => board.n += 1,
+                None if is_unsettled_settlement_terminal(run) => board.n += 1,
+                None => {}
+            }
+        }
+        board.total_settled = board.f + board.x + board.n;
+        board
+    }
+}
+
+fn is_unsettled_settlement_terminal(run: &RunStatus) -> bool {
+    const TERMINAL_STATES: [&str; 17] = [
+        "report_validated",
+        "completed",
+        "closed",
+        "converged",
+        "stopped",
+        "blocked",
+        "failed",
+        "report_missing",
+        "report_invalid",
+        "contract_failed",
+        "recovery_required",
+        "timed_out",
+        "gc",
+        "ghost",
+        "stalled",
+        "killed_by_operator",
+        "process_dead",
+    ];
+    TERMINAL_STATES.contains(&run.state.as_str())
+        || run.liveness == "terminal"
+        || run.exit_code.is_some()
+}
+
+fn de_optional_settlement_verdict<'de, D>(
+    deserializer: D,
+) -> Result<Option<SettlementVerdict>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(
+        match value
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase()
+            .as_str()
+        {
+            "finalized" => Some(SettlementVerdict::Finalized),
+            "failed" => Some(SettlementVerdict::Failed),
+            "needs_attention" => Some(SettlementVerdict::NeedsAttention),
+            "invalid" => Some(SettlementVerdict::Invalid),
+            _ => None,
+        },
+    )
+}
+
+fn de_optional_settlement_tui<'de, D>(deserializer: D) -> Result<Option<SettlementTui>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(
+        match value
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase()
+            .as_str()
+        {
+            "f" => Some(SettlementTui::F),
+            "x" => Some(SettlementTui::X),
+            "n" => Some(SettlementTui::N),
+            _ => None,
+        },
+    )
 }
 
 /// Nested lifecycle run state written by `lifecycle_runner.py`.
@@ -359,9 +742,38 @@ pub struct LifecycleRun {
     pub accepted_dou: Option<i64>,
     #[serde(default)]
     pub accepted_dou_findings: Vec<serde_json::Value>,
+    /// Run-level execution axis (projected; not stored on disk historically).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_state: Option<ExecutionState>,
+    /// Run-level proof axis (projected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_state: Option<ProofState>,
+    /// Run-level delivery axis (projected; never from `completed` alone).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_state: Option<DeliveryState>,
 }
 
 impl LifecycleRun {
+    /// Project delivery-proof axes onto this run and every stage.
+    ///
+    /// Mirrors `lifecycle_runner.write_lifecycle_report` / `delivery_axes_for_receipt`:
+    /// explicit on-disk axis fields win; otherwise status supplies execution only.
+    /// Idempotent when axes are already present.
+    pub fn project_delivery_axes(&mut self) {
+        let run_axes = delivery_axes_for_receipt(
+            &self.status,
+            self.execution_state,
+            self.proof_state,
+            self.delivery_state,
+        );
+        self.execution_state = Some(run_axes.execution_state);
+        self.proof_state = Some(run_axes.proof_state);
+        self.delivery_state = Some(run_axes.delivery_state);
+        for stage in &mut self.stages {
+            stage.project_delivery_axes();
+        }
+    }
+
     /// Build the compact read-model used by `/api/control/lifecycle` and the
     /// dashboard. `updated_at` is normally the `state.json` mtime because the
     /// lifecycle state file does not carry a canonical timestamp.
@@ -424,6 +836,12 @@ impl LifecycleRun {
         } else {
             health
         };
+        let axes = delivery_axes_for_receipt(
+            &state,
+            self.execution_state,
+            self.proof_state,
+            self.delivery_state,
+        );
 
         RunStatus {
             run_id: summary.run_id,
@@ -452,6 +870,12 @@ impl LifecycleRun {
             session_id: String::new(),
             current_loop: None,
             total_loops: None,
+            settlement_verdict: None,
+            settlement_tui: None,
+            execution_state: Some(axes.execution_state),
+            proof_state: Some(axes.proof_state),
+            delivery_state: Some(axes.delivery_state),
+            seal: None,
         }
     }
 
@@ -516,6 +940,15 @@ pub struct LifecycleStage {
     pub transition: Option<LifecycleTransition>,
     #[serde(default, deserialize_with = "de_nonnegative_int")]
     pub dou_index: Option<i64>,
+    /// Stage execution axis (projected from status / explicit fields).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_state: Option<ExecutionState>,
+    /// Stage proof axis (projected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_state: Option<ProofState>,
+    /// Stage delivery axis (projected; never from `artifact_ok` alone).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_state: Option<DeliveryState>,
 }
 
 impl LifecycleStage {
@@ -523,6 +956,20 @@ impl LifecycleStage {
         self.await_result
             .get("exit_code")
             .and_then(coerce_int_value)
+    }
+
+    /// Project the three axes for this stage (same rules as the run-level
+    /// report lines in `write_lifecycle_report`).
+    pub fn project_delivery_axes(&mut self) {
+        let axes = delivery_axes_for_receipt(
+            &self.status,
+            self.execution_state,
+            self.proof_state,
+            self.delivery_state,
+        );
+        self.execution_state = Some(axes.execution_state);
+        self.proof_state = Some(axes.proof_state);
+        self.delivery_state = Some(axes.delivery_state);
     }
 }
 
@@ -734,6 +1181,14 @@ impl AgentMeta {
             session_id: self.session_id.clone(),
             current_loop: None,
             total_loops: None,
+            settlement_verdict: None,
+            settlement_tui: None,
+            // Meta is not a delivery receipt; axes stay absent until a
+            // snapshot or seal file provides them (never inferred here).
+            execution_state: None,
+            proof_state: None,
+            delivery_state: None,
+            seal: None,
         })
     }
 }
@@ -785,5 +1240,12 @@ pub fn merge_status(existing: Option<RunStatus>, incoming: RunStatus) -> RunStat
         session_id: nonempty_or(&preferred.session_id, &other.session_id),
         current_loop: preferred.current_loop.or(other.current_loop),
         total_loops: preferred.total_loops.or(other.total_loops),
+        settlement_verdict: preferred.settlement_verdict.or(other.settlement_verdict),
+        settlement_tui: preferred.settlement_tui.or(other.settlement_tui),
+        // Prefer explicit axes; never synthesise from the other side's state.
+        execution_state: preferred.execution_state.or(other.execution_state),
+        proof_state: preferred.proof_state.or(other.proof_state),
+        delivery_state: preferred.delivery_state.or(other.delivery_state),
+        seal: preferred.seal.clone().or_else(|| other.seal.clone()),
     }
 }

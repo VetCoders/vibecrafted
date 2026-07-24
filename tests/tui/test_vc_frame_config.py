@@ -5,6 +5,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VC_FRAME_CONFIG = REPO_ROOT / "config" / "vc-frame" / "config.kdl"
 LAYOUTS_DIR = REPO_ROOT / "config" / "vc-frame" / "layouts"
+THEMES_DIR = REPO_ROOT / "config" / "vc-frame" / "themes"
 
 
 def test_vc_frame_config_uses_plain_ctrl_without_option_layer() -> None:
@@ -31,14 +32,29 @@ def test_vc_frame_config_ctrl_q_closes_focus_not_session() -> None:
     assert 'bind "Ctrl q" { Quit; }' not in active_lines
 
 
-def test_vc_frame_config_has_vibecrafted_theme() -> None:
+def test_vc_frame_config_dual_theme_monochrome_dark_ivory_light() -> None:
     payload = VC_FRAME_CONFIG.read_text(encoding="utf-8")
 
+    # Brand block stays defined (graphite + amber) for explicit / mesh use.
     assert "vibecrafted {" in payload
-    assert 'theme "pastel"' in payload
-    assert '"vibecrafted" for the amber/gold brand palette' in payload
-    # Brand accent colors present
     assert "amber gold" in payload.lower() or "214 175 54" in payload
+    # Fleet chrome: dark monochrome + light ivory; never default pastel green.
+    assert 'theme "monochrome"' in payload
+    assert 'theme_dark "monochrome"' in payload
+    assert 'theme_light "vibecrafted-ivory"' in payload
+    assert 'theme "pastel"' not in payload
+    # Flat key tiles — no powerline  triangles on status-bar / tab-bar.
+    assert "simplified_ui true" in payload
+
+
+def test_vibecrafted_ivory_theme_file_exists_and_is_warm_paper() -> None:
+    ivory = THEMES_DIR / "vibecrafted-ivory.kdl"
+    assert ivory.is_file()
+    payload = ivory.read_text(encoding="utf-8")
+    assert "vibecrafted-ivory" in payload
+    # Ivory paper background (not dark, not neon green ribbons).
+    assert "250 246 238" in payload
+    assert "166 227 161" not in payload  # catppuccin green ribbon from pastel
 
 
 def test_vc_frame_config_session_resilience() -> None:
@@ -58,34 +74,41 @@ def test_vc_frame_config_has_plugin_aliases() -> None:
     assert 'session-manager location="zellij:session-manager"' in payload
 
 
-def test_all_layouts_have_new_tab_template() -> None:
-    """Every layout must define new_tab_template so dynamically spawned agent
-    tabs get branded chrome (compact-bar + status-bar). Operator is the compact
-    stock entrypoint and opens additional agents as separate tabs."""
+def test_all_layouts_keep_sessions_rail_always_visible() -> None:
+    """Every layout tab template must pin session-manager rail ALWAYS."""
     for layout_file in sorted(LAYOUTS_DIR.glob("*.kdl")):
         payload = layout_file.read_text(encoding="utf-8")
-        if layout_file.name == "operator.kdl":
-            assert 'plugin location="tab-bar"' in payload
-            assert 'plugin location="status-bar"' in payload
-            continue
-        assert "new_tab_template" in payload, (
-            f"{layout_file.name} missing new_tab_template"
+        assert "session-manager" in payload, (
+            f"{layout_file.name} missing session-manager"
         )
-        assert 'plugin location="compact-bar"' in payload, (
-            f"{layout_file.name} missing compact-bar in new_tab_template"
+        assert "rail true" in payload or 'rail "true"' in payload, (
+            f"{layout_file.name} missing rail true on session-manager"
         )
+        assert "default_tab_template" in payload or "new_tab_template" in payload, (
+            f"{layout_file.name} missing tab template"
+        )
+
+
+def test_all_layouts_have_status_chrome() -> None:
+    for layout_file in sorted(LAYOUTS_DIR.glob("*.kdl")):
+        payload = layout_file.read_text(encoding="utf-8")
+        assert 'plugin location="status-bar"' in payload, (
+            f"{layout_file.name} missing status-bar"
+        )
+        assert (
+            'plugin location="compact-bar"' in payload
+            or 'plugin location="tab-bar"' in payload
+        ), f"{layout_file.name} missing top bar plugin"
 
 
 def test_layout_tab_branding_matches_frame_contract() -> None:
-    """Most layout tabs use the brand prefix; operator avoids duplication.
-
-    vc-frame already brands the session title, so the operator tab should be
-    plain and scan-friendly instead of repeating "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍." twice.
-    """
+    """Non-operator layouts use the brand prefix on primary tabs."""
     for layout_file in sorted(LAYOUTS_DIR.glob("*.kdl")):
         payload = layout_file.read_text(encoding="utf-8")
         if layout_file.name == "operator.kdl":
-            assert 'tab name="𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Operator"' not in payload
+            # Launch alias for default_layout "vibecrafted": Start here + Shell.
+            assert 'tab name="Start here"' in payload
+            assert 'tab name="Shell"' in payload
             continue
         assert "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍." in payload, f"{layout_file.name} missing branded tab name"
 
@@ -99,27 +122,37 @@ def test_marbles_layout_is_operator_centric() -> None:
     assert "focus=true" in payload
 
 
-def test_operator_layout_uses_stock_strider_shell_split() -> None:
-    """Operator layout stays on the stock strider + shell split that parses and
-    starts reliably under vc-frame."""
+def test_operator_layout_matches_vibecrafted_standard() -> None:
+    """vc-start operator.kdl is the launch alias of default_layout vibecrafted:
+    Start here + Shell, SESSIONS rail on every tab, no strider, no spaced names."""
     payload = (LAYOUTS_DIR / "operator.kdl").read_text(encoding="utf-8")
-    assert 'pane split_direction="Vertical"' in payload
-    assert 'plugin location="strider"' in payload
-    assert "swap_tiled_layout" not in payload
-
-
-def test_operator_layout_keeps_usable_shell_beside_strider() -> None:
-    """Operator first screen keeps a file browser beside an uncommanded shell."""
-    payload = (LAYOUTS_DIR / "operator.kdl").read_text(encoding="utf-8")
-    active_lines = [
-        line.strip()
+    assert 'tab name="Start here"' in payload
+    assert 'tab name="Shell"' in payload
+    assert 'guide_mode "mission-control"' in payload
+    assert "session-manager" in payload
+    assert "rail true" in payload
+    assert "default_tab_template" in payload
+    assert "compact-bar" in payload
+    assert "status-bar" in payload
+    assert "vibecrafted start" in payload
+    # Rejected parallel path (ignore comments).
+    active = "\n".join(
+        line
         for line in payload.splitlines()
         if line.strip() and not line.lstrip().startswith("//")
-    ]
+    )
+    assert "strider" not in active
+    assert 'tab name="Operator"' not in active
+    assert "VibeCrafted" not in active
 
-    assert 'plugin location="strider"' in payload
-    assert "pane\n" in payload
-    assert not any("${VIBECRAFTED_HOME" in line for line in active_lines)
+
+def test_operator_layout_guide_and_shell_tabs() -> None:
+    payload = (LAYOUTS_DIR / "operator.kdl").read_text(encoding="utf-8")
+    assert 'plugin location="about"' in payload
+    assert 'name="Shell"' in payload
+    # Shell wakes with banner then zsh (not bare suspended /bin/zsh).
+    assert "exec zsh" in payload or "zsh -l" in payload
+    assert "start_suspended true" not in payload
 
 
 def test_workflow_layout_has_swap_layouts() -> None:

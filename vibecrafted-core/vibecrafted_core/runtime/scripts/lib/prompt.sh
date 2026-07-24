@@ -60,6 +60,38 @@ _report_frontmatter_status() {
   spawn_frontmatter_field "$report_path" "status"
 }
 
+spawn_report_template_untouched() {
+  local report_path="$1"
+  local marker status finalized claim
+
+  [[ -s "$report_path" ]] || return 1
+  marker="$(spawn_frontmatter_field "$report_path" "launcher_template")"
+  [[ "$marker" == "true" ]] || return 1
+  status="$(spawn_frontmatter_field "$report_path" "status")"
+  [[ "$status" == "pending-unset" ]] || return 1
+  finalized="$(spawn_frontmatter_field "$report_path" "finalized")"
+  case "$finalized" in
+    1|true|yes|on) return 1 ;;
+  esac
+  claim="$(spawn_frontmatter_field "$report_path" "claim")"
+  [[ -z "$claim" ]] || return 1
+
+  # The worker may append evidence without touching the template fields. Body
+  # content still counts as a deliberate write; the Python finalizer removes
+  # the marker and stamps the discovered child session after command closure.
+  if awk '
+    BEGIN { body=0; in_front=0 }
+    NR==1 && $0=="---" { in_front=1; next }
+    in_front && $0=="---" { in_front=0; next }
+    in_front { next }
+    NF { body=1 }
+    END { exit body ? 0 : 1 }
+  ' "$report_path"; then
+    return 1
+  fi
+  return 0
+}
+
 spawn_strip_frontmatter_to_file() {
   local source_file="$1"
   local target_file="$2"
@@ -100,6 +132,7 @@ skill: ${SPAWN_SKILL_CODE:-unknown}
 model: $model
 status: $status
 session_id: ${SPAWN_SESSION_ID:-pending}
+finalized: false
 repo_path: ${SPAWN_ROOT:-unknown}
 tokens_input: 0
 tokens_output: 0
@@ -175,6 +208,8 @@ skill: ${SPAWN_SKILL_CODE:-rsch}
 model: $model
 status: completed
 session_id: pending
+finalized: false
+claim:
 repo_path: ${SPAWN_ROOT:-unknown}
 tokens_input: 0
 tokens_output: 0
@@ -272,10 +307,13 @@ EOF_IMPLEMENT
 At the end of the task, write your final human-readable report to this exact path:
 Report path: $report_path
 
-Keep streaming useful progress to stdout while you work. If you cannot write a
-standalone report file, finish normally and let the transcript act as the fallback
-artifact.
-
-When writing your report file, include YAML frontmatter at the top (use the exact frontmatter that this prompt starts with, but change status to 'completed' or 'failed').
+Keep streaming useful progress to stdout while you work. The launcher has
+already created the report file with machine-owned run/session identity and
+\`finalized: false\`. Edit that report in place: preserve its identity fields,
+change status to \`completed\` or \`failed\`, and add the human-readable body.
+Only when you believe the run succeeded, deliberately change
+\`finalized: false\` to \`finalized: true\` and add a non-empty one-line
+\`claim:\`. If you cannot write a standalone report, finish normally and let
+the transcript act as the fallback artifact.
 EOF_PROMPT
 }

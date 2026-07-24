@@ -1,0 +1,74 @@
+"""W2-B: frontier parity + zombie cleanup."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[2]
+SCRIPT = REPO / "runtime" / "scripts" / "install-frontier-config.sh"
+
+
+@pytest.mark.skipif(not SCRIPT.is_file(), reason="install-frontier-config.sh missing")
+def test_frontier_install_includes_themes_and_auto_theme(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    env["VIBECRAFTED_PREFER_REPO_VC_FRAME"] = "1"
+    proc = subprocess.run(
+        ["bash", str(SCRIPT), "--source", str(REPO)],
+        cwd=str(REPO),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    root = home / ".config" / "vetcoders" / "frontier" / "vc-frame"
+    assert (root / "config.kdl").exists()
+    assert (root / "auto-theme.sh").exists()
+    assert (root / "layouts" / "operator.kdl").exists()
+    assert (root / "themes").exists()
+    themes = list((root / "themes").glob("*.kdl")) if (root / "themes").is_dir() else []
+    # may be files directly if install_one linked into themes/
+    if not themes and (root / "themes").is_dir():
+        themes = list(Path(root / "themes").rglob("*.kdl"))
+    assert themes or (root / "themes").exists()
+
+
+@pytest.mark.skipif(not SCRIPT.is_file(), reason="install-frontier-config.sh missing")
+def test_frontier_removes_dangling_zellij_links(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    env["VIBECRAFTED_PREFER_REPO_VC_FRAME"] = "1"
+    zellij = home / ".config" / "vetcoders" / "frontier" / "zellij" / "layouts"
+    zellij.mkdir(parents=True)
+    zombie = zellij / "operator.kdl"
+    zombie.symlink_to("./config/zellij/layouts/operator.kdl")  # dangling relative
+    healthy_dir = home / ".config" / "vetcoders" / "frontier" / "keep"
+    healthy_dir.mkdir(parents=True)
+    healthy = healthy_dir / "ok.txt"
+    healthy.write_text("keep\n", encoding="utf-8")
+    mtime = healthy.stat().st_mtime
+    proc = subprocess.run(
+        ["bash", str(SCRIPT), "--source", str(REPO)],
+        cwd=str(REPO),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert not zombie.exists()
+    assert healthy.is_file()
+    assert healthy.stat().st_mtime == mtime

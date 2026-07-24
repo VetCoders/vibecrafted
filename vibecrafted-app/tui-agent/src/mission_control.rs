@@ -1,6 +1,8 @@
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, Utc};
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap};
+use serde_json::Value;
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,7 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::polarize::{PolarizeBand, PolarizeIntent};
-use crate::state::{ControlPlaneState, RunKind, classify_run};
+use crate::state::{ControlPlaneState, RunKind, RunSnapshot, classify_run};
 
 /// Maximum number of `*.meta.json` files we will fold per refresh. Large
 /// artifact roots can hold tens of thousands of files; the dashboard
@@ -57,10 +59,172 @@ const LOCTREE_SNAPSHOT_FRESHNESS_JSON_ENV: &str = "VIBECRAFTED_LOCTREE_SNAPSHOT_
 static TAILSCALE_STATUS_CACHE: OnceLock<Mutex<ProbeCache<Result<String, String>>>> =
     OnceLock::new();
 static AICX_HEALTH_CACHE: OnceLock<Mutex<ProbeCache<Result<String, String>>>> = OnceLock::new();
+static ORPHAN_COUNT_CACHE: OnceLock<Mutex<HashMap<PathBuf, (Instant, usize)>>> = OnceLock::new();
+
+/// Settlement f/x/n board for retained control-plane snapshots.
+///
+/// Source of truth for counting semantics:
+/// `vibecrafted-server/control-core/src/model.rs` — `SettlementBoard::from_snapshots`.
+/// The local projection preserves arbitrary future snapshot fields while the
+/// linked control-core reader owns active/stalled runtime reconciliation.
+/// Scope is honest: f/x/n uses retained `control_plane/runs/*.json` only.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SettlementBoardCounts {
+    /// Human-readable scope boundary (never claim full meta history).
+    pub scope: String,
+    pub f: usize,
+    pub x: usize,
+    pub n: usize,
+    /// Diagnostic detail inside `x`, not a fourth total bucket.
+    pub invalid: usize,
+    /// Canonical runtime-aware live runs (not part of `total_settled`).
+    pub active: usize,
+    /// Non-terminal runs without current live activity evidence.
+    pub stalled: usize,
+    /// Legacy `Untitled*.md` artifacts, reported separately from retained f/x/n.
+    pub orphans: usize,
+    pub total_settled: usize,
+}
+
+impl SettlementBoardCounts {
+    pub const SCOPE_RETAINED_SNAPSHOTS: &'static str =
+        "retained control_plane/runs snapshots (≠ full meta history)";
+
+    /// Count settlement axis from retained run snapshots.
+    ///
+    /// Mirrors `SettlementBoard::from_snapshots` / Python `board_fxn_counts`:
+    /// missing verdict contributes `n` only when the run is terminal; live
+    /// unsettled runs are ignored. No exit/process signal promotes to `f`.
+    #[must_use]
+    pub fn from_snapshots(runs: &[RunSnapshot], active: usize, stalled: usize) -> Self {
+        let mut board = Self {
+            scope: Self::SCOPE_RETAINED_SNAPSHOTS.to_string(),
+            active,
+            stalled,
+            f: 0,
+            x: 0,
+            n: 0,
+            invalid: 0,
+            orphans: 0,
+            total_settled: 0,
+        };
+        for run in runs {
+            match settlement_verdict_of(run) {
+                Some(SettlementCell::Finalized) => board.f += 1,
+                Some(SettlementCell::Failed) => board.x += 1,
+                Some(SettlementCell::Invalid) => {
+                    board.x += 1;
+                    board.invalid += 1;
+                }
+                Some(SettlementCell::NeedsAttention) => board.n += 1,
+                None if is_unsettled_settlement_terminal(run) => board.n += 1,
+                None => {}
+            }
+        }
+        board.total_settled = board.f + board.x + board.n;
+        board
+    }
+
+    /// One-line operator strip for `vc-admin status` / Mission Control.
+    #[must_use]
+    pub fn render_strip(&self) -> String {
+        format!(
+            "settlement  f={} x={} n={} (+invalid={}) · active={} · stalled={} · orphans={} · total_settled={} · scope: {}",
+            self.f,
+            self.x,
+            self.n,
+            self.invalid,
+            self.active,
+            self.stalled,
+            self.orphans,
+            self.total_settled,
+            self.scope
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettlementCell {
+    Finalized,
+    Failed,
+    NeedsAttention,
+    Invalid,
+}
+
+fn settlement_verdict_of(run: &RunSnapshot) -> Option<SettlementCell> {
+    // Flat field first (Rust-reader compatible), then nested settlement.verdict.
+    let flat = run
+        .extra
+        .get("settlement_verdict")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase);
+    if let Some(raw) = flat {
+        return parse_settlement_verdict(&raw);
+    }
+    run.extra
+        .get("settlement")
+        .and_then(Value::as_object)
+        .and_then(|obj| obj.get("verdict"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_ascii_lowercase)
+        .and_then(|raw| parse_settlement_verdict(&raw))
+}
+
+fn parse_settlement_verdict(raw: &str) -> Option<SettlementCell> {
+    match raw {
+        "finalized" => Some(SettlementCell::Finalized),
+        "failed" => Some(SettlementCell::Failed),
+        "needs_attention" => Some(SettlementCell::NeedsAttention),
+        "invalid" => Some(SettlementCell::Invalid),
+        _ => None,
+    }
+}
+
+/// Mirrors control-core `is_unsettled_settlement_terminal` / Python `_is_terminal`.
+fn is_unsettled_settlement_terminal(run: &RunSnapshot) -> bool {
+    const TERMINAL_STATES: &[&str] = &[
+        "report_validated",
+        "completed",
+        "closed",
+        "converged",
+        "stopped",
+        "blocked",
+        "failed",
+        "report_missing",
+        "report_invalid",
+        "contract_failed",
+        "recovery_required",
+        "timed_out",
+        "gc",
+        "ghost",
+        "stalled",
+        "killed_by_operator",
+        "process_dead",
+    ];
+    let state = run.display_state().to_ascii_lowercase();
+    if TERMINAL_STATES.contains(&state.as_str()) {
+        return true;
+    }
+    let liveness = run
+        .extra
+        .get("liveness")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if liveness == "terminal" {
+        return true;
+    }
+    run.extra.get("exit_code").is_some_and(|v| !v.is_null())
+}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MissionControlState {
     pub generated_at: String,
+    pub settlement: SettlementBoardCounts,
     pub active_dispatches: Vec<ActiveDispatch>,
     pub wave_atlas: Vec<WaveSegment>,
     pub agent_stats: Vec<AgentStatsRow>,
@@ -328,9 +492,16 @@ impl MissionControlState {
         let failures = failure_board_from_meta(&meta_records, state, now);
         let fleet_health = fleet_health_from_inputs(state, artifact_root, &data_quality);
         let action_queue = action_queue_from_inputs(state, &failures, &meta_records, intents, now);
+        let mut settlement = SettlementBoardCounts::from_snapshots(
+            &state.retained_runs,
+            state.canonical_active_count(),
+            state.canonical_stalled_count(),
+        );
+        settlement.orphans = cached_orphan_markdown_count(artifact_root);
 
         Self {
             generated_at: now.to_rfc3339(),
+            settlement,
             active_dispatches,
             wave_atlas,
             agent_stats,
@@ -473,6 +644,67 @@ fn walk_meta_files(dir: &Path, out: &mut Vec<PathBuf>, window_floor: &NaiveDate)
             out.push(path);
         }
     }
+}
+
+fn cached_orphan_markdown_count(artifact_root: &Path) -> usize {
+    let now = Instant::now();
+    let cache = ORPHAN_COUNT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut cache) = cache.lock() else {
+        return count_orphan_markdown_files(artifact_root);
+    };
+    if let Some((last_run, count)) = cache.get(artifact_root)
+        && now
+            .checked_duration_since(*last_run)
+            .is_some_and(|age| age < Duration::from_secs(PROBE_CACHE_TTL_SECS))
+    {
+        return *count;
+    }
+    let count = count_orphan_markdown_files(artifact_root);
+    if cache.len() >= 64 {
+        cache.retain(|_, (last_run, _)| {
+            now.checked_duration_since(*last_run)
+                .is_some_and(|age| age < Duration::from_secs(PROBE_CACHE_TTL_SECS))
+        });
+    }
+    cache.insert(artifact_root.to_path_buf(), (now, count));
+    count
+}
+
+fn count_orphan_markdown_files(artifact_root: &Path) -> usize {
+    fn walk(dir: &Path, count: &mut usize) {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                walk(&path, count);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let is_orphan = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_ascii_lowercase)
+                .is_some_and(|name| name.starts_with("untitled") && name.ends_with(".md"));
+            if is_orphan {
+                *count += 1;
+            }
+        }
+    }
+
+    let mut count = 0;
+    walk(artifact_root, &mut count);
+    count
 }
 
 fn directory_within_window(path: &Path, window_floor: &NaiveDate) -> bool {
@@ -830,7 +1062,11 @@ fn failure_board_from_meta(
     now: DateTime<Utc>,
 ) -> Vec<FailureEntry> {
     let cutoff = now - ChronoDuration::hours(FAILURE_WINDOW_HOURS);
-    let mut failures: Vec<FailureEntry> = Vec::new();
+    // Timestamp travels next to the entry so ordering is chronological;
+    // `age_label` is a display string and must never drive the sort
+    // ("11h ago" < "2m ago" lexicographically would evict fresh failures).
+    let mut failures: Vec<(Option<DateTime<Utc>>, FailureEntry)> = Vec::new();
+    let mut seen_run_ids: HashSet<String> = HashSet::new();
 
     for record in records {
         let is_failure = match record.meta.exit_code {
@@ -852,12 +1088,18 @@ fn failure_board_from_meta(
         if record.completed_at < cutoff {
             continue;
         }
-        failures.push(FailureEntry {
-            run_id: record
-                .meta
-                .run_id
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
+        let run_id = record
+            .meta
+            .run_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        if run_id != "unknown" && !seen_run_ids.insert(run_id.clone()) {
+            continue;
+        }
+        failures.push((
+            Some(record.completed_at),
+            FailureEntry {
+                run_id,
             agent: record
                 .meta
                 .agent
@@ -879,15 +1121,43 @@ fn failure_board_from_meta(
                 }),
             age_label: relative_age(record.completed_at, now),
             source_path: Some(record.path.clone()),
-        });
+            },
+        ));
     }
 
     for snapshot in &state.runs {
         if !matches!(classify_run(snapshot, now), RunKind::Failed) {
             continue;
         }
-        failures.push(FailureEntry {
-            run_id: snapshot.run_id.clone(),
+        // Prefer completed_at (or first settlement stamp) over updated_at.
+        // Watchdog/sync restamps updated_at every pass, which made day-old
+        // fails show as "10m ago" and kept them inside the 24h window forever.
+        let timestamp = snapshot
+            .extra
+            .get("completed_at")
+            .and_then(|value| value.as_str())
+            .and_then(parse_rfc3339)
+            .or_else(|| {
+                snapshot
+                    .extra
+                    .get("settlement_at")
+                    .and_then(|value| value.as_str())
+                    .and_then(parse_rfc3339)
+            })
+            .or_else(|| snapshot.updated_at.as_deref().and_then(parse_rfc3339))
+            .or_else(|| snapshot.started_at.as_deref().and_then(parse_rfc3339));
+        // Same 24h window as the meta loop — without it, long-dead
+        // garbage-collected snapshots permanently occupy the 20-row board.
+        if matches!(timestamp, Some(ts) if ts < cutoff) {
+            continue;
+        }
+        if !seen_run_ids.insert(snapshot.run_id.clone()) {
+            continue;
+        }
+        failures.push((
+            timestamp,
+            FailureEntry {
+                run_id: snapshot.run_id.clone(),
             agent: snapshot
                 .agent
                 .clone()
@@ -903,10 +1173,7 @@ fn failure_board_from_meta(
                 .or_else(|| snapshot.status.clone())
                 .or_else(|| snapshot.state.clone())
                 .unwrap_or_else(|| "failed".to_string()),
-            age_label: snapshot
-                .updated_at
-                .as_deref()
-                .and_then(parse_rfc3339)
+            age_label: timestamp
                 .map(|ts| relative_age(ts, now))
                 .unwrap_or_else(|| "age unknown".to_string()),
             source_path: snapshot
@@ -914,12 +1181,19 @@ fn failure_board_from_meta(
                 .as_deref()
                 .map(PathBuf::from)
                 .or_else(|| snapshot.root.as_deref().map(PathBuf::from)),
-        });
+            },
+        ));
     }
 
-    failures.sort_by(|left, right| left.age_label.cmp(&right.age_label));
+    // Freshest first; entries without a parsable timestamp sink to the end.
+    failures.sort_by(|(left, _), (right, _)| match (right, left) {
+        (Some(r), Some(l)) => r.cmp(l),
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+        (None, None) => Ordering::Equal,
+    });
     failures.truncate(20);
-    failures
+    failures.into_iter().map(|(_, entry)| entry).collect()
 }
 
 fn fleet_health_from_inputs(
@@ -2217,6 +2491,7 @@ mod tests {
     fn empty_state(root: &Path) -> ControlPlaneState {
         ControlPlaneState {
             root: root.to_path_buf(),
+            retained_runs: Vec::new(),
             runs: Vec::new(),
             events: Vec::new(),
             archived_run_ids: Default::default(),
@@ -2433,6 +2708,170 @@ mod tests {
     }
 
     #[test]
+    fn failure_board_excludes_exit_zero_with_stale_last_error() {
+        // Success evidence on the snapshot must not feed the failure board
+        // even when the watchdog left last_error / recovery_required.
+        let dir = tempdir().unwrap();
+        let artifact = dir.path().join("artifacts");
+        let mut extra = HashMap::new();
+        extra.insert("exit_code".into(), serde_json::json!(0));
+        extra.insert(
+            "completed_at".into(),
+            serde_json::json!("2026-05-19T03:12:57Z"),
+        );
+        extra.insert("health".into(), serde_json::json!("final"));
+        extra.insert("liveness".into(), serde_json::json!("terminal"));
+
+        let mut state = empty_state(dir.path());
+        state.runs.push(RunSnapshot {
+            run_id: "work-false-fail".to_string(),
+            session_id: None,
+            agent: Some("grok".to_string()),
+            skill: Some("workflow".to_string()),
+            mode: Some("workflow".to_string()),
+            state: Some("completed".to_string()),
+            status: Some("completed".to_string()),
+            started_at: Some("2026-05-19T03:00:00Z".to_string()),
+            // Fresh updated_at restamp — must not put this on the failure board.
+            updated_at: Some("2026-05-19T12:55:00Z".to_string()),
+            last_heartbeat: None,
+            root: None,
+            operator_session: None,
+            latest_report: Some("/tmp/report.md".to_string()),
+            latest_transcript: None,
+            last_error: Some(
+                "launcher_pid gone; heartbeat stale; recovery_required".to_string(),
+            ),
+            extra,
+        });
+
+        // Real failure: age should follow completed_at, not a restamped updated_at.
+        // completed_at is 12h old (inside the 24h board window); updated_at is
+        // restamped to 10m ago — the bug that made day-old fails look fresh.
+        let mut fail_extra = HashMap::new();
+        fail_extra.insert("exit_code".into(), serde_json::json!(2));
+        fail_extra.insert(
+            "completed_at".into(),
+            serde_json::json!("2026-05-19T01:00:00Z"),
+        );
+        state.runs.push(RunSnapshot {
+            run_id: "real-fail".to_string(),
+            session_id: None,
+            agent: Some("codex".to_string()),
+            skill: Some("impl".to_string()),
+            mode: None,
+            state: Some("failed".to_string()),
+            status: Some("failed".to_string()),
+            started_at: Some("2026-05-19T00:30:00Z".to_string()),
+            updated_at: Some("2026-05-19T12:50:00Z".to_string()),
+            last_heartbeat: None,
+            root: None,
+            operator_session: None,
+            latest_report: None,
+            latest_transcript: None,
+            last_error: Some("nonzero exit".to_string()),
+            extra: fail_extra,
+        });
+
+        let now = ts("2026-05-19T13:00:00Z");
+        let mission = MissionControlState::build_at(&state, &artifact, now);
+        assert!(
+            mission
+                .failures
+                .iter()
+                .all(|entry| entry.run_id != "work-false-fail"),
+            "exit 0 + completed_at must not appear on failure board: {:?}",
+            mission
+                .failures
+                .iter()
+                .map(|e| e.run_id.as_str())
+                .collect::<Vec<_>>()
+        );
+        let real = mission
+            .failures
+            .iter()
+            .find(|entry| entry.run_id == "real-fail")
+            .expect("real failure stays on board");
+        assert_eq!(
+            real.age_label, "12h ago",
+            "failure age must use completed_at, not restamped updated_at"
+        );
+    }
+
+    #[test]
+    fn failure_board_keeps_freshest_and_dedups_run_ids() {
+        let dir = tempdir().unwrap();
+        let artifact = dir.path().join("artifacts");
+        let bucket = artifact.join("vetcoders/vc-tui/2026_0519/reports");
+        // 22 failures at 11h old: lexicographic age_label sort ("11h ago" <
+        // "2m ago") used to keep exactly these and evict the fresh one.
+        for index in 0..22 {
+            write_meta(
+                &bucket.join(format!("stale-{index}.meta.json")),
+                &format!(
+                    r#"{{
+                        "run_id": "stale-{index}",
+                        "agent": "codex",
+                        "skill_code": "impl",
+                        "exit_code": 1,
+                        "status": "failed",
+                        "completed_at": "2026-05-19T02:00:00Z"
+                    }}"#
+                ),
+            );
+        }
+        write_meta(
+            &bucket.join("fresh-fail.meta.json"),
+            r#"{
+                "run_id": "fresh-fail",
+                "agent": "gemini",
+                "skill_code": "rvew",
+                "exit_code": 2,
+                "status": "failed",
+                "completed_at": "2026-05-19T12:58:00Z"
+            }"#,
+        );
+        // Duplicate of a meta-derived failure arriving via a retained
+        // snapshot must not occupy a second board row.
+        let mut state = empty_state(dir.path());
+        state.runs.push(RunSnapshot {
+            run_id: "fresh-fail".to_string(),
+            session_id: None,
+            agent: Some("gemini".to_string()),
+            skill: Some("rvew".to_string()),
+            mode: None,
+            state: Some("failed".to_string()),
+            status: None,
+            started_at: None,
+            updated_at: Some("2026-05-19T12:58:30Z".to_string()),
+            last_heartbeat: None,
+            root: None,
+            operator_session: None,
+            latest_report: None,
+            latest_transcript: None,
+            last_error: Some("duplicate snapshot".to_string()),
+            extra: HashMap::new(),
+        });
+
+        let now = ts("2026-05-19T13:00:00Z");
+        let mission = MissionControlState::build_at(&state, &artifact, now);
+        assert_eq!(mission.failures.len(), 20, "board stays capped at 20");
+        assert_eq!(
+            mission.failures[0].run_id, "fresh-fail",
+            "freshest failure must lead the board, not be evicted by lexicographic age labels"
+        );
+        assert_eq!(
+            mission
+                .failures
+                .iter()
+                .filter(|entry| entry.run_id == "fresh-fail")
+                .count(),
+            1,
+            "meta-derived and snapshot-derived rows for one run must dedup"
+        );
+    }
+
+    #[test]
     fn active_dispatches_split_stalled_into_action_queue() {
         let now = ts("2026-05-19T13:00:00Z");
         let active = RunSnapshot {
@@ -2473,6 +2912,7 @@ mod tests {
         };
         let state = ControlPlaneState {
             root: PathBuf::from("/tmp/state"),
+            retained_runs: vec![active.clone(), stalled.clone()],
             runs: vec![active, stalled],
             events: Vec::<RunEvent>::new(),
             archived_run_ids: Default::default(),
@@ -2489,6 +2929,108 @@ mod tests {
                 .any(|item| item.kind == ActionQueueKind::StalledRun
                     && item.summary.contains("lost"))
         );
+    }
+
+    fn run_with_settlement(
+        run_id: &str,
+        state: &str,
+        verdict: Option<&str>,
+        exit_code: Option<i64>,
+    ) -> RunSnapshot {
+        let mut extra = HashMap::new();
+        if let Some(v) = verdict {
+            extra.insert(
+                "settlement_verdict".to_string(),
+                Value::String(v.to_string()),
+            );
+        }
+        if let Some(code) = exit_code {
+            extra.insert("exit_code".to_string(), Value::from(code));
+        }
+        RunSnapshot {
+            run_id: run_id.to_string(),
+            session_id: None,
+            agent: Some("claude".to_string()),
+            skill: Some("implement".to_string()),
+            mode: None,
+            state: Some(state.to_string()),
+            status: None,
+            started_at: None,
+            updated_at: None,
+            last_heartbeat: None,
+            root: None,
+            operator_session: None,
+            latest_report: None,
+            latest_transcript: None,
+            last_error: None,
+            extra,
+        }
+    }
+
+    #[test]
+    fn settlement_board_counts_fxn_and_unsettled_terminal_fallback() {
+        // Mirrors SettlementBoard::from_snapshots: f/x/n + invalid-in-x +
+        // unsettled terminal → n; live unsettled ignored.
+        let runs = vec![
+            run_with_settlement("f1", "report_validated", Some("finalized"), Some(0)),
+            run_with_settlement("x1", "failed", Some("failed"), Some(1)),
+            run_with_settlement("inv", "failed", Some("invalid"), Some(1)),
+            run_with_settlement("n1", "report_validated", Some("needs_attention"), Some(0)),
+            // terminal, no verdict → n
+            run_with_settlement("n2", "completed", None, Some(0)),
+            // live, no verdict → ignored
+            run_with_settlement("live", "running", None, None),
+        ];
+        let board = SettlementBoardCounts::from_snapshots(&runs, 1, 2);
+        assert_eq!(board.f, 1);
+        assert_eq!(board.x, 2); // failed + invalid
+        assert_eq!(board.invalid, 1);
+        assert_eq!(board.n, 2); // needs_attention + unsettled terminal
+        assert_eq!(board.total_settled, 5);
+        assert_eq!(board.active, 1);
+        assert_eq!(board.stalled, 2);
+        assert_eq!(board.orphans, 0);
+        assert!(board.scope.contains("retained"));
+        let strip = board.render_strip();
+        assert!(strip.contains("f=1"));
+        assert!(strip.contains("x=2"));
+        assert!(strip.contains("n=2"));
+        assert!(strip.contains("active=1"));
+        assert!(strip.contains("stalled=2"));
+        assert!(strip.contains("orphans=0"));
+    }
+
+    #[test]
+    fn settlement_board_uses_all_retained_snapshots_and_reports_orphans() {
+        let dir = tempdir().unwrap();
+        let artifact_root = dir.path().join("artifacts");
+        fs::create_dir_all(artifact_root.join("nested")).unwrap();
+        fs::write(artifact_root.join("Untitled.md"), "legacy\n").unwrap();
+        fs::write(
+            artifact_root.join("nested/Untitled report.MD"),
+            "legacy nested\n",
+        )
+        .unwrap();
+        fs::write(artifact_root.join("nested/titled.md"), "not orphan\n").unwrap();
+
+        let archived_finalized =
+            run_with_settlement("archived-f", "report_validated", Some("finalized"), Some(0));
+        let state = ControlPlaneState {
+            root: dir.path().join("control-plane"),
+            retained_runs: vec![archived_finalized],
+            runs: Vec::new(),
+            events: Vec::new(),
+            archived_run_ids: Default::default(),
+        };
+        let board =
+            MissionControlState::build_at(&state, &artifact_root, ts("2026-05-20T00:00:00Z"))
+                .settlement;
+
+        assert_eq!(board.f, 1);
+        assert_eq!(board.x, 0);
+        assert_eq!(board.n, 0);
+        assert_eq!(board.orphans, 2);
+        assert!(board.render_strip().contains("orphans=2"));
     }
 
     #[test]

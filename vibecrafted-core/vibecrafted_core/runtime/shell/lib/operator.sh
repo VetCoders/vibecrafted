@@ -52,7 +52,9 @@ _vetcoders_init_command_text() {
       printf 'junie --task=%s --project=. --skip-update-check --use-local-cache' "$quoted_prompt"
       ;;
     grok)
-      printf 'grok --cwd . --permission-mode bypassPermissions --no-alt-screen --single %s' "$quoted_prompt"
+      # Interactive TUI: positional PROMPT seeds the session and stays open.
+      # NEVER use --single here — that is one-shot headless (prints + exits).
+      printf 'grok --cwd . --permission-mode bypassPermissions --no-alt-screen %s' "$quoted_prompt"
       ;;
     *)
       echo "Unsupported init agent: $tool" >&2
@@ -118,7 +120,8 @@ _vetcoders_operator_command_text() {
       printf 'junie --task=%s --project=. --skip-update-check --use-local-cache' "$quoted_prompt"
       ;;
     grok)
-      printf 'grok --cwd . --permission-mode bypassPermissions --no-alt-screen --single %s' "$quoted_prompt"
+      # Same contract as vc-init: interactive TUI, not --single one-shot.
+      printf 'grok --cwd . --permission-mode bypassPermissions --no-alt-screen %s' "$quoted_prompt"
       ;;
     *)
       echo "Unsupported operator agent: $tool" >&2

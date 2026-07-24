@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import workflow
+from vibecrafted_core.dispatch import supervisor as supervisor_module
 from vibecrafted_core.dispatch.model import (
     STATE_FAILED,
     STATE_PENDING,
@@ -16,7 +16,6 @@ from vibecrafted_core.dispatch.model import (
     STATE_VERIFIED,
     Dispatch,
 )
-from vibecrafted_core.dispatch import supervisor as supervisor_module
 from vibecrafted_core.dispatch.schema import parse_dispatch
 from vibecrafted_core.dispatch.supervisor import (
     CellRun,

@@ -15,8 +15,28 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
+import tomllib
+import vibecrafted_mcp
 from vibecrafted_mcp import server, synthesis
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_version_matches_repository_contract() -> None:
+    expected = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "vibecrafted-mcp" / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    packaged = (
+        (REPO_ROOT / "vibecrafted-mcp" / "vibecrafted_mcp" / "VERSION")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+
+    assert pyproject["project"]["version"] == expected
+    assert packaged == expected
+    assert vibecrafted_mcp.__version__ == expected
+    assert server.build_server().version == expected
 
 
 # ---------------------------------------------------------------------------

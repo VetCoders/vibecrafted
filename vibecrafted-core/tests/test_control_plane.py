@@ -9,7 +9,6 @@ import uuid
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import control_plane
 
 
@@ -413,6 +412,54 @@ def test_sync_state_reconciles_dead_launcher_to_stalled(
     assert "recovery_required" in refreshed["last_error"]
 
 
+def test_sync_state_settles_active_pid_gone_on_nonzero_exit_immediately(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Worker death with exit_code!=0 must not leave state=active and hang await.
+
+    Field 2026-07-22: scaffold died on MCP AuthRequired; meta stayed active with
+    pid_gone and await idled the heartbeat window.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    # Fresh heartbeat would previously block settle for the full threshold.
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "999999")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
+    now = "2026-07-22T12:00:00+00:00"
+    _write_meta(
+        home,
+        {
+            "run_id": "scaf-dead-exit1",
+            "status": "running",
+            "state": "active",
+            "agent": "codex",
+            "mode": "scaffold",
+            "root": str(tmp_path),
+            "updated_at": now,
+            "heartbeat_at": now,
+            "skill_code": "scaf",
+            "launcher_pid": 999999999,
+            "exit_code": 1,
+            "liveness": "pid_gone",
+            "last_error": "AuthRequired: stripe",
+        },
+    )
+
+    run = control_plane.sync_state()["recent_runs"][0]
+    assert run["state"] == "failed"
+    assert run["health"] == "final"
+    assert run["liveness"] == "pid_gone"
+    assert run["exit_code"] == 1
+    assert run["recovery_required"] is True
+    assert "pid_gone immediate settle" in str(run.get("last_error") or "")
+
+    await_result = control_plane.await_run(
+        "scaf-dead-exit1", timeout_seconds=2, interval_seconds=0.2
+    )
+    assert await_result["completed"] is True
+    assert await_result["timed_out"] is False
+
+
 def test_sync_state_keeps_run_live_when_worker_alive_despite_dead_launcher(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -498,7 +545,7 @@ def test_sync_state_gc_terminalizes_old_stalled_dead_launcher(
     assert persisted["state"] == "gc"
 
 
-def test_sync_state_keeps_stalled_dead_launcher_active_before_gc_grace(
+def test_sync_state_separates_stalled_dead_launcher_before_gc_grace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     home = tmp_path / ".vibecrafted"
@@ -529,8 +576,95 @@ def test_sync_state_keeps_stalled_dead_launcher_active_before_gc_grace(
     assert run["state"] == "stalled"
     assert run["health"] == "stalled"
     assert run["liveness"] == "pid_gone"
-    assert run["run_id"] in {item["run_id"] for item in snapshot["active_runs"]}
+    assert run["run_id"] not in {item["run_id"] for item in snapshot["active_runs"]}
+    assert run["run_id"] in {item["run_id"] for item in snapshot["stalled_runs"]}
     assert "garbage-collected" not in run["last_error"]
+
+
+def test_sync_state_active_truth_quarantines_pytest_events_and_separates_stalls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tempfile
+
+    now = dt.datetime(2026, 7, 23, 10, 0, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(control_plane, "_now", lambda: now)
+    with tempfile.TemporaryDirectory(prefix="vibecrafted-production-home-") as raw_home:
+        home = Path(raw_home) / ".vibecrafted"
+        monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+        events = home / "control_plane" / "events.jsonl"
+        events.parent.mkdir(parents=True)
+        records = [
+            {
+                "ts": now.isoformat(),
+                "run_id": "live-worker",
+                "kind": "lifecycle:active",
+                "message": "worker heartbeat",
+                "payload": {
+                    "state": "active",
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                    "launcher_pid": os.getpid(),
+                    "liveness": "pid_alive",
+                    "heartbeat_at": now.isoformat(),
+                },
+            },
+            {
+                "ts": now.isoformat(),
+                "run_id": "definitely-missing",
+                "kind": "state",
+                "message": "stale event only",
+                "payload": {
+                    "state": "running",
+                    "health": "active",
+                    "liveness": "pid_alive",
+                    "heartbeat_at": (now - dt.timedelta(hours=2)).isoformat(),
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                },
+            },
+            {
+                "ts": now.isoformat(),
+                "run_id": "pytest-fixture-run",
+                "kind": "lifecycle:active",
+                "message": "fixture leak",
+                "payload": {
+                    "state": "active",
+                    "root": "/private/tmp/pytest-of-operator/pytest-1/test_board0",
+                    "launcher_pid": os.getpid(),
+                },
+            },
+        ]
+        events.write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+
+        snapshot = control_plane.sync_state()
+
+        assert [run["run_id"] for run in snapshot["active_runs"]] == ["live-worker"]
+        assert [run["run_id"] for run in snapshot["stalled_runs"]] == [
+            "definitely-missing"
+        ]
+        projected_ids = {
+            run["run_id"]
+            for bucket in ("active_runs", "stalled_runs", "recent_runs")
+            for run in snapshot[bucket]
+        }
+        assert "pytest-fixture-run" not in projected_ids
+        assert all(
+            event["run_id"] != "pytest-fixture-run" for event in snapshot["events"]
+        )
+        assert snapshot["settlement_counts"] == {
+            "f": 0,
+            "x": 0,
+            "n": 0,
+            "total_settled": 0,
+            "orphans": 0,
+        }
+
+        replayed = control_plane.sync_state()
+        assert [run["run_id"] for run in replayed["active_runs"]] == ["live-worker"]
+        assert [run["run_id"] for run in replayed["stalled_runs"]] == [
+            "definitely-missing"
+        ]
 
 
 def test_sync_state_reconciles_dead_launcher_success_evidence_to_completed(
@@ -568,6 +702,90 @@ def test_sync_state_reconciles_dead_launcher_success_evidence_to_completed(
     assert all(
         item["run_id"] != "just-success-pid-gone" for item in snapshot["active_runs"]
     )
+
+
+def test_sync_state_clears_stale_last_error_when_success_evidence_arrives(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """False-fail gap: watchdog stamps last_error, then exit 0 lands — must not stay Failed.
+
+    Live pattern (work-260724-050009-56000): exit 0 + report + completed_at while
+    the snapshot still carried recovery_required + launcher-dead last_error.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
+    run_id = "work-false-fail-success"
+    completed_at = "2026-05-19T00:05:00+00:00"
+
+    # Phase 1: dead launcher + stale heartbeat → stalled + last_error.
+    _write_meta(
+        home,
+        {
+            "run_id": run_id,
+            "status": "running",
+            "agent": "grok",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "work",
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+    stalled = control_plane.sync_state()["recent_runs"][0]
+    assert stalled["state"] == "stalled"
+    assert stalled["recovery_required"] is True
+    assert "recovery_required" in str(stalled.get("last_error") or "")
+
+    # Phase 2: worker delivered — exit 0 + completed_at on disk.
+    _write_meta(
+        home,
+        {
+            "run_id": run_id,
+            "status": "completed",
+            "agent": "grok",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": completed_at,
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "work",
+            "launcher_pid": 999999999,
+            "exit_code": 0,
+            "liveness": "terminal",
+            "completed_at": completed_at,
+            # Residual recovery marks on meta must not re-poison the board.
+            "last_error": "launcher_pid 999999999 is not alive; recovery_required",
+            "recovery_required": True,
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = next(item for item in snapshot["recent_runs"] if item["run_id"] == run_id)
+
+    assert run["state"] == "completed"
+    assert run["health"] == "final"
+    assert run["liveness"] == "terminal"
+    assert run["exit_code"] == 0
+    assert run["completed_at"] == completed_at
+    assert "recovery_required" not in run or run.get("recovery_required") in (
+        False,
+        None,
+    )
+    assert not str(run.get("last_error") or "").strip()
+    assert run["lifecycle"]["recovery_required"] is False
+
+    # Terminal success may already be drained to runs/archive/ after settle.
+    live = home / "control_plane" / "runs" / f"{run_id}.json"
+    archived = home / "control_plane" / "runs" / "archive" / f"{run_id}.json"
+    path = live if live.exists() else archived
+    assert path.exists(), f"expected snapshot at {live} or {archived}"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["state"] == "completed"
+    assert not str(persisted.get("last_error") or "").strip()
+    assert not persisted.get("recovery_required")
 
 
 def test_sync_state_reconciles_dead_launcher_with_missing_report_to_terminal_failure(
@@ -612,6 +830,238 @@ def test_sync_state_reconciles_dead_launcher_with_missing_report_to_terminal_fai
     assert refreshed is not None
     assert refreshed["state"] == "report_missing"
     assert refreshed["health"] == "final"
+
+
+@pytest.mark.parametrize("terminal_state", ["report_invalid", "report_missing"])
+def test_sync_state_heals_repaired_report_contract_to_completed_attention(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, terminal_state: str
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "repaired.md"
+    report.write_text(
+        "---\n"
+        "run_id: repaired-report\n"
+        "agent: codex\n"
+        "skill: implement\n"
+        "status: completed\n"
+        "---\n"
+        "# Verified handoff\n",
+        encoding="utf-8",
+    )
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-22T14:28:54+00:00",
+                "run_id": "repaired-report",
+                "kind": f"lifecycle:{terminal_state}",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": terminal_state,
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "report": str(report),
+                    "exit_code": 0,
+                    "artifact_ok": False,
+                    "artifact_errors": [
+                        "report_missing"
+                        if terminal_state == "report_missing"
+                        else "report_frontmatter_missing"
+                    ],
+                    "liveness": "terminal",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "completed"
+    assert run["artifact_ok"] is True
+    assert run["artifact_errors"] == []
+    assert run["execution_state"] == "exited"
+    assert run["settlement_verdict"] == "needs_attention"
+    assert run["settlement_tui"] == "n"
+    assert run["lifecycle"]["recovery_required"] is False
+    assert run["failure_card"] is None
+    assert snapshot["settlement_counts"] == {
+        "f": 0,
+        "x": 0,
+        "n": 1,
+        "total_settled": 1,
+        "orphans": 0,
+    }
+
+
+def test_sync_state_refuses_report_repair_from_another_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "cross-wired.md"
+    report.write_text(
+        "---\n"
+        "run_id: other-run\n"
+        "agent: codex\n"
+        "skill: implement\n"
+        "status: completed\n"
+        "---\n"
+        "# Wrong report\n",
+        encoding="utf-8",
+    )
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-22T14:28:54+00:00",
+                "run_id": "victim-run",
+                "kind": "lifecycle:report_invalid",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": "report_invalid",
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "report": str(report),
+                    "exit_code": 0,
+                    "artifact_ok": False,
+                    "artifact_errors": ["report_frontmatter_missing"],
+                    "liveness": "terminal",
+                    "recovery_required": True,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["run_id"] == "victim-run"
+    assert run["state"] == "report_invalid"
+    assert run["artifact_ok"] is False
+    assert run["settlement_tui"] == "x"
+    assert run["lifecycle"]["recovery_required"] is True
+
+
+def test_sync_state_keeps_unrepaired_report_invalid_in_failed_recovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "still-invalid.md"
+    report.write_text("# Missing frontmatter\n", encoding="utf-8")
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-22T14:28:54+00:00",
+                "run_id": "still-invalid",
+                "kind": "lifecycle:report_invalid",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": "report_invalid",
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "report": str(report),
+                    "exit_code": 0,
+                    "artifact_ok": False,
+                    "artifact_errors": ["report_frontmatter_missing"],
+                    "liveness": "terminal",
+                    "recovery_required": True,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "report_invalid"
+    assert run["settlement_verdict"] == "failed"
+    assert run["settlement_tui"] == "x"
+    assert run["lifecycle"]["recovery_required"] is True
+    assert snapshot["settlement_counts"]["x"] == 1
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "invalid_proof"),
+    [(0, True), (7, False)],
+)
+def test_sync_state_never_heals_failed_execution_or_invalid_proof(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    exit_code: int,
+    invalid_proof: bool,
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "proof-invalid" if invalid_proof else "execution-failed"
+    report = tmp_path / "valid-report.md"
+    report.write_text(
+        "---\n"
+        f"run_id: {run_id}\n"
+        "agent: codex\n"
+        "skill: implement\n"
+        "status: completed\n"
+        "---\n"
+        "# Report\n",
+        encoding="utf-8",
+    )
+    if invalid_proof:
+        proof = home / "control_plane" / "runtime_runs" / run_id / "proof"
+        proof.mkdir(parents=True, exist_ok=True)
+        (proof / "result.json").write_text("{}\n", encoding="utf-8")
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    events.write_text(
+        json.dumps(
+            {
+                "ts": "2026-07-22T14:28:54+00:00",
+                "run_id": run_id,
+                "kind": "lifecycle:report_invalid",
+                "message": "artifact contract failed",
+                "payload": {
+                    "state": "report_invalid",
+                    "agent": "codex",
+                    "skill": "implement",
+                    "mode": "implement",
+                    "root": str(tmp_path),
+                    "report": str(report),
+                    "exit_code": exit_code,
+                    "artifact_errors": ["report_frontmatter_missing"],
+                    "liveness": "terminal",
+                    "recovery_required": True,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "report_invalid"
+    assert run["proof_state"] == ("invalid" if invalid_proof else "undeclared")
+    assert run["settlement_verdict"] == ("invalid" if invalid_proof else "failed")
+    assert run["settlement_tui"] == "x"
+    assert run["lifecycle"]["recovery_required"] is True
 
 
 def test_sync_state_reaps_stale_lock_present_run_without_launcher_pid(
@@ -1007,6 +1457,60 @@ def test_await_run_returns_report_delivered_when_worker_is_gone(
     assert payload["attempts"] == 1
 
 
+def test_await_run_waits_for_live_launcher_to_finalize_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A dead worker's report is not terminal while its launcher can still
+    publish final metadata.  Await must keep the canonical loop open until the
+    finalizer exits instead of returning an ``active`` pre-handoff snapshot.
+    """
+    import subprocess
+    import sys
+    import threading
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    report = tmp_path / "stage-report.md"
+    report.write_text("### Summary\ndelivered\n", encoding="utf-8")
+
+    launcher = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
+    reaper = threading.Thread(target=launcher.wait, daemon=True)
+    reaper.start()
+    try:
+        _write_meta(
+            home,
+            {
+                "run_id": "revi-launcher-finalizing-42",
+                "status": "running",
+                "agent": "codex",
+                "mode": "review",
+                "skill_code": "revi",
+                "root": str(tmp_path),
+                "updated_at": "2026-05-19T00:00:00+00:00",
+                "launcher_pid": launcher.pid,
+                "worker_pid": 999999999,
+                "worker_pgid": 999999999,
+                "liveness": "pid_alive",
+            },
+        )
+
+        payload = control_plane.await_run(
+            "revi-launcher-finalizing-42",
+            timeout_seconds=1,
+            interval_seconds=0.05,
+            hard_cap_seconds=2,
+            report_path=str(report),
+        )
+    finally:
+        reaper.join(timeout=2)
+
+    assert payload["completed"] is True
+    assert payload["timed_out"] is False
+    assert payload["reason"] in {"terminal", "report_delivered"}
+    assert payload["worker_alive"] is False
+    assert payload["attempts"] >= 2
+
+
 def test_await_run_report_alone_never_completes_a_live_worker(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1352,3 +1856,260 @@ def test_run_liveness_projects_reconciled_worker_truth(
         "found": False,
     }
     assert control_plane.run_liveness("")["found"] is False
+
+
+def _write_snapshot(home: Path, payload: dict[str, object]) -> Path:
+    runs = home / "control_plane" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    path = runs / f"{payload['run_id']}.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_drain_settles_then_archives_old_terminals_and_keeps_recent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    now = dt.datetime.now(dt.timezone.utc)
+    old_stamp = (now - dt.timedelta(days=3)).isoformat()
+    fresh_stamp = now.isoformat()
+    # Parked gc run without a settlement terminal — must settle before archive.
+    _write_snapshot(
+        home,
+        {
+            "run_id": "impl-old-parked",
+            "state": "gc",
+            "health": "final",
+            "liveness": "pid_gone",
+            "updated_at": old_stamp,
+            "completed_at": old_stamp,
+        },
+    )
+    # Recent terminal — settles but stays retained inside the keep window.
+    _write_snapshot(
+        home,
+        {
+            "run_id": "impl-fresh-terminal",
+            "state": "failed",
+            "health": "final",
+            "liveness": "terminal",
+            "updated_at": fresh_stamp,
+            "completed_at": fresh_stamp,
+        },
+    )
+    # Live run — untouched.
+    _write_snapshot(
+        home,
+        {
+            "run_id": "impl-live",
+            "state": "active",
+            "health": "active",
+            "updated_at": fresh_stamp,
+        },
+    )
+
+    counts = control_plane.drain_settled_snapshots(keep_hours=24.0, batch_size=2)
+
+    assert counts["settled"] == 2
+    assert counts["archived"] == 1
+    assert counts["kept_recent"] == 1
+    assert counts["skipped_live"] == 1
+    assert counts["retained"] == 2
+    archived = control_plane._snapshot_archive_dir() / "impl-old-parked.json"
+    assert archived.is_file()
+    archived_payload = json.loads(archived.read_text(encoding="utf-8"))
+    # Settlement precedes gc: the archived run carries a written terminal.
+    assert archived_payload["settlement_verdict"]
+    retained = json.loads(
+        (home / "control_plane" / "runs" / "impl-fresh-terminal.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert retained["settlement_verdict"]
+    # Idempotent: a second drain changes nothing.
+    again = control_plane.drain_settled_snapshots(keep_hours=24.0, batch_size=2)
+    assert again["settled"] == 0
+    assert again["archived"] == 0
+
+
+def test_sync_state_does_not_resurrect_archived_runs_from_meta(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    old_stamp = "2026-05-19T00:00:00+00:00"
+    # Launcher meta outlives the snapshot — the resurrection source.
+    _write_meta(
+        home,
+        {
+            "run_id": "impl-archived-1",
+            "status": "completed",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": old_stamp,
+            "skill_code": "impl",
+            "exit_code": 0,
+            "liveness": "terminal",
+        },
+    )
+    snapshot_path = _write_snapshot(
+        home,
+        {
+            "run_id": "impl-archived-1",
+            "state": "completed",
+            "health": "final",
+            "liveness": "terminal",
+            "updated_at": old_stamp,
+            "completed_at": old_stamp,
+            "settlement_verdict": "needs_attention",
+            "settlement_reason": "report_without_seal",
+            "settlement_at": old_stamp,
+            "settlement_source": "auto",
+            "settlement_tui": "n",
+        },
+    )
+    archive_dir = control_plane._snapshot_archive_dir()
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_path.replace(archive_dir / snapshot_path.name)
+
+    board = control_plane.sync_state()
+
+    assert not (home / "control_plane" / "runs" / "impl-archived-1.json").exists()
+    assert all(run.get("run_id") != "impl-archived-1" for run in board["recent_runs"])
+    assert board["settlement_counts"]["n"] == 0
+    # The archived projection still resolves for a direct scoped lookup.
+    looked_up = control_plane.lookup_run("impl-archived-1")
+    assert looked_up is not None
+    assert looked_up["settlement_verdict"] == "needs_attention"
+
+
+def test_sync_state_keeps_retained_snapshot_only_runs_on_board(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After event rotation a retained snapshot is the only trace of a run."""
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+    _write_snapshot(
+        home,
+        {
+            "run_id": "impl-snapshot-only",
+            "state": "failed",
+            "health": "final",
+            "liveness": "terminal",
+            "updated_at": stamp,
+            "completed_at": stamp,
+            "settlement_verdict": "failed",
+            "settlement_reason": "execution_failed",
+            "settlement_at": stamp,
+            "settlement_source": "auto",
+            "settlement_tui": "x",
+        },
+    )
+
+    board = control_plane.sync_state()
+
+    run_ids = {run.get("run_id") for run in board["recent_runs"]}
+    assert "impl-snapshot-only" in run_ids
+    assert board["settlement_counts"]["x"] == 1
+
+
+def test_sync_state_rotates_oversized_event_stream_and_keeps_tail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "512")
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        json.dumps(
+            {
+                "ts": f"2026-05-19T00:00:{index:02d}+00:00",
+                "run_id": "impl-rotate-1",
+                "kind": "state",
+                "message": f"tick {index}",
+                "payload": {"state": "active", "agent": "codex"},
+            }
+        )
+        for index in range(40)
+    ]
+    events.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    board = control_plane.sync_state()
+
+    archive = control_plane._events_archive_dir()
+    rotated = list(archive.glob("events-*.jsonl"))
+    assert len(rotated) == 1
+    # Tail re-seeded: the fresh stream keeps the last records for the board.
+    fresh_text = events.read_text(encoding="utf-8")
+    fresh = fresh_text.strip().splitlines()
+    # Tail re-seed happens after projection appended its own transition events,
+    # so the fresh stream holds the last pre-rotation records, not the whole log.
+    assert 0 < len(fresh) <= control_plane.EVENT_TAIL_LIMIT
+    assert "tick 39" in fresh_text
+    assert 'tick 0"' not in fresh_text
+    # The run projected before rotation stays resolvable from its snapshot.
+    assert control_plane.lookup_run("impl-rotate-1") is not None
+    assert any(run.get("run_id") == "impl-rotate-1" for run in board["recent_runs"])
+
+
+def test_lock_busy_message_names_install_doctor_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S", "0.1")
+    control_plane.control_plane_home().mkdir(parents=True, exist_ok=True)
+    holder = control_plane._sync_lock_path().open("a+", encoding="utf-8")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    try:
+        with pytest.raises(control_plane.ControlPlaneLockBusy) as excinfo:
+            control_plane.sync_state()
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+    message = str(excinfo.value)
+    assert "install/doctor sync in progress; retry" in message
+    assert "stuck run" in message
+
+
+def test_await_status_with_run_id_is_lockless_during_board_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`vibecrafted <agent> await --run-id` must survive a concurrent full sync."""
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S", "0.2")
+    _write_meta(
+        home,
+        {
+            "run_id": "impl-await-lockless",
+            "status": "running",
+            "agent": "grok",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "impl",
+            "launcher_pid": os.getpid(),
+            "liveness": "pid_alive",
+        },
+    )
+    control_plane.control_plane_home().mkdir(parents=True, exist_ok=True)
+
+    from vibecrafted_core import cli as core_cli
+
+    holder = control_plane._sync_lock_path().open("a+", encoding="utf-8")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    try:
+        run = core_cli._run_for_agent("grok", "impl-await-lockless")
+        assert run is not None
+        assert run["run_id"] == "impl-await-lockless"
+        # run_liveness is the other supervisor-hot probe — also lockless now.
+        liveness = control_plane.run_liveness("impl-await-lockless")
+        assert liveness["found"] is True
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()

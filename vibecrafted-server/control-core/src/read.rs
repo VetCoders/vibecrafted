@@ -13,16 +13,18 @@
 //!   active/recent/warnings without ever depending on the Python sync having
 //!   run. This is what lets the web/TUI frontends be self-sufficient.
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 use chrono::{DateTime, Utc};
 
 use crate::events::EventStream;
 use crate::model::{
-    AgentMeta, Event, FINAL_STATES, Health, LifecycleRun, LifecycleRunSummary, RECENT_RUN_LIMIT,
-    RUN_STALL_SECONDS, RunStatus, coerce_int_value, is_final_state, merge_status,
-    operator_session_name, parse_iso, skill_from_code, state_health,
+    AgentMeta, DeliverySealRef, Event, FINAL_STATES, Health, LifecycleRun, LifecycleRunSummary,
+    RECENT_RUN_LIMIT, RUN_STALL_SECONDS, RunStatus, SettlementBoard, coerce_int_value,
+    is_final_state, merge_status, operator_session_name, parse_iso, skill_from_code, state_health,
 };
 
 /// Resolve `~`-prefixed paths against `$HOME`. Other paths pass through.
@@ -58,20 +60,26 @@ pub fn vibecrafted_home() -> PathBuf {
 #[derive(Debug, Clone)]
 pub struct ControlPlane {
     home: PathBuf,
+    control_plane_home: PathBuf,
 }
 
 /// Aggregate projection. Mirrors the read-shape of `control_plane.sync_state`'s
 /// return payload, minus `generated_at` (callers stamp their own clock).
 #[derive(Debug, Clone)]
 pub struct StateView {
-    /// In-flight runs (health active/stalled and not in a final state).
+    /// Runs with current live activity evidence.
     pub active_runs: Vec<RunStatus>,
+    /// Non-terminal runs whose last activity crossed the stall threshold.
+    pub stalled_runs: Vec<RunStatus>,
     /// Up to [`RECENT_RUN_LIMIT`] most-recently-updated runs.
     pub recent_runs: Vec<RunStatus>,
     /// Human-readable warnings (stalls, locks without reports).
     pub warnings: Vec<String>,
     /// Newest-first event tail.
     pub events: Vec<Event>,
+    /// Python-owned settlement truth across retained `runs/*.json` snapshots,
+    /// plus the active count from this Rust projection.
+    pub settlement_counts: SettlementBoard,
 }
 
 impl ControlPlane {
@@ -79,7 +87,30 @@ impl ControlPlane {
     /// `control_plane/`).
     #[must_use]
     pub fn new(home: impl Into<PathBuf>) -> Self {
-        Self { home: home.into() }
+        let home = home.into();
+        let control_plane_home = home.join("control_plane");
+        Self {
+            home,
+            control_plane_home,
+        }
+    }
+
+    /// Handle rooted at an explicit control-plane directory.
+    ///
+    /// Frontends already receive `.../control_plane` as their state root. This
+    /// constructor lets them consume the canonical reader without guessing a
+    /// second state path or reparsing the same files.
+    #[must_use]
+    pub fn from_control_plane_home(control_plane_home: impl Into<PathBuf>) -> Self {
+        let control_plane_home = control_plane_home.into();
+        let home = control_plane_home
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| control_plane_home.clone());
+        Self {
+            home,
+            control_plane_home,
+        }
     }
 
     /// Handle rooted at [`vibecrafted_home`] (env-aware default).
@@ -91,7 +122,7 @@ impl ControlPlane {
     /// `<home>/control_plane`.
     #[must_use]
     pub fn control_plane_home(&self) -> PathBuf {
-        self.home.join("control_plane")
+        self.control_plane_home.clone()
     }
 
     /// `<home>/control_plane/runs`.
@@ -156,7 +187,7 @@ impl ControlPlane {
             }
             if let Some(run) = read_json::<RunStatus>(&path) {
                 if !run.run_id.is_empty() {
-                    runs.push(run);
+                    runs.push(self.attach_seal_if_present(run));
                 }
             }
         }
@@ -175,7 +206,7 @@ impl ControlPlane {
         let direct = self.run_snapshot_dir().join(format!("{target}.json"));
         if let Some(run) = read_json::<RunStatus>(&direct) {
             if run.run_id == target {
-                return Some(run);
+                return Some(self.attach_seal_if_present(run));
             }
         }
         if let Some(run) = self
@@ -190,19 +221,41 @@ impl ControlPlane {
         // of control_plane.resolve_run so this frontend eye reads the same place
         // the runtime wrote (Niezmiennik 3 — one contract, many eyes).
         if let Some(run) = self.resolve_runtime_run(target) {
-            return Some(run);
+            return Some(self.attach_seal_if_present(run));
         }
         self.resolve_lifecycle_run(target)
             .map(|run| self.lifecycle_run_status(&run))
+    }
+
+    /// Attach a seal projection from `runtime_runs/<id>/delivery-seal.json`
+    /// when the snapshot does not already carry one. Read-only; never invents
+    /// delivery axes from process state.
+    fn attach_seal_if_present(&self, mut run: RunStatus) -> RunStatus {
+        if run.seal.is_none() {
+            run.seal = self.read_seal_ref(&run.run_id);
+        }
+        run
+    }
+
+    /// Read `delivery-seal.json` under the runtime run directory, if present
+    /// and well-formed enough to project.
+    #[must_use]
+    pub fn read_seal_ref(&self, run_id: &str) -> Option<DeliverySealRef> {
+        let target = run_id.trim();
+        if target.is_empty() {
+            return None;
+        }
+        let path = self.runtime_run_dir(target).join("delivery-seal.json");
+        read_json::<DeliverySealRef>(&path).filter(|seal| !seal.seal_id.is_empty())
     }
 
     /// Resolve a run straight from `runtime_runs/<id>/` — the read-follows-write
     /// fallback mirroring `control_plane.resolve_run`. A just-launched run lives
     /// here (`transcript.log`; `meta.json` optional and frequently absent at
     /// launch) before the Python sync merges it into the `runs/` snapshots.
-    /// Returns a minimal `launching` [`RunStatus`] carrying the transcript path
-    /// so the frontend surfaces it instead of a silent miss. `None` when the run
-    /// directory does not exist yet (the "still launching → await" case).
+    /// Runtime metadata is projected when present so an old completed directory
+    /// never masquerades as a fresh launch. `None` means the run has not reached
+    /// the runtime tree yet (the "still launching → await" case).
     #[must_use]
     pub fn resolve_runtime_run(&self, run_id: &str) -> Option<RunStatus> {
         let target = run_id.trim();
@@ -213,40 +266,92 @@ impl ControlPlane {
         if !dir.is_dir() {
             return None;
         }
+        let meta = read_json::<serde_json::Value>(&dir.join("meta.json"));
+        let value = |key: &str| {
+            meta.as_ref()
+                .and_then(|payload| payload.get(key))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        };
+        let state = {
+            let status = value("status");
+            if status.is_empty() {
+                let state = value("state");
+                if state.is_empty() {
+                    "launching".to_string()
+                } else {
+                    state
+                }
+            } else {
+                status
+            }
+        };
+        let exit_code = meta
+            .as_ref()
+            .and_then(|payload| payload.get("exit_code"))
+            .and_then(coerce_int_value);
+        let completed_at = value("completed_at");
+        let terminal = is_final_state(&state) || exit_code.is_some() || !completed_at.is_empty();
         let transcript = dir.join("transcript.log");
-        let latest_transcript = if transcript.is_file() {
-            transcript.to_string_lossy().into_owned()
-        } else {
-            String::new()
+        let latest_transcript = {
+            let declared = value("transcript");
+            if !declared.is_empty() {
+                declared
+            } else if transcript.is_file() {
+                transcript.to_string_lossy().into_owned()
+            } else {
+                String::new()
+            }
+        };
+        let updated_at = {
+            let updated = value("updated_at");
+            if updated.is_empty() {
+                completed_at.clone()
+            } else {
+                updated
+            }
         };
         Some(RunStatus {
             run_id: target.to_string(),
-            state: "launching".to_string(),
-            agent: String::new(),
-            skill: String::new(),
-            mode: String::new(),
-            root: String::new(),
-            operator_session: String::new(),
-            latest_report: String::new(),
+            state,
+            agent: value("agent"),
+            skill: nonempty_runtime_value(&value("skill"), &value("workflow")),
+            mode: value("mode"),
+            root: value("root"),
+            operator_session: value("operator_session"),
+            latest_report: value("report"),
             latest_transcript,
-            last_error: String::new(),
-            updated_at: String::new(),
-            started_at: String::new(),
-            health: "active".to_string(),
+            last_error: nonempty_runtime_value(&value("message"), &value("reason")),
+            updated_at,
+            started_at: value("started_at"),
+            health: if terminal { "final" } else { "active" }.to_string(),
             source: "runtime_runs".to_string(),
             lock_present: false,
-            exit_code: None,
-            liveness: String::new(),
+            exit_code,
+            liveness: if terminal {
+                "terminal".to_string()
+            } else {
+                value("liveness")
+            },
             launcher_pid: None,
-            completed_at: String::new(),
-            session_id: String::new(),
+            completed_at,
+            session_id: value("session_id"),
             current_loop: None,
             total_loops: None,
+            settlement_verdict: None,
+            settlement_tui: None,
+            // No delivery section on a still-launching runtime dir unless a
+            // seal file is later attached by attach_seal_if_present.
+            execution_state: None,
+            proof_state: None,
+            delivery_state: None,
+            seal: None,
         })
     }
 
-    /// Every run currently materialised under `runtime_runs/` as a minimal
-    /// `launching` [`RunStatus`]. The aggregate counterpart to
+    /// Every run currently materialised under `runtime_runs/` as a read-only
+    /// [`RunStatus`]. The aggregate counterpart to
     /// [`Self::resolve_runtime_run`]; used by [`Self::compute_view`] so a fresh
     /// run shows on the dashboard before the snapshot sync merges it.
     fn iter_runtime_run_status(&self) -> Vec<RunStatus> {
@@ -269,6 +374,10 @@ impl ControlPlane {
     }
 
     /// Resolve a full nested lifecycle run from `lifecycle_runs/<id>/state.json`.
+    ///
+    /// Delivery-proof axes are projected onto the run and each stage (shape of
+    /// `write_lifecycle_report`) so `/api/control/lifecycle/{run_id}` never
+    /// has to re-derive them from `completed`/`artifact_ok` in the server.
     #[must_use]
     pub fn resolve_lifecycle_run(&self, run_id: &str) -> Option<LifecycleRun> {
         let target = run_id.trim();
@@ -276,8 +385,9 @@ impl ControlPlane {
             return None;
         }
         let state_path = self.lifecycle_run_dir(target).join("state.json");
-        let run = read_json::<LifecycleRun>(&state_path)?;
+        let mut run = read_json::<LifecycleRun>(&state_path)?;
         if run.run_id == target {
+            run.project_delivery_axes();
             Some(run)
         } else {
             None
@@ -285,6 +395,8 @@ impl ControlPlane {
     }
 
     /// Full nested lifecycle runs, newest first by `state.json` mtime.
+    /// Each run carries projected delivery-proof axes (see
+    /// [`LifecycleRun::project_delivery_axes`]).
     #[must_use]
     pub fn load_lifecycle_runs(&self) -> Vec<LifecycleRun> {
         let Ok(entries) = fs::read_dir(self.lifecycle_runs_dir()) else {
@@ -296,12 +408,13 @@ impl ControlPlane {
                 continue;
             }
             let state_path = entry.path().join("state.json");
-            let Some(run) = read_json::<LifecycleRun>(&state_path) else {
+            let Some(mut run) = read_json::<LifecycleRun>(&state_path) else {
                 continue;
             };
             if run.run_id.is_empty() {
                 continue;
             }
+            run.project_delivery_axes();
             runs.push((modified_at(&state_path), run));
         }
         runs.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
@@ -389,7 +502,8 @@ impl ControlPlane {
     #[must_use]
     pub fn read_state_view(&self) -> StateView {
         let runs = self.load_snapshots();
-        self.project_view(runs)
+        let settlement_counts = SettlementBoard::from_snapshots(&runs);
+        self.project_view(runs, settlement_counts)
     }
 
     /// Build a [`StateView`] by merging the three raw sources in Rust
@@ -398,71 +512,161 @@ impl ControlPlane {
     /// frontend-self-sufficient path.
     #[must_use]
     pub fn compute_view(&self, now: DateTime<Utc>) -> StateView {
+        // Verdict truth is Python's persisted snapshot projection. Raw meta,
+        // lock, runtime, marbles, and lifecycle sources below can disagree on
+        // process state, but they must never be used to invent a settlement.
+        let retained_snapshots = self.load_snapshots();
+        let settlement_counts = SettlementBoard::from_snapshots(&retained_snapshots);
         let mut merged: Vec<RunStatus> = Vec::new();
-
-        let mut absorb = |incoming: RunStatus| {
-            if let Some(idx) = merged.iter().position(|r| r.run_id == incoming.run_id) {
-                let existing = merged.remove(idx);
-                merged.push(merge_status(Some(existing), incoming));
-            } else {
-                merged.push(incoming);
-            }
-        };
 
         for path in self.iter_meta_files() {
             if let Some(meta) = read_json::<AgentMeta>(&path) {
                 if let Some(status) = meta.normalize(now) {
-                    absorb(status);
+                    absorb_status(&mut merged, status);
                 }
             }
         }
         for path in self.iter_lock_files() {
             if let Some(status) = normalize_lock(&path, now) {
-                absorb(status);
+                absorb_status(&mut merged, status);
             }
         }
         for path in self.iter_marbles_state_files() {
             if let Some(status) =
                 read_json::<MarblesState>(&path).and_then(|state| state.normalize(now))
             {
-                absorb(status);
+                absorb_status(&mut merged, status);
+            }
+        }
+        // Python sync_state folds the event stream after raw sources. The
+        // Mission Control active total must use the same projection; counting
+        // every durable runtime_runs/ directory resurrects old workers.
+        let mut events = self
+            .events()
+            .read_all()
+            .map(|batch| batch.events)
+            .unwrap_or_default();
+        events.retain(|event| !event_has_test_provenance(event, &self.home));
+        let worker_pid_candidates: HashSet<(String, i64)> = events
+            .iter()
+            .flat_map(|event| event_worker_pids(event).map(|pid| (event.run_id.clone(), pid)))
+            .collect();
+        let live_worker_runs: HashSet<String> = worker_pid_candidates
+            .into_iter()
+            .filter(|(_, pid)| pid_is_alive(*pid))
+            .map(|(run_id, _)| run_id)
+            .collect();
+        for event in &events {
+            if event.run_id.trim().is_empty() {
+                continue;
+            }
+            let existing = merged.iter().find(|run| run.run_id == event.run_id);
+            let status = normalize_event(event, existing, now);
+            absorb_status(&mut merged, status);
+        }
+        for run in &mut merged {
+            if live_worker_runs.contains(&run.run_id) && !run.is_terminal() {
+                run.health = "active".to_string();
             }
         }
         // runtime_runs/: a just-launched run no richer source has surfaced yet.
         // Read-follows-write — keeps the dashboard from a silent gap before the
-        // sync merges the run (Niezmiennik 3). Only fills run ids no meta/lock/
-        // marbles source already provided.
+        // sync merges the run (Niezmiennik 3). Only a recently touched fallback
+        // can be live; the durable directory itself is not liveness evidence.
         for run in self.iter_runtime_run_status() {
-            if !merged.iter().any(|r| r.run_id == run.run_id) {
+            if !merged.iter().any(|r| r.run_id == run.run_id)
+                && self.runtime_run_is_fresh(&run.run_id, now)
+            {
                 merged.push(run);
             }
         }
-        for run in self.iter_lifecycle_run_status() {
-            if !merged.iter().any(|r| r.run_id == run.run_id) {
+        for mut run in self.iter_lifecycle_run_status() {
+            if !merged.iter().any(|r| r.run_id == run.run_id)
+                && (run.is_terminal() || run.health == "active")
+            {
+                // Lifecycle containers remain discoverable in `recent`, but
+                // they are neither workers nor heartbeat sources. Only their
+                // dispatched worker runs may enter active/stalled projections.
+                if !run.is_terminal() {
+                    run.health = "unknown".to_string();
+                }
                 merged.push(run);
+            }
+        }
+
+        // Persisted terminal snapshots are the completion authority over the
+        // runtime_runs/ read-follows-write fallback. Runtime directories
+        // intentionally outlive workers, so their mere existence cannot
+        // resurrect a finished run. Other richer sources keep their existing
+        // merge semantics.
+        for snapshot in retained_snapshots
+            .iter()
+            .filter(|snapshot| snapshot.is_terminal())
+        {
+            if let Some(idx) = merged.iter().position(|run| {
+                run.run_id == snapshot.run_id && run.source.as_str() == "runtime_runs"
+            }) {
+                merged[idx] = snapshot.clone();
             }
         }
 
         sort_recent_first(&mut merged);
-        self.project_view(merged)
+        if events.len() > crate::model::EVENT_TAIL_LIMIT {
+            let start = events.len() - crate::model::EVENT_TAIL_LIMIT;
+            events.drain(..start);
+        }
+        events.reverse();
+        Self::project_view_with_events(merged, settlement_counts, events)
     }
 
-    fn project_view(&self, runs: Vec<RunStatus>) -> StateView {
+    fn project_view(&self, runs: Vec<RunStatus>, settlement_counts: SettlementBoard) -> StateView {
+        Self::project_view_with_events(
+            runs,
+            settlement_counts,
+            self.read_event_tail(crate::model::EVENT_TAIL_LIMIT),
+        )
+    }
+
+    fn project_view_with_events(
+        runs: Vec<RunStatus>,
+        mut settlement_counts: SettlementBoard,
+        events: Vec<Event>,
+    ) -> StateView {
         let warnings = warnings_for_runs(&runs);
-        let active_runs = runs
+        let active_runs: Vec<RunStatus> = runs
             .iter()
-            .filter(|run| {
-                matches!(run.health.as_str(), "active" | "stalled") && !is_final_state(&run.state)
-            })
+            .filter(|run| run.health == "active" && !is_final_state(&run.state))
             .cloned()
             .collect();
+        let stalled_runs: Vec<RunStatus> = runs
+            .iter()
+            .filter(|run| run.health == "stalled" && !is_final_state(&run.state))
+            .cloned()
+            .collect();
+        settlement_counts.active = active_runs.len();
         let recent_runs = runs.into_iter().take(RECENT_RUN_LIMIT).collect();
         StateView {
             active_runs,
+            stalled_runs,
             recent_runs,
             warnings,
-            events: self.read_event_tail(crate::model::EVENT_TAIL_LIMIT),
+            events,
+            settlement_counts,
         }
+    }
+
+    fn runtime_run_is_fresh(&self, run_id: &str, now: DateTime<Utc>) -> bool {
+        let dir = self.runtime_run_dir(run_id);
+        [
+            dir.clone(),
+            dir.join("meta.json"),
+            dir.join("transcript.log"),
+        ]
+        .into_iter()
+        .filter_map(|path| modified_at(&path))
+        .map(DateTime::<Utc>::from)
+        .max()
+        .is_some_and(|updated| (now - updated).num_seconds() <= RUN_STALL_SECONDS)
     }
 
     fn iter_meta_files(&self) -> Vec<PathBuf> {
@@ -482,6 +686,224 @@ impl ControlPlane {
             p.file_name().and_then(|n| n.to_str()) == Some("state.json")
         })
     }
+}
+
+fn absorb_status(merged: &mut Vec<RunStatus>, incoming: RunStatus) {
+    if let Some(idx) = merged.iter().position(|run| run.run_id == incoming.run_id) {
+        let existing = merged.remove(idx);
+        merged.push(merge_status(Some(existing), incoming));
+    } else {
+        merged.push(incoming);
+    }
+}
+
+fn normalize_event(event: &Event, existing: Option<&RunStatus>, now: DateTime<Utc>) -> RunStatus {
+    let payload_string = |key: &str| {
+        event
+            .payload
+            .get(key)
+            .map(json_scalar_string)
+            .unwrap_or_default()
+    };
+    let existing_string = |value: &str, fallback: &str| {
+        if value.is_empty() {
+            fallback.to_string()
+        } else {
+            value.to_string()
+        }
+    };
+
+    let mut state = payload_string("state");
+    if state.is_empty() {
+        if let Some(lifecycle_state) = event.kind.strip_prefix("lifecycle:") {
+            state = lifecycle_state.to_string();
+        } else if event.kind == "launch" {
+            state = "created".to_string();
+        } else if event.kind == "audit:stop"
+            && event
+                .payload
+                .get("accepted")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        {
+            state = "stopped".to_string();
+        } else {
+            state = existing
+                .map(|run| run.state.clone())
+                .unwrap_or_else(|| "unknown".to_string());
+        }
+    }
+
+    let root = existing_string(
+        &payload_string("root"),
+        existing.map(|run| run.root.as_str()).unwrap_or_default(),
+    );
+    let agent = existing_string(
+        &payload_string("agent"),
+        existing.map(|run| run.agent.as_str()).unwrap_or("unknown"),
+    );
+    let skill = existing_string(
+        &payload_string("skill"),
+        existing.map(|run| run.skill.as_str()).unwrap_or("unknown"),
+    );
+    let mode = existing_string(
+        &payload_string("mode"),
+        existing.map(|run| run.mode.as_str()).unwrap_or("unknown"),
+    );
+    let updated_at = if event.ts.is_empty() {
+        existing
+            .map(|run| run.updated_at.clone())
+            .unwrap_or_default()
+    } else {
+        event.ts.clone()
+    };
+    let started_at = existing_string(
+        &payload_string("started_at"),
+        existing
+            .map(|run| run.started_at.as_str())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&updated_at),
+    );
+    let exit_code = event
+        .payload
+        .get("exit_code")
+        .and_then(coerce_int_value)
+        .or_else(|| existing.and_then(|run| run.exit_code));
+    let launcher_pid = event
+        .payload
+        .get("launcher_pid")
+        .and_then(coerce_int_value)
+        .or_else(|| existing.and_then(|run| run.launcher_pid));
+    let payload_error = existing_string(&payload_string("error"), &payload_string("last_error"));
+    let last_error = if !payload_error.is_empty() {
+        payload_error
+    } else if let Some(existing) = existing.filter(|run| !run.last_error.is_empty()) {
+        existing.last_error.clone()
+    } else if event.kind != "state"
+        && matches!(
+            state.as_str(),
+            "blocked" | "failed" | "ghost" | "stalled" | "timed_out"
+        )
+    {
+        event.message.clone()
+    } else {
+        String::new()
+    };
+    let declared_health = payload_string("health");
+    let heartbeat_at = payload_string("heartbeat_at");
+    let activity_at = if heartbeat_at.is_empty() {
+        updated_at.as_str()
+    } else {
+        heartbeat_at.as_str()
+    };
+    let health = if matches!(declared_health.as_str(), "stalled" | "final" | "unknown") {
+        declared_health
+    } else {
+        state_health(&state, activity_at, now).as_str().to_string()
+    };
+
+    RunStatus {
+        run_id: event.run_id.trim().to_string(),
+        state: state.clone(),
+        agent,
+        skill,
+        mode,
+        root: root.clone(),
+        operator_session: operator_session_name(&root, event.run_id.trim()),
+        latest_report: existing_string(
+            &payload_string("report"),
+            existing
+                .map(|run| run.latest_report.as_str())
+                .unwrap_or_default(),
+        ),
+        latest_transcript: existing_string(
+            &payload_string("transcript"),
+            existing
+                .map(|run| run.latest_transcript.as_str())
+                .unwrap_or_default(),
+        ),
+        last_error,
+        updated_at: updated_at.clone(),
+        started_at,
+        health,
+        source: "event-stream".to_string(),
+        lock_present: existing.is_some_and(|run| run.lock_present),
+        exit_code,
+        liveness: existing_string(
+            &payload_string("liveness"),
+            existing
+                .map(|run| run.liveness.as_str())
+                .unwrap_or_default(),
+        ),
+        launcher_pid,
+        completed_at: existing_string(
+            &payload_string("completed_at"),
+            existing
+                .map(|run| run.completed_at.as_str())
+                .unwrap_or_default(),
+        ),
+        session_id: existing_string(
+            &payload_string("session_id"),
+            existing
+                .map(|run| run.session_id.as_str())
+                .unwrap_or_default(),
+        ),
+        current_loop: existing.and_then(|run| run.current_loop),
+        total_loops: existing.and_then(|run| run.total_loops),
+        settlement_verdict: None,
+        settlement_tui: None,
+        execution_state: None,
+        proof_state: None,
+        delivery_state: None,
+        seal: None,
+    }
+}
+
+fn json_scalar_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::String(value) => value.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn event_has_test_provenance(event: &Event, home: &Path) -> bool {
+    if is_pytest_temp_path(home) {
+        return false;
+    }
+    ["root", "source_dir", "report", "transcript", "meta"]
+        .into_iter()
+        .filter_map(|key| event.payload.get(key))
+        .filter_map(serde_json::Value::as_str)
+        .any(|value| is_pytest_temp_path(Path::new(value)))
+}
+
+fn event_worker_pids(event: &Event) -> impl Iterator<Item = i64> + '_ {
+    ["worker_pid", "worker_pgid"]
+        .into_iter()
+        .filter_map(|key| event.payload.get(key))
+        .filter_map(coerce_int_value)
+}
+
+fn pid_is_alive(pid: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn is_pytest_temp_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|part| part.starts_with("pytest-of-"))
+    })
 }
 
 fn sort_recent_first(runs: &mut [RunStatus]) {
@@ -517,6 +939,14 @@ fn warnings_for_runs(runs: &[RunStatus]) -> Vec<String> {
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Option<T> {
     let text = fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
+}
+
+fn nonempty_runtime_value(primary: &str, fallback: &str) -> String {
+    if primary.is_empty() {
+        fallback.to_string()
+    } else {
+        primary.to_string()
+    }
 }
 
 fn modified_at(path: &Path) -> Option<std::time::SystemTime> {
@@ -647,6 +1077,12 @@ fn normalize_lock(path: &Path, now: DateTime<Utc>) -> Option<RunStatus> {
         session_id: String::new(),
         current_loop: None,
         total_loops: None,
+        settlement_verdict: None,
+        settlement_tui: None,
+        execution_state: None,
+        proof_state: None,
+        delivery_state: None,
+        seal: None,
     })
 }
 
@@ -749,6 +1185,110 @@ impl MarblesState {
             session_id: String::new(),
             current_loop: self.current_loop,
             total_loops: self.total_loops,
+            settlement_verdict: None,
+            settlement_tui: None,
+            execution_state: None,
+            proof_state: None,
+            delivery_state: None,
+            seal: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ControlPlane;
+    use chrono::{Duration, Utc};
+    use serde_json::json;
+    use std::fs;
+
+    #[test]
+    fn active_truth_separates_stalls_and_quarantines_pytest_events() {
+        let unique = format!(
+            "control-core-active-truth-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let home = std::env::temp_dir().join(unique);
+        let control_plane = home.join("control_plane");
+        fs::create_dir_all(&control_plane).expect("control plane");
+        let now = Utc::now();
+        let records = [
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "live-worker",
+                "kind": "lifecycle:active",
+                "message": "worker heartbeat",
+                "payload": {
+                    "state": "active",
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                    "worker_pid": std::process::id(),
+                    "liveness": "pid_alive",
+                    "heartbeat_at": (now - Duration::hours(2)).to_rfc3339()
+                }
+            }),
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "definitely-missing",
+                "kind": "state",
+                "message": "stale event only",
+                "payload": {
+                    "state": "running",
+                    "health": "active",
+                    "liveness": "pid_alive",
+                    "heartbeat_at": (now - Duration::hours(2)).to_rfc3339(),
+                    "root": "/Volumes/vc-workspace/vetcoders/vibecrafted"
+                }
+            }),
+            json!({
+                "ts": now.to_rfc3339(),
+                "run_id": "pytest-fixture-run",
+                "kind": "lifecycle:active",
+                "message": "fixture leak",
+                "payload": {
+                    "state": "active",
+                    "root": "/private/tmp/pytest-of-operator/pytest-1/test_board0",
+                    "launcher_pid": std::process::id()
+                }
+            }),
+        ];
+        let encoded = records
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(control_plane.join("events.jsonl"), format!("{encoded}\n"))
+            .expect("event stream");
+
+        let view = ControlPlane::new(&home).compute_view(now);
+
+        assert_eq!(
+            view.active_runs
+                .iter()
+                .map(|run| run.run_id.as_str())
+                .collect::<Vec<_>>(),
+            ["live-worker"]
+        );
+        assert_eq!(
+            view.stalled_runs
+                .iter()
+                .map(|run| run.run_id.as_str())
+                .collect::<Vec<_>>(),
+            ["definitely-missing"]
+        );
+        assert!(
+            view.recent_runs
+                .iter()
+                .all(|run| run.run_id != "pytest-fixture-run")
+        );
+        assert!(
+            view.events
+                .iter()
+                .all(|event| event.run_id != "pytest-fixture-run")
+        );
+        assert_eq!(view.settlement_counts.active, 1);
+        assert_eq!(view.settlement_counts.total_settled, 0);
+
+        fs::remove_dir_all(home).ok();
     }
 }

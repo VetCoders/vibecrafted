@@ -7,8 +7,9 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from . import doctor as doctor_module
 from .agent_stream import ANSI_PATTERN, AgentStreamParser, resolve_default_model
@@ -45,9 +46,9 @@ LAUNCHERS = (
     "scaffold",
     "workflow",
 )
-LAUNCH_ALIASES = {
-    "justdo": "implement",
-}
+# No skill aliases: each LAUNCHERS name is its own skill id (ADR-0001: justdo
+# is not implement). Keep the map only for legacy shell-wrapper renames if any.
+LAUNCH_ALIASES: dict[str, str] = {}
 # These installed names are symlinks to the ``vibecrafted`` Python entrypoint,
 # but their behavior is still owned by the shell deck. Preserve the invoked
 # name as an explicit deck verb instead of silently treating the first user
@@ -91,8 +92,8 @@ def _add_launch_parser(sub: argparse._SubParsersAction, name: str) -> None:
         run.add_argument("--dry-run", action="store_true")
         run.add_argument("--json", action="store_true")
         return
-    run.add_argument("--prompt", default="")
-    run.add_argument("--file", default="")
+    run.add_argument("-p", "--prompt", default="")
+    run.add_argument("-f", "--file", default="")
     run.add_argument("--runtime", default="")
     run.add_argument("--root", default="")
     run.add_argument("--mode", default="")
@@ -115,6 +116,95 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("dispatch", help="run or validate a dispatch plan")
     doctor = sub.add_parser("doctor", help="verify installed Vibecrafted runtime")
     doctor.add_argument("--json", action="store_true")
+    doctor.add_argument(
+        "--quarantine-legacy-runs",
+        action="store_true",
+        help=(
+            "one-shot migration: mark terminal runs without worker_pgid as "
+            "reaper_ownership=legacy; best-effort recover pgid for live runs "
+            "only when SPAWN_RUN_ID is positively visible"
+        ),
+    )
+    capabilities = sub.add_parser(
+        "capabilities",
+        help="describe workflow execution contracts (versioned, machine-readable)",
+    )
+    capabilities.add_argument("--json", action="store_true")
+    config = sub.add_parser(
+        "config",
+        help="install/wire packaged vc-frame config into the tools store and ~/.config/vc-frame",
+    )
+    config_sub = config.add_subparsers(dest="config_action")
+    config_install = config_sub.add_parser(
+        "install",
+        help="stage package config → tools store + wire ~/.config/vc-frame view",
+    )
+    config_install.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the wiring plan without mutating the filesystem",
+    )
+    config_install.add_argument(
+        "--force",
+        action="store_true",
+        help="replace healthy view links (default: leave healthy wiring alone)",
+    )
+    config_install.add_argument(
+        "--prefer-repo",
+        action="store_true",
+        help="wire view to checkout config/vc-frame (dev mode)",
+    )
+    config_zshrc = config_sub.add_parser(
+        "ensure-zshrc",
+        help="idempotent host ~/.zshrc onboarding (create or fenced append)",
+    )
+    config_zshrc.add_argument("--dry-run", action="store_true")
+    reap = sub.add_parser(
+        "reap",
+        help="terminate processes that outlived their run (survivors of terminal runs)",
+    )
+    reap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the would-kill table with ownership evidence, signal nothing",
+    )
+    reap.add_argument("--json", action="store_true")
+    reap.add_argument(
+        "--resettle",
+        action="store_true",
+        help=(
+            "re-run settlement over retained control_plane/runs snapshots "
+            "(honest: automatic FINALIZED only from a sealed delivery or an "
+            "explicit worker attestation; a traced operator waive remains an "
+            "override; never from bare exit 0)"
+        ),
+    )
+    settle = sub.add_parser(
+        "settle",
+        help="settlement board maintenance (resettle retained snapshots)",
+    )
+    settle.add_argument(
+        "--resettle",
+        action="store_true",
+        help="re-classify retained snapshots from existing axes (no invented f)",
+    )
+    settle.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="count would-rewrite only; do not write snapshots",
+    )
+    settle.add_argument("--json", action="store_true")
+    procs = sub.add_parser(
+        "procs",
+        help="identity-qualified process snapshot/terminate for vc-procs TUI",
+    )
+    procs_sub = procs.add_subparsers(dest="procs_action")
+    procs_sub.add_parser("snapshot", help="JSON process snapshot")
+    term = procs_sub.add_parser("terminate", help="TERM→KILL with identity proof")
+    term.add_argument("--pid", type=int, required=True)
+    term.add_argument("--expected-start", required=True)
+    term.add_argument("--expected-command-sha256", required=True)
+    term.add_argument("--expected-run-id", default="")
     for name in LAUNCHERS:
         _add_launch_parser(sub, name)
     return parser
@@ -270,7 +360,7 @@ def _print_launch_input_error(*, command: str, agent: str | None, message: str) 
     if agent:
         base = f"{base} {agent}"
     print(f"error: {message}", file=sys.stderr)
-    print("", file=sys.stderr)
+    print(file=sys.stderr)
     print("Provide work for the agent with one of:", file=sys.stderr)
     print(f"  {base} --prompt 'what to do'", file=sys.stderr)
     print(f"  {base} --file /path/to/brief.md", file=sys.stderr)
@@ -311,11 +401,15 @@ def _apply_live_liveness(run: dict[str, Any] | None) -> dict[str, Any] | None:
 def _run_for_agent(
     agent: str, run_id: str, *, last: bool = False
 ) -> dict[str, Any] | None:
-    snapshot = sync_state()
+    # With an explicit run id the scoped, lockless lookup is the whole answer.
+    # The old unconditional full sync_state() here queued every await/observe
+    # behind the global board lock — during an install/doctor full sync that
+    # meant ControlPlaneLockBusy on every await inside the sync window.
     if run_id:
         return _apply_live_liveness(lookup_run(run_id))
     if not last:
         return None
+    snapshot = sync_state()
     for key in ("active_runs", "recent_runs"):
         for run in snapshot.get(key) or []:
             if str(run.get("agent") or "") == agent:
@@ -510,6 +604,43 @@ def _agent_await(agent: str, argv: Sequence[str]) -> int:
     return 1
 
 
+def _cmd_resettle(args: argparse.Namespace) -> int:
+    """Honest re-settlement of retained control_plane/runs snapshots."""
+    from .lifecycle_delivery import resettle_retained_snapshots
+
+    result = resettle_retained_snapshots(
+        force=True,
+        dry_run=bool(getattr(args, "dry_run", False)),
+    )
+    if getattr(args, "json", False):
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ok") else 1
+    before = result.get("before") or {}
+    after = result.get("after") or {}
+    print(
+        "resettle "
+        f"scanned={result.get('scanned', 0)} "
+        f"rewritten={result.get('rewritten', 0)} "
+        f"unchanged={result.get('unchanged', 0)} "
+        f"skipped={result.get('skipped', 0)}"
+        + (" (dry-run)" if result.get("dry_run") else "")
+    )
+    print(
+        f"before: f={before.get('f', 0)} x={before.get('x', 0)} "
+        f"n={before.get('n', 0)} invalid={before.get('invalid', 0)}"
+    )
+    print(
+        f"after:  f={after.get('f', 0)} x={after.get('x', 0)} "
+        f"n={after.get('n', 0)} invalid={after.get('invalid', 0)}"
+    )
+    print(
+        "note: automatic FINALIZED comes only from a sealed delivery or an "
+        "explicit worker attestation (finalized: true + claim); a traced "
+        "operator waive remains an explicit override; never from bare exit 0"
+    )
+    return 0 if result.get("ok") else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
     invoked_as = Path(sys.argv[0]).name if argv is None else "vibecrafted"
@@ -530,7 +661,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"vibecrafted {__version__}")
         return 0
 
-    python_commands = {"dispatch", "doctor", "paste", "stop"} | set(LAUNCHERS)
+    # Help is a product surface, not argparse fallout.  Resolve it before the
+    # shell-deck compatibility router or any workflow runtime is imported so
+    # every installed entrypoint teaches the same contract.  ``help --all``
+    # deliberately stays with the deck: it is the long operational reference.
+    from . import __version__
+    from .help_surface import (
+        has_workflow_help,
+        render_root_help,
+        render_workflow_help,
+    )
+
+    if not raw_args or raw_args[0] in {"-h", "--help"}:
+        print(render_root_help(__version__), end="")
+        return 0
+    if raw_args[0] == "help":
+        if len(raw_args) == 1:
+            print(render_root_help(__version__), end="")
+            return 0
+        topic = raw_args[1].removeprefix("vc-")
+        if topic not in {"--all", "--full"} and has_workflow_help(topic):
+            print(render_workflow_help(topic), end="")
+            return 0
+    if raw_args[0] in LAUNCHERS:
+        workflow_args = raw_args[1:]
+        help_requested = (
+            bool(workflow_args)
+            and workflow_args[0] == "help"
+            or any(arg in {"-h", "--help"} for arg in workflow_args)
+        )
+        if help_requested:
+            print(render_workflow_help(raw_args[0]), end="")
+            return 0
+
+    python_commands = {
+        "acp",
+        "capabilities",
+        "config",
+        "dispatch",
+        "doctor",
+        "paste",
+        "procs",
+        "reap",
+        "settle",
+        "stop",
+    } | set(LAUNCHERS)
     agent_python_verbs = {"observe", "await", "stop"}
     is_lifecycle = shell_wrapper_verb is not None
     if raw_args and shell_wrapper_verb is None:
@@ -544,8 +719,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             is_lifecycle = True
 
     if is_lifecycle:
-        from .runtime_paths import vibecrafted_tools_home
         import subprocess
+
+        from .runtime_paths import vibecrafted_tools_home
 
         deck = (
             vibecrafted_tools_home() / "vibecrafted-current" / "scripts" / "vibecrafted"
@@ -553,7 +729,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not deck.is_file():
             deck = deck_path()
         if deck.is_file():
-            res = subprocess.run([str(deck), *raw_args])
+            res = subprocess.run([str(deck), *raw_args], check=False)
             return res.returncode
         if shell_wrapper_verb is not None:
             print(
@@ -561,6 +737,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+
+    if raw_args and raw_args[0] == "acp":
+        try:
+            from vibecrafted_acp.server import main as acp_main
+        except ModuleNotFoundError:
+            print(
+                "error: vibecrafted-acp is not installed; install the "
+                "vibecrafted-acp workspace package",
+                file=sys.stderr,
+            )
+            return 1
+        return acp_main(raw_args[1:])
 
     if raw_args and raw_args[0] == "dispatch":
         from .dispatch.cli import main as dispatch_main
@@ -583,8 +771,58 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(raw_args)
     if not args.command:
         parser.print_help()
-        return 0 if invoked_as in {"vc-help", "vc-dashboard"} else 2
+        return 0
+    if args.command == "config":
+        from .vc_frame_delivery import ensure_zshrc, stage_vc_frame_config
+
+        action = getattr(args, "config_action", None)
+        if action == "ensure-zshrc":
+            result = ensure_zshrc(dry_run=bool(getattr(args, "dry_run", False)))
+            print(f"ensure-zshrc: {result['action']} -> {result['path']}")
+            return 0
+        if action != "install":
+            print(
+                "usage: vibecrafted config install [--dry-run] [--force] [--prefer-repo]\n"
+                "       vibecrafted config ensure-zshrc [--dry-run]",
+                file=sys.stderr,
+            )
+            return 2
+        plan = stage_vc_frame_config(
+            dry_run=bool(getattr(args, "dry_run", False)),
+            force=bool(getattr(args, "force", False)),
+            prefer_repo=True if getattr(args, "prefer_repo", False) else None,
+        )
+        print(plan.render(), end="")
+        return 0
     if args.command == "doctor":
+        if getattr(args, "quarantine_legacy_runs", False):
+            from .run_reaper import quarantine_legacy_runs
+
+            quarantine = quarantine_legacy_runs()
+            payload = quarantine.as_dict()
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(
+                    "quarantine-legacy-runs: "
+                    f"changed={payload['changed']} "
+                    f"marked_legacy={len(payload['marked_legacy'])} "
+                    f"recovered_pgid={len(payload['recovered_pgid'])} "
+                    f"skipped_live={len(payload['skipped_live'])} "
+                    f"skipped_has_pgid={len(payload['skipped_has_pgid'])} "
+                    f"already_legacy={len(payload['already_legacy'])} "
+                    f"parse_errors={len(payload['parse_errors'])}"
+                )
+                for run_id in payload["marked_legacy"]:
+                    print(f"  legacy: {run_id}")
+                for row in payload["recovered_pgid"]:
+                    print(
+                        f"  recovered: {row.get('run_id')} "
+                        f"worker_pgid={row.get('worker_pgid')}"
+                    )
+                for err in payload["parse_errors"]:
+                    print(f"  parse_error: {err}")
+            return 0
         findings = doctor_module.doctor_run()
         summary = doctor_module.doctor_summary(findings)
         if args.json:
@@ -599,6 +837,65 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{summary['failures']} failures"
             )
         return 0 if summary["failures"] == 0 else 1
+    if args.command == "reap":
+        if getattr(args, "resettle", False):
+            return _cmd_resettle(args)
+        from .run_reaper import main as reap_main
+
+        reap_argv: list[str] = []
+        if args.dry_run:
+            reap_argv.append("--dry-run")
+        if args.json:
+            reap_argv.append("--json")
+        return reap_main(reap_argv)
+    if args.command == "settle":
+        if not getattr(args, "resettle", False):
+            print(
+                "usage: vibecrafted settle --resettle [--dry-run] [--json]",
+                file=sys.stderr,
+            )
+            return 2
+        return _cmd_resettle(args)
+    if args.command == "procs":
+        from .process_control import main as procs_main
+
+        action = getattr(args, "procs_action", None) or "snapshot"
+        if action == "snapshot":
+            return procs_main(["snapshot", "--json"])
+        if action == "terminate":
+            return procs_main(
+                [
+                    "terminate",
+                    "--pid",
+                    str(args.pid),
+                    "--expected-start",
+                    args.expected_start,
+                    "--expected-command-sha256",
+                    args.expected_command_sha256,
+                    "--expected-run-id",
+                    args.expected_run_id or "",
+                    "--json",
+                ]
+            )
+        print("usage: vibecrafted procs {snapshot|terminate}", file=sys.stderr)
+        return 2
+    if args.command == "capabilities":
+        from .workflow_capabilities import (
+            render_capabilities_lines,
+            workflow_capabilities_payload,
+        )
+
+        capabilities_payload = workflow_capabilities_payload()
+        if args.json:
+            print(
+                json.dumps(
+                    capabilities_payload, ensure_ascii=False, indent=2, sort_keys=True
+                )
+            )
+        else:
+            for line in render_capabilities_lines(capabilities_payload):
+                print(line)
+        return 0
     if args.command == "paste":
         from .paste import run_namespace
 

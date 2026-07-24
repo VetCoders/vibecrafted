@@ -1,22 +1,13 @@
 ---
 name: vc-implement
-version: 2.1.0
-aliases:
-  - vc-justdo
+version: 2.2.0
 description: >
-  End-to-end implementation skill for when the user is done talking and needs
-  the thing built. Not a shortcut — a full delivery with autonomous decision
-  making. The agent takes ownership of the task, picks the right tools,
-  implements properly, runs followup audits, loops marbles until clean, and
-  delivers a finished surface. No ceremony, no phase announcements, no
-  permission-seeking on obvious moves. The user says what, the agent figures
-  out how.
+  End-to-end implementation skill — faza WRITE VC-ship. Pełne dowiezienie z
+  autonomicznymi decyzjami, followup i marbles. Nie jest aliasem vc-justdo.
   Trigger phrases: "implement", "vc-implement", "implement this e2e",
-  "build this properly", "ship the feature", "just do", "just do it",
-  "zrób to", "zaimplementuj to", "dowiez to", "I'm tired but this needs to ship",
+  "build this properly", "ship the feature", "zaimplementuj to",
   "full implementation", "od pomyslu do realizacji", "caly feature",
-  "before tomorrow", "nie mam siły ale musi byc gotowe".
-  Alias: vc-justdo (kept for agents already wired to that name).
+  "before tomorrow".
 compatibility:
   tools:
     - exec_command
@@ -31,10 +22,32 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-# vc-implement — Na moment, gdy to po prostu musi być zrobione
+<!-- fleet-imperative: v3 -->
 
-> **Front-face (fasada):** `vc-implement`. **Alias:** `vc-justdo`. Obie nazwy
-> kierują do tego samego autonomicznego skilla implementacji.
+> **Wywołanie dla `vc-implement` (launcher `implement`)**
+>
+> Ten sam _kształt_ trzech ścieżek floty, z **literałami tego** skilla — zobacz
+> kanoniczną [Matrycę Delegacji](../DELEGATION_MATRIX.md):
+>
+> - [Wspólne trzy ścieżki](../DELEGATION_MATRIX.md#wspólne-trzy-ścieżki)
+> - [Katalog launcherów](../DELEGATION_MATRIX.md#katalog-launcherów-core-runtime)
+> - [Reguła per-launcher](../DELEGATION_MATRIX.md#reguła-per-launcher-delta-semantyczna)
+> - [Native vs external](../DELEGATION_MATRIX.md#natywne-subagenty-vs-zewnętrzni-workerzy)
+>
+> | Ścieżka               | Literał tego skilla                                                                                                              |
+> | --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. Worker użytkownika | `vibecrafted implement <agent>`                                                                                                  |
+> | 2. Interactive        | `/vc-implement` — wykonaj **w tej sesji**; native subagenty gdy trzeba; **nie** zewnętrzniaj tylko dlatego, że launcher istnieje |
+> | 3. Agent-operator     | może odpalić formę workera powyżej przez `vc-dispatch` / linie operatora, zachowując tożsamość tego skilla                       |
+
+> Swobodniejszy native na niektórych biegach ≠ porzucenie floty external. `vc-dispatch` i `vc-ship` zachowują własne tożsamości.
+
+<!-- /fleet-imperative -->
+
+# vc-implement — faza WRITE cyklu ship
+
+> Skill id `implement`. Ustrukturyzowane e2e. **Nie** `vc-justdo` — to osobna
+> postawa non-pipeline (ADR-0001).
 
 ## Wejście operatora
 
@@ -52,15 +65,13 @@ Zanim ten workflow wykona analizę specyficzną dla repo, planowanie, implementa
 
 Chodzi o znalezienie zaczepów: węzłów nośnych, twins (duplikaty), martwego kodu, dryfu, entrypointów runtime'u oraz pułapek o dużym zasięgu zmiany. Jeśli zadanie jawnie nie dotyczy repo lub nie dotyczy kodu, odnotuj w raporcie wyjątek „bez repo". W przeciwnym razie brak dowodów z `vc-init`/Loctree to błąd procesu.
 
-Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<workflow> <agent> [--prompt|--file ...]`).
+Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<launcher> <agent> [--prompt|--file ...]`).
 
 ```bash
 vibecrafted implement codex --prompt 'Build the login page'
 vc-implement claude --prompt 'Implement caching layer e2e'
 vibecrafted implement gemini --file /path/to/feature-plan.md
 ```
-
-Alternatywne nazwy nadal działają: `vibecrafted justdo codex ...`, `vc-justdo claude ...`.
 
 Zależności fundamentowe (ładowane wraz z frameworkiem): `vc-loctree`, `vc-aicx`.
 
@@ -78,14 +89,15 @@ zawiedzie lub przeoczy jakąś powierzchnię, dopisz feedback do `~/.vibecrafted
 
 ## Czym to jest
 
-Pełna implementacja e2e. Nie ceremonia pipelinu. Nie skrót. Użytkownik mówi coś
-w stylu „just do the auth system", „implement caching e2e, I trust you", „zrób to
-porządnie, nie mam siły gadać". Bierzesz to od zera do gotowego. Porządnie.
+Pełna implementacja e2e na fazie WRITE ship. Nie alias postawy. Nie skrót, który
+pomija followup lub marbles. Użytkownik mówi coś w stylu „implement caching e2e,
+I trust you" albo „zaimplementuj auth porządnie". Bierzesz cut od scope do gotowego.
 
 ## Czym to NIE jest
 
 - Nie „zrób szybko i byle jak" — jakość jest nie do negocjacji.
-- Nie `vc-partner` — nikt nie jest drugim pilotem; jesteś sam z zadaniem.
+- Nie `vc-partner` — nikt nie jest drugim pilotem; jesteś sam z cutem.
+- Nie `vc-justdo` — ten skill to postawa non-pipeline z typem z promptu.
 - Nie wymówka, żeby pominąć marbles — jeśli implementacja ma luki, loop.
 - Nie wymówka, żeby pominąć followup — jeśli kod ma problemy, znajdź je.
 
@@ -101,7 +113,7 @@ zadaj **JEDNO** pytanie doprecyzowujące. Nie trzy. Jedno.
 
 Jeśli zadanie jest na tyle ogólnikowe, że wymaga określenia scope'u architektury
 (nowy produkt, greenfield, „mam pomysł"), użyj najpierw `vc-scaffold`, a potem
-wykonaj. JustDo konsumuje plany scaffold bezpośrednio.
+wykonaj. Implement konsumuje plany scaffold bezpośrednio.
 
 Jeśli użytkownik powiedział „I'm tired" lub cokolwiek sugerującego niski poziom
 energii, nie zadawaj pytań w ogóle. Podejmij rozsądną decyzję i działaj.
@@ -158,7 +170,7 @@ Podczas implementacji:
 ### 5. Followup (obowiązkowy)
 
 Gdy implementacja wydaje się kompletna, uruchom audyt followup na samym sobie.
-Nie opcjonalnie. To tu „just do" zarabia na zaufanie.
+Nie opcjonalnie. To tu faza ship zarabia na zaufanie.
 
 - Czy bramki jakości przechodzą? Uruchom je.
 - Czy nowy kod integruje się czysto z istniejącym kodem?
@@ -177,7 +189,7 @@ na zaraportowaniu ich.
 
 Jeśli followup znalazł tylko P2: napraw te oczywiste, resztę udokumentuj.
 
-Pętla marbles w trybie justdo jest ciasna:
+Pętla marbles pod implement jest ciasna:
 
 ```
 dopóki P0 > 0 lub P1 > 0:
@@ -265,6 +277,7 @@ oszczędza więcej czasu, niż kosztuje.
 - Zostawianie użytkownika, żeby sam dochodził, co się zmieniło
 - Naprawianie niepowiązanego kodu, podczas gdy zamówiony feature jest niekompletny
 - Cisza przez 30 minut bez żadnego sygnału postępu
+- Traktowanie tego skilla jako zamiennika `vc-justdo`
 
 ## Kontrakt
 
@@ -273,6 +286,6 @@ pracę. Napraw to, co zepsute. Dowieź czysto. Gdy wróci, ta rzecz działa.
 
 ---
 
-_„Nie byle jak. Nie ceremonialnie. Po prostu zrobione."_
+_„Nie byle jak. Nie ceremonialnie. Zaimplementowane."_
 
-_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by Vetcoders (c)2024-2026 LibraxisAI_
+_𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. with AI Agents by VetCoders (c)2024-2026 The LibraxisAI Team_

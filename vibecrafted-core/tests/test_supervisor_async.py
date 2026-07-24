@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 import sys
 from pathlib import Path
 
-from vibecrafted_core import dispatcher
+from vibecrafted_core import control_plane, dispatcher
 from vibecrafted_core.artifacts import validate_artifacts
 from vibecrafted_core.control_plane import read_event_tail
 from vibecrafted_core.lifecycle import RunState, transition_allowed
+from vibecrafted_core.lifecycle_delivery import claim_digest_for_text
+from vibecrafted_core.lifecycle_runner import (
+    LifecycleRunner,
+    LifecycleRunSpec,
+    record_stage_worker_completion,
+)
+from vibecrafted_core.report_contract import CLAIM_DIGEST_ENV
 from vibecrafted_core.supervisor_async import AsyncSupervisor
 
 
@@ -37,7 +45,7 @@ def test_async_supervisor_emits_lifecycle_and_validates_artifacts(
     script = tmp_path / "worker.py"
     script.write_text(
         "from pathlib import Path\n"
-        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n"
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n"
         "print('hello from async supervisor')\n"
     )
     run_id = "asup-test-1"
@@ -80,7 +88,7 @@ def test_dispatcher_cli_runs_full_lifecycle(
     script = tmp_path / "worker.py"
     script.write_text(
         "from pathlib import Path\n"
-        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n"
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n"
         "print('dispatcher lifecycle hello')\n",
         encoding="utf-8",
     )
@@ -115,6 +123,182 @@ def test_dispatcher_cli_runs_full_lifecycle(
     assert "dispatcher lifecycle hello" in transcript.read_text(encoding="utf-8")
 
 
+def test_dispatcher_normalizes_bare_codex_report_before_validation(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_SKILL_NAME", "implement")
+    report = tmp_path / "dispatch-report.md"
+    transcript = tmp_path / "dispatch.log"
+    codex = tmp_path / "codex"
+    codex.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'# Worker handoff\\n\\nSubstantive body.\\n', encoding='utf-8')\n"
+        "print('done')\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+
+    rc = dispatcher.main(
+        [
+            "run",
+            "--run-id",
+            "disp-bare-codex",
+            "--root",
+            str(tmp_path),
+            "--report",
+            str(report),
+            "--transcript",
+            str(transcript),
+            "--json",
+            "--",
+            str(codex),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifact_ok"] is True
+    assert payload["state"] == "report_validated"
+    report_text = report.read_text(encoding="utf-8")
+    assert "run_id: disp-bare-codex" in report_text
+    assert "agent: codex" in report_text
+    assert "skill: implement" in report_text
+    assert "status: completed" in report_text
+    assert "# Worker handoff\n\nSubstantive body.\n" in report_text
+
+
+def test_async_supervisor_preseeds_and_stamps_launcher_owned_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_SKILL", "implement")
+    digest = "9e0d59e1dc48bc42"
+    monkeypatch.setenv(CLAIM_DIGEST_ENV, digest)
+    report = tmp_path / "identity.md"
+    meta = tmp_path / "meta.json"
+    worker = tmp_path / "codex"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "report = Path(os.environ['VIBECRAFTED_REPORT_PATH'])\n"
+        "template = report.read_text(encoding='utf-8')\n"
+        "assert 'run_id: identity-run' in template\n"
+        "assert 'session_id: pending-unset' in template\n"
+        "assert 'finalized: false' in template\n"
+        "assert 'launcher_template: true' in template\n"
+        f"assert 'claim_digest: {digest}' in template\n"
+        "report.write_text("
+        "'---\\nrun_id: copied-wrong\\nsession_id: copied-wrong\\nagent: codex\\n"
+        "skill: implement\\nstatus: completed\\nfinalized: true\\n"
+        "claim: identity was launcher-stamped\\n"
+        "claim_digest: deadbeefdeadbeef\\n---\\n# Evidence\\n', "
+        "encoding='utf-8')\n"
+        "print(json.dumps({'type': 'thread.started', 'thread_id': 'codex-child'}))\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="identity-run",
+            command=[str(worker)],
+            root=tmp_path,
+            meta_path=meta,
+            report_path=report,
+        )
+    )
+
+    assert handle.artifact_validation is not None
+    assert handle.artifact_validation.ok
+    assert handle.agent_session_id == "codex-child"
+    report_text = report.read_text(encoding="utf-8")
+    assert "run_id: identity-run" in report_text
+    assert "session_id: codex-child" in report_text
+    assert "copied-wrong" not in report_text
+    assert "launcher_template:" not in report_text
+    assert "finalized: true" in report_text
+    assert "claim: identity was launcher-stamped" in report_text
+    assert f"claim_digest: {digest}" in report_text
+    assert "deadbeefdeadbeef" not in report_text
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload["agent_session_id"] == "codex-child"
+    assert meta_payload["claim_digest"] == digest
+
+
+def test_async_supervisor_preserves_blocked_claim_while_filling_identity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_SKILL_NAME", "implement")
+    report = tmp_path / "blocked.md"
+    worker = tmp_path / "codex"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'---\\nstatus: blocked\\nclaim_status: blocked\\n---\\n# Body\\n', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="blocked-claim",
+            command=[str(worker)],
+            root=tmp_path,
+            report_path=report,
+        )
+    )
+
+    assert handle.artifact_validation is not None
+    assert handle.artifact_validation.ok
+    report_text = report.read_text(encoding="utf-8")
+    assert "status: blocked" in report_text
+    assert "claim_status: blocked" in report_text
+    assert "run_id: blocked-claim" in report_text
+    assert "# Body\n" in report_text
+
+
+def test_async_supervisor_normalizes_existing_report_after_nonzero_exit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("VIBECRAFTED_SKILL_NAME", "implement")
+    report = tmp_path / "failed.md"
+    worker = tmp_path / "codex"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('# Failure evidence\\n', encoding='utf-8')\n"
+        "sys.exit(7)\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="failed-with-report",
+            command=[str(worker)],
+            root=tmp_path,
+            report_path=report,
+        )
+    )
+
+    assert handle.exit_code == 7
+    assert handle.artifact_validation is not None
+    assert handle.artifact_validation.ok
+    report_text = report.read_text(encoding="utf-8")
+    assert "status: failed" in report_text
+    assert "# Failure evidence\n" in report_text
+
+
 def test_dispatcher_cli_delivers_prompt_file_on_stdin(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -129,7 +313,17 @@ def test_dispatcher_cli_delivers_prompt_file_on_stdin(
         "import os, sys\n"
         "body = sys.stdin.read()\n"
         "assert body == Path(os.environ['VIBECRAFTED_PROMPT_PATH']).read_text()\n"
-        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text(body, encoding='utf-8')\n"
+        "report = (\n"
+        "  '---\\n'\n"
+        "  'run_id: disp-test-prompt-file\\n'\n"
+        "  'agent: python\\n'\n"
+        "  'skill: test\\n'\n"
+        "  'status: completed\\n'\n"
+        "  'claim_status: completed\\n'\n"
+        "  '---\\n'\n"
+        "  + body\n"
+        ")\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text(report, encoding='utf-8')\n"
         "print('stdin prompt ok')\n",
         encoding="utf-8",
     )
@@ -158,7 +352,9 @@ def test_dispatcher_cli_delivers_prompt_file_on_stdin(
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["artifact_ok"] is True
-    assert report.read_text(encoding="utf-8") == "line one\nline two\n"
+    report_text = report.read_text(encoding="utf-8")
+    assert report_text.startswith("---\n")
+    assert "line one\nline two\n" in report_text
     assert "stdin prompt ok" in transcript.read_text(encoding="utf-8")
 
 
@@ -171,7 +367,7 @@ def test_dispatcher_cli_tees_visible_worker_output(
     script = tmp_path / "worker.py"
     script.write_text(
         "from pathlib import Path\n"
-        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n"
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n"
         "print('visible worker line')\n",
         encoding="utf-8",
     )
@@ -212,7 +408,7 @@ def test_dispatcher_cli_quiet_suppresses_final_summary(
     script = tmp_path / "worker.py"
     script.write_text(
         "from pathlib import Path\n"
-        f"Path({str(report)!r}).write_text('---\\nstatus: completed\\n---\\nbody\\n')\n",
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n",
         encoding="utf-8",
     )
 
@@ -252,7 +448,7 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
         "import json, os\n"
         "from pathlib import Path\n"
         "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        "'---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n', encoding='utf-8'"
         ")\n"
         "print(json.dumps({'type': 'system', 'session_id': 'sess-123', "
         "'model': 'claude-opus-4-8'}))\n"
@@ -291,7 +487,8 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     assert "model: claude-opus-4-8" in out
     assert "visible text from claude" in out
     assert "tokens_cache_write: 2" in out
-    assert "tokens_total: 18" in out
+    # input 10 + output 5; cached 3 is subset of input (not double-counted)
+    assert "tokens_total: 15" in out
     assert '"type": "assistant"' not in out
     transcript_text = transcript.read_text(encoding="utf-8")
     assert '"type": "assistant"' in transcript_text
@@ -303,7 +500,7 @@ def test_async_supervisor_renders_claude_stream_json_for_visible_terminal(
     assert meta_payload["agent_model"] == "claude-opus-4-8"
     assert meta_payload["tokens_cached_input"] == 3
     assert meta_payload["tokens_cache_write"] == 2
-    assert meta_payload["tokens_total"] == 18
+    assert meta_payload["tokens_total"] == 15
     assert meta_payload["resume_command"].endswith("claude --resume sess-123")
 
 
@@ -321,7 +518,7 @@ def test_async_supervisor_uses_env_model_for_codex_thread_banner(
         "import json, os\n"
         "from pathlib import Path\n"
         "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        "'---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n', encoding='utf-8'"
         ")\n"
         "print(json.dumps({'type': 'thread.started', 'thread_id': 'codex-thread'}))\n"
         "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'codex text'}}))\n",
@@ -365,7 +562,7 @@ def test_async_supervisor_records_requested_model_next_to_reported_model(
         "import os\n"
         "from pathlib import Path\n"
         "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        "'---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n', encoding='utf-8'"
         ")\n"
         "print('model: gemini-real')\n",
         encoding="utf-8",
@@ -474,7 +671,7 @@ def test_async_supervisor_survives_large_single_json_line_from_mcp(
         "import json, os\n"
         "from pathlib import Path\n"
         "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
-        "'---\\nstatus: completed\\n---\\nbody\\n', encoding='utf-8'"
+        "'---\\nrun_id: asup-test\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n', encoding='utf-8'"
         ")\n"
         "print(json.dumps({'type': 'thread.started', 'thread_id': 'codex-thread'}))\n"
         "huge = 'x' * 120000\n"
@@ -536,6 +733,11 @@ def test_dispatcher_cli_fails_missing_report_contract(
     assert payload["artifact_ok"] is False
     assert payload["artifact_errors"] == ["report_missing"]
     assert payload["state"] == "report_missing"
+    template = (tmp_path / "missing.md").read_text(encoding="utf-8")
+    assert "run_id: disp-test-2" in template
+    assert "session_id: pending-unset" in template
+    assert "finalized: false" in template
+    assert "launcher_template: true" in template
 
 
 def test_dispatcher_cli_records_lifecycle_worker_death(
@@ -585,3 +787,197 @@ def test_dispatcher_cli_records_lifecycle_worker_death(
     assert reloaded["stage_worker_exit"]["stage"] == "implement"
     assert reloaded["stage_worker_exit"]["run_id"] == "disp-death-1"
     capsys.readouterr()
+
+
+def test_default_no_await_dispatcher_reconciles_finalized_and_refusals(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The real default path, not the opt-in synchronous runner, owns f/n."""
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+    # The dispatcher's finish hook triages with ambient os.environ. Under a
+    # live vc-frame session env that fires real dump-screen/bucket-session
+    # actions at the operator's terminal. Scrub the blast surface.
+    monkeypatch.setenv("VIBECRAFTED_TRIAGE_RUN", "0")
+    for hazard in (
+        "ZELLIJ_SESSION_NAME",
+        "ZELLIJ_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_TAB_NAME",
+    ):
+        monkeypatch.delenv(hazard, raising=False)
+
+    mission = "default lifecycle dispatch must settle from validated proof"
+    mission_digest = claim_digest_for_text(mission)
+    cases = (
+        ("matching", mission_digest, 0, "finalized", "f"),
+        ("mismatch", "deadbeefdeadbeef", 0, "needs_attention", "n"),
+        ("missing", None, 2, "needs_attention", "n"),
+    )
+
+    for name, report_digest, expected_rc, expected_verdict, expected_tui in cases:
+        case_dir = tmp_path / name
+        repo = case_dir / "repo"
+        home = case_dir / "home"
+        repo.mkdir(parents=True)
+        monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=VC Test",
+                "-c",
+                "user.email=vc@example.test",
+                "commit",
+                "-m",
+                "initial",
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        stage_run_id = f"default-dispatch-{name}"
+        runtime_dir = home / "control_plane" / "runtime_runs" / stage_run_id
+        artifact_dir = home / "artifacts" / "tests" / stage_run_id
+        report = artifact_dir / "report.md"
+        transcript = artifact_dir / "transcript.log"
+        meta = runtime_dir / "meta.json"
+        seen_state_paths: list[str] = []
+
+        def fake_launcher(
+            spec,
+            _source_dir,
+            *,
+            _runtime_dir=runtime_dir,
+            _artifact_dir=artifact_dir,
+            _seen_state_paths=seen_state_paths,
+            _meta=meta,
+            _stage_run_id=stage_run_id,
+            _report=report,
+            _transcript=transcript,
+        ):
+            # Default-arg capture avoids B023 loop-variable binding in the body.
+            _runtime_dir.mkdir(parents=True)
+            _artifact_dir.mkdir(parents=True)
+            _seen_state_paths.append(spec.lifecycle_state_path)
+            _meta.write_text(
+                json.dumps(
+                    {
+                        "run_id": _stage_run_id,
+                        "claim_digest": spec.claim_digest,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return {
+                "accepted": True,
+                "run_id": _stage_run_id,
+                "report": str(_report),
+                "transcript": str(_transcript),
+                "meta": str(_meta),
+            }
+
+        state = asyncio.run(
+            LifecycleRunner(launcher=fake_launcher).run(
+                LifecycleRunSpec(
+                    workflow_id="vc-implement",
+                    agent="codex",
+                    prompt=mission,
+                    root=str(repo),
+                )
+            )
+        )
+        state_path = Path(str(state["state_path"]))
+        assert state["await_stages"] is False
+        assert seen_state_paths == [str(state_path)]
+
+        worker = case_dir / "worker.py"
+        if report_digest is None:
+            worker.write_text("print('exit zero without report')\n", encoding="utf-8")
+        else:
+            report_text = "\n".join(
+                [
+                    "---",
+                    f"run_id: {stage_run_id}",
+                    "agent: codex",
+                    "skill: implement",
+                    "status: completed",
+                    "claim_status: completed",
+                    "finalized: true",
+                    "claim: default lifecycle stage completed",
+                    f"claim_digest: {report_digest}",
+                    "---",
+                    "",
+                    "Validated default-mode stage output.",
+                    "",
+                ]
+            )
+            worker.write_text(
+                "from pathlib import Path\n"
+                "import os\n"
+                f"Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text({report_text!r}, encoding='utf-8')\n"
+                "print('default lifecycle worker complete')\n",
+                encoding="utf-8",
+            )
+
+        rc = dispatcher.main(
+            [
+                "run",
+                "--run-id",
+                stage_run_id,
+                "--root",
+                str(repo),
+                "--meta",
+                str(meta),
+                "--report",
+                str(report),
+                "--transcript",
+                str(transcript),
+                "--lifecycle-state",
+                str(state_path),
+                "--json",
+                "--",
+                sys.executable,
+                str(worker),
+            ]
+        )
+        assert rc == expected_rc
+        summary = json.loads(capsys.readouterr().out)
+        reloaded = json.loads(state_path.read_text(encoding="utf-8"))
+        snapshot = json.loads(
+            (control_plane.run_snapshot_dir() / f"{stage_run_id}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert snapshot["settlement_verdict"] == expected_verdict
+        assert snapshot["settlement_tui"] == expected_tui
+
+        if name == "matching":
+            assert summary["lifecycle_reconciled"] is True
+            assert reloaded["proof_state"] == "passed"
+            assert reloaded["delivery_state"] == "sealed"
+            assert reloaded["stages"][0]["worker_completion"]["processed"] is True
+            assert reloaded["stages"][0]["lifecycle_seal"]["granted"] is True
+            seal_path = runtime_dir / "delivery-seal.json"
+            first_seal = seal_path.read_bytes()
+            assert record_stage_worker_completion(state_path, stage_run_id, summary)
+            assert seal_path.read_bytes() == first_seal
+        elif name == "mismatch":
+            assert summary["lifecycle_reconciled"] is True
+            assert reloaded["proof_state"] == "undeclared"
+            assert reloaded["delivery_state"] == "unverified"
+            refusal = reloaded["stages"][0]["lifecycle_seal"]
+            assert refusal["granted"] is False
+            assert refusal["reason"].startswith("claim_digest_mismatch")
+            assert not (runtime_dir / "delivery-seal.json").exists()
+        else:
+            assert summary["lifecycle_reconciled"] is True
+            assert reloaded["stages"][0]["worker_exit"]["artifact_ok"] is False
+            assert not (runtime_dir / "delivery-seal.json").exists()

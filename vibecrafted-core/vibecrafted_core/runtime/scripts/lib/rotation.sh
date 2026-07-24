@@ -13,7 +13,7 @@ spawn_rotation_pool_json() {
   python3 - <<'PY'
 import json
 
-print(json.dumps(["codex", "claude", "gemini"]))
+print(json.dumps(["codex", "claude", "agy"]))
 PY
 }
 
@@ -26,7 +26,7 @@ spawn_rotation_schedule_agent() {
 import sys
 
 mode, seed_agent, loop_raw = sys.argv[1:4]
-pool = ["codex", "claude", "gemini"]
+pool = ["codex", "claude", "agy"]
 
 try:
     loop_nr = max(int(loop_raw), 1)

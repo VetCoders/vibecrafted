@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -20,13 +22,17 @@ unset SPAWN_MODEL SPAWN_PROMPT_ID
 
 
 def _bash(script: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", "-lc", _ENV_SANITIZE + script],
-        check=True,
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-    )
+    with tempfile.TemporaryDirectory(prefix="vibecrafted-meta-test-") as state_root:
+        env = os.environ.copy()
+        env["VIBECRAFTED_HOME"] = str(Path(state_root) / ".vibecrafted")
+        return subprocess.run(
+            ["bash", "-lc", _ENV_SANITIZE + script],
+            check=True,
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
 
 
 def _write_meta(meta: Path, status: str) -> None:
@@ -42,6 +48,38 @@ def _write_meta(meta: Path, status: str) -> None:
 
 def _load(meta: Path) -> dict:
     return json.loads(meta.read_text(encoding="utf-8"))
+
+
+def test_control_plane_script_prefers_explicit_root_then_checkout(
+    tmp_path: Path,
+) -> None:
+    explicit_root = tmp_path / "explicit"
+    tools_home = tmp_path / "tools"
+    installed_root = tools_home / "vibecrafted-current"
+    for root in (explicit_root, installed_root):
+        script = root / "scripts" / "control_plane_state.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("# test helper\n", encoding="utf-8")
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        export VIBECRAFTED_ROOT="{explicit_root}"
+        export VIBECRAFTED_TOOLS_HOME="{tools_home}"
+        spawn_control_plane_script
+        unset VIBECRAFTED_ROOT
+        spawn_control_plane_script
+        cd "{tmp_path}"
+        spawn_control_plane_script
+        '''
+    )
+
+    assert result.stdout.splitlines() == [
+        str(explicit_root / "scripts" / "control_plane_state.py"),
+        str(REPO_ROOT / "scripts" / "control_plane_state.py"),
+        str(installed_root / "scripts" / "control_plane_state.py"),
+    ]
 
 
 def test_mark_meta_running_flips_launching_to_running(tmp_path: Path) -> None:
@@ -296,3 +334,103 @@ def test_write_meta_python_direct(tmp_path: Path) -> None:
     assert data["model"] == "gpt-4"
     assert isinstance(data["created_at"], str)
     assert isinstance(data["updated_at"], str)
+
+
+def test_triage_run_is_the_last_step_of_a_generated_launcher() -> None:
+    """Triage closes the tab the launcher is running in, so it must run last.
+
+    Anything sequenced after `spawn_triage_run` in a successful transfer may
+    simply never execute — the pane is gone. Pinning the order here keeps a
+    later edit from quietly moving artifact closure behind it and losing the
+    report on exactly the runs that finished cleanly.
+    """
+    launcher_src = (
+        REPO_ROOT / "runtime" / "scripts" / "lib" / "launcher.sh"
+    ).read_text(encoding="utf-8")
+
+    for branch, tail in (
+        ("success", 'spawn_triage_run "$meta"\nelse'),
+        ("failure", 'spawn_triage_run "$meta"\n  exit "$exit_code"'),
+    ):
+        assert tail in launcher_src, f"{branch} branch does not end with triage"
+
+    # ...and in both branches artifact closure precedes it.
+    first_triage = launcher_src.index('spawn_triage_run "$meta"')
+    first_finalize = launcher_src.index('spawn_finalize_artifacts "$meta"')
+    assert first_finalize < first_triage
+
+    last_triage = launcher_src.rindex('spawn_triage_run "$meta"')
+    last_finalize = launcher_src.rindex('spawn_finalize_artifacts "$meta"')
+    assert last_finalize < last_triage
+
+
+def test_reap_runs_after_artifact_closure_and_before_triage() -> None:
+    """The reaper sits between artifact closure and triage, in both branches.
+
+    Before triage, because a successful transfer closes this tab: sequenced after
+    it, the sweep may never run and the survivors keep burning cores until reboot.
+    After artifact closure, because the reap is only correct once the run's
+    terminal state is on disk — that is what makes it a *terminal* run's residue.
+    """
+    launcher_src = (
+        REPO_ROOT / "runtime" / "scripts" / "lib" / "launcher.sh"
+    ).read_text(encoding="utf-8")
+
+    assert launcher_src.count("spawn_reap_run") == 2, "both branches must sweep"
+
+    for finder in ("index", "rindex"):
+        finalize = getattr(launcher_src, finder)('spawn_finalize_artifacts "$meta"')
+        reap = getattr(launcher_src, finder)("spawn_reap_run")
+        triage = getattr(launcher_src, finder)('spawn_triage_run "$meta"')
+        assert finalize < reap < triage
+
+
+def test_reap_run_never_fails_a_finished_run(tmp_path: Path) -> None:
+    """The shell wrapper is fail-open: a reaper problem cannot fail a done run."""
+    proc = _bash(
+        f"""
+        source "{COMMON_SH}"
+        export VIBECRAFTED_REAPER=0
+        spawn_reap_run
+        echo "survived"
+        """
+    )
+    assert proc.returncode == 0
+    assert "survived" in proc.stdout
+
+
+def test_triage_run_never_fails_a_finished_run(tmp_path: Path) -> None:
+    """The shell wrapper is fail-open: no meta, no session, no vc-frame — exit 0."""
+    meta = tmp_path / "agent.meta.json"
+    meta.write_text(
+        json.dumps({"run_id": "r1", "exit_code": 0}) + "\n", encoding="utf-8"
+    )
+
+    # _ENV_SANITIZE clears VC_FRAME_* but not the legacy ZELLIJ_* aliases that
+    # vc-frame still dual-emits, and this suite may itself be running inside a
+    # live session. Clear both so the assertion is about the code, not the host.
+    result = _bash(
+        f'''
+        set -euo pipefail
+        unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME
+        source "{COMMON_SH}"
+        spawn_triage_run "{meta}"
+        echo "survived=$?"
+        '''
+    )
+
+    assert "survived=0" in result.stdout
+    # Headless test env has no vc-frame pane: the receipt says so plainly.
+    data = json.loads(meta.read_text(encoding="utf-8"))
+    assert data["triage"] == "skipped"
+    assert data["triage_reason"] == "no_session"
+
+
+def test_triage_run_tolerates_a_missing_meta(tmp_path: Path) -> None:
+    _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        spawn_triage_run "{tmp_path / "absent.meta.json"}"
+        '''
+    )

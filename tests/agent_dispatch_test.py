@@ -22,8 +22,7 @@ _CORE_SRC = _REPO_ROOT / "vibecrafted-core"
 if str(_CORE_SRC) not in sys.path:
     sys.path.insert(0, str(_CORE_SRC))
 
-from vibecrafted_core import agent_dispatch  # noqa: E402  (after sys.path mutation)
-
+from vibecrafted_core import agent_dispatch
 
 # ---------------------------------------------------------------------------
 # Fixtures

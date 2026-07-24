@@ -19,7 +19,7 @@ class SandboxPolicy:
     mounts: tuple[str, ...] = field(default_factory=tuple)
 
     @classmethod
-    def default(cls, root: str | os.PathLike[str] | None = None) -> "SandboxPolicy":
+    def default(cls, root: str | os.PathLike[str] | None = None) -> SandboxPolicy:
         root_mount = f"{Path(root).resolve()}:/workspace:ro" if root else ""
         mounts = (root_mount, "/tmp:/tmp:rw") if root_mount else ("/tmp:/tmp:rw",)
         return cls(mounts=mounts)
@@ -30,14 +30,14 @@ class SandboxPolicy:
         path: str | os.PathLike[str] | None = None,
         *,
         root: str | os.PathLike[str] | None = None,
-    ) -> "SandboxPolicy":
+    ) -> SandboxPolicy:
         policy = cls.default(root)
         candidate = Path(path).expanduser() if path else default_policy_path()
         if not candidate.is_file():
             return policy
         return policy.overlay(_parse_simple_yaml(candidate))
 
-    def overlay(self, data: dict[str, Any]) -> "SandboxPolicy":
+    def overlay(self, data: dict[str, Any]) -> SandboxPolicy:
         values: dict[str, Any] = {
             "cpu": self.cpu,
             "memory_mb": self.memory_mb,

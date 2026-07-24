@@ -80,14 +80,14 @@ canonical_vibecrafted_launcher_bin() {
 }
 
 pause_runtime_contract_failure() {
-  if ! is_interactive; then
+  printf '\nRuntime root contract failed fast.\n'
+  printf 'No automatic cleanup was performed. Review and run the explicit migration:\n'
+  printf '  python3 scripts/vetcoders_install.py doctor --fix-legacy-bootstrap\n'
+  printf 'Then rerun make install-all with canonical roots:\n'
+  printf '  store ~/.vibecrafted · runtime ~/.local/share/vibecrafted · launchers ~/.local/bin\n\n'
+  if [[ "${VIBECRAFTED_INSTALL_NONINTERACTIVE:-0}" == "1" ]] || ! is_interactive; then
     return
   fi
-  printf '\nRuntime root contract failed fast.\n'
-  printf 'Manual cleanup required (no dotfiles were modified automatically):\n'
-  printf '  1) unset conflicting VIBECRAFTED_* root overrides\n'
-  printf '  2) remove stale wrappers from ~/.cargo/bin and /usr/local/bin\n'
-  printf '  3) keep launchers in ~/.local/bin and rerun foundations install\n\n'
   printf 'Press Enter to continue after reviewing cleanup steps, or Ctrl-C to abort: '
   read -r _ || true
 }

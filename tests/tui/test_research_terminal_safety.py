@@ -11,7 +11,7 @@ HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 
 sys.path.insert(0, str(REPO_ROOT / "vibecrafted-core"))
 
-from vibecrafted_core.wrappers import _launcher_paths  # noqa: E402
+from vibecrafted_core.wrappers import _launcher_paths
 
 BLOCKING_VC_FRAME_VERBS = ("attach", "--new-session-with-layout", "switch-session")
 
@@ -96,16 +96,7 @@ def test_launcher_paths_recognise_every_supported_agent() -> None:
     # The old regex matched only a subset of agents while the configured swarm
     # can include every supported lane — the venv vc-research entrypoint could never
     # collect its own launchers and always exited 1 before spawning.
-    output = "\n".join(
-        [
-            "Launchers:",
-            "  claude: /tmp/claude_launch.sh",
-            "  codex: /tmp/codex_launch.sh",
-            "  junie: /tmp/junie_launch.sh",
-            "  agy: /tmp/agy_launch.sh",
-            "  grok: /tmp/grok_launch.sh",
-        ]
-    )
+    output = "Launchers:\n  claude: /tmp/claude_launch.sh\n  codex: /tmp/codex_launch.sh\n  junie: /tmp/junie_launch.sh\n  agy: /tmp/agy_launch.sh\n  grok: /tmp/grok_launch.sh"
     launchers = _launcher_paths(output)
     assert sorted(launchers) == ["agy", "claude", "codex", "grok", "junie"]
     assert launchers["junie"] == Path("/tmp/junie_launch.sh")

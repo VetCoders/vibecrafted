@@ -16,6 +16,28 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Wywołanie dla `vc-dou` (launcher `dou`)**
+>
+> Ten sam _kształt_ trzech ścieżek floty, z **literałami tego** skilla — zobacz
+> kanoniczną [Matrycę Delegacji](../DELEGATION_MATRIX.md):
+>
+> - [Wspólne trzy ścieżki](../DELEGATION_MATRIX.md#wspólne-trzy-ścieżki)
+> - [Katalog launcherów](../DELEGATION_MATRIX.md#katalog-launcherów-core-runtime)
+> - [Reguła per-launcher](../DELEGATION_MATRIX.md#reguła-per-launcher-delta-semantyczna)
+> - [Native vs external](../DELEGATION_MATRIX.md#natywne-subagenty-vs-zewnętrzni-workerzy)
+>
+> | Ścieżka               | Literał tego skilla                                                                                                        |
+> | --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+> | 1. Worker użytkownika | `vibecrafted dou <agent>`                                                                                                  |
+> | 2. Interactive        | `/vc-dou` — wykonaj **w tej sesji**; native subagenty gdy trzeba; **nie** zewnętrzniaj tylko dlatego, że launcher istnieje |
+> | 3. Agent-operator     | może odpalić formę workera powyżej przez `vc-dispatch` / linie operatora, zachowując tożsamość tego skilla                 |
+
+> Swobodniejszy native na niektórych biegach ≠ porzucenie floty external. `vc-dispatch` i `vc-ship` zachowują własne tożsamości.
+
+<!-- /fleet-imperative -->
+
 # `vc-dou` — AUDIT-FIRST Definition of Undone
 
 > AUDIT-FIRST, napędzana narzędziami analiza gotowości do dowiezienia. Tam gdzie
@@ -53,7 +75,7 @@ Zanim ten workflow wykona analizę specyficzną dla repo, planowanie, implementa
 
 Chodzi o znalezienie zaczepów: węzłów nośnych, twins (duplikaty), martwego kodu, dryfu, entrypointów runtime'u oraz pułapek o dużym zasięgu zmiany. Jeśli task jest jawnie nie-repo lub no-code, zadeklaruj w raporcie wyjątek no-repo. W przeciwnym razie brak dowodów z `vc-init`/Loctree to porażka procesu.
 
-Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<workflow> <agent> --file|--prompt ...`).
+Standardowy launcher (`vibecrafted start` / `vc-start`, następnie `vc-<launcher> <agent> --file|--prompt ...`).
 Poza Zellij framework podłącza/tworzy sesję operatora.
 
 ```bash

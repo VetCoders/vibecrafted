@@ -4,8 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from vibecrafted_core import cli
+from vibecrafted_core import cli, lifecycle_delivery
 
 
 def _accepted_launch_payload() -> dict[str, object]:
@@ -24,10 +23,89 @@ def _accepted_launch_payload() -> dict[str, object]:
     }
 
 
-def test_root_cli_without_command_returns_help_error(capsys) -> None:
-    assert cli.main([]) == 2
+def test_root_cli_without_command_returns_product_help(capsys) -> None:
+    assert cli.main([]) == 0
 
-    assert "Vibecrafted core command surface" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "release engine for AI-developed software" in output
+    assert "Ship cycle:" in output
+    assert "Vibecrafted core command surface" not in output
+
+
+@pytest.mark.parametrize("launcher", cli.LAUNCHERS)
+def test_every_workflow_help_uses_the_core_product_surface(
+    launcher: str, capsys
+) -> None:
+    assert cli.main([launcher, "--help"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Usage:" in output
+    assert "Flow:" in output
+    assert "Examples:" in output
+    assert f"launch vc-{launcher} through core runtime" not in output
+
+
+def test_help_topic_and_direct_flag_render_identically(capsys) -> None:
+    assert cli.main(["help", "marbles"]) == 0
+    topic_output = capsys.readouterr().out
+
+    assert cli.main(["marbles", "codex", "--help"]) == 0
+    direct_output = capsys.readouterr().out
+
+    assert topic_output == direct_output
+    assert "one dedicated orchestrator tab" in topic_output
+    assert "L1…LN" in topic_output
+
+
+def test_core_parser_accepts_the_short_prompt_and_file_flags() -> None:
+    parser = cli._build_parser()
+
+    prompt = parser.parse_args(["implement", "codex", "-p", "ship it"])
+    file_input = parser.parse_args(["review", "claude", "-f", "brief.md"])
+
+    assert prompt.prompt == "ship it"
+    assert file_input.file == "brief.md"
+
+
+def test_resettle_names_automatic_sources_and_explicit_override(
+    monkeypatch, capsys
+) -> None:
+    monkeypatch.setattr(
+        lifecycle_delivery,
+        "resettle_retained_snapshots",
+        lambda **_kwargs: {
+            "ok": True,
+            "scanned": 1,
+            "rewritten": 0,
+            "unchanged": 1,
+            "skipped": 0,
+            "dry_run": True,
+            "before": {"f": 1, "x": 0, "n": 0, "invalid": 0},
+            "after": {"f": 1, "x": 0, "n": 0, "invalid": 0},
+        },
+    )
+
+    assert cli._cmd_resettle(SimpleNamespace(dry_run=True, json=False)) == 0
+
+    output = capsys.readouterr().out
+    assert "automatic FINALIZED" in output
+    assert "operator waive remains an explicit override" in output
+    assert "never from bare exit 0" in output
+
+
+def test_literal_help_prompt_still_launches(monkeypatch, capsys) -> None:
+    seen = {}
+
+    def fake_launch(spec, _source_dir):
+        seen["prompt"] = spec.prompt
+        return _accepted_launch_payload()
+
+    monkeypatch.setattr(cli, "launch_workflow", fake_launch)
+
+    assert cli.main(["implement", "codex", "--prompt", "help"]) == 0
+
+    assert seen["prompt"] == "help"
+    assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -52,7 +130,7 @@ def test_shell_wrapper_entrypoints_preserve_their_deck_verb(
     deck.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     seen: dict[str, object] = {}
 
-    def fake_run(argv):
+    def fake_run(argv, check=False):
         seen["argv"] = argv
         return SimpleNamespace(returncode=0)
 
@@ -105,7 +183,7 @@ def test_version_reads_installed_package_never_delegates_to_deck(
         assert capsys.readouterr().out.strip() == f"vibecrafted {expected}"
 
 
-def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
+def test_root_cli_accepts_justdo_as_own_skill(monkeypatch, capsys) -> None:
     seen = {}
 
     def fake_launch(spec, source_dir):
@@ -118,7 +196,7 @@ def test_root_cli_accepts_justdo_alias(monkeypatch, capsys) -> None:
 
     assert cli.main(["justdo", "codex", "--prompt", "ship it"]) == 0
 
-    assert seen["skill"] == "implement"
+    assert seen["skill"] == "justdo"
     assert seen["agent"] == "codex"
     assert "VIBECRAFTED LAUNCH RECEIPT" in capsys.readouterr().out
 
@@ -359,15 +437,10 @@ def test_root_cli_agent_observe_renders_json_transcript_tail(
 ) -> None:
     transcript = tmp_path / "transcript.log"
     transcript.write_text(
-        "\n".join(
-            [
-                '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"very noisy hook payload"}',
-                '{"type":"system","subtype":"init","session_id":"claude-sess","model":"claude-opus-4-8"}',
-                '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}',
-                '{"type":"result","result":"done","usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":2},"total_cost_usd":0.01}',
-            ]
-        )
-        + "\n",
+        '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"very noisy hook payload"}\n'
+        '{"type":"system","subtype":"init","session_id":"claude-sess","model":"claude-opus-4-8"}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+        '{"type":"result","result":"done","usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":2},"total_cost_usd":0.01}\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -403,13 +476,8 @@ def test_root_cli_agent_observe_recovers_model_when_tail_starts_after_init(
 ) -> None:
     transcript = tmp_path / "transcript.log"
     transcript.write_text(
-        "\n".join(
-            [
-                '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"noise"}',
-                '{"type":"assistant","session_id":"claude-sess","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"late body"}]}}',
-            ]
-        )
-        + "\n",
+        '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"noise"}\n'
+        '{"type":"assistant","session_id":"claude-sess","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"late body"}]}}\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -446,13 +514,8 @@ def test_root_cli_agent_observe_uses_codex_config_model(
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     transcript = tmp_path / "transcript.log"
     transcript.write_text(
-        "\n".join(
-            [
-                '{"type":"thread.started","thread_id":"codex-thread"}',
-                '{"type":"item.completed","item":{"type":"agent_message","text":"codex body"}}',
-            ]
-        )
-        + "\n",
+        '{"type":"thread.started","thread_id":"codex-thread"}\n'
+        '{"type":"item.completed","item":{"type":"agent_message","text":"codex body"}}\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(

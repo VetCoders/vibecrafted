@@ -18,7 +18,10 @@ def _fake_agent(bin_dir: Path, name: str) -> None:
         "printf '[12:00:01] tokens: 10 in (3 cached) / 5 out\\n'\n"
         "printf 'cost_usd: $0.015\\n'\n"
         "printf 'fake worker ok\\n'\n"
-        'printf "%s\\n" "---" "status: completed" "---" "report for $0" > "$VIBECRAFTED_REPORT_PATH"\n',
+        'printf "%s\\n" "---" "run_id: ${VIBECRAFTED_RUN_ID:-unknown}" '
+        f'"agent: {name}" "skill: test" "status: completed" '
+        '"claim_status: completed" "---" "report for $0" '
+        '> "$VIBECRAFTED_REPORT_PATH"\n',
         encoding="utf-8",
     )
     path.chmod(0o755)
@@ -114,23 +117,7 @@ def test_research_runtime_yaml_wins_over_legacy_toml_and_applies_lane_models(
     config_dir = home / "config"
     config_dir.mkdir(parents=True)
     (config_dir / "research.yaml").write_text(
-        "\n".join(
-            [
-                "lanes:",
-                "  - agent: codex",
-                "    model: gpt-yaml",
-                "    enabled: true",
-                "  - agent: agy",
-                "    model: agy-yaml",
-                "    enabled: true",
-                "  - agent: claude",
-                "    enabled: false",
-                "synthesizer:",
-                "  agent: codex",
-                "  model: gpt-synth",
-                "",
-            ]
-        ),
+        "lanes:\n  - agent: codex\n    model: gpt-yaml\n    enabled: true\n  - agent: agy\n    model: agy-yaml\n    enabled: true\n  - agent: claude\n    enabled: false\nsynthesizer:\n  agent: codex\n  model: gpt-synth\n",
         encoding="utf-8",
     )
 
@@ -538,7 +525,8 @@ def test_marbles_runtime_supervises_loops(monkeypatch, tmp_path: Path) -> None:
     assert "agent_session_id: codex-session" in report
     assert "agent_model: codex-model" in report
     assert "session_id: aggregated" in report
-    assert "tokens_total: 36" in report
+    # parent: input 20 + output 10; cached 6 subset (not double-counted)
+    assert "tokens_total: 30" in report
     assert "cost_usd: 0.03" in report
     assert "cost_source: children_sum" in report
     assert "codex resume codex-session" in report
@@ -547,10 +535,10 @@ def test_marbles_runtime_supervises_loops(monkeypatch, tmp_path: Path) -> None:
     assert meta["tokens_input"] == 20
     assert meta["tokens_cached_input"] == 6
     assert meta["tokens_output"] == 10
-    assert meta["tokens_total"] == 36
+    assert meta["tokens_total"] == 30
     assert meta["cost_usd"] == 0.03
     assert meta["cost_source"] == "children_sum"
-    assert meta["children"][0]["tokens_total"] == 18
+    assert meta["children"][0]["tokens_total"] == 15
     assert meta["children"][1]["cost_usd"] == 0.015
     assert (home / "marb-test-children" / "marbles-L1.md").is_file()
     assert (home / "marb-test-children" / "marbles-L2.md").is_file()

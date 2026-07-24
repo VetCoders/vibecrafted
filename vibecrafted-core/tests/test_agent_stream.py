@@ -125,6 +125,32 @@ def test_agent_stream_parser_renders_grok_thought_text_and_session() -> None:
     assert parser.session_id == "019ec430-9888-78e3-8ca0-b29387444fdb"
 
 
+def test_filter_stream_renders_grok_and_tees_raw(tmp_path) -> None:
+    from io import BytesIO
+
+    from vibecrafted_core.agent_stream import filter_stream
+
+    raw = tmp_path / "raw.jsonl"
+    payload = (
+        b'{"type":"thought","data":"thinking"}\n'
+        b'{"type":"text","data":"hello pane"}\n'
+        b'{"type":"end","sessionId":"sess-1"}\n'
+    )
+    out = BytesIO()
+    status = filter_stream(
+        "grok",
+        stdin=BytesIO(payload),
+        stdout=out,
+        raw_file=raw,
+    )
+    assert status == 0
+    text = out.getvalue().decode("utf-8")
+    assert "hello pane" in text
+    assert "thinking" in text
+    assert '"type":"text"' not in text
+    assert raw.read_bytes() == payload
+
+
 def test_agent_stream_parser_maps_real_grok_end_telemetry() -> None:
     parser = AgentStreamParser("grok")
     parser.feed_line(

@@ -1,18 +1,24 @@
 from __future__ import annotations
 
-import asyncio
 import argparse
+import asyncio
 import hashlib
 import json
 import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from .control_plane import control_plane_home, normalize_run_root, run_liveness
+from .delivery.model import DeliveryState, ExecutionState, ProofState
+from .lifecycle_delivery import (
+    claim_digest_for_text,
+    try_grant_lifecycle_stage_seal,
+)
 from .workflow import (
     SUPPORTED_AGENTS,
     WorkflowLaunchSpec,
@@ -20,22 +26,188 @@ from .workflow import (
     launch_workflow,
     report_dou_index,
 )
+from .workflows.model import WorkflowManifest, WorkflowStage
 from .workflows.registry import (
     workflow_definition,
     workflow_manifest,
     workflow_manifest_payload,
 )
-from .workflows.model import WorkflowManifest, WorkflowStage
 
 LaunchWorkflow = Callable[[WorkflowLaunchSpec, str | Path], dict[str, Any]]
 AwaitWorkflow = Callable[[dict[str, Any]], dict[str, Any]]
 LIFECYCLE_SCHEMA_ID = "vibecrafted.lifecycle.v1"
 
 
+def delivery_axes_for_receipt(
+    status: str, payload: dict[str, Any] | None = None
+) -> dict[str, str]:
+    """Project legacy lifecycle truth onto the three independent axes.
+
+    A legacy ``completed`` value is execution evidence only.  Missing proof or
+    seal artifacts therefore remain explicitly undeclared/unverified.
+    """
+
+    source = payload or {}
+    execution_default = {
+        "launching": ExecutionState.LAUNCHED,
+        "running": ExecutionState.RUNNING,
+        "completed": ExecutionState.EXITED,
+    }.get(str(status), ExecutionState.FAILED)
+    # The execution axis states what the PROCESS did, not what the artifact
+    # gate concluded. A worker that exited 0 without a report is the contract's
+    # exit_0_without_report specimen — needs_attention, never a fabricated
+    # execution failure (which would settle x instead of n).
+    exit_code = source.get("exit_code")
+    if isinstance(exit_code, int) and str(status) not in ("launching", "running"):
+        execution_default = (
+            ExecutionState.EXITED if exit_code == 0 else ExecutionState.FAILED
+        )
+
+    def enum_value(name: str, enum_type: type[Any], default: Any) -> str:
+        raw = source.get(name)
+        if (
+            name == "execution_state"
+            and str(status) == "failed"
+            and raw in ("launched", "running")
+        ):
+            return ExecutionState.FAILED.value
+        try:
+            return enum_type(raw).value if raw is not None else default.value
+        except ValueError:
+            return default.value
+
+    return {
+        "execution_state": enum_value(
+            "execution_state", ExecutionState, execution_default
+        ),
+        "proof_state": enum_value("proof_state", ProofState, ProofState.UNDECLARED),
+        "delivery_state": enum_value(
+            "delivery_state", DeliveryState, DeliveryState.UNVERIFIED
+        ),
+    }
+
+
+def _maybe_seal_awaited_stage(
+    *,
+    record: dict[str, Any],
+    await_result: dict[str, Any],
+    lifecycle_id: str,
+    mission_text: str,
+    repo_root: Path,
+) -> Any:
+    """Drive the delivery kernel after a stage await completes.
+
+    Only runs when the stage produced a validated report artifact. Refusal
+    reasons stay on the record; axes remain undeclared/unverified so
+    settlement parks as needs_attention (never silent FINALIZED).
+    """
+    from .control_plane import control_plane_home
+
+    stage_run_id = str(await_result.get("run_id") or "").strip()
+    if not stage_run_id:
+        launch_value = record.get("launch")
+        launch: dict[str, Any] = launch_value if isinstance(launch_value, dict) else {}
+        stage_run_id = str(launch.get("run_id") or "").strip()
+    if not stage_run_id:
+        return None
+
+    launch_value = record.get("launch")
+    launch = launch_value if isinstance(launch_value, dict) else {}
+    report_path = str(await_result.get("report") or launch.get("report") or "").strip()
+    transcript_path = str(
+        await_result.get("transcript") or launch.get("transcript") or ""
+    ).strip()
+    run_value = await_result.get("run")
+    run: dict[str, Any] = run_value if isinstance(run_value, dict) else {}
+    exit_code = run.get("exit_code")
+    if exit_code is None:
+        exit_code = await_result.get("exit_code")
+
+    # Prefer runtime_runs/<id> (control-plane projection source); fall back to
+    # meta parent when the launch announced an absolute meta path.
+    run_dir = control_plane_home() / "runtime_runs" / stage_run_id
+    if not run_dir.is_dir():
+        meta_path = str(await_result.get("meta") or launch.get("meta") or "").strip()
+        if meta_path:
+            candidate = Path(meta_path).expanduser().resolve().parent
+            if candidate.is_dir():
+                run_dir = candidate
+
+    mission_digest = claim_digest_for_text(mission_text)
+    return try_grant_lifecycle_stage_seal(
+        run_dir,
+        run_id=stage_run_id,
+        lifecycle_id=lifecycle_id,
+        stage_id=str(record.get("id") or ""),
+        report_path=report_path or None,
+        transcript_path=transcript_path or None,
+        mission_text=mission_text,
+        mission_digest=mission_digest,
+        artifact_ok=bool(await_result.get("artifact_ok")),
+        exit_code=exit_code,
+        repo_root=repo_root,
+        agent=str(record.get("agent") or ""),
+        baseline_head=str(record.get("commit_before") or ""),
+        final_head=str(record.get("commit_after") or ""),
+        scoped_dirty_paths=tuple(
+            str(item) for item in record.get("changed_files") or ()
+        ),
+        baseline_status_lines=tuple(
+            str(item) for item in record.get("git_before") or ()
+        ),
+    )
+
+
+def _capture_stage_completion(
+    record: dict[str, Any],
+    await_result: dict[str, Any],
+    repo_root: Path,
+) -> bool:
+    """Attach terminal worker truth and return whether a READ stage mutated.
+
+    Both lifecycle modes must derive provenance the same way.  The synchronous
+    runner used to own this block exclusively, which made the default
+    launch-and-return dispatcher path structurally unable to reach proof/seal.
+    """
+    record["await"] = await_result
+    record["status"] = "completed" if await_result.get("artifact_ok") else "failed"
+    record["commit_after"] = _git_head(repo_root)
+    record["git_after"] = _git_status(repo_root)
+    record["git_snapshot_after"] = _git_worktree_snapshot(
+        repo_root, list(record.get("git_after") or [])
+    )
+    status_changed_files = _changed_paths_between(
+        list(record.get("git_before") or []),
+        list(record.get("git_after") or []),
+        dict(record.get("git_snapshot_before") or {}),
+        dict(record.get("git_snapshot_after") or {}),
+    )
+    committed_changed_files = _committed_paths_between(
+        repo_root,
+        str(record.get("commit_before") or ""),
+        str(record.get("commit_after") or ""),
+    )
+    record["changed_files"] = sorted(
+        set(status_changed_files) | set(committed_changed_files)
+    )
+    record["new_commits"] = _commits_between(
+        repo_root,
+        str(record.get("commit_before") or ""),
+        str(record.get("commit_after") or ""),
+    )
+    read_violation = record.get("phase") == "read" and bool(record["changed_files"])
+    if read_violation:
+        record["read_phase_violation"] = True
+    return read_violation
+
+
 @dataclass(frozen=True)
 class LifecycleRunSpec:
     workflow_id: str
     agent: str
+    # Protocol adapters may need to publish the parent lifecycle identity
+    # before the first stage launches. Empty keeps the historical allocator.
+    run_id: str = ""
     prompt: str = ""
     file: str = ""
     root: str = ""
@@ -493,7 +665,7 @@ class LifecycleRunner:
             dict(spec.stage_models or {}) or _mission_stage_models(source_prompt),
             manifest,
         )
-        run_id = _lifecycle_run_id(manifest.id)
+        run_id = spec.run_id or _lifecycle_run_id(manifest.id)
         run_dir = control_plane_home() / "lifecycle_runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         state_path = run_dir / "state.json"
@@ -515,6 +687,7 @@ class LifecycleRunner:
             "agent": spec.agent,
             "root": str(root),
             "status": "launching",
+            **delivery_axes_for_receipt("launching"),
             "await_stages": spec.await_stages,
             "parent_run_id": spec.parent_run_id,
             "operator_actions": [],
@@ -590,6 +763,8 @@ class LifecycleRunner:
                 state_path=state_path,
             )
             state["stages"].append(record)
+            record.update(delivery_axes_for_receipt("launching", record.get("launch")))
+            state.update(delivery_axes_for_receipt("launching", record))
             self._write_state(state_path, state)
             with transcript_path.open(
                 "a", encoding="utf-8", errors="replace"
@@ -616,10 +791,7 @@ class LifecycleRunner:
             state["status"] = "running"
             self._write_state(state_path, state)
             await_result = await asyncio.to_thread(self.awaiter, record["launch"])
-            record["await"] = await_result
-            record["status"] = (
-                "completed" if await_result.get("artifact_ok") else "failed"
-            )
+            read_violation = _capture_stage_completion(record, await_result, root)
             reported_dou = _surfaced_dou_index(await_result)
             if reported_dou is not None:
                 record["dou_index"] = reported_dou
@@ -628,37 +800,33 @@ class LifecycleRunner:
                     "stage": stage.id,
                     "report": str(record["launch"].get("report") or ""),
                 }
-            record["commit_after"] = _git_head(root)
-            record["git_after"] = _git_status(root)
-            record["git_snapshot_after"] = _git_worktree_snapshot(
-                root, list(record.get("git_after") or [])
-            )
-            status_changed_files = _changed_paths_between(
-                list(record.get("git_before") or []),
-                list(record.get("git_after") or []),
-                dict(record.get("git_snapshot_before") or {}),
-                dict(record.get("git_snapshot_after") or {}),
-            )
-            committed_changed_files = _committed_paths_between(
-                root,
-                str(record.get("commit_before") or ""),
-                str(record.get("commit_after") or ""),
-            )
-            record["changed_files"] = sorted(
-                set(status_changed_files) | set(committed_changed_files)
-            )
-            record["new_commits"] = _commits_between(
-                root,
-                str(record.get("commit_before") or ""),
-                str(record.get("commit_after") or ""),
-            )
-            if record["phase"] == "read" and record["changed_files"]:
-                record["read_phase_violation"] = True
+            if read_violation:
                 state["status"] = "failed"
                 state["error"] = f"READ stage {stage.id} changed files: " + ", ".join(
                     record["changed_files"]
                 )
                 break
+            # Delivery kernel: only after report validation and after the
+            # stage's actual commit/worktree provenance is captured. Never
+            # promote from bare exit 0.
+            seal_result = _maybe_seal_awaited_stage(
+                record=record,
+                await_result=await_result,
+                lifecycle_id=str(state.get("run_id") or ""),
+                mission_text=source_prompt,
+                repo_root=root,
+            )
+            if seal_result is not None:
+                record["lifecycle_seal"] = seal_result.to_payload()
+                await_result.update(seal_result.axes_payload())
+                await_result["claim_digest"] = seal_result.claim_digest
+            record.update(delivery_axes_for_receipt(record["status"], await_result))
+            state.update(delivery_axes_for_receipt(record["status"], record))
+            if seal_result is not None and seal_result.granted:
+                # Propagate seal to the lifecycle run receipt (final stage wins).
+                state.update(seal_result.axes_payload())
+                state["claim_digest"] = seal_result.claim_digest
+                state["lifecycle_seal"] = seal_result.to_payload()
             if record["launch"].get("report"):
                 previous_reports.append(str(record["launch"]["report"]))
             self._write_state(state_path, state)
@@ -735,6 +903,7 @@ class LifecycleRunner:
             ),
             model=model,
             lifecycle_state_path=str(state_path or ""),
+            claim_digest=claim_digest_for_text(source_prompt),
         )
         commit_before = _git_head(root)
         git_before = _git_status(root)
@@ -779,6 +948,7 @@ class LifecycleRunner:
         allowed_artifacts = ", ".join(stage.allowed_artifacts) or "none"
         human_controls = ", ".join(manifest.human_controls) or "none"
         known_agents = ", ".join(sorted(SUPPORTED_AGENTS))
+        claim_digest = claim_digest_for_text(source_prompt)
         dou_contract = ""
         if stage.workflow == "dou":
             dou_contract = (
@@ -812,6 +982,17 @@ Lifecycle steering (optional, via your report YAML frontmatter):
   stage ids are ignored (manifest-validated). No key = manifest order.
 - next_agent: <agent-id> — hand the baton to that agent for the following
   stages ({known_agents}); unknown agents are ignored.{dou_contract}
+
+Delivery claim binding (required for automatic settlement FINALIZED):
+- mission claim digest: {claim_digest}
+- write `claim_digest: {claim_digest}` in the report YAML frontmatter exactly;
+  a validated report without this exact digest remains needs_attention.
+
+Worker self-attestation (explicit pragmatic tier, separate from a kernel seal):
+- start the report YAML frontmatter with `finalized: false`;
+- only when this stage genuinely succeeded, flip it to `finalized: true` and add
+  one non-empty `claim: <what succeeded>` line; otherwise leave it false;
+- a bare process exit never finalizes, and sealed proof wins provenance.
 
 Previous stage reports:
 {previous}
@@ -944,13 +1125,210 @@ def record_stage_worker_exit(
     return True
 
 
+def record_stage_worker_completion(
+    state_path: str | Path,
+    stage_run_id: str,
+    completion_payload: dict[str, Any],
+) -> bool:
+    """Reconcile a no-await stage through terminal truth and settlement.
+
+    The dispatcher is the process that observes completion in the default
+    lifecycle mode.  Replays are a no-op once ``worker_completion.processed``
+    is present, and the final merge re-reads ``state.json`` so an operator
+    action written while the proof engine ran is not overwritten.
+    """
+    target = str(stage_run_id or "").strip()
+    path = Path(state_path).expanduser()
+    if not target:
+        return False
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(state, dict):
+        return False
+    stages = state.get("stages")
+    if not isinstance(stages, list) or not stages:
+        return False
+
+    matched_index: int | None = None
+    for index in range(len(stages) - 1, -1, -1):
+        stage = stages[index]
+        if not isinstance(stage, dict):
+            continue
+        launch = stage.get("launch") or {}
+        if str(launch.get("run_id") or "") == target:
+            matched_index = index
+            break
+    if matched_index is None:
+        return False
+
+    existing = stages[matched_index].get("worker_completion")
+    if isinstance(existing, dict) and existing.get("processed"):
+        sync = existing.get("settlement_sync")
+        return not isinstance(sync, dict) or bool(sync.get("ok"))
+
+    working_record = dict(stages[matched_index])
+    root = Path(str(state.get("root") or ".")).expanduser().resolve()
+    completion = dict(completion_payload)
+    completion.setdefault("run_id", target)
+    read_violation = _capture_stage_completion(working_record, completion, root)
+    exit_code = completion.get("exit_code")
+    failed = (isinstance(exit_code, int) and exit_code != 0) or not completion.get(
+        "artifact_ok"
+    )
+    if failed:
+        working_record["worker_exit"] = {
+            "state": completion.get("state"),
+            "exit_code": exit_code,
+            "artifact_ok": bool(completion.get("artifact_ok")),
+            "artifact_errors": list(completion.get("artifact_errors") or []),
+            "report": str(completion.get("report") or ""),
+            "transcript": str(completion.get("transcript") or ""),
+            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }
+
+    seal_result = None
+    if not read_violation:
+        spec = state.get("spec")
+        spec_payload = spec if isinstance(spec, dict) else {}
+        seal_result = _maybe_seal_awaited_stage(
+            record=working_record,
+            await_result=completion,
+            lifecycle_id=str(state.get("run_id") or ""),
+            mission_text=str(spec_payload.get("prompt") or ""),
+            repo_root=root,
+        )
+        if seal_result is not None:
+            working_record["lifecycle_seal"] = seal_result.to_payload()
+            completion.update(seal_result.axes_payload())
+            completion["claim_digest"] = seal_result.claim_digest
+
+    working_record.update(
+        delivery_axes_for_receipt(str(working_record.get("status") or ""), completion)
+    )
+
+    settlement_sync: dict[str, Any]
+    try:
+        from .control_plane import sync_state
+
+        board = sync_state(target)
+        synced: dict[str, Any] = next(
+            (
+                item
+                for item in board.get("recent_runs") or []
+                if str(item.get("run_id") or "") == target
+            ),
+            {},
+        )
+        settlement_sync = {
+            "ok": True,
+            "verdict": str(synced.get("settlement_verdict") or ""),
+            "tui": str(synced.get("settlement_tui") or ""),
+        }
+    except Exception as exc:  # noqa: BLE001 — persist the failed projection
+        settlement_sync = {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+    # Proof execution can take long enough for a human control to land. Merge
+    # completion-owned fields into the latest state instead of restoring the
+    # stale pre-proof document.
+    try:
+        latest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        latest = state
+    if not isinstance(latest, dict):
+        return False
+    latest_stages = latest.get("stages")
+    if not isinstance(latest_stages, list) or matched_index >= len(latest_stages):
+        return False
+    latest_record = latest_stages[matched_index]
+    if not isinstance(latest_record, dict):
+        return False
+    latest_launch = latest_record.get("launch") or {}
+    if str(latest_launch.get("run_id") or "") != target:
+        return False
+
+    completion_keys = (
+        "await",
+        "status",
+        "commit_after",
+        "git_after",
+        "git_snapshot_after",
+        "changed_files",
+        "new_commits",
+        "read_phase_violation",
+        "lifecycle_seal",
+        "worker_exit",
+        "execution_state",
+        "proof_state",
+        "delivery_state",
+    )
+    for key in completion_keys:
+        if key in working_record:
+            latest_record[key] = working_record[key]
+
+    completion_receipt = {
+        "processed": True,
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "run_id": target,
+        "state": completion.get("state"),
+        "exit_code": completion.get("exit_code"),
+        "artifact_ok": bool(completion.get("artifact_ok")),
+        "settlement_sync": settlement_sync,
+    }
+    latest_record["worker_completion"] = completion_receipt
+    latest["stage_completion"] = {
+        **completion_receipt,
+        "stage": str(latest_record.get("id") or ""),
+    }
+    if (
+        failed
+        and matched_index == len(latest_stages) - 1
+        and latest.get("status") == "launching"
+    ):
+        latest["stage_worker_exit"] = {
+            **dict(latest_record.get("worker_exit") or {}),
+            "stage": str(latest_record.get("id") or ""),
+            "run_id": target,
+        }
+    latest.update(
+        delivery_axes_for_receipt(str(latest.get("status") or ""), latest_record)
+    )
+    if seal_result is not None and seal_result.granted:
+        latest.update(seal_result.axes_payload())
+        latest["claim_digest"] = seal_result.claim_digest
+        latest["lifecycle_seal"] = seal_result.to_payload()
+    if read_violation:
+        latest["status"] = "failed"
+        latest["error"] = (
+            f"READ stage {latest_record.get('id')} changed files: "
+            + ", ".join(latest_record.get("changed_files") or [])
+        )
+
+    try:
+        write_lifecycle_state(path, latest)
+        report_path = str(latest.get("report_path") or "").strip()
+        if report_path:
+            write_lifecycle_report(Path(report_path), latest)
+    except OSError:
+        return False
+    return bool(settlement_sync.get("ok"))
+
+
 def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
     stages = state.get("stages") or []
+    axes = delivery_axes_for_receipt(str(state.get("status") or ""), state)
     lines = [
         f"# Lifecycle run {state.get('run_id')}",
         "",
         f"- workflow: {state.get('workflow')}",
         f"- status: {state.get('status')}",
+        f"- execution_state: {axes['execution_state']}",
+        f"- proof_state: {axes['proof_state']}",
+        f"- delivery_state: {axes['delivery_state']}",
         f"- agent: {state.get('agent')}",
         f"- root: {state.get('root')}",
         f"- context_atlas_ok: {state.get('context_atlas', {}).get('ok')}",
@@ -967,6 +1345,7 @@ def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
         lines.append(f"- accepted_dou_findings: {len(accepted_dou)}")
     lines.extend(["", "## Stages"])
     for stage in stages:
+        stage_axes = delivery_axes_for_receipt(str(stage.get("status") or ""), stage)
         lines.extend(
             [
                 "",
@@ -984,6 +1363,9 @@ def write_lifecycle_report(path: Path, state: dict[str, Any]) -> None:
                 f"  - commit_after: {stage.get('commit_after', '')}",
                 f"  - exit_code: {stage.get('await', {}).get('exit_code', '')}",
                 f"  - artifact_ok: {stage.get('await', {}).get('artifact_ok', '')}",
+                f"  - execution_state: {stage_axes['execution_state']}",
+                f"  - proof_state: {stage_axes['proof_state']}",
+                f"  - delivery_state: {stage_axes['delivery_state']}",
                 "  - transition_conditions: "
                 + ", ".join(stage.get("transition_conditions") or []),
                 "  - allowed_artifacts: "
@@ -1041,11 +1423,13 @@ class LifecycleSupervisor:
             # Primary no-await mode: the runner exits before the worker writes
             # its report, so the DoU index only exists in the live frontmatter.
             dou_value = report_dou_index(str(stage_launch.get("report") or ""))
+        axes = delivery_axes_for_receipt(str(state.get("status") or ""), state)
         return {
             "schema": state.get("schema"),
             "run_id": state.get("run_id"),
             "workflow": state.get("workflow"),
             "status": state.get("status"),
+            **axes,
             "current_stage": last_stage.get("id", ""),
             "next_stage": (state.get("baton") or {}).get("next_stage", ""),
             "next_agent": (state.get("baton") or {}).get("next_agent", ""),
@@ -1069,6 +1453,10 @@ def _print_lifecycle_receipt(state: dict[str, Any]) -> None:
     print(f"run_id:     {state.get('run_id')}")
     print(f"workflow:   {state.get('workflow')}")
     print(f"status:     {state.get('status')}")
+    axes = delivery_axes_for_receipt(str(state.get("status") or ""), state)
+    print(f"execution:  {axes['execution_state']}")
+    print(f"proof:      {axes['proof_state']}")
+    print(f"delivery:   {axes['delivery_state']}")
     print(f"state:      {state.get('state_path')}")
     print(f"report:     {state.get('report_path')}")
     print("=" * (24 + len(title)))

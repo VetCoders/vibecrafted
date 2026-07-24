@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
 import re
@@ -8,8 +7,8 @@ import shutil
 import subprocess
 import textwrap
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
@@ -17,13 +16,7 @@ HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 
 def _write_fake_marbles_spawn(script_path: Path) -> None:
     script_path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > "$CAPTURE_FILE"'
         + "\n",
         encoding="utf-8",
     )
@@ -32,29 +25,7 @@ def _write_fake_marbles_spawn(script_path: Path) -> None:
 
 def _write_replaying_vc_frame(script_path: Path) -> None:
     payload = (
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import os",
-                "import shutil",
-                "import subprocess",
-                "import sys",
-                "from pathlib import Path",
-                "",
-                "args = sys.argv[1:]",
-                'Path(os.environ["VC_FRAME_CAPTURE_FILE"]).write_text("\\n".join(args) + "\\n", encoding="utf-8")',
-                "if args:",
-                "    cmd_script = Path(args[-1])",
-                '    expected_spawn = os.environ.get("EXPECTED_MARBLES_SPAWN", "")',
-                "    if expected_spawn and cmd_script.is_file():",
-                '        payload = cmd_script.read_text(encoding="utf-8", errors="ignore")',
-                "        if expected_spawn not in payload:",
-                '            print(f"unsafe vc_frame replay target: {cmd_script}", file=sys.stderr)',
-                "            sys.exit(97)",
-                "    shell = shutil.which('zsh') or shutil.which('bash') or '/bin/sh'",
-                "    subprocess.run([shell, '-lc', str(cmd_script)], check=True, env=os.environ.copy())",
-            ]
-        )
+        '#!/usr/bin/env python3\nimport os\nimport shutil\nimport subprocess\nimport sys\nfrom pathlib import Path\n\nargs = sys.argv[1:]\nPath(os.environ["VC_FRAME_CAPTURE_FILE"]).write_text("\\n".join(args) + "\\n", encoding="utf-8")\nif args:\n    cmd_script = Path(args[-1])\n    expected_spawn = os.environ.get("EXPECTED_MARBLES_SPAWN", "")\n    if expected_spawn and cmd_script.is_file():\n        payload = cmd_script.read_text(encoding="utf-8", errors="ignore")\n        if expected_spawn not in payload:\n            print(f"unsafe vc_frame replay target: {cmd_script}", file=sys.stderr)\n            sys.exit(97)\n    shell = shutil.which(\'zsh\') or shutil.which(\'bash\') or \'/bin/sh\'\n    subprocess.run([shell, \'-lc\', str(cmd_script)], check=True, env=os.environ.copy())'
         + "\n"
     )
     script_path.write_text(payload, encoding="utf-8")
@@ -227,7 +198,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
           ancestor_path="$(spawn_marbles_state_dir "$base_run_id")/ancestor.md"
           cat > "$ancestor_path" <<'EOF_ANCESTOR'
         ---
-        agent: gemini
+        agent: agy
         focus: accessibility
         priority: P0
         ---
@@ -259,7 +230,7 @@ def _prepare_fake_marbles_bundle(tmp_path: Path) -> tuple[Path, Path]:
         """
     ).lstrip()
 
-    for agent in ("claude", "codex", "gemini"):
+    for agent in ("claude", "codex", "agy"):
         script = scripts_dir / f"{agent}_spawn.sh"
         script.write_text(fake_spawn, encoding="utf-8")
         script.chmod(0o755)
@@ -401,7 +372,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_vc_frame(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now().strftime("%Y_%m%d")
+        / datetime.now(timezone.utc).strftime("%Y_%m%d")
         / "tmp"
     )
 
@@ -539,7 +510,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now().strftime("%Y_%m%d")
+        / datetime.now(timezone.utc).strftime("%Y_%m%d")
         / "tmp"
     )
 
@@ -719,17 +690,17 @@ def test_marbles_runtime_steers_next_loop_from_ancestor_frontmatter(
     assert state["god_plan"] == str(state_dir / "god.md")
     assert state["ancestor_plan"] == str(state_dir / "ancestor.md")
     assert state["plan"] == str(state_dir / "ancestor.md")
-    assert [loop["agent"] for loop in state["loops"][:2]] == ["codex", "gemini"]
+    assert [loop["agent"] for loop in state["loops"][:2]] == ["codex", "agy"]
     assert state["loops"][1]["focus"] == "accessibility"
 
     god_plan = state_dir / "god.md"
     ancestor_plan = state_dir / "ancestor.md"
     assert god_plan.read_text(encoding="utf-8").startswith("---\nkind: god\n")
     assert oct(god_plan.stat().st_mode & 0o777) == "0o444"
-    assert ancestor_plan.read_text(encoding="utf-8").startswith("---\nagent: gemini\n")
+    assert ancestor_plan.read_text(encoding="utf-8").startswith("---\nagent: agy\n")
 
     events = _load_spawn_events(capture_file)
-    assert [event["agent"] for event in events] == ["codex", "gemini"]
+    assert [event["agent"] for event in events] == ["codex", "agy"]
     assert state["archived_from"] in str(events[0]["success_hook"])
     assert str(events[0]["plan"]).endswith("marbles-ancestor_L1.md")
     assert str(events[1]["plan"]).endswith("marbles-ancestor_L2.md")
@@ -781,7 +752,7 @@ def test_marbles_runtime_keeps_ancestor_focus_when_next_plan_write_lags(
     assert len(state_dirs) == 1
     state = json.loads((state_dirs[0] / "state.json").read_text(encoding="utf-8"))
 
-    assert [loop["agent"] for loop in state["loops"][:2]] == ["codex", "gemini"]
+    assert [loop["agent"] for loop in state["loops"][:2]] == ["codex", "agy"]
     assert [loop["agent_source"] for loop in state["loops"][:2]] == [
         "rotation",
         "user",
@@ -838,11 +809,11 @@ def test_marbles_runtime_applies_rotation_schedule_without_ancestor_override(
     assert state["ancestor_plan"] == str(state_dir / "ancestor.md")
     assert state["plan"] == str(state_dir / "ancestor.md")
     assert state["rotation"] == "trio"
-    assert state["rotation_pool"] == ["codex", "claude", "gemini"]
+    assert state["rotation_pool"] == ["codex", "claude", "agy"]
     assert [loop["agent"] for loop in state["loops"][:3]] == [
         "codex",
         "claude",
-        "gemini",
+        "agy",
     ]
     assert [loop["focus"] for loop in state["loops"][:3]] == [
         "initial prompt",
@@ -859,7 +830,7 @@ def test_marbles_runtime_applies_rotation_schedule_without_ancestor_override(
     )
 
     events = _load_spawn_events(capture_file)
-    assert [event["agent"] for event in events] == ["codex", "claude", "gemini"]
+    assert [event["agent"] for event in events] == ["codex", "claude", "agy"]
     child_plans = [Path(event["plan"]) for event in events]
     assert [plan.name for plan in child_plans] == [
         "marbles-ancestor_L1.md",
@@ -878,7 +849,7 @@ def test_marbles_runtime_applies_rotation_schedule_without_ancestor_override(
         "focus: initial prompt\npriority: P0\n---\n"
     )
     assert child_plan_3.startswith(
-        "---\nagent: gemini\nskill_name: marbles\n"
+        "---\nagent: agy\nskill_name: marbles\n"
         "focus: initial prompt\npriority: P0\n---\n"
     )
     assert "The worker must remain on the operator-assigned substrate." in child_plan_1
@@ -900,9 +871,7 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["MARBLES_SPAWN_CAPTURE"] = str(capture_file)
     env["VIBECRAFTED_MARBLES_VERIFICATION_GRACE_S"] = "0"
-    env["MARBLES_TEST_ANCESTOR_SEQUENCE"] = (
-        "gemini|accessibility|;claude|auth hardening|"
-    )
+    env["MARBLES_TEST_ANCESTOR_SEQUENCE"] = "agy|accessibility|;claude|auth hardening|"
     env.pop("VC_FRAME", None)
     env.pop("VC_FRAME_PANE_ID", None)
     env.pop("VC_FRAME_SESSION_NAME", None)
@@ -939,13 +908,13 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
     assert state["ancestor_plan"] == str(state_dir / "ancestor.md")
     assert state["plan"] == str(state_dir / "ancestor.md")
     assert state["rotation"] == "trio"
-    assert state["rotation_pool"] == ["codex", "claude", "gemini"]
+    assert state["rotation_pool"] == ["codex", "claude", "agy"]
     assert re.fullmatch(
         r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z", state["ancestor_mtime"]
     )
     assert [loop["agent"] for loop in state["loops"][:3]] == [
         "codex",
-        "gemini",
+        "agy",
         "claude",
     ]
     assert [loop["focus"] for loop in state["loops"][:3]] == [
@@ -961,7 +930,7 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
     ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
     events = _load_spawn_events(capture_file)
-    assert [event["agent"] for event in events] == ["codex", "gemini", "claude"]
+    assert [event["agent"] for event in events] == ["codex", "agy", "claude"]
     child_plans = [Path(event["plan"]) for event in events]
     assert [plan.name for plan in child_plans] == [
         "marbles-ancestor_L1.md",
@@ -976,7 +945,7 @@ def test_marbles_runtime_consumes_ancestor_override_sequence_across_children(
         "focus: initial prompt\npriority: P0\n---\n"
     )
     assert child_plan_2.startswith(
-        "---\nagent: gemini\nfocus: accessibility\npriority: P0\n---\n"
+        "---\nagent: agy\nfocus: accessibility\npriority: P0\n---\n"
     )
     assert child_plan_3.startswith(
         "---\nagent: claude\nfocus: auth hardening\npriority: P0\n---\n"
@@ -1234,7 +1203,7 @@ def test_marbles_watcher_waits_for_meta_completion_before_advancing(
             "bash",
             str(scripts_dir / "marbles_spawn.sh"),
             "--agent",
-            "gemini",
+            "agy",
             "--count",
             "2",
             "--runtime",
@@ -1292,7 +1261,7 @@ def test_marbles_no_watch_keeps_report_hint_enabled(
             "bash",
             str(scripts_dir / "marbles_spawn.sh"),
             "--agent",
-            "gemini",
+            "agy",
             "--count",
             "1",
             "--runtime",
@@ -1534,7 +1503,7 @@ def test_marbles_verification_poll_survives_watcher_exit_without_job_noise(
             "bash",
             str(scripts_dir / "marbles_spawn.sh"),
             "--agent",
-            "gemini",
+            "agy",
             "--count",
             "1",
             "--runtime",

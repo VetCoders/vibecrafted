@@ -6,9 +6,10 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from .runtime_paths import vibecrafted_home
 

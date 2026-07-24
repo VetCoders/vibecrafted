@@ -4,8 +4,11 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMMON_SH = REPO_ROOT / "runtime" / "scripts" / "common.sh"
@@ -27,7 +30,7 @@ _ENV_SANITIZE = """
 unset VC_FRAME VC_FRAME_PANE_ID VC_FRAME_SESSION_NAME VC_FRAME_TAB_NAME VC_FRAME_CONFIG_DIR
 unset ZELLIJ ZELLIJ_PANE_ID ZELLIJ_SESSION_NAME ZELLIJ_SOCKET_DIR
 unset VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION VIBECRAFTED_PANE_SEQ VIBECRAFTED_MARBLES_TAB_NAME
-unset VIBECRAFTED_OPERATOR_SESSION VIBECRAFTED_RUN_ID VIBECRAFTED_RUN_LOCK
+unset VIBECRAFTED_OPERATOR_SESSION VIBECRAFTED_WORKER_SESSION VIBECRAFTED_RUN_ID VIBECRAFTED_RUN_LOCK
 unset VIBECRAFTED_SKILL_CODE VIBECRAFTED_SKILL_NAME VIBECRAFTED_LOOP_NR
 unset VIBECRAFTED_VC_FRAME_CLOSE_AGENT_PANES VIBECRAFTED_VC_FRAME_KEEP_AGENT_PANES VIBECRAFTED_INLINE_STARTUP_WATCH
 unset VIBECRAFTED_SPAWN_STAGGER VIBECRAFTED_SPAWN_STAGGER_SECONDS
@@ -36,6 +39,18 @@ unset SPAWN_RUN_ID SPAWN_RUN_LOCK SPAWN_AGENT SPAWN_SKILL_CODE SPAWN_SKILL_NAME
 unset SPAWN_PROMPT_ID
 export VIBECRAFTED_SPAWN_STAGGER_SECONDS=0
 """
+
+
+@pytest.fixture(autouse=True)
+def _isolate_spawn_test_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Shell subprocesses must never fall through to the operator store."""
+    home = tmp_path / "ambient-home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("VIBECRAFTED_HOME", raising=False)
 
 
 def _bash(script: str) -> subprocess.CompletedProcess[str]:
@@ -229,15 +244,18 @@ def test_skill_dry_run_reaches_spawn_launcher_without_launching(tmp_path: Path) 
     env["HOME"] = str(home)
     env["VIBECRAFTED_HOME"] = str(crafted_home)
     env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
-    env["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    env["VIBECRAFTED_PYTHON"] = sys.executable
+    env["PATH"] = f"{local_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
 
     result = subprocess.run(
         [
             "bash",
-            "-lc",
+            "--noprofile",
+            "--norc",
+            "-c",
             (
                 f'source "{SHELL_SH}"; '
-                f'vc-followup claude --runtime detached --dry-run --file "{plan}"'
+                f'vc-audit claude --runtime detached --dry-run --file "{plan}"'
             ),
         ],
         check=True,
@@ -267,27 +285,14 @@ def test_terminal_spawn_refuses_osascript_fallback_when_vc_frame_fails(
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
     (fake_bin / "vc-frame").write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                'printf "%s\\n" "$*" >> "$VC_FRAME_CAPTURE"',
-                "exit 1",
-            ]
-        )
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$VC_FRAME_CAPTURE"\nexit 1'
         + "\n",
         encoding="utf-8",
     )
     (fake_bin / "vc-frame").chmod(0o755)
     _mirror_fake_vc_frame(fake_bin / "vc-frame")
     (fake_bin / "osascript").write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                'cat >> "$OSA_CAPTURE"',
-                "exit 0",
-            ]
-        )
-        + "\n",
+        '#!/usr/bin/env bash\ncat >> "$OSA_CAPTURE"\nexit 0' + "\n",
         encoding="utf-8",
     )
     (fake_bin / "osascript").chmod(0o755)
@@ -405,6 +410,60 @@ def test_spawn_prepare_paths_include_run_id_for_durable_artifacts(
     assert first_report != second_report
     assert first_transcript != second_transcript
     assert first_meta != second_meta
+
+
+def test_spawn_prepare_paths_dry_run_never_bootstraps_perception(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    plan = tmp_path / "plan.md"
+    root = tmp_path / "repo"
+    marker = tmp_path / "perception-started"
+    home.mkdir()
+    root.mkdir()
+    plan.write_text("# Plan\n", encoding="utf-8")
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export HOME="{home}"
+        export VIBECRAFTED_HOME="{home / ".vibecrafted"}"
+        source "{COMMON_SH}"
+        spawn_ensure_perception() {{ : > "{marker}"; }}
+
+        spawn_prepare_paths codex "{plan}" "{root}" implement 1
+        test ! -e "{marker}"
+        '''
+    )
+
+    assert result.returncode == 0
+
+
+def test_spawn_prepare_paths_real_run_bootstraps_perception(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    plan = tmp_path / "plan.md"
+    root = tmp_path / "repo"
+    marker = tmp_path / "perception-started"
+    home.mkdir()
+    root.mkdir()
+    plan.write_text("# Plan\n", encoding="utf-8")
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export HOME="{home}"
+        export VIBECRAFTED_HOME="{home / ".vibecrafted"}"
+        source "{COMMON_SH}"
+        spawn_ensure_perception() {{ : > "{marker}"; }}
+
+        spawn_prepare_paths codex "{plan}" "{root}" implement 0
+        test -e "{marker}"
+        '''
+    )
+
+    assert result.returncode == 0
 
 
 def _split_vc_frame_calls(payload: str) -> list[list[str]]:
@@ -534,6 +593,51 @@ def test_generated_launcher_preserves_marbles_watcher_mode(tmp_path: Path) -> No
     )
 
 
+def test_generated_launcher_preseeds_and_stamps_report_identity(
+    tmp_path: Path,
+) -> None:
+    launcher = tmp_path / "launch.sh"
+    meta = tmp_path / "run.meta.json"
+    report = tmp_path / "report.md"
+    observed_template = tmp_path / "observed-template.md"
+    transcript = tmp_path / "transcript.log"
+
+    _bash(
+        f'''
+        set -euo pipefail
+        export VIBECRAFTED_HOME="{tmp_path / ".vibecrafted"}"
+        export VIBECRAFTED_INLINE_STARTUP_WATCH=0
+        source "{COMMON_SH}"
+        export SPAWN_ROOT="{tmp_path}"
+        export SPAWN_AGENT=codex
+        export SPAWN_PROMPT_ID=prompt
+        export SPAWN_RUN_ID=marb-identity-001
+        export SPAWN_RUN_LOCK="{tmp_path / "marb-identity.lock"}"
+        export SPAWN_LOOP_NR=3
+        export SPAWN_SKILL_CODE=marb
+        export SPAWN_SKILL_NAME=marbles
+        cmd='cp "{report}" "{observed_template}"; printf "# Worker evidence\\n" >> "{report}"; printf "[12:40:43] session: codex-shell-session-001\\n" >> "{transcript}"'
+        spawn_write_meta "{meta}" "launching" "codex" "marbles" "{tmp_path}" "{launcher}" "{report}" "{transcript}" "{launcher}"
+        spawn_generate_launcher "{launcher}" "{meta}" "{report}" "{transcript}" "{COMMON_SH}" "$cmd"
+        chmod +x "{launcher}"
+        bash "{launcher}"
+        '''
+    )
+
+    template = observed_template.read_text(encoding="utf-8")
+    assert "run_id: marb-identity-001" in template
+    assert "session_id: pending-unset" in template
+    assert "finalized: false" in template
+    assert "launcher_template: true" in template
+
+    finalized = report.read_text(encoding="utf-8")
+    assert "run_id: marb-identity-001" in finalized
+    assert "session_id: codex-shell-session-001" in finalized
+    assert "finalized: false" in finalized
+    assert "launcher_template:" not in finalized
+    assert "# Worker evidence" in finalized
+
+
 def test_generated_launcher_preloads_curated_agent_tool_paths(tmp_path: Path) -> None:
     launcher = tmp_path / "launch.sh"
     meta = tmp_path / "run.meta.json"
@@ -579,6 +683,9 @@ def test_runtime_prompt_includes_vc_agents_worker_charter(tmp_path: Path) -> Non
 
     payload = runtime_file.read_text(encoding="utf-8")
     assert "## VC Agents Worker Charter" in payload
+    assert "finalized: false" in payload
+    assert "already created the report file with machine-owned" in payload
+    assert "Only when you believe the run succeeded" in payload
     assert "Do NOT invoke vc-agents" in payload
     assert "do not reinterpret it" in payload
     assert "record the boundary clearly in your report" in payload
@@ -685,6 +792,8 @@ def test_research_runtime_prompt_forbids_commits_and_source_mutation(
 
     payload = runtime_file.read_text(encoding="utf-8")
     assert "## Research Safety Contract" in payload
+    assert "finalized: false" in payload
+    assert "claim:" in payload
     assert "**GIT WRITES forbidden**" in payload
     assert "do not stage, commit, amend" in payload
     assert "**SOURCE MUTATION**: forbidden" in payload
@@ -701,20 +810,7 @@ def test_codex_research_prompt_uses_clean_research_payload(
     runtime_file = tmp_path / "runtime.md"
     report_path = tmp_path / "report.md"
     source_file.write_text(
-        "\n".join(
-            [
-                "---",
-                "run_id: rsch-123",
-                "skill: vc-research",
-                "status: in-progress",
-                "---",
-                "",
-                "# Research Prompt",
-                "",
-                "Question: How should clean worker prompts behave?",
-                "",
-            ]
-        ),
+        "---\nrun_id: rsch-123\nskill: vc-research\nstatus: in-progress\n---\n\n# Research Prompt\n\nQuestion: How should clean worker prompts behave?\n",
         encoding="utf-8",
     )
 
@@ -1030,12 +1126,7 @@ def test_spawn_finish_meta_does_not_parse_codex_core_session_error_as_id(
     plan = tmp_path / "plan.md"
 
     transcript.write_text(
-        "\n".join(
-            [
-                "2026-05-08T19:51:31.928244Z ERROR codex_core::session: failed to record rollout items: thread 019e0905-1eb8-7890-a73a-74bbb2171341 not found",
-                "[21:51:32] session: 019e09051eb87890a73a74bbb2171341",
-            ]
-        )
+        "2026-05-08T19:51:31.928244Z ERROR codex_core::session: failed to record rollout items: thread 019e0905-1eb8-7890-a73a-74bbb2171341 not found\n[21:51:32] session: 019e09051eb87890a73a74bbb2171341"
         + "\n",
         encoding="utf-8",
     )
@@ -1079,13 +1170,7 @@ def test_codex_stream_bridge_tolerates_turn_abort_and_malformed_json(
     tmp_path: Path,
 ) -> None:
     transcript = tmp_path / "trace.log"
-    payload = "\n".join(
-        [
-            '{"type":"thread.started","thread_id":"fake-session-001"}',
-            '{"type":"turn.aborted","message":"refresh token already used"}',
-            '{"type":"item.completed"',
-        ]
-    )
+    payload = '{"type":"thread.started","thread_id":"fake-session-001"}\n{"type":"turn.aborted","message":"refresh token already used"}\n{"type":"item.completed"'
 
     subprocess.run(
         [
@@ -1121,22 +1206,7 @@ def test_codex_spawn_marks_meta_failed_when_codex_emits_non_json_auth_error(
 
     fake_codex = fake_bin / "codex"
     fake_codex.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'report=""',
-                "while [[ $# -gt 0 ]]; do",
-                '  case "$1" in',
-                '    --output-last-message) shift; report="$1" ;;',
-                "  esac",
-                "  shift || true",
-                "done",
-                "cat >/dev/null || true",
-                'printf "Your access token could not be refreshed because your refresh token was already used.\\n" >&2',
-                "exit 17",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nreport=""\nwhile [[ $# -gt 0 ]]; do\n  case "$1" in\n    --output-last-message) shift; report="$1" ;;\n  esac\n  shift || true\ndone\ncat >/dev/null || true\nprintf "Your access token could not be refreshed because your refresh token was already used.\\n" >&2\nexit 17'
         + "\n",
         encoding="utf-8",
     )
@@ -1214,42 +1284,7 @@ def test_codex_spawn_preserves_standalone_report_when_last_message_is_handoff(
 
     fake_codex = fake_bin / "codex"
     fake_codex.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'last_message=""',
-                "while [[ $# -gt 0 ]]; do",
-                '  case "$1" in',
-                '    --output-last-message) shift; last_message="${1:-}" ;;',
-                "  esac",
-                "  shift || true",
-                "done",
-                'prompt="$(cat)"',
-                'report_path="$(printf "%s\\n" "$prompt" | sed -n \'s/^Report path: //p\' | tail -n 1)"',
-                '[[ -n "$report_path" ]] || exit 22',
-                'mkdir -p "$(dirname "$report_path")"',
-                'cat > "$report_path" <<EOF_REPORT',
-                "---",
-                "agent: codex",
-                "status: completed",
-                "---",
-                "",
-                "# Full Research Report",
-                "",
-                "This is the durable report body.",
-                "EOF_REPORT",
-                'if [[ -n "$last_message" ]]; then',
-                '  mkdir -p "$(dirname "$last_message")"',
-                '  cat > "$last_message" <<EOF_LAST',
-                "Done. Report saved at: $report_path",
-                "EOF_LAST",
-                "fi",
-                'printf \'{"type":"thread.started","thread_id":"fake-session-standalone"}\\n\'',
-                'printf \'{"type":"item.completed","item":{"type":"agent_message","text":"structured report was streamed earlier"}}\\n\'',
-                'printf \'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\\n\'',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nlast_message=""\nwhile [[ $# -gt 0 ]]; do\n  case "$1" in\n    --output-last-message) shift; last_message="${1:-}" ;;\n  esac\n  shift || true\ndone\nprompt="$(cat)"\nreport_path="$(printf "%s\\n" "$prompt" | sed -n \'s/^Report path: //p\' | tail -n 1)"\n[[ -n "$report_path" ]] || exit 22\nmkdir -p "$(dirname "$report_path")"\ncat > "$report_path" <<EOF_REPORT\n---\nagent: codex\nstatus: completed\n---\n\n# Full Research Report\n\nThis is the durable report body.\nEOF_REPORT\nif [[ -n "$last_message" ]]; then\n  mkdir -p "$(dirname "$last_message")"\n  cat > "$last_message" <<EOF_LAST\nDone. Report saved at: $report_path\nEOF_LAST\nfi\nprintf \'{"type":"thread.started","thread_id":"fake-session-standalone"}\\n\'\nprintf \'{"type":"item.completed","item":{"type":"agent_message","text":"structured report was streamed earlier"}}\\n\'\nprintf \'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\\n\''
         + "\n",
         encoding="utf-8",
     )
@@ -1320,28 +1355,7 @@ def test_codex_research_does_not_copy_pointer_last_message_as_report(
 
     fake_codex = fake_bin / "codex"
     fake_codex.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'last_message=""',
-                "while [[ $# -gt 0 ]]; do",
-                '  case "$1" in',
-                '    --output-last-message) shift; last_message="${1:-}" ;;',
-                "  esac",
-                "  shift || true",
-                "done",
-                "cat >/dev/null",
-                'if [[ -n "$last_message" ]]; then',
-                '  mkdir -p "$(dirname "$last_message")"',
-                '  cat > "$last_message" <<EOF_LAST',
-                "Done. Report saved at: /tmp/research/codex.md",
-                "EOF_LAST",
-                "fi",
-                'printf \'{"type":"thread.started","thread_id":"fake-session-pointer"}\\n\'',
-                'printf \'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\\n\'',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nlast_message=""\nwhile [[ $# -gt 0 ]]; do\n  case "$1" in\n    --output-last-message) shift; last_message="${1:-}" ;;\n  esac\n  shift || true\ndone\ncat >/dev/null\nif [[ -n "$last_message" ]]; then\n  mkdir -p "$(dirname "$last_message")"\n  cat > "$last_message" <<EOF_LAST\nDone. Report saved at: /tmp/research/codex.md\nEOF_LAST\nfi\nprintf \'{"type":"thread.started","thread_id":"fake-session-pointer"}\\n\'\nprintf \'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\\n\''
         + "\n",
         encoding="utf-8",
     )
@@ -1420,15 +1434,7 @@ def test_claude_spawn_marks_meta_failed_when_stream_has_no_json(
 
     fake_claude = fake_bin / "claude"
     fake_claude.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "cat >/dev/null || true",
-                'printf "Not logged in · Please run /login\\n" >&2',
-                "exit 19",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\ncat >/dev/null || true\nprintf "Not logged in · Please run /login\\n" >&2\nexit 19'
         + "\n",
         encoding="utf-8",
     )
@@ -1587,6 +1593,9 @@ def test_spawn_in_vc_frame_pane_honors_requested_direction(tmp_path: Path) -> No
         export VC_FRAME_SESSION_NAME="{operator_session}"
         export ZELLIJ_SESSION_NAME="{operator_session}"
         export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
+        # G7: in-pane path only fires when current seat == worker host.
+        # Simulate "already inside the project worker session".
+        export VIBECRAFTED_WORKER_SESSION="{operator_session}"
         export VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=down
         source "{COMMON_SH}"
         spawn_in_vc_frame_pane "{launcher}" "workflow"
@@ -1700,6 +1709,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
     _bash(
         f'''
         set -euo pipefail
+        export VIBECRAFTED_HOME="{tmp_path / ".vibecrafted"}"
         source "{COMMON_SH}"
         export SPAWN_ROOT="{root_dir}"
         export SPAWN_AGENT="codex"
@@ -1720,7 +1730,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
     assert payload["tokens_input"] == 10
     assert payload["tokens_cached_input"] == 3
     assert payload["tokens_output"] == 5
-    assert payload["tokens_total"] == 18
+    assert payload["tokens_total"] == 15
     assert (
         payload["resume_hint"]
         == f"Use `cd {root_dir} && vc-resume --session sess-abc-123` to continue work with this Agent."
@@ -1733,7 +1743,7 @@ def test_generated_launcher_adds_uniform_artifact_closure(tmp_path: Path) -> Non
         assert "session_id: sess-abc-123" in text
         assert "tokens_input: 10" in text
         assert "tokens_output: 5" in text
-        assert "tokens_total: 18" in text
+        assert "tokens_total: 15" in text
         assert "cost_usd: unknown" in text
         assert "<!-- vibecrafted-artifact-footer:impl-010203-999 -->" in text
         assert "vc-resume --session sess-abc-123" in text
@@ -1955,8 +1965,11 @@ def test_spawn_prepare_paths_generates_real_run_context_when_missing(
 
 def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None:
     run_id = "marb-014520"
-    operator_session = _expected_operator_session(run_id)
-    launcher = tmp_path / "launch.sh"
+    # G7: host is basename(SPAWN_ROOT), not ambient VIBECRAFTED_OPERATOR_SESSION.
+    project_root = tmp_path / "proj-foo"
+    project_root.mkdir()
+    host_session = project_root.name
+    launcher = project_root / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
 
@@ -1970,7 +1983,7 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 'if [[ "${1:-}" == "list-sessions" ]]; then',
-                f'  printf "%s [Created]\\n" "{operator_session}"',
+                f'  printf "%s [Created]\\n" "{host_session}"',
                 "  exit 0",
                 "fi",
                 'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
@@ -1988,8 +2001,9 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
         export PATH="{fake_bin}:$PATH"
         export CAPTURE_FILE="{capture_file}"
         export VIBECRAFTED_RUN_ID="{run_id}"
-        export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
-        export SPAWN_ROOT="{tmp_path}"
+        # Ambient human seat must not steal the worker host.
+        export VIBECRAFTED_OPERATOR_SESSION="operator-seat"
+        export SPAWN_ROOT="{project_root}"
         source "{COMMON_SH}"
         spawn_in_operator_session "{launcher}" "workflow"
         '''
@@ -1997,7 +2011,8 @@ def test_spawn_in_operator_session_targets_named_session(tmp_path: Path) -> None
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
     assert "--session" in payload
-    assert operator_session in payload
+    assert host_session in payload
+    assert "operator-seat" not in payload
     assert "action" in payload
     # When spawning from outside a vc_frame context (no VC_FRAME/VC_FRAME_PANE_ID),
     # the routing guard forces a new-tab to avoid landing in a stale operator tab.
@@ -2010,7 +2025,7 @@ def test_spawn_in_operator_session_suppresses_vc_frame_tab_number_output(
     tmp_path: Path,
 ) -> None:
     run_id = "marb-014520"
-    operator_session = _expected_operator_session(run_id)
+    host_session = tmp_path.name  # G7: basename(SPAWN_ROOT)
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
@@ -2025,7 +2040,7 @@ def test_spawn_in_operator_session_suppresses_vc_frame_tab_number_output(
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 'if [[ "${1:-}" == "list-sessions" ]]; then',
-                f'  printf "%s [Created]\\n" "{operator_session}"',
+                f'  printf "%s [Created]\\n" "{host_session}"',
                 "  exit 0",
                 "fi",
                 'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
@@ -2042,12 +2057,12 @@ def test_spawn_in_operator_session_suppresses_vc_frame_tab_number_output(
         [
             "bash",
             "-lc",
-            f'''
+            _ENV_SANITIZE
+            + f'''
             set -euo pipefail
             export PATH="{fake_bin}:$PATH"
             export CAPTURE_FILE="{capture_file}"
             export VIBECRAFTED_RUN_ID="{run_id}"
-            export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
             export SPAWN_ROOT="{tmp_path}"
             source "{COMMON_SH}"
             spawn_in_operator_session "{launcher}" "workflow"
@@ -2120,6 +2135,7 @@ def test_spawn_in_vc_frame_pane_marbles_tab_suppresses_tab_number_output(
             export VC_FRAME_TAB_NAME="operator-tab"
             export VIBECRAFTED_RUN_ID="{run_id}"
             export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
+            export VIBECRAFTED_WORKER_SESSION="{operator_session}"
             export VIBECRAFTED_MARBLES_TAB_NAME="marbles"
             export SPAWN_ROOT="{tmp_path}"
             export SPAWN_LOOP_NR=1
@@ -2201,6 +2217,7 @@ def test_spawn_in_vc_frame_pane_marbles_tab_can_keep_agent_panes_for_forensics(
             export ZELLIJ_SESSION_NAME="{operator_session}"
             export VIBECRAFTED_RUN_ID="{run_id}"
             export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
+            export VIBECRAFTED_WORKER_SESSION="{operator_session}"
             export VIBECRAFTED_MARBLES_TAB_NAME="marbles"
             export VIBECRAFTED_VC_FRAME_KEEP_AGENT_PANES=1
             export SPAWN_ROOT="{tmp_path}"
@@ -2230,28 +2247,7 @@ def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
     capture_file = tmp_path / "vc_frame-calls.txt"
     vc_frame = fake_bin / "vc-frame"
     vc_frame.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf -- "--CALL--\\n"',
-                '  printf "%s\\n" "$@"',
-                '} >> "$CAPTURE_FILE"',
-                'if [[ "${1:-}" == "action" && "${2:-}" == "current-tab-info" ]]; then',
-                '  printf \'{"name":"operator-tab","tab_id":9}\\n\'',
-                "  exit 0",
-                "fi",
-                'if [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then',
-                '  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'',
-                "  exit 0",
-                "fi",
-                'if [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then',
-                '  printf "terminal_99\\n"',
-                "  exit 0",
-                "fi",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\n{\n  printf -- "--CALL--\\n"\n  printf "%s\\n" "$@"\n} >> "$CAPTURE_FILE"\nif [[ "${1:-}" == "action" && "${2:-}" == "current-tab-info" ]]; then\n  printf \'{"name":"operator-tab","tab_id":9}\\n\'\n  exit 0\nfi\nif [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then\n  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'\n  exit 0\nfi\nif [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then\n  printf "terminal_99\\n"\n  exit 0\nfi'
         + "\n",
         encoding="utf-8",
     )
@@ -2328,24 +2324,7 @@ def test_spawn_await_watch_uses_active_meta_floating_pane_and_restores_focus(
     capture_file = tmp_path / "vc_frame-calls.txt"
     vc_frame = fake_bin / "vc-frame"
     vc_frame.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf -- "--CALL--\\n"',
-                '  printf "%s\\n" "$@"',
-                '} >> "$CAPTURE_FILE"',
-                'if [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then',
-                '  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'',
-                "  exit 0",
-                "fi",
-                'if [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then',
-                '  printf "terminal_99\\n"',
-                "  exit 0",
-                "fi",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\n{\n  printf -- "--CALL--\\n"\n  printf "%s\\n" "$@"\n} >> "$CAPTURE_FILE"\nif [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then\n  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'\n  exit 0\nfi\nif [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then\n  printf "terminal_99\\n"\n  exit 0\nfi'
         + "\n",
         encoding="utf-8",
     )
@@ -2354,21 +2333,7 @@ def test_spawn_await_watch_uses_active_meta_floating_pane_and_restores_focus(
 
     jq = fake_bin / "jq"
     jq.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'if [[ "${1:-}" == "-r" ]]; then filter="${2:-}"; file="${3:-}"; else filter="${1:-}"; file="${2:-}"; fi',
-                'python3 - "$filter" "$file" <<\'PY\'',
-                "import json, sys",
-                "key = sys.argv[1].split()[0].lstrip('.')",
-                "with open(sys.argv[2], 'r', encoding='utf-8') as fh:",
-                "    payload = json.load(fh)",
-                "value = payload.get(key, '')",
-                "print('' if value is None else value)",
-                "PY",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nif [[ "${1:-}" == "-r" ]]; then filter="${2:-}"; file="${3:-}"; else filter="${1:-}"; file="${2:-}"; fi\npython3 - "$filter" "$file" <<\'PY\'\nimport json, sys\nkey = sys.argv[1].split()[0].lstrip(\'.\')\nwith open(sys.argv[2], \'r\', encoding=\'utf-8\') as fh:\n    payload = json.load(fh)\nvalue = payload.get(key, \'\')\nprint(\'\' if value is None else value)\nPY'
         + "\n",
         encoding="utf-8",
     )
@@ -2415,13 +2380,7 @@ def test_spawn_probe_watch_does_not_fail_live_worker_on_transient_error(
 ) -> None:
     transcript = tmp_path / "trace.log"
     transcript.write_text(
-        "\n".join(
-            [
-                "2026-05-26T04:44:37Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed",
-                "[22:44:37] session: 019e6299-554a-76b2-900d-6dde67314658",
-                "I will use the VC Workflow skill and continue.",
-            ]
-        )
+        "2026-05-26T04:44:37Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed\n[22:44:37] session: 019e6299-554a-76b2-900d-6dde67314658\nI will use the VC Workflow skill and continue."
         + "\n",
         encoding="utf-8",
     )
@@ -2528,7 +2487,7 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
     tmp_path: Path,
 ) -> None:
     run_id = "rsch-014520"
-    operator_session = _expected_operator_session(run_id)
+    host_session = tmp_path.name  # G7: basename(SPAWN_ROOT)
     expected_tmp_root = tmp_path / ".vibecrafted" / "tmp"
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -2551,7 +2510,7 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 'if [[ "${1:-}" == "list-sessions" ]]; then',
-                f'  printf "%s [Created]\\n" "{operator_session}"',
+                f'  printf "%s [Created]\\n" "{host_session}"',
                 "  exit 0",
                 "fi",
                 "{",
@@ -2572,7 +2531,6 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
         export PATH="{fake_bin}:$PATH"
         export CAPTURE_FILE="{capture_file}"
         export VIBECRAFTED_RUN_ID="{run_id}"
-        export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
         export SPAWN_ROOT="{tmp_path}"
         export SPAWN_META="{meta}"
         export SPAWN_TRANSCRIPT="{transcript}"
@@ -2584,21 +2542,30 @@ def test_spawn_in_operator_session_new_tab_uses_run_tab_without_startup_monitor(
     )
 
     calls = _split_vc_frame_calls(capture_file.read_text(encoding="utf-8"))
-    assert len(calls) == 2
+    # G3 after-base probe may insert `action new-tab --help` between list-tabs
+    # and the real new-tab; filter help probes so the contract stays stable.
+    material = [
+        c
+        for c in calls
+        if not (
+            len(c) >= 3 and c[0] == "action" and c[1] == "new-tab" and "--help" in c
+        )
+    ]
+    assert len(material) == 2
 
-    list_tabs_call, workflow_call = calls
+    list_tabs_call, workflow_call = material
     assert list_tabs_call[:5] == [
         "--session",
-        operator_session,
+        host_session,
         "action",
         "list-tabs",
         "--json",
     ]
-    assert workflow_call[:4] == ["--session", operator_session, "action", "new-tab"]
+    assert workflow_call[:4] == ["--session", host_session, "action", "new-tab"]
     assert "--name" in workflow_call
     assert run_id in workflow_call
     assert "workflow" not in workflow_call[workflow_call.index("--name") + 1]
-    assert not any("startup-monitor" in arg for call in calls for arg in call)
+    assert not any("startup-monitor" in arg for call in material for arg in call)
 
     workflow_script = Path(workflow_call[workflow_call.index("--") + 1])
     assert workflow_script.parent == expected_tmp_root
@@ -2611,7 +2578,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
     tmp_path: Path,
 ) -> None:
     run_id = "ownr-014520"
-    operator_session = _expected_operator_session(run_id)
+    host_session = tmp_path.name  # G7: basename(SPAWN_ROOT)
     expected_tmp_root = tmp_path / ".vibecrafted" / "tmp"
     launcher = tmp_path / "launch.sh"
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -2627,7 +2594,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 'if [[ "${1:-}" == "list-sessions" ]]; then',
-                f'  printf "%s [Created]\\n" "{operator_session}"',
+                f'  printf "%s [Created]\\n" "{host_session}"',
                 "  exit 0",
                 "fi",
                 "{",
@@ -2656,7 +2623,6 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
         export PATH="{fake_bin}:$PATH"
         export CAPTURE_FILE="{capture_file}"
         export VIBECRAFTED_RUN_ID="{run_id}"
-        export VIBECRAFTED_OPERATOR_SESSION="{operator_session}"
         export SPAWN_ROOT="{tmp_path}"
         source "{COMMON_SH}"
         spawn_in_operator_session "{launcher}" "ownership-codex"
@@ -2667,21 +2633,21 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
     assert len(calls) == 4
     assert calls[0][:5] == [
         "--session",
-        operator_session,
+        host_session,
         "action",
         "list-tabs",
         "--json",
     ]
     assert calls[1][:5] == [
         "--session",
-        operator_session,
+        host_session,
         "action",
         "current-tab-info",
         "--json",
     ]
 
     pane_call = calls[2]
-    assert pane_call[:4] == ["--session", operator_session, "action", "new-pane"]
+    assert pane_call[:4] == ["--session", host_session, "action", "new-pane"]
     assert "--tab-id" in pane_call
     assert "7" in pane_call
     assert "--stacked" in pane_call
@@ -2689,8 +2655,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
     assert "--name" in pane_call
     assert "ownership-codex" in pane_call
     assert not any(
-        call[:4] == ["--session", operator_session, "action", "new-tab"]
-        for call in calls
+        call[:4] == ["--session", host_session, "action", "new-tab"] for call in calls
     )
     assert not any("startup-monitor" in arg for call in calls for arg in call)
 
@@ -2702,7 +2667,7 @@ def test_spawn_in_operator_session_existing_run_tab_stacks_and_restores_focus(
 
     assert calls[3][:5] == [
         "--session",
-        operator_session,
+        host_session,
         "action",
         "go-to-tab-by-id",
         "2",
@@ -2752,3 +2717,459 @@ PY
 
     assert result.stderr == ""
     assert done_file.read_text(encoding="utf-8") == "first-acquired\n"
+
+
+def test_spawn_vc_frame_session_action_resurrects_missing_host_once(
+    tmp_path: Path,
+) -> None:
+    """G3: first action Session-not-found → one create-background → retry ok."""
+    host = "host-resurrect"
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                '  if [[ -f "$STATE/live" ]]; then printf "%s [Created]\\n" "host-resurrect"; fi',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "attach" && "${2:-}" == "--create-background" ]]; then',
+                '  touch "$STATE/live"',
+                '  printf "create-ok\\n" >> "$STATE/create"',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "--session" ]]; then',
+                '  if [[ ! -f "$STATE/live" ]]; then',
+                '    printf "Session \'%s\' not found\\n" "${2:-}" >&2',
+                "    # Intentionally exit 0: real binary has been observed doing this.",
+                "    exit 0",
+                "  fi",
+                '  printf "action-ok\\n" >> "$STATE/action"',
+                "  exit 0",
+                "fi",
+                "exit 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        source "{COMMON_SH}"
+        spawn_vc_frame_session_action vc-frame "{host}" action new-tab --name t --cwd "{tmp_path}" -- /bin/true
+        printf 'status=%s\\n' "$?"
+        printf 'create=%s\\n' "$(cat "{state}/create" 2>/dev/null || true)"
+        printf 'action=%s\\n' "$(cat "{state}/action" 2>/dev/null || true)"
+        '''
+    )
+
+    assert "status=0" in result.stdout
+    assert "create-ok" in result.stdout
+    assert "action-ok" in result.stdout
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert calls.count("attach") == 1
+    assert "--create-background" in calls
+    # Two action invocations (first miss, second after resurrect).
+    assert calls.count("new-tab") == 2
+
+
+def test_spawn_vc_frame_session_action_double_fail_is_loud(tmp_path: Path) -> None:
+    """G3: create-background also fails → return 2 + SPAWN_VC_FRAME_LAST_ERROR."""
+    host = "ghost-host"
+    state = tmp_path / "state"
+    state.mkdir()
+    meta = tmp_path / "meta.json"
+    meta.write_text(
+        json.dumps({"status": "launching", "run_id": "g3-double-fail"}),
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" ]]; then exit 0; fi',
+                'if [[ "${1:-}" == "attach" ]]; then',
+                '  printf "attach boom\\n" >&2',
+                "  exit 1",
+                "fi",
+                'if [[ "${1:-}" == "--session" ]]; then',
+                '  printf "Session \'%s\' not found\\n" "${2:-}" >&2',
+                "  exit 1",
+                "fi",
+                "exit 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            _ENV_SANITIZE
+            + f'''
+            set +e
+            export PATH="{fake_bin}:$PATH"
+            export SPAWN_META="{meta}"
+            source "{COMMON_SH}"
+            spawn_vc_frame_session_action vc-frame "{host}" action new-tab --name t --cwd "{tmp_path}" -- /bin/true
+            status=$?
+            printf 'status=%s\\n' "$status"
+            printf 'last_error=%s\\n' "${{SPAWN_VC_FRAME_LAST_ERROR:-}}"
+            if [[ "$status" -eq 2 ]]; then
+              spawn_record_host_session_failure
+            fi
+            exit 0
+            ''',
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "status=2" in result.stdout
+    assert "not found" in result.stdout.lower() or "not found" in result.stderr.lower()
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload.get("status") == "failed"
+    assert (
+        "not found" in str(meta_payload.get("last_error") or "").lower()
+        or "create-background" in str(meta_payload.get("last_error") or "").lower()
+    )
+
+
+def test_spawn_vc_frame_session_action_happy_path_no_create_background(
+    tmp_path: Path,
+) -> None:
+    """G3: live session — zero create-background, single action."""
+    host = "live-host"
+    state = tmp_path / "state"
+    state.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" ]]; then',
+                f'  printf "%s [Created]\\n" "{host}"',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "attach" ]]; then',
+                '  printf "UNEXPECTED_CREATE\\n" >> "$STATE/create"',
+                "  exit 0",
+                "fi",
+                "exit 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+
+    _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        source "{COMMON_SH}"
+        spawn_vc_frame_session_action vc-frame "{host}" action new-tab --name t --cwd "{tmp_path}" -- /bin/true
+        '''
+    )
+
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "attach" not in calls
+    assert "--create-background" not in calls
+    assert calls.count("new-tab") == 1
+    assert not (state / "create").exists()
+
+
+# ---------------------------------------------------------------------------
+# G7 — worker tabs host in per-project sessions, never the operator seat
+# ---------------------------------------------------------------------------
+
+
+def _g7_fake_vc_frame(
+    tmp_path: Path, *, live_sessions: list[str] | None = None
+) -> tuple[Path, Path, Path]:
+    """Stub vc-frame that logs argv and optional create-background."""
+    state = tmp_path / "g7-state"
+    state.mkdir(exist_ok=True)
+    (state / "live").write_text(
+        "\n".join(live_sessions or []) + ("\n" if live_sessions else ""),
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(exist_ok=True)
+    capture = state / "calls"
+    vc_frame = fake_bin / "vc-frame"
+    vc_frame.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'STATE="{state}"',
+                'printf -- "--CALL--\\n" >> "$STATE/calls"',
+                'printf "%s\\n" "$@" >> "$STATE/calls"',
+                'if [[ "${1:-}" == "list-sessions" || "${1:-}" == "ls" ]]; then',
+                '  if [[ -f "$STATE/live" ]]; then cat "$STATE/live"; fi',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "attach" && "${2:-}" == "--create-background" ]]; then',
+                '  printf "%s [Created]\\n" "${3:-}" >> "$STATE/live"',
+                '  printf "create:%s\\n" "${3:-}" >> "$STATE/create"',
+                "  exit 0",
+                "fi",
+                'if [[ "${1:-}" == "--session" ]]; then',
+                '  sess="${2:-}"',
+                '  if ! grep -qxF "$sess [Created]" "$STATE/live" 2>/dev/null \\',
+                '     && ! grep -qxF "$sess" "$STATE/live" 2>/dev/null; then',
+                "    # Accept bare name lines too.",
+                '    if ! awk -v s="$sess" \'$1 == s { found=1 } END { exit found ? 0 : 1 }\' "$STATE/live" 2>/dev/null; then',
+                '      printf "Session \'%s\' not found\\n" "$sess" >&2',
+                "      exit 0",
+                "    fi",
+                "  fi",
+                "  exit 0",
+                "fi",
+                "exit 0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    vc_frame.chmod(0o755)
+    _mirror_fake_vc_frame(vc_frame)
+    return fake_bin, state, capture
+
+
+def test_g7_worker_tab_never_lands_in_operator_session(tmp_path: Path) -> None:
+    """Dispatch from seat X for repo foo → tab in foo, zero --session X."""
+    project = tmp_path / "foo"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    operator_seat = "operator-X"
+    fake_bin, state, _capture = _g7_fake_vc_frame(
+        tmp_path, live_sessions=[f"{operator_seat} [Created]", "foo [Created]"]
+    )
+
+    _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export VC_FRAME=1
+        export VC_FRAME_PANE_ID=pane-1
+        export VC_FRAME_SESSION_NAME="{operator_seat}"
+        export SPAWN_ROOT="{project}"
+        export VIBECRAFTED_RUN_ID="impl-g7-001"
+        export VIBECRAFTED_OPERATOR_SESSION="{operator_seat}"
+        source "{COMMON_SH}"
+        spawn_in_operator_session "{launcher}" "worker"
+        printf 'resolved=%s\\n' "$(spawn_effective_operator_session)"
+        '''
+    )
+
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "--session" in calls
+    assert "\nfoo\n" in calls or calls.endswith("foo") or "\nfoo\n" in f"\n{calls}\n"
+    # No action targets the operator seat.
+    assert f"--session\n{operator_seat}\n" not in calls
+    assert "operator-X" not in [
+        line
+        for i, line in enumerate(calls.splitlines())
+        if i and calls.splitlines()[i - 1] == "--session"
+    ]
+
+
+def test_g7_missing_project_session_create_background_then_tab(tmp_path: Path) -> None:
+    """Host foo missing → one create-background + tab; live host → no create."""
+    project = tmp_path / "foo"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+
+    # Missing host first.
+    fake_bin, state, _ = _g7_fake_vc_frame(tmp_path, live_sessions=[])
+    _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export SPAWN_ROOT="{project}"
+        export VIBECRAFTED_RUN_ID="impl-g7-miss"
+        source "{COMMON_SH}"
+        spawn_in_operator_session "{launcher}" "worker"
+        '''
+    )
+    create = (state / "create").read_text(encoding="utf-8")
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "create:foo" in create
+    assert "--create-background" in calls
+    # Real actions only (exclude `action new-tab --help` capability probe).
+    material_new_tabs = [
+        c
+        for c in _split_vc_frame_calls(calls)
+        if len(c) >= 2 and "new-tab" in c and "--help" not in c
+    ]
+    assert len(material_new_tabs) == 2  # miss + after resurrect
+
+    # Happy path: host already live → zero create-background.
+    state2 = tmp_path / "g7-live"
+    state2.mkdir()
+    fake_bin2, state_live, _ = _g7_fake_vc_frame(
+        state2, live_sessions=["foo [Created]"]
+    )
+    launcher2 = state2 / "foo" / "launch.sh"
+    launcher2.parent.mkdir()
+    launcher2.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher2.chmod(0o755)
+    _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin2}:$PATH"
+        export SPAWN_ROOT="{launcher2.parent}"
+        export VIBECRAFTED_RUN_ID="impl-g7-live"
+        source "{COMMON_SH}"
+        spawn_in_operator_session "{launcher2}" "worker"
+        '''
+    )
+    live_calls = (state_live / "calls").read_text(encoding="utf-8")
+    assert "--create-background" not in live_calls
+    live_new_tabs = [
+        c
+        for c in _split_vc_frame_calls(live_calls)
+        if len(c) >= 2 and "new-tab" in c and "--help" not in c
+    ]
+    assert len(live_new_tabs) == 1
+
+
+def test_g7_worker_session_env_override(tmp_path: Path) -> None:
+    """VIBECRAFTED_WORKER_SESSION=bar → tab in bar regardless of repo."""
+    project = tmp_path / "foo"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    fake_bin, state, _ = _g7_fake_vc_frame(tmp_path, live_sessions=["bar [Created]"])
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export SPAWN_ROOT="{project}"
+        export VC_FRAME_SESSION_NAME="operator-X"
+        export VIBECRAFTED_WORKER_SESSION="bar"
+        export VIBECRAFTED_RUN_ID="impl-g7-ov"
+        source "{COMMON_SH}"
+        printf 'host=%s\\n' "$(spawn_effective_operator_session)"
+        spawn_in_operator_session "{launcher}" "worker"
+        '''
+    )
+    assert "host=bar" in result.stdout
+    sessions = [
+        line
+        for i, line in enumerate(
+            (state / "calls").read_text(encoding="utf-8").splitlines()
+        )
+        if i
+        and (state / "calls").read_text(encoding="utf-8").splitlines()[i - 1]
+        == "--session"
+    ]
+    assert "bar" in sessions
+    assert "foo" not in sessions
+
+
+def test_g7_name_collision_uses_workers_suffix(tmp_path: Path) -> None:
+    """Dispatch from seat foo for repo foo → host 'foo workers', not foo."""
+    project = tmp_path / "foo"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    host = "foo workers"
+    fake_bin, state, _ = _g7_fake_vc_frame(
+        tmp_path, live_sessions=[f"{host} [Created]", "foo [Created]"]
+    )
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export VC_FRAME=1
+        export VC_FRAME_PANE_ID=pane-1
+        export VC_FRAME_SESSION_NAME="foo"
+        export SPAWN_ROOT="{project}"
+        export VIBECRAFTED_RUN_ID="impl-g7-col"
+        source "{COMMON_SH}"
+        printf 'host=%s\\n' "$(spawn_effective_operator_session)"
+        spawn_in_operator_session "{launcher}" "worker"
+        '''
+    )
+    assert "host=foo workers" in result.stdout
+    calls = (state / "calls").read_text(encoding="utf-8")
+    assert "foo workers" in calls
+    # Worker action must not target the bare operator seat name as host.
+    session_args = []
+    lines = calls.splitlines()
+    for i, line in enumerate(lines):
+        if line == "--session" and i + 1 < len(lines):
+            session_args.append(lines[i + 1])
+    assert "foo workers" in session_args
+    assert session_args.count("foo") == 0
+
+
+def test_g7_receipt_operator_session_is_worker_host(tmp_path: Path) -> None:
+    """After resolve, VIBECRAFTED_OPERATOR_SESSION export = actual worker host."""
+    project = tmp_path / "proj-bar"
+    project.mkdir()
+    launcher = project / "launch.sh"
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    fake_bin, _state, _ = _g7_fake_vc_frame(
+        tmp_path, live_sessions=["proj-bar [Created]"]
+    )
+
+    result = _bash(
+        f'''
+        set -euo pipefail
+        export PATH="{fake_bin}:$PATH"
+        export VC_FRAME_SESSION_NAME="vc-workspace"
+        export SPAWN_ROOT="{project}"
+        export VIBECRAFTED_OPERATOR_SESSION="vc-workspace"
+        export VIBECRAFTED_RUN_ID="impl-g7-rcpt"
+        source "{COMMON_SH}"
+        spawn_in_operator_session "{launcher}" "worker"
+        printf 'receipt=%s\\n' "${{VIBECRAFTED_OPERATOR_SESSION}}"
+        '''
+    )
+    assert "receipt=proj-bar" in result.stdout

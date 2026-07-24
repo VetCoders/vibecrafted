@@ -7,10 +7,11 @@ from pathlib import Path
 from vibecrafted_core import ship
 from vibecrafted_core.lifecycle_control import lifecycle_control_main
 from vibecrafted_core.lifecycle_runner import (
-    LifecycleRunSpec,
     LifecycleRunner,
+    LifecycleRunSpec,
     lifecycle_main,
 )
+
 from .lifecycle_schema_assertions import (
     assert_lifecycle_state_matches_packaged_schema,
 )

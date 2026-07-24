@@ -4,9 +4,8 @@ import json
 import os
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
@@ -19,13 +18,7 @@ def _write_capture_command(bin_dir: Path, name: str, capture_file: Path) -> None
     for script_name in script_names:
         script = bin_dir / script_name
         script.write_text(
-            "\n".join(
-                [
-                    "#!/usr/bin/env bash",
-                    "set -euo pipefail",
-                    'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
-                ]
-            )
+            '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > "$CAPTURE_FILE"'
             + "\n",
             encoding="utf-8",
         )
@@ -107,22 +100,7 @@ def _write_fake_osascript(
 ) -> None:
     script = bin_dir / "osascript"
     script.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import os",
-                "import sys",
-                "from pathlib import Path",
-                "",
-                "payload = sys.stdin.read()",
-                'capture = Path(os.environ["CAPTURE_FILE"])',
-                'state_file = Path(os.environ["SESSION_STATE_FILE"])',
-                'with capture.open("a", encoding="utf-8") as fh:',
-                '    fh.write("OSA " + payload.replace("\\n", "\\\\n") + "\\n")',
-                'if "new-session-with-layout" in payload or "attach --force-run-commands" in payload:',
-                '    state_file.write_text("live", encoding="utf-8")',
-            ]
-        )
+        '#!/usr/bin/env python3\nimport os\nimport sys\nfrom pathlib import Path\n\npayload = sys.stdin.read()\ncapture = Path(os.environ["CAPTURE_FILE"])\nstate_file = Path(os.environ["SESSION_STATE_FILE"])\nwith capture.open("a", encoding="utf-8") as fh:\n    fh.write("OSA " + payload.replace("\\n", "\\\\n") + "\\n")\nif "new-session-with-layout" in payload or "attach --force-run-commands" in payload:\n    state_file.write_text("live", encoding="utf-8")'
         + "\n",
         encoding="utf-8",
     )
@@ -240,6 +218,7 @@ def test_helper_exports_vc_skill_wrappers() -> None:
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -295,6 +274,7 @@ def test_vc_init_finds_bundled_vc_frame_and_creates_missing_operator_session(
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -351,6 +331,7 @@ def test_operator_spawn_success_prints_actionable_receipt(tmp_path: Path) -> Non
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -406,6 +387,7 @@ def test_operator_spawn_failure_is_loud_and_preserves_status(tmp_path: Path) -> 
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 37
@@ -441,6 +423,7 @@ def test_vc_init_missing_vc_frame_message_has_fresh_install_path_hint(
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode != 0
@@ -487,10 +470,17 @@ def test_marbles_from_operator_mode_spawns_launcher_in_fresh_tab_and_loops_right
     )
 
     payload = capture_file.read_text(encoding="utf-8").splitlines()
-    assert "new-tab" in payload
+    # One marbles run owns a dedicated host session. Its first surface is a
+    # fresh marbles tab, never a pane in the operator's active session.
+    assert payload[:4] == [
+        "--session",
+        "vibecrafted-marb-014520",
+        "action",
+        "new-tab",
+    ]
     assert "--name" in payload
-    assert "marbles" in payload
-    assert "vibecrafted-marb-014520" in payload
+    assert "marbles" in " ".join(payload) or "marb-014520" in payload
+    assert "vibecrafted-marb-014520" in payload or "marb-014520" in payload
 
 
 def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
@@ -539,7 +529,8 @@ def test_marbles_inside_vc_frame_uses_bundled_vc_frame_priority(
     assert result.returncode == 0
     assert result.stderr == ""
     payload = capture_file.read_text(encoding="utf-8")
-    assert "new-tab" in payload
+    # Bundled vc-frame must create the tab in the dedicated marbles host.
+    assert "--session\nvibecrafted-marb-014520\naction\nnew-tab\n" in payload
     assert result.stdout.endswith(f"PATH={os.defpath}\n")
 
 
@@ -556,7 +547,7 @@ def test_marbles_manual_spawn_emits_probe_without_l1_transcript_tail(
         / ".vibecrafted"
         / "artifacts"
         / _org_repo()
-        / datetime.now().strftime("%Y_%m%d")
+        / datetime.now(timezone.utc).strftime("%Y_%m%d")
         / "marbles"
         / "reports"
     )
@@ -851,6 +842,7 @@ def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     expected_session = _expected_operator_session(env["VIBECRAFTED_RUN_ID"])

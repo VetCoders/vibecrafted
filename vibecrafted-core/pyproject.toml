@@ -1,6 +1,6 @@
 [project]
 name = "vibecrafted"
-version = "3.5.0"
+version = "3.6.0"
 description = "Core Python library for Vibecrafted runtime and synthesis surfaces."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -54,7 +54,15 @@ artifacts = [
     "vibecrafted_core/skills/**",
     "vibecrafted_core/deck/vibecrafted",
     "vibecrafted_core/schemas/**",
+    "vibecrafted_core/config/vc-frame/**",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["vibecrafted_core"]
+# vibecrafted_core/config/vc-frame is a symlink to monorepo config/vc-frame
+# (zero-copy at dev time; hatch follows the symlink into the wheel).
+
+[tool.pytest.ini_options]
+markers = [
+    "e2e_delivery: full config delivery channel matrix (wheel/dev × shell)",
+]

@@ -35,8 +35,9 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Iterable
+from typing import Any
 
 try:
     import iterm2
@@ -156,7 +157,7 @@ async def _post_notification(
     try:
         await iterm2.async_post_notification(connection, title=title, body=body)  # type: ignore[attr-defined]
         return
-    except (AttributeError, Exception):
+    except AttributeError:
         pass
     try:
         app = await iterm2.async_get_app(connection)  # type: ignore[union-attr]
@@ -165,10 +166,8 @@ async def _post_notification(
             tab = window.current_tab if window else None
             session = tab.current_session if tab else None
             if session is not None:
-                await session.async_inject(
-                    f"\x1b]9;{title}: {body}\x07".encode("utf-8")
-                )
-    except Exception:  # pragma: no cover - best-effort path
+                await session.async_inject(f"\x1b]9;{title}: {body}\x07".encode())
+    except Exception:  # pragma: no cover - best-effort path  # noqa: BLE001
         _LOG.debug("notification fallback failed", exc_info=True)
 
 
@@ -231,7 +230,7 @@ async def _run_with_reconnect(
             await iterm2.async_main(_main_loop)  # type: ignore[attr-defined]
         except KeyboardInterrupt:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001
             attempt += 1
             delay = delays[min(attempt - 1, len(delays) - 1)]
             _LOG.warning(

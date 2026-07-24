@@ -28,9 +28,11 @@ copy, and copies public assets/fonts to the runtime home directory.
 Through the first-class command deck:
 
 ```bash
-vc-server                         # foreground dashboard on 127.0.0.1:3000
-vc-server --addr 127.0.0.1:3024   # explicit bind address
-vibecrafted server start        # start the daemonized viewer
+vc-server                         # foreground dashboard on 127.0.0.1:3024
+vc-server --addr 127.0.0.1:8080   # explicit bind address
+vc-server --help                  # CLI contract (must not start a listener)
+vc-server --version
+vibecrafted server start        # start the daemonized viewer (port 3024)
 vibecrafted server status       # check daemon and HTTP health
 vibecrafted server open         # open the viewer in your default browser
 vibecrafted server doctor       # run diagnostic checks on paths/ports

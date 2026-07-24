@@ -220,7 +220,9 @@ Report path (mandatory):
 {{REPORT_PATH}}
 
 Report sections:
-- Frontmatter (mirror this prompt's YAML, set `status: completed | failed`)
+- Frontmatter (mandatory `vibecrafted.report-frontmatter.v1`):
+  `run_id`, `agent`, `skill`, `status` / `claim_status` (`completed|failed|blocked|partial`).
+  Claim is not a self-seal for board `f` — runtime triangulates claim vs exit/artifacts.
 - Current state, Proposal, Execution, Open risks, Next move
 - Gate results (paste the final relevant output lines of each gate command)
 - Files changed (paste `git diff --stat HEAD~1` when a commit was made)

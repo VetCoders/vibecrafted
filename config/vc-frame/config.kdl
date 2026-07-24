@@ -38,20 +38,35 @@ themes {
 //   export VIBECRAFTED_VC_FRAME_THEME="$(./auto-theme.sh)"
 //
 // Then either override `theme "..."` below or pass via overlay config.
-// The fleet default below (vibecrafted) is intentionally neutral so the
-// shipped framework looks the same on a fresh install regardless of host.
-
-// Default theme: pastel (calm). Swap to "monochrome" for greyscale, or
-// "vibecrafted" for the amber/gold brand palette. Both pastel and monochrome
-// ship bundled in the vc-frame binary (assets/themes/).
-theme "pastel"
+// Fleet chrome — two eyes, one standard shape (flat tiles, no  triangles):
+//
+//   dark  → monochrome        (bundled in vc-frame assets)
+//   light → vibecrafted-ivory (themes/vibecrafted-ivory.kdl — kość słoniowa)
+//
+// theme_dark + theme_light both required for host-terminal auto-switch
+// (CSI 2031). Static `theme` is the fallback when the terminal does not
+// report a palette. Brand block "vibecrafted" (graphite + amber) and mesh
+// themes remain for explicit override / host identity.
+theme "monochrome"
+theme_dark "monochrome"
+theme_light "vibecrafted-ivory"
+// Flat status-bar / tab-bar: no powerline arrow fonts (). Plugins paint
+// plain Ctrl+<key> LABEL tiles instead of triangular ribbon buttons.
+simplified_ui true
 
 // ─── Shell & Display ────────────────────────────────────────────────────────────
 default_shell "zsh"
 // compact chowal rail SESSIONS z nowego default.kdl (2026-07-07)
-default_layout "default"
+// 2026-07-20: default = wbudowany "vibecrafted" (operator layout z railem,
+// Guide + vibecrafted tabs) — zrzut zywego "Vibecrafted Operator"
+default_layout "vibecrafted"
 copy_command "pbcopy"
 mouse_mode true
+// Rail hover chrome. Defaults in vc-frame are already true; pin so product
+// surface does not drift. With these on, UpdateHover delivers Mouse::Hover to
+// the unfocused SESSIONS rail (and clears on leave) — no focus_follows_mouse.
+advanced_mouse_actions true
+mouse_hover_effects true
 pane_frames true
 scroll_buffer_size 50000
 styled_underlines false
@@ -181,6 +196,30 @@ keybinds {
     // ever closes a pane. (Normal full-quit path = close the last pane.)
     session {
         bind "q" { Quit; }
+    }
+
+    // ─── Tab mode (Ctrl+t): spatial navigation ──────────────────────────────
+    // ←/→ walk the TOP tab bar; ↑/↓ walk the LEFT Sessions rail. The pipe
+    // target is the plugin URL "vc-frame:session-manager" — a "session-rail"
+    // alias named in older docs was never defined anywhere, so alias-form
+    // binds piped into the void. Every rail instance resolves the same
+    // relative target (wrap-around, idempotent) — see
+    // relative_session_target() in default-plugins/session-manager.
+    tab {
+        bind "h" "Left" { GoToPreviousTab; }
+        bind "l" "Right" { GoToNextTab; }
+        bind "k" "Up" {
+            MessagePlugin "vc-frame:session-manager" {
+                name "vc_rail_nav"
+                payload "up"
+            };
+        }
+        bind "j" "Down" {
+            MessagePlugin "vc-frame:session-manager" {
+                name "vc_rail_nav"
+                payload "down"
+            };
+        }
     }
 
     // ─── Copy mode (inside Ctrl+s SCROLL) ───────────────────────────────────

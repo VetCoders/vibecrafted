@@ -11,6 +11,30 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
+<!-- fleet-imperative: v3 -->
+
+> **Invocation for `vc-agents` (launcher `agents`)**
+>
+> Same three-path _shape_ as the fleet, with **this** skill's literals — see the
+> canonical [Delegation Matrix](../DELEGATION_MATRIX.md):
+>
+> - [Shared three paths](../DELEGATION_MATRIX.md#shared-three-paths)
+> - [Launcher catalogue](../DELEGATION_MATRIX.md#launcher-catalogue-core-runtime)
+> - [Per-launcher rule](../DELEGATION_MATRIX.md#per-launcher-rule-the-semantic-delta)
+> - [Native vs external](../DELEGATION_MATRIX.md#native-subagents-vs-external-workers)
+>
+> | Path                    | Literal for this skill                                                                                                                                  |
+> | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. User-launched worker | (fleet contract — external modes via documented spawn paths)                                                                                            |
+> | 2. Interactive          | load `vc-agents` as doctrine — execute **in this session**; use native subagents when required; do **not** externalize merely because a launcher exists |
+> | 3. Agent-operator       | may dispatch the worker form above via `vc-dispatch` / operator lines while preserving this skill's identity                                            |
+>
+> **Note:** External fleet **contract**; interactive skills still execute in-session.
+
+> Freer native on some runs ≠ abandon external fleet. `vc-dispatch` and `vc-ship` keep their own identities.
+
+<!-- /fleet-imperative -->
+
 # vc-agents — The External Execution Fleet
 
 ## Operator Entry
@@ -42,22 +66,22 @@ vc-start
 operator command a founder types first. The operator-facing entrypoint stays:
 
 ```bash
-vibecrafted <workflow> <agent> \
+vibecrafted <launcher> <agent> \
   --<options> <values> \
   --<parameters> <values> \
   --file '/path/to/plan.md'
 ```
 
 ```bash
-vc-<workflow> <agent> \
+vc-<launcher> <agent> \
   --<options> <values> \
   --<parameters> <values> \
   --prompt '<prompt>'
 ```
 
-If `vc-<workflow> <agent>` is invoked outside vc-frame, the framework will attach
-or create the operator session and run that workflow in a new tab. `vc-agents`
-defines how that workflow fans out into external workers.
+If `vc-<launcher> <agent>` is invoked outside vc-frame, the framework will attach
+or create the operator session and run that launcher skill in a new tab. `vc-agents`
+defines how that launcher run fans out into external workers.
 
 ### Concrete dispatch examples
 
@@ -210,7 +234,7 @@ Living tree note:
 ## Spawn commands
 
 The operator-facing launch path for out-of-process delegation goes through the
-`vibecrafted` command deck or the `vc-<workflow>` helper. The repo-owned spawn
+`vibecrafted` command deck or the `vc-<launcher>` helper. The repo-owned spawn
 scripts remain the internal engine behind that path.
 
 ### Codex

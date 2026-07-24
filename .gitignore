@@ -53,3 +53,6 @@ vibecrafted-io-link
 /vibecrafted-server/target
 /docs/plans
 /.air
+/.venv/
+**/.venv/
+/.prview

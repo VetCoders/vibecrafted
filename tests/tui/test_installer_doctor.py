@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from argparse import Namespace
 import shutil
 import subprocess
+from argparse import Namespace
 from pathlib import Path
+
+from vibecrafted_core.doctor import _vc_frame_delivery_findings
+from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
 
 from scripts import vetcoders_install as installer
 
@@ -118,24 +121,7 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-                "vc-agents() { :; }",
-                "vc-init() { :; }",
-                "vc-intents() { :; }",
-                "vc-ownership() { :; }",
-                "vc-loop() { :; }",
-                "vc-ship() { :; }",
-                "vc-cron() { :; }",
-                "vc-marbles() { :; }",
-                "codex-implement() { :; }",
-                "codex-marbles() { :; }",
-                "skills-sync() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}\nvc-agents() {{ :; }}\nvc-init() {{ :; }}\nvc-intents() {{ :; }}\nvc-ownership() {{ :; }}\nvc-loop() {{ :; }}\nvc-ship() {{ :; }}\nvc-cron() {{ :; }}\nvc-marbles() {{ :; }}\ncodex-implement() {{ :; }}\ncodex-marbles() {{ :; }}\nskills-sync() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
@@ -253,24 +239,7 @@ def test_run_doctor_includes_dashboard_smoke(tmp_path: Path, monkeypatch) -> Non
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-                "vc-agents() { :; }",
-                "vc-init() { :; }",
-                "vc-intents() { :; }",
-                "vc-ownership() { :; }",
-                "vc-loop() { :; }",
-                "vc-ship() { :; }",
-                "vc-cron() { :; }",
-                "vc-marbles() { :; }",
-                "codex-implement() { :; }",
-                "codex-marbles() { :; }",
-                "skills-sync() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}\nvc-agents() {{ :; }}\nvc-init() {{ :; }}\nvc-intents() {{ :; }}\nvc-ownership() {{ :; }}\nvc-loop() {{ :; }}\nvc-ship() {{ :; }}\nvc-cron() {{ :; }}\nvc-marbles() {{ :; }}\ncodex-implement() {{ :; }}\ncodex-marbles() {{ :; }}\nskills-sync() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
@@ -351,15 +320,7 @@ def test_run_doctor_accepts_gemini_help_when_version_flag_exits_nonzero(
     fake_bin.mkdir()
     _write_executable(
         gemini,
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                'case "${1:-}" in',
-                "  --help) echo 'gemini help'; exit 0 ;;",
-                "  *) exit 1 ;;",
-                "esac",
-            ]
-        )
+        "#!/usr/bin/env bash\ncase \"${1:-}\" in\n  --help) echo 'gemini help'; exit 0 ;;\n  *) exit 1 ;;\nesac"
         + "\n",
     )
 
@@ -397,24 +358,7 @@ def test_run_doctor_finds_launchers_outside_local_bin(
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-                "vc-agents() { :; }",
-                "vc-init() { :; }",
-                "vc-intents() { :; }",
-                "vc-ownership() { :; }",
-                "vc-loop() { :; }",
-                "vc-ship() { :; }",
-                "vc-cron() { :; }",
-                "vc-marbles() { :; }",
-                "codex-implement() { :; }",
-                "codex-marbles() { :; }",
-                "skills-sync() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}\nvc-agents() {{ :; }}\nvc-init() {{ :; }}\nvc-intents() {{ :; }}\nvc-ownership() {{ :; }}\nvc-loop() {{ :; }}\nvc-ship() {{ :; }}\nvc-cron() {{ :; }}\nvc-marbles() {{ :; }}\ncodex-implement() {{ :; }}\ncodex-marbles() {{ :; }}\nskills-sync() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
@@ -942,31 +886,13 @@ def test_run_doctor_spawn_e2e_supplies_full_meta_arguments(
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-                "codex-implement() { :; }",
-                "codex-marbles() { :; }",
-                "skills-sync() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}\ncodex-implement() {{ :; }}\ncodex-marbles() {{ :; }}\nskills-sync() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
 
     (scripts_dir / "common.sh").write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'spawn_write_meta() { local meta_path="$1"; local status="$2"; printf "%s\\n" "$status" > "$meta_path"; }',
-                "spawn_prepare_paths() { :; }",
-                "spawn_watch_startup() { :; }",
-                'spawn_generate_launcher() { local launcher="$1"; local _meta="$2"; local _report="$3"; local _transcript="$4"; local common="$5"; local command="$6"; cat > "$launcher" <<EOF\n#!/usr/bin/env bash\nset -euo pipefail\nsource "$common"\n$command\nEOF\n}',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nspawn_write_meta() { local meta_path="$1"; local status="$2"; printf "%s\\n" "$status" > "$meta_path"; }\nspawn_prepare_paths() { :; }\nspawn_watch_startup() { :; }\nspawn_generate_launcher() { local launcher="$1"; local _meta="$2"; local _report="$3"; local _transcript="$4"; local common="$5"; local command="$6"; cat > "$launcher" <<EOF\n#!/usr/bin/env bash\nset -euo pipefail\nsource "$common"\n$command\nEOF\n}'
         + "\n",
         encoding="utf-8",
     )
@@ -1013,13 +939,7 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
@@ -1031,15 +951,7 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
         "#!/usr/bin/env bash\nprintf '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. help ok\\n'\n",
     )
     zshrc.write_text(
-        "\n".join(
-            [
-                "# existing user config",
-                installer._old_zshrc_source_line(),
-                installer._shell_source_line(),
-                'export VIBECRAFTED_HOME="$HOME/.vibecrafted"',
-                installer._launcher_path_line(),
-            ]
-        )
+        f'# existing user config\n{installer._old_zshrc_source_line()}\n{installer._shell_source_line()}\nexport VIBECRAFTED_HOME="$HOME/.vibecrafted"\n{installer._launcher_path_line()}'
         + "\n",
         encoding="utf-8",
     )
@@ -1200,3 +1112,104 @@ def test_describe_dumb_terminal_noise_flags_starship_and_stdout() -> None:
     assert "starship init still runs under TERM=dumb" in detail
     assert "stdout noise:" in detail
     assert '[[ -o interactive && "${TERM:-}" != "dumb" ]]' in detail
+
+
+# --- W3-A vc-frame config delivery (plan vcframe-config-delivery) ---
+
+
+def _seed_complete_vibecrafted_runtime(tools: Path) -> Path:
+    runtime = tools / "vibecrafted-local"
+    (runtime / "vibecrafted-core").mkdir(parents=True)
+    (runtime / "runtime" / "scripts").mkdir(parents=True)
+    (runtime / "Makefile").write_text("install:\n", encoding="utf-8")
+    current = tools / "vibecrafted-current"
+    current.parent.mkdir(parents=True, exist_ok=True)
+    current.symlink_to(runtime.name)
+    return runtime
+
+
+def test_vc_frame_delivery_healthy_store_view_ok(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    _seed_complete_vibecrafted_runtime(tools)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.delenv("VIBECRAFTED_PREFER_REPO_VC_FRAME", raising=False)
+    stage_vc_frame_config(
+        home=home, tools_home=tools, version="doc1", prefer_repo=False
+    )
+    findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
+    view = [f.level for f in findings if f.component == "vc-frame:view"]
+    assert "fail" not in view, findings
+
+
+def test_vc_frame_delivery_stale_file_fails_view(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    view = home / ".config" / "vc-frame"
+    view.mkdir(parents=True)
+    (view / "config.kdl").write_text('theme "choinka"\n', encoding="utf-8")
+    (view / "layouts").mkdir()
+    (view / "themes").mkdir()
+    findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
+    fails = [
+        f for f in findings if f.component == "vc-frame:view" and f.level == "fail"
+    ]
+    assert fails
+    assert any("config install" in f.message for f in fails)
+
+
+def test_vc_frame_delivery_dangling_frontier_fails(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    z = home / ".config" / "vetcoders" / "frontier" / "zellij"
+    z.mkdir(parents=True)
+    bad = z / "x.kdl"
+    bad.symlink_to("./nope.kdl")
+    findings = _vc_frame_delivery_findings(home=home, tools_home=tools)
+    zf = [f for f in findings if f.component == "frontier:zombies"]
+    assert zf and zf[0].level == "fail"
+
+
+def test_vc_frame_delivery_pane_shell_warn_when_zsh_missing_and_layouts_unsubstituted(
+    tmp_path, monkeypatch
+):
+    """zsh-less PATH + layouts still command=\"zsh\" → vc-frame:pane-shell warn."""
+    home = tmp_path / "home"
+    home.mkdir()
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    # Unsubstituted layouts (dev-style view pointing at raw kdl with zsh)
+    view = home / ".config" / "vc-frame"
+    layouts = view / "layouts"
+    layouts.mkdir(parents=True)
+    (view / "config.kdl").write_text(
+        'theme "monochrome"\ndefault_shell "zsh"\ncopy_command "pbcopy"\n',
+        encoding="utf-8",
+    )
+    (view / "themes").mkdir()
+    (layouts / "research.kdl").write_text(
+        'pane command="zsh"\npane command="zsh"\n', encoding="utf-8"
+    )
+    (layouts / "operator.kdl").write_text(
+        'pane command="bash" { args "-lc" "exec /bin/zsh -l" }\n',
+        encoding="utf-8",
+    )
+    # PATH with only bash
+    bash = shutil.which("bash")
+    assert bash
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "bash").symlink_to(bash)
+    findings = _vc_frame_delivery_findings(
+        home=home, tools_home=tools, path_env=str(fake)
+    )
+    pane = [f for f in findings if f.component == "vc-frame:pane-shell"]
+    assert pane, findings
+    assert pane[0].level == "warn"
+    assert "zsh" in pane[0].message
+    assert "pbcopy" in pane[0].message

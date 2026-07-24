@@ -20,26 +20,46 @@ import argparse
 import json
 import os
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from vibecrafted_core import (
     capabilities as _capabilities,
+)
+from vibecrafted_core import (
     control_plane as _control_plane,
+)
+from vibecrafted_core import (
     doctor as _doctor,
+)
+from vibecrafted_core import (
     git as _git,
+)
+from vibecrafted_core import (
     lifecycle_control as _lifecycle_control,
+)
+from vibecrafted_core import (
     workflow as _workflow,
 )
 from vibecrafted_core.lifecycle_runner import (
     LIFECYCLE_SCHEMA_ID as _LIFECYCLE_SCHEMA_ID,
+)
+from vibecrafted_core.lifecycle_runner import (
     LifecycleSupervisor as _LifecycleSupervisor,
 )
 from vibecrafted_core.package_resources import resource_path as _core_resource_path
 
-from . import synthesis as _synthesis
-
+from .synthesis import (
+    live_failure_score as _live_failure_score,
+)
+from .synthesis import (
+    unmade_decisions as _unmade_decisions,
+)
+from .synthesis import (
+    unverified_claims as _unverified_claims,
+)
 
 SLIM_MAX_COMMITS = 5
 SLIM_MAX_DOCTOR_FINDINGS = 8
@@ -491,7 +511,9 @@ def build_server() -> Any:
     """
     from fastmcp import FastMCP
 
-    mcp = FastMCP("vibecrafted")
+    from .version import __version__
+
+    mcp = FastMCP("vibecrafted", version=__version__)
 
     @mcp.tool(annotations={"readOnlyHint": True})
     def vc_repo_full(project: str = ".") -> dict[str, Any]:
@@ -955,11 +977,9 @@ def build_server() -> Any:
             "perception_hint": "use mcp__loctree-mcp__context() for full perception",
             "intentions_hint": "use mcp__aicx-mcp__aicx_intents() for full intentions",
             "synthesis": {
-                "live_failure_score": _synthesis.live_failure_score(
-                    repo_state, doctor_state
-                ),
-                "unmade_decisions": _synthesis.unmade_decisions(repo_state),
-                "unverified_claims": _synthesis.unverified_claims(),
+                "live_failure_score": _live_failure_score(repo_state, doctor_state),
+                "unmade_decisions": _unmade_decisions(repo_state),
+                "unverified_claims": _unverified_claims(),
             },
         }
         if slim:
@@ -1058,7 +1078,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.version:
-        from . import __version__
+        from .version import __version__
 
         print(__version__)
         return 0

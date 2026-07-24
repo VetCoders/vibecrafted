@@ -26,19 +26,27 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-<!-- fleet-imperative: v2 -->
+<!-- fleet-imperative: v3 -->
 
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching through the Vibecrafted
-> launcher.
+> **Invocation for `vc-ship` (launcher `ship`)**
 >
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread unless the operator explicitly asks for runtime
-> launch, dispatch, or native delegation.
+> Same three-path _shape_ as the fleet, with **this** skill's literals — see the
+> canonical [Delegation Matrix](../DELEGATION_MATRIX.md):
 >
-> Native in-process subagents are allowed only through the bounded
-> `vc-delegate` doctrine.
+> - [Shared three paths](../DELEGATION_MATRIX.md#shared-three-paths)
+> - [Launcher catalogue](../DELEGATION_MATRIX.md#launcher-catalogue-core-runtime)
+> - [Per-launcher rule](../DELEGATION_MATRIX.md#per-launcher-rule-the-semantic-delta)
+> - [Native vs external](../DELEGATION_MATRIX.md#native-subagents-vs-external-workers)
+>
+> | Path                    | Literal for this skill                                                                                                                |
+> | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+> | 1. User-launched worker | `vibecrafted ship <agent>` / `vc-ship`                                                                                                |
+> | 2. Interactive          | `/vc-ship` — execute **in this session**; use native subagents when required; do **not** externalize merely because a launcher exists |
+> | 3. Agent-operator       | may dispatch the worker form above via `vc-dispatch` / operator lines while preserving this skill's identity                          |
+>
+> **Note:** Lifecycle **umbrella** (scaffold→release). Stages keep their own launchers.
+
+> Freer native on some runs ≠ abandon external fleet. `vc-dispatch` and `vc-ship` keep their own identities.
 
 <!-- /fleet-imperative -->
 

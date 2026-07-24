@@ -7,19 +7,17 @@ aicx_value: "intent, session, and decision-context retrieval"
 dogfooding: "required for repo-impacting work"
 ---
 
-<!-- fleet-imperative: v2 -->
+<!-- fleet-imperative: v3 -->
 
-> **Operator CLI / slash-command layer:** invoking `/vc-<workflow>` or
-> `vibecrafted <workflow> <agent>` means dispatching through the Vibecrafted
-> launcher.
+> **Invocation (template)** — replace `{{LAUNCHER}}` with the real launcher from the
+> [Delegation Matrix](../DELEGATION_MATRIX.md). Do **not** paste `workflow` literals
+> unless this skill is `vc-workflow`.
 >
-> **Skill-loading / chat layer:** loading this `SKILL.md` inside Codex, Claude,
-> Gemini, or another local agent does not mean self-dispatch. Read and apply the
-> skill in the current thread unless the operator explicitly asks for runtime
-> launch, dispatch, or native delegation.
->
-> Native in-process subagents are allowed only through the bounded
-> `vc-delegate` doctrine.
+> | Path           | Literal                                               |
+> | -------------- | ----------------------------------------------------- |
+> | 1. Worker      | `vibecrafted {{LAUNCHER}} <agent>`                    |
+> | 2. Interactive | `/vc-{{LAUNCHER}}` — in-session; native when required |
+> | 3. Operator    | same worker form via `vc-dispatch` / operator lines   |
 
 <!-- /fleet-imperative -->
 
@@ -110,6 +108,8 @@ completed — say so explicitly in the final report.
 
 - TODO — common failure mode #1 (e.g. running this skill before `vc-init`)
 - TODO — common failure mode #2 (e.g. expanding scope beyond the one sharp axis)
+- Pasting `workflow` / ERi rails when this skill is not `vc-workflow`
+- Inventing a fake `vibecrafted <name> <agent>` worker for a foundation skill
 - Skipping the Living Tree re-read before edit when concurrent agents are active
 - Claiming "done" without ticking the acceptance criteria above
 
@@ -119,6 +119,18 @@ completed — say so explicitly in the final report.
 
 See [`examples/example-prompt.md`](examples/example-prompt.md) for a minimal
 trigger phrase + expected behavior pair.
+
+---
+
+## Verify before the handoff
+
+Before claiming "done", walk around the truck — see
+[Verification Rule](../VERIFICATION_RULE.md): real artifact, not green gates only;
+never trust upstream verification as proof; check your own instrument.
+
+Progressive disclosure: keep this SKILL.md lean; put long procedures in
+`references/` and load them only when the run needs them
+([Delegation Matrix](../DELEGATION_MATRIX.md), CONTRIBUTING-SKILLS).
 
 ---
 

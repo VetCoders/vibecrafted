@@ -80,7 +80,7 @@ def _setup_installed_surface(
 def test_cmd_uninstall_removes_launchers_and_compat_pack_wrappers(
     tmp_path: Path, monkeypatch
 ) -> None:
-    home, crafted_home, store_path, helper_file, zshrc = _setup_installed_surface(
+    home, _crafted_home, store_path, helper_file, zshrc = _setup_installed_surface(
         tmp_path, monkeypatch
     )
 
@@ -196,7 +196,7 @@ def test_cmd_uninstall_prefers_manifest_tracked_launchers_and_helpers(
 def test_restore_roundtrip_recovers_launchers_and_runtime_symlinks(
     tmp_path: Path, monkeypatch
 ) -> None:
-    home, crafted_home, store_path, helper_file, zshrc = _setup_installed_surface(
+    home, _crafted_home, store_path, helper_file, zshrc = _setup_installed_surface(
         tmp_path, monkeypatch
     )
 
@@ -242,7 +242,7 @@ def test_cmd_uninstall_cleans_launcher_only_surface_without_manifest(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
     monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
     monkeypatch.setattr(installer, "_IS_TTY", False)
-    monkeypatch.setattr(installer, "_known_bundle_names", lambda: [])
+    monkeypatch.setattr(installer, "_known_bundle_names", list)
 
     for launcher_bin_dir in installer._launcher_bin_dirs():
         launcher_bin_dir.mkdir(parents=True, exist_ok=True)
