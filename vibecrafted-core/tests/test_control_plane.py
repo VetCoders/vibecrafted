@@ -9,7 +9,6 @@ import uuid
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import control_plane
 
 
@@ -1773,3 +1772,260 @@ def test_run_liveness_projects_reconciled_worker_truth(
         "found": False,
     }
     assert control_plane.run_liveness("")["found"] is False
+
+
+def _write_snapshot(home: Path, payload: dict[str, object]) -> Path:
+    runs = home / "control_plane" / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    path = runs / f"{payload['run_id']}.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_drain_settles_then_archives_old_terminals_and_keeps_recent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    now = dt.datetime.now(dt.timezone.utc)
+    old_stamp = (now - dt.timedelta(days=3)).isoformat()
+    fresh_stamp = now.isoformat()
+    # Parked gc run without a settlement terminal — must settle before archive.
+    _write_snapshot(
+        home,
+        {
+            "run_id": "impl-old-parked",
+            "state": "gc",
+            "health": "final",
+            "liveness": "pid_gone",
+            "updated_at": old_stamp,
+            "completed_at": old_stamp,
+        },
+    )
+    # Recent terminal — settles but stays retained inside the keep window.
+    _write_snapshot(
+        home,
+        {
+            "run_id": "impl-fresh-terminal",
+            "state": "failed",
+            "health": "final",
+            "liveness": "terminal",
+            "updated_at": fresh_stamp,
+            "completed_at": fresh_stamp,
+        },
+    )
+    # Live run — untouched.
+    _write_snapshot(
+        home,
+        {
+            "run_id": "impl-live",
+            "state": "active",
+            "health": "active",
+            "updated_at": fresh_stamp,
+        },
+    )
+
+    counts = control_plane.drain_settled_snapshots(keep_hours=24.0, batch_size=2)
+
+    assert counts["settled"] == 2
+    assert counts["archived"] == 1
+    assert counts["kept_recent"] == 1
+    assert counts["skipped_live"] == 1
+    assert counts["retained"] == 2
+    archived = control_plane._snapshot_archive_dir() / "impl-old-parked.json"
+    assert archived.is_file()
+    archived_payload = json.loads(archived.read_text(encoding="utf-8"))
+    # Settlement precedes gc: the archived run carries a written terminal.
+    assert archived_payload["settlement_verdict"]
+    retained = json.loads(
+        (home / "control_plane" / "runs" / "impl-fresh-terminal.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert retained["settlement_verdict"]
+    # Idempotent: a second drain changes nothing.
+    again = control_plane.drain_settled_snapshots(keep_hours=24.0, batch_size=2)
+    assert again["settled"] == 0
+    assert again["archived"] == 0
+
+
+def test_sync_state_does_not_resurrect_archived_runs_from_meta(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    old_stamp = "2026-05-19T00:00:00+00:00"
+    # Launcher meta outlives the snapshot — the resurrection source.
+    _write_meta(
+        home,
+        {
+            "run_id": "impl-archived-1",
+            "status": "completed",
+            "agent": "codex",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": old_stamp,
+            "skill_code": "impl",
+            "exit_code": 0,
+            "liveness": "terminal",
+        },
+    )
+    snapshot_path = _write_snapshot(
+        home,
+        {
+            "run_id": "impl-archived-1",
+            "state": "completed",
+            "health": "final",
+            "liveness": "terminal",
+            "updated_at": old_stamp,
+            "completed_at": old_stamp,
+            "settlement_verdict": "needs_attention",
+            "settlement_reason": "report_without_seal",
+            "settlement_at": old_stamp,
+            "settlement_source": "auto",
+            "settlement_tui": "n",
+        },
+    )
+    archive_dir = control_plane._snapshot_archive_dir()
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_path.replace(archive_dir / snapshot_path.name)
+
+    board = control_plane.sync_state()
+
+    assert not (home / "control_plane" / "runs" / "impl-archived-1.json").exists()
+    assert all(run.get("run_id") != "impl-archived-1" for run in board["recent_runs"])
+    assert board["settlement_counts"]["n"] == 0
+    # The archived projection still resolves for a direct scoped lookup.
+    looked_up = control_plane.lookup_run("impl-archived-1")
+    assert looked_up is not None
+    assert looked_up["settlement_verdict"] == "needs_attention"
+
+
+def test_sync_state_keeps_retained_snapshot_only_runs_on_board(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """After event rotation a retained snapshot is the only trace of a run."""
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    stamp = dt.datetime.now(dt.timezone.utc).isoformat()
+    _write_snapshot(
+        home,
+        {
+            "run_id": "impl-snapshot-only",
+            "state": "failed",
+            "health": "final",
+            "liveness": "terminal",
+            "updated_at": stamp,
+            "completed_at": stamp,
+            "settlement_verdict": "failed",
+            "settlement_reason": "execution_failed",
+            "settlement_at": stamp,
+            "settlement_source": "auto",
+            "settlement_tui": "x",
+        },
+    )
+
+    board = control_plane.sync_state()
+
+    run_ids = {run.get("run_id") for run in board["recent_runs"]}
+    assert "impl-snapshot-only" in run_ids
+    assert board["settlement_counts"]["x"] == 1
+
+
+def test_sync_state_rotates_oversized_event_stream_and_keeps_tail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "512")
+    events = home / "control_plane" / "events.jsonl"
+    events.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        json.dumps(
+            {
+                "ts": f"2026-05-19T00:00:{index:02d}+00:00",
+                "run_id": "impl-rotate-1",
+                "kind": "state",
+                "message": f"tick {index}",
+                "payload": {"state": "active", "agent": "codex"},
+            }
+        )
+        for index in range(40)
+    ]
+    events.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    board = control_plane.sync_state()
+
+    archive = control_plane._events_archive_dir()
+    rotated = list(archive.glob("events-*.jsonl"))
+    assert len(rotated) == 1
+    # Tail re-seeded: the fresh stream keeps the last records for the board.
+    fresh_text = events.read_text(encoding="utf-8")
+    fresh = fresh_text.strip().splitlines()
+    # Tail re-seed happens after projection appended its own transition events,
+    # so the fresh stream holds the last pre-rotation records, not the whole log.
+    assert 0 < len(fresh) <= control_plane.EVENT_TAIL_LIMIT
+    assert "tick 39" in fresh_text
+    assert 'tick 0"' not in fresh_text
+    # The run projected before rotation stays resolvable from its snapshot.
+    assert control_plane.lookup_run("impl-rotate-1") is not None
+    assert any(run.get("run_id") == "impl-rotate-1" for run in board["recent_runs"])
+
+
+def test_lock_busy_message_names_install_doctor_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S", "0.1")
+    control_plane.control_plane_home().mkdir(parents=True, exist_ok=True)
+    holder = control_plane._sync_lock_path().open("a+", encoding="utf-8")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    try:
+        with pytest.raises(control_plane.ControlPlaneLockBusy) as excinfo:
+            control_plane.sync_state()
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()
+    message = str(excinfo.value)
+    assert "install/doctor sync in progress; retry" in message
+    assert "stuck run" in message
+
+
+def test_await_status_with_run_id_is_lockless_during_board_sync(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`vibecrafted <agent> await --run-id` must survive a concurrent full sync."""
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_SYNC_LOCK_TIMEOUT_S", "0.2")
+    _write_meta(
+        home,
+        {
+            "run_id": "impl-await-lockless",
+            "status": "running",
+            "agent": "grok",
+            "mode": "implement",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "impl",
+            "launcher_pid": os.getpid(),
+            "liveness": "pid_alive",
+        },
+    )
+    control_plane.control_plane_home().mkdir(parents=True, exist_ok=True)
+
+    from vibecrafted_core import cli as core_cli
+
+    holder = control_plane._sync_lock_path().open("a+", encoding="utf-8")
+    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    try:
+        run = core_cli._run_for_agent("grok", "impl-await-lockless")
+        assert run is not None
+        assert run["run_id"] == "impl-await-lockless"
+        # run_liveness is the other supervisor-hot probe — also lockless now.
+        liveness = control_plane.run_liveness("impl-await-lockless")
+        assert liveness["found"] is True
+    finally:
+        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
+        holder.close()

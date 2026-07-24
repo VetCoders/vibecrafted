@@ -38,11 +38,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from .report_contract import validate_report_file
 from .run_triage import (
@@ -53,13 +54,13 @@ from .run_triage import (
 )
 
 __all__ = [
-    "SettlementVerdict",
-    "Settlement",
+    "SETTLED_TERMINALS",
     "TUI_FAILED",
     "TUI_FINALIZED",
     "TUI_NEEDS_ATTENTION",
-    "SETTLED_TERMINALS",
     "BareMarkdownError",
+    "Settlement",
+    "SettlementVerdict",
     "board_fxn_counts",
     "can_archive",
     "claim_digest_from_payload",
@@ -199,9 +200,7 @@ def _has_operator_waive(payload: Mapping[str, Any]) -> bool:
         if _as_bool(payload.get(key)):
             return True
     settlement = payload.get("settlement")
-    if isinstance(settlement, Mapping) and _as_bool(settlement.get("waived")):
-        return True
-    return False
+    return isinstance(settlement, Mapping) and _as_bool(settlement.get("waived"))
 
 
 def _proof_passed(payload: Mapping[str, Any]) -> bool:
@@ -385,18 +384,36 @@ def settle_payload(
     claim_digest = claim_digest_from_payload(payload)
     waived = _has_operator_waive(payload)
 
+    def _stable(candidate: Settlement) -> Settlement:
+        # Recomputing with unchanged evidence must be a no-op: re-stamping
+        # ``settled_at`` on every board sync made each pass rewrite every
+        # terminal snapshot and emit a spurious "refreshed" event — the event
+        # stream grew without bound and the idempotency comparison never held.
+        if (
+            existing is not None
+            and existing.verdict is candidate.verdict
+            and existing.reason == candidate.reason
+            and existing.source == candidate.source
+            and existing.claim_digest == candidate.claim_digest
+            and existing.waived == candidate.waived
+        ):
+            return existing
+        return candidate
+
     # Hard invalidation from the delivery kernel — folds into x.
     if _proof_failed(payload):
-        return Settlement(
-            verdict=SettlementVerdict.INVALID
-            if str(payload.get("proof_state") or "").lower() == "invalid"
-            or str(payload.get("delivery_state") or "").lower() == "invalidated"
-            else SettlementVerdict.FAILED,
-            reason="proof_or_delivery_failed",
-            settled_at=settled_at,
-            source=source,
-            claim_digest=claim_digest,
-            waived=False,
+        return _stable(
+            Settlement(
+                verdict=SettlementVerdict.INVALID
+                if str(payload.get("proof_state") or "").lower() == "invalid"
+                or str(payload.get("delivery_state") or "").lower() == "invalidated"
+                else SettlementVerdict.FAILED,
+                reason="proof_or_delivery_failed",
+                settled_at=settled_at,
+                source=source,
+                claim_digest=claim_digest,
+                waived=False,
+            )
         )
 
     # Board projections use `latest_report` / `latest_transcript`; launcher
@@ -415,51 +432,61 @@ def settle_payload(
     self_attested, attested_claim_digest = _report_self_attestation(signal_payload)
 
     if waived:
-        return Settlement(
-            verdict=SettlementVerdict.FINALIZED,
-            reason="operator_waive",
-            settled_at=settled_at,
-            source="operator_waive",
-            claim_digest=claim_digest,
-            waived=True,
+        return _stable(
+            Settlement(
+                verdict=SettlementVerdict.FINALIZED,
+                reason="operator_waive",
+                settled_at=settled_at,
+                source="operator_waive",
+                claim_digest=claim_digest,
+                waived=True,
+            )
         )
 
     # Sealed provenance is stronger than the pragmatic attestation tier.
     if classification.verdict == VERDICT_FINALIZED and _proof_passed(payload):
         if not claim_digest:
-            return Settlement(
-                verdict=SettlementVerdict.NEEDS_ATTENTION,
-                reason="finalized_candidate_without_claim",
-                settled_at=settled_at,
-                source=source,
-                claim_digest="",
+            return _stable(
+                Settlement(
+                    verdict=SettlementVerdict.NEEDS_ATTENTION,
+                    reason="finalized_candidate_without_claim",
+                    settled_at=settled_at,
+                    source=source,
+                    claim_digest="",
+                )
             )
-        return Settlement(
-            verdict=SettlementVerdict.FINALIZED,
-            reason="claim_report_and_seal",
-            settled_at=settled_at,
-            source="sealed",
-            claim_digest=claim_digest,
+        return _stable(
+            Settlement(
+                verdict=SettlementVerdict.FINALIZED,
+                reason="claim_report_and_seal",
+                settled_at=settled_at,
+                source="sealed",
+                claim_digest=claim_digest,
+            )
         )
 
     # Pragmatic tier from the operator addendum: a validated, run-bound report
     # must contain both deliberate fields. Process exit alone never enters it.
     if self_attested:
-        return Settlement(
-            verdict=SettlementVerdict.FINALIZED,
-            reason="report_self_attested",
-            settled_at=settled_at,
-            source="self_attested",
-            claim_digest=attested_claim_digest,
+        return _stable(
+            Settlement(
+                verdict=SettlementVerdict.FINALIZED,
+                reason="report_self_attested",
+                settled_at=settled_at,
+                source="self_attested",
+                claim_digest=attested_claim_digest,
+            )
         )
 
     if classification.verdict == VERDICT_FAILED:
-        return Settlement(
-            verdict=SettlementVerdict.FAILED,
-            reason=classification.reason,
-            settled_at=settled_at,
-            source=source,
-            claim_digest=claim_digest,
+        return _stable(
+            Settlement(
+                verdict=SettlementVerdict.FAILED,
+                reason=classification.reason,
+                settled_at=settled_at,
+                source=source,
+                claim_digest=claim_digest,
+            )
         )
 
     has_report = bool(signals.report_exists)
@@ -473,12 +500,14 @@ def settle_payload(
         reason = classification.reason
         if signals.kernel_axes is None and has_report and not _proof_passed(payload):
             reason = "claim_unchecked" if not claim_digest else "report_without_seal"
-        return Settlement(
-            verdict=SettlementVerdict.NEEDS_ATTENTION,
-            reason=reason,
-            settled_at=settled_at,
-            source=source,
-            claim_digest=claim_digest,
+        return _stable(
+            Settlement(
+                verdict=SettlementVerdict.NEEDS_ATTENTION,
+                reason=reason,
+                settled_at=settled_at,
+                source=source,
+                claim_digest=claim_digest,
+            )
         )
 
     # classify_run says finalized (exit 0 + delivered state + report, or
@@ -487,12 +516,14 @@ def settle_payload(
     # without a report (or a seal) from the classifier.
     if classification.verdict == VERDICT_FINALIZED:
         if not claim_digest:
-            return Settlement(
-                verdict=SettlementVerdict.NEEDS_ATTENTION,
-                reason="finalized_candidate_without_claim",
-                settled_at=settled_at,
-                source=source,
-                claim_digest="",
+            return _stable(
+                Settlement(
+                    verdict=SettlementVerdict.NEEDS_ATTENTION,
+                    reason="finalized_candidate_without_claim",
+                    settled_at=settled_at,
+                    source=source,
+                    claim_digest="",
+                )
             )
         # The sealed branch returned above. What remains is an unsealed legacy
         # finalized candidate, which stays n without explicit attestation.
@@ -501,21 +532,25 @@ def settle_payload(
             if signals.kernel_axes is not None
             else "report_without_seal"
         )
-        return Settlement(
+        return _stable(
+            Settlement(
+                verdict=SettlementVerdict.NEEDS_ATTENTION,
+                reason=demote_reason,
+                settled_at=settled_at,
+                source=source,
+                claim_digest=claim_digest,
+            )
+        )
+
+    # Unreachable under current classify_run, but fail closed.
+    return _stable(
+        Settlement(
             verdict=SettlementVerdict.NEEDS_ATTENTION,
-            reason=demote_reason,
+            reason=f"unmapped_classification:{classification.verdict}",
             settled_at=settled_at,
             source=source,
             claim_digest=claim_digest,
         )
-
-    # Unreachable under current classify_run, but fail closed.
-    return Settlement(
-        verdict=SettlementVerdict.NEEDS_ATTENTION,
-        reason=f"unmapped_classification:{classification.verdict}",
-        settled_at=settled_at,
-        source=source,
-        claim_digest=claim_digest,
     )
 
 

@@ -30,7 +30,10 @@ import vibecrafted_core.events as events_module
 
 # The ONLY functions permitted to acquire the shared global lock. Everything
 # else — especially the per-run and append/emit hot paths — must be lockless.
-_SYNC_LOCK_ALLOWED_CALLERS = {"sync_state"}
+# drain_settled_snapshots is a board-level mutator like the full rebuild:
+# it batches (≤50 snapshots per acquisition, lock released between batches)
+# and never sits on a per-run or append/emit path.
+_SYNC_LOCK_ALLOWED_CALLERS = {"sync_state", "drain_settled_snapshots"}
 
 # Hot-path functions that must NEVER acquire the shared lock. Adding _sync_lock
 # to any of these is the exact regression this guard blocks.

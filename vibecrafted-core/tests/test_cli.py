@@ -4,7 +4,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from vibecrafted_core import cli, lifecycle_delivery
 
 
@@ -131,7 +130,7 @@ def test_shell_wrapper_entrypoints_preserve_their_deck_verb(
     deck.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     seen: dict[str, object] = {}
 
-    def fake_run(argv):
+    def fake_run(argv, check=False):
         seen["argv"] = argv
         return SimpleNamespace(returncode=0)
 
@@ -438,15 +437,10 @@ def test_root_cli_agent_observe_renders_json_transcript_tail(
 ) -> None:
     transcript = tmp_path / "transcript.log"
     transcript.write_text(
-        "\n".join(
-            [
-                '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"very noisy hook payload"}',
-                '{"type":"system","subtype":"init","session_id":"claude-sess","model":"claude-opus-4-8"}',
-                '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}',
-                '{"type":"result","result":"done","usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":2},"total_cost_usd":0.01}',
-            ]
-        )
-        + "\n",
+        '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"very noisy hook payload"}\n'
+        '{"type":"system","subtype":"init","session_id":"claude-sess","model":"claude-opus-4-8"}\n'
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}\n'
+        '{"type":"result","result":"done","usage":{"input_tokens":10,"cache_read_input_tokens":4,"output_tokens":2},"total_cost_usd":0.01}\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -482,13 +476,8 @@ def test_root_cli_agent_observe_recovers_model_when_tail_starts_after_init(
 ) -> None:
     transcript = tmp_path / "transcript.log"
     transcript.write_text(
-        "\n".join(
-            [
-                '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"noise"}',
-                '{"type":"assistant","session_id":"claude-sess","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"late body"}]}}',
-            ]
-        )
-        + "\n",
+        '{"type":"system","subtype":"hook_response","session_id":"claude-sess","output":"noise"}\n'
+        '{"type":"assistant","session_id":"claude-sess","message":{"model":"claude-opus-4-8","content":[{"type":"text","text":"late body"}]}}\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -525,13 +514,8 @@ def test_root_cli_agent_observe_uses_codex_config_model(
     monkeypatch.setenv("CODEX_HOME", str(codex_home))
     transcript = tmp_path / "transcript.log"
     transcript.write_text(
-        "\n".join(
-            [
-                '{"type":"thread.started","thread_id":"codex-thread"}',
-                '{"type":"item.completed","item":{"type":"agent_message","text":"codex body"}}',
-            ]
-        )
-        + "\n",
+        '{"type":"thread.started","thread_id":"codex-thread"}\n'
+        '{"type":"item.completed","item":{"type":"agent_message","text":"codex body"}}\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(

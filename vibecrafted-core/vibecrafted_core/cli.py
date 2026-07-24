@@ -7,8 +7,9 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from . import doctor as doctor_module
 from .agent_stream import ANSI_PATTERN, AgentStreamParser, resolve_default_model
@@ -359,7 +360,7 @@ def _print_launch_input_error(*, command: str, agent: str | None, message: str) 
     if agent:
         base = f"{base} {agent}"
     print(f"error: {message}", file=sys.stderr)
-    print("", file=sys.stderr)
+    print(file=sys.stderr)
     print("Provide work for the agent with one of:", file=sys.stderr)
     print(f"  {base} --prompt 'what to do'", file=sys.stderr)
     print(f"  {base} --file /path/to/brief.md", file=sys.stderr)
@@ -400,11 +401,15 @@ def _apply_live_liveness(run: dict[str, Any] | None) -> dict[str, Any] | None:
 def _run_for_agent(
     agent: str, run_id: str, *, last: bool = False
 ) -> dict[str, Any] | None:
-    snapshot = sync_state()
+    # With an explicit run id the scoped, lockless lookup is the whole answer.
+    # The old unconditional full sync_state() here queued every await/observe
+    # behind the global board lock — during an install/doctor full sync that
+    # meant ControlPlaneLockBusy on every await inside the sync window.
     if run_id:
         return _apply_live_liveness(lookup_run(run_id))
     if not last:
         return None
+    snapshot = sync_state()
     for key in ("active_runs", "recent_runs"):
         for run in snapshot.get(key) or []:
             if str(run.get("agent") or "") == agent:
@@ -713,8 +718,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             is_lifecycle = True
 
     if is_lifecycle:
-        from .runtime_paths import vibecrafted_tools_home
         import subprocess
+
+        from .runtime_paths import vibecrafted_tools_home
 
         deck = (
             vibecrafted_tools_home() / "vibecrafted-current" / "scripts" / "vibecrafted"
@@ -722,7 +728,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not deck.is_file():
             deck = deck_path()
         if deck.is_file():
-            res = subprocess.run([str(deck), *raw_args])
+            res = subprocess.run([str(deck), *raw_args], check=False)
             return res.returncode
         if shell_wrapper_verb is not None:
             print(

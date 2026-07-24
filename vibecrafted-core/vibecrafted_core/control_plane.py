@@ -9,9 +9,10 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any
 
 from .delivery.model import (
     ContractError,
@@ -31,7 +32,6 @@ from .settlement import (
     persist_settlement_to_meta,
     settle_payload,
 )
-
 
 ACTIVE_STATES = {
     "created",
@@ -102,6 +102,8 @@ RUN_SNAPSHOT_RETENTION_SECONDS_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_SECONDS
 RUN_SNAPSHOT_RETENTION_COUNT = 2000
 RUN_SNAPSHOT_RETENTION_COUNT_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_COUNT"
 EVENT_TAIL_LIMIT = 16
+EVENTS_ROTATE_BYTES = 32 * 1024 * 1024
+EVENTS_ROTATE_BYTES_ENV = "VIBECRAFTED_EVENTS_ROTATE_BYTES"
 RECENT_RUN_LIMIT = 12
 MISSING_SESSION_IDS = {"", "pending", "none", "null", "unknown"}
 
@@ -235,8 +237,9 @@ def _sync_lock(
                 if time.monotonic() >= deadline:
                     raise ControlPlaneLockBusy(
                         f"control-plane {purpose} lock busy for > {budget:.0f}s "
-                        f"({lock_path}). Another process is holding it — look for "
-                        f"a stuck run instead of waiting on a silent hang."
+                        f"({lock_path}). Another process is holding it — usually a "
+                        f"full board rebuild (install/doctor sync in progress; retry "
+                        f"shortly) or a stuck run holding the lock."
                     ) from exc
                 time.sleep(_SYNC_LOCK_POLL_SECONDS)
         try:
@@ -376,6 +379,10 @@ def _configured_snapshot_retention_count() -> int:
     return _configured_nonnegative_int(
         RUN_SNAPSHOT_RETENTION_COUNT_ENV, RUN_SNAPSHOT_RETENTION_COUNT
     )
+
+
+def _configured_events_rotate_bytes() -> int:
+    return _configured_nonnegative_int(EVENTS_ROTATE_BYTES_ENV, EVENTS_ROTATE_BYTES)
 
 
 def _configured_nonnegative_int(env_name: str, default: int) -> int:
@@ -1234,6 +1241,78 @@ def _snapshot_archive_dir() -> Path:
     return run_snapshot_dir() / "archive"
 
 
+def _archived_run_ids() -> set[str]:
+    """Run ids already settled and archived — closed history, never rebuilt.
+
+    Snapshot filenames are ``<run_id>.json``, so a directory listing is enough;
+    no JSON parse. Used by the full board rebuild to stop archived runs from
+    resurrecting out of their (still present) launcher meta files or old event
+    lines — the resurrection loop is what let settlement debt grow without end.
+    """
+    archive_dir = _snapshot_archive_dir()
+    if not archive_dir.is_dir():
+        return set()
+    return {path.stem for path in archive_dir.glob("*.json")}
+
+
+def _events_archive_dir() -> Path:
+    return control_plane_home() / "events_archive"
+
+
+def _read_tail_lines(path: Path, limit: int, *, window_bytes: int = 65536) -> list[str]:
+    """Last ``limit`` complete lines of a large file without reading it whole."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(size - window_bytes, 0))
+            chunk = handle.read()
+    except OSError:
+        return []
+    lines = chunk.decode("utf-8", errors="replace").splitlines()
+    if size > window_bytes and lines:
+        # First line of the window is almost certainly a partial record.
+        lines = lines[1:]
+    return lines[-limit:]
+
+
+def _rotate_event_stream() -> Path | None:
+    """Rotate an oversized events.jsonl into events_archive/, keeping the tail.
+
+    The event stream is append-only and unbounded; every full board rebuild
+    re-parses it whole, so past ~1 GB a sync took a minute and starved every
+    await on the lock. Rotation is safe exactly at the end of an unscoped sync:
+    all information the stream carried has just been projected into per-run
+    snapshots, which are the durable state. The last ``EVENT_TAIL_LIMIT`` lines
+    are re-seeded into the fresh stream so the board's event tail stays
+    continuous. Caller must hold the sync lock.
+    """
+    threshold = _configured_events_rotate_bytes()
+    if threshold <= 0:
+        return None
+    stream_path = event_stream_path()
+    try:
+        if not stream_path.is_file() or stream_path.stat().st_size <= threshold:
+            return None
+    except OSError:
+        return None
+    tail = _read_tail_lines(stream_path, EVENT_TAIL_LIMIT)
+    archive_dir = _events_archive_dir()
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    stamp = _now().strftime("%Y%m%dT%H%M%SZ")
+    target = archive_dir / f"events-{stamp}.jsonl"
+    counter = 0
+    while target.exists():
+        counter += 1
+        target = archive_dir / f"events-{stamp}-{counter}.jsonl"
+    try:
+        stream_path.replace(target)
+        if tail:
+            stream_path.write_text("\n".join(tail) + "\n", encoding="utf-8")
+    except OSError:
+        return None
+    return target
+
+
 def _load_existing_snapshots() -> dict[str, dict[str, Any]]:
     snapshots: dict[str, dict[str, Any]] = {}
     for path in run_snapshot_dir().glob("*.json"):
@@ -1331,6 +1410,73 @@ def _archive_expired_snapshots() -> None:
         _archive_snapshot(path)
 
 
+def drain_settled_snapshots(
+    *, keep_hours: float = 24.0, batch_size: int = 50
+) -> dict[str, Any]:
+    """Settle-then-archive the parked terminal debt in ``runs/`` (canonical drain).
+
+    Settlement precedes gc (contract §7): every terminal snapshot first gets its
+    settlement terminal written (default → ``needs_attention``), then moves to
+    ``runs/archive/`` once it is older than ``keep_hours``. Recent terminals stay
+    retained so the board keeps showing the current day's f/x/n. Live runs are
+    never touched and nothing is deleted — archive is a rename.
+
+    Each batch (≤ ``batch_size`` snapshots) runs under its own bounded sync
+    lock, released between batches, so concurrent awaits never starve. The
+    operation is idempotent per run: a crashed drain resumes on the next call.
+    """
+    keep_seconds = max(float(keep_hours), 0.0) * 3600.0
+    step = max(int(batch_size), 1)
+    now = _now()
+    counts = {
+        "settled": 0,
+        "archived": 0,
+        "kept_recent": 0,
+        "skipped_live": 0,
+        "unreadable": 0,
+    }
+    paths = sorted(run_snapshot_dir().glob("*.json"))
+    for start in range(0, len(paths), step):
+        batch = paths[start : start + step]
+        with _sync_lock(purpose="drain"):
+            for path in batch:
+                if not path.exists():
+                    continue
+                payload = _read_json(path)
+                if not payload:
+                    counts["unreadable"] += 1
+                    continue
+                if not _run_is_terminal(payload):
+                    counts["skipped_live"] += 1
+                    continue
+                if not can_archive(payload):
+                    settlement = settle_payload(payload, source="auto")
+                    if settlement is None:
+                        counts["skipped_live"] += 1
+                        continue
+                    payload.update(settlement.to_payload())
+                    payload["settlement"] = {
+                        "verdict": settlement.verdict.value,
+                        "reason": settlement.reason,
+                        "settled_at": settlement.settled_at,
+                        "source": settlement.source,
+                        "claim_digest": settlement.claim_digest,
+                        "waived": settlement.waived,
+                        "tui": settlement.tui_key,
+                    }
+                    _write_json(path, payload)
+                    counts["settled"] += 1
+                age = _snapshot_age_seconds(payload, now)
+                if age is not None and age < keep_seconds:
+                    counts["kept_recent"] += 1
+                    continue
+                if can_archive(payload):
+                    _archive_snapshot(path)
+                    counts["archived"] += 1
+    counts["retained"] = len(list(run_snapshot_dir().glob("*.json")))
+    return counts
+
+
 def _select_run(snapshot: dict[str, Any], run_id: str) -> dict[str, Any] | None:
     target = str(run_id or "").strip()
     if not target:
@@ -1342,6 +1488,9 @@ def _select_run(snapshot: dict[str, Any], run_id: str) -> dict[str, Any] | None:
     payload = _read_json(_snapshot_path(target))
     if str(payload.get("run_id") or "") == target:
         return payload
+    archived = _read_json(_snapshot_archive_dir() / f"{target}.json")
+    if str(archived.get("run_id") or "") == target:
+        return archived
     return None
 
 
@@ -1585,7 +1734,21 @@ def _project_run_payload(
     run_id: str, status: RunStatus, previous: dict[str, Any] | None
 ) -> dict[str, Any]:
     """Project one run's status to its snapshot payload (single-run, lockless)."""
-    payload = _artifact_projection(_status_to_payload(status), previous)
+    incoming = _status_to_payload(status)
+    # A settled gc park is sticky: the launcher meta that fed this status stays
+    # "running" forever, so without this guard every full sync re-parked the
+    # same dead run — restamping updated_at/completed_at (which made the drain
+    # keep-window immortal) and appending the park explanation to last_error on
+    # every pass. Fresh process evidence still reopens normal projection.
+    if (
+        previous is not None
+        and str(previous.get("state") or "") == "gc"
+        and str(previous.get("settlement_verdict") or "")
+        and not _worker_is_alive(incoming)
+        and _coerce_int(incoming.get("exit_code")) is None
+    ):
+        return dict(previous)
+    payload = _artifact_projection(incoming, previous)
     payload = _reconcile_dead_launcher(payload)
     run_dir = _runtime_run_dir(run_id)
     axes = _delivery_axes_from_run_dir(
@@ -1714,6 +1877,7 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
     lock_ctx = contextlib.nullcontext() if scoped else _sync_lock(purpose="board-sync")
     with lock_ctx:
         previous_snapshots = _load_existing_snapshots()
+        archived_ids = set() if scoped else _archived_run_ids()
         merged: dict[str, RunStatus] = {}
 
         # The migraine was the exclusive GLOBAL LOCK, not the file walk: every
@@ -1747,13 +1911,32 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
         for run_id, status in merged.items():
             if not _in_scope(run_id):
                 continue
+            # Archived runs are closed history: settlement precedes gc, so an
+            # archived snapshot already carries its terminal. Rebuilding it from
+            # the launcher meta (which outlives the snapshot) resurrected every
+            # collected run each sync and made the settlement debt immortal.
+            # A demonstrably active status (fresh evidence) still projects.
+            if (
+                run_id in archived_ids
+                and run_id not in previous_snapshots
+                and status.health != "active"
+            ):
+                continue
             previous = previous_snapshots.get(run_id)
             payload = _project_run_payload(run_id, status, previous)
             _record_transition(previous, payload)
             _write_json(_snapshot_path(run_id), payload)
             payload_runs.append(payload)
         if not scoped:
+            # Retained snapshots whose source evidence went quiet (e.g. their
+            # event lines were rotated away) stay on the board until archived;
+            # the snapshot itself is the durable state.
+            seen_ids = {str(run.get("run_id") or "") for run in payload_runs}
+            for run_id, prev in previous_snapshots.items():
+                if run_id not in seen_ids:
+                    payload_runs.append(prev)
             _archive_expired_snapshots()
+            _rotate_event_stream()
 
     # A scoped pass only re-projects runs that had fresh events; quiet target/
     # child runs keep their last snapshot, which _select_run reads directly.
@@ -2356,7 +2539,9 @@ def run_liveness(run_id: str) -> dict[str, Any]:
     if not target:
         return {"run_id": "", "found": False}
     try:
-        snapshot = sync_state()
+        # Scoped to the probed run: this is a supervisor-hot single-run probe
+        # and must never queue on the global board lock behind a full sync.
+        snapshot = sync_state(only_run_id=target)
     except OSError:
         return {"run_id": target, "found": False}
     run = _select_run(snapshot, target)
@@ -2380,11 +2565,31 @@ def cli(argv: list[str] | None = None) -> int:
         "command",
         nargs="?",
         default="sync",
-        choices=("sync", "status"),
-        help="sync writes snapshots and prints the aggregate payload; status is an alias.",
+        choices=("sync", "status", "drain"),
+        help=(
+            "sync writes snapshots and prints the aggregate payload; status is "
+            "an alias; drain settles and archives parked terminal snapshots."
+        ),
     )
-    parser.parse_args(argv)
-    payload = sync_state()
+    parser.add_argument(
+        "--keep-hours",
+        type=float,
+        default=24.0,
+        help="drain: keep terminal snapshots newer than this many hours retained.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        help="drain: snapshots per lock acquisition (lock released between batches).",
+    )
+    args = parser.parse_args(argv)
+    if args.command == "drain":
+        payload: dict[str, Any] = drain_settled_snapshots(
+            keep_hours=args.keep_hours, batch_size=args.batch_size
+        )
+    else:
+        payload = sync_state()
     print(json.dumps(payload, indent=2, ensure_ascii=False))
     return 0
 
