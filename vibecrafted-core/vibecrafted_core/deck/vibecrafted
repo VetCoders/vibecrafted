@@ -834,7 +834,7 @@ cmd_tui_help() {
   printf '%b⚒%b  %btui%b  (product binary: %bvoc%b)\n' "$_copper" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
   printf '  Launch Voc Agent — the Rust terminal cockpit over shared control-plane state.\n'
-  printf '  Installed by `make install-app-binaries` / `make install` as ~/.local/bin/voc.\n'
+  printf '  Installed by "make install-app-binaries" / "make install" as ~/.local/bin/voc.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted tui [voc flags...]\n'

@@ -490,9 +490,9 @@ _skill_summary() {
     dou) printf 'Definition of Undone audit across the product surface.\n' ;;
     followup) printf 'Post-implementation direction audit for gaps, drift, regressions, and next leverage.\n' ;;
     hydrate) printf 'Packaging and go-to-market hydration.\n' ;;
-    implement) printf 'Autonomous end-to-end implementation with followup and marbles built in.\n' ;;
+    implement) printf 'Ship WRITE stage: autonomous end-to-end implementation with followup and marbles built in.\n' ;;
     intents) printf 'Plan-to-runtime truth audit across prior intent and present repo state.\n' ;;
-    justdo) printf 'Convenient alias for vc-implement, kept for existing agents and scripts.\n' ;;
+    justdo) printf 'Standalone Just Do posture: take the task (type from prompt); not an implement alias.\n' ;;
     marbles) printf 'Counterexample loop that keeps fixing what is still wrong until the surface is clean.\n' ;;
     ownership) printf 'Full-spectrum operational ownership across code, runtime, docs, packaging, and ship surface.\n' ;;
     partner) printf 'Collaborative debugging, architecture triage, and shared executive reasoning with the user in the loop.\n' ;;
@@ -613,9 +613,9 @@ cmd_skill_help() {
       printf '  vc-implement claude --file /path/to/brief.md\n'
       ;;
     justdo)
-      printf '  vibecrafted implement codex --prompt "Ship the feature"\n'
-      printf '  vc-implement claude --file /path/to/brief.md\n'
-      printf '  vibecrafted justdo codex --prompt "Ship the feature"  # same workflow\n'
+      printf '  vibecrafted justdo codex --prompt "Review the last five commits for X"\n'
+      printf '  vc-justdo claude --file /path/to/brief.md\n'
+      printf '  # not implement — own skill id, posture from prompt (ADR-0001)\n'
       ;;
     marbles)
       printf '  vibecrafted marbles codex --count 3 --depth 3\n'
@@ -834,7 +834,7 @@ cmd_tui_help() {
   printf '%b⚒%b  %btui%b  (product binary: %bvoc%b)\n' "$_copper" "$_reset" "$_bold" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
   printf '  Launch Voc Agent — the Rust terminal cockpit over shared control-plane state.\n'
-  printf '  Installed by `make install-app-binaries` / `make install` as ~/.local/bin/voc.\n'
+  printf '  Installed by "make install-app-binaries" / "make install" as ~/.local/bin/voc.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted tui [voc flags...]\n'
@@ -1867,7 +1867,7 @@ cmd_help_full() {
   printf '%b=== ALIASES ===%b\n' "$_bold" "$_reset"
   printf '\n'
   printf '  %bstats%b = status       %bcheck%b = doctor       %bremove%b = uninstall\n' "$_dim" "$_reset" "$_dim" "$_reset" "$_dim" "$_reset"
-  printf '  %bjustdo%b = alias for implement       %bvc-justdo%b = alias for vc-implement\n' "$_dim" "$_reset" "$_dim" "$_reset"
+  printf '  %bjustdo%b = Just Do posture (not implement)  %bvc-justdo%b = same skill id\n' "$_dim" "$_reset" "$_dim" "$_reset"
   printf '\n'
   printf '%b=== SKILL FLAGS (uniform contract) ===%b\n' "$_bold" "$_reset"
   printf '\n'

@@ -5016,6 +5016,31 @@ def _uv_tool_shim() -> Path:
     return Path(data_home) / "uv" / "tools" / "vibecrafted" / "bin" / "vibecrafted"
 
 
+def _launcher_symlink_target(repo_root: Path) -> Path:
+    """Resolve what ~/.local/bin/vibecrafted should point at.
+
+    The uv-tool shim wins when it exists (full `make install` lane). A
+    python-only install (CI skill-loader, bare `vetcoders_install.py install`)
+    has no shim yet — pointing at it would leave a dangling launcher that
+    doctor rightly fails. Fall back to the staged deck, then the source deck,
+    so the installed launcher always executes.
+    """
+    shim = _uv_tool_shim()
+    if shim.exists():
+        return shim
+    staged_deck = (
+        vibecrafted_tools_home()
+        / "vibecrafted-current"
+        / "vibecrafted-core"
+        / "vibecrafted_core"
+        / "deck"
+        / "vibecrafted"
+    )
+    if staged_deck.exists():
+        return staged_deck
+    return repo_root / "scripts" / "vibecrafted"
+
+
 def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -> None:
     """Install vibecrafted launcher to portable and compat bin surfaces."""
     launcher_src = repo_root / "scripts" / "vibecrafted"
@@ -5026,10 +5051,10 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
             canonical_bin_dir.mkdir(parents=True, exist_ok=True)
             canonical_launcher = canonical_bin_dir / "vibecrafted"
 
-            # Target 1: The installer must leave the uv-tool shim winning ~/.local/bin/vibecrafted.
-            # Do NOT copy the bash deck over that name. The deck stays reachable under its own path
-            # as a delegation target.
-            shim = _uv_tool_shim()
+            # Target 1: the uv-tool shim wins ~/.local/bin/vibecrafted when it
+            # exists; otherwise the staged/source deck keeps the launcher live
+            # (see _launcher_symlink_target). Never copy the deck over the name.
+            shim = _launcher_symlink_target(repo_root)
             if canonical_launcher.exists() or canonical_launcher.is_symlink():
                 if canonical_launcher.is_symlink():
                     try:
@@ -5064,7 +5089,7 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
                     create_symlink(canonical_legacy, legacy_dst)
         else:
             for launcher_bin_dir in _launcher_bin_dirs():
-                shim = _uv_tool_shim()
+                shim = _launcher_symlink_target(repo_root)
                 create_symlink(shim, launcher_bin_dir / "vibecrafted", dry_run=True)
                 for wrapper in LAUNCHER_WRAPPERS:
                     if wrapper in PYTHON_ENTRYPOINT_LAUNCHERS:
