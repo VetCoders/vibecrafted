@@ -73,10 +73,16 @@ fn populate(root: &Path) {
 fn published_schema_and_fixture_match_the_typed_model() {
     let fixture = include_str!("fixtures/scaffold-manifest-v1.json");
     let manifest: ScaffoldManifest = serde_json::from_str(fixture).expect("typed fixture");
+    let schema: serde_json::Value =
+        serde_json::from_str(SCAFFOLD_MANIFEST_SCHEMA_JSON).expect("published schema");
+    let path_pattern = schema["properties"]["artifacts"]["items"]["properties"]["path"]["pattern"]
+        .as_str()
+        .expect("artifact path pattern");
     assert_eq!(manifest.schema_version, "1");
     assert_eq!(manifest.artifacts[2].role, ScaffoldArtifactRole::Brief);
     assert_eq!(manifest.artifacts[2].dependencies, ["driver", "atlas"]);
     assert!(SCAFFOLD_MANIFEST_SCHEMA_JSON.contains("\"wave-atlas\""));
+    assert_eq!(path_pattern, r"^[^/\\].*\.md$");
 }
 
 #[test]

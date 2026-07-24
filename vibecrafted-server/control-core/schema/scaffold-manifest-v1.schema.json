@@ -22,7 +22,7 @@
           "role": {
             "enum": ["driver", "wave-atlas", "brief", "design-doc", "traceability", "tracker", "falsification", "report", "other"]
           },
-          "path": { "type": "string", "pattern": "^[^/\\].*\\.md$" },
+          "path": { "type": "string", "pattern": "^[^/\\\\].*\\.md$" },
           "editable": { "type": "boolean" },
           "required": { "type": "boolean" },
           "dependencies": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }

@@ -189,11 +189,14 @@ pub mod api {
         plan_id: &str,
         error: Option<ScaffoldError>,
     ) -> Response {
-        if let Some(error) = error {
-            return scaffold_error_response(error);
-        }
+        let status = if let Some(error) = error {
+            eprintln!("scaffold mutation failed: {error}");
+            "status-error"
+        } else {
+            "status-saved"
+        };
         let location = format!(
-            "/scaffold/editor?org={}&repo={}&day={}&plan_id={}#status-saved",
+            "/scaffold/editor?org={}&repo={}&day={}&plan_id={}#{status}",
             url_component(org),
             url_component(repo),
             url_component(day),
@@ -620,6 +623,26 @@ button{justify-self:start;margin:12px 16px;border:1px solid #5e7f47;background:#
             let html = render_editor(&fixture());
             assert!(html.contains("name=\"plan_id\" value=\"plan-a\""));
             assert!(html.contains("name=\"expected_hash\" value=\"sha256:test\""));
+        }
+
+        #[test]
+        fn form_mutation_error_redirects_back_to_editor_status() {
+            let response = redirect_after_mutation(
+                "Vetcoders",
+                "vibecrafted",
+                "2026_0615",
+                "plan-a",
+                Some(ScaffoldError::Conflict {
+                    expected: "sha256:old".into(),
+                    actual: "sha256:new".into(),
+                }),
+            );
+
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+            assert_eq!(
+                response.headers().get(header::LOCATION).unwrap(),
+                "/scaffold/editor?org=Vetcoders&repo=vibecrafted&day=2026_0615&plan_id=plan-a#status-error"
+            );
         }
     }
 }
