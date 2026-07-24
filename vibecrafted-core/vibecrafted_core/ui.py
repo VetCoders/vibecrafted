@@ -16,8 +16,7 @@ import os
 import sys
 import threading
 from types import TracebackType
-
-from typing_extensions import Self
+from typing import Self
 
 SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 SPINNER_INTERVAL = 0.08
