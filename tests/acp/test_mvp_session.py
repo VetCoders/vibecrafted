@@ -33,6 +33,17 @@ def _request(
     )
 
 
+def _has_stop_reason(
+    message: dict[str, object], request_id: int, stop_reason: str
+) -> bool:
+    result = message.get("result")
+    return (
+        message.get("id") == request_id
+        and isinstance(result, dict)
+        and result.get("stopReason") == stop_reason
+    )
+
+
 def test_mvp_fixture_handshake_prompt_update_and_cancel(tmp_path: Path) -> None:
     output = io.StringIO()
     bridge = RuntimeBridge(dry_run=True)
@@ -84,10 +95,7 @@ def test_mvp_fixture_handshake_prompt_update_and_cancel(tmp_path: Path) -> None:
         and message["params"]["update"]["sessionUpdate"] == "agent_message_chunk"  # type: ignore[index]
         for message in messages
     )
-    assert any(
-        message.get("id") == 2 and message.get("result") == {"stopReason": "end_turn"}
-        for message in messages
-    )
+    assert any(_has_stop_reason(message, 2, "end_turn") for message in messages)
     assert bridge._dry_runs[session_id]["cancelled"] is True
 
 
@@ -173,10 +181,7 @@ def test_prompt_hard_stop_requests_permission_and_denies_by_default(
     server.wait()
 
     messages = _messages(output)
-    assert any(
-        message.get("id") == 2 and message.get("result") == {"stopReason": "refusal"}
-        for message in messages
-    )
+    assert any(_has_stop_reason(message, 2, "refusal") for message in messages)
     assert session_id not in bridge._dry_runs
 
 
@@ -219,8 +224,7 @@ def test_cancel_interrupts_pending_permission(tmp_path: Path) -> None:
     server.wait()
 
     assert any(
-        message.get("id") == 2 and message.get("result") == {"stopReason": "cancelled"}
-        for message in _messages(output)
+        _has_stop_reason(message, 2, "cancelled") for message in _messages(output)
     )
     assert session_id not in bridge._dry_runs
 

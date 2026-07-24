@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from vibecrafted_core.agent_stream import ANSI_PATTERN, AgentStreamParser
+from vibecrafted_core.workflows.registry import (
+    SHIP_STAGES,
+    WORKFLOW_DEFINITIONS,
+    WORKFLOW_MANIFESTS,
+)
 
 from . import __version__
 from .bridge import RuntimeBridge
@@ -110,6 +115,13 @@ class Session:
     cancel_event: threading.Event = field(default_factory=threading.Event)
     transcript_offset: int = 0
     pending_stream: bytes = b""
+    prompt_count: int = 0
+    restored: bool = False
+    child_run_ids: list[str] = field(default_factory=list)
+    stage: str = ""
+    active_run_id: str = ""
+    dry_stages: int = 2
+    plan_statuses: dict[str, str] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -135,11 +147,15 @@ class ACPServer:
         )
 
     def _update(self, session_id: str, update: dict[str, Any]) -> None:
+        payload = dict(update)
+        session = self.sessions.get(session_id)
+        if session is not None:
+            payload.setdefault("_meta", self._session_meta(session))
         self.writer.send(
             {
                 "jsonrpc": "2.0",
                 "method": "session/update",
-                "params": {"sessionId": session_id, "update": update},
+                "params": {"sessionId": session_id, "update": payload},
             }
         )
 
@@ -162,6 +178,10 @@ class ACPServer:
             self._initialize(request_id)
         elif method == "session/new":
             self._new_session(request_id, params)
+        elif method == "session/load":
+            self._restore_session(request_id, params, replay=True)
+        elif method == "session/resume":
+            self._restore_session(request_id, params, replay=False)
         elif method == "session/prompt":
             self._start_prompt(request_id, params)
         elif method == "session/cancel":
@@ -176,12 +196,15 @@ class ACPServer:
             {
                 "protocolVersion": PROTOCOL_VERSION,
                 "agentCapabilities": {
+                    "loadSession": self.bridge.supports_resume,
                     "promptCapabilities": {
                         "image": False,
                         "audio": False,
                         "embeddedContext": False,
                     },
-                    "sessionCapabilities": {},
+                    "sessionCapabilities": (
+                        {"resume": {}} if self.bridge.supports_resume else {}
+                    ),
                 },
                 "agentInfo": {
                     "name": "vibecrafted-acp",
@@ -218,16 +241,198 @@ class ACPServer:
         agent = str(settings.get("agent") or "codex").strip()
         skill = str(settings.get("skill") or "implement").strip()
         runtime = str(settings.get("runtime") or "headless").strip()
+        try:
+            dry_stages = int(settings.get("dryStages") or 2)
+        except (TypeError, ValueError):
+            self._error(
+                request_id, -32602, "_meta.vibecrafted.dryStages must be an integer"
+            )
+            return
+        if dry_stages < 1:
+            self._error(
+                request_id, -32602, "_meta.vibecrafted.dryStages must be positive"
+            )
+            return
         session_id = self.bridge.reserve_run_id(skill)
-        self.sessions[session_id] = Session(
+        session = Session(
             session_id=session_id,
             cwd=cwd,
             agent=agent,
             skill=skill,
             runtime=runtime,
             parser=AgentStreamParser(agent),
+            dry_stages=dry_stages,
         )
-        self._response(request_id, {"sessionId": session_id})
+        self.sessions[session_id] = session
+        self._response(
+            request_id,
+            {"sessionId": session_id, "_meta": self._session_meta(session)},
+        )
+        self._emit_catalog(session)
+
+    @staticmethod
+    def _session_meta(session: Session) -> dict[str, Any]:
+        return {
+            "vibecrafted": {
+                "parent_run_id": session.session_id,
+                "child_run_ids": list(session.child_run_ids),
+                "stage": session.stage,
+            }
+        }
+
+    @staticmethod
+    def _available_commands() -> list[dict[str, Any]]:
+        ship = WORKFLOW_MANIFESTS["vc-ship"]
+        commands: list[dict[str, Any]] = [
+            {
+                "name": "ship",
+                "description": ship.description,
+                "input": {"hint": "mission text passed unchanged"},
+                "_meta": {"vibecrafted": {"argv": ["vibecrafted", "ship"]}},
+            }
+        ]
+        definitions = sorted(
+            WORKFLOW_DEFINITIONS.values(),
+            key=lambda definition: (definition.lifecycle_order, definition.id),
+        )
+        for definition in definitions:
+            manifest = WORKFLOW_MANIFESTS.get(f"vc-{definition.id}")
+            description = (
+                manifest.description
+                if manifest is not None
+                else f"Run the canonical vc-{definition.id} workflow."
+            )
+            commands.append(
+                {
+                    "name": definition.id,
+                    "description": description,
+                    "input": {"hint": "prompt text passed unchanged"},
+                    "_meta": {
+                        "vibecrafted": {
+                            "argv": ["vibecrafted", definition.id],
+                        }
+                    },
+                }
+            )
+        return commands
+
+    def _emit_catalog(self, session: Session) -> None:
+        self._update(
+            session.session_id,
+            {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": self._available_commands(),
+            },
+        )
+
+    def _emit_plan(self, session: Session) -> None:
+        entries: list[dict[str, str]] = []
+        for stage in SHIP_STAGES:
+            status = session.plan_statuses.get(stage.id, "pending")
+            entries.append(
+                {
+                    "content": stage.name,
+                    "priority": "high" if status == "in_progress" else "medium",
+                    "status": status,
+                }
+            )
+        self._update(
+            session.session_id,
+            {"sessionUpdate": "plan", "entries": entries},
+        )
+
+    def _restore_session(
+        self,
+        request_id: Any,
+        params: dict[str, Any],
+        *,
+        replay: bool,
+    ) -> None:
+        if not self.initialized:
+            self._error(request_id, -32002, "initialize must be called first")
+            return
+        session_id = str(params.get("sessionId") or "").strip()
+        cwd = str(params.get("cwd") or "").strip()
+        if not session_id:
+            self._error(request_id, -32602, "sessionId is required")
+            return
+        if not cwd or not Path(cwd).is_absolute():
+            self._error(request_id, -32602, "cwd must be an absolute path")
+            return
+        mcp_servers = params.get("mcpServers", [])
+        if replay and "mcpServers" not in params:
+            self._error(request_id, -32602, "mcpServers must be an array")
+            return
+        if not isinstance(mcp_servers, list):
+            self._error(request_id, -32602, "mcpServers must be an array")
+            return
+        if mcp_servers:
+            self._error(request_id, -32602, "MCP passthrough is not supported")
+            return
+        try:
+            restored = self.bridge.load_session(session_id)
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._error(request_id, -32004, str(exc))
+            return
+        artifact_cwd = str(restored.get("cwd") or "").strip()
+        if artifact_cwd and Path(artifact_cwd).resolve() != Path(cwd).resolve():
+            self._error(
+                request_id,
+                -32004,
+                "session resume unavailable: cwd differs from artifact root",
+            )
+            return
+        agent = str(restored.get("agent") or "codex")
+        session = Session(
+            session_id=session_id,
+            cwd=artifact_cwd or cwd,
+            agent=agent,
+            skill=str(restored.get("skill") or "implement"),
+            runtime=str(restored.get("runtime") or "headless"),
+            parser=AgentStreamParser(agent),
+            restored=True,
+            child_run_ids=[
+                str(run_id) for run_id in restored.get("child_run_ids") or []
+            ],
+            stage=str(restored.get("stage") or ""),
+        )
+        for stage in restored.get("plan_stages") or []:
+            if not isinstance(stage, dict):
+                continue
+            stage_id = str(stage.get("id") or "")
+            if stage_id:
+                session.plan_statuses[stage_id] = (
+                    "completed"
+                    if str(stage.get("status") or "") == "completed"
+                    else "in_progress"
+                )
+        self.sessions[session_id] = session
+        self._emit_catalog(session)
+        if session.plan_statuses:
+            self._emit_plan(session)
+        if replay:
+            transcript = str(restored.get("transcript") or "")
+            if transcript:
+                self._emit_stream(
+                    session,
+                    transcript.encode("utf-8", errors="replace"),
+                    final=True,
+                )
+        self._response(
+            request_id,
+            {
+                "_meta": {
+                    **self._session_meta(session),
+                    "vibecrafted": {
+                        **self._session_meta(session)["vibecrafted"],
+                        "restored_from": ["report", "transcript"],
+                        "transcript_truncated": bool(
+                            restored.get("transcript_truncated")
+                        ),
+                    },
+                }
+            },
+        )
 
     @staticmethod
     def _prompt_text(params: dict[str, Any]) -> str:
@@ -260,7 +465,7 @@ class ACPServer:
             return
         with session.lock:
             if session.prompt_started:
-                self._error(request_id, -32001, "MVP permits one prompt per session")
+                self._error(request_id, -32001, "a prompt is already running")
                 return
             session.prompt_started = True
         thread = threading.Thread(
@@ -271,113 +476,135 @@ class ACPServer:
         self._threads.append(thread)
         thread.start()
 
+    @classmethod
+    def _command_prompt(cls, session: Session, prompt: str) -> tuple[str, str, bool]:
+        if not prompt.startswith("/"):
+            return session.skill, prompt, False
+        command, separator, remainder = prompt[1:].partition(" ")
+        names = {item["name"] for item in cls._available_commands()}
+        if command not in names:
+            return "", remainder if separator else "", True
+        return command, remainder if separator else "", True
+
     def _prompt_worker(self, request_id: Any, session: Session, prompt: str) -> None:
-        hard_stop = classify_hard_stop(prompt)
         permission_tool_id = ""
-        if hard_stop is not None:
-            permission_tool_id = f"hard-stop-{session.session_id}"
-            self._update(
-                session.session_id,
-                {
-                    "sessionUpdate": "tool_call",
-                    "toolCallId": permission_tool_id,
-                    "title": f"Operator button required: {hard_stop.category}",
-                    "kind": "execute",
-                    "status": "pending",
-                    "rawInput": {"prompt": prompt},
-                },
-            )
-            timeout = float(os.environ.get("VIBECRAFTED_ACP_PERMISSION_TIMEOUT", "30"))
-            decision = self.client.request(
-                "session/request_permission",
-                permission_request(
-                    session_id=session.session_id,
-                    tool_call_id=permission_tool_id,
-                    hard_stop=hard_stop,
-                    raw_input=prompt,
-                ),
-                timeout_seconds=timeout,
-                cancel_event=session.cancel_event,
-            )
-            if not allowed_once(decision):
-                cancelled = session.cancel_event.is_set()
+        try:
+            skill, runtime_prompt, was_command = self._command_prompt(session, prompt)
+            if was_command and not skill:
+                self._update(
+                    session.session_id,
+                    {
+                        "sessionUpdate": "agent_message_chunk",
+                        "content": {
+                            "type": "text",
+                            "text": "Unknown slash command; use the advertised catalog.",
+                        },
+                    },
+                )
+                self._response(
+                    request_id,
+                    {
+                        "stopReason": "refusal",
+                        "_meta": self._session_meta(session),
+                    },
+                )
+                return
+
+            hard_stop = classify_hard_stop(prompt)
+            if hard_stop is not None:
+                permission_tool_id = f"hard-stop-{session.session_id}"
+                self._update(
+                    session.session_id,
+                    {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": permission_tool_id,
+                        "title": f"Operator button required: {hard_stop.category}",
+                        "kind": "execute",
+                        "status": "pending",
+                        "rawInput": {"prompt": prompt},
+                    },
+                )
+                timeout = float(
+                    os.environ.get("VIBECRAFTED_ACP_PERMISSION_TIMEOUT", "30")
+                )
+                decision = self.client.request(
+                    "session/request_permission",
+                    permission_request(
+                        session_id=session.session_id,
+                        tool_call_id=permission_tool_id,
+                        hard_stop=hard_stop,
+                        raw_input=prompt,
+                    ),
+                    timeout_seconds=timeout,
+                    cancel_event=session.cancel_event,
+                )
+                if not allowed_once(decision):
+                    cancelled = session.cancel_event.is_set()
+                    self._update(
+                        session.session_id,
+                        {
+                            "sessionUpdate": "tool_call_update",
+                            "toolCallId": permission_tool_id,
+                            "status": "failed",
+                            "content": [
+                                {
+                                    "type": "content",
+                                    "content": {
+                                        "type": "text",
+                                        "text": (
+                                            "Cancelled by client."
+                                            if cancelled
+                                            else (
+                                                "Denied: explicit allow_once "
+                                                "was not selected."
+                                            )
+                                        ),
+                                    },
+                                }
+                            ],
+                        },
+                    )
+                    self._response(
+                        request_id,
+                        {
+                            "stopReason": ("cancelled" if cancelled else "refusal"),
+                            "_meta": self._session_meta(session),
+                        },
+                    )
+                    return
+                self.bridge.record_hard_stop_override(
+                    session.session_id,
+                    category=hard_stop.category,
+                    evidence=hard_stop.evidence,
+                )
                 self._update(
                     session.session_id,
                     {
                         "sessionUpdate": "tool_call_update",
                         "toolCallId": permission_tool_id,
-                        "status": "failed",
-                        "content": [
-                            {
-                                "type": "content",
-                                "content": {
-                                    "type": "text",
-                                    "text": (
-                                        "Cancelled by client."
-                                        if cancelled
-                                        else "Denied: explicit allow_once was not selected."
-                                    ),
-                                },
-                            }
-                        ],
+                        "status": "in_progress",
                     },
                 )
-                self._response(
-                    request_id,
-                    {"stopReason": "cancelled" if cancelled else "refusal"},
-                )
-                return
-            self.bridge.record_hard_stop_override(
-                session.session_id,
-                category=hard_stop.category,
-                evidence=hard_stop.evidence,
-            )
-            self._update(
-                session.session_id,
-                {
-                    "sessionUpdate": "tool_call_update",
-                    "toolCallId": permission_tool_id,
-                    "status": "in_progress",
-                },
-            )
 
-        with session.lock:
-            if session.cancelled:
-                self._response(request_id, {"stopReason": "cancelled"})
-                return
-        try:
-            launch = self.bridge.launch(
-                run_id=session.session_id,
-                root=session.cwd,
-                prompt=prompt,
-                agent=session.agent,
-                skill=session.skill,
-                runtime=session.runtime,
-            )
-            if not launch.get("accepted") or launch.get("run_id") != session.session_id:
-                raise RuntimeError("core launch did not accept the reserved run_id")
             with session.lock:
-                session.launched = True
-                cancelled = session.cancelled
-            if cancelled:
-                self.bridge.stop(session.session_id)
+                if session.cancelled:
+                    self._response(
+                        request_id,
+                        {
+                            "stopReason": "cancelled",
+                            "_meta": self._session_meta(session),
+                        },
+                    )
+                    return
 
-            result = self.bridge.await_run(
-                session.session_id,
-                on_poll=lambda _run: self._pump_once(session),
-                timeout_seconds=float(os.environ.get("VIBECRAFTED_ACP_TIMEOUT", "300")),
-                interval_seconds=0.25,
-            )
-            self._pump_once(session, final=True)
-            run = result.get("run") or {}
-            stopped = session.cancelled or str(run.get("state") or "") == "stopped"
-            stop_reason = (
-                "cancelled"
-                if stopped
-                else "end_turn"
-                if result.get("completed")
-                else "refusal"
-            )
+            if skill == "ship":
+                stop_reason = self._run_lifecycle_prompt(session, runtime_prompt)
+            else:
+                stop_reason = self._run_direct_prompt(
+                    session,
+                    runtime_prompt,
+                    skill=skill,
+                )
             if permission_tool_id:
                 self._update(
                     session.session_id,
@@ -389,7 +616,13 @@ class ACPServer:
                         else "failed",
                     },
                 )
-            self._response(request_id, {"stopReason": stop_reason})
+            self._response(
+                request_id,
+                {
+                    "stopReason": stop_reason,
+                    "_meta": self._session_meta(session),
+                },
+            )
         except Exception as exc:
             _LOGGER.exception("ACP prompt failed")
             self._update(
@@ -398,20 +631,135 @@ class ACPServer:
                     "sessionUpdate": "agent_message_chunk",
                     "content": {
                         "type": "text",
-                        "text": f"Vibecrafted runtime error: {type(exc).__name__}",
+                        "text": (
+                            f"Vibecrafted runtime error: {type(exc).__name__}: {exc}"
+                        ),
                     },
                 },
             )
-            self._response(request_id, {"stopReason": "refusal"})
+            self._response(
+                request_id,
+                {
+                    "stopReason": ("cancelled" if session.cancelled else "refusal"),
+                    "_meta": self._session_meta(session),
+                },
+            )
+        finally:
+            with session.lock:
+                session.prompt_started = False
+                session.prompt_count += 1
 
-    def _pump_once(self, session: Session, *, final: bool = False) -> None:
+    def _run_direct_prompt(
+        self,
+        session: Session,
+        prompt: str,
+        *,
+        skill: str,
+    ) -> str:
+        continuation = session.restored or session.prompt_count > 0
+        run_id = (
+            self.bridge.reserve_run_id(skill) if continuation else session.session_id
+        )
+        if continuation:
+            session.child_run_ids.append(run_id)
+        session.skill = skill
+        session.stage = skill
+        session.active_run_id = run_id
+        session.transcript_offset = 0
+        session.pending_stream = b""
+        launch = self.bridge.launch(
+            run_id=run_id,
+            root=session.cwd,
+            prompt=prompt,
+            agent=session.agent,
+            skill=skill,
+            runtime=session.runtime,
+        )
+        if not launch.get("accepted") or launch.get("run_id") != run_id:
+            raise RuntimeError("core launch did not accept the reserved run_id")
+        with session.lock:
+            session.launched = True
+            cancelled = session.cancelled
+        if cancelled:
+            self.bridge.stop(run_id)
+
+        result = self.bridge.await_run(
+            run_id,
+            on_poll=lambda _run: self._pump_once(session, run_id=run_id),
+            timeout_seconds=float(os.environ.get("VIBECRAFTED_ACP_TIMEOUT", "300")),
+            interval_seconds=0.25,
+        )
+        self._pump_once(session, run_id=run_id, final=True)
+        run = result.get("run") or {}
+        stopped = session.cancelled or str(run.get("state") or "") == "stopped"
+        if stopped:
+            return "cancelled"
+        return "end_turn" if result.get("completed") else "refusal"
+
+    def _run_lifecycle_prompt(self, session: Session, prompt: str) -> str:
+        session.skill = "ship"
+        session.transcript_offset = 0
+        session.pending_stream = b""
+        session.plan_statuses = {}
+
+        def stage_update(
+            stage: str,
+            status: str,
+            child_run_ids: list[str],
+            active_child: str,
+        ) -> None:
+            session.stage = stage
+            session.child_run_ids = list(child_run_ids)
+            if active_child:
+                session.active_run_id = active_child
+                session.launched = True
+            session.plan_statuses[stage] = status
+            self._emit_plan(session)
+
+        state = self.bridge.run_lifecycle(
+            parent_run_id=session.session_id,
+            root=session.cwd,
+            prompt=prompt,
+            agent=session.agent,
+            runtime=session.runtime,
+            dry_stages=session.dry_stages,
+            on_stage=stage_update,
+            on_chunk=lambda _run_id, data: self._emit_stream(session, data),
+            cancelled=session.cancel_event.is_set,
+        )
+        self._emit_stream(session, b"", final=True)
+        if session.cancelled or str(state.get("status") or "") == "stopped":
+            return "cancelled"
+        return "end_turn" if state.get("status") == "completed" else "refusal"
+
+    def _pump_once(
+        self,
+        session: Session,
+        *,
+        run_id: str = "",
+        final: bool = False,
+    ) -> None:
         observed = self.bridge.observe(
-            session.session_id, offset=session.transcript_offset
+            run_id or session.active_run_id or session.session_id,
+            offset=session.transcript_offset,
         )
         session.transcript_offset = int(
             observed.get("next_offset") or session.transcript_offset
         )
-        data = session.pending_stream + bytes(observed.get("text") or b"")
+        self._emit_stream(
+            session,
+            bytes(observed.get("text") or b""),
+            final=final,
+        )
+
+    def _emit_stream(
+        self,
+        session: Session,
+        data: bytes,
+        *,
+        final: bool = False,
+    ) -> None:
+        data = session.pending_stream + data
         lines = data.splitlines(keepends=True)
         session.pending_stream = b""
         if lines and not lines[-1].endswith((b"\n", b"\r")) and not final:
@@ -442,9 +790,10 @@ class ACPServer:
             session.cancelled = True
             session.cancel_event.set()
             launched = session.launched
+            active_run_id = session.active_run_id or session.session_id
         self.client.wake()
         if launched:
-            self.bridge.stop(session_id)
+            self.bridge.stop(active_run_id)
         if request_id is not None:
             self._response(request_id, {})
 
