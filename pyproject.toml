@@ -14,6 +14,17 @@ dev = [
     "textual>=8.2.3",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# sys.path bootstrap shims and tests: the import legitimately follows the
+# path setup, so E402 is the declared pattern here — not a hidden violation.
+"scripts/control_plane_launch.py" = ["E402"]
+"scripts/control_plane_state.py" = ["E402"]
+"scripts/runtime_paths.py" = ["E402"]
+"tests/agent_dispatch_test.py" = ["E402"]
+"tests/tui/test_installer_branding.py" = ["E402"]
+"tests/tui/test_installer_manifest.py" = ["E402"]
+"tests/tui/test_research_terminal_safety.py" = ["E402"]
+
 [tool.mypy]
 python_version = "3.11"
 files = [
