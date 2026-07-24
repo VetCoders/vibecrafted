@@ -38,7 +38,12 @@ def iso_now() -> str:
 def parse_frontmatter(path: Path) -> dict[str, str]:
     if not path.is_file():
         return {}
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        # Frontmatter is optional launch metadata. A transient permission or
+        # filesystem failure must not turn model discovery into a hard stop.
+        return {}
     if not lines or lines[0].strip() != "---":
         return {}
     values: dict[str, str] = {}
