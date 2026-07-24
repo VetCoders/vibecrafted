@@ -282,6 +282,66 @@ fn classifies_stale_active_runs_as_stalled() {
 }
 
 #[test]
+fn classify_run_success_evidence_beats_stale_last_error() {
+    // work-260724-050009-56000 shape: exit 0 + completed_at + report, but
+    // watchdog left last_error/recovery_required on the snapshot.
+    let mut extra = std::collections::HashMap::new();
+    extra.insert("exit_code".into(), serde_json::json!(0));
+    extra.insert("completed_at".into(), serde_json::json!("2026-07-24T03:12:57Z"));
+    extra.insert("health".into(), serde_json::json!("final"));
+    extra.insert("liveness".into(), serde_json::json!("terminal"));
+    extra.insert("recovery_required".into(), serde_json::json!(true));
+
+    let snapshot = RunSnapshot {
+        run_id: "work-260724-050009-56000".to_string(),
+        session_id: None,
+        agent: Some("grok".to_string()),
+        skill: Some("workflow".to_string()),
+        mode: Some("workflow".to_string()),
+        state: Some("completed".to_string()),
+        status: Some("completed".to_string()),
+        started_at: Some("2026-07-24T03:00:10Z".to_string()),
+        updated_at: Some("2026-07-24T04:00:00Z".to_string()),
+        last_heartbeat: Some("2026-07-24T03:00:20Z".to_string()),
+        root: None,
+        operator_session: None,
+        latest_report: Some(
+            "/tmp/2026-07-24_grok_zbadaj-i-doci_report.md".to_string(),
+        ),
+        latest_transcript: None,
+        last_error: Some(
+            "launcher_pid 18734 is not alive; heartbeat stale; recovery_required"
+                .to_string(),
+        ),
+        extra,
+    };
+    let now = chrono::DateTime::parse_from_rfc3339("2026-07-24T04:05:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let kind = classify_run(&snapshot, now);
+    assert!(
+        matches!(kind, RunKind::Recent | RunKind::Completed),
+        "exit 0 + completed_at must not classify as Failed, got {kind:?}"
+    );
+
+    // True failure still wins when exit is nonzero even with completed_at.
+    let mut failed_extra = std::collections::HashMap::new();
+    failed_extra.insert("exit_code".into(), serde_json::json!(1));
+    failed_extra.insert(
+        "completed_at".into(),
+        serde_json::json!("2026-07-24T03:12:57Z"),
+    );
+    let true_fail = RunSnapshot {
+        last_error: Some("worker crashed".to_string()),
+        state: Some("failed".to_string()),
+        status: Some("failed".to_string()),
+        extra: failed_extra,
+        ..snapshot.clone()
+    };
+    assert_eq!(classify_run(&true_fail, now), RunKind::Failed);
+}
+
+#[test]
 fn builds_existing_command_deck_launches() {
     let deck = Path::new("/usr/bin/vibecrafted");
     let request = LaunchRequest {

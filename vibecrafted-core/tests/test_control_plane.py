@@ -704,6 +704,90 @@ def test_sync_state_reconciles_dead_launcher_success_evidence_to_completed(
     )
 
 
+def test_sync_state_clears_stale_last_error_when_success_evidence_arrives(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """False-fail gap: watchdog stamps last_error, then exit 0 lands — must not stay Failed.
+
+    Live pattern (work-260724-050009-56000): exit 0 + report + completed_at while
+    the snapshot still carried recovery_required + launcher-dead last_error.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
+    run_id = "work-false-fail-success"
+    completed_at = "2026-05-19T00:05:00+00:00"
+
+    # Phase 1: dead launcher + stale heartbeat → stalled + last_error.
+    _write_meta(
+        home,
+        {
+            "run_id": run_id,
+            "status": "running",
+            "agent": "grok",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "work",
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+    stalled = control_plane.sync_state()["recent_runs"][0]
+    assert stalled["state"] == "stalled"
+    assert stalled["recovery_required"] is True
+    assert "recovery_required" in str(stalled.get("last_error") or "")
+
+    # Phase 2: worker delivered — exit 0 + completed_at on disk.
+    _write_meta(
+        home,
+        {
+            "run_id": run_id,
+            "status": "completed",
+            "agent": "grok",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": completed_at,
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "skill_code": "work",
+            "launcher_pid": 999999999,
+            "exit_code": 0,
+            "liveness": "terminal",
+            "completed_at": completed_at,
+            # Residual recovery marks on meta must not re-poison the board.
+            "last_error": "launcher_pid 999999999 is not alive; recovery_required",
+            "recovery_required": True,
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = next(item for item in snapshot["recent_runs"] if item["run_id"] == run_id)
+
+    assert run["state"] == "completed"
+    assert run["health"] == "final"
+    assert run["liveness"] == "terminal"
+    assert run["exit_code"] == 0
+    assert run["completed_at"] == completed_at
+    assert "recovery_required" not in run or run.get("recovery_required") in (
+        False,
+        None,
+    )
+    assert not str(run.get("last_error") or "").strip()
+    assert run["lifecycle"]["recovery_required"] is False
+
+    # Terminal success may already be drained to runs/archive/ after settle.
+    live = home / "control_plane" / "runs" / f"{run_id}.json"
+    archived = home / "control_plane" / "runs" / "archive" / f"{run_id}.json"
+    path = live if live.exists() else archived
+    assert path.exists(), f"expected snapshot at {live} or {archived}"
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert persisted["state"] == "completed"
+    assert not str(persisted.get("last_error") or "").strip()
+    assert not persisted.get("recovery_required")
+
+
 def test_sync_state_reconciles_dead_launcher_with_missing_report_to_terminal_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

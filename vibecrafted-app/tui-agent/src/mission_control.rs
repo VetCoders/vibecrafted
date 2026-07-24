@@ -1129,10 +1129,23 @@ fn failure_board_from_meta(
         if !matches!(classify_run(snapshot, now), RunKind::Failed) {
             continue;
         }
+        // Prefer completed_at (or first settlement stamp) over updated_at.
+        // Watchdog/sync restamps updated_at every pass, which made day-old
+        // fails show as "10m ago" and kept them inside the 24h window forever.
         let timestamp = snapshot
-            .updated_at
-            .as_deref()
-            .and_then(parse_rfc3339);
+            .extra
+            .get("completed_at")
+            .and_then(|value| value.as_str())
+            .and_then(parse_rfc3339)
+            .or_else(|| {
+                snapshot
+                    .extra
+                    .get("settlement_at")
+                    .and_then(|value| value.as_str())
+                    .and_then(parse_rfc3339)
+            })
+            .or_else(|| snapshot.updated_at.as_deref().and_then(parse_rfc3339))
+            .or_else(|| snapshot.started_at.as_deref().and_then(parse_rfc3339));
         // Same 24h window as the meta loop — without it, long-dead
         // garbage-collected snapshots permanently occupy the 20-row board.
         if matches!(timestamp, Some(ts) if ts < cutoff) {
@@ -2692,6 +2705,97 @@ mod tests {
         let mission = MissionControlState::build_at(&state, &artifact, now);
         assert_eq!(mission.failures.len(), 1);
         assert_eq!(mission.failures[0].run_id, "recent-fail");
+    }
+
+    #[test]
+    fn failure_board_excludes_exit_zero_with_stale_last_error() {
+        // Success evidence on the snapshot must not feed the failure board
+        // even when the watchdog left last_error / recovery_required.
+        let dir = tempdir().unwrap();
+        let artifact = dir.path().join("artifacts");
+        let mut extra = HashMap::new();
+        extra.insert("exit_code".into(), serde_json::json!(0));
+        extra.insert(
+            "completed_at".into(),
+            serde_json::json!("2026-05-19T03:12:57Z"),
+        );
+        extra.insert("health".into(), serde_json::json!("final"));
+        extra.insert("liveness".into(), serde_json::json!("terminal"));
+
+        let mut state = empty_state(dir.path());
+        state.runs.push(RunSnapshot {
+            run_id: "work-false-fail".to_string(),
+            session_id: None,
+            agent: Some("grok".to_string()),
+            skill: Some("workflow".to_string()),
+            mode: Some("workflow".to_string()),
+            state: Some("completed".to_string()),
+            status: Some("completed".to_string()),
+            started_at: Some("2026-05-19T03:00:00Z".to_string()),
+            // Fresh updated_at restamp — must not put this on the failure board.
+            updated_at: Some("2026-05-19T12:55:00Z".to_string()),
+            last_heartbeat: None,
+            root: None,
+            operator_session: None,
+            latest_report: Some("/tmp/report.md".to_string()),
+            latest_transcript: None,
+            last_error: Some(
+                "launcher_pid gone; heartbeat stale; recovery_required".to_string(),
+            ),
+            extra,
+        });
+
+        // Real failure: age should follow completed_at, not a restamped updated_at.
+        // completed_at is 12h old (inside the 24h board window); updated_at is
+        // restamped to 10m ago — the bug that made day-old fails look fresh.
+        let mut fail_extra = HashMap::new();
+        fail_extra.insert("exit_code".into(), serde_json::json!(2));
+        fail_extra.insert(
+            "completed_at".into(),
+            serde_json::json!("2026-05-19T01:00:00Z"),
+        );
+        state.runs.push(RunSnapshot {
+            run_id: "real-fail".to_string(),
+            session_id: None,
+            agent: Some("codex".to_string()),
+            skill: Some("impl".to_string()),
+            mode: None,
+            state: Some("failed".to_string()),
+            status: Some("failed".to_string()),
+            started_at: Some("2026-05-19T00:30:00Z".to_string()),
+            updated_at: Some("2026-05-19T12:50:00Z".to_string()),
+            last_heartbeat: None,
+            root: None,
+            operator_session: None,
+            latest_report: None,
+            latest_transcript: None,
+            last_error: Some("nonzero exit".to_string()),
+            extra: fail_extra,
+        });
+
+        let now = ts("2026-05-19T13:00:00Z");
+        let mission = MissionControlState::build_at(&state, &artifact, now);
+        assert!(
+            mission
+                .failures
+                .iter()
+                .all(|entry| entry.run_id != "work-false-fail"),
+            "exit 0 + completed_at must not appear on failure board: {:?}",
+            mission
+                .failures
+                .iter()
+                .map(|e| e.run_id.as_str())
+                .collect::<Vec<_>>()
+        );
+        let real = mission
+            .failures
+            .iter()
+            .find(|entry| entry.run_id == "real-fail")
+            .expect("real failure stays on board");
+        assert_eq!(
+            real.age_label, "12h ago",
+            "failure age must use completed_at, not restamped updated_at"
+        );
     }
 
     #[test]

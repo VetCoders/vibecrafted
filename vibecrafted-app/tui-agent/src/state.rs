@@ -266,7 +266,19 @@ pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
         .as_deref()
         .and_then(parse_timestamp)
         .or_else(|| snapshot.updated_at.as_deref().and_then(parse_timestamp));
+    // Recency for completed success uses completed_at when present so a
+    // watchdog restamp of updated_at cannot keep a day-old finish "fresh".
+    let success_ts = completed_at_timestamp(snapshot).or(heartbeat);
 
+    // Success evidence beats a stale last_error left by the heartbeat
+    // watchdog. Order: success > last_error/fail > stalled > active.
+    if has_success_evidence(snapshot) {
+        return if is_recent(success_ts, now) {
+            RunKind::Recent
+        } else {
+            RunKind::Completed
+        };
+    }
     if snapshot.last_error.is_some() || state.contains("fail") || state.contains("error") {
         return RunKind::Failed;
     }
@@ -283,7 +295,7 @@ pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
         || state.contains("stopped")
         || state.contains("gc")
     {
-        return if is_recent(heartbeat, now) {
+        return if is_recent(success_ts, now) {
             RunKind::Recent
         } else {
             RunKind::Completed
@@ -299,6 +311,68 @@ pub fn classify_run(snapshot: &RunSnapshot, now: DateTime<Utc>) -> RunKind {
         return RunKind::Recent;
     }
     RunKind::Unknown
+}
+
+/// Disk/process proof that a run finished successfully, even if the watchdog
+/// stamped `last_error` / `recovery_required` during the heartbeat gap.
+fn has_success_evidence(snapshot: &RunSnapshot) -> bool {
+    if snapshot
+        .extra
+        .get("artifact_ok")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return false;
+    }
+    if let Some(Value::Array(errors)) = snapshot.extra.get("artifact_errors")
+        && !errors.is_empty()
+    {
+        return false;
+    }
+
+    let exit_code = coerce_exit_code(snapshot);
+    if matches!(exit_code, Some(code) if code != 0) {
+        return false;
+    }
+    // exit 0 is hard success evidence — beats stale last_error.
+    if exit_code == Some(0) {
+        return true;
+    }
+
+    let state = snapshot.display_state().to_lowercase();
+    if matches!(
+        state.as_str(),
+        "report_validated" | "completed" | "closed" | "converged"
+    ) {
+        return true;
+    }
+    if completed_at_timestamp(snapshot).is_some() {
+        return true;
+    }
+    snapshot
+        .extra
+        .get("liveness")
+        .and_then(Value::as_str)
+        == Some("terminal")
+}
+
+fn coerce_exit_code(snapshot: &RunSnapshot) -> Option<i64> {
+    let value = snapshot.extra.get("exit_code")?;
+    if value.is_null() {
+        return None;
+    }
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().map(|code| code as i64))
+        .or_else(|| value.as_str().and_then(|raw| raw.trim().parse().ok()))
+}
+
+fn completed_at_timestamp(snapshot: &RunSnapshot) -> Option<DateTime<Utc>> {
+    snapshot
+        .extra
+        .get("completed_at")
+        .and_then(Value::as_str)
+        .and_then(parse_timestamp)
 }
 
 fn compare_runs(left: &RenderedRun, right: &RenderedRun) -> Ordering {

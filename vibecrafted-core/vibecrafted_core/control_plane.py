@@ -681,6 +681,13 @@ def _has_success_evidence(run: dict[str, Any]) -> bool:
 
 
 def _reconcile_successful_terminal(run: dict[str, Any]) -> dict[str, Any]:
+    """Close a run that has success evidence, including after a stale watchdog stamp.
+
+    The heartbeat watchdog can set ``last_error`` / ``recovery_required`` while a
+    worker is still delivering. Once exit 0 / completed_at / terminal liveness is
+    present, those recovery marks are stale noise — clear them so the failure
+    board and action queue do not treat a green run as investigate-fodder.
+    """
     result = dict(run)
     completed_at = str(result.get("completed_at") or result.get("updated_at") or "")
     if not completed_at:
@@ -691,6 +698,9 @@ def _reconcile_successful_terminal(run: dict[str, Any]) -> dict[str, Any]:
     result["completed_at"] = completed_at
     result["updated_at"] = completed_at
     result.pop("recovery_required", None)
+    # Empty string matches _reconcile_repaired_report_terminal; consumers treat
+    # blank last_error as absent.
+    result["last_error"] = ""
     return result
 
 
