@@ -36,6 +36,7 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
   private let skillTableView = NSTableView()
   private let activeTableView = NSTableView()
   private let failuresTableView = NSTableView()
+  private let settlementLabel = NSTextField(labelWithString: "settlement f=— x=— n=—")
   private let healthStackView = NSStackView()
   private let dataQualityFooterLabel = NSTextField(labelWithString: "")
 
@@ -290,6 +291,10 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
   }
 
   private func configureHealthStrip() {
+    settlementLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+    settlementLabel.textColor = .labelColor
+    stackView.addArrangedSubview(settlementLabel)
+
     let titleLabel = NSTextField(labelWithString: "Fleet health")
     titleLabel.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
     sectionAnchors[Section.health.focusID] = titleLabel
@@ -322,6 +327,7 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
     waveTableView.reloadData()
     agentTableView.reloadData()
     skillTableView.reloadData()
+    updateSettlementStrip()
     updateHealthStrip()
     updateDataQualityFooter()
     updateTableHeights()
@@ -343,6 +349,17 @@ final class MissionControlViewController: NSViewController, NSTableViewDataSourc
     let capped = quality.capped ? " capped" : ""
     statusLabel.stringValue =
       "Generated \(snapshot.generatedAt) - \(quality.scannedMetaFiles) meta files\(capped)"
+  }
+
+  private func updateSettlementStrip() {
+    guard let snapshot else {
+      settlementLabel.stringValue = "settlement f=— x=— n=—"
+      return
+    }
+
+    let settlement = snapshot.settlement
+    settlementLabel.stringValue =
+      "settlement f=\(settlement.f) x=\(settlement.x) n=\(settlement.n)"
   }
 
   private func updateHealthStrip() {

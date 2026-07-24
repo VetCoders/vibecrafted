@@ -222,12 +222,26 @@ pub struct FfiDataQuality {
 }
 
 #[derive(uniffi::Record)]
+pub struct FfiSettlementBoard {
+    pub f: u64,
+    pub x: u64,
+    pub n: u64,
+    pub invalid: u64,
+    pub active: u64,
+    pub stalled: u64,
+    pub orphans: u64,
+    pub total_settled: u64,
+    pub scope: String,
+}
+
+#[derive(uniffi::Record)]
 pub struct FfiMissionControlSnapshot {
     pub generated_at: String,
     pub active_dispatches: Vec<FfiActiveDispatch>,
     pub wave_atlas: Vec<FfiWaveSegment>,
     pub agent_stats: Vec<FfiAgentStatsRow>,
     pub skill_stats: Vec<FfiSkillStatsRow>,
+    pub settlement: FfiSettlementBoard,
     pub fleet_health: Vec<FfiFleetHealthSignal>,
     pub failures: Vec<FfiFailureEntry>,
     pub action_queue: Vec<FfiActionQueueItem>,
@@ -273,6 +287,22 @@ impl From<mc::ActionPriority> for FfiActionPriority {
             mc::ActionPriority::Critical => FfiActionPriority::Critical,
             mc::ActionPriority::High => FfiActionPriority::High,
             mc::ActionPriority::Normal => FfiActionPriority::Normal,
+        }
+    }
+}
+
+impl From<mc::SettlementBoardCounts> for FfiSettlementBoard {
+    fn from(value: mc::SettlementBoardCounts) -> Self {
+        Self {
+            f: value.f as u64,
+            x: value.x as u64,
+            n: value.n as u64,
+            invalid: value.invalid as u64,
+            active: value.active as u64,
+            stalled: value.stalled as u64,
+            orphans: value.orphans as u64,
+            total_settled: value.total_settled as u64,
+            scope: value.scope,
         }
     }
 }
@@ -329,6 +359,7 @@ fn convert_snapshot(state: MissionControlState) -> FfiMissionControlSnapshot {
                 avg_duration_s: row.avg_duration_s,
             })
             .collect(),
+        settlement: state.settlement.into(),
         fleet_health: state
             .fleet_health
             .into_iter()
@@ -652,5 +683,32 @@ mod tests {
         let ffi: FfiClientKind = original.clone().into();
         let back: ClientKind = ffi.into();
         assert_eq!(original, back);
+    }
+
+    #[test]
+    fn settlement_board_conversion_carries_every_field() {
+        let board = mc::SettlementBoardCounts {
+            f: 1,
+            x: 2,
+            n: 3,
+            invalid: 4,
+            active: 5,
+            stalled: 6,
+            orphans: 7,
+            total_settled: 8,
+            scope: "retained snapshots".to_string(),
+        };
+
+        let ffi: FfiSettlementBoard = board.into();
+
+        assert_eq!(ffi.f, 1);
+        assert_eq!(ffi.x, 2);
+        assert_eq!(ffi.n, 3);
+        assert_eq!(ffi.invalid, 4);
+        assert_eq!(ffi.active, 5);
+        assert_eq!(ffi.stalled, 6);
+        assert_eq!(ffi.orphans, 7);
+        assert_eq!(ffi.total_settled, 8);
+        assert_eq!(ffi.scope, "retained snapshots");
     }
 }

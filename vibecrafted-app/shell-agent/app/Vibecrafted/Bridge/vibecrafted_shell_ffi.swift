@@ -1030,6 +1030,7 @@ public struct FfiMissionControlSnapshot: Equatable, Hashable {
     public var waveAtlas: [FfiWaveSegment]
     public var agentStats: [FfiAgentStatsRow]
     public var skillStats: [FfiSkillStatsRow]
+    public var settlement: FfiSettlementBoard
     public var fleetHealth: [FfiFleetHealthSignal]
     public var failures: [FfiFailureEntry]
     public var actionQueue: [FfiActionQueueItem]
@@ -1037,12 +1038,13 @@ public struct FfiMissionControlSnapshot: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(generatedAt: String, activeDispatches: [FfiActiveDispatch], waveAtlas: [FfiWaveSegment], agentStats: [FfiAgentStatsRow], skillStats: [FfiSkillStatsRow], fleetHealth: [FfiFleetHealthSignal], failures: [FfiFailureEntry], actionQueue: [FfiActionQueueItem], dataQuality: FfiDataQuality) {
+    public init(generatedAt: String, activeDispatches: [FfiActiveDispatch], waveAtlas: [FfiWaveSegment], agentStats: [FfiAgentStatsRow], skillStats: [FfiSkillStatsRow], settlement: FfiSettlementBoard, fleetHealth: [FfiFleetHealthSignal], failures: [FfiFailureEntry], actionQueue: [FfiActionQueueItem], dataQuality: FfiDataQuality) {
         self.generatedAt = generatedAt
         self.activeDispatches = activeDispatches
         self.waveAtlas = waveAtlas
         self.agentStats = agentStats
         self.skillStats = skillStats
+        self.settlement = settlement
         self.fleetHealth = fleetHealth
         self.failures = failures
         self.actionQueue = actionQueue
@@ -1068,6 +1070,7 @@ public struct FfiConverterTypeFfiMissionControlSnapshot: FfiConverterRustBuffer 
                 waveAtlas: FfiConverterSequenceTypeFfiWaveSegment.read(from: &buf),
                 agentStats: FfiConverterSequenceTypeFfiAgentStatsRow.read(from: &buf),
                 skillStats: FfiConverterSequenceTypeFfiSkillStatsRow.read(from: &buf),
+                settlement: FfiConverterTypeFfiSettlementBoard.read(from: &buf),
                 fleetHealth: FfiConverterSequenceTypeFfiFleetHealthSignal.read(from: &buf),
                 failures: FfiConverterSequenceTypeFfiFailureEntry.read(from: &buf),
                 actionQueue: FfiConverterSequenceTypeFfiActionQueueItem.read(from: &buf),
@@ -1081,6 +1084,7 @@ public struct FfiConverterTypeFfiMissionControlSnapshot: FfiConverterRustBuffer 
         FfiConverterSequenceTypeFfiWaveSegment.write(value.waveAtlas, into: &buf)
         FfiConverterSequenceTypeFfiAgentStatsRow.write(value.agentStats, into: &buf)
         FfiConverterSequenceTypeFfiSkillStatsRow.write(value.skillStats, into: &buf)
+        FfiConverterTypeFfiSettlementBoard.write(value.settlement, into: &buf)
         FfiConverterSequenceTypeFfiFleetHealthSignal.write(value.fleetHealth, into: &buf)
         FfiConverterSequenceTypeFfiFailureEntry.write(value.failures, into: &buf)
         FfiConverterSequenceTypeFfiActionQueueItem.write(value.actionQueue, into: &buf)
@@ -1345,6 +1349,86 @@ public func FfiConverterTypeFfiServerStatus_lift(_ buf: RustBuffer) throws -> Ff
 #endif
 public func FfiConverterTypeFfiServerStatus_lower(_ value: FfiServerStatus) -> RustBuffer {
     return FfiConverterTypeFfiServerStatus.lower(value)
+}
+
+
+public struct FfiSettlementBoard: Equatable, Hashable {
+    public var f: UInt64
+    public var x: UInt64
+    public var n: UInt64
+    public var invalid: UInt64
+    public var active: UInt64
+    public var stalled: UInt64
+    public var orphans: UInt64
+    public var totalSettled: UInt64
+    public var scope: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(f: UInt64, x: UInt64, n: UInt64, invalid: UInt64, active: UInt64, stalled: UInt64, orphans: UInt64, totalSettled: UInt64, scope: String) {
+        self.f = f
+        self.x = x
+        self.n = n
+        self.invalid = invalid
+        self.active = active
+        self.stalled = stalled
+        self.orphans = orphans
+        self.totalSettled = totalSettled
+        self.scope = scope
+    }
+
+
+}
+
+#if compiler(>=6)
+extension FfiSettlementBoard: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiSettlementBoard: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiSettlementBoard {
+        return
+            try FfiSettlementBoard(
+                f: FfiConverterUInt64.read(from: &buf),
+                x: FfiConverterUInt64.read(from: &buf),
+                n: FfiConverterUInt64.read(from: &buf),
+                invalid: FfiConverterUInt64.read(from: &buf),
+                active: FfiConverterUInt64.read(from: &buf),
+                stalled: FfiConverterUInt64.read(from: &buf),
+                orphans: FfiConverterUInt64.read(from: &buf),
+                totalSettled: FfiConverterUInt64.read(from: &buf),
+                scope: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiSettlementBoard, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.f, into: &buf)
+        FfiConverterUInt64.write(value.x, into: &buf)
+        FfiConverterUInt64.write(value.n, into: &buf)
+        FfiConverterUInt64.write(value.invalid, into: &buf)
+        FfiConverterUInt64.write(value.active, into: &buf)
+        FfiConverterUInt64.write(value.stalled, into: &buf)
+        FfiConverterUInt64.write(value.orphans, into: &buf)
+        FfiConverterUInt64.write(value.totalSettled, into: &buf)
+        FfiConverterString.write(value.scope, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSettlementBoard_lift(_ buf: RustBuffer) throws -> FfiSettlementBoard {
+    return try FfiConverterTypeFfiSettlementBoard.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiSettlementBoard_lower(_ value: FfiSettlementBoard) -> RustBuffer {
+    return FfiConverterTypeFfiSettlementBoard.lower(value)
 }
 
 
