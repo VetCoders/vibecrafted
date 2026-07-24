@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -49,6 +50,24 @@ def _minimal_payload(root: Path) -> None:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"runtime sentinel for {relative}\n", encoding="utf-8")
+    # The repo's top-level runtime/ is a symlink into the canonical package
+    # path; sshfs-backed mounts (colima containers) drop that symlink entirely.
+    # Mirror every runtime/* requirement under CANONICAL_RUNTIME so fixtures
+    # can exercise the projection with real canonical content behind it.
+    for relative in manifest.REQUIRED_DIRECTORIES:
+        parts = Path(relative).parts
+        if parts and parts[0] == "runtime":
+            (root / manifest.CANONICAL_RUNTIME.joinpath(*parts[1:])).mkdir(
+                parents=True, exist_ok=True
+            )
+    for relative in manifest.REQUIRED_SURFACE_FILES.values():
+        parts = Path(relative).parts
+        if parts and parts[0] == "runtime":
+            path = root / manifest.CANONICAL_RUNTIME.joinpath(*parts[1:])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f"canonical runtime sentinel for {relative}\n", encoding="utf-8"
+            )
 
 
 def test_manifest_names_complete_runtime_and_forbidden_junk() -> None:
@@ -121,6 +140,24 @@ def test_stage_payload_filters_junk_and_mirrors_destination(tmp_path: Path) -> N
     assert not (destination / "scripts" / "tests").exists()
     assert not (destination / ".gitignore").exists()
     assert not (destination / "orphan.txt").exists()
+
+
+def test_stage_payload_projects_canonical_runtime_when_mount_hides_symlink(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "payload"
+    _minimal_payload(source)
+    shutil.rmtree(source / "runtime")
+
+    manifest.stage_payload(source, destination, mirror=True)
+
+    runtime_projection = destination / "runtime"
+    assert runtime_projection.is_symlink()
+    assert runtime_projection.readlink() == manifest.CANONICAL_RUNTIME
+    assert (runtime_projection / "scripts" / "README.md").is_file()
+    assert (runtime_projection / "shell" / "lib" / "core.sh").is_file()
+    manifest.validate_payload(destination)
 
 
 def test_validate_payload_reports_missing_and_forbidden_paths(tmp_path: Path) -> None:

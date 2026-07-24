@@ -1672,6 +1672,106 @@ def _doctor_fix_rc_files() -> list[DoctorFinding]:
     return findings
 
 
+_LEGACY_BOOTSTRAP_ROOT = Path("/opt/vibecrafted")
+_LEGACY_ROOT_EXPORT_MARK = (
+    "# vibecrafted doctor --fix-legacy-bootstrap: retired legacy root"
+)
+
+
+def _doctor_fix_legacy_bootstrap() -> list[DoctorFinding]:
+    """Neutralize the retired /opt/vibecrafted bootstrap layout.
+
+    Comments out ``export VIBECRAFTED_ROOT=...`` lines that pin the legacy
+    bootstrap root in shell rc files (backing the file up first) and reports
+    the leftover tree. The tree itself is never deleted — removal stays an
+    explicit operator action.
+    """
+    findings: list[DoctorFinding] = []
+    legacy_token = str(_LEGACY_BOOTSTRAP_ROOT)
+
+    for rcname in (".zshrc", ".zshenv", ".bashrc", ".profile"):
+        rcfile = Path.home() / rcname
+        if not rcfile.exists():
+            continue
+        try:
+            content = rcfile.read_text(encoding="utf-8")
+        except OSError as exc:
+            findings.append(
+                DoctorFinding(
+                    "warn", f"legacy-bootstrap:{rcname}", f"could not read: {exc}"
+                )
+            )
+            continue
+        lines = content.splitlines(keepends=True)
+        changed = False
+        for index, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "VIBECRAFTED_ROOT" in stripped and legacy_token in stripped:
+                lines[index] = f"{_LEGACY_ROOT_EXPORT_MARK}\n# {line.lstrip()}"
+                changed = True
+        if not changed:
+            findings.append(
+                DoctorFinding(
+                    "ok", f"legacy-bootstrap:{rcname}", "no legacy root export"
+                )
+            )
+            continue
+        if not _is_writable(rcfile):
+            findings.append(
+                DoctorFinding(
+                    "warn",
+                    f"legacy-bootstrap:{rcname}",
+                    f"{rcfile} is locked — cannot comment out the legacy export",
+                )
+            )
+            continue
+        backup = rcfile.with_name(rcfile.name + ".vibecrafted-legacy-bak")
+        try:
+            backup.write_text(content, encoding="utf-8")
+            rcfile.write_text("".join(lines), encoding="utf-8")
+        except OSError as exc:
+            findings.append(
+                DoctorFinding(
+                    "warn", f"legacy-bootstrap:{rcname}", f"could not repair: {exc}"
+                )
+            )
+            continue
+        findings.append(
+            DoctorFinding(
+                "ok",
+                f"legacy-bootstrap:{rcname}",
+                f"commented out legacy VIBECRAFTED_ROOT export (backup: {backup.name})",
+            )
+        )
+
+    if os.environ.get("VIBECRAFTED_ROOT", "").startswith(legacy_token):
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "legacy-bootstrap:env",
+                "VIBECRAFTED_ROOT still points at the legacy root in this shell — "
+                "run `unset VIBECRAFTED_ROOT` or open a fresh shell",
+            )
+        )
+
+    if _LEGACY_BOOTSTRAP_ROOT.is_dir():
+        findings.append(
+            DoctorFinding(
+                "warn",
+                "legacy-bootstrap:tree",
+                f"legacy bootstrap tree left in place at {_LEGACY_BOOTSTRAP_ROOT} — "
+                "archive or remove it manually once the canonical install is verified",
+            )
+        )
+    else:
+        findings.append(
+            DoctorFinding("ok", "legacy-bootstrap:tree", "no legacy bootstrap tree")
+        )
+    return findings
+
+
 def _doctor_launcher_source_root(store_path: Path) -> Path | None:
     current_link = vibecrafted_tools_home() / "vibecrafted-current"
     candidates: list[Path] = [Path(__file__).resolve().parent.parent]
@@ -5422,6 +5522,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         for finding in _doctor_fix_launchers(store_path, state):
             icon = OK if finding.level == "ok" else WARN
             print(f"  {icon} {finding.component}: {finding.message}")
+    if getattr(args, "fix_legacy_bootstrap", False):
+        for finding in _doctor_fix_legacy_bootstrap():
+            icon = OK if finding.level == "ok" else WARN
+            print(f"  {icon} {finding.component}: {finding.message}")
 
     if not state.skills:
         # No manifest — discover from disk, but only OUR skills
@@ -6248,6 +6352,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--fix-launchers",
         action="store_true",
         help="Refresh vibecrafted, vc-help, and vc-* wrappers from the installed/current source before verifying",
+    )
+    p_doctor.add_argument(
+        "--fix-legacy-bootstrap",
+        action="store_true",
+        help="Neutralize retired /opt/vibecrafted bootstrap roots: comment out VIBECRAFTED_ROOT exports in shell rc files (with backup) and report the leftover tree — never deletes it",
     )
 
     # list
