@@ -11,7 +11,7 @@ echo "Building Rust binaries (Helper)..."
 cd "$REPO_ROOT"
 cargo build -p rmcp-mux --release --bin rmcp-mux
 cargo build -p tray-agent --release --bin vc-mux-tray
-cargo build -p vc-tui --release --bin vc-tui
+cargo build -p voc --release --bin voc
 cargo build -p vibecrafted-shell-ffi --release
 ./shell-agent/scripts/fix-dylib-install-names.sh
 
@@ -21,8 +21,8 @@ if [ -n "${TARGET_BUILD_DIR:-}" ] && [ -n "${CONTENTS_FOLDER_PATH:-}" ]; then
         echo "Embedding Rust binaries into ${APP_MACOS_DIR}"
         cp "$REPO_ROOT/target/release/rmcp-mux" "$APP_MACOS_DIR/vc-mux-daemon"
         cp "$REPO_ROOT/target/release/vc-mux-tray" "$APP_MACOS_DIR/vc-mux-tray"
-        cp "$REPO_ROOT/target/release/vc-tui" "$APP_MACOS_DIR/vc-tui"
-        chmod +x "$APP_MACOS_DIR/vc-mux-daemon" "$APP_MACOS_DIR/vc-mux-tray" "$APP_MACOS_DIR/vc-tui"
+        cp "$REPO_ROOT/target/release/voc" "$APP_MACOS_DIR/voc"
+        chmod +x "$APP_MACOS_DIR/vc-mux-daemon" "$APP_MACOS_DIR/vc-mux-tray" "$APP_MACOS_DIR/voc"
         ./shell-agent/scripts/fix-dylib-install-names.sh "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}"
     else
         echo "ERROR: expected app MacOS directory not found: ${APP_MACOS_DIR}" >&2

@@ -52,7 +52,7 @@ app-debug: bindings xcode
 	if [ -n "$$BUILT_APP" ]; then \
 		cp ../target/release/rmcp-mux "$$BUILT_APP/Contents/MacOS/vc-mux-daemon"; \
 		cp ../target/release/vc-mux-tray "$$BUILT_APP/Contents/MacOS/vc-mux-tray"; \
-		cp ../target/release/vc-tui "$$BUILT_APP/Contents/MacOS/vc-tui"; \
+		cp ../target/release/voc "$$BUILT_APP/Contents/MacOS/voc"; \
 		chmod +x "$$BUILT_APP/Contents/MacOS/"*; \
 		./scripts/fix-dylib-install-names.sh "$$BUILT_APP"; \
 		codesign --force --deep --sign - "$$BUILT_APP"; \
