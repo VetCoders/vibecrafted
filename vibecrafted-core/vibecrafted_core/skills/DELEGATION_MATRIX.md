@@ -192,7 +192,7 @@ Pick the cell by intent: ship-stage delivery → `implement`. Daily rescue / pro
 ### Worked example: ship (meta — different product)
 
 | Path          | Literal                                                          |
-| ------------- | ---------------------------------------------------------------- |
+| ------------- | ---------------------------------------------------------------- | --------- | --- |
 | 1 Worker      | `vibecrafted ship <agent>` (lifecycle run)                       |
 | 2 Interactive | `/vc-ship` — load ship umbrella; stages keep their own launchers |
 | 3 Operator    | ship as baton carrier; stages still `vibecrafted scaffold        | implement | …`  |
