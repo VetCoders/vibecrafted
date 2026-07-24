@@ -1,3 +1,24 @@
+/* Listener registry: pair every bind with pagehide teardown (mem/global-event-listener). */
+var __vcListeners = [];
+function vcListen(target, type, handler, options) {
+    if (!target || typeof target.addEventListener !== 'function') return handler;
+    target.addEventListener(type, handler, options);
+    __vcListeners.push({ target: target, type: type, handler: handler, options: options });
+    return handler;
+}
+function vcUnlistenAll() {
+    for (var i = 0; i < __vcListeners.length; i++) {
+        var e = __vcListeners[i];
+        try {
+            e.target.removeEventListener(e.type, e.handler, e.options);
+        } catch (_err) { /* best-effort teardown */ }
+    }
+    __vcListeners.length = 0;
+}
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('pagehide', vcUnlistenAll);
+}
+
 var prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 var supportsIntersectionObserver = 'IntersectionObserver' in window;
 var liveRegion;
@@ -562,7 +583,7 @@ function shuffleArr(a) {
         buildBoard();
     }
 
-    window.addEventListener('resize', resizeCanvas);
+    vcListen(window, 'resize', resizeCanvas);
     resizeCanvas();
 
     function settledCount() {
@@ -838,12 +859,12 @@ function shuffleArr(a) {
     var mx = -1, my = -1;
     var DIM = 0.22, BRIGHT = 0.92;
 
-    c.addEventListener('mousemove', function (e) {
+    vcListen(c, 'mousemove', function (e) {
         var r = c.getBoundingClientRect();
         mx = (e.clientX - r.left) / (r.right - r.left) * cw;
         my = (e.clientY - r.top) / (r.bottom - r.top) * cw;
     });
-    c.addEventListener('mouseleave', function () {
+    vcListen(c, 'mouseleave', function () {
         mx = -1;
         my = -1;
     });
@@ -1007,7 +1028,7 @@ function shuffleArr(a) {
         requestAnimationFrame(render);
     }
 
-    window.addEventListener('resize', function () {
+    vcListen(window, 'resize', function () {
         resize();
         buildBoard();
     });
@@ -1072,7 +1093,7 @@ function shuffleArr(a) {
     var buttons = document.querySelectorAll('.copy-btn');
     buttons.forEach(function (btn) {
         btn.setAttribute('data-default-label', btn.textContent.trim() || uiStrings.copy);
-        btn.addEventListener('click', function () {
+        vcListen(btn, 'click', function () {
             var code = btn.parentElement && btn.parentElement.querySelector('code');
             var text = code ? code.innerText : '';
             copyText(text).then(function (copied) {
@@ -1089,7 +1110,7 @@ function shuffleArr(a) {
     if (!buttons.length) return;
     buttons.forEach(function (btn) {
         btn.setAttribute('data-default-label', btn.getAttribute('data-default-label') || btn.textContent.trim() || uiStrings.copy);
-        btn.addEventListener('click', function () {
+        vcListen(btn, 'click', function () {
             var cmd = btn.getAttribute('data-copy');
             copyText(cmd).then(function (copied) {
                 flashCopyButton(btn, copied);
@@ -1138,31 +1159,31 @@ function shuffleArr(a) {
         el.setAttribute('role', 'button');
         el.setAttribute('tabindex', '0');
         el.setAttribute('aria-label', uiStrings.copyCommandAriaPrefix + value);
-        el.addEventListener('mouseenter', function (e) {
+        vcListen(el, 'mouseenter', function (e) {
             clearTimeout(hideTimer);
             showTip(e.clientX, e.clientY, uiStrings.tooltipCopy);
         });
-        el.addEventListener('mousemove', function (e) {
+        vcListen(el, 'mousemove', function (e) {
             if (tip.classList.contains('ok') || tip.classList.contains('err')) return;
             tip.style.left = e.clientX + 'px';
             tip.style.top = e.clientY + 'px';
         });
-        el.addEventListener('focus', function () {
+        vcListen(el, 'focus', function () {
             var r = el.getBoundingClientRect();
             showTip(r.left + r.width / 2, r.top, uiStrings.tooltipCopy);
         });
-        el.addEventListener('blur', function () {
+        vcListen(el, 'blur', function () {
             clearTimeout(hideTimer);
             hideTip();
         });
-        el.addEventListener('mouseleave', function () {
+        vcListen(el, 'mouseleave', function () {
             clearTimeout(hideTimer);
             hideTimer = setTimeout(hideTip, 80);
         });
-        el.addEventListener('click', function (e) {
+        vcListen(el, 'click', function (e) {
             copyFromElement(el, e.clientX, e.clientY);
         });
-        el.addEventListener('keydown', function (event) {
+        vcListen(el, 'keydown', function (event) {
             if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 var r = el.getBoundingClientRect();
@@ -1192,8 +1213,8 @@ function shuffleArr(a) {
     }
 
     updateBar();
-    window.addEventListener('scroll', queueUpdate, {passive: true});
-    window.addEventListener('resize', queueUpdate);
+    vcListen(window, 'scroll', queueUpdate, {passive: true});
+    vcListen(window, 'resize', queueUpdate);
 })();
 
 // ============ FRAMEWORK STRIP ARROWS ============
@@ -1344,25 +1365,25 @@ function shuffleArr(a) {
     seedInfiniteStrip();
     jumpToMiddle(true);
 
-    leftBtn.addEventListener('click', function () {
+    vcListen(leftBtn, 'click', function () {
         scrollStrip(-1);
     });
 
-    rightBtn.addEventListener('click', function () {
+    vcListen(rightBtn, 'click', function () {
         scrollStrip(1);
     });
 
-    strip.addEventListener('pointerdown', function () {
+    vcListen(strip, 'pointerdown', function () {
         stopMomentum();
         targetScrollLeft = strip.scrollLeft;
     });
 
-    strip.addEventListener('touchstart', function () {
+    vcListen(strip, 'touchstart', function () {
         stopMomentum();
         targetScrollLeft = strip.scrollLeft;
     }, {passive: true});
 
-    strip.addEventListener('scroll', function () {
+    vcListen(strip, 'scroll', function () {
         if (!isMomentumScroll) {
             targetScrollLeft = strip.scrollLeft;
         }
@@ -1370,14 +1391,14 @@ function shuffleArr(a) {
         isMomentumScroll = false;
     }, {passive: true});
 
-    wrap.addEventListener('wheel', function (event) {
+    vcListen(wrap, 'wheel', function (event) {
         var delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
         if (!delta) return;
         event.preventDefault();
         pushMomentum(delta, prefersReducedMotion ? 0.02 : 0.035);
     }, {passive: false});
 
-    window.addEventListener('resize', function () {
+    vcListen(window, 'resize', function () {
         stopMomentum();
         jumpToMiddle(false);
     });
@@ -1406,15 +1427,15 @@ function shuffleArr(a) {
         }, 120);
     }
 
-    footer.addEventListener('pointerenter', openDrawer);
-    footer.addEventListener('pointerleave', closeDrawerSoon);
-    footer.addEventListener('focusin', openDrawer);
-    footer.addEventListener('focusout', function (event) {
+    vcListen(footer, 'pointerenter', openDrawer);
+    vcListen(footer, 'pointerleave', closeDrawerSoon);
+    vcListen(footer, 'focusin', openDrawer);
+    vcListen(footer, 'focusout', function (event) {
         if (footer.contains(event.relatedTarget)) return;
         closeDrawerSoon();
     });
 
-    window.addEventListener('blur', function () {
+    vcListen(window, 'blur', function () {
         if (closeTimer) clearTimeout(closeTimer);
         closeTimer = 0;
         footer.removeAttribute('data-drawer-open');
@@ -1428,7 +1449,7 @@ function shuffleArr(a) {
     btn.setAttribute('data-default-label', uiStrings.copy);
     var code = btn.parentElement && btn.parentElement.querySelector('code');
     if (!code) return;
-    btn.addEventListener('click', function () {
+    vcListen(btn, 'click', function () {
         copyText(code.textContent).then(function (ok) {
             flashCopyButton(btn, ok);
             announceUiMessage(ok ? uiStrings.pipelineCopied : uiStrings.copyFailed);
@@ -1623,20 +1644,20 @@ function shuffleArr(a) {
         }, 120);
     }
 
-    toggleBtn.addEventListener('click', function () {
+    vcListen(toggleBtn, 'click', function () {
         var mode = shell.getAttribute('data-mode');
         animateModeChange(mode === 'preview' ? 'code' : 'preview');
     });
 
     if (splitBtn) {
-        splitBtn.addEventListener('click', function () {
+        vcListen(splitBtn, 'click', function () {
             var mode = shell.getAttribute('data-mode');
             animateModeChange(mode === 'split' ? 'code' : 'split');
         });
     }
 
     lockMermaidShellHeight();
-    window.addEventListener('resize', function () {
+    vcListen(window, 'resize', function () {
         requestAnimationFrame(lockMermaidShellHeight);
     });
 })();
@@ -1662,25 +1683,25 @@ function shuffleArr(a) {
         }, hideDelay);
     }
 
-    getZone.addEventListener('mouseenter', showBanner);
-    getZone.addEventListener('mouseleave', function () {
+    vcListen(getZone, 'mouseenter', showBanner);
+    vcListen(getZone, 'mouseleave', function () {
         hideBanner(240);
     });
-    getZone.addEventListener('focusin', showBanner);
-    getZone.addEventListener('focusout', function () {
-        hideBanner(240);
-    });
-
-    curlBanner.addEventListener('mouseenter', showBanner);
-    curlBanner.addEventListener('mouseleave', function () {
-        hideBanner(240);
-    });
-    curlBanner.addEventListener('focusin', showBanner);
-    curlBanner.addEventListener('focusout', function () {
+    vcListen(getZone, 'focusin', showBanner);
+    vcListen(getZone, 'focusout', function () {
         hideBanner(240);
     });
 
-    window.addEventListener('scroll', function () {
+    vcListen(curlBanner, 'mouseenter', showBanner);
+    vcListen(curlBanner, 'mouseleave', function () {
+        hideBanner(240);
+    });
+    vcListen(curlBanner, 'focusin', showBanner);
+    vcListen(curlBanner, 'focusout', function () {
+        hideBanner(240);
+    });
+
+    vcListen(window, 'scroll', function () {
         var currentY = window.scrollY || 0;
         if (currentY > lastScrollY + 6) {
             hideBanner(180);
@@ -1688,7 +1709,7 @@ function shuffleArr(a) {
         lastScrollY = currentY;
     }, {passive: true});
 
-    window.addEventListener('wheel', function (event) {
+    vcListen(window, 'wheel', function (event) {
         if (event.deltaY > 0) {
             hideBanner(180);
         }
@@ -1761,7 +1782,7 @@ function shuffleArr(a) {
     }
 
     triggers.forEach(function (trigger) {
-        trigger.addEventListener('click', function (event) {
+        vcListen(trigger, 'click', function (event) {
             var modalId = trigger.getAttribute('data-modal-open');
             var modal = modalId ? document.getElementById(modalId) : null;
             if (!modal) return;
@@ -1775,7 +1796,7 @@ function shuffleArr(a) {
 
     modals.forEach(function (modal) {
         setModalHidden(modal, true);
-        modal.addEventListener('click', function (event) {
+        vcListen(modal, 'click', function (event) {
             if (event.target === modal || event.target.hasAttribute('data-modal-close') ||
                 event.target.classList.contains('surface-modal__backdrop')) {
                 closeModal(false);
@@ -1783,7 +1804,7 @@ function shuffleArr(a) {
         });
     });
 
-    document.addEventListener('keydown', function (event) {
+    vcListen(document, 'keydown', function (event) {
         if (!activeModal) return;
         if (event.key === 'Tab') {
             var panel = activeModal.querySelector('.surface-modal__panel');
