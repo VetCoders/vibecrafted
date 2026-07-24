@@ -53,7 +53,11 @@ from vibecrafted_core.package_resources import resource_path as _core_resource_p
 
 from .synthesis import (
     live_failure_score as _live_failure_score,
+)
+from .synthesis import (
     unmade_decisions as _unmade_decisions,
+)
+from .synthesis import (
     unverified_claims as _unverified_claims,
 )
 
@@ -973,9 +977,7 @@ def build_server() -> Any:
             "perception_hint": "use mcp__loctree-mcp__context() for full perception",
             "intentions_hint": "use mcp__aicx-mcp__aicx_intents() for full intentions",
             "synthesis": {
-                "live_failure_score": _live_failure_score(
-                    repo_state, doctor_state
-                ),
+                "live_failure_score": _live_failure_score(repo_state, doctor_state),
                 "unmade_decisions": _unmade_decisions(repo_state),
                 "unverified_claims": _unverified_claims(),
             },
