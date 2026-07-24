@@ -329,6 +329,121 @@ def test_vc_research_config_selection_announces_source(tmp_path: Path) -> None:
     assert lanes_match.group(2).endswith("config.toml")
 
 
+def test_vc_research_empty_config_falls_through_to_next_source(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    crafted_home = tmp_path / "home" / ".vibecrafted"
+    write_runtime_research_yaml(crafted_home, ["codex", "agy"])
+    empty_config = tmp_path / "empty.toml"
+    empty_config.write_text("[runtime.picking.research]\n", encoding="utf-8")
+
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(crafted_home)
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VIBECRAFTED_RESEARCH_CONFIG"] = str(empty_config)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                f'vc-research --runtime headless --root "{root}" '
+                '--prompt "fallback lanes"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Research lanes: codex agy" in result.stdout
+    assert "research.yaml" in result.stdout
+
+
+def test_vc_research_malformed_config_fails_closed(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    malformed_config = tmp_path / "malformed.toml"
+    malformed_config.write_text(
+        "[runtime.picking.research]\ndefault_agents = [\n", encoding="utf-8"
+    )
+
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["VIBECRAFTED_RESEARCH_CONFIG"] = str(malformed_config)
+    env["XDG_CONFIG_HOME"] = str(tmp_path / "xdg")
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                f'vc-research --runtime headless --root "{root}" '
+                '--prompt "must not launch"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "Failed to read research agent config" in result.stderr
+    assert "prepared" not in result.stdout
+    assert "launched" not in result.stdout
+
+
+def test_vc_research_unsupported_configured_agent_fails_closed(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    config_home = tmp_path / "xdg"
+    write_research_config(config_home, ["codex", "claud"])
+
+    env = os.environ.copy()
+    env["VIBECRAFTED_HOME"] = str(tmp_path / "home" / ".vibecrafted")
+    env["VIBECRAFTED_ROOT"] = str(REPO_ROOT)
+    env["XDG_CONFIG_HOME"] = str(config_home)
+    env["VETCODERS_SPAWN_RUNTIME"] = "headless"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            (
+                f'source "{HELPER_SCRIPT}"; '
+                f'vc-research --runtime headless --root "{root}" '
+                '--prompt "must not shrink"'
+            ),
+        ],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert (
+        "unsupported research agent in runtime picking config: claud" in result.stderr
+    )
+    assert "refusing to silently shrink the swarm" in result.stderr
+    assert "prepared" not in result.stdout
+    assert "launched" not in result.stdout
+
+
 def test_vc_research_reads_runtime_owned_yaml(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     root.mkdir()

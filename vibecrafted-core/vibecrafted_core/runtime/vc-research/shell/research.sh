@@ -170,7 +170,10 @@ else:
     return 1
   fi
   printf 'Failed to read research agent config: %s\n' "$config_path" >&2
-  return "$parse_status"
+  # `1` is the caller's sentinel for a readable config with no lane list.
+  # Parse/read failures must stay distinguishable so the selection fails closed
+  # instead of silently falling through to another source.
+  return 2
 }
 
 # Output contract: first line is `__source:<origin>`, remaining lines are
@@ -194,10 +197,13 @@ _vetcoders_research_agents() {
       printf '__source:%s\n' "$config_path"
       printf '%s\n' "$config_agents"
       return 0
-    fi
-    parse_status=$?
-    if (( parse_status != 1 )); then
-      return "$parse_status"
+    else
+      # Capture the condition status inside `else`: an `if` with no matching
+      # branch itself returns success and would erase the parser's status.
+      parse_status=$?
+      if (( parse_status != 1 )); then
+        return "$parse_status"
+      fi
     fi
   done < <(_vetcoders_research_config_paths)
 
@@ -477,7 +483,11 @@ _vetcoders_research() {
           return 1
           ;;
         "") ;;
-        *) printf 'Ignoring unsupported research agent from runtime picking config: %s\n' "$agent" >&2 ;;
+        *)
+          printf 'vc-research: unsupported research agent in runtime picking config: %s\n' "$agent" >&2
+          printf 'Fix the picking config - refusing to silently shrink the swarm.\n' >&2
+          return 1
+          ;;
       esac
     done <<< "$agents_output"
     if (( ${#research_agents[@]} == 0 )); then
