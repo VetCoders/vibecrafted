@@ -64,10 +64,9 @@ if command -v bat >/dev/null 2>&1; then
     alias cathl='bat'
 fi
 
-# vibecrafted helper aliases
-alias vc='vibecrafted'
-alias vc-init='vibecrafted init claude'
-alias vc-impl='vibecrafted implement codex'
+# vc/vc-init/vc-impl come from the sourced vetcoders shell helpers as
+# functions — do NOT alias those names here (zsh refuses to define a function
+# over an active alias, which breaks helper loading).
 
 # Welcome message (printed once per shell)
 if [ -z "$VC_WORKSPACE_WELCOMED" ]; then

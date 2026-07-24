@@ -51,7 +51,11 @@ from vibecrafted_core.lifecycle_runner import (
 )
 from vibecrafted_core.package_resources import resource_path as _core_resource_path
 
-from . import synthesis as _synthesis
+from .synthesis import (
+    live_failure_score as _live_failure_score,
+    unmade_decisions as _unmade_decisions,
+    unverified_claims as _unverified_claims,
+)
 
 SLIM_MAX_COMMITS = 5
 SLIM_MAX_DOCTOR_FINDINGS = 8
@@ -503,7 +507,7 @@ def build_server() -> Any:
     """
     from fastmcp import FastMCP
 
-    from . import __version__
+    from .version import __version__
 
     mcp = FastMCP("vibecrafted", version=__version__)
 
@@ -969,11 +973,11 @@ def build_server() -> Any:
             "perception_hint": "use mcp__loctree-mcp__context() for full perception",
             "intentions_hint": "use mcp__aicx-mcp__aicx_intents() for full intentions",
             "synthesis": {
-                "live_failure_score": _synthesis.live_failure_score(
+                "live_failure_score": _live_failure_score(
                     repo_state, doctor_state
                 ),
-                "unmade_decisions": _synthesis.unmade_decisions(repo_state),
-                "unverified_claims": _synthesis.unverified_claims(),
+                "unmade_decisions": _unmade_decisions(repo_state),
+                "unverified_claims": _unverified_claims(),
             },
         }
         if slim:
@@ -1072,7 +1076,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.version:
-        from . import __version__
+        from .version import __version__
 
         print(__version__)
         return 0

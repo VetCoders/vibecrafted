@@ -274,6 +274,18 @@ _vetcoders_command_dispatch() {
   return 127
 }
 
+# Shell dotfiles commonly alias vc/vc-* (old container templates did); zsh
+# refuses to define a function whose name is an active alias. Drop any such
+# alias before defining the canonical functions.
+if [ -n "${ZSH_VERSION:-}" ]; then
+  unalias -m 'vc' 'vc-*' 2>/dev/null || true
+else
+  for _vc_alias in $(alias 2>/dev/null | sed -n 's/^alias \(vc[a-z-]*\)=.*/\1/p'); do
+    unalias "$_vc_alias" 2>/dev/null || true
+  done
+  unset _vc_alias 2>/dev/null || true
+fi
+
 vc-agents() { _vetcoders_skill_dispatch agents "$@"; }
 vc-audit() { _vetcoders_skill_dispatch audit "$@"; }
 vc-decorate() { command vibecrafted decorate "$@"; }

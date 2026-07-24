@@ -1,25 +1,26 @@
+"""Public package surface for vibecrafted-mcp.
+
+``build_server`` / ``main`` are lazy-loaded so ``server.py`` can import sibling
+modules (``version``, ``synthesis``) without a breaking import cycle through
+this package root.
+"""
+
 from __future__ import annotations
 
-import importlib.metadata
-from pathlib import Path
+from typing import Any
 
-from .server import build_server, main
-
-
-def _resolve_installed_version() -> str:
-    packaged = Path(__file__).with_name("VERSION")
-    try:
-        version = packaged.read_text(encoding="utf-8").strip()
-    except OSError:
-        version = ""
-    if version:
-        return version
-    try:
-        return importlib.metadata.version("vibecrafted-mcp")
-    except importlib.metadata.PackageNotFoundError:
-        return "unknown"
-
-
-__version__ = _resolve_installed_version()
+from .version import __version__
 
 __all__ = ["__version__", "build_server", "main"]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"build_server", "main"}:
+        from . import server as _server
+
+        return getattr(_server, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted({*globals(), *__all__})

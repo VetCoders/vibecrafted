@@ -97,8 +97,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV TZ=UTC
-ENV PATH="/usr/local/bin:/opt/vibecrafted/bin:/opt/vibecrafted/tools/vibecrafted-current/bin:/root/.cargo/bin:/root/.local/bin:${PATH}"
-ENV VIBECRAFTED_ROOT="/opt/vibecrafted"
+# /opt/vibecrafted is only a build-time SEED (image layer, see the framework
+# install below). The live install owns the canonical roots — store
+# ~/.vibecrafted · runtime ~/.local/share/vibecrafted · launchers
+# ~/.local/bin — so the image must not export VIBECRAFTED_ROOT or shadow
+# canonical launchers with seed paths (the installer fail-fasts on that drift).
+ENV PATH="/root/.local/bin:/usr/local/bin:/root/.cargo/bin:${PATH}"
 
 # Runtime deps. gnupg2 for signed installers; make for the vibecrafted installer
 # preflight. CLI niceties (eza/bat/fd/rg/just/zoxide) from Debian trixie apt
