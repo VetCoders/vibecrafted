@@ -97,6 +97,52 @@ def test_makefile_keeps_install_as_terminal_first_front_door() -> None:
             "uv run --project $(INSTALLER_DIR) --quiet vetcoders-installer $(MANIFEST)"
             in block
         ), f"{name} must invoke the uv meta-installer"
+        assert 'UV_PROJECT_ENVIRONMENT="$(UV_PROJECT_ENVIRONMENT)"' in block, (
+            f"{name} must isolate uv from a foreign checkout .venv"
+        )
+
+    assert (
+        "UV_PROJECT_ENVIRONMENT ?= "
+        "$(INSTALLER_CACHE_HOME)/vibecrafted/venvs/installer-$(INSTALLER_HOST_TAG)"
+        in text
+    )
+    assert "INSTALLER_HOST_TAG := $(shell uname -s" in text
+
+
+def test_installer_environment_is_host_scoped_outside_checkout(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    cache = tmp_path / "xdg-cache"
+    probe = tmp_path / "probe.mk"
+    probe.write_text(
+        f"include {REPO_ROOT / 'Makefile'}\n"
+        "print-installer-env:\n"
+        "\t@printf '%s\\n' '$(UV_PROJECT_ENVIRONMENT)'\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "make",
+            "--no-print-directory",
+            "-s",
+            "-f",
+            str(probe),
+            f"HOME={home}",
+            f"XDG_CACHE_HOME={cache}",
+            "print-installer-env",
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    environment = Path(result.stdout.strip())
+    assert environment.parent == cache / "vibecrafted" / "venvs"
+    assert environment.name.startswith("installer-")
+    assert REPO_ROOT not in environment.parents
 
 
 def test_bundle_check_uses_portable_mktemp_template() -> None:
@@ -163,6 +209,11 @@ def test_install_manifest_post_install_uses_mirror_sync() -> None:
         "--compact --non-interactive --mirror"
     ) in text
     assert "make --no-print-directory install-python-tools" in text
+    assert (
+        'bash "$PWD/vibecrafted-core/vibecrafted_core/runtime/scripts/'
+        'install-frontier-config.sh" --source "$PWD"'
+    ) in text
+    assert "bash runtime/scripts/install-frontier-config.sh" not in text
 
 
 def test_make_install_stages_vc_frame_from_stable_runtime() -> None:

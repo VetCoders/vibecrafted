@@ -300,6 +300,8 @@ def run_phase(
     task_id: Any,
     log_handle: Any | None,
     quiet: bool,
+    *,
+    non_interactive: bool = False,
 ) -> int:
     """Execute one phase; stream subprocess output above the sticky bar.
 
@@ -321,6 +323,9 @@ def run_phase(
         progress.update(task_id, cur="starting…")
 
     try:
+        phase_env = os.environ.copy()
+        if non_interactive:
+            phase_env["VIBECRAFTED_INSTALL_NONINTERACTIVE"] = "1"
         proc = subprocess.Popen(
             phase.cmd,
             stdout=subprocess.PIPE,
@@ -328,6 +333,7 @@ def run_phase(
             text=True,
             bufsize=1,
             cwd=str(phase.cwd),
+            env=phase_env,
         )
     except FileNotFoundError as exc:
         console.print(f"  [red]✗ command not found: {exc}[/]")
@@ -1044,7 +1050,15 @@ def run(
                 progress.update(task_id, description=phase.label)
                 progress.start()
 
-            rc = run_phase(console, phase, progress, task_id, log_handle, quiet)
+            rc = run_phase(
+                console,
+                phase,
+                progress,
+                task_id,
+                log_handle,
+                quiet,
+                non_interactive=auto_yes or not _is_interactive(),
+            )
 
             if HAS_RICH and not compact_stdout:
                 progress.update(task_id, advance=1)

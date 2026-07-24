@@ -228,6 +228,40 @@ def test_run_yes_quiet_keeps_stdout_compact_and_moves_detail_to_log(
     assert "subprocess detail that should be logged only" in log_text
 
 
+def test_run_phase_marks_auto_approved_subprocess_non_interactive(
+    tmp_path: Path,
+) -> None:
+    captured = tmp_path / "non-interactive.txt"
+    phase = installer.Phase(
+        key="installation",
+        label="Installation",
+        reason="fixture",
+        cmd=[
+            sys.executable,
+            "-c",
+            (
+                "import os, pathlib; "
+                f"pathlib.Path({str(captured)!r}).write_text("
+                "os.environ.get('VIBECRAFTED_INSTALL_NONINTERACTIVE', 'missing'))"
+            ),
+        ],
+        cwd=tmp_path,
+    )
+
+    rc = installer.run_phase(
+        installer._PlainConsole(),
+        phase,
+        progress=None,
+        task_id=None,
+        log_handle=None,
+        quiet=True,
+        non_interactive=True,
+    )
+
+    assert rc == 0
+    assert captured.read_text(encoding="utf-8") == "1"
+
+
 def test_print_summary_edge_failure_shows_recovery_block_with_installer_cmd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
