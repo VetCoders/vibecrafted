@@ -67,6 +67,10 @@ cp "$REPO_ROOT/target/release/rmcp-mux" "$APP_PATH/Contents/MacOS/vc-mux-daemon"
 cp "$REPO_ROOT/target/release/vc-mux-tray" "$APP_PATH/Contents/MacOS/vc-mux-tray"
 cp "$REPO_ROOT/target/release/voc" "$APP_PATH/Contents/MacOS/voc"
 chmod +x "$APP_PATH/Contents/MacOS/"*
+mkdir -p "$APP_PATH/Contents/Resources"
+cp "$REPO_ROOT/icon1.icns" "$APP_PATH/Contents/Resources/icon1.icns"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile icon1" "$APP_PATH/Contents/Info.plist" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string icon1" "$APP_PATH/Contents/Info.plist"
 ./../scripts/fix-dylib-install-names.sh "$APP_PATH"
 
 # Step 5: Codesign deep + verify
