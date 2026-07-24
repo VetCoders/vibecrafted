@@ -87,19 +87,19 @@ def test_full_help_examples_keep_decorate_between_dou_and_hydrate(
     assert "vibecrafted dou claude" in output
     assert "vibecrafted decorate codex" in output
     assert "vibecrafted hydrate codex" in output
-    assert "justdo = alias for implement" in output
+    assert "justdo = Just Do posture (not implement)" in output
 
 
-def test_implement_help_is_canonical_and_names_alias(tmp_path: Path) -> None:
+def test_implement_help_is_ship_write_and_distinct_from_justdo(tmp_path: Path) -> None:
     output = _run_launcher_help(tmp_path, "implement", "--help")
 
     assert (
-        "Autonomous end-to-end implementation with followup and marbles built in."
-        in output
+        "VC-ship WRITE stage: structured end-to-end implementation with followup "
+        "and marbles built in." in output
     )
     assert "vibecrafted implement <claude|codex|agy|junie|grok> [flags]" in output
     assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in output
-    assert "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]" in output
+    assert "Not the same skill as justdo." in output
     assert 'vibecrafted implement codex --prompt "Ship the feature"' in output
 
 
@@ -153,14 +153,15 @@ def test_docs_skill_index_locks_command_semantics() -> None:
     workflows = (REPO_ROOT / "docs" / "WORKFLOWS.md").read_text(encoding="utf-8")
 
     assert (
-        "`vc-implement` / `vibecrafted implement` is the official autonomous delivery"
+        "`vc-implement` / `vibecrafted implement` is the official ship-cycle WRITE"
         in skills
     )
     assert "`vc-justdo`" in skills
-    assert "`justdo`    | `vibecrafted implement`" in skills
+    assert "`justdo`    | `justdo`" in skills
+    assert "Standalone Just Do posture" in skills
     assert (
         "Findings-first review over a bounded PR, branch, commit range, or artifact pack."
         in skills
     )
     assert "Post-implementation direction audit" in skills
-    assert "`justdo` command and `vc-justdo` helper remain aliases" in workflows
+    assert "`vibecrafted justdo` / `vc-justdo` is a **standalone**" in workflows

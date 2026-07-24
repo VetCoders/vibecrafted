@@ -82,9 +82,10 @@ See [Living Tree Rule](../LIVING_TREE_RULE.md).
 
 Not asking the operator does **not** mean skipping orientation. Before
 repo-specific work, run or consume `vc-init`. Loctree is the default structural
-perception — use it before broad grep (`context` / `slice` / `impact` / `find`)
-to build or refresh the Code-Derived Application Map. Missing `vc-init`/Loctree
-evidence is a process failure. No-repo/no-code tasks: state the no-repo exception.
+perception — use the `Loctree:loctree` skill before broad grep (`context` /
+`slice` / `impact` / `find`). Use it to build or refresh the
+Code-Derived Application Map. Missing `vc-init`/Loctree evidence is a process
+failure. No-repo/no-code tasks: state the no-repo exception.
 
 ## Repository Work Doctrine
 

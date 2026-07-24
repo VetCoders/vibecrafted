@@ -70,6 +70,7 @@ def test_skill_docs_pin_command_deck_semantics() -> None:
     assert "`vc-partner` keeps the user and agent in shared steering" in skills
     assert "`vc-ownership`\n  means the agent takes operational ownership" in skills
 
-    assert "`vibecrafted implement` is the canonical autonomous delivery" in workflows
+    assert "`vibecrafted implement` is the ship WRITE autonomous delivery" in workflows
+    assert "`vibecrafted justdo` / `vc-justdo` is a **standalone**" in workflows
     assert "`vc-review` reviews a bounded target" in workflows
     assert "`vc-partner` is shared steering with the user" in workflows

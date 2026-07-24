@@ -47,10 +47,10 @@ surface.
 - `vc-marbles` uses the same root but nests loop artifacts under `marbles/`.
 - `vc-init` is interactive-only and prepares the operator session; it does not
   guarantee a report on its own.
-- `vc-implement` / `vibecrafted implement` is the official autonomous delivery
-  face. `vc-justdo`, `vibecrafted justdo`, and per-agent `*-justdo` helpers are
-  compatibility aliases only; they stay listed here so installed operator
-  environments do not silently break.
+- `vc-implement` / `vibecrafted implement` is the official ship-cycle WRITE
+  delivery face. `vc-justdo`, `vibecrafted justdo`, and per-agent `*-justdo`
+  helpers expose the standalone Just Do posture under skill id `justdo`; they
+  are not aliases of `implement`.
 - Every `vc-*` workflow skill inherits the Living Tree rule: stay in the
   operator's current checkout and branch; do not create or move into git
   worktrees unless the operator explicitly asks for a worktree in that prompt.

@@ -1347,18 +1347,15 @@ def test_implement_help_is_the_canonical_autonomous_delivery_surface() -> None:
     )
 
     assert "implement" in result.stdout
-    assert "Autonomous end-to-end implementation" in result.stdout
+    assert "VC-ship WRITE stage: structured end-to-end implementation" in result.stdout
     assert (
         "vibecrafted implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
     )
     assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
-    assert (
-        "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]"
-        in result.stdout
-    )
+    assert "Not the same skill as justdo." in result.stdout
 
 
-def test_justdo_help_points_back_to_implement() -> None:
+def test_justdo_help_is_a_distinct_standalone_posture() -> None:
     result = subprocess.run(
         [str(LAUNCHER), "justdo", "--help"],
         check=True,
@@ -1368,15 +1365,10 @@ def test_justdo_help_points_back_to_implement() -> None:
     )
 
     assert "justdo" in result.stdout
-    assert "Convenient alias for vc-implement" in result.stdout
-    assert (
-        "vibecrafted implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
-    )
-    assert "vc-implement <claude|codex|agy|junie|grok> [flags]" in result.stdout
-    assert (
-        "Alias: vibecrafted justdo <claude|codex|agy|junie|grok> [flags]"
-        in result.stdout
-    )
+    assert "Standalone Just Do posture" in result.stdout
+    assert "vibecrafted justdo <claude|codex|agy|junie|grok> [flags]" in result.stdout
+    assert "vc-justdo <claude|codex|agy|junie|grok> [flags]" in result.stdout
+    assert "Not implement." in result.stdout
 
 
 @pytest.mark.parametrize("skill", ["implement", "justdo"])
