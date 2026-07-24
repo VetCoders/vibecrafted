@@ -50,24 +50,22 @@ def _minimal_payload(root: Path) -> None:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"runtime sentinel for {relative}\n", encoding="utf-8")
-    # The repo's top-level runtime/ is a symlink into the canonical package
-    # path; sshfs-backed mounts (colima containers) drop that symlink entirely.
-    # Mirror every runtime/* requirement under CANONICAL_RUNTIME so fixtures
-    # can exercise the projection with real canonical content behind it.
+    # The repo's top-level runtime/ and skills/ are symlinks into the canonical
+    # package path; sshfs-backed mounts (colima containers) drop those symlinks
+    # entirely. Mirror every aliased requirement under its canonical path so
+    # fixtures can exercise the projection with real content behind it.
     for relative in manifest.REQUIRED_DIRECTORIES:
         parts = Path(relative).parts
-        if parts and parts[0] == "runtime":
-            (root / manifest.CANONICAL_RUNTIME.joinpath(*parts[1:])).mkdir(
-                parents=True, exist_ok=True
-            )
+        if parts and parts[0] in manifest.CANONICAL_PROJECTIONS:
+            canonical = manifest.CANONICAL_PROJECTIONS[parts[0]]
+            (root / canonical.joinpath(*parts[1:])).mkdir(parents=True, exist_ok=True)
     for relative in manifest.REQUIRED_SURFACE_FILES.values():
         parts = Path(relative).parts
-        if parts and parts[0] == "runtime":
-            path = root / manifest.CANONICAL_RUNTIME.joinpath(*parts[1:])
+        if parts and parts[0] in manifest.CANONICAL_PROJECTIONS:
+            canonical = manifest.CANONICAL_PROJECTIONS[parts[0]]
+            path = root / canonical.joinpath(*parts[1:])
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                f"canonical runtime sentinel for {relative}\n", encoding="utf-8"
-            )
+            path.write_text(f"canonical sentinel for {relative}\n", encoding="utf-8")
 
 
 def test_manifest_names_complete_runtime_and_forbidden_junk() -> None:
@@ -157,6 +155,23 @@ def test_stage_payload_projects_canonical_runtime_when_mount_hides_symlink(
     assert runtime_projection.readlink() == manifest.CANONICAL_RUNTIME
     assert (runtime_projection / "scripts" / "README.md").is_file()
     assert (runtime_projection / "shell" / "lib" / "core.sh").is_file()
+    manifest.validate_payload(destination)
+
+
+def test_stage_payload_projects_canonical_skills_when_mount_hides_symlink(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "payload"
+    _minimal_payload(source)
+    shutil.rmtree(source / "skills")
+
+    manifest.stage_payload(source, destination, mirror=True)
+
+    skills_projection = destination / "skills"
+    assert skills_projection.is_symlink()
+    assert skills_projection.readlink() == manifest.CANONICAL_SKILLS
+    assert (skills_projection / "vc-init" / "SKILL.md").is_file()
     manifest.validate_payload(destination)
 
 

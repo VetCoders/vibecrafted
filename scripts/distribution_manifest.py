@@ -165,6 +165,16 @@ FORBIDDEN_COMPONENTS = frozenset(
 )
 
 FORBIDDEN_SUFFIXES = (".pyc", ".pyo", ".swp", "~")
+CANONICAL_RUNTIME = Path("vibecrafted-core/vibecrafted_core/runtime")
+CANONICAL_SKILLS = Path("vibecrafted-core/vibecrafted_core/skills")
+# Repo-root aliases that are symlinks into the canonical package tree. Some
+# mounts (colima's sshfs view of a macOS checkout) drop symlinks entirely, so
+# source validation and staging must be able to project these from the
+# canonical paths instead of requiring the symlink itself.
+CANONICAL_PROJECTIONS = {
+    "runtime": CANONICAL_RUNTIME,
+    "skills": CANONICAL_SKILLS,
+}
 
 
 class ManifestError(ValueError):
@@ -215,16 +225,43 @@ def _symlink_error(root: Path, path: Path) -> str | None:
     return None
 
 
-def _required_errors(root: Path) -> list[str]:
+def _required_candidate(
+    root: Path, relative: str, *, allow_runtime_projection: bool
+) -> Path:
+    candidate = root / relative
+    relative_path = Path(relative)
+    if (
+        allow_runtime_projection
+        and relative_path.parts
+        and relative_path.parts[0] in CANONICAL_PROJECTIONS
+        and not candidate.exists()
+    ):
+        canonical = CANONICAL_PROJECTIONS[relative_path.parts[0]]
+        return root / canonical.joinpath(*relative_path.parts[1:])
+    return candidate
+
+
+def _required_errors(
+    root: Path, *, allow_runtime_projection: bool = False
+) -> list[str]:
     errors = []
     for relative in REQUIRED_FILES:
-        if not (root / relative).is_file():
+        candidate = _required_candidate(
+            root, relative, allow_runtime_projection=allow_runtime_projection
+        )
+        if not candidate.is_file():
             errors.append(f"missing required path: {relative}")
     for relative in REQUIRED_DIRECTORIES:
-        if not (root / relative).is_dir():
+        candidate = _required_candidate(
+            root, relative, allow_runtime_projection=allow_runtime_projection
+        )
+        if not candidate.is_dir():
             errors.append(f"missing required path: {relative}")
     for surface, relative in REQUIRED_SURFACE_FILES.items():
-        if not (root / relative).is_file():
+        candidate = _required_candidate(
+            root, relative, allow_runtime_projection=allow_runtime_projection
+        )
+        if not candidate.is_file():
             errors.append(f"missing required runtime content: {surface} -> {relative}")
     return errors
 
@@ -267,7 +304,7 @@ def validate_payload(root: str | Path) -> None:
 
 
 def _validate_source(root: Path) -> None:
-    errors = _required_errors(root)
+    errors = _required_errors(root, allow_runtime_projection=True)
     for path in _walk_entries(root):
         relative = path.relative_to(root)
         if not path_is_included(relative):
@@ -323,6 +360,13 @@ def stage_payload(
     destination_root.mkdir(parents=True, exist_ok=True)
     for item in sorted(source_root.iterdir(), key=lambda entry: entry.name):
         _copy_included(source_root, item, destination_root / item.name)
+    for alias, canonical in CANONICAL_PROJECTIONS.items():
+        projection = destination_root / alias
+        canonical_dir = destination_root / canonical
+        if not projection.is_dir() and canonical_dir.is_dir():
+            if projection.exists() or projection.is_symlink():
+                _remove_path(projection)
+            projection.symlink_to(canonical, target_is_directory=True)
     validate_payload(destination_root)
 
 

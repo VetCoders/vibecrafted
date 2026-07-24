@@ -1676,6 +1676,15 @@ _LEGACY_BOOTSTRAP_ROOT = Path("/opt/vibecrafted")
 _LEGACY_ROOT_EXPORT_MARK = (
     "# vibecrafted doctor --fix-legacy-bootstrap: retired legacy root"
 )
+_LEGACY_ROOT_UNSET_MARK = (
+    "# vibecrafted doctor --fix-legacy-bootstrap: retire container-image legacy root"
+)
+_LEGACY_ROOT_UNSET_BLOCK = (
+    f"\n{_LEGACY_ROOT_UNSET_MARK}\n"
+    f'if [ "${{VIBECRAFTED_ROOT:-}}" = "{_LEGACY_BOOTSTRAP_ROOT}" ]; then\n'
+    "  unset VIBECRAFTED_ROOT\n"
+    "fi\n"
+)
 
 
 def _doctor_fix_legacy_bootstrap() -> list[DoctorFinding]:
@@ -1683,8 +1692,10 @@ def _doctor_fix_legacy_bootstrap() -> list[DoctorFinding]:
 
     Comments out ``export VIBECRAFTED_ROOT=...`` lines that pin the legacy
     bootstrap root in shell rc files (backing the file up first) and reports
-    the leftover tree. The tree itself is never deleted — removal stays an
-    explicit operator action.
+    the leftover tree. When the environment itself carries the legacy root
+    (container images bake it via ENV), appends an idempotent unset guard to
+    ``.zshrc``/``.bashrc`` so fresh shells shed it. The tree itself is never
+    deleted — removal stays an explicit operator action.
     """
     findings: list[DoctorFinding] = []
     legacy_token = str(_LEGACY_BOOTSTRAP_ROOT)
@@ -1708,7 +1719,14 @@ def _doctor_fix_legacy_bootstrap() -> list[DoctorFinding]:
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
-            if "VIBECRAFTED_ROOT" in stripped and legacy_token in stripped:
+            # Only neutralize actual export statements. The unset guard this
+            # same fix appends also mentions the legacy token — commenting its
+            # `if` line would orphan the closing `fi` and break the rc file.
+            if (
+                "export" in stripped
+                and "VIBECRAFTED_ROOT" in stripped
+                and legacy_token in stripped
+            ):
                 lines[index] = f"{_LEGACY_ROOT_EXPORT_MARK}\n# {line.lstrip()}"
                 changed = True
         if not changed:
@@ -1747,12 +1765,46 @@ def _doctor_fix_legacy_bootstrap() -> list[DoctorFinding]:
         )
 
     if os.environ.get("VIBECRAFTED_ROOT", "").startswith(legacy_token):
+        # .zshenv is read by EVERY zsh invocation (interactive or not); .zshrc
+        # alone would leave non-interactive shells (make, docker exec) with the
+        # image-baked legacy root.
+        for rcname in (".zshenv", ".zshrc", ".bashrc"):
+            rcfile = Path.home() / rcname
+            try:
+                existing = rcfile.read_text(encoding="utf-8") if rcfile.exists() else ""
+                if _LEGACY_ROOT_UNSET_MARK in existing:
+                    findings.append(
+                        DoctorFinding(
+                            "ok",
+                            f"legacy-bootstrap:guard:{rcname}",
+                            "unset guard already present",
+                        )
+                    )
+                    continue
+                with rcfile.open("a", encoding="utf-8") as handle:
+                    handle.write(_LEGACY_ROOT_UNSET_BLOCK)
+                findings.append(
+                    DoctorFinding(
+                        "ok",
+                        f"legacy-bootstrap:guard:{rcname}",
+                        "appended unset guard for the image-baked legacy root",
+                    )
+                )
+            except OSError as exc:
+                findings.append(
+                    DoctorFinding(
+                        "warn",
+                        f"legacy-bootstrap:guard:{rcname}",
+                        f"could not append unset guard: {exc}",
+                    )
+                )
         findings.append(
             DoctorFinding(
                 "warn",
                 "legacy-bootstrap:env",
                 "VIBECRAFTED_ROOT still points at the legacy root in this shell — "
-                "run `unset VIBECRAFTED_ROOT` or open a fresh shell",
+                "fresh shells now shed it via the rc guard; run "
+                "`unset VIBECRAFTED_ROOT` to clear the current one",
             )
         )
 

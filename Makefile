@@ -13,6 +13,10 @@ RUNTIME ?= none
 INSTALLER_CACHE_HOME ?= $(if $(XDG_CACHE_HOME),$(XDG_CACHE_HOME),$(HOME)/.cache)
 INSTALLER_HOST_TAG := $(shell uname -s | tr '[:upper:]' '[:lower:]')-$(shell uname -m)
 UV_PROJECT_ENVIRONMENT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/venvs/installer-$(INSTALLER_HOST_TAG)
+# Shared source mounts (sshfs skews mtimes) can serve another host's stale
+# __pycache__ as valid bytecode; route bytecode to a per-host cache so the
+# in-tree cache is never read or written by install lanes.
+export PYTHONPYCACHEPREFIX ?= $(INSTALLER_CACHE_HOME)/vibecrafted/pycache-$(INSTALLER_HOST_TAG)
 
 .PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server server-smoke
 
@@ -116,7 +120,9 @@ install-all: init-hooks
 # VERBOSE=1 shows the full bazaar.
 VERBOSE ?= 0
 INSTALL_LOG := $(HOME)/.vibecrafted/install.log
-INSTALL_STEP := scripts/install-step.sh
+# Invoke via bash, never via the execute bit: sshfs-backed mounts (colima
+# containers viewing a macOS checkout) strip +x from files.
+INSTALL_STEP := bash scripts/install-step.sh
 ifeq ($(VERBOSE),1)
 INSTALL_QUIET :=
 else
@@ -207,19 +213,23 @@ install-vendored-binaries:
 		echo "[vendor] installed $$bin -> $(BIN_DIR)/$$bin"; \
 	done
 
+# Degrade like the vendored lane when the toolchain is absent: a cargo-less
+# host (slim containers) keeps a working framework install and gets the app
+# binaries from vendor/ or a release bundle instead of failing the whole lane.
 install-app-binaries:
-	@command -v cargo >/dev/null 2>&1 || { \
-		echo "[app] cargo not found — install rustup (https://rustup.rs) to build $(APP_BINARIES)" >&2; \
-		exit 1; \
-	}
-	@mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)"
-	@echo "[app] building release binaries ($(APP_BINARIES)) from $(APP_DIR)"
-	@cd $(APP_DIR) && cargo build --release -p voc $(INSTALL_QUIET)
-	@for bin in $(APP_BINARIES); do \
+	@if ! command -v cargo >/dev/null 2>&1; then \
+		echo "[app] cargo not found — skipping $(APP_BINARIES) build (install rustup or use vendored/release binaries)" >&2; \
+		exit 0; \
+	fi; \
+	set -e; \
+	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)"; \
+	echo "[app] building release binaries ($(APP_BINARIES)) from $(APP_DIR)"; \
+	( cd $(APP_DIR) && cargo build --release -p voc $(INSTALL_QUIET) ); \
+	for bin in $(APP_BINARIES); do \
 		rm -f "$(BIN_DIR)/$$bin"; \
 		install -m 0755 "$(APP_DIR)/target/release/$$bin" "$(BIN_DIR)/$$bin"; \
-	done
-	@echo "[app] installed: $(APP_BINARIES) -> $(BIN_DIR)"
+	done; \
+	echo "[app] installed: $(APP_BINARIES) -> $(BIN_DIR)"
 
 skills:
 	@$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --non-interactive
@@ -658,22 +668,23 @@ server-test:
 	@cd $(SERVER_DIR) && cargo test -p control-core
 
 install-server:
-	@command -v cargo >/dev/null 2>&1 || { \
-		echo "[server] cargo not found — install rustup (https://rustup.rs) to build $(SERVER_PACKAGE)" >&2; \
-		exit 1; \
-	}
-	@mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(SERVER_INSTALL_SITE_ROOT)"
-	@echo "[server] building release package ($(SERVER_PACKAGE))"
-	@ulimit -f unlimited; cd $(SERVER_DIR) && cargo build --release -p $(SERVER_PACKAGE) --no-default-features --features ssr $(INSTALL_QUIET)
-	@rm -f "$(BIN_DIR)/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"
-	@install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"
-	@install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"
-	@echo "[server] copying public assets/fonts to $(SERVER_INSTALL_SITE_ROOT)"
-	@rm -rf "$(SERVER_INSTALL_SITE_ROOT)"/*
-	@cp -R "$(SERVER_DIR)/web/public/"* "$(SERVER_INSTALL_SITE_ROOT)/"
-	@echo "[server] installed: $(SERVER_BIN) -> $(BIN_DIR) (real file)"
-	@echo "[server] compat: $(SERVER_COMPAT_BIN) -> $(BIN_DIR) (real file)"
-	@echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
+	@if ! command -v cargo >/dev/null 2>&1; then \
+		echo "[server] cargo not found — skipping $(SERVER_PACKAGE) build (install rustup or use vendored/release binaries)" >&2; \
+		exit 0; \
+	fi; \
+	set -e; \
+	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(SERVER_INSTALL_SITE_ROOT)"; \
+	echo "[server] building release package ($(SERVER_PACKAGE))"; \
+	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo build --release -p $(SERVER_PACKAGE) --no-default-features --features ssr $(INSTALL_QUIET) ); \
+	rm -f "$(BIN_DIR)/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
+	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"; \
+	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
+	echo "[server] copying public assets/fonts to $(SERVER_INSTALL_SITE_ROOT)"; \
+	rm -rf "$(SERVER_INSTALL_SITE_ROOT)"/*; \
+	cp -R "$(SERVER_DIR)/web/public/"* "$(SERVER_INSTALL_SITE_ROOT)/"; \
+	echo "[server] installed: $(SERVER_BIN) -> $(BIN_DIR) (real file)"; \
+	echo "[server] compat: $(SERVER_COMPAT_BIN) -> $(BIN_DIR) (real file)"; \
+	echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
 
 server-smoke: install-server
 	@echo "[server-smoke] Run 1/3" && bash tests/server_smoke.sh
