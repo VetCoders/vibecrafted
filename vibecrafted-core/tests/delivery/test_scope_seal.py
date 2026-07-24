@@ -39,8 +39,24 @@ from vibecrafted_core.delivery.seal import (
     reconstruct_seal,
     write_seal,
 )
+from vibecrafted_core.delivery.store import (
+    DELIVERY_SEAL_PATH,
+    EXECUTION_ENVELOPE_PATH,
+    PROOF_CONTRACT_PATH,
+    PROOF_RESULT_PATH,
+)
 
 ZERO = "sha256:" + "0" * 64
+
+
+def test_default_seal_layout_matches_canonical_run_directory() -> None:
+    assert Path(DEFAULT_SEAL_LAYOUT.seal) == DELIVERY_SEAL_PATH
+    assert Path(DEFAULT_SEAL_LAYOUT.envelope) == EXECUTION_ENVELOPE_PATH
+    assert Path(DEFAULT_SEAL_LAYOUT.contract) == PROOF_CONTRACT_PATH
+    assert Path(DEFAULT_SEAL_LAYOUT.proof_result) == PROOF_RESULT_PATH
+    assert DEFAULT_SEAL_LAYOUT.report == "report.md"
+    assert DEFAULT_SEAL_LAYOUT.transcript == "transcript.log"
+    assert DEFAULT_SEAL_LAYOUT.control_plane == "control-plane-snapshot.json"
 
 
 def _contract(
@@ -727,6 +743,9 @@ def test_seal_binds_every_spec_component(tmp_path: Path) -> None:
 def _materialize_run_dir(run_dir: Path) -> SealComponents:
     """Write the on-disk artifacts a seal binds and return matching components."""
     run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / DEFAULT_SEAL_LAYOUT.proof_result).parent.mkdir(
+        parents=True, exist_ok=True
+    )
     contract = _contract("checkout")
     proof = _proof()
 

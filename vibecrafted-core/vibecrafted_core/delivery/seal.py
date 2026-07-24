@@ -58,13 +58,13 @@ class SealLayout:
     without touching seal semantics.
     """
 
-    seal: str = "seal.json"
-    envelope: str = "execution_envelope.json"
-    contract: str = "delivery_proof_contract.json"
-    proof_result: str = "proof_result.json"
+    seal: str = "delivery-seal.json"
+    envelope: str = "execution-envelope.json"
+    contract: str = "delivery-proof-contract.json"
+    proof_result: str = "proof/result.json"
     report: str = "report.md"
     transcript: str = "transcript.log"
-    control_plane: str = "control_plane_snapshot.json"
+    control_plane: str = "control-plane-snapshot.json"
 
     def reconstructable(self) -> Mapping[str, str]:
         """Map seal component name → relative artifact path."""

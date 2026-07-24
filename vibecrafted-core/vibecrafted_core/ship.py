@@ -29,15 +29,7 @@ DEFAULT_SHIP_PROMPT = (
 )
 
 SHIP_ISSUER = "vc-ship"
-SHIP_SEAL_LAYOUT = seal.SealLayout(
-    seal="delivery-seal.json",
-    envelope="execution-envelope.json",
-    contract="delivery-proof-contract.json",
-    proof_result="proof/result.json",
-    report="report.md",
-    transcript="transcript.log",
-    control_plane="control-plane-snapshot.json",
-)
+SHIP_SEAL_LAYOUT = seal.DEFAULT_SEAL_LAYOUT
 SEAL_REFUSAL_PATH = Path("delivery-seal-refusal.json")
 ZERO_DIGEST = "sha256:" + "0" * 64
 EventSink = Callable[[str, str, str, dict[str, Any]], Mapping[str, Any]]
