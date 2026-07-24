@@ -205,6 +205,9 @@ def _capture_stage_completion(
 class LifecycleRunSpec:
     workflow_id: str
     agent: str
+    # Protocol adapters may need to publish the parent lifecycle identity
+    # before the first stage launches. Empty keeps the historical allocator.
+    run_id: str = ""
     prompt: str = ""
     file: str = ""
     root: str = ""
@@ -662,7 +665,7 @@ class LifecycleRunner:
             dict(spec.stage_models or {}) or _mission_stage_models(source_prompt),
             manifest,
         )
-        run_id = _lifecycle_run_id(manifest.id)
+        run_id = spec.run_id or _lifecycle_run_id(manifest.id)
         run_dir = control_plane_home() / "lifecycle_runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         state_path = run_dir / "state.json"

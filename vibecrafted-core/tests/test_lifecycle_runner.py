@@ -23,6 +23,52 @@ from .lifecycle_schema_assertions import (
 )
 
 
+def test_lifecycle_runner_honors_reserved_parent_run_id(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setattr(
+        "vibecrafted_core.lifecycle_runner.load_context_atlas",
+        lambda *_args, **_kwargs: {"ok": True, "command": ["loct", "context"]},
+    )
+
+    def fake_launcher(spec, _source_dir):
+        report = tmp_path / f"{spec.skill}.md"
+        report.write_text(f"{spec.skill} ok\n", encoding="utf-8")
+        return {
+            "accepted": True,
+            "run_id": "child-implement",
+            "report": str(report),
+            "transcript": str(tmp_path / f"{spec.skill}.log"),
+            "meta": str(tmp_path / f"{spec.skill}.json"),
+        }
+
+    runner = LifecycleRunner(
+        launcher=fake_launcher,
+        awaiter=lambda payload: {
+            "completed": True,
+            "artifact_ok": True,
+            "report": payload["report"],
+        },
+    )
+    state = asyncio.run(
+        runner.run(
+            LifecycleRunSpec(
+                workflow_id="vc-implement",
+                agent="codex",
+                run_id="parent-session-123",
+                prompt="reserved identity",
+                root=str(tmp_path),
+                await_stages=True,
+            )
+        )
+    )
+
+    assert state["run_id"] == "parent-session-123"
+    assert Path(state["state_path"]).parent.name == "parent-session-123"
+    assert state["stages"][0]["launch"]["run_id"] == "child-implement"
+
+
 def test_lifecycle_runner_triggers_audit_after_marbles(
     monkeypatch, tmp_path: Path
 ) -> None:
