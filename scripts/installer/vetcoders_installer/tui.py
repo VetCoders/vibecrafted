@@ -8,13 +8,13 @@ import shutil
 import subprocess
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import VerticalScroll, Vertical
-from textual.widgets import Static, Checkbox
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import Checkbox, Static
 
 DEFAULT_RENDER_WIDTH = 57
 MAX_RENDER_WIDTH = 180
@@ -136,7 +136,7 @@ class InstallerIntroApp(App):
     }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("enter", "next_screen", "Proceed", show=True),
         Binding("backspace", "prev_screen", "Back", show=True),
         Binding("escape", "quit_installer", "Quit", show=True),
@@ -209,7 +209,7 @@ class InstallerIntroApp(App):
 
     async def _render_screen(self) -> None:
         idx = min(self._current, len(self._screens) - 1)
-        header, content, footer = self._screens[idx]
+        header, _content, footer = self._screens[idx]
 
         # Override headers/footers using branding if available
         if self.manifest and getattr(self.manifest, "branding", None):
@@ -323,9 +323,11 @@ class InstallerIntroApp(App):
         names = self.install_phase_names or [self.install_phase_label]
         parts = []
         for index, name in enumerate(names, start=1):
-            if self.install_done and self.install_exit_code == 0:
-                marker = "●"
-            elif index < self.install_phase_index:
+            if (
+                self.install_done
+                and self.install_exit_code == 0
+                or index < self.install_phase_index
+            ):
                 marker = "●"
             elif index == self.install_phase_index:
                 marker = "◆"
@@ -440,8 +442,8 @@ class InstallerIntroApp(App):
         try:
             widget = self.query_one("#content-container > Static", Static)
             widget.update(text)
-        except Exception:
-            pass
+        except Exception as _update_exc:  # noqa: BLE001
+            _ = _update_exc  # widget may be unmounted mid-refresh
 
     def _build_step_4_static(self) -> str:
         lines = ["[bold]  Results[/bold]\n"]
@@ -581,7 +583,7 @@ class InstallerIntroApp(App):
                     exit_code = rc
                     err = f"Phase {phase.label} failed with exit {rc}"
                     break
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 exit_code = -1
                 err = str(exc)
                 break

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import dataclasses
 import os
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import pytest
-
 from vibecrafted_core.capabilities import ProbeResult as CliProbe
 from vibecrafted_core.continuity import capabilities as continuity
 

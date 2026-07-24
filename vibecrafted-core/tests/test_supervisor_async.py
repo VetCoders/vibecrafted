@@ -851,14 +851,26 @@ def test_default_no_await_dispatcher_reconciles_finalized_and_refusals(
         meta = runtime_dir / "meta.json"
         seen_state_paths: list[str] = []
 
-        def fake_launcher(spec, _source_dir):
-            runtime_dir.mkdir(parents=True)
-            artifact_dir.mkdir(parents=True)
-            seen_state_paths.append(spec.lifecycle_state_path)
-            meta.write_text(
+        def fake_launcher(
+            spec,
+            _source_dir,
+            *,
+            _runtime_dir=runtime_dir,
+            _artifact_dir=artifact_dir,
+            _seen_state_paths=seen_state_paths,
+            _meta=meta,
+            _stage_run_id=stage_run_id,
+            _report=report,
+            _transcript=transcript,
+        ):
+            # Default-arg capture avoids B023 loop-variable binding in the body.
+            _runtime_dir.mkdir(parents=True)
+            _artifact_dir.mkdir(parents=True)
+            _seen_state_paths.append(spec.lifecycle_state_path)
+            _meta.write_text(
                 json.dumps(
                     {
-                        "run_id": stage_run_id,
+                        "run_id": _stage_run_id,
                         "claim_digest": spec.claim_digest,
                     }
                 ),
@@ -866,10 +878,10 @@ def test_default_no_await_dispatcher_reconciles_finalized_and_refusals(
             )
             return {
                 "accepted": True,
-                "run_id": stage_run_id,
-                "report": str(report),
-                "transcript": str(transcript),
-                "meta": str(meta),
+                "run_id": _stage_run_id,
+                "report": str(_report),
+                "transcript": str(_transcript),
+                "meta": str(_meta),
             }
 
         state = asyncio.run(

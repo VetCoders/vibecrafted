@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from vibecrafted_core.delivery.doctor import (
     diagnose_file,
     diagnose_payload,

@@ -34,10 +34,11 @@ import os
 import subprocess
 import time
 import zlib
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 try:  # pragma: no cover - exercised on every supported (POSIX) platform
     import fcntl
@@ -238,14 +239,14 @@ def _resolve_loct() -> str | None:
     return _resolve_foundation("loct")
 
 
-def _default_spawner(cmd: Sequence[str]) -> "subprocess.Popen[bytes]":
+def _default_spawner(cmd: Sequence[str]) -> subprocess.Popen[bytes]:
     """Launch a detached ``loct watch`` in its own session.
 
     Output is discarded — loctree keeps its own ``.loctree/watch.log``; our
     truth signals are the lock and the bound port, not this process's stdout.
     ``start_new_session`` detaches it so the watcher outlives the spawn pipeline.
     """
-    return subprocess.Popen(  # noqa: S603 - canonical perception command
+    return subprocess.Popen(
         list(cmd),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

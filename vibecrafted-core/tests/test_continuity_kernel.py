@@ -13,7 +13,6 @@ land in later W-waves; this skeleton pins the first two truths NOW:
 from __future__ import annotations
 
 import pytest
-
 from vibecrafted_core import spawn, workflow_runtime
 from vibecrafted_core.continuity import capabilities as continuity
 

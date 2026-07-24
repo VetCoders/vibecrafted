@@ -20,9 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from vibecrafted_core import memex_client as mc
-
 
 # ----------------------------------------------------------- config tests
 

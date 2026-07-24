@@ -7,11 +7,10 @@ import shutil
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core.vc_frame_delivery import (
+    classify_view_path,
     stage_vc_frame_config,
     substitute_pane_shell,
-    classify_view_path,
 )
 
 

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from argparse import Namespace
 import shutil
 import subprocess
+from argparse import Namespace
 from pathlib import Path
 
-from scripts import vetcoders_install as installer
 from vibecrafted_core.doctor import _vc_frame_delivery_findings
 from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
+
+from scripts import vetcoders_install as installer
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -120,24 +121,7 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-                "vc-agents() { :; }",
-                "vc-init() { :; }",
-                "vc-intents() { :; }",
-                "vc-ownership() { :; }",
-                "vc-loop() { :; }",
-                "vc-ship() { :; }",
-                "vc-cron() { :; }",
-                "vc-marbles() { :; }",
-                "codex-implement() { :; }",
-                "codex-marbles() { :; }",
-                "skills-sync() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}\nvc-agents() {{ :; }}\nvc-init() {{ :; }}\nvc-intents() {{ :; }}\nvc-ownership() {{ :; }}\nvc-loop() {{ :; }}\nvc-ship() {{ :; }}\nvc-cron() {{ :; }}\nvc-marbles() {{ :; }}\ncodex-implement() {{ :; }}\ncodex-marbles() {{ :; }}\nskills-sync() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
@@ -255,24 +239,7 @@ def test_run_doctor_includes_dashboard_smoke(tmp_path: Path, monkeypatch) -> Non
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-                "vc-agents() { :; }",
-                "vc-init() { :; }",
-                "vc-intents() { :; }",
-                "vc-ownership() { :; }",
-                "vc-loop() { :; }",
-                "vc-ship() { :; }",
-                "vc-cron() { :; }",
-                "vc-marbles() { :; }",
-                "codex-implement() { :; }",
-                "codex-marbles() { :; }",
-                "skills-sync() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}\nvc-agents() {{ :; }}\nvc-init() {{ :; }}\nvc-intents() {{ :; }}\nvc-ownership() {{ :; }}\nvc-loop() {{ :; }}\nvc-ship() {{ :; }}\nvc-cron() {{ :; }}\nvc-marbles() {{ :; }}\ncodex-implement() {{ :; }}\ncodex-marbles() {{ :; }}\nskills-sync() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
@@ -353,15 +320,7 @@ def test_run_doctor_accepts_gemini_help_when_version_flag_exits_nonzero(
     fake_bin.mkdir()
     _write_executable(
         gemini,
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                'case "${1:-}" in',
-                "  --help) echo 'gemini help'; exit 0 ;;",
-                "  *) exit 1 ;;",
-                "esac",
-            ]
-        )
+        "#!/usr/bin/env bash\ncase \"${1:-}\" in\n  --help) echo 'gemini help'; exit 0 ;;\n  *) exit 1 ;;\nesac"
         + "\n",
     )
 
@@ -399,24 +358,7 @@ def test_run_doctor_finds_launchers_outside_local_bin(
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-                "vc-agents() { :; }",
-                "vc-init() { :; }",
-                "vc-intents() { :; }",
-                "vc-ownership() { :; }",
-                "vc-loop() { :; }",
-                "vc-ship() { :; }",
-                "vc-cron() { :; }",
-                "vc-marbles() { :; }",
-                "codex-implement() { :; }",
-                "codex-marbles() { :; }",
-                "skills-sync() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}\nvc-agents() {{ :; }}\nvc-init() {{ :; }}\nvc-intents() {{ :; }}\nvc-ownership() {{ :; }}\nvc-loop() {{ :; }}\nvc-ship() {{ :; }}\nvc-cron() {{ :; }}\nvc-marbles() {{ :; }}\ncodex-implement() {{ :; }}\ncodex-marbles() {{ :; }}\nskills-sync() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
@@ -944,31 +886,13 @@ def test_run_doctor_spawn_e2e_supplies_full_meta_arguments(
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-                "codex-implement() { :; }",
-                "codex-marbles() { :; }",
-                "skills-sync() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}\ncodex-implement() {{ :; }}\ncodex-marbles() {{ :; }}\nskills-sync() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
 
     (scripts_dir / "common.sh").write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'spawn_write_meta() { local meta_path="$1"; local status="$2"; printf "%s\\n" "$status" > "$meta_path"; }',
-                "spawn_prepare_paths() { :; }",
-                "spawn_watch_startup() { :; }",
-                'spawn_generate_launcher() { local launcher="$1"; local _meta="$2"; local _report="$3"; local _transcript="$4"; local common="$5"; local command="$6"; cat > "$launcher" <<EOF\n#!/usr/bin/env bash\nset -euo pipefail\nsource "$common"\n$command\nEOF\n}',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nspawn_write_meta() { local meta_path="$1"; local status="$2"; printf "%s\\n" "$status" > "$meta_path"; }\nspawn_prepare_paths() { :; }\nspawn_watch_startup() { :; }\nspawn_generate_launcher() { local launcher="$1"; local _meta="$2"; local _report="$3"; local _transcript="$4"; local common="$5"; local command="$6"; cat > "$launcher" <<EOF\n#!/usr/bin/env bash\nset -euo pipefail\nsource "$common"\n$command\nEOF\n}'
         + "\n",
         encoding="utf-8",
     )
@@ -1015,13 +939,7 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
 
     helper_file = helper_dir / "vc-skills.sh"
     helper_file.write_text(
-        "\n".join(
-            [
-                "# shellcheck shell=bash",
-                installer.HELPER_SHIM_MARKER,
-                "vc-help() { :; }",
-            ]
-        )
+        f"# shellcheck shell=bash\n{installer.HELPER_SHIM_MARKER}\nvc-help() {{ :; }}"
         + "\n",
         encoding="utf-8",
     )
@@ -1033,15 +951,7 @@ def test_cmd_doctor_fix_rc_repairs_compat_shell_lines(
         "#!/usr/bin/env bash\nprintf '𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. help ok\\n'\n",
     )
     zshrc.write_text(
-        "\n".join(
-            [
-                "# existing user config",
-                installer._old_zshrc_source_line(),
-                installer._shell_source_line(),
-                'export VIBECRAFTED_HOME="$HOME/.vibecrafted"',
-                installer._launcher_path_line(),
-            ]
-        )
+        f'# existing user config\n{installer._old_zshrc_source_line()}\n{installer._shell_source_line()}\nexport VIBECRAFTED_HOME="$HOME/.vibecrafted"\n{installer._launcher_path_line()}'
         + "\n",
         encoding="utf-8",
     )

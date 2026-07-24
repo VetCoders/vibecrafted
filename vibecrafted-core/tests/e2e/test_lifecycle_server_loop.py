@@ -17,11 +17,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-
 from vibecrafted_core.events import append_event
 from vibecrafted_core.lifecycle_runner import (
-    LifecycleRunSpec,
     LifecycleRunner,
+    LifecycleRunSpec,
     delivery_axes_for_receipt,
 )
 from vibecrafted_core.run_triage import (
@@ -216,8 +215,7 @@ def _sse_events_for_run(raw: str, run_id: str) -> list[dict[str, Any]]:
             if line.startswith("data:"):
                 # Spec: optional single space after data:
                 payload = line[5:]
-                if payload.startswith(" "):
-                    payload = payload[1:]
+                payload = payload.removeprefix(" ")
                 data_parts.append(payload)
         if not data_parts:
             continue

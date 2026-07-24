@@ -317,10 +317,9 @@ def plan_delivery(
 ) -> DeliveryPlan:
     source = vc_frame_config_source()
     tools = tools_home if tools_home is not None else vibecrafted_tools_home()
-    if home is not None:
-        # Isolate tools under sandbox when tools_home not overridden
-        if tools_home is None:
-            tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    # Isolate tools under sandbox when tools_home not overridden
+    if home is not None and tools_home is None:
+        tools = home / ".local" / "share" / "vibecrafted" / "tools"
     current = tools / "vibecrafted-current"
     view_root = vc_frame_user_config_dir(home)
     use_repo = prefer_repo if prefer_repo is not None else prefer_repo_vc_frame()

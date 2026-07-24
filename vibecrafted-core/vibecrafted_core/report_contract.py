@@ -14,9 +14,10 @@ Contract id: ``vibecrafted.report-frontmatter.v1``
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 CONTRACT_ID = "vibecrafted.report-frontmatter.v1"
 CLAIM_DIGEST_ENV = "VIBECRAFTED_CLAIM_DIGEST"
@@ -156,8 +157,7 @@ def parse_report_text(text: str) -> tuple[dict[str, str], str, bool]:
             continue
         fields[key] = value.strip().strip("\"'")
     body = text[match.end() :]
-    if body.startswith("\n"):
-        body = body[1:]
+    body = body.removeprefix("\n")
     return fields, body, True
 
 

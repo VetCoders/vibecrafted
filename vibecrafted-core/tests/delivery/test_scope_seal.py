@@ -13,11 +13,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from vibecrafted_core.delivery.model import (
     DeliveryProofContract,
-    DeliveryState,
     DeliverySeal,
+    DeliveryState,
     ExecutionState,
     ProofResult,
     ProofState,

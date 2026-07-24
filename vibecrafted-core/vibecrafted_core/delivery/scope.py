@@ -298,8 +298,10 @@ def _branch_refusals(evidence: ScopeEvidence) -> list[str]:
     root = Path(evidence.repo_root)
     if not _commit_reachable(root, evidence.final_head, evidence.branch):
         return [
-            f"scope qualification FAIL: commit {evidence.final_head} is not reachable "
-            f"from local branch {evidence.branch!r}"
+            (
+                f"scope qualification FAIL: commit {evidence.final_head} is not reachable "
+                f"from local branch {evidence.branch!r}"
+            )
         ]
     return []
 
@@ -309,21 +311,27 @@ def _integrated_refusals(evidence: ScopeEvidence) -> list[str]:
     target = evidence.integration_target
     if not target:
         return [
-            "scope qualification FAIL: scope 'integrated' requires a declared "
-            "integration_target"
+            (
+                "scope qualification FAIL: scope 'integrated' requires a declared "
+                "integration_target"
+            )
         ]
     root = Path(evidence.repo_root)
     if evidence.fetch_remote:
         fetched = _git(root, "fetch", "--quiet", evidence.fetch_remote)
         if fetched.returncode != 0:
             return [
-                f"scope qualification FAIL: fetch from {evidence.fetch_remote!r} failed: "
-                f"{fetched.stderr.strip()}"
+                (
+                    f"scope qualification FAIL: fetch from {evidence.fetch_remote!r} failed: "
+                    f"{fetched.stderr.strip()}"
+                )
             ]
     if not _commit_reachable(root, evidence.final_head, target):
         return [
-            f"scope qualification FAIL: commit {evidence.final_head} is not reachable "
-            f"from integration target {target!r} after fetch"
+            (
+                f"scope qualification FAIL: commit {evidence.final_head} is not reachable "
+                f"from integration target {target!r} after fetch"
+            )
         ]
     return []
 
@@ -333,8 +341,10 @@ def _installed_refusals(evidence: ScopeEvidence) -> list[str]:
     installed = evidence.installed
     if installed is None:
         return [
-            "scope qualification FAIL: scope 'installed' requires resolved installed "
-            "path, provenance marker and a public-entrypoint smoke"
+            (
+                "scope qualification FAIL: scope 'installed' requires resolved installed "
+                "path, provenance marker and a public-entrypoint smoke"
+            )
         ]
 
     refusals: list[str] = []
@@ -387,8 +397,10 @@ def _live_refusals(evidence: ScopeEvidence) -> list[str]:
     probes = evidence.runtime_probes
     if not probes:
         return [
-            "scope qualification FAIL: scope 'live' requires a runtime probe against "
-            "the declared target"
+            (
+                "scope qualification FAIL: scope 'live' requires a runtime probe against "
+                "the declared target"
+            )
         ]
     refusals: list[str] = []
     for probe in probes:

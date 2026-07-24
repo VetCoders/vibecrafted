@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import control_plane
 from vibecrafted_core.agent_dispatch import extract_session_id
 from vibecrafted_core.events import append_event
@@ -159,25 +158,7 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     meta = reports / "announced.meta.json"
 
     report.write_text(
-        "\n".join(
-            [
-                "---",
-                "run_id: copied-by-worker",
-                "session_id: copied-by-worker",
-                "agent: codex",
-                "skill: implement",
-                "status: completed",
-                "finalized: true",
-                "claim: the bounded implementation passed its gates",
-                "launcher_template: true",
-                "---",
-                "",
-                "# Report",
-                "",
-                "Done.",
-                "",
-            ]
-        ),
+        "---\nrun_id: copied-by-worker\nsession_id: copied-by-worker\nagent: codex\nskill: implement\nstatus: completed\nfinalized: true\nclaim: the bounded implementation passed its gates\nlauncher_template: true\n---\n\n# Report\n\nDone.\n",
         encoding="utf-8",
     )
     transcript.write_text(

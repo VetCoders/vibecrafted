@@ -39,32 +39,33 @@ import argparse
 import json
 import os
 import subprocess
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 __all__ = [
     "BUCKET_FAILED",
     "BUCKET_FINALIZED",
     "BUCKET_NEEDS_ATTENTION",
-    "KernelAxes",
     "MINIMAL_REPORT_BYTES",
     "MINIMAL_TRANSCRIPT_BYTES",
-    "RunClassification",
-    "RunSignals",
-    "TriagePlan",
-    "TriageOutcome",
     "VERDICT_FAILED",
     "VERDICT_FINALIZED",
     "VERDICT_NEEDS_ATTENTION",
+    "KernelAxes",
+    "RunClassification",
+    "RunSignals",
+    "TriageOutcome",
+    "TriagePlan",
     "bucket_for_exit_code",
     "classify_run",
+    "main",
     "outcome_for_exit_code",
     "plan_triage",
     "read_kernel_axes",
     "read_run_signals",
     "triage_finished_run",
-    "main",
 ]
 
 # Bucket names are vc-frame's wire contract (BucketKind::session_name), not ours.
@@ -381,9 +382,9 @@ def classify_run(
 
     claim = str(report_claim_status or "").strip().lower()
     from .report_contract import (
+        CLAIM_BLOCKED,
         CLAIM_COMPLETED,
         CLAIM_FAILED,
-        CLAIM_BLOCKED,
         CLAIM_PARTIAL,
     )
 
@@ -770,7 +771,7 @@ def _probe_triage_run(binary: str, runner: Callable[..., Any]) -> _Probe:
     """
     try:
         proc = runner([binary, "triage-run", "--help"])
-    except Exception:
+    except Exception:  # noqa: BLE001
         return _Probe(supported=False)
     if getattr(proc, "returncode", 1) != 0:
         return _Probe(supported=False)
@@ -781,7 +782,7 @@ def _probe_triage_run(binary: str, runner: Callable[..., Any]) -> _Probe:
 
 
 def _default_runner(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - argv is built, never shell-interpolated.
+    return subprocess.run(
         list(argv),
         capture_output=True,
         text=True,
@@ -807,8 +808,8 @@ def triage_finished_run(
     try:
         payload = json.loads(meta.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
-            raise ValueError("meta.json is not an object")
-    except Exception as exc:
+            raise TypeError("meta.json is not an object")
+    except Exception as exc:  # noqa: BLE001
         # No meta means no receipt to write to either; report and stop.
         return TriageOutcome(OUTCOME_SKIPPED, reason=f"no_meta: {exc}")
 
@@ -885,7 +886,7 @@ def _run_triage(
 
     try:
         proc = runner(plan.argv(binary, with_bucket=probe.bucket))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(f"invoke_error: {type(exc).__name__}: {exc}")
 
     returncode = getattr(proc, "returncode", 1)
@@ -920,7 +921,7 @@ def _record_receipt(
         current = json.loads(meta.read_text(encoding="utf-8"))
         if not isinstance(current, dict):
             current = payload
-    except Exception:
+    except Exception:  # noqa: BLE001
         current = payload
 
     current.update(outcome.receipt())

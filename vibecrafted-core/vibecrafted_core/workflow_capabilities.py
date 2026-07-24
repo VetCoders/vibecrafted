@@ -131,10 +131,12 @@ def render_capabilities_lines(payload: dict[str, Any]) -> list[str]:
     lines = [
         f"schema:   {payload['schema']} (v{payload['schema_version']})",
         f"agents:   {', '.join(payload['agents'])}",
-        "research: "
-        f"lanes={', '.join(selection['agents']) or 'none'} "
-        f"source={selection['source']} "
-        f"synthesizer={selection['synthesizer']['agent'] or 'last-survivor'}",
+        (
+            "research: "
+            f"lanes={', '.join(selection['agents']) or 'none'} "
+            f"source={selection['source']} "
+            f"synthesizer={selection['synthesizer']['agent'] or 'last-survivor'}"
+        ),
     ]
     if selection["unsupported_configured"]:
         lines.append(

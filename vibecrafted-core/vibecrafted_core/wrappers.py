@@ -7,8 +7,9 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from . import control_plane
 from .events import append_event

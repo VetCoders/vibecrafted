@@ -6,16 +6,16 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import control_plane, ship, wrappers
 from vibecrafted_core.lifecycle_delivery import claim_digest_for_text
 from vibecrafted_core.lifecycle_runner import (
     LIFECYCLE_SCHEMA_ID,
-    LifecycleRunSpec,
     LifecycleRunner,
+    LifecycleRunSpec,
     LifecycleSupervisor,
 )
 from vibecrafted_core.workflows.model import WorkflowManifest, WorkflowStage
+
 from .lifecycle_schema_assertions import (
     assert_lifecycle_state_matches_packaged_schema,
     assert_worker_report_frontmatter_matches_packaged_schema,

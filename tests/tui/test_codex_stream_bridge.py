@@ -26,7 +26,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BRIDGE_PATH = REPO_ROOT / "runtime" / "scripts" / "codex_stream_bridge.py"
 
@@ -75,6 +74,7 @@ def _run_bridge(tmp_path: Path, stdin_text: str) -> tuple[int, str, str]:
         capture_output=True,
         text=True,
         timeout=10,
+        check=False,
     )
     return (
         proc.returncode,
@@ -162,6 +162,7 @@ def test_bridge_can_echo_rendered_output_to_stdout(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         timeout=10,
+        check=False,
     )
 
     assert proc.returncode == 0, proc.stderr
@@ -285,6 +286,7 @@ def test_bridge_rejects_missing_required_arguments() -> None:
         capture_output=True,
         text=True,
         timeout=5,
+        check=False,
     )
     assert proc.returncode != 0
     assert "--transcript" in proc.stderr or "--transcript" in proc.stdout
@@ -311,6 +313,7 @@ def test_bridge_can_write_optional_raw_diagnostic_mirror(tmp_path: Path) -> None
         capture_output=True,
         text=True,
         timeout=10,
+        check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert raw.parent.is_dir()

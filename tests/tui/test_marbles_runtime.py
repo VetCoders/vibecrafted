@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
 import os
 import re
@@ -8,8 +7,8 @@ import shutil
 import subprocess
 import textwrap
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
@@ -17,13 +16,7 @@ HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 
 def _write_fake_marbles_spawn(script_path: Path) -> None:
     script_path.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'printf "%s\\n" "$@" > "$CAPTURE_FILE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > "$CAPTURE_FILE"'
         + "\n",
         encoding="utf-8",
     )
@@ -32,29 +25,7 @@ def _write_fake_marbles_spawn(script_path: Path) -> None:
 
 def _write_replaying_vc_frame(script_path: Path) -> None:
     payload = (
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import os",
-                "import shutil",
-                "import subprocess",
-                "import sys",
-                "from pathlib import Path",
-                "",
-                "args = sys.argv[1:]",
-                'Path(os.environ["VC_FRAME_CAPTURE_FILE"]).write_text("\\n".join(args) + "\\n", encoding="utf-8")',
-                "if args:",
-                "    cmd_script = Path(args[-1])",
-                '    expected_spawn = os.environ.get("EXPECTED_MARBLES_SPAWN", "")',
-                "    if expected_spawn and cmd_script.is_file():",
-                '        payload = cmd_script.read_text(encoding="utf-8", errors="ignore")',
-                "        if expected_spawn not in payload:",
-                '            print(f"unsafe vc_frame replay target: {cmd_script}", file=sys.stderr)',
-                "            sys.exit(97)",
-                "    shell = shutil.which('zsh') or shutil.which('bash') or '/bin/sh'",
-                "    subprocess.run([shell, '-lc', str(cmd_script)], check=True, env=os.environ.copy())",
-            ]
-        )
+        '#!/usr/bin/env python3\nimport os\nimport shutil\nimport subprocess\nimport sys\nfrom pathlib import Path\n\nargs = sys.argv[1:]\nPath(os.environ["VC_FRAME_CAPTURE_FILE"]).write_text("\\n".join(args) + "\\n", encoding="utf-8")\nif args:\n    cmd_script = Path(args[-1])\n    expected_spawn = os.environ.get("EXPECTED_MARBLES_SPAWN", "")\n    if expected_spawn and cmd_script.is_file():\n        payload = cmd_script.read_text(encoding="utf-8", errors="ignore")\n        if expected_spawn not in payload:\n            print(f"unsafe vc_frame replay target: {cmd_script}", file=sys.stderr)\n            sys.exit(97)\n    shell = shutil.which(\'zsh\') or shutil.which(\'bash\') or \'/bin/sh\'\n    subprocess.run([shell, \'-lc\', str(cmd_script)], check=True, env=os.environ.copy())'
         + "\n"
     )
     script_path.write_text(payload, encoding="utf-8")
@@ -401,7 +372,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_inside_vc_frame(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now().strftime("%Y_%m%d")
+        / datetime.now(timezone.utc).strftime("%Y_%m%d")
         / "tmp"
     )
 
@@ -539,7 +510,7 @@ def test_vc_marbles_preserves_prompt_as_single_argument_in_operator_session(
         crafted_home
         / "artifacts"
         / _org_repo()
-        / datetime.now().strftime("%Y_%m%d")
+        / datetime.now(timezone.utc).strftime("%Y_%m%d")
         / "tmp"
     )
 

@@ -33,16 +33,7 @@ def _write_capture_binary(bin_dir: Path, name: str, capture_file: Path) -> None:
     for script_name in script_names:
         script = bin_dir / script_name
         script.write_text(
-            "\n".join(
-                [
-                    "#!/usr/bin/env bash",
-                    "set -euo pipefail",
-                    "{",
-                    '  printf "%s\\n" "$@"',
-                    '  printf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}"',
-                    '} > "$CAPTURE_FILE"',
-                ]
-            )
+            '#!/usr/bin/env bash\nset -euo pipefail\n{\n  printf "%s\\n" "$@"\n  printf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}"\n} > "$CAPTURE_FILE"'
             + "\n",
             encoding="utf-8",
         )

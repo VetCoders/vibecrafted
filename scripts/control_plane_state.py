@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: E402,F401,F403,F405
-
 import sys
 from pathlib import Path
 
@@ -10,7 +8,7 @@ if _CORE_SRC.is_dir() and str(_CORE_SRC) not in sys.path:
     sys.path.insert(0, str(_CORE_SRC))
 
 from vibecrafted_core import control_plane as _control_plane
-from vibecrafted_core.control_plane import *  # noqa: F401,F403
+from vibecrafted_core.control_plane import *
 
 
 def _sync_overrides() -> None:

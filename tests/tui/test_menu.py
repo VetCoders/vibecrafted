@@ -1,5 +1,4 @@
 from scripts import installer_gui
-
 from scripts.installer.vetcoders_installer import tui as installer_textual
 
 

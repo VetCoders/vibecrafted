@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from vibecrafted_core import workflow
 
 
@@ -164,9 +163,11 @@ def test_launch_workflow_returns_pid_and_logs_spawn(
         lambda _agent: [
             sys.executable,
             "-c",
-            "from pathlib import Path; import os, sys; "
-            "assert sys.stdin.read() == Path(os.environ['VIBECRAFTED_PROMPT_PATH']).read_text(); "
-            "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
+            (
+                "from pathlib import Path; import os, sys; "
+                "assert sys.stdin.read() == Path(os.environ['VIBECRAFTED_PROMPT_PATH']).read_text(); "
+                "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')"
+            ),
         ],
     )
     payload = workflow.launch_workflow(spec, source)
@@ -296,8 +297,10 @@ def test_launch_workflow_records_skipped_model_override_for_unknown_flag(
         lambda _agent: [
             sys.executable,
             "-c",
-            "from pathlib import Path; import os; "
-            "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
+            (
+                "from pathlib import Path; import os; "
+                "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')"
+            ),
         ],
     )
 
@@ -365,8 +368,10 @@ def test_launch_workflow_reports_read_phase_metadata(
         lambda _agent: [
             sys.executable,
             "-c",
-            "from pathlib import Path; import os; "
-            "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')",
+            (
+                "from pathlib import Path; import os; "
+                "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text('ok\\n')"
+            ),
         ],
     )
 
@@ -676,22 +681,7 @@ def test_terminal_runtime_host_double_fail_marks_failed_with_last_error(
     vc_frame = tmp_path / "bin" / "vc-frame"
     vc_frame.parent.mkdir()
     vc_frame.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'if [[ "${1:-}" == "list-sessions" ]]; then exit 0; fi',
-                'if [[ "${1:-}" == "attach" ]]; then',
-                '  printf "attach failed for %s\\n" "${3:-}" >&2',
-                "  exit 1",
-                "fi",
-                'if [[ "${1:-}" == "--session" ]]; then',
-                '  printf "Session \'%s\' not found\\n" "${2:-}" >&2',
-                "  exit 1",
-                "fi",
-                "exit 1",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nif [[ "${1:-}" == "list-sessions" ]]; then exit 0; fi\nif [[ "${1:-}" == "attach" ]]; then\n  printf "attach failed for %s\\n" "${3:-}" >&2\n  exit 1\nfi\nif [[ "${1:-}" == "--session" ]]; then\n  printf "Session \'%s\' not found\\n" "${2:-}" >&2\n  exit 1\nfi\nexit 1'
         + "\n",
         encoding="utf-8",
     )
@@ -1503,14 +1493,14 @@ def test_runtime_prompt_carries_worker_signal_discipline(tmp_path: Path) -> None
 
 
 def test_dispatcher_command_carries_lifecycle_state_flag() -> None:
-    base = dict(
-        run_id="impl-1",
-        root="/repo",
-        meta_path=Path("/tmp/m.json"),
-        report_path=Path("/tmp/r.md"),
-        transcript_path=Path("/tmp/t.log"),
-        worker_command=["codex", "exec"],
-    )
+    base = {
+        "run_id": "impl-1",
+        "root": "/repo",
+        "meta_path": Path("/tmp/m.json"),
+        "report_path": Path("/tmp/r.md"),
+        "transcript_path": Path("/tmp/t.log"),
+        "worker_command": ["codex", "exec"],
+    }
 
     with_state = workflow._dispatcher_command(
         **base, lifecycle_state_path="/cp/lifecycle_runs/x/state.json"

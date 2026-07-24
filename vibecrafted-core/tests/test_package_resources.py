@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import package_resources as pr
 
 

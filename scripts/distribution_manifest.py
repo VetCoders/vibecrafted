@@ -15,9 +15,8 @@ import shutil
 import sys
 import tarfile
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
-
 
 REQUIRED_FILES = (
     "VERSION",
@@ -339,24 +338,24 @@ def _normalized_tar_info(info: tarfile.TarInfo) -> tarfile.TarInfo:
 
 def _write_archive(payload_root: Path, output: Path, root_name: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("wb") as raw_output:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw_output, mtime=0) as gz:
-            with tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tar:
-                root_info = tarfile.TarInfo(root_name)
-                root_info.type = tarfile.DIRTYPE
-                root_info.mode = 0o755
-                tar.addfile(_normalized_tar_info(root_info))
-                for path in _walk_entries(payload_root):
-                    relative = path.relative_to(payload_root)
-                    archive_name = f"{root_name}/{relative.as_posix()}"
-                    info = _normalized_tar_info(
-                        tar.gettarinfo(str(path), arcname=archive_name)
-                    )
-                    if info.isreg():
-                        with path.open("rb") as source_file:
-                            tar.addfile(info, source_file)
-                    else:
-                        tar.addfile(info)
+    with (
+        output.open("wb") as raw_output,
+        gzip.GzipFile(filename="", mode="wb", fileobj=raw_output, mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tar,
+    ):
+        root_info = tarfile.TarInfo(root_name)
+        root_info.type = tarfile.DIRTYPE
+        root_info.mode = 0o755
+        tar.addfile(_normalized_tar_info(root_info))
+        for path in _walk_entries(payload_root):
+            relative = path.relative_to(payload_root)
+            archive_name = f"{root_name}/{relative.as_posix()}"
+            info = _normalized_tar_info(tar.gettarinfo(str(path), arcname=archive_name))
+            if info.isreg():
+                with path.open("rb") as source_file:
+                    tar.addfile(info, source_file)
+            else:
+                tar.addfile(info)
 
 
 def create_archive(source: str | Path, output: str | Path, *, root_name: str) -> Path:

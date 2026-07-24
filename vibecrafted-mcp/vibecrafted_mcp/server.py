@@ -20,26 +20,38 @@ import argparse
 import json
 import os
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from vibecrafted_core import (
     capabilities as _capabilities,
+)
+from vibecrafted_core import (
     control_plane as _control_plane,
+)
+from vibecrafted_core import (
     doctor as _doctor,
+)
+from vibecrafted_core import (
     git as _git,
+)
+from vibecrafted_core import (
     lifecycle_control as _lifecycle_control,
+)
+from vibecrafted_core import (
     workflow as _workflow,
 )
 from vibecrafted_core.lifecycle_runner import (
     LIFECYCLE_SCHEMA_ID as _LIFECYCLE_SCHEMA_ID,
+)
+from vibecrafted_core.lifecycle_runner import (
     LifecycleSupervisor as _LifecycleSupervisor,
 )
 from vibecrafted_core.package_resources import resource_path as _core_resource_path
 
 from . import synthesis as _synthesis
-
 
 SLIM_MAX_COMMITS = 5
 SLIM_MAX_DOCTOR_FINDINGS = 8
@@ -490,6 +502,7 @@ def build_server() -> Any:
     per case without relying on import-time global state.
     """
     from fastmcp import FastMCP
+
     from . import __version__
 
     mcp = FastMCP("vibecrafted", version=__version__)

@@ -136,6 +136,7 @@ def _run_verifier(
             text=True,
             errors="replace",
             timeout=timeout_s,
+            check=False,
         )
     except subprocess.TimeoutExpired as exc:
         elapsed_ms = int((time.monotonic() - started) * 1000)

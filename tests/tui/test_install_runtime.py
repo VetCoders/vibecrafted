@@ -43,6 +43,7 @@ def test_install_runtime_locterm_fast_fails_on_linux(tmp_path: Path) -> None:
         env=env,
         text=True,
         capture_output=True,
+        check=False,
     )
 
     assert result.returncode == 1
@@ -113,6 +114,7 @@ def test_foundations_fail_fast_on_runtime_root_drift(tmp_path: Path) -> None:
         env=env,
         text=True,
         capture_output=True,
+        check=False,
     )
 
     assert result.returncode == 1
@@ -138,6 +140,7 @@ def test_install_sh_fail_fast_on_launcher_root_drift(tmp_path: Path) -> None:
         env=env,
         text=True,
         capture_output=True,
+        check=False,
     )
 
     assert result.returncode == 1

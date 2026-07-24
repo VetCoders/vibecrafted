@@ -7,10 +7,11 @@ import re
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from vibecrafted_core.delivery.model import ExecutionEnvelope
 from vibecrafted_core.workflow import WorkflowLaunchSpec, launch_workflow
@@ -224,7 +225,7 @@ class DispatchSupervisor:
 
             result = self._build_result(baton, line_broken)
             return result
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             label = (
                 "dispatch substrate failure"
                 if isinstance(exc, CellContractError)
@@ -440,7 +441,7 @@ class DispatchSupervisor:
     ) -> tuple[AwaitOutcome | None, Verdict | None]:
         try:
             cell = self.launcher(cut, prompt, kind)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             message = f"{kind} launch crashed: {type(exc).__name__}: {exc}"
             self._journal(f"[{cut.id}] {message}")
             return None, Verdict(
@@ -784,8 +785,10 @@ class DispatchSupervisor:
         if envelope.dirty_policy != "living-tree-scoped":
             # Fail closed: an unknown policy never degrades to "allow".
             return [
-                f"unsupported dirty_policy {envelope.dirty_policy!r}:"
-                " refusing to launch"
+                (
+                    f"unsupported dirty_policy {envelope.dirty_policy!r}:"
+                    " refusing to launch"
+                )
             ]
         # Living tree: dirt outside the cut's owned paths is expected and
         # allowed; dirt inside owned paths would poison attribution.
@@ -829,6 +832,7 @@ class DispatchSupervisor:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
             return ""
@@ -842,6 +846,7 @@ class DispatchSupervisor:
                 capture_output=True,
                 text=True,
                 timeout=30,
+                check=False,
             )
         except (OSError, subprocess.TimeoutExpired):
             return False
@@ -893,8 +898,10 @@ class DispatchSupervisor:
             f"- baseline_head: {meta.baseline.get('head', '')}",
             f"- validated_copy: {self.artifacts_dir / 'validated-dispatch.toml'}",
             f"- updated: {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
-            "- writer: dispatch supervisor (single writer; verified state"
-            " flips only after green supervisor verify)",
+            (
+                "- writer: dispatch supervisor (single writer; verified state"
+                " flips only after green supervisor verify)"
+            ),
             "",
             "| Cut | Phase | Agent | State | Supervisor evidence |",
             "|---|---|---|---:|---|",
@@ -957,8 +964,10 @@ class DispatchSupervisor:
             f"# dispatch handoff — {meta.name or 'unnamed'}",
             "",
             f"- repo: {meta.repo}",
-            f"- dou_index: {baton.verified}/{baton.total}"
-            f" ({baton.ratio:.0%} supervisor-verified)",
+            (
+                f"- dou_index: {baton.verified}/{baton.total}"
+                f" ({baton.ratio:.0%} supervisor-verified)"
+            ),
             f"- line_broken: {result.line_broken}",
             f"- tracker: {self.tracker_path}",
             f"- journal: {self.journal_path}",
@@ -1034,15 +1043,13 @@ def _repo_identity_from_url(url: str) -> str:
         tail = tail.split("/", 1)[1] if "/" in tail else ""
     elif ":" in tail.split("/", 1)[0]:
         tail = tail.split(":", 1)[1]
-    if tail.endswith(".git"):
-        tail = tail[: -len(".git")]
+    tail = tail.removesuffix(".git")
     return tail.strip("/")
 
 
 def _normalize_digest(digest: str) -> str:
     cleaned = digest.strip().lower()
-    if cleaned.startswith("sha256:"):
-        cleaned = cleaned[len("sha256:") :]
+    cleaned = cleaned.removeprefix("sha256:")
     return f"sha256:{cleaned}"
 
 

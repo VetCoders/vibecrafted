@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from . import loop, ui
 from .delivery import seal
@@ -19,7 +19,6 @@ from .lifecycle_runner import (
     delivery_axes_for_receipt,
     run_lifecycle,
 )
-
 
 SUPPORTED_AGENTS = {"claude", "codex", "gemini", "agy", "junie", "grok"}
 

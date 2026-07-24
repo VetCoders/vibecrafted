@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from vibecrafted_core import control_plane
 from vibecrafted_core.delivery.executor import run_pipeline
 from vibecrafted_core.delivery.legacy import import_verify_run

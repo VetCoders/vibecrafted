@@ -5,7 +5,6 @@ import subprocess
 from dataclasses import FrozenInstanceError
 
 import pytest
-
 from vibecrafted_core.delivery import (
     ALLOWED_TRANSITIONS,
     ContractValidationError,

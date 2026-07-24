@@ -12,7 +12,6 @@ import json
 import os
 import ssl
 import urllib.parse
-from typing import Optional
 
 API_HOST = "api.search.brave.com"
 API_PATH = "/res/v1/web/search"
@@ -22,7 +21,7 @@ def build_tls_context() -> ssl.SSLContext:
     return ssl.create_default_context()
 
 
-def search(query: str, count: int = 8, lang: Optional[str] = None) -> dict:
+def search(query: str, count: int = 8, lang: str | None = None) -> dict:
     api_key = os.getenv("BRAVE_SEARCH_API_KEY") or os.getenv("BRAVE_API_KEY")
     if not api_key:
         return {
@@ -55,7 +54,7 @@ def search(query: str, count: int = 8, lang: Optional[str] = None) -> dict:
         if resp.status >= 400:
             return {"error": f"HTTP {resp.status}: {resp.reason}"}
         return json.loads(body)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return {"error": str(e)}
     finally:
         conn.close()

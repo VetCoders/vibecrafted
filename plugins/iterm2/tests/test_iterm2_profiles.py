@@ -8,9 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_iterm2 import iterm2_profiles as profiles
-
 
 # --------------------------------------------------------------------- helpers
 

@@ -22,4 +22,4 @@ def _resolve_installed_version() -> str:
 
 __version__ = _resolve_installed_version()
 
-__all__ = ["build_server", "main", "__version__"]
+__all__ = ["__version__", "build_server", "main"]

@@ -79,22 +79,23 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 __all__ = [
-    "Authority",
+    "DEFAULT_CONFLICT_LOG",
     "AicxChunk",
+    "AicxSyncEngine",
+    "Authority",
     "ConflictTie",
     "SyncPlan",
     "SyncResult",
-    "AicxSyncEngine",
-    "DEFAULT_CONFLICT_LOG",
-    "normalize_authority",
     "authority_rank",
+    "normalize_authority",
 ]
 
 
@@ -144,7 +145,7 @@ class Authority(str, Enum):
     STALE_OR_UNKNOWN = "stale_or_unknown"
 
     @classmethod
-    def from_str(cls, raw: str) -> "Authority":
+    def from_str(cls, raw: str) -> Authority:
         """Parse a raw string (snake_case or CamelCase) into an Authority.
 
         Raises :class:`ValueError` on unknown input — callers that need a

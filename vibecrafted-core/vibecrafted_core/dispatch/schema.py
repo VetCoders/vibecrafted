@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import re
 import shlex
-import tomllib
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+
+import tomllib
 
 from vibecrafted_core.delivery.model import ContractError, ExecutionEnvelope
 from vibecrafted_core.workflow import SUPPORTED_WORKFLOWS
@@ -379,9 +380,8 @@ def _parse_cuts(
             errors.append(
                 f"cuts[{index}].verify: required unless observational READ is explicit"
             )
-        if mode == "read":
-            if mutation and mutation not in READ_MUTATIONS:
-                errors.append(f"cuts[{index}].mutation: unsupported value {mutation!r}")
+        if mode == "read" and mutation and mutation not in READ_MUTATIONS:
+            errors.append(f"cuts[{index}].mutation: unsupported value {mutation!r}")
 
         cuts.append(
             Cut(

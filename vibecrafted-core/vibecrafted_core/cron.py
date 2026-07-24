@@ -5,13 +5,12 @@ import json
 import shlex
 import subprocess
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
 
 from . import ui
 from .runtime_paths import vibecrafted_home
-
 
 HARD_STOP_NEEDLES = (
     "git push",

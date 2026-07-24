@@ -7,7 +7,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core.frontier_assets import vc_frame_config_kdl, vc_frame_config_source
 
 CORE_ROOT = Path(__file__).resolve().parents[1]
@@ -141,10 +140,11 @@ def test_sdist_contains_vc_frame_tree() -> None:
     # sdist prefixes with package-version/
     missing = []
     for member in REQUIRED_MEMBERS:
-        if not any(n.endswith(member) or n.endswith("/" + member) for n in names):
+        if not any(n.endswith((member, "/" + member)) for n in names) and not any(
+            member.split("/", 1)[-1] in n for n in names if "vc-frame" in n
+        ):
             # also allow top-level without vibecrafted- prefix quirks
-            if not any(member.split("/", 1)[-1] in n for n in names if "vc-frame" in n):
-                missing.append(member)
+            missing.append(member)
     # stricter: any path ending with config/vc-frame/config.kdl
     assert any(n.endswith("config/vc-frame/config.kdl") for n in names), (
         f"sdist {sdist.name} has no config.kdl; sample={sorted(names)[:20]}"

@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import control_plane
 from vibecrafted_core.lifecycle_delivery import (
     claim_digest_for_text,

@@ -45,9 +45,9 @@ import sys
 import tempfile
 import webbrowser
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-
+from typing import ClassVar
 
 # =============================================================================
 # ANSI Colors
@@ -122,7 +122,9 @@ class Repository:
 
 def run_gh(args: list[str]) -> tuple[int, str, str]:
     try:
-        result = subprocess.run(["gh"] + args, capture_output=True, text=True)
+        result = subprocess.run(
+            ["gh"] + args, capture_output=True, text=True, check=False
+        )
         return result.returncode, result.stdout, result.stderr
     except FileNotFoundError:
         return 1, "", "gh CLI not found"
@@ -177,7 +179,7 @@ def check_repo_exists(repo: str) -> bool:
 
 
 def delete_repo(repo: str) -> tuple[bool, str]:
-    code, out, err = run_gh(["repo", "delete", repo, "--yes"])
+    code, _out, err = run_gh(["repo", "delete", repo, "--yes"])
     return code == 0, err.strip() if code != 0 else "Deleted"
 
 
@@ -194,7 +196,7 @@ def transfer_repo(
     ]
     if new_name:
         args.extend(["-f", f"new_name={new_name}"])
-    code, out, err = run_gh(args)
+    code, _out, err = run_gh(args)
     return code == 0, err.strip() if code != 0 else "Transferred"
 
 
@@ -215,7 +217,7 @@ def clean_transfer(
     Clean transfer using bare clone + mirror push.
     Breaks fork relationships and creates a fresh copy.
     """
-    source_owner, source_repo = source.split("/")
+    _source_owner, source_repo = source.split("/")
     final_name = new_name or source_repo
     target_full = f"{target_owner}/{final_name}"
 
@@ -241,6 +243,7 @@ def clean_transfer(
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode != 0:
             return False, f"Failed to clone source: {result.stderr}"
@@ -251,6 +254,7 @@ def clean_transfer(
             cwd=str(bare_path),
             capture_output=True,
             text=True,
+            check=False,
         )
         if result.returncode != 0:
             return False, f"Failed to push to target: {result.stderr}"
@@ -596,8 +600,8 @@ init();
 
 
 class RepoHandler(http.server.SimpleHTTPRequestHandler):
-    repos_data: list[dict] = []
-    html_content: str = ""
+    repos_data: ClassVar[list[dict]] = []
+    html_content: ClassVar[str] = ""
 
     def do_GET(self):
         if self.path == "/":
@@ -868,7 +872,7 @@ Created by vetcoders (c)2024-2026
     all_repos.sort(key=lambda r: (r.owner, r.name.lower()))
     print(f"\n  {C.BOLD}Total: {len(all_repos)} repos{C.RESET}")
 
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     port = None if args.open else args.port
     html = generate_html(all_repos, orgs, timestamp, port)
 

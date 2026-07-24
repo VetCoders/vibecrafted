@@ -12,18 +12,19 @@ import json
 import os
 import signal
 import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from .run_reaper import (
     ProcessEntry,
-    build_process_table,
-    plan_reap,
     _is_protected,
     _pid_alive,
     _signal_pid,
+    build_process_table,
     grace_seconds,
+    plan_reap,
 )
 
 SCHEMA_VERSION = "vibecrafted.procs.v1"
@@ -35,7 +36,7 @@ def _load_run_payloads_light() -> list[dict[str, Any]]:
         from .control_plane import run_snapshot_dir
 
         root = run_snapshot_dir()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return []
     if not root.is_dir():
         return []
@@ -59,10 +60,10 @@ __all__ = [
     "ProcessSnapshotRow",
     "TerminateOutcome",
     "command_sha256",
+    "main",
     "process_start_token",
     "snapshot_processes",
     "terminate_process",
-    "main",
 ]
 
 

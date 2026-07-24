@@ -26,11 +26,12 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any
 
 try:
     _distribution_manifest = importlib.import_module("distribution_manifest")
@@ -41,25 +42,25 @@ except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypo
     _installer_brand = importlib.import_module("scripts.installer_brand")
     _runtime_paths = importlib.import_module("scripts.runtime_paths")
 
-FOOTER_BRANDING = getattr(_installer_brand, "FOOTER_BRANDING")
-FRAMEWORK_STAMP = getattr(_installer_brand, "FRAMEWORK_STAMP")
-PRODUCT_LINE = getattr(_installer_brand, "PRODUCT_LINE")
-TAGLINE = getattr(_installer_brand, "TAGLINE")
-VAPOR_HEADER = getattr(_installer_brand, "VAPOR_HEADER")
-brand_separator = getattr(_installer_brand, "separator")
-brand_version_line = getattr(_installer_brand, "version_line")
-read_version_file = getattr(_runtime_paths, "read_version_file")
-vibecrafted_backups_home = getattr(_runtime_paths, "vibecrafted_backups_home")
-vibecrafted_launcher_bin = getattr(_runtime_paths, "vibecrafted_launcher_bin")
-vibecrafted_runtime_home = getattr(_runtime_paths, "vibecrafted_runtime_home")
-vibecrafted_runtime_bin = getattr(_runtime_paths, "vibecrafted_runtime_bin")
-vibecrafted_tools_home = getattr(_runtime_paths, "vibecrafted_tools_home")
-vibecrafted_home = getattr(_runtime_paths, "vibecrafted_home")
-xdg_data_home = getattr(_runtime_paths, "xdg_data_home")
-xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
-stage_distribution_payload = getattr(_distribution_manifest, "stage_payload")
-distribution_path_is_forbidden = getattr(_distribution_manifest, "path_is_forbidden")
-DistributionManifestError = getattr(_distribution_manifest, "ManifestError")
+FOOTER_BRANDING = _installer_brand.FOOTER_BRANDING
+FRAMEWORK_STAMP = _installer_brand.FRAMEWORK_STAMP
+PRODUCT_LINE = _installer_brand.PRODUCT_LINE
+TAGLINE = _installer_brand.TAGLINE
+VAPOR_HEADER = _installer_brand.VAPOR_HEADER
+brand_separator = _installer_brand.separator
+brand_version_line = _installer_brand.version_line
+read_version_file = _runtime_paths.read_version_file
+vibecrafted_backups_home = _runtime_paths.vibecrafted_backups_home
+vibecrafted_launcher_bin = _runtime_paths.vibecrafted_launcher_bin
+vibecrafted_runtime_home = _runtime_paths.vibecrafted_runtime_home
+vibecrafted_runtime_bin = _runtime_paths.vibecrafted_runtime_bin
+vibecrafted_tools_home = _runtime_paths.vibecrafted_tools_home
+vibecrafted_home = _runtime_paths.vibecrafted_home
+xdg_data_home = _runtime_paths.xdg_data_home
+xdg_config_home = _runtime_paths.xdg_config_home
+stage_distribution_payload = _distribution_manifest.stage_payload
+distribution_path_is_forbidden = _distribution_manifest.path_is_forbidden
+DistributionManifestError = _distribution_manifest.ManifestError
 
 # ---------------------------------------------------------------------------
 # ANSI helpers
@@ -127,7 +128,8 @@ class TeeLogger:
     """Captures print output to a log file while optionally suppressing stdout."""
 
     def __init__(self, log_path: Path, quiet: bool = False):
-        self.log = open(log_path, "w", encoding="utf-8")
+        # Long-lived tee: open for the logger lifetime; closed in close().
+        self.log = log_path.open("w", encoding="utf-8")
         self.quiet = quiet
         self._real_stdout = sys.__stdout__ if sys.__stdout__ is not None else sys.stdout
 
@@ -200,7 +202,7 @@ def _compact_checkpoint(
 # Component manifest
 # ---------------------------------------------------------------------------
 
-SKILL_CATEGORIES: Dict[str, Dict[str, Any]] = {
+SKILL_CATEGORIES: dict[str, dict[str, Any]] = {
     "pipeline": {
         "label": "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. Pipeline",
         "description": "Core workflow skills: init, workflow, followup, marbles, dou, hydrate, release",
@@ -225,12 +227,12 @@ class Foundation:
 
     name: str
     description: str
-    channels: List[str]
-    packages: Dict[str, str]
+    channels: list[str]
+    packages: dict[str, str]
     verify_cmd: str
     required: bool = True  # False = optional
 
-    def is_installed(self) -> Optional[str]:
+    def is_installed(self) -> str | None:
         """Return path if installed, None otherwise."""
         if self.name == "vc-frame":
             for candidate in ("vc-frame",):
@@ -275,7 +277,7 @@ VENDORED_FOUNDATION_BINARIES = {
 }
 
 
-def detect_vendor_platform() -> Optional[str]:
+def detect_vendor_platform() -> str | None:
     try:
         uname = os.uname()
     except AttributeError:
@@ -290,7 +292,7 @@ def detect_vendor_platform() -> Optional[str]:
     return f"{os_name}-{arch}"
 
 
-def vendored_foundation_dir(repo_root: Path) -> Optional[Path]:
+def vendored_foundation_dir(repo_root: Path) -> Path | None:
     platform = detect_vendor_platform()
     if not platform:
         return None
@@ -300,9 +302,9 @@ def vendored_foundation_dir(repo_root: Path) -> Optional[Path]:
 def install_foundation_from_bundle(
     foundation: Foundation,
     repo_root: Path,
-    bin_dir: Optional[Path] = None,
+    bin_dir: Path | None = None,
     dry_run: bool = False,
-) -> Optional[Path]:
+) -> Path | None:
     vendor_name = VENDORED_FOUNDATION_BINARIES.get(foundation.name)
     if not vendor_name:
         return None
@@ -350,7 +352,7 @@ def install_or_find_foundation(
     return "", "not-installed"
 
 
-FOUNDATIONS: List[Foundation] = [
+FOUNDATIONS: list[Foundation] = [
     Foundation(
         name="aicx",
         description="AICX CLI for session history and memory recovery",
@@ -498,7 +500,7 @@ def runtime_status_path() -> Path:
     return vibecrafted_home() / "runtime" / "runtime.json"
 
 
-def read_runtime_status() -> Dict:
+def read_runtime_status() -> dict:
     status_file = runtime_status_path()
     if not status_file.is_file():
         return {}
@@ -513,7 +515,7 @@ def read_runtime_status() -> Dict:
     return data if isinstance(data, dict) else {}
 
 
-def doctor_runtime_finding() -> "DoctorFinding":
+def doctor_runtime_finding() -> DoctorFinding:
     status = read_runtime_status()
     runtime = str(status.get("runtime") or "none")
     if runtime == "none":
@@ -596,13 +598,13 @@ class InstallState:
     updated_at: str = ""
     repo_commit: str = ""
     repo_url: str = ""
-    skills: List[str] = field(default_factory=list)
-    runtimes: List[str] = field(default_factory=list)
-    launcher_entries: List[str] = field(default_factory=list)
-    helper_files: List[str] = field(default_factory=list)
-    foundations: Dict[str, Dict] = field(default_factory=dict)
-    product_tools: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    layout_transfers: List[Dict[str, str]] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    runtimes: list[str] = field(default_factory=list)
+    launcher_entries: list[str] = field(default_factory=list)
+    helper_files: list[str] = field(default_factory=list)
+    foundations: dict[str, dict] = field(default_factory=dict)
+    product_tools: dict[str, dict[str, str]] = field(default_factory=dict)
+    layout_transfers: list[dict[str, str]] = field(default_factory=list)
     shell_helpers: bool = False
     install_path: str = ""
 
@@ -631,20 +633,20 @@ def start_here_path() -> Path:
     return vibecrafted_home() / START_HERE_FILE
 
 
-def _doctor_totals(findings: Sequence["DoctorFinding"]) -> Tuple[int, int, int]:
+def _doctor_totals(findings: Sequence[DoctorFinding]) -> tuple[int, int, int]:
     oks = sum(1 for finding in findings if finding.level == "ok")
     warns = sum(1 for finding in findings if finding.level == "warn")
     fails = sum(1 for finding in findings if finding.level == "fail")
     return oks, warns, fails
 
 
-def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
+def _doctor_action_items(findings: Sequence[DoctorFinding]) -> list[str]:
     """One bounded, copy-pasteable fix per issue class (CLI_PRODUCT_SPEC §3.4)."""
     issues = [finding for finding in findings if finding.level != "ok"]
     if not issues:
         return ["start here: `vibecrafted init claude`"]
 
-    actions: List[str] = []
+    actions: list[str] = []
     if any(finding.component.startswith("foundation:") for finding in issues):
         # Foundation findings are now warn-level (externally managed), so key off
         # the component, not the level — the repair guidance must still surface.
@@ -680,7 +682,7 @@ def _doctor_action_items(findings: Sequence["DoctorFinding"]) -> List[str]:
 
 
 def write_start_here_guide(
-    store_path: Path, state: InstallState, findings: Sequence["DoctorFinding"]
+    store_path: Path, state: InstallState, findings: Sequence[DoctorFinding]
 ) -> Path:
     guide_path = start_here_path()
     guide_path.parent.mkdir(parents=True, exist_ok=True)
@@ -770,7 +772,7 @@ def write_start_here_guide(
 # ---------------------------------------------------------------------------
 
 
-def detect_system_deps() -> Dict[str, Optional[str]]:
+def detect_system_deps() -> dict[str, str | None]:
     """Check which system dependencies are available."""
     result = {}
     for cmd in RUNTIME_DEPS:
@@ -782,7 +784,7 @@ def detect_system_deps() -> Dict[str, Optional[str]]:
     return result
 
 
-def detect_agent_runtimes() -> Dict[str, Optional[str]]:
+def detect_agent_runtimes() -> dict[str, str | None]:
     """Check which agent CLIs are available."""
     result = {}
     for rt in AGENT_RUNTIMES:
@@ -798,11 +800,11 @@ def runtime_commands_dir(runtime: str) -> Path:
     return Path.home() / f".{runtime}" / "commands"
 
 
-def detect_osascript() -> Optional[str]:
+def detect_osascript() -> str | None:
     return shutil.which("osascript")
 
 
-def detect_cargo() -> Optional[str]:
+def detect_cargo() -> str | None:
     return shutil.which("cargo")
 
 
@@ -922,9 +924,9 @@ def get_repo_url(repo_root: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-def discover_skills(repo_root: Path) -> List[Path]:
+def discover_skills(repo_root: Path) -> list[Path]:
     """Find all default 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. skill directories."""
-    skills: List[Path] = []
+    skills: list[Path] = []
     skills_dir = source_skills_root(repo_root)
     if not skills_dir.exists() or not skills_dir.is_dir():
         return skills
@@ -943,8 +945,8 @@ def discover_skills(repo_root: Path) -> List[Path]:
     return skills
 
 
-def iter_skill_root_rule_files(skills_root: Path) -> List[Tuple[Path, Path]]:
-    rule_files: List[Tuple[Path, Path]] = []
+def iter_skill_root_rule_files(skills_root: Path) -> list[tuple[Path, Path]]:
+    rule_files: list[tuple[Path, Path]] = []
 
     for filename in SKILL_ROOT_RULE_FILES:
         source = skills_root / filename
@@ -965,9 +967,9 @@ def iter_skill_root_rule_files(skills_root: Path) -> List[Tuple[Path, Path]]:
 
 def sync_skill_root_rules(
     skills_root: Path, store_path: Path, dry_run: bool = False
-) -> List[Path]:
+) -> list[Path]:
     """Copy rule files that skill directories link to via ../RULE.md."""
-    copied: List[Path] = []
+    copied: list[Path] = []
     for source, relative_target in iter_skill_root_rule_files(skills_root):
         target = store_path / relative_target
         if not dry_run:
@@ -989,8 +991,8 @@ def categorize_skill(name: str) -> str:
     return "specialist"
 
 
-def categorize_all(skills: List[Path]) -> Dict[str, List[str]]:
-    cats: Dict[str, List[str]] = {"pipeline": [], "foundations": [], "specialist": []}
+def categorize_all(skills: list[Path]) -> dict[str, list[str]]:
+    cats: dict[str, list[str]] = {"pipeline": [], "foundations": [], "specialist": []}
     for s in skills:
         cat = categorize_skill(s.name)
         cats[cat].append(s.name)
@@ -1049,7 +1051,7 @@ def _accumulate_digits(first: str) -> str:
     return buf
 
 
-def ask_choice(prompt: str, options: List[str], default: int = 0) -> int:
+def ask_choice(prompt: str, options: list[str], default: int = 0) -> int:
     """Ask user to pick from a list interactively."""
     if not _IS_TTY:
         return default
@@ -1130,7 +1132,7 @@ def ask_choice(prompt: str, options: List[str], default: int = 0) -> int:
     return current_idx
 
 
-def ask_multi(prompt: str, options: List[str], defaults: List[bool]) -> List[bool]:
+def ask_multi(prompt: str, options: list[str], defaults: list[bool]) -> list[bool]:
     """Ask user to toggle or select multiple options interactively."""
     if not _IS_TTY:
         return defaults
@@ -1335,14 +1337,14 @@ def _path_present(path: Path) -> bool:
     return path.exists() or path.is_symlink()
 
 
-def _teardown_backup_records(inventory: Sequence[ManagedPath]) -> List[ManagedPath]:
+def _teardown_backup_records(inventory: Sequence[ManagedPath]) -> list[ManagedPath]:
     candidates = [
         record
         for record in inventory
         if record.action in {"remove", "edit"} and _path_present(record.path)
     ]
-    selected: List[ManagedPath] = []
-    selected_roots: List[Path] = []
+    selected: list[ManagedPath] = []
+    selected_roots: list[Path] = []
     for record in sorted(candidates, key=lambda item: len(item.path.parts)):
         if record.path.is_symlink():
             selected.append(record)
@@ -1357,11 +1359,11 @@ def _teardown_backup_records(inventory: Sequence[ManagedPath]) -> List[ManagedPa
 
 def create_teardown_backup(
     inventory: Sequence[ManagedPath], *, dry_run: bool = False
-) -> Optional[str]:
+) -> str | None:
     records = _teardown_backup_records(inventory)
     if not records:
         return None
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     if dry_run:
         return timestamp
 
@@ -1369,7 +1371,7 @@ def create_teardown_backup(
     backup_dir = backup_root / timestamp
     items_dir = backup_dir / "items"
     items_dir.mkdir(parents=True, exist_ok=False)
-    manifest_items: List[Dict[str, str]] = []
+    manifest_items: list[dict[str, str]] = []
     for index, record in enumerate(records):
         safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", record.path.name) or "root"
         relative_backup = Path("items") / f"{index:04d}-{safe_name}"
@@ -1413,10 +1415,10 @@ def shlex_quote(value: str) -> str:
 
 
 def collect_orphaned_skills(
-    store_path: Path, runtimes: List[str], current_bundle: Set[str]
-) -> List[Tuple[str, Path]]:
+    store_path: Path, runtimes: list[str], current_bundle: set[str]
+) -> list[tuple[str, Path]]:
     """Return vc-* entries that no longer exist in the current bundle."""
-    orphans: List[Tuple[str, Path]] = []
+    orphans: list[tuple[str, Path]] = []
 
     if store_path.exists():
         for entry in sorted(store_path.iterdir()):
@@ -1424,9 +1426,7 @@ def collect_orphaned_skills(
                 continue
             if not entry.name.startswith("vc-"):
                 continue
-            if entry.is_symlink():
-                orphans.append(("store", entry))
-            elif entry.is_dir() and (entry / "SKILL.md").exists():
+            if entry.is_symlink() or entry.is_dir() and (entry / "SKILL.md").exists():
                 orphans.append(("store", entry))
 
     for rt in runtimes:
@@ -1436,9 +1436,7 @@ def collect_orphaned_skills(
         for entry in sorted(rt_skills.iterdir()):
             if not entry.name.startswith("vc-") or entry.name in current_bundle:
                 continue
-            if entry.is_symlink():
-                orphans.append((rt, entry))
-            elif entry.is_dir() and (entry / "SKILL.md").exists():
+            if entry.is_symlink() or entry.is_dir() and (entry / "SKILL.md").exists():
                 orphans.append((rt, entry))
 
     return orphans
@@ -1446,15 +1444,15 @@ def collect_orphaned_skills(
 
 def create_backup(
     store_path: Path,
-    runtimes: List[str],
-    bundle_names: List[str],
-    orphaned_entries: Optional[List[Tuple[str, Path]]] = None,
-    launcher_entries: Optional[List[str]] = None,
-    helper_entries: Optional[List[str]] = None,
+    runtimes: list[str],
+    bundle_names: list[str],
+    orphaned_entries: list[tuple[str, Path]] | None = None,
+    launcher_entries: list[str] | None = None,
+    helper_entries: list[str] | None = None,
     dry_run: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """Snapshot existing state before install. Returns backup timestamp or None."""
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     backup_dir = _backup_root(store_path) / ts
     anything_backed = False
 
@@ -1576,7 +1574,7 @@ def _old_zshrc_source_line() -> str:
     return '[[ -r "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh" ]] && source "${XDG_CONFIG_HOME:-$HOME/.config}/zsh/vc-skills.zsh"'
 
 
-def _helper_surface_label(*, zsh_available: Optional[bool] = None) -> str:
+def _helper_surface_label(*, zsh_available: bool | None = None) -> str:
     helper_file = _helper_target_path()
     legacy_file = _helper_legacy_path()
     if zsh_available is None:
@@ -1593,7 +1591,7 @@ def _launcher_path_line() -> str:
     return 'case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
 
 
-def _legacy_launcher_path_lines() -> List[str]:
+def _legacy_launcher_path_lines() -> list[str]:
     return ['export PATH="$HOME/.local/bin:$PATH"']
 
 
@@ -1603,7 +1601,7 @@ def _doctor_repair_rc_content(
     repaired, _removed = _clean_legacy_rc_entries(content)
     for line, comment in _uninstall_rc_entries():
         repaired, _ = _strip_rc_entry(repaired, line, comment)
-    blocks: List[Tuple[str, str]] = []
+    blocks: list[tuple[str, str]] = []
     if ensure_helper:
         blocks.append(("𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers", _shell_source_line()))
     if ensure_path:
@@ -1621,8 +1619,8 @@ def _doctor_repair_rc_content(
     return repaired
 
 
-def _doctor_fix_rc_files() -> List[DoctorFinding]:
-    findings: List[DoctorFinding] = []
+def _doctor_fix_rc_files() -> list[DoctorFinding]:
+    findings: list[DoctorFinding] = []
     ensure_helper = _helper_target_path().exists() or _helper_legacy_path().exists()
     ensure_path = _find_launcher_wrapper("vibecrafted") is not None
 
@@ -1674,9 +1672,9 @@ def _doctor_fix_rc_files() -> List[DoctorFinding]:
     return findings
 
 
-def _doctor_launcher_source_root(store_path: Path) -> Optional[Path]:
+def _doctor_launcher_source_root(store_path: Path) -> Path | None:
     current_link = vibecrafted_tools_home() / "vibecrafted-current"
-    candidates: List[Path] = [Path(__file__).resolve().parent.parent]
+    candidates: list[Path] = [Path(__file__).resolve().parent.parent]
 
     if current_link.exists():
         try:
@@ -1693,7 +1691,7 @@ def _doctor_launcher_source_root(store_path: Path) -> Optional[Path]:
     return None
 
 
-def _doctor_fix_launchers(store_path: Path, state: InstallState) -> List[DoctorFinding]:
+def _doctor_fix_launchers(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     source_root = _doctor_launcher_source_root(store_path)
     if source_root is None:
         return [
@@ -1708,7 +1706,7 @@ def _doctor_fix_launchers(store_path: Path, state: InstallState) -> List[DoctorF
         _install_launcher(source_root, dry_run=False, update_rc=False)
         state.launcher_entries = _snapshot_launcher_entries()
         state.save(store_path)
-    except Exception as exc:  # pragma: no cover - repair failures surface here
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - surface repair failures
         return [
             DoctorFinding(
                 "warn",
@@ -1729,16 +1727,13 @@ def _doctor_fix_launchers(store_path: Path, state: InstallState) -> List[DoctorF
 def _run_smoke_command(
     command: Sequence[str],
     *,
-    env: Optional[Dict[str, str]] = None,
-    expected_text: Optional[str] = None,
-) -> Tuple[bool, str]:
+    env: dict[str, str] | None = None,
+    expected_text: str | None = None,
+) -> tuple[bool, str]:
     """Run a small runtime smoke command and capture a concise result."""
     try:
         result = subprocess.run(
-            command,
-            env=env,
-            capture_output=True,
-            text=True,
+            command, env=env, capture_output=True, text=True, check=False
         )
     except OSError as exc:
         return False, str(exc)
@@ -1756,7 +1751,7 @@ def _run_smoke_command(
     return True, detail
 
 
-def _clean_legacy_rc_entries(content: str) -> Tuple[str, int]:
+def _clean_legacy_rc_entries(content: str) -> tuple[str, int]:
     import re
 
     lines = content.splitlines()
@@ -1774,11 +1769,8 @@ def _clean_legacy_rc_entries(content: str) -> Tuple[str, int]:
                 skip_until = None
             continue
 
-        if (
-            stripped.startswith("# >>> VibeCraft")
-            or stripped.startswith("# <<< VibeCraft")
-            or stripped.startswith("# >>> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝")
-            or stripped.startswith("# <<< 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝")
+        if stripped.startswith(
+            ("# >>> VibeCraft", "# <<< VibeCraft", "# >>> 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝", "# <<< 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝")
         ):
             removed += 1
             skip_until = "VibeCraft" if "VibeCraft" in stripped else "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝"
@@ -1797,11 +1789,13 @@ def _clean_legacy_rc_entries(content: str) -> Tuple[str, int]:
             continue
 
         # 3. Known exports
-        if (
-            stripped.startswith("export VIBECRAFTED_ROOT")
-            or stripped.startswith("export VIBECRAFT_ROOT")
-            or stripped.startswith("export VIBECRAFTED_HOME")
-            or stripped.startswith("export LOCTREE_NUDGE")
+        if stripped.startswith(
+            (
+                "export VIBECRAFTED_ROOT",
+                "export VIBECRAFT_ROOT",
+                "export VIBECRAFTED_HOME",
+                "export LOCTREE_NUDGE",
+            )
         ):
             removed += 1
             continue
@@ -1850,10 +1844,10 @@ def _clean_legacy_rc_entries(content: str) -> Tuple[str, int]:
 
 
 def _strip_rc_entry(
-    content: str, line: str, comment: Optional[str] = None
-) -> Tuple[str, int]:
+    content: str, line: str, comment: str | None = None
+) -> tuple[str, int]:
     raw_lines = content.splitlines()
-    kept: List[str] = []
+    kept: list[str] = []
     removed = 0
     idx = 0
 
@@ -1882,7 +1876,7 @@ def _strip_rc_entry(
     return rebuilt, removed
 
 
-def _installer_managed_launcher_names() -> List[str]:
+def _installer_managed_launcher_names() -> list[str]:
     return [
         "vibecrafted",
         "vibecraft",
@@ -1916,26 +1910,26 @@ def _snapshot_legacy_helper_link(path: Path) -> bool:
     return target == _helper_target_path()
 
 
-def _snapshot_helper_files() -> List[str]:
-    helper_files: List[str] = []
+def _snapshot_helper_files() -> list[str]:
+    helper_files: list[str] = []
     helper_file = _helper_target_path()
     legacy_file = _helper_legacy_path()
 
-    if _snapshot_helper_file(helper_file):
-        helper_files.append(str(helper_file))
-    elif helper_file.exists():
+    if _snapshot_helper_file(helper_file) or helper_file.exists():
         helper_files.append(str(helper_file))
 
-    if _snapshot_legacy_helper_link(legacy_file):
-        helper_files.append(str(legacy_file))
-    elif legacy_file.exists() and _snapshot_helper_file(legacy_file):
+    if (
+        _snapshot_legacy_helper_link(legacy_file)
+        or legacy_file.exists()
+        and _snapshot_helper_file(legacy_file)
+    ):
         helper_files.append(str(legacy_file))
 
     return helper_files
 
 
-def _snapshot_launcher_entries() -> List[str]:
-    launcher_entries: List[str] = []
+def _snapshot_launcher_entries() -> list[str]:
+    launcher_entries: list[str] = []
     seen: set[tuple[str, str]] = set()
     for launcher_bin_dir in _launcher_bin_dirs():
         for name in _installer_managed_launcher_names():
@@ -1950,14 +1944,14 @@ def _snapshot_launcher_entries() -> List[str]:
     return launcher_entries
 
 
-def snapshot_product_tool_state() -> Dict[str, Dict[str, str]]:
+def snapshot_product_tool_state() -> dict[str, dict[str, str]]:
     """Record product dependency commands exactly where PATH resolves them.
 
     Loctree/AICX/vc-frame/etc. are foundation payload when the bundle vendors
     them for this platform. Missing bundle payloads remain external dependencies,
     so discovery still observes PATH and persists the fallback result.
     """
-    product_tools: Dict[str, Dict[str, str]] = {}
+    product_tools: dict[str, dict[str, str]] = {}
     seen: set[str] = set()
     for foundation in FOUNDATIONS:
         if foundation.name in seen:
@@ -1981,7 +1975,7 @@ def snapshot_product_tool_state() -> Dict[str, Dict[str, str]]:
 
 def _parse_manifest_launchers(
     raw_entries: Sequence[str],
-) -> List[tuple[Path, Path]]:
+) -> list[tuple[Path, Path]]:
     launcher_entries: list[tuple[Path, Path]] = []
     seen: set[tuple[str, str]] = set()
 
@@ -2098,11 +2092,11 @@ FRAMEWORK_LAUNCHER_MARKERS = (
 )
 
 
-def _launcher_bin_dirs() -> List[Path]:
+def _launcher_bin_dirs() -> list[Path]:
     return [vibecrafted_launcher_bin()]
 
 
-def _find_launcher_wrapper(name: str) -> Optional[Path]:
+def _find_launcher_wrapper(name: str) -> Path | None:
     for launcher_bin_dir in _launcher_bin_dirs():
         candidate = launcher_bin_dir / name
         if candidate.exists() or candidate.is_symlink():
@@ -2110,7 +2104,7 @@ def _find_launcher_wrapper(name: str) -> Optional[Path]:
     return None
 
 
-def _uninstall_rc_entries() -> List[Tuple[str, str]]:
+def _uninstall_rc_entries() -> list[tuple[str, str]]:
     entries = [
         (_shell_source_line(), "𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. shell helpers"),
         (_shell_source_line(), "Vetcoders shell helpers"),
@@ -2149,7 +2143,7 @@ def _launcher_dir_key(launcher_bin_dir: Path) -> str:
     )
 
 
-def _launcher_dir_from_key(key: str) -> Optional[Path]:
+def _launcher_dir_from_key(key: str) -> Path | None:
     mapping = {
         "local-bin": vibecrafted_launcher_bin(),
     }
@@ -2195,13 +2189,8 @@ def _is_framework_managed_launcher(entry: Path) -> bool:
             if _launcher_file_contains_framework_markers(resolved):
                 return True
 
-    hinted_name = (
-        name.startswith("vc-") or name.startswith("vibecraft") or name.endswith("-pack")
-    )
-    if hinted_name and _launcher_file_contains_framework_markers(entry):
-        return True
-
-    return False
+    hinted_name = name.startswith(("vc-", "vibecraft")) or name.endswith("-pack")
+    return bool(hinted_name and _launcher_file_contains_framework_markers(entry))
 
 
 def _is_replaceable_framework_launcher(entry: Path) -> bool:
@@ -2223,8 +2212,8 @@ def _is_replaceable_framework_launcher(entry: Path) -> bool:
     return _launcher_file_contains_framework_markers(entry)
 
 
-def collect_installed_launchers() -> List[Tuple[Path, Path]]:
-    launchers: List[Tuple[Path, Path]] = []
+def collect_installed_launchers() -> list[tuple[Path, Path]]:
+    launchers: list[tuple[Path, Path]] = []
     for launcher_bin_dir in _launcher_bin_dirs():
         if not launcher_bin_dir.exists():
             continue
@@ -2285,10 +2274,10 @@ class HelperConflict:
     line_num: int
 
 
-def scan_helper_conflicts() -> Dict[Path, List[HelperConflict]]:
+def scan_helper_conflicts() -> dict[Path, list[HelperConflict]]:
     """Scan shell config files for existing helper function definitions."""
     default = _helper_target_path()
-    conflicts: Dict[Path, List[HelperConflict]] = {}
+    conflicts: dict[Path, list[HelperConflict]] = {}
 
     search_dirs = []
     config_base = xdg_config_home()
@@ -2297,7 +2286,7 @@ def scan_helper_conflicts() -> Dict[Path, List[HelperConflict]]:
         if candidate.is_dir():
             search_dirs.append(candidate)
 
-    files_to_scan: List[Path] = []
+    files_to_scan: list[Path] = []
     for d in search_dirs:
         files_to_scan.extend(d.glob("*.sh"))
         files_to_scan.extend(d.glob("*.zsh"))
@@ -2317,7 +2306,7 @@ def scan_helper_conflicts() -> Dict[Path, List[HelperConflict]]:
             stripped = line.strip()
             for fn in KNOWN_HELPER_FUNCTIONS:
                 # Match function definitions: "func_name()" or "func_name ()"
-                if stripped.startswith(f"{fn}()") or stripped.startswith(f"{fn} ()"):
+                if stripped.startswith((f"{fn}()", f"{fn} ()")):
                     if fpath not in conflicts:
                         conflicts[fpath] = []
                     conflicts[fpath].append(
@@ -2328,7 +2317,7 @@ def scan_helper_conflicts() -> Dict[Path, List[HelperConflict]]:
 
 
 def report_helper_conflicts(
-    conflicts: Dict[Path, List[HelperConflict]], interactive: bool
+    conflicts: dict[Path, list[HelperConflict]], interactive: bool
 ) -> bool:
     """Report conflicts and ask user what to do. Returns True if should proceed with install."""
     if not conflicts:
@@ -2541,7 +2530,7 @@ def _ensure_current_tools_target(shared_home: Path) -> Path:
 
 def refresh_current_tools(
     repo_root: Path, shared_home: Path, dry_run: bool = False, mirror: bool = False
-) -> Optional[Path]:
+) -> Path | None:
     """Refresh the runtime tools current-link from the install source."""
     if not _is_framework_source_root(repo_root):
         return None
@@ -2583,10 +2572,10 @@ def _current_agents_layout_root(store_path: Path, *, create: bool = False) -> Pa
     return current_link / "agents"
 
 
-def _transfer_relative_files(root: Path) -> List[Path]:
+def _transfer_relative_files(root: Path) -> list[Path]:
     if not root.exists():
         return []
-    files: List[Path] = []
+    files: list[Path] = []
     for item in sorted(root.rglob("*")):
         if distribution_path_is_forbidden(item.relative_to(root)):
             continue
@@ -2607,8 +2596,8 @@ def _same_file_payload(src: Path, dst: Path) -> bool:
         return False
 
 
-def _layout_transfer_conflicts(src: Path, dst: Path) -> List[Path]:
-    conflicts: List[Path] = []
+def _layout_transfer_conflicts(src: Path, dst: Path) -> list[Path]:
+    conflicts: list[Path] = []
     for rel in _transfer_relative_files(src):
         target = dst / rel
         source = src / rel
@@ -2619,8 +2608,8 @@ def _layout_transfer_conflicts(src: Path, dst: Path) -> List[Path]:
     return conflicts
 
 
-def _copy_layout_payload(src: Path, dst: Path) -> List[str]:
-    copied: List[str] = []
+def _copy_layout_payload(src: Path, dst: Path) -> list[str]:
+    copied: list[str] = []
     dst.mkdir(parents=True, exist_ok=True)
     for rel in _transfer_relative_files(src):
         source = src / rel
@@ -2665,7 +2654,7 @@ def transfer_agents_layout(
     direction: str,
     dry_run: bool = False,
     force: bool = False,
-) -> Tuple[int, Dict[str, Any]]:
+) -> tuple[int, dict[str, Any]]:
     """Move the agent script layout between legacy store and current tools.
 
     This is intentionally conservative: existing target payload with different
@@ -2736,7 +2725,7 @@ def transfer_agents_layout(
     }
 
 
-def layout_status(store_path: Path) -> Dict[str, Any]:
+def layout_status(store_path: Path) -> dict[str, Any]:
     legacy = _legacy_agents_layout_root(store_path)
     current = _current_agents_layout_root(store_path, create=False)
     state = InstallState.load(store_path)
@@ -2751,10 +2740,10 @@ def layout_status(store_path: Path) -> Dict[str, Any]:
 
 def prune_orphaned_skills(
     store_path: Path,
-    runtimes: List[str],
-    current_bundle: Set[str],
+    runtimes: list[str],
+    current_bundle: set[str],
     dry_run: bool = False,
-    orphaned_entries: Optional[List[Tuple[str, Path]]] = None,
+    orphaned_entries: list[tuple[str, Path]] | None = None,
     interactive: bool = True,
 ) -> int:
     """Remove vc-* skills from store and runtime dirs that are no longer in the bundle."""
@@ -2771,11 +2760,10 @@ def prune_orphaned_skills(
         print(f"  {yellow(f'[{kind}]')} {location}/{entry.name}")
     print()
 
-    if interactive:
-        if not ask_yn("Remove orphaned skills?", default=True):
-            print(dim("  Keeping orphaned skills."))
-            print()
-            return 0
+    if interactive and not ask_yn("Remove orphaned skills?", default=True):
+        print(dim("  Keeping orphaned skills."))
+        print()
+        return 0
 
     removed = 0
     for location, entry in orphans:
@@ -2797,12 +2785,12 @@ def prune_orphaned_skills(
 
 def prune_legacy_skills(
     store_path: Path,
-    runtimes: List[str],
+    runtimes: list[str],
     dry_run: bool = False,
     interactive: bool = True,
 ) -> int:
     """Remove old vetcoders-* skills replaced by vc-* equivalents."""
-    legacy: List[tuple] = []
+    legacy: list[tuple] = []
 
     if store_path.exists():
         for entry in sorted(store_path.iterdir()):
@@ -2834,11 +2822,12 @@ def prune_legacy_skills(
         print(f"  {yellow(f'[{kind}]')} {location}/{entry.name}")
     print()
 
-    if interactive:
-        if not ask_yn("Remove the old vetcoders-* entries now?", default=True):
-            print(dim("  Keeping the old entries."))
-            print()
-            return 0
+    if interactive and not ask_yn(
+        "Remove the old vetcoders-* entries now?", default=True
+    ):
+        print(dim("  Keeping the old entries."))
+        print()
+        return 0
 
     removed = 0
     for location, entry in legacy:
@@ -2977,7 +2966,7 @@ def _ensure_runtime_pip(python_bin: Path) -> None:
     )
 
 
-def _ensure_runtime_venv(current_tools: Path, dry_run: bool = False) -> Optional[Path]:
+def _ensure_runtime_venv(current_tools: Path, dry_run: bool = False) -> Path | None:
     """Create/update the installed runtime venv and editable core packages."""
     python_bin = _runtime_venv_python(current_tools)
     if dry_run:
@@ -3025,9 +3014,9 @@ def _ensure_runtime_venv(current_tools: Path, dry_run: bool = False) -> Optional
 
 def _install_python_entrypoint_launchers(
     current_tools: Path, dry_run: bool = False
-) -> List[Path]:
+) -> list[Path]:
     """Expose Python console scripts from the installed runtime venv."""
-    installed: List[Path] = []
+    installed: list[Path] = []
     console_bin = _runtime_venv_dir(current_tools) / "bin"
     launcher_bin_dir = vibecrafted_launcher_bin()
     if not dry_run:
@@ -3109,7 +3098,7 @@ def cleanse_state_home_agency(current_tools: Path, dry_run: bool = False) -> int
 
 
 AGENT_COMMAND_MARKER = "<!-- vibecrafted-managed-agent-command -->"
-MARBLES_COMMANDS_BY_RUNTIME: Dict[str, Tuple[str, ...]] = {
+MARBLES_COMMANDS_BY_RUNTIME: dict[str, tuple[str, ...]] = {
     "claude": ("marbles.md", "cancel-marbles.md"),
     "codex": ("marbles.md", "codex-marbles-loop.md", "cancel-codex-marbles.md"),
 }
@@ -3247,7 +3236,7 @@ fi
 """
 
 
-def _agent_command_payloads(runtime: str) -> Dict[str, str]:
+def _agent_command_payloads(runtime: str) -> dict[str, str]:
     if runtime == "codex":
         return {
             "marbles.md": _codex_marbles_command("/marbles"),
@@ -3353,7 +3342,7 @@ def is_benign_zsh_session_noise(stderr: str) -> bool:
 
 def describe_dumb_terminal_noise(stdout: str, stderr: str) -> str:
     """Summarize shell noise seen under TERM=dumb with a concrete fix hint."""
-    issues: List[str] = []
+    issues: list[str] = []
     stderr = (stderr or "").strip()
     stdout = (stdout or "").strip()
     stderr_lower = stderr.lower()
@@ -3409,7 +3398,7 @@ def _is_subpath(path: Path, root: Path) -> bool:
         return False
 
 
-def _runtime_root_contract_findings() -> List[DoctorFinding]:
+def _runtime_root_contract_findings() -> list[DoctorFinding]:
     checks = [
         (
             "launcher-bin",
@@ -3431,7 +3420,7 @@ def _runtime_root_contract_findings() -> List[DoctorFinding]:
         ),
     ]
 
-    findings: List[DoctorFinding] = []
+    findings: list[DoctorFinding] = []
     for component, resolved_path, canonical_path, env_var in checks:
         if resolved_path == canonical_path:
             findings.append(
@@ -3459,8 +3448,8 @@ def _runtime_root_contract_findings() -> List[DoctorFinding]:
 
 def _foundation_provenance_findings(
     foundation_name: str, executable_path: Path
-) -> List[DoctorFinding]:
-    findings: List[DoctorFinding] = []
+) -> list[DoctorFinding]:
+    findings: list[DoctorFinding] = []
     canonical_launcher = _canonical_launcher_root()
     executable = executable_path.expanduser()
 
@@ -3531,9 +3520,9 @@ def _pause_for_runtime_contract_failures(findings: Sequence[DoctorFinding]) -> N
         print(file=out)
 
 
-def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
+def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
     """Run full installation health check."""
-    findings: List[DoctorFinding] = []
+    findings: list[DoctorFinding] = []
 
     # 0. Framework version
     fw_ver = state.framework_version or "unknown"
@@ -3605,7 +3594,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         skills_src = source_candidate / "skills"
         if skills_src.is_dir():
             source_root = skills_src
-    drifted: List[str] = []
+    drifted: list[str] = []
     if source_root:
         for skill_name in state.skills:
             installed = store_path / skill_name / "SKILL.md"
@@ -3834,8 +3823,8 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             )
         )
 
-    python_entrypoint_issues: List[str] = []
-    python_entrypoint_owners: Set[str] = set()
+    python_entrypoint_issues: list[str] = []
+    python_entrypoint_owners: set[str] = set()
     for name in PYTHON_ENTRYPOINT_LAUNCHERS:
         launcher_path = _find_launcher_wrapper(name)
         if launcher_path is None:
@@ -3955,12 +3944,14 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             [
                 "bash",
                 "-c",
-                'source "$1" && '
-                "type spawn_write_meta >/dev/null 2>&1 && "
-                "type spawn_prepare_paths >/dev/null 2>&1 && "
-                "type spawn_generate_launcher >/dev/null 2>&1 && "
-                "type spawn_watch_startup >/dev/null 2>&1 && "
-                'printf "spawn-pipeline-ok\\n"',
+                (
+                    'source "$1" && '
+                    "type spawn_write_meta >/dev/null 2>&1 && "
+                    "type spawn_prepare_paths >/dev/null 2>&1 && "
+                    "type spawn_generate_launcher >/dev/null 2>&1 && "
+                    "type spawn_watch_startup >/dev/null 2>&1 && "
+                    'printf "spawn-pipeline-ok\\n"'
+                ),
                 "_",
                 str(common_sh),
             ],
@@ -3981,22 +3972,24 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             [
                 "bash",
                 "-c",
-                'source "$1" && '
-                'tmpdir="$(mktemp -d)" && '
-                "export SPAWN_AGENT=doctor-smoke SPAWN_RUN_ID=smoke-000 "
-                "SPAWN_PROMPT_ID=smoke SPAWN_LOOP_NR=0 SPAWN_SKILL_CODE=doctor "
-                'SPAWN_ROOT="$tmpdir" SPAWN_PLAN="$tmpdir/doctor-plan.md" '
-                'SPAWN_REPORT="$tmpdir/report.md" '
-                'SPAWN_TRANSCRIPT="$tmpdir/transcript.md" '
-                'SPAWN_LAUNCHER="$tmpdir/launcher.sh" && '
-                'spawn_write_meta "$tmpdir/meta.json" "launching" "$SPAWN_AGENT" '
-                '"doctor" "$SPAWN_ROOT" "$SPAWN_PLAN" "$SPAWN_REPORT" '
-                '"$SPAWN_TRANSCRIPT" "$SPAWN_LAUNCHER" && '
-                'spawn_generate_launcher "$SPAWN_LAUNCHER" "$tmpdir/meta.json" '
-                '"$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$1" "echo ok" && '
-                'bash -n "$tmpdir/launcher.sh" && '
-                'rm -rf "$tmpdir" && '
-                'printf "spawn-e2e-ok\\n"',
+                (
+                    'source "$1" && '
+                    'tmpdir="$(mktemp -d)" && '
+                    "export SPAWN_AGENT=doctor-smoke SPAWN_RUN_ID=smoke-000 "
+                    "SPAWN_PROMPT_ID=smoke SPAWN_LOOP_NR=0 SPAWN_SKILL_CODE=doctor "
+                    'SPAWN_ROOT="$tmpdir" SPAWN_PLAN="$tmpdir/doctor-plan.md" '
+                    'SPAWN_REPORT="$tmpdir/report.md" '
+                    'SPAWN_TRANSCRIPT="$tmpdir/transcript.md" '
+                    'SPAWN_LAUNCHER="$tmpdir/launcher.sh" && '
+                    'spawn_write_meta "$tmpdir/meta.json" "launching" "$SPAWN_AGENT" '
+                    '"doctor" "$SPAWN_ROOT" "$SPAWN_PLAN" "$SPAWN_REPORT" '
+                    '"$SPAWN_TRANSCRIPT" "$SPAWN_LAUNCHER" && '
+                    'spawn_generate_launcher "$SPAWN_LAUNCHER" "$tmpdir/meta.json" '
+                    '"$SPAWN_REPORT" "$SPAWN_TRANSCRIPT" "$1" "echo ok" && '
+                    'bash -n "$tmpdir/launcher.sh" && '
+                    'rm -rf "$tmpdir" && '
+                    'printf "spawn-e2e-ok\\n"'
+                ),
                 "_",
                 str(common_sh),
             ],
@@ -4034,6 +4027,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             ],
             capture_output=True,
             text=True,
+            check=False,
         )
         if channel_raw.returncode == 0 and channel_raw.stdout.strip():
             import json as _json
@@ -4121,6 +4115,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                check=False,
             )
             ver_str = (
                 vc_frame_ver.stdout.strip()
@@ -4149,6 +4144,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                 capture_output=True,
                 text=True,
                 timeout=5,
+                check=False,
             )
             if ls_result.returncode == 0:
                 dead_sessions = [
@@ -4196,7 +4192,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
         last_detail = ""
         stream_ok = False
         stream_line = ""
-        stream_flags: List[str] = []
+        stream_flags: list[str] = []
         for flags in flag_options:
             try:
                 flag_result = subprocess.run(
@@ -4204,6 +4200,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
                     capture_output=True,
                     text=True,
                     timeout=10,
+                    check=False,
                 )
                 if flag_result.returncode == 0:
                     stream_ok = True
@@ -4250,6 +4247,7 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
             env=env,
             capture_output=True,
             text=True,
+            check=False,
         )
         stdout = (smoke.stdout or "").strip()
         stderr = (smoke.stderr or "").strip()
@@ -4279,8 +4277,8 @@ def run_doctor(store_path: Path, state: InstallState) -> List[DoctorFinding]:
 
 
 def print_doctor(
-    findings: List[DoctorFinding],
-    guide_path: Optional[Path] = None,
+    findings: list[DoctorFinding],
+    guide_path: Path | None = None,
     verbose: bool = False,
 ) -> int:
     """Summary-first doctor report (CLI_PRODUCT_SPEC §6.4).
@@ -4357,8 +4355,6 @@ def print_doctor(
 class GoBack(Exception):
     """Raised by the interactive wizard to re-visit a previous step."""
 
-    pass
-
 
 def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     """Original verbose install flow — used when --compact is NOT set."""
@@ -4418,7 +4414,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     all_runtimes = list(SYMLINK_TARGETS)
     install_shell = cli_with_shell
     write_shell_rc = getattr(args, "write_shell_rc", False)
-    installed_foundations: Dict[str, Dict] = {}
+    installed_foundations: dict[str, dict] = {}
 
     while True:
         try:
@@ -4557,7 +4553,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
                 # Foundations
                 if not getattr(args, "_fnd_checked", False):
                     print(bold("Runtime Foundations:"))
-                    missing_foundations: List[Foundation] = []
+                    missing_foundations: list[Foundation] = []
                     for f in FOUNDATIONS:
                         path, channel = install_or_find_foundation(
                             f, repo_root, dry_run=dry_run
@@ -4646,7 +4642,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             elif step == 3:
                 # Going back from foundations
                 if cli_tools:
-                    step = 0 if (advanced and interactive) else 0  # actually 0
+                    step = 0
                 else:
                     step = 2
             elif step == 2:
@@ -4912,9 +4908,8 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
                     create_symlink(Path("vibecrafted"), launcher_bin_dir / wrapper)
                 # Replace old vibecraft binary with a thin redirect
                 legacy_dst = launcher_bin_dir / "vibecraft"
-                if legacy_redirect_src.exists():
-                    if legacy_dst != canonical_legacy:
-                        create_symlink(canonical_legacy, legacy_dst)
+                if legacy_redirect_src.exists() and legacy_dst != canonical_legacy:
+                    create_symlink(canonical_legacy, legacy_dst)
         else:
             for launcher_bin_dir in _launcher_bin_dirs():
                 shim = _uv_tool_shim()
@@ -4958,7 +4953,7 @@ def _install_launcher(repo_root: Path, dry_run: bool, update_rc: bool = False) -
 
 
 def _print_unicode_summary(
-    repo_root: Path, store_path: Path, skills: List[Path], out=None
+    repo_root: Path, store_path: Path, skills: list[Path], out=None
 ) -> None:
     """Print the unicode summary box. If out is given, write there instead of stdout."""
     _out = out or sys.stdout
@@ -5046,7 +5041,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
     all_runtimes = list(SYMLINK_TARGETS)
     install_shell = cli_with_shell
     write_shell_rc = getattr(args, "write_shell_rc", False)
-    installed_foundations: Dict[str, Dict] = {}
+    installed_foundations: dict[str, dict] = {}
 
     # --- System check (critical deps — must fail visibly) ---
     sys_deps = detect_system_deps()
@@ -5256,7 +5251,9 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                     shell_cmd.append("--write-rc")
                 if dry_run:
                     shell_cmd.append("--dry-run")
-                result = subprocess.run(shell_cmd, capture_output=True, text=True)
+                result = subprocess.run(
+                    shell_cmd, capture_output=True, text=True, check=False
+                )
                 # Log the shell installer output
                 if result.stdout:
                     print(result.stdout)
@@ -5401,7 +5398,7 @@ def cmd_install(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _known_bundle_names() -> List[str]:
+def _known_bundle_names() -> list[str]:
     """Skill names this installer manages. Used to scope doctor checks."""
     # Try to discover from repo checkout next to this script
     script_dir = Path(__file__).resolve().parent
@@ -5492,15 +5489,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         for entry in sorted(store_path.iterdir()):
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
-            if entry.name.startswith("vc-") and entry.name not in bundle:
-                if (entry / "SKILL.md").exists():
-                    findings.append(
-                        DoctorFinding(
-                            "warn",
-                            f"orphan:store/{entry.name}",
-                            "in store but no longer in bundle — run installer to clean up",
-                        )
+            if (
+                entry.name.startswith("vc-")
+                and entry.name not in bundle
+                and (entry / "SKILL.md").exists()
+            ):
+                findings.append(
+                    DoctorFinding(
+                        "warn",
+                        f"orphan:store/{entry.name}",
+                        "in store but no longer in bundle — run installer to clean up",
                     )
+                )
     if bundle:
         for rt in state.runtimes:
             rt_skills = runtime_skills_dir(rt)
@@ -5660,11 +5660,11 @@ def _build_uninstall_inventory(
     skill_names: Sequence[str],
     runtimes: Sequence[str],
     helper_paths: Sequence[Path],
-    launchers: Sequence[Tuple[Path, Path]],
+    launchers: Sequence[tuple[Path, Path]],
     rc_cleanup_targets: Sequence[Path],
-) -> List[ManagedPath]:
-    records: List[ManagedPath] = []
-    seen: Dict[str, int] = {}
+) -> list[ManagedPath]:
+    records: list[ManagedPath] = []
+    seen: dict[str, int] = {}
 
     def add(kind: str, path: Path, action: str = "remove", reason: str = "") -> None:
         normalized = path.expanduser()
@@ -5711,7 +5711,7 @@ def _build_uninstall_inventory(
     add("start-guide", start_here_path())
 
     tools_roots = [vibecrafted_tools_home(), shared_home / "tools"]
-    unique_tools_roots: List[Path] = []
+    unique_tools_roots: list[Path] = []
     for tools_root in tools_roots:
         if tools_root in unique_tools_roots:
             continue
@@ -5795,7 +5795,7 @@ def _print_uninstall_inventory(inventory: Sequence[ManagedPath]) -> None:
     print()
 
 
-def _edit_rc_file(record: ManagedPath, *, dry_run: bool) -> Tuple[bool, str]:
+def _edit_rc_file(record: ManagedPath, *, dry_run: bool) -> tuple[bool, str]:
     rcfile = record.path
     if not _is_writable(rcfile):
         return False, "locked; launcher/source hints remain"
@@ -5811,10 +5811,10 @@ def _edit_rc_file(record: ManagedPath, *, dry_run: bool) -> Tuple[bool, str]:
 
 def _apply_uninstall_inventory(
     inventory: Sequence[ManagedPath], *, dry_run: bool
-) -> Tuple[List[ManagedPath], List[ManagedPath], List[str]]:
-    applied: List[ManagedPath] = []
+) -> tuple[list[ManagedPath], list[ManagedPath], list[str]]:
+    applied: list[ManagedPath] = []
     preserved = [record for record in inventory if record.action == "preserve"]
-    failures: List[str] = []
+    failures: list[str] = []
 
     removals = sorted(
         (record for record in inventory if record.action == "remove"),
@@ -6162,7 +6162,7 @@ def detect_repo_root() -> str:
     return str(Path.cwd())
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     default_source = detect_repo_root()
 
     parser = argparse.ArgumentParser(

@@ -8,9 +8,10 @@ import re
 import shlex
 import subprocess
 import threading
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from .agent_dispatch import extract_session_id, sandbox_supported
 from .control_plane import ensure_session_id, normalize_run_root
@@ -216,8 +217,10 @@ def _stdin_command(agent: str) -> list[str]:
         return [
             "bash",
             "-c",
-            "agy --dangerously-skip-permissions --add-dir . "
-            '--print-timeout 30m --print "$(cat)"',
+            (
+                "agy --dangerously-skip-permissions --add-dir . "
+                '--print-timeout 30m --print "$(cat)"'
+            ),
         ]
     if agent == "junie":
         return [
@@ -893,7 +896,7 @@ def finalize_artifacts(
     announced_transcript = transcript
     transcript_text = _read_text(transcript) if str(transcript) else ""
     report_text = _read_text(report) if str(report) else ""
-    combined_text = "\n".join([transcript_text, report_text])
+    combined_text = f"{transcript_text}\n{report_text}"
 
     session_id = payload.get("session_id") or _extract_session(combined_text)
     tokens = _extract_tokens(combined_text)
@@ -1235,12 +1238,14 @@ class Supervisor:
             thread.start()
             return handle
 
+        # start_new_session puts the child in its own process group (same intent
+        # as setpgid) without the PLW1509 preexec_fn hazard in threaded hosts.
         process = subprocess.Popen(
             command_list,
             cwd=str(root_path),
             env=child_env,
             text=True,
-            preexec_fn=_set_child_pgid if hasattr(os, "setpgid") else None,
+            start_new_session=hasattr(os, "setpgid"),
         )
         try:
             pgid = os.getpgid(process.pid)
@@ -1304,7 +1309,7 @@ class Supervisor:
                 on_event=on_event,
             )
             handle.exit_code = result.exit_code
-        except Exception as exc:  # pragma: no cover - defensive event path
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive event path
             handle.exit_code = 1
             self._emit(
                 "spawn-failed",

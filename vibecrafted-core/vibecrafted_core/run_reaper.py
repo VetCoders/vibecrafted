@@ -69,30 +69,31 @@ import re
 import signal
 import subprocess
 import time
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 __all__ = [
-    "ProcessEntry",
-    "ReapCandidate",
-    "ReapPlan",
-    "ReapReceipt",
-    "OwnershipBuckets",
-    "QuarantineResult",
-    "PROTECTED_COMMAND_PATTERNS",
-    "REAPER_OWNERSHIP_KEY",
     "OWNERSHIP_LEGACY",
     "OWNERSHIP_PROVABLE",
     "OWNERSHIP_UNDECIDABLE",
+    "PROTECTED_COMMAND_PATTERNS",
+    "REAPER_OWNERSHIP_KEY",
+    "OwnershipBuckets",
+    "ProcessEntry",
+    "QuarantineResult",
+    "ReapCandidate",
+    "ReapPlan",
+    "ReapReceipt",
     "build_env_index",
     "build_process_table",
     "classify_run_ownership",
+    "main",
     "plan_json_payload",
     "plan_reap",
     "quarantine_legacy_runs",
-    "recorded_worker_pgid",
     "reap_terminal_runs",
-    "main",
+    "recorded_worker_pgid",
 ]
 
 _TRUTHY_OFF = {"0", "false", "no", "off"}
@@ -325,7 +326,7 @@ class ReapReceipt:
 
 
 def _default_runner(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603 - argv is built, never shell-interpolated.
+    return subprocess.run(
         list(argv),
         capture_output=True,
         text=True,
@@ -341,7 +342,7 @@ def build_process_table(
     runner = _default_runner if runner is None else runner
     try:
         proc = runner(["ps", "-A", "-o", "pid=,ppid=,pgid=,command="])
-    except Exception:
+    except Exception:  # noqa: BLE001
         return ()
     if getattr(proc, "returncode", 1) != 0:
         return ()
@@ -377,7 +378,7 @@ def build_env_index(runner: Callable[..., Any] | None = None) -> dict[int, str]:
     runner = _default_runner if runner is None else runner
     try:
         proc = runner(["ps", "axeww"])
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {}
     if getattr(proc, "returncode", 1) != 0:
         return {}
@@ -721,7 +722,7 @@ def quarantine_legacy_runs(
     if runs is None:
         try:
             run_list: list[dict[str, Any]] = _terminal_run_snapshots()
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # pragma: no cover - defensive  # noqa: BLE001
             result.parse_errors.append(f"load_snapshots:{exc}")
             return result
     else:
@@ -729,7 +730,7 @@ def quarantine_legacy_runs(
         for raw in runs:
             try:
                 run_list.append(dict(raw))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 result.parse_errors.append(f"coerce:{exc}")
 
     proc_table = () if table is None else table
@@ -798,7 +799,7 @@ def quarantine_legacy_runs(
                 persist(run_id, payload)
             result.marked_legacy.append(run_id)
             result.changed += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # Quarantine variants, never crash the doctor path.
             rid = str(run.get("run_id") or "?")
             result.parse_errors.append(f"{rid}:{type(exc).__name__}:{exc}")
@@ -834,7 +835,7 @@ def reap_terminal_runs(
         receipts = execute_reap(plan, grace=grace_seconds(env))
         _record_receipts(receipts)
         return plan
-    except Exception:
+    except Exception:  # noqa: BLE001
         # A garbage collector may never take down the thing it is cleaning up after.
         return ReapPlan(should_run=False, skip_reason="error")
 

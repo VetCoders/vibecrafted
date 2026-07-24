@@ -12,7 +12,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config
 
 CORE = Path(__file__).resolve().parents[1]

@@ -123,7 +123,7 @@ def live_server(server_binary: Path, vc_home: Path, tmp_path: Path):
                 if resp.status == 200:
                     ready = True
                     break
-        except Exception:
+        except Exception:  # noqa: BLE001
             time.sleep(0.1)
     if not ready:
         proc.kill()

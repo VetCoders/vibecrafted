@@ -31,17 +31,17 @@ except ModuleNotFoundError:  # pragma: no cover - depends on entrypoint
     _installer_brand = importlib.import_module("scripts.installer_brand")
     _runtime_paths = importlib.import_module("scripts.runtime_paths")
 
-launch_workflow = getattr(_control_plane_launch, "launch_workflow")
-normalize_launch_spec = getattr(_control_plane_launch, "normalize_launch_spec")
-sync_state = getattr(_control_plane_state, "sync_state")
-PRODUCT_LINE = getattr(_installer_brand, "PRODUCT_LINE")
-TAGLINE = getattr(_installer_brand, "TAGLINE")
-VAPOR_HEADER = getattr(_installer_brand, "VAPOR_HEADER")
-read_version_file = getattr(_runtime_paths, "read_version_file")
-vibecrafted_runtime_bin = getattr(_runtime_paths, "vibecrafted_runtime_bin")
-vibecrafted_tools_home = getattr(_runtime_paths, "vibecrafted_tools_home")
-vibecrafted_home = getattr(_runtime_paths, "vibecrafted_home")
-xdg_config_home = getattr(_runtime_paths, "xdg_config_home")
+launch_workflow = _control_plane_launch.launch_workflow
+normalize_launch_spec = _control_plane_launch.normalize_launch_spec
+sync_state = _control_plane_state.sync_state
+PRODUCT_LINE = _installer_brand.PRODUCT_LINE
+TAGLINE = _installer_brand.TAGLINE
+VAPOR_HEADER = _installer_brand.VAPOR_HEADER
+read_version_file = _runtime_paths.read_version_file
+vibecrafted_runtime_bin = _runtime_paths.vibecrafted_runtime_bin
+vibecrafted_tools_home = _runtime_paths.vibecrafted_tools_home
+vibecrafted_home = _runtime_paths.vibecrafted_home
+xdg_config_home = _runtime_paths.xdg_config_home
 
 
 OUTPUT_TAIL_LIMIT = 120
@@ -654,7 +654,7 @@ class InstallController:
                 if exit_code != 0:
                     break
                 env = install_runtime_env(env)
-        except Exception as exc:  # pragma: no cover - defensive path
+        except Exception as exc:  # pragma: no cover - defensive path  # noqa: BLE001
             error = str(exc)
             exit_code = -1
 
@@ -732,7 +732,7 @@ STATIC_MIME_TYPES: dict[str, str] = {
 class InstallerRequestHandler(BaseHTTPRequestHandler):
     server: InstallerHTTPServer
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
         if path.startswith("/api/"):
@@ -764,9 +764,7 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
         if site_dist is None:
             return None
 
-        if url_path in ("/", ""):
-            candidate = site_dist / "en" / "install" / "index.html"
-        elif url_path in ("/en/install", "/en/install/"):
+        if url_path in ("/", "") or url_path in ("/en/install", "/en/install/"):
             candidate = site_dist / "en" / "install" / "index.html"
         elif url_path in ("/pl/install", "/pl/install/"):
             candidate = site_dist / "pl" / "install" / "index.html"
@@ -822,7 +820,7 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/install":
             payload = self._read_json()
@@ -853,7 +851,7 @@ class InstallerRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json({"error": "Not found"}, status=HTTPStatus.NOT_FOUND)
 
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+    def log_message(self, format: str, *args: object) -> None:
         return
 
     def _read_json(self) -> dict[str, Any]:

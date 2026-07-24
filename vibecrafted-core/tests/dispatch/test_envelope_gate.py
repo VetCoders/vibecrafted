@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core.delivery.model import ExecutionEnvelope
 from vibecrafted_core.dispatch.model import STATE_FAILED, STATE_VERIFIED, Dispatch
 from vibecrafted_core.dispatch.schema import DispatchSchemaError, parse_dispatch

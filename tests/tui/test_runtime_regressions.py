@@ -240,27 +240,12 @@ def test_resume_terminal_runtime_routes_headless_codex_into_worker_session(
 
     _write_fake_command(
         fake_bin / "vc-frame",
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf "%s\\n" "--CALL--"',
-                '  printf "%s\\n" "$@"',
-                '} >> "$VC_FRAME_CAPTURE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\n{\n  printf "%s\\n" "--CALL--"\n  printf "%s\\n" "$@"\n} >> "$VC_FRAME_CAPTURE"'
         + "\n",
     )
     _write_fake_command(
         fake_bin / "codex",
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'printf "%s\\n" "$@" > "$CODEX_CAPTURE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > "$CODEX_CAPTURE"'
         + "\n",
     )
 
@@ -352,13 +337,7 @@ def test_resume_headless_routes_codex_through_exec(tmp_path: Path) -> None:
 
     _write_fake_command(
         fake_bin / "codex",
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'printf "%s\\n" "$@" > "$CODEX_CAPTURE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$@" > "$CODEX_CAPTURE"'
         + "\n",
     )
 

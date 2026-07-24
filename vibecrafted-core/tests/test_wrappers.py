@@ -5,9 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-
-from vibecrafted_core import wrappers
-from vibecrafted_core import workflow
+from vibecrafted_core import workflow, wrappers
 
 
 def test_deck_path_resolves_packaged_command_deck() -> None:

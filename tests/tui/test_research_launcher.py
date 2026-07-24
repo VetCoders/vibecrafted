@@ -5,8 +5,9 @@ import os
 import re
 import subprocess
 import textwrap
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
@@ -41,6 +42,7 @@ def test_vc_research_help_is_pure_help() -> None:
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0
@@ -77,6 +79,7 @@ def test_vc_research_positional_agent_launches_one_lane(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -110,6 +113,7 @@ def test_vc_research_uno_launches_one_requested_agent(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -175,6 +179,7 @@ def test_vc_research_trio_honors_operator_selection(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -217,6 +222,7 @@ def test_vc_research_unknown_token_fails_closed(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 1
@@ -248,6 +254,7 @@ def test_vc_research_arity_keyword_must_match_agent_count(tmp_path: Path) -> Non
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 1
@@ -278,6 +285,7 @@ def test_vc_research_duplicate_agent_fails_closed(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 1
@@ -311,6 +319,7 @@ def test_vc_research_config_selection_announces_source(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -345,6 +354,7 @@ def test_vc_research_reads_runtime_owned_yaml(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -407,6 +417,7 @@ def test_vc_research_generated_worker_prompts_do_not_leak_launcher_semantics(
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -489,6 +500,7 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -545,6 +557,7 @@ def test_vc_research_uses_run_scoped_artifact_layout(tmp_path: Path) -> None:
         env=await_env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert await_result.returncode == 0, await_result.stderr

@@ -5,10 +5,10 @@ import json
 import os
 import signal
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
 
 from .agent_stream import (
     AgentStreamParser,
@@ -634,10 +634,9 @@ class AsyncSupervisor:
                     model=handle.agent_model,
                     claim_digest=handle.claim_digest,
                 )
-            if tee_output:
-                if display_text:
-                    sys.stdout.buffer.write(display_text.encode("utf-8"))
-                    sys.stdout.buffer.flush()
+            if tee_output and display_text:
+                sys.stdout.buffer.write(display_text.encode("utf-8"))
+                sys.stdout.buffer.flush()
             if not handle.first_output_seen:
                 handle.first_output_seen = True
                 await self._transition(
@@ -779,12 +778,13 @@ class AsyncSupervisor:
         # pane, so ambient VC_FRAME_* is often empty at triage time. Prefer
         # values already in meta (launch path) over live env.
         origin = _origin_fields_from_env()
-        if not str(payload.get("origin_session") or "").strip():
-            if origin.get("origin_session"):
-                summary["origin_session"] = origin["origin_session"]
-                summary["operator_session"] = origin.get(
-                    "operator_session", origin["origin_session"]
-                )
+        if not str(payload.get("origin_session") or "").strip() and origin.get(
+            "origin_session"
+        ):
+            summary["origin_session"] = origin["origin_session"]
+            summary["operator_session"] = origin.get(
+                "operator_session", origin["origin_session"]
+            )
         if not str(payload.get("origin_tab") or "").strip():
             summary["origin_tab"] = origin.get("origin_tab") or handle.run_id
         if (

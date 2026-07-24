@@ -4,9 +4,10 @@ import importlib.util
 import os
 import shutil
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from .package_resources import deck_path, runtime_path, skills_path
 from .vc_frame_delivery import (

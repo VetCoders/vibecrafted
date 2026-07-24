@@ -42,8 +42,9 @@ def test_missing_frontmatter_fails_artifact_validation(tmp_path: Path) -> None:
     report.write_text("# no frontmatter\n\nbody\n", encoding="utf-8")
     meta = tmp_path / "meta.json"
     meta.write_text(
-        '{"report": %s, "transcript": %s}'
-        % (repr(str(report)), repr(str(tmp_path / "t.log"))),
+        '{{"report": {}, "transcript": {}}}'.format(
+            repr(str(report)), repr(str(tmp_path / "t.log"))
+        ),
         encoding="utf-8",
     )
     (tmp_path / "t.log").write_text("x\n", encoding="utf-8")

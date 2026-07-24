@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import validate_artifacts
-from .cron import parse_frontmatter
 from .control_plane import (
     await_run,
     control_plane_home,
@@ -26,10 +25,11 @@ from .control_plane import (
     run_snapshot_dir,
     sync_state,
 )
+from .cron import parse_frontmatter
 from .delivery.store import atomic_write_json
-from .package_resources import deck_path as package_deck_path
 from .events import append_event
 from .model_overrides import _model_override_receipt, _with_model_override
+from .package_resources import deck_path as package_deck_path
 from .report_contract import CLAIM_DIGEST_ENV
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .spawn import _stdin_command
@@ -183,7 +183,7 @@ def _canonical_report_dir(root: str | Path, skill: str) -> Path:
 
 
 def _artifact_slug(text: str, fallback: str) -> str:
-    frontmatter = re.match(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", text, re.S)
+    frontmatter = re.match(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", text, re.DOTALL)
     if frontmatter:
         for key in ("slug", "title"):
             match = re.search(
@@ -533,6 +533,7 @@ def _vc_frame_session_active(vc_frame: str, session: str) -> bool:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -560,6 +561,7 @@ def _vc_frame_create_background(vc_frame: str, session: str) -> tuple[bool, str]
             capture_output=True,
             text=True,
             timeout=20,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return False, f"{type(exc).__name__}: {exc}"
@@ -601,10 +603,7 @@ def _vc_frame_run_host_action(
 
     def _run_once() -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            command, capture_output=True, text=True, timeout=timeout, check=False
         )
 
     # CompletedProcess has no .pid; host actions are short-lived, so pid is
@@ -1334,8 +1333,8 @@ def _sweep_stale_runs() -> None:
         from .run_reaper import sweep_quietly
 
         sweep_quietly()
-    except Exception:
-        pass
+    except Exception as _sweep_exc:  # noqa: BLE001
+        _ = _sweep_exc  # best-effort reaper sweep
 
 
 def launch_workflow(

@@ -285,27 +285,14 @@ def test_terminal_spawn_refuses_osascript_fallback_when_vc_frame_fails(
     launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     launcher.chmod(0o755)
     (fake_bin / "vc-frame").write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                'printf "%s\\n" "$*" >> "$VC_FRAME_CAPTURE"',
-                "exit 1",
-            ]
-        )
+        '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$VC_FRAME_CAPTURE"\nexit 1'
         + "\n",
         encoding="utf-8",
     )
     (fake_bin / "vc-frame").chmod(0o755)
     _mirror_fake_vc_frame(fake_bin / "vc-frame")
     (fake_bin / "osascript").write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                'cat >> "$OSA_CAPTURE"',
-                "exit 0",
-            ]
-        )
-        + "\n",
+        '#!/usr/bin/env bash\ncat >> "$OSA_CAPTURE"\nexit 0' + "\n",
         encoding="utf-8",
     )
     (fake_bin / "osascript").chmod(0o755)
@@ -823,20 +810,7 @@ def test_codex_research_prompt_uses_clean_research_payload(
     runtime_file = tmp_path / "runtime.md"
     report_path = tmp_path / "report.md"
     source_file.write_text(
-        "\n".join(
-            [
-                "---",
-                "run_id: rsch-123",
-                "skill: vc-research",
-                "status: in-progress",
-                "---",
-                "",
-                "# Research Prompt",
-                "",
-                "Question: How should clean worker prompts behave?",
-                "",
-            ]
-        ),
+        "---\nrun_id: rsch-123\nskill: vc-research\nstatus: in-progress\n---\n\n# Research Prompt\n\nQuestion: How should clean worker prompts behave?\n",
         encoding="utf-8",
     )
 
@@ -1152,12 +1126,7 @@ def test_spawn_finish_meta_does_not_parse_codex_core_session_error_as_id(
     plan = tmp_path / "plan.md"
 
     transcript.write_text(
-        "\n".join(
-            [
-                "2026-05-08T19:51:31.928244Z ERROR codex_core::session: failed to record rollout items: thread 019e0905-1eb8-7890-a73a-74bbb2171341 not found",
-                "[21:51:32] session: 019e09051eb87890a73a74bbb2171341",
-            ]
-        )
+        "2026-05-08T19:51:31.928244Z ERROR codex_core::session: failed to record rollout items: thread 019e0905-1eb8-7890-a73a-74bbb2171341 not found\n[21:51:32] session: 019e09051eb87890a73a74bbb2171341"
         + "\n",
         encoding="utf-8",
     )
@@ -1201,13 +1170,7 @@ def test_codex_stream_bridge_tolerates_turn_abort_and_malformed_json(
     tmp_path: Path,
 ) -> None:
     transcript = tmp_path / "trace.log"
-    payload = "\n".join(
-        [
-            '{"type":"thread.started","thread_id":"fake-session-001"}',
-            '{"type":"turn.aborted","message":"refresh token already used"}',
-            '{"type":"item.completed"',
-        ]
-    )
+    payload = '{"type":"thread.started","thread_id":"fake-session-001"}\n{"type":"turn.aborted","message":"refresh token already used"}\n{"type":"item.completed"'
 
     subprocess.run(
         [
@@ -1243,22 +1206,7 @@ def test_codex_spawn_marks_meta_failed_when_codex_emits_non_json_auth_error(
 
     fake_codex = fake_bin / "codex"
     fake_codex.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'report=""',
-                "while [[ $# -gt 0 ]]; do",
-                '  case "$1" in',
-                '    --output-last-message) shift; report="$1" ;;',
-                "  esac",
-                "  shift || true",
-                "done",
-                "cat >/dev/null || true",
-                'printf "Your access token could not be refreshed because your refresh token was already used.\\n" >&2',
-                "exit 17",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nreport=""\nwhile [[ $# -gt 0 ]]; do\n  case "$1" in\n    --output-last-message) shift; report="$1" ;;\n  esac\n  shift || true\ndone\ncat >/dev/null || true\nprintf "Your access token could not be refreshed because your refresh token was already used.\\n" >&2\nexit 17'
         + "\n",
         encoding="utf-8",
     )
@@ -1336,42 +1284,7 @@ def test_codex_spawn_preserves_standalone_report_when_last_message_is_handoff(
 
     fake_codex = fake_bin / "codex"
     fake_codex.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'last_message=""',
-                "while [[ $# -gt 0 ]]; do",
-                '  case "$1" in',
-                '    --output-last-message) shift; last_message="${1:-}" ;;',
-                "  esac",
-                "  shift || true",
-                "done",
-                'prompt="$(cat)"',
-                'report_path="$(printf "%s\\n" "$prompt" | sed -n \'s/^Report path: //p\' | tail -n 1)"',
-                '[[ -n "$report_path" ]] || exit 22',
-                'mkdir -p "$(dirname "$report_path")"',
-                'cat > "$report_path" <<EOF_REPORT',
-                "---",
-                "agent: codex",
-                "status: completed",
-                "---",
-                "",
-                "# Full Research Report",
-                "",
-                "This is the durable report body.",
-                "EOF_REPORT",
-                'if [[ -n "$last_message" ]]; then',
-                '  mkdir -p "$(dirname "$last_message")"',
-                '  cat > "$last_message" <<EOF_LAST',
-                "Done. Report saved at: $report_path",
-                "EOF_LAST",
-                "fi",
-                'printf \'{"type":"thread.started","thread_id":"fake-session-standalone"}\\n\'',
-                'printf \'{"type":"item.completed","item":{"type":"agent_message","text":"structured report was streamed earlier"}}\\n\'',
-                'printf \'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\\n\'',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nlast_message=""\nwhile [[ $# -gt 0 ]]; do\n  case "$1" in\n    --output-last-message) shift; last_message="${1:-}" ;;\n  esac\n  shift || true\ndone\nprompt="$(cat)"\nreport_path="$(printf "%s\\n" "$prompt" | sed -n \'s/^Report path: //p\' | tail -n 1)"\n[[ -n "$report_path" ]] || exit 22\nmkdir -p "$(dirname "$report_path")"\ncat > "$report_path" <<EOF_REPORT\n---\nagent: codex\nstatus: completed\n---\n\n# Full Research Report\n\nThis is the durable report body.\nEOF_REPORT\nif [[ -n "$last_message" ]]; then\n  mkdir -p "$(dirname "$last_message")"\n  cat > "$last_message" <<EOF_LAST\nDone. Report saved at: $report_path\nEOF_LAST\nfi\nprintf \'{"type":"thread.started","thread_id":"fake-session-standalone"}\\n\'\nprintf \'{"type":"item.completed","item":{"type":"agent_message","text":"structured report was streamed earlier"}}\\n\'\nprintf \'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\\n\''
         + "\n",
         encoding="utf-8",
     )
@@ -1442,28 +1355,7 @@ def test_codex_research_does_not_copy_pointer_last_message_as_report(
 
     fake_codex = fake_bin / "codex"
     fake_codex.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'last_message=""',
-                "while [[ $# -gt 0 ]]; do",
-                '  case "$1" in',
-                '    --output-last-message) shift; last_message="${1:-}" ;;',
-                "  esac",
-                "  shift || true",
-                "done",
-                "cat >/dev/null",
-                'if [[ -n "$last_message" ]]; then',
-                '  mkdir -p "$(dirname "$last_message")"',
-                '  cat > "$last_message" <<EOF_LAST',
-                "Done. Report saved at: /tmp/research/codex.md",
-                "EOF_LAST",
-                "fi",
-                'printf \'{"type":"thread.started","thread_id":"fake-session-pointer"}\\n\'',
-                'printf \'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\\n\'',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nlast_message=""\nwhile [[ $# -gt 0 ]]; do\n  case "$1" in\n    --output-last-message) shift; last_message="${1:-}" ;;\n  esac\n  shift || true\ndone\ncat >/dev/null\nif [[ -n "$last_message" ]]; then\n  mkdir -p "$(dirname "$last_message")"\n  cat > "$last_message" <<EOF_LAST\nDone. Report saved at: /tmp/research/codex.md\nEOF_LAST\nfi\nprintf \'{"type":"thread.started","thread_id":"fake-session-pointer"}\\n\'\nprintf \'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\\n\''
         + "\n",
         encoding="utf-8",
     )
@@ -1542,15 +1434,7 @@ def test_claude_spawn_marks_meta_failed_when_stream_has_no_json(
 
     fake_claude = fake_bin / "claude"
     fake_claude.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "cat >/dev/null || true",
-                'printf "Not logged in · Please run /login\\n" >&2',
-                "exit 19",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\ncat >/dev/null || true\nprintf "Not logged in · Please run /login\\n" >&2\nexit 19'
         + "\n",
         encoding="utf-8",
     )
@@ -2363,28 +2247,7 @@ def test_spawn_probe_uses_active_tab_and_restores_focus(tmp_path: Path) -> None:
     capture_file = tmp_path / "vc_frame-calls.txt"
     vc_frame = fake_bin / "vc-frame"
     vc_frame.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf -- "--CALL--\\n"',
-                '  printf "%s\\n" "$@"',
-                '} >> "$CAPTURE_FILE"',
-                'if [[ "${1:-}" == "action" && "${2:-}" == "current-tab-info" ]]; then',
-                '  printf \'{"name":"operator-tab","tab_id":9}\\n\'',
-                "  exit 0",
-                "fi",
-                'if [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then',
-                '  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'',
-                "  exit 0",
-                "fi",
-                'if [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then',
-                '  printf "terminal_99\\n"',
-                "  exit 0",
-                "fi",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\n{\n  printf -- "--CALL--\\n"\n  printf "%s\\n" "$@"\n} >> "$CAPTURE_FILE"\nif [[ "${1:-}" == "action" && "${2:-}" == "current-tab-info" ]]; then\n  printf \'{"name":"operator-tab","tab_id":9}\\n\'\n  exit 0\nfi\nif [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then\n  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'\n  exit 0\nfi\nif [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then\n  printf "terminal_99\\n"\n  exit 0\nfi'
         + "\n",
         encoding="utf-8",
     )
@@ -2461,24 +2324,7 @@ def test_spawn_await_watch_uses_active_meta_floating_pane_and_restores_focus(
     capture_file = tmp_path / "vc_frame-calls.txt"
     vc_frame = fake_bin / "vc-frame"
     vc_frame.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "{",
-                '  printf -- "--CALL--\\n"',
-                '  printf "%s\\n" "$@"',
-                '} >> "$CAPTURE_FILE"',
-                'if [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then',
-                '  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'',
-                "  exit 0",
-                "fi",
-                'if [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then',
-                '  printf "terminal_99\\n"',
-                "  exit 0",
-                "fi",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\n{\n  printf -- "--CALL--\\n"\n  printf "%s\\n" "$@"\n} >> "$CAPTURE_FILE"\nif [[ "${1:-}" == "action" && "${2:-}" == "list-panes" ]]; then\n  printf \'[{"pane_id":"terminal_42","is_focused":true}]\\n\'\n  exit 0\nfi\nif [[ "${1:-}" == "action" && "${2:-}" == "new-pane" ]]; then\n  printf "terminal_99\\n"\n  exit 0\nfi'
         + "\n",
         encoding="utf-8",
     )
@@ -2487,21 +2333,7 @@ def test_spawn_await_watch_uses_active_meta_floating_pane_and_restores_focus(
 
     jq = fake_bin / "jq"
     jq.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                'if [[ "${1:-}" == "-r" ]]; then filter="${2:-}"; file="${3:-}"; else filter="${1:-}"; file="${2:-}"; fi',
-                'python3 - "$filter" "$file" <<\'PY\'',
-                "import json, sys",
-                "key = sys.argv[1].split()[0].lstrip('.')",
-                "with open(sys.argv[2], 'r', encoding='utf-8') as fh:",
-                "    payload = json.load(fh)",
-                "value = payload.get(key, '')",
-                "print('' if value is None else value)",
-                "PY",
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nif [[ "${1:-}" == "-r" ]]; then filter="${2:-}"; file="${3:-}"; else filter="${1:-}"; file="${2:-}"; fi\npython3 - "$filter" "$file" <<\'PY\'\nimport json, sys\nkey = sys.argv[1].split()[0].lstrip(\'.\')\nwith open(sys.argv[2], \'r\', encoding=\'utf-8\') as fh:\n    payload = json.load(fh)\nvalue = payload.get(key, \'\')\nprint(\'\' if value is None else value)\nPY'
         + "\n",
         encoding="utf-8",
     )
@@ -2548,13 +2380,7 @@ def test_spawn_probe_watch_does_not_fail_live_worker_on_transient_error(
 ) -> None:
     transcript = tmp_path / "trace.log"
     transcript.write_text(
-        "\n".join(
-            [
-                "2026-05-26T04:44:37Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed",
-                "[22:44:37] session: 019e6299-554a-76b2-900d-6dde67314658",
-                "I will use the VC Workflow skill and continue.",
-            ]
-        )
+        "2026-05-26T04:44:37Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed\n[22:44:37] session: 019e6299-554a-76b2-900d-6dde67314658\nI will use the VC Workflow skill and continue."
         + "\n",
         encoding="utf-8",
     )

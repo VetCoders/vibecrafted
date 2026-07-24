@@ -7,10 +7,10 @@ import os
 import re
 import shlex
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
 
 from .model_overrides import _with_model_override
 from .package_resources import package_root
@@ -77,9 +77,9 @@ def _slug(value: str, fallback: str) -> str:
 
 
 def _artifact_ts() -> str:
-    return os.environ.get("VIBECRAFTED_ARTIFACT_TS") or datetime.now().strftime(
-        "%Y-%m-%d"
-    )
+    return os.environ.get("VIBECRAFTED_ARTIFACT_TS") or datetime.now(
+        timezone.utc
+    ).strftime("%Y-%m-%d")
 
 
 def _artifact_slug(prompt: str) -> str:
@@ -497,9 +497,11 @@ def _resume_stdin_command(agent: str, session_id: str) -> list[str]:
         return [
             "bash",
             "-c",
-            "agy --dangerously-skip-permissions --conversation "
-            f"{shlex.quote(session_id)} --add-dir . "
-            '--print-timeout 30m --print "$(cat)"',
+            (
+                "agy --dangerously-skip-permissions --conversation "
+                f"{shlex.quote(session_id)} --add-dir . "
+                '--print-timeout 30m --print "$(cat)"'
+            ),
         ]
     if agent == "junie":
         return [
@@ -891,9 +893,11 @@ def _write_parent_report(
             "",
             "## Reception Ledger",
             "",
-            "Child reports are supervised artifacts for the parent runtime. "
-            "Research synthesis resumes the last-finishing lane so the reducer "
-            "can use native agent context/cache.",
+            (
+                "Child reports are supervised artifacts for the parent runtime. "
+                "Research synthesis resumes the last-finishing lane so the reducer "
+                "can use native agent context/cache."
+            ),
             "",
         ]
     )
@@ -921,17 +925,23 @@ def _write_parent_report(
             f"  - agent_session_id: {synthesis.agent_session_id or 'unknown'}",
             f"  - agent_model: {synthesis.agent_model or 'unknown'}",
             f"  - model_requested: {synthesis.model_requested or 'none'}",
-            "  - model_override_supported: "
-            f"{str(synthesis.model_override_supported).lower()}",
-            "  - model_override_skipped: "
-            f"{str(synthesis.model_override_skipped).lower()}",
+            (
+                "  - model_override_supported: "
+                f"{str(synthesis.model_override_supported).lower()}"
+            ),
+            (
+                "  - model_override_skipped: "
+                f"{str(synthesis.model_override_skipped).lower()}"
+            ),
             f"  - exit_code: {synthesis.exit_code}",
             f"  - artifact_ok: {str(synthesis.artifact_ok).lower()}",
             f"  - resume: {synthesis.resume_command}",
-            "  - tokens: "
-            f"{synthesis.tokens_input} in "
-            f"({synthesis.tokens_cached_input} cached) / "
-            f"{synthesis.tokens_output} out",
+            (
+                "  - tokens: "
+                f"{synthesis.tokens_input} in "
+                f"({synthesis.tokens_cached_input} cached) / "
+                f"{synthesis.tokens_output} out"
+            ),
         ]
         if synthesis.tokens_cache_write is not None:
             synthesis_lines.append(
@@ -939,8 +949,10 @@ def _write_parent_report(
             )
         synthesis_lines.extend(
             [
-                "  - cost_usd: "
-                f"{synthesis.cost_usd if synthesis.cost_usd is not None else 'unknown'}",
+                (
+                    "  - cost_usd: "
+                    f"{synthesis.cost_usd if synthesis.cost_usd is not None else 'unknown'}"
+                ),
                 f"  - report: {synthesis.report}",
                 f"  - transcript: {synthesis.transcript}",
                 "",
@@ -958,22 +970,28 @@ def _write_parent_report(
             f"  - agent_session_id: {result.agent_session_id or 'unknown'}",
             f"  - agent_model: {result.agent_model or 'unknown'}",
             f"  - model_requested: {result.model_requested or 'none'}",
-            "  - model_override_supported: "
-            f"{str(result.model_override_supported).lower()}",
+            (
+                "  - model_override_supported: "
+                f"{str(result.model_override_supported).lower()}"
+            ),
             f"  - model_override_skipped: {str(result.model_override_skipped).lower()}",
             f"  - exit_code: {result.exit_code}",
             f"  - artifact_ok: {str(result.artifact_ok).lower()}",
             f"  - artifact_errors: {errors}",
-            "  - tokens: "
-            f"{result.tokens_input} in ({result.tokens_cached_input} cached) / "
-            f"{result.tokens_output} out",
+            (
+                "  - tokens: "
+                f"{result.tokens_input} in ({result.tokens_cached_input} cached) / "
+                f"{result.tokens_output} out"
+            ),
         ]
         if result.tokens_cache_write is not None:
             child_lines.append(f"  - tokens_cache_write: {result.tokens_cache_write}")
         child_lines.extend(
             [
-                "  - cost_usd: "
-                f"{result.cost_usd if result.cost_usd is not None else 'unknown'}",
+                (
+                    "  - cost_usd: "
+                    f"{result.cost_usd if result.cost_usd is not None else 'unknown'}"
+                ),
                 f"  - resume: {result.resume_command}",
                 f"  - report: {result.report}",
                 f"  - transcript: {result.transcript}",

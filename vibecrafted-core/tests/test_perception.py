@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import pytest
-
 from vibecrafted_core import perception
-
 
 # ---------------------------------------------------------------------------
 # Test doubles
@@ -66,12 +64,12 @@ def _always_loct() -> str | None:
 
 
 def _ensure(root, **kwargs):
-    base = dict(
-        resolver=_always_loct,
-        sleeper=_no_sleep,
-        clock=_fast_clock(),
-        lock_probe=lambda _root: False,
-    )
+    base = {
+        "resolver": _always_loct,
+        "sleeper": _no_sleep,
+        "clock": _fast_clock(),
+        "lock_probe": lambda _root: False,
+    }
     base.update(kwargs)
     return perception.ensure_watch(root, **base)
 

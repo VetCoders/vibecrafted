@@ -8,7 +8,6 @@ from typing import Any
 
 from vibecrafted_core.delivery.model import ExecutionEnvelope
 
-
 SCHEMA_VERSION = "vibecrafted.dispatch.v1"
 MATCHER_TYPES = {"contains", "equals", "matches", "not_contains", "exit_code"}
 READ_MUTATIONS = {"forbid", "allow-report-only", "allow"}

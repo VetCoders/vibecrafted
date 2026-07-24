@@ -20,8 +20,7 @@ INSTALLER_PKG_DIR = REPO_ROOT / "scripts" / "installer"
 if str(INSTALLER_PKG_DIR) not in sys.path:
     sys.path.insert(0, str(INSTALLER_PKG_DIR))
 
-import vetcoders_installer as installer  # noqa: E402
-
+import vetcoders_installer as installer
 
 # ---------------------------------------------------------------------------
 # Helpers

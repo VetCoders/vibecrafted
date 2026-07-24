@@ -4,8 +4,9 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from .control_plane import await_run as control_plane_await_run
 from .control_plane import control_plane_home

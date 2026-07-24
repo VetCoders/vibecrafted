@@ -12,8 +12,9 @@ https://iterm2.com/documentation-triggers.html
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 _LOG = logging.getLogger("vibecrafted.iterm2.triggers")
 
@@ -111,7 +112,7 @@ async def apply_triggers_to_default_profile(
 
     try:
         profiles = await iterm2.PartialProfile.async_query(connection)  # type: ignore[attr-defined]
-    except Exception:  # pragma: no cover - API surface variance
+    except Exception:  # pragma: no cover - API surface variance  # noqa: BLE001
         _LOG.debug("could not query iTerm2 profiles", exc_info=True)
         return False
 
@@ -128,7 +129,7 @@ async def apply_triggers_to_default_profile(
 
     try:
         full_profile = await default_profile.async_get_full_profile()  # type: ignore[attr-defined]
-    except Exception:  # pragma: no cover
+    except Exception:  # pragma: no cover  # noqa: BLE001
         _LOG.debug("full profile load failed", exc_info=True)
         return False
 
@@ -142,7 +143,7 @@ async def apply_triggers_to_default_profile(
 
     try:
         await full_profile.async_set_triggers(new_payload)  # type: ignore[attr-defined]
-    except Exception:  # pragma: no cover
+    except Exception:  # pragma: no cover  # noqa: BLE001
         _LOG.debug("async_set_triggers failed", exc_info=True)
         return False
 

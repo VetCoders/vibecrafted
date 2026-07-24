@@ -9,7 +9,6 @@ import pytest
 
 from scripts import distribution_manifest as manifest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 EXPECTED_REQUIRED = {

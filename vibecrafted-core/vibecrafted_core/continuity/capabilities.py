@@ -27,9 +27,10 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from ..capabilities import ProbeResult as CliProbe
 
@@ -343,7 +344,7 @@ def _now_iso() -> str:
 def _default_runner(timeout: float) -> Runner:
     def run(cmd: Sequence[str]) -> CliProbe:
         try:
-            completed = subprocess.run(  # noqa: S603 - read-only CLI probe
+            completed = subprocess.run(
                 list(cmd),
                 capture_output=True,
                 text=True,

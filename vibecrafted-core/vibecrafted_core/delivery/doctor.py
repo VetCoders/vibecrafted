@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import yaml  # type: ignore[import-untyped]
 
@@ -278,7 +279,7 @@ def extract_payloads_from_markdown(
     for block in matches:
         try:
             doc = yaml.safe_load(block)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             parse_errors.append(
                 DoctorError(path="brief", message=f"failed to parse code block: {exc}")
             )
@@ -334,7 +335,7 @@ def diagnose_file(path: str | Path) -> DoctorReport:
 
     try:
         doc = yaml.safe_load(text)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return DoctorReport(
             ok=False,
             errors=(

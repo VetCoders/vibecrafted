@@ -5,7 +5,8 @@ import asyncio
 import json
 import os
 import sys
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from .supervisor_async import AsyncSupervisor
 

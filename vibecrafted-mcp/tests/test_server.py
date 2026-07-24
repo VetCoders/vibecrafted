@@ -11,15 +11,13 @@ import asyncio
 import datetime as dt
 import json
 import os
-import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
-
+import tomllib
 import vibecrafted_mcp
 from vibecrafted_mcp import server, synthesis
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

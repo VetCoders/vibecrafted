@@ -4,14 +4,12 @@ import importlib
 import importlib.metadata
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
-
+import tomllib
 import vibecrafted_core
 from vibecrafted_core import workflows
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CORE_ROOT = REPO_ROOT / "vibecrafted-core"

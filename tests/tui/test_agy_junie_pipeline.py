@@ -187,7 +187,7 @@ def test_grok_resume_uses_resume_flag_not_session_id_and_streams_json() -> None:
 
     # Fixture-based unit test for spawn.py extraction against grok 0.2.97 streaming-json shape
     # (no real grok call). Covers session-id (sessionId in end event) + JSON_TOKEN_PATTERNS usage.
-    from vibecrafted_core.spawn import _extract_session, _extract_tokens, _extract_cost
+    from vibecrafted_core.spawn import _extract_cost, _extract_session, _extract_tokens
 
     # Realistic grok streaming-json transcript fragment (end event + usage if emitted; patterns are general)
     grok_stream = (

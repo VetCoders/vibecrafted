@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
 from vibecrafted_core import cli, workflow
 from vibecrafted_core import workflow_capabilities as caps
 

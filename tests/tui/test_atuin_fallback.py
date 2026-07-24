@@ -11,52 +11,7 @@ HELPER_SCRIPT = REPO_ROOT / "runtime" / "shell" / "vetcoders.sh"
 def _write_fake_atuin(bin_dir: Path, capture_file: Path) -> Path:
     script = bin_dir / "atuin"
     script.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env python3",
-                "import os",
-                "import sys",
-                "from pathlib import Path",
-                "",
-                "args = sys.argv[1:]",
-                'capture = Path(os.environ["CAPTURE_FILE"])',
-                'home = os.environ["HOME"]',
-                'with capture.open("a", encoding="utf-8") as fh:',
-                '    fh.write("CALL " + " ".join(args) + "\\n")',
-                'if args[:1] == ["search"]:',
-                "    cwd = None",
-                "    interactive = False",
-                "    cmd_only = False",
-                "    i = 0",
-                "    while i < len(args):",
-                "        arg = args[i]",
-                '        if arg in ("-c", "--cwd") and i + 1 < len(args):',
-                "            cwd = args[i + 1]",
-                "            i += 1",
-                '        elif arg in ("-i", "--interactive", "--shell-up-key-binding"):',
-                "            interactive = True",
-                '        elif arg == "--cmd-only":',
-                "            cmd_only = True",
-                "        i += 1",
-                "    if interactive and cwd == home:",
-                '        print("home-interactive-hit", end="")',
-                "    elif interactive:",
-                '        print("repo-interactive-hit", end="")',
-                "    elif cmd_only and cwd == home:",
-                '        print("home-suggestion", end="")',
-                "    elif cmd_only:",
-                '        print("", end="")',
-                "    elif cwd == home:",
-                '        print("home-search-hit", end="")',
-                "    else:",
-                '        print("", end="")',
-                "    sys.exit(0)",
-                'if args[:1] == ["uuid"]:',
-                '    print("uuid-1", end="")',
-                "    sys.exit(0)",
-                "sys.exit(0)",
-            ]
-        )
+        '#!/usr/bin/env python3\nimport os\nimport sys\nfrom pathlib import Path\n\nargs = sys.argv[1:]\ncapture = Path(os.environ["CAPTURE_FILE"])\nhome = os.environ["HOME"]\nwith capture.open("a", encoding="utf-8") as fh:\n    fh.write("CALL " + " ".join(args) + "\\n")\nif args[:1] == ["search"]:\n    cwd = None\n    interactive = False\n    cmd_only = False\n    i = 0\n    while i < len(args):\n        arg = args[i]\n        if arg in ("-c", "--cwd") and i + 1 < len(args):\n            cwd = args[i + 1]\n            i += 1\n        elif arg in ("-i", "--interactive", "--shell-up-key-binding"):\n            interactive = True\n        elif arg == "--cmd-only":\n            cmd_only = True\n        i += 1\n    if interactive and cwd == home:\n        print("home-interactive-hit", end="")\n    elif interactive:\n        print("repo-interactive-hit", end="")\n    elif cmd_only and cwd == home:\n        print("home-suggestion", end="")\n    elif cmd_only:\n        print("", end="")\n    elif cwd == home:\n        print("home-search-hit", end="")\n    else:\n        print("", end="")\n    sys.exit(0)\nif args[:1] == ["uuid"]:\n    print("uuid-1", end="")\n    sys.exit(0)\nsys.exit(0)'
         + "\n",
         encoding="utf-8",
     )
@@ -95,6 +50,7 @@ def test_atuin_interactive_search_falls_back_to_home_scope(tmp_path: Path) -> No
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0
@@ -136,6 +92,7 @@ def test_atuin_noninteractive_search_respects_explicit_scope(tmp_path: Path) -> 
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0
@@ -172,6 +129,7 @@ def test_atuin_noninteractive_search_falls_back_to_home_scope(tmp_path: Path) ->
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0

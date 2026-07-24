@@ -26,20 +26,19 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from typing import Optional
 
 __all__ = [
-    "detect_parent_model",
-    "normalize_model",
-    "tier_rank",
-    "tier_family",
-    "check_parity",
-    "extract_session_id",
-    "sandbox_supported",
-    "require_parity",
-    "ParityError",
     "DispatchGranularity",
+    "ParityError",
+    "check_parity",
+    "detect_parent_model",
     "dispatch_granularity",
+    "extract_session_id",
+    "normalize_model",
+    "require_parity",
+    "sandbox_supported",
+    "tier_family",
+    "tier_rank",
 ]
 
 
@@ -90,7 +89,7 @@ _SANDBOX_SUPPORTED_AGENTS = {
 }
 
 
-def detect_parent_model() -> Optional[str]:
+def detect_parent_model() -> str | None:
     """Return the first non-empty parent-model identifier from the env, if any.
 
     The probe order matches ``spawn_detect_parent_model`` in spawn.sh:

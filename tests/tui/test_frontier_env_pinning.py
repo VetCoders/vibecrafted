@@ -39,16 +39,7 @@ def test_ensure_vc_frame_session_uses_frontier_config_not_user_vc_frame(
 
     vc_frame = fake_bin / "vc-frame"
     vc_frame.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                'if [[ "${1:-}" == "ls" ]]; then exit 0; fi',
-                'printf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}" >> "$CAPTURE_FILE"',
-                'printf "args=%s\\n" "$*" >> "$CAPTURE_FILE"',
-                "exit 0",
-                "",
-            ]
-        ),
+        '#!/usr/bin/env bash\nif [[ "${1:-}" == "ls" ]]; then exit 0; fi\nprintf "VC_FRAME_CONFIG_DIR=%s\\n" "${VC_FRAME_CONFIG_DIR:-}" >> "$CAPTURE_FILE"\nprintf "args=%s\\n" "$*" >> "$CAPTURE_FILE"\nexit 0\n',
         encoding="utf-8",
     )
     vc_frame.chmod(0o755)

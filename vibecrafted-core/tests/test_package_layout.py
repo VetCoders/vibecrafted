@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 
 def test_pyproject_publishes_vibecrafted_distribution_with_package_data() -> None:

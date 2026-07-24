@@ -3,12 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core.dispatch.model import (
+    STATE_VERIFIED,
     Baton,
     CutState,
     Matcher,
-    STATE_VERIFIED,
     Verdict,
     VerifierEvidence,
 )
@@ -19,7 +18,6 @@ from vibecrafted_core.dispatch.schema import (
     parse_dispatch,
     render_cell_prompt,
 )
-
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

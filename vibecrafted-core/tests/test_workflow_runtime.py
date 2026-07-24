@@ -117,23 +117,7 @@ def test_research_runtime_yaml_wins_over_legacy_toml_and_applies_lane_models(
     config_dir = home / "config"
     config_dir.mkdir(parents=True)
     (config_dir / "research.yaml").write_text(
-        "\n".join(
-            [
-                "lanes:",
-                "  - agent: codex",
-                "    model: gpt-yaml",
-                "    enabled: true",
-                "  - agent: agy",
-                "    model: agy-yaml",
-                "    enabled: true",
-                "  - agent: claude",
-                "    enabled: false",
-                "synthesizer:",
-                "  agent: codex",
-                "  model: gpt-synth",
-                "",
-            ]
-        ),
+        "lanes:\n  - agent: codex\n    model: gpt-yaml\n    enabled: true\n  - agent: agy\n    model: agy-yaml\n    enabled: true\n  - agent: claude\n    enabled: false\nsynthesizer:\n  agent: codex\n  model: gpt-synth\n",
         encoding="utf-8",
     )
 

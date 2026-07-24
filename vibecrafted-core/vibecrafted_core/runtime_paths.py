@@ -27,7 +27,7 @@ def xdg_data_home() -> Path:
 
 
 def vibecrafted_home() -> Path:
-    if "VIBECRAFTED_HOME" in os.environ and os.environ["VIBECRAFTED_HOME"]:
+    if os.environ.get("VIBECRAFTED_HOME"):
         return Path(os.environ["VIBECRAFTED_HOME"]).expanduser()
     return Path.home() / ".vibecrafted"
 

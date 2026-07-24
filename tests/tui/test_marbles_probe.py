@@ -13,14 +13,7 @@ def test_marbles_emit_probe_detaches_and_keeps_foreground_quiet(tmp_path: Path) 
     fake_bin.mkdir()
     tray = fake_bin / "vc-mux-tray"
     tray.write_text(
-        "\n".join(
-            [
-                "#!/usr/bin/env bash",
-                "set -euo pipefail",
-                "sleep 2",
-                'printf "called\\n" >> "$PROBE_CAPTURE"',
-            ]
-        )
+        '#!/usr/bin/env bash\nset -euo pipefail\nsleep 2\nprintf "called\\n" >> "$PROBE_CAPTURE"'
         + "\n",
         encoding="utf-8",
     )

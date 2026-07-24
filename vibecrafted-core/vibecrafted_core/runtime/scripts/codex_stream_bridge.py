@@ -12,10 +12,10 @@ normal runtime.
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
 import json
 import sys
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 

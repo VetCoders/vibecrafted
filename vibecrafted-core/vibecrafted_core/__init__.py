@@ -4,6 +4,12 @@ import importlib.metadata
 from pathlib import Path
 from typing import Any
 
+from .artifacts import ArtifactValidation, validate_artifacts
+from .capabilities import (
+    ToolCapability,
+    foundation_capabilities,
+    probe_tool,
+)
 from .control_plane import (
     Event,
     RunStatus,
@@ -16,11 +22,15 @@ from .control_plane import (
     subscribe_events,
     sync_state,
 )
+from .doctor import doctor_run, doctor_summary
 from .events import append_event
-from .capabilities import (
-    ToolCapability,
-    foundation_capabilities,
-    probe_tool,
+from .git import repo_full, repo_full_summary
+from .lifecycle import (
+    EventKind,
+    RunState,
+    is_final_state,
+    is_negative_state,
+    transition_allowed,
 )
 from .perception import (
     DEFAULT_MCP_TRANSPORT,
@@ -32,16 +42,6 @@ from .perception import (
     mcp_servers_config,
     port_for_root,
     watcher_running,
-)
-from .doctor import doctor_run, doctor_summary
-from .git import repo_full, repo_full_summary
-from .artifacts import ArtifactValidation, validate_artifacts
-from .lifecycle import (
-    EventKind,
-    RunState,
-    is_final_state,
-    is_negative_state,
-    transition_allowed,
 )
 from .runtime_paths import (
     read_version_file,
@@ -122,28 +122,28 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "RunStatus",
-    "Event",
-    "EventKind",
-    "ArtifactValidation",
+    "DEFAULT_MCP_TRANSPORT",
+    "DEFAULT_WATCH_MODE",
     "DELIVERY_EVENT_KINDS",
+    "ArtifactValidation",
+    "AsyncRunHandle",
+    "AsyncSupervisor",
     "DeliveryAxes",
     "DeliveryEventKind",
     "DeliveryStore",
     "DeliveryStoreError",
+    "Event",
+    "EventKind",
     "ProviderCapability",
+    "RunState",
+    "RunStatus",
     "ToolCapability",
     "WatchOutcome",
-    "DEFAULT_MCP_TRANSPORT",
-    "DEFAULT_WATCH_MODE",
-    "AsyncRunHandle",
-    "AsyncSupervisor",
-    "RunState",
     "WorkflowLaunchSpec",
-    "append_event",
     "append_delivery_event",
-    "await_run",
+    "append_event",
     "await_launch_truth",
+    "await_run",
     "build_launch_command",
     "capability_registry",
     "control_plane_home",
@@ -152,32 +152,32 @@ __all__ = [
     "ensure_watch",
     "event_stream_path",
     "foundation_capabilities",
+    "is_final_state",
+    "is_negative_state",
+    "launch_workflow",
     "loctree_mcp_config_entry",
+    "lookup_run",
     "mcp_endpoint",
     "mcp_servers_config",
+    "normalize_launch_spec",
     "port_for_root",
     "probe_provider",
     "probe_tool",
-    "watcher_running",
-    "launch_workflow",
-    "lookup_run",
-    "normalize_launch_spec",
-    "retry_run",
-    "read_event_tail",
     "read_delivery_axes",
+    "read_event_tail",
     "read_version_file",
     "repo_full",
     "repo_full_summary",
     "resolve_env_path",
+    "retry_run",
     "run_snapshot_dir",
     "stop_run",
     "subscribe_events",
     "sync_state",
-    "is_final_state",
-    "is_negative_state",
     "transition_allowed",
     "validate_artifacts",
     "vibecrafted_home",
     "vibecrafted_launcher",
+    "watcher_running",
     "xdg_config_home",
 ]

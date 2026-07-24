@@ -9,17 +9,16 @@ in this path can damage a run that has already finished.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import pytest
-
 from vibecrafted_core.report_contract import render_minimal_frontmatter
 from vibecrafted_core.run_triage import (
     BUCKET_FAILED,
     BUCKET_FINALIZED,
     BUCKET_NEEDS_ATTENTION,
-    KernelAxes,
     MINIMAL_TRANSCRIPT_BYTES,
     OUTCOME_ERROR,
     OUTCOME_FAILED,
@@ -29,6 +28,7 @@ from vibecrafted_core.run_triage import (
     VERDICT_FAILED,
     VERDICT_FINALIZED,
     VERDICT_NEEDS_ATTENTION,
+    KernelAxes,
     bucket_for_exit_code,
     classify_run,
     plan_triage,

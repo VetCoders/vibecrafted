@@ -11,9 +11,7 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
-
 from vibecrafted_core import run_reaper
-
 
 TERMINAL_RUN = {
     "run_id": "impl-260720-000001-11000",

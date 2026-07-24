@@ -1,9 +1,9 @@
-import pytest
 import sys
 from pathlib import Path
 
-from scripts import installer_gui
-from scripts import vetcoders_install
+import pytest
+
+from scripts import installer_gui, vetcoders_install
 from scripts.runtime_paths import read_version_file, vibecrafted_home
 
 

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import asyncio
 import argparse
+import asyncio
 import hashlib
 import json
 import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from .control_plane import control_plane_home, normalize_run_root, run_liveness
 from .delivery.model import DeliveryState, ExecutionState, ProofState
@@ -25,12 +26,12 @@ from .workflow import (
     launch_workflow,
     report_dou_index,
 )
+from .workflows.model import WorkflowManifest, WorkflowStage
 from .workflows.registry import (
     workflow_definition,
     workflow_manifest,
     workflow_manifest_payload,
 )
-from .workflows.model import WorkflowManifest, WorkflowStage
 
 LaunchWorkflow = Callable[[WorkflowLaunchSpec, str | Path], dict[str, Any]]
 AwaitWorkflow = Callable[[dict[str, Any]], dict[str, Any]]

@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import control_plane
 from vibecrafted_core.settlement import (
     BareMarkdownError,

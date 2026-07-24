@@ -15,7 +15,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - import path depends on entrypoint
     _vetcoders_install = importlib.import_module("scripts.vetcoders_install")
 
-discover_skills = getattr(_vetcoders_install, "discover_skills")
+discover_skills = _vetcoders_install.discover_skills
 
 OUTPUT_FILENAME = "vibecrafted-framework.plugin"
 PLUGIN_NAME = "vibecrafted-framework"

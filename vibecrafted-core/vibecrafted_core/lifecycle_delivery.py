@@ -44,8 +44,8 @@ __all__ = [
     "claim_digest_for_text",
     "mission_claim_digest",
     "report_claim_matches",
-    "try_grant_lifecycle_stage_seal",
     "resettle_retained_snapshots",
+    "try_grant_lifecycle_stage_seal",
 ]
 
 CLAIM_DIGEST_RE = re.compile(r"^[0-9a-f]{16}$")

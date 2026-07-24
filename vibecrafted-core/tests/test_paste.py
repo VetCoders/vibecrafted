@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from vibecrafted_core import paste
 from vibecrafted_core.workflow import normalize_launch_spec
 
