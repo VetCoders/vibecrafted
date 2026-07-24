@@ -129,7 +129,7 @@ def _run_report_path(run: dict[str, Any]) -> Path | None:
 def _run_from_resolved(run_id: str) -> dict[str, Any] | None:
     try:
         resolved = control_plane.resolve_run(run_id)
-    except Exception:  # noqa: BLE001
+    except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
         return None
     payload: dict[str, Any] = {}
     meta = getattr(resolved, "meta", None)

@@ -32,7 +32,8 @@ from .model import (
     DeliveryState,
 )
 
-SEAL_VERSION = "vibecrafted.delivery-seal.v1"
+# Single source for the schema string used at issuance; mirrors DeliverySeal.SCHEMA.
+SEAL_VERSION = DeliverySeal.SCHEMA
 
 ReconstructionStatus = Literal["verified", "stale", "missing"]
 
@@ -172,7 +173,7 @@ def issue_seal(
     )
 
     return DeliverySeal(
-        schema=DeliverySeal.SCHEMA,
+        schema=SEAL_VERSION,
         seal_id=resolved_seal_id,
         issued_at=issued_at
         or datetime.now(timezone.utc).isoformat(timespec="milliseconds"),

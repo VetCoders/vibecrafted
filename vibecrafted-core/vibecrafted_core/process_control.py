@@ -36,7 +36,7 @@ def _load_run_payloads_light() -> list[dict[str, Any]]:
         from .control_plane import run_snapshot_dir
 
         root = run_snapshot_dir()
-    except Exception:  # noqa: BLE001
+    except (ImportError, OSError, AttributeError, RuntimeError, ValueError, TypeError):
         return []
     if not root.is_dir():
         return []
@@ -188,13 +188,21 @@ def _classify_row(
         ownership, killable, reason = "proven", True, "owned"
     else:
         ownership, killable, reason = "unproven", False, "ownership_unproven"
-    return ProcessSnapshotRow(
+    identity = ProcessIdentity(
         pid=entry.pid,
         ppid=entry.ppid,
         pgid=entry.pgid,
         start_token=start,
         command_sha256=cmd_hash,
         command=entry.command[:300],
+    )
+    return ProcessSnapshotRow(
+        pid=identity.pid,
+        ppid=identity.ppid,
+        pgid=identity.pgid,
+        start_token=identity.start_token,
+        command_sha256=identity.command_sha256,
+        command=identity.command,
         run_id=run_id,
         ownership=ownership,
         evidence=evidence or "unproven",
