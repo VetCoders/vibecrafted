@@ -83,6 +83,41 @@ converts narrated demos into actionable input for agent workflows.
 **Install**: use the current Screenscribe release or source install path checked
 by `make doctor`. Treat this document as role guidance, not a package registry.
 
+## Foundation acquisition order (prebuilt-first)
+
+Operator mandate: strangers and CI must get working foundations **without
+building from source by default**. Source builds remain available; they are
+not the first path.
+
+**Acquisition order (every foundation binary):**
+
+1. **Prebuilt product channel (preferred)**
+   - **aicx** — npm `@loctree/aicx` and signed GitHub release assets
+   - **loctree / loct** — npm `loctree` and signed GitHub release assets
+   - **prview** — crates.io published crates / release binaries
+   - **screenscribe** — PyPI `screenscribe`
+   - **vc-frame** — release binary / vendored `bin/vendor/<platform>/` in the
+     framework tarball when the site release pipeline stages it
+2. **Package manager** — brew / apt / dnf / pacman when the product publishes
+   an official formula/package for that host (never a random third-party fork
+   as the default).
+3. **`cargo build` / source install — last fallback only**
+   - Run a **preflight** first: Rust toolchain present, supported target triple,
+     disk/network budget, and an explicit operator or CI opt-in
+     (`INSTALL_RUST=true` or equivalent).
+   - Fail closed with a clear message if preflight fails — do not silently
+     compile for ten minutes on a laptop that only needed `npm i -g`.
+   - Never replace a product-managed prebuilt with a stale local `target/release`
+     copy without an explicit force path.
+
+| Foundation     | Prebuilt channel                       | Fallback                         |
+| -------------- | -------------------------------------- | -------------------------------- |
+| loctree / loct | npm + GitHub releases                  | cargo (preflighted)              |
+| aicx           | npm `@loctree/aicx` + GitHub releases  | cargo (preflighted)              |
+| prview         | crates.io / release binaries           | cargo (preflighted)              |
+| screenscribe   | PyPI                                   | source install with doctor check |
+| vc-frame       | vendored release binary in site bundle | cargo from companion repo        |
+
 ## Foundation in the Installer
 
 `make doctor` checks foundation binaries and reports their status.
@@ -96,9 +131,10 @@ pair: `loctree-mcp` plus `aicx-mcp`.
 
 The recommended install order:
 
-1. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework (`make install`)
-2. Foundation binaries (`make foundations` — installs loctree + aicx)
-3. Agent CLIs (claude, codex, gemini)
+1. 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. framework (`make install` / `install.sh`)
+2. Foundation binaries via **prebuilt-first** (`make foundations` — prefers
+   release/npm/crates/PyPI paths; cargo only after preflight)
+3. Agent CLIs (claude, codex, agy, junie, grok)
 4. PRView (recommended for review workflows)
 5. Screenscribe (recommended for visual verification)
 

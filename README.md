@@ -125,7 +125,9 @@ the truth lives in artifacts, not in the terminal scrollback.
 ## Foundations & Where They Ship
 
 The framework stands on product-managed foundations, each with its own public
-distribution channel:
+distribution channel. **Acquisition is prebuilt-first**: npm / signed release
+assets / crates.io / PyPI first, package manager second, `cargo build` only as a
+preflighted last fallback. Full doctrine: [docs/FOUNDATION.md](docs/FOUNDATION.md).
 
 | Foundation           | What it does                                        | Channel                                                                              |
 | -------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -133,6 +135,7 @@ distribution channel:
 | **AICX** (`aicx`)    | Agent-session memory — catalog, search, intents     | [npm `@loctree/aicx`](https://www.npmjs.com/package/@loctree/aicx) · GitHub releases |
 | **prview**           | PR review artifact generator                        | [crates.io](https://crates.io/crates/prview)                                         |
 | **screenscribe**     | Screencast → structured engineering findings        | [PyPI](https://pypi.org/project/screenscribe/)                                       |
+| **vc-frame**         | Operator cockpit (session rail, layouts)            | Vendored in site bundle · companion repo release binary                              |
 
 The installer verifies these foundations on every run (`vibecrafted doctor`)
 and never silently replaces a product-managed binary with a stale copy.
