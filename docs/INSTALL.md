@@ -18,6 +18,19 @@ The installer is **idempotent** on every platform: re-running it never breaks
 an existing install. It uses `$HOME/.vibecrafted/` as its staging root unless
 you override `VIBECRAFTED_HOME`.
 
+### Foundations: prebuilt-first
+
+Foundation binaries (loctree, aicx, prview, screenscribe, vc-frame when
+vendored) are acquired in this order:
+
+1. **Prebuilt** — npm / curl of signed release assets / crates.io / PyPI /
+   `bin/vendor/<platform>/` inside the published tarball
+2. **Package manager** — only official product packages when published
+3. **`cargo build` or source install** — last fallback, after preflight
+   (toolchain, target, explicit opt-in). No silent multi-minute compile.
+
+Doctrine and channel table: [FOUNDATION.md](FOUNDATION.md).
+
 ---
 
 ## macOS

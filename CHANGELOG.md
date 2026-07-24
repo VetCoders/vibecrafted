@@ -3,6 +3,94 @@
 All notable changes to 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## 3.6.0 — 2026-07-24
+
+> **Ship AI-built software without the vibe hangover.**
+>
+> 3.6.0 is the release where the board stops lying, the cockpit stays honest,
+> the installer survives a hostile filesystem, and a stranger can still install
+> with one command. Not a list of commits — a product story with gates behind it.
+
+### The story
+
+For months Mission Control could show activity while the settlement strip said
+`0 · 0 · 0`. Operators learned to distrust the board. Agents finished work,
+reports claimed success, and the retained control plane still had no canonical
+f/x/n truth to hand to the next session.
+
+3.6.0 closes that gap. **Retained control-plane settlement is the single run-level
+source of truth for f/x/n.** Mission Control, vc-server API, and SSR read the same
+board. vc-frame's rail still reports **tab inventory**, not fleet settlement —
+two surfaces, two jobs, no false equivalence.
+
+Around that board sits a **delivery-proof kernel**
+(`vibecrafted_core.delivery.*`): execution envelopes, proof contracts, reconstructable
+seals. Dispatch no longer treats a completion label as proof. A run is final when the
+envelope, the proof, and the seal agree — or it is not final.
+
+The operator cockpit is **vc-frame 0.46**. Every dispatch layout (dashboard, marbles,
+operator, research, workflow) welds the session-manager rail into the default tab
+template so a reinstall cannot strip the sidebar the operator hand-welded last week.
+Layouts passed parser dump and live `new-tab` load probes before this line shipped.
+
+The **installer container lane** earned its scars on a real vetcoders container
+mount: sshfs that dropped executable bits, broke symlinks, and corrupted bytecode
+on copy. The lane is resilient under those conditions — stage, verify, refuse to
+pretend a half-copied tree is an install. That is not marketing; it is wartime
+filesystem engineering.
+
+**ACP adapter (MVP + P2)** is the gate to IDE-shaped clients. Thin glue over the
+existing control plane and workflow APIs — launch, observe, await, stream, stop —
+without inventing a parallel runtime truth. IDE integration starts from evidence the
+CLI already trusts.
+
+**Prune / health** moved the structural health readout from the low-70s into the
+low-80s range on the release candidate path (78 → 81 on the measured prune pass).
+Not "perfect architecture" — a cleaner cone for the next cut.
+
+### What landed (facts, not hype)
+
+| Surface                  | Claim                                                        | Evidence bar                            |
+| ------------------------ | ------------------------------------------------------------ | --------------------------------------- |
+| Settlement board f/x/n   | Canonical retained control-plane counts                      | Python core suite; API/SSR parity tests |
+| Delivery-proof kernel    | Envelopes + proof + seal layout                              | Delivery unit + e2e tests               |
+| vc-frame 0.46 cockpit    | Rail on every default layout; honest inventory vs settlement | Layout dump + live new-tab probes       |
+| Installer container lane | Survives symlink / +x / bytecode damage on hostile mounts    | Installer + delivery path tests         |
+| ACP adapter MVP+P2       | stdio ACP over control_plane                                 | `tests/acp/`                            |
+| Research agent pick      | Fail-closed arity + announced source                         | Research launcher suite (16)            |
+| Gemini lane              | Hard-removed; **agy** is the Google successor                | Dispatch/marbles/research rotation      |
+| Version truth            | Framework stamps **3.6.0**                                   | `VERSION`, package metadata             |
+
+### Gates at merge of PR #20 (release candidate head)
+
+- Full Python core suite: **910 passed**, 8 skipped
+- Research launcher suite: **16 passed**
+- Rust workspace: `cargo check --all-targets --all-features`, clippy `-D warnings`, 47 tests + 1 doctest
+- All five vc-frame layouts: parser dump + live `new-tab` load
+- Local quality stack: Semgrep, Ruff, mypy, ShellCheck, Prettier, diff-check, pre-commit, pre-push
+
+### Install (stranger path)
+
+```bash
+curl -fsSL https://vibecrafted.io/install.sh | bash
+vibecrafted doctor
+```
+
+Foundations are **prebuilt-first** (npm / curl release assets / crates.io / PyPI),
+then package-manager, then `cargo build` only as a last fallback with preflight.
+See [docs/FOUNDATION.md](docs/FOUNDATION.md).
+
+### Compatibility notes
+
+- Canonical delivery artifact filenames replace non-canonical seal defaults;
+  `vc-ship` consumes the same layout owner as reconstruction.
+- `.gemini` remains discoverable only as a legacy data-directory compatibility
+  view; active research/sync targets use **agy**.
+- This changelog entry does not itself create a git tag. Tag and public deploy
+  follow the published-artifact smoke path on vibecrafted.io.
+
+---
+
 ## 2.0.0 — 2026-05-20
 
 > Quality-layer reform. The pipeline epistemic rhythm
