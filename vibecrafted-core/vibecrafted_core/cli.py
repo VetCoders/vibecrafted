@@ -695,6 +695,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
     python_commands = {
+        "acp",
         "capabilities",
         "config",
         "dispatch",
@@ -736,6 +737,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+
+    if raw_args and raw_args[0] == "acp":
+        try:
+            from vibecrafted_acp.server import main as acp_main
+        except ModuleNotFoundError:
+            print(
+                "error: vibecrafted-acp is not installed; install the "
+                "vibecrafted-acp workspace package",
+                file=sys.stderr,
+            )
+            return 1
+        return acp_main(raw_args[1:])
 
     if raw_args and raw_args[0] == "dispatch":
         from .dispatch.cli import main as dispatch_main

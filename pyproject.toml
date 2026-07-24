@@ -1,5 +1,10 @@
 [tool.uv.workspace]
-members = ["vibecrafted-core", "vibecrafted-mcp", "plugins/iterm2"]
+members = [
+    "vibecrafted-core",
+    "vibecrafted-mcp",
+    "vibecrafted-acp",
+    "plugins/iterm2",
+]
 
 [dependency-groups]
 dev = [
@@ -11,7 +16,11 @@ dev = [
 
 [tool.mypy]
 python_version = "3.11"
-files = ["vibecrafted-core/vibecrafted_core", "vibecrafted-mcp/vibecrafted_mcp"]
+files = [
+    "vibecrafted-core/vibecrafted_core",
+    "vibecrafted-mcp/vibecrafted_mcp",
+    "vibecrafted-acp/vibecrafted_acp",
+]
 exclude = [
     "^skills/",
     "^runtime/",
@@ -25,4 +34,4 @@ follow_imports = "skip"
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
-pythonpath = ["vibecrafted-core"]
+pythonpath = ["vibecrafted-core", "vibecrafted-acp"]

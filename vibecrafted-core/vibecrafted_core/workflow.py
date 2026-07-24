@@ -76,6 +76,10 @@ class WorkflowLaunchSpec:
     # Machine-owned mission binding for lifecycle stage reports. The worker may
     # attest success, but it cannot choose which mission that attestation closes.
     claim_digest: str = ""
+    # Adapters that must expose the execution identity before launch (ACP's
+    # session/new) may reserve one through reserve_run_id(). Empty keeps the
+    # historical launch-time allocation path.
+    run_id: str = ""
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -85,11 +89,17 @@ def vibecrafted_launcher(source_dir: str | Path) -> Path:
     return package_deck_path()
 
 
-def _run_id(skill: str) -> str:
+def reserve_run_id(skill: str) -> str:
+    """Return a safe control-plane run id without creating runtime state."""
     stamp = time.strftime("%y%m%d-%H%M%S")
     code = (skill or "run")[:4].ljust(4, "x")
     entropy = int(time.time_ns() % 100000)
     return f"{code}-{stamp}-{entropy:05d}"
+
+
+def _run_id(skill: str) -> str:
+    """Backward-compatible internal alias for the run-id allocator."""
+    return reserve_run_id(skill)
 
 
 def _artifact_org_repo(root: str | Path) -> tuple[str, str] | None:
@@ -1200,6 +1210,7 @@ def normalize_launch_spec(
         research_agents=research_agents,
         research_synthesizer=research_synthesizer,
         research_synthesizer_model=research_synthesizer_model,
+        run_id=str(payload.get("run_id") or "").strip(),
     )
 
 
@@ -1350,7 +1361,9 @@ def launch_workflow(
     # Silent and best-effort; a reaper problem must never block a launch.
     _sweep_stale_runs()
 
-    run_id = _run_id(spec.skill)
+    run_id = spec.run_id or reserve_run_id(spec.skill)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
+        raise ValueError("run_id must be a safe 1-128 character identifier")
     artifacts = _run_artifact_paths(run_id)
     runtime_kind = workflow_registry.workflow_runtime_kind(spec.skill)
     research_selection = (
