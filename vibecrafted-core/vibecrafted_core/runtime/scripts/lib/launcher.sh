@@ -16,7 +16,7 @@ spawn_generate_launcher() {
   [[ -f "$common_path" ]] || spawn_die "common.sh not found: $common_path"
   [[ -n "$command" ]] || spawn_die "Missing command payload for launcher."
 
-  local q_meta q_report q_transcript q_common q_ulimits q_cmd
+  local q_meta q_report q_transcript q_common q_ulimits q_cmd q_python
   local q_root q_agent q_model q_prompt_id q_run_id q_run_lock q_loop_nr q_skill_code
   local q_skill_name q_operator_session q_spawn_direction q_marbles_tab q_marbles_watcher
   q_meta="$(spawn_shell_quote "$meta_path")"
@@ -25,6 +25,7 @@ spawn_generate_launcher() {
   q_common="$(spawn_shell_quote "$common_path")"
   q_ulimits="$(spawn_shell_quote "$(dirname "$common_path")/lib/ulimits.sh")"
   q_cmd="$(spawn_shell_quote "$command")"
+  q_python="$(spawn_shell_quote "$(command -v "$(spawn_python_bin)")")"
   q_root="$(spawn_shell_quote "${SPAWN_ROOT:-}")"
   q_agent="$(spawn_shell_quote "${SPAWN_AGENT:-}")"
   q_model="$(spawn_shell_quote "$(spawn_read_meta_field "$meta_path" "model")")"
@@ -68,6 +69,7 @@ export VIBECRAFTED_OPERATOR_SESSION=\${VIBECRAFTED_OPERATOR_SESSION:-$q_operator
 export VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION=\${VIBECRAFTED_VC_FRAME_SPAWN_DIRECTION:-$q_spawn_direction}
 export VIBECRAFTED_MARBLES_TAB_NAME=\${VIBECRAFTED_MARBLES_TAB_NAME:-$q_marbles_tab}
 export VIBECRAFTED_MARBLES_WATCHER=\${VIBECRAFTED_MARBLES_WATCHER:-$q_marbles_watcher}
+export VIBECRAFTED_PYTHON=\${VIBECRAFTED_PYTHON:-$q_python}
 startup_watch_pid=""
 
 # Write this launcher's PID into meta.json so the watcher heartbeat and the
@@ -161,7 +163,16 @@ command_status=0
 bash -c "$SPAWN_CMD" || command_status=$?
 report_template_untouched=0
 if spawn_report_template_untouched "$report"; then
-  report_template_untouched=1
+  last_message="${transcript%.log}.last-message.md"
+  if [[ -s "$last_message" ]]; then
+    # Provider commands write their final message before returning. Preserve
+    # the launcher-owned identity shell and attach that message as worker
+    # evidence; finalization will stamp the terminal status without losing IDs.
+    printf '\n' >> "$report"
+    cat "$last_message" >> "$report"
+  else
+    report_template_untouched=1
+  fi
 fi
 # Research requires a first-class worker report. Preserve its established
 # exit-65 contract even though the launcher now materializes an identity shell.
@@ -172,9 +183,9 @@ if [[ "$command_status" -eq 0 && "$report_template_untouched" -eq 1 ]] && {
 }; then
   command_status=65
 fi
-# Legacy provider hooks use file presence as their salvage gate. Remove only a
-# provably untouched launcher shell so those hooks keep their existing fallback
-# behavior; worker-written evidence remains intact.
+# Provider hooks use file presence as their fallback gate. Remove only a
+# provably untouched launcher shell; an available final message was attached
+# above and therefore remains worker evidence.
 if [[ "$report_template_untouched" -eq 1 ]]; then
   rm -f "$report"
 fi
