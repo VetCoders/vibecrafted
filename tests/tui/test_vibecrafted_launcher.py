@@ -1,3 +1,6 @@
+# ruff: noqa: FLY002,PLW1510
+# Fixture-heavy launcher harness builds shell/python stubs via "\n".join; FLY002
+# and bare subprocess.run (PLW1510) are intentional and predate this cut.
 from __future__ import annotations
 
 import hashlib
@@ -1125,9 +1128,10 @@ def test_installed_launcher_gui_uses_python_control_plane_surface(
     assert "Press Ctrl-C to stop." in result.stdout
 
 
-def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
+def test_installed_launcher_tui_uses_shared_state_and_voc_binary(
     tmp_path: Path,
 ) -> None:
+    """Product contract: `vibecrafted tui` launches `voc` (install-app-binaries)."""
     home = tmp_path / "home"
     installed_root = home / ".vibecrafted"
     launcher = home / ".local" / "bin" / "vibecrafted"
@@ -1144,11 +1148,15 @@ def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
     launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
     launcher.chmod(0o755)
     (current_root / "scripts").mkdir(parents=True, exist_ok=True)
-    (current_root / "operator-tui" / "target" / "debug").mkdir(
-        parents=True, exist_ok=True
+    app_root = current_root / "vibecrafted-app"
+    (app_root / "tui-agent").mkdir(parents=True, exist_ok=True)
+    (app_root / "target" / "debug").mkdir(parents=True, exist_ok=True)
+    (app_root / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["tui-agent"]\n',
+        encoding="utf-8",
     )
-    (current_root / "operator-tui" / "Cargo.toml").write_text(
-        '[package]\nname = "vibecrafted-operator"\nversion = "0.0.0"\nedition = "2021"\n',
+    (app_root / "tui-agent" / "Cargo.toml").write_text(
+        '[package]\nname = "voc"\nversion = "0.0.0"\nedition = "2021"\n',
         encoding="utf-8",
     )
     (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
@@ -1159,14 +1167,13 @@ def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
         "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
     )
     _write_fake_python3(fake_bin, python_capture)
-    _write_capture_script(
-        current_root / "operator-tui" / "target" / "debug" / "vibecrafted-operator",
-        tui_capture,
-    )
+    _write_capture_script(app_root / "target" / "debug" / "voc", tui_capture)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    # Isolate PATH so a host ~/.local/bin/voc cannot steal resolution from the
+    # local vibecrafted-app debug fixture. Keep /bin for bash/coreutils.
+    env["PATH"] = f"{fake_bin}:/bin:/usr/bin"
     env["CAPTURE_FILE"] = str(python_capture)
 
     subprocess.run(
@@ -1186,9 +1193,10 @@ def test_installed_launcher_tui_uses_shared_state_and_operator_binary(
     assert "--tick-ms 500" in tui_args
 
 
-def test_tui_uses_vc_operator_from_path_when_local_build_missing(
+def test_tui_uses_voc_from_path_when_local_build_missing(
     tmp_path: Path,
 ) -> None:
+    """When no local vibecrafted-app build exists, PATH `voc` is the product bin."""
     home = tmp_path / "home"
     launcher = home / ".local" / "bin" / "vibecrafted"
     current_root = (
@@ -1204,9 +1212,6 @@ def test_tui_uses_vc_operator_from_path_when_local_build_missing(
     launcher.write_text(LAUNCHER.read_text(encoding="utf-8"), encoding="utf-8")
     launcher.chmod(0o755)
     (current_root / "scripts").mkdir(parents=True, exist_ok=True)
-    (current_root / "operator-tui" / "target" / "debug").mkdir(
-        parents=True, exist_ok=True
-    )
     (current_root / "VERSION").write_text("0.0.0-test\n", encoding="utf-8")
     (current_root / "scripts" / "control_plane_state.py").write_text(
         "#!/usr/bin/env python3\n", encoding="utf-8"
@@ -1217,9 +1222,10 @@ def test_tui_uses_vc_operator_from_path_when_local_build_missing(
     _write_fake_python3(fake_bin, python_capture)
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    # Product install path: only PATH-owned voc (no local app tree build).
+    env["PATH"] = f"{fake_bin}:/bin:/usr/bin"
     env["CAPTURE_FILE"] = str(python_capture)
-    _write_capture_script(fake_bin / "vc-operator", tui_capture)
+    _write_capture_script(fake_bin / "voc", tui_capture)
 
     subprocess.run(
         ["bash", str(launcher), "tui", "--runtime", "headless"],

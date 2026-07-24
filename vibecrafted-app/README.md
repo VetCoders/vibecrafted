@@ -1,8 +1,9 @@
-# Vibecrafted TUI Workspace
+# Vibecrafted App Workspace
 
-`vc-tui` is the standalone desktop/control workspace for Vibecrafted.
-It carries the terminal cockpit, MCP multiplexer, tray agent, and macOS shell
-wrapper as one Rust-first product surface.
+Product surface for the desktop/control workspace: terminal cockpit (`voc`),
+MCP multiplexer, tray agent, and macOS shell wrapper as one Rust-first pack.
+Installed into `~/.local/bin` by root `make install-app-binaries` /
+`make install` as real files (`voc`, `vc-admin`).
 
 ## Workspace Shape
 
@@ -11,13 +12,14 @@ The root `Cargo.toml` is a workspace, not an application crate:
 | Path                          | Package                      | Role                                            |
 | ----------------------------- | ---------------------------- | ----------------------------------------------- |
 | `mux-agent/`                  | `rmcp-mux`                   | MCP transport multiplexer and daemon supervisor |
-| `tui-agent/`                  | `vc-tui`                     | terminal control cockpit                        |
+| `tui-agent/`                  | `voc`                        | terminal control cockpit (`voc`, `vc-admin`)    |
 | `tray-agent/`                 | `tray-agent`                 | menu bar/tray control surface                   |
 | `shell-agent/ffi/`            | `vibecrafted-shell-ffi`      | Rust/UniFFI bridge for the macOS app            |
 | `shell-agent/uniffi-bindgen/` | `vibecrafted-uniffi-bindgen` | local binding generator wrapper                 |
 
-The old root-level TUI crate was intentionally removed after extraction. The
-single source of truth for the terminal cockpit is now `tui-agent/`.
+The package was renamed from `vc-tui` to `voc`. The single source of truth for
+the terminal cockpit is `tui-agent/`. Deck entry: `vibecrafted tui` (also the
+`voc` / legacy `vc-tui` wrappers).
 
 ## Quality Gates
 
@@ -53,7 +55,7 @@ make dmg-signed
 
 - `vc-mux-daemon`
 - `vc-mux-tray`
-- `vc-tui`
+- `voc`
 
 `make dmg` creates an unsigned local DMG. `make dmg-signed` requires a
 Developer ID Application signing identity in the local keychain and prints the

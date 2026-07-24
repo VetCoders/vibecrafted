@@ -110,5 +110,5 @@ cargo run -- --state-root "$VIBECRAFTED_HOME/control_plane"
 #   --root /path/to/repo
 ```
 
-The package is `vc-tui` (manifest at repo root). The supported CLI entrypoint
-is `vc-tui`.
+The package is `voc` (crate under `tui-agent/`). The supported CLI entrypoint
+is `voc` (also launched via `vibecrafted tui`; legacy wrapper name `vc-tui`).
