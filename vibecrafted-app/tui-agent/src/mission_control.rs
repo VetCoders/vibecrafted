@@ -1,7 +1,8 @@
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, Utc};
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1061,7 +1062,11 @@ fn failure_board_from_meta(
     now: DateTime<Utc>,
 ) -> Vec<FailureEntry> {
     let cutoff = now - ChronoDuration::hours(FAILURE_WINDOW_HOURS);
-    let mut failures: Vec<FailureEntry> = Vec::new();
+    // Timestamp travels next to the entry so ordering is chronological;
+    // `age_label` is a display string and must never drive the sort
+    // ("11h ago" < "2m ago" lexicographically would evict fresh failures).
+    let mut failures: Vec<(Option<DateTime<Utc>>, FailureEntry)> = Vec::new();
+    let mut seen_run_ids: HashSet<String> = HashSet::new();
 
     for record in records {
         let is_failure = match record.meta.exit_code {
@@ -1083,12 +1088,18 @@ fn failure_board_from_meta(
         if record.completed_at < cutoff {
             continue;
         }
-        failures.push(FailureEntry {
-            run_id: record
-                .meta
-                .run_id
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string()),
+        let run_id = record
+            .meta
+            .run_id
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
+        if run_id != "unknown" && !seen_run_ids.insert(run_id.clone()) {
+            continue;
+        }
+        failures.push((
+            Some(record.completed_at),
+            FailureEntry {
+                run_id,
             agent: record
                 .meta
                 .agent
@@ -1110,15 +1121,30 @@ fn failure_board_from_meta(
                 }),
             age_label: relative_age(record.completed_at, now),
             source_path: Some(record.path.clone()),
-        });
+            },
+        ));
     }
 
     for snapshot in &state.runs {
         if !matches!(classify_run(snapshot, now), RunKind::Failed) {
             continue;
         }
-        failures.push(FailureEntry {
-            run_id: snapshot.run_id.clone(),
+        let timestamp = snapshot
+            .updated_at
+            .as_deref()
+            .and_then(parse_rfc3339);
+        // Same 24h window as the meta loop — without it, long-dead
+        // garbage-collected snapshots permanently occupy the 20-row board.
+        if matches!(timestamp, Some(ts) if ts < cutoff) {
+            continue;
+        }
+        if !seen_run_ids.insert(snapshot.run_id.clone()) {
+            continue;
+        }
+        failures.push((
+            timestamp,
+            FailureEntry {
+                run_id: snapshot.run_id.clone(),
             agent: snapshot
                 .agent
                 .clone()
@@ -1134,10 +1160,7 @@ fn failure_board_from_meta(
                 .or_else(|| snapshot.status.clone())
                 .or_else(|| snapshot.state.clone())
                 .unwrap_or_else(|| "failed".to_string()),
-            age_label: snapshot
-                .updated_at
-                .as_deref()
-                .and_then(parse_rfc3339)
+            age_label: timestamp
                 .map(|ts| relative_age(ts, now))
                 .unwrap_or_else(|| "age unknown".to_string()),
             source_path: snapshot
@@ -1145,12 +1168,19 @@ fn failure_board_from_meta(
                 .as_deref()
                 .map(PathBuf::from)
                 .or_else(|| snapshot.root.as_deref().map(PathBuf::from)),
-        });
+            },
+        ));
     }
 
-    failures.sort_by(|left, right| left.age_label.cmp(&right.age_label));
+    // Freshest first; entries without a parsable timestamp sink to the end.
+    failures.sort_by(|(left, _), (right, _)| match (right, left) {
+        (Some(r), Some(l)) => r.cmp(l),
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+        (None, None) => Ordering::Equal,
+    });
     failures.truncate(20);
-    failures
+    failures.into_iter().map(|(_, entry)| entry).collect()
 }
 
 fn fleet_health_from_inputs(
@@ -2662,6 +2692,79 @@ mod tests {
         let mission = MissionControlState::build_at(&state, &artifact, now);
         assert_eq!(mission.failures.len(), 1);
         assert_eq!(mission.failures[0].run_id, "recent-fail");
+    }
+
+    #[test]
+    fn failure_board_keeps_freshest_and_dedups_run_ids() {
+        let dir = tempdir().unwrap();
+        let artifact = dir.path().join("artifacts");
+        let bucket = artifact.join("vetcoders/vc-tui/2026_0519/reports");
+        // 22 failures at 11h old: lexicographic age_label sort ("11h ago" <
+        // "2m ago") used to keep exactly these and evict the fresh one.
+        for index in 0..22 {
+            write_meta(
+                &bucket.join(format!("stale-{index}.meta.json")),
+                &format!(
+                    r#"{{
+                        "run_id": "stale-{index}",
+                        "agent": "codex",
+                        "skill_code": "impl",
+                        "exit_code": 1,
+                        "status": "failed",
+                        "completed_at": "2026-05-19T02:00:00Z"
+                    }}"#
+                ),
+            );
+        }
+        write_meta(
+            &bucket.join("fresh-fail.meta.json"),
+            r#"{
+                "run_id": "fresh-fail",
+                "agent": "gemini",
+                "skill_code": "rvew",
+                "exit_code": 2,
+                "status": "failed",
+                "completed_at": "2026-05-19T12:58:00Z"
+            }"#,
+        );
+        // Duplicate of a meta-derived failure arriving via a retained
+        // snapshot must not occupy a second board row.
+        let mut state = empty_state(dir.path());
+        state.runs.push(RunSnapshot {
+            run_id: "fresh-fail".to_string(),
+            session_id: None,
+            agent: Some("gemini".to_string()),
+            skill: Some("rvew".to_string()),
+            mode: None,
+            state: Some("failed".to_string()),
+            status: None,
+            started_at: None,
+            updated_at: Some("2026-05-19T12:58:30Z".to_string()),
+            last_heartbeat: None,
+            root: None,
+            operator_session: None,
+            latest_report: None,
+            latest_transcript: None,
+            last_error: Some("duplicate snapshot".to_string()),
+            extra: HashMap::new(),
+        });
+
+        let now = ts("2026-05-19T13:00:00Z");
+        let mission = MissionControlState::build_at(&state, &artifact, now);
+        assert_eq!(mission.failures.len(), 20, "board stays capped at 20");
+        assert_eq!(
+            mission.failures[0].run_id, "fresh-fail",
+            "freshest failure must lead the board, not be evicted by lexicographic age labels"
+        );
+        assert_eq!(
+            mission
+                .failures
+                .iter()
+                .filter(|entry| entry.run_id == "fresh-fail")
+                .count(),
+            1,
+            "meta-derived and snapshot-derived rows for one run must dedup"
+        );
     }
 
     #[test]
