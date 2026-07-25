@@ -1,34 +1,134 @@
+//! Deterministic scaffold plan gate.
+//!
+//! ```text
+//! scaffold-doctor --plan <plan_root> [--json]
+//! scaffold-doctor <vibecrafted-home> <org> <repo> <day> <plan-id> [--json]
+//! ```
+//!
+//! Exit 0 = pass · Exit 1 = refuse (rule violations) · Exit 2 = usage / not a plan.
+
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use control_core::ScaffoldArtifactStore;
+use control_core::{ScaffoldArtifactStore, ScaffoldDoctorReport, doctor_plan_root};
 
 fn main() -> ExitCode {
-    // argv[0] is skipped; these values select local inputs and never establish executable trust.
+    // argv values select local inputs; they never establish executable trust.
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>(); // nosemgrep: rust.lang.security.args-os.args-os
-    if arguments.len() != 5 {
-        eprintln!("usage: scaffold-doctor <vibecrafted-home> <org> <repo> <day> <plan-id>");
-        return ExitCode::from(2);
-    }
-    let store = ScaffoldArtifactStore::new(&arguments[0]);
-    let values = arguments[1..]
-        .iter()
-        .map(|value| value.to_string_lossy())
-        .collect::<Vec<_>>();
-    match store.doctor(&values[0], &values[1], &values[2], &values[3]) {
-        Ok(report) => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&report).expect("report serializes")
-            );
-            if report.valid {
-                ExitCode::SUCCESS
-            } else {
-                ExitCode::from(1)
+    let mut json = false;
+    let mut plan: Option<PathBuf> = None;
+    let mut positional = Vec::new();
+
+    let mut index = 0usize;
+    while index < arguments.len() {
+        let arg = arguments[index].to_string_lossy();
+        match arg.as_ref() {
+            "--json" => json = true,
+            "--plan" => {
+                index += 1;
+                let Some(value) = arguments.get(index) else {
+                    eprintln!("scaffold-doctor: --plan requires a path");
+                    return usage();
+                };
+                plan = Some(PathBuf::from(value));
             }
+            "-h" | "--help" => return usage(),
+            other if other.starts_with('-') => {
+                eprintln!("scaffold-doctor: unknown flag {other}");
+                return usage();
+            }
+            _ => positional.push(arguments[index].clone()),
         }
+        index += 1;
+    }
+
+    let report = if let Some(plan_root) = plan {
+        doctor_plan_root(plan_root)
+    } else if positional.len() == 5 {
+        let values = positional
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        ScaffoldArtifactStore::new(&values[0]).doctor(
+            &values[1],
+            &values[2],
+            &values[3],
+            &values[4],
+        )
+    } else {
+        return usage();
+    };
+
+    match report {
+        Ok(report) => emit(&report, json),
         Err(error) => {
-            eprintln!("scaffold-doctor: {error}");
+            if json {
+                let payload = serde_json::json!({
+                    "valid": false,
+                    "error": error.to_string(),
+                });
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&payload).expect("json")
+                );
+            } else {
+                eprintln!("scaffold-doctor: REFUSE — {error}");
+            }
             ExitCode::from(2)
         }
     }
+}
+
+fn emit(report: &ScaffoldDoctorReport, json: bool) -> ExitCode {
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(report).expect("report serializes")
+        );
+    } else {
+        print_human(report);
+    }
+    if report.valid {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn print_human(report: &ScaffoldDoctorReport) {
+    if report.valid {
+        println!(
+            "scaffold-doctor: PASS plan_id={} root={}",
+            report.plan_id, report.plan_root
+        );
+        println!("  artifacts: {}", report.artifact_ids.len());
+        return;
+    }
+    println!(
+        "scaffold-doctor: REFUSE plan_id={} ({} violation{})",
+        report.plan_id,
+        report.errors.len(),
+        if report.errors.len() == 1 { "" } else { "s" }
+    );
+    println!("  root: {}", report.plan_root);
+    for error in &report.errors {
+        let rule = error.rule.as_deref().unwrap_or("—");
+        let where_ = error
+            .path
+            .as_deref()
+            .or(error.artifact_id.as_deref())
+            .unwrap_or("(package)");
+        println!(
+            "  [{rule} {code}] {where_}: {message}",
+            code = error.code,
+            message = error.message
+        );
+    }
+}
+
+fn usage() -> ExitCode {
+    eprintln!(
+        "usage:\n  scaffold-doctor --plan <plan_root> [--json]\n  scaffold-doctor <vibecrafted-home> <org> <repo> <day> <plan-id> [--json]"
+    );
+    ExitCode::from(2)
 }

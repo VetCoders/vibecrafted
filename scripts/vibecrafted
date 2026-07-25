@@ -2050,6 +2050,75 @@ cmd_init() {
   return 1
 }
 
+
+cmd_scaffold_doctor() {
+  # Deterministic plan-package gate (control-core). Not the install doctor.
+  local bin="" plan="" json=0
+  local args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --plan) plan="${2:-}"; shift 2 || true ;;
+      --json) json=1; shift ;;
+      -h|--help)
+        printf 'Usage: vibecrafted scaffold-doctor --plan <plan_root> [--json]\n'
+        printf '       vibecrafted scaffold-doctor <home> <org> <repo> <day> <plan-id> [--json]\n'
+        printf 'Exit 0=pass, 1=refuse (rule violations), 2=not a plan / usage.\n'
+        return 0
+        ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+
+  for candidate in \
+    "${VIBECRAFTED_ROOT:-}/vibecrafted-server/target/release/scaffold-doctor" \
+    "${VIBECRAFTED_ROOT:-}/vibecrafted-server/target/debug/scaffold-doctor" \
+    "${VIBECRAFTED_ROOT:-}/target/release/scaffold-doctor" \
+    "${VIBECRAFTED_ROOT:-}/target/debug/scaffold-doctor" \
+    "$(command -v scaffold-doctor 2>/dev/null || true)"
+  do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      bin="$candidate"
+      break
+    fi
+  done
+
+  if [[ -z "$bin" ]]; then
+    # Build once into the workspace if cargo is available.
+    if command -v cargo >/dev/null 2>&1 && [[ -n "${VIBECRAFTED_ROOT:-}" && -f "${VIBECRAFTED_ROOT}/vibecrafted-server/control-core/Cargo.toml" ]]; then
+      cargo build -q --manifest-path "${VIBECRAFTED_ROOT}/vibecrafted-server/control-core/Cargo.toml" --bin scaffold-doctor || {
+        printf '%b✗%b scaffold-doctor binary missing and cargo build failed\n' "$_red" "$_reset" >&2
+        return 2
+      }
+      bin="${VIBECRAFTED_ROOT}/vibecrafted-server/target/debug/scaffold-doctor"
+      [[ -x "$bin" ]] || bin="${VIBECRAFTED_ROOT}/target/debug/scaffold-doctor"
+    fi
+  fi
+
+  if [[ -z "$bin" || ! -x "$bin" ]]; then
+    printf '%b✗%b scaffold-doctor binary not found. Build control-core first:\n' "$_red" "$_reset" >&2
+    printf '  cargo build --manifest-path vibecrafted-server/control-core/Cargo.toml --bin scaffold-doctor\n' >&2
+    return 2
+  fi
+
+  if [[ -n "$plan" ]]; then
+    if [[ "$json" -eq 1 ]]; then
+      "$bin" --plan "$plan" --json
+    else
+      "$bin" --plan "$plan"
+    fi
+  elif [[ ${#args[@]} -ge 5 ]]; then
+    if [[ "$json" -eq 1 ]]; then
+      "$bin" "${args[@]}" --json
+    else
+      "$bin" "${args[@]}"
+    fi
+  else
+    printf 'Usage: vibecrafted scaffold-doctor --plan <plan_root> [--json]\n' >&2
+    return 2
+  fi
+}
+
+
 cmd_doctor() {
   # Resolve the installer source tree without going through make.
   # The Python installer owns the doctor logic; calling it directly
@@ -2759,6 +2828,7 @@ main() {
     server) cmd_server "$@" ;;
     tui) cmd_tui "$@" ;;
     doctor|check) cmd_doctor ;;
+    scaffold-doctor) cmd_scaffold_doctor "$@" ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
     loop) cmd_loop "$@" ;;
     cron) cmd_cron "$@" ;;

@@ -59,5 +59,5 @@ pub use scaffold::{
     ScaffoldArtifactDeclaration, ScaffoldArtifactPatch, ScaffoldArtifactRole,
     ScaffoldArtifactStore, ScaffoldChange, ScaffoldCheckpoint, ScaffoldCheckpointPatch,
     ScaffoldDoctorError, ScaffoldDoctorReport, ScaffoldError, ScaffoldManifest,
-    ScaffoldPlanSummary, ScaffoldResult, ScaffoldWorkspace,
+    ScaffoldPlanSummary, ScaffoldResult, ScaffoldWorkspace, doctor_plan_root,
 };
