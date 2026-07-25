@@ -2,10 +2,12 @@
 name: vc-trust
 version: 1.0.0
 description: >
-  Post-hoc falsification of commit claims on a Living Tree. Produces
-  pass, pass-with-gaps, or block verdicts, appends evidence to the trust
-  journal, and projects explicit verdicts onto the canonical f/x/n settlement
-  axis. Trust observes and judges; it never blocks dispatch or mutates code.
+  Post-hoc falsification of commit claims on a Living Tree, including agent
+  fairness (Authored-By matches subject agent; no vendor footers; no foreign
+  envelope lies) and completeness claims. Produces pass, pass-with-gaps, or
+  block verdicts, appends evidence to the trust journal, and projects explicit
+  verdicts onto the canonical f/x/n settlement axis. Trust observes and judges;
+  it never blocks dispatch or mutates code. Enforcement is vc-guard.
 loctree_value: "commit scope, consumers, blast radius, and runtime paths"
 aicx_value: "why the commit exists and which prior attempts shaped it"
 dogfooding: "required"
@@ -17,13 +19,35 @@ dogfooding: "required"
 Tree. Commit messages are hypotheses. Trust falsifies their claims against the
 diff, consumers, tests, runtime, and historical intent before issuing:
 
-- `pass` — every material claim survived falsification.
+- `pass` — every material claim survived falsification **with strong evidence**
+  (format/trailer legality alone is never enough).
 - `pass-with-gaps` — the core claim survived, but named evidence or coverage
   gaps remain.
 - `block` — a material claim is false, contradicted, unsafe, or cannot meet its
-  required evidence bar.
+  required evidence bar (including agent-fairness breaches).
 
-The settlement mapping is closed and canonical:
+### Agent fairness (first-class claim axis)
+
+On every commit, treat at least these as material claims:
+
+1. Subject matches `[<agent>/<runtime>] <type>: …`.
+2. `Authored-By: <agent> <agents@vetcoders.io>` is present and **equals** the
+   subject agent (Agent Fairness — executor authenticity).
+3. No vendor `Co-Authored-By` / `noreply@` / vendor emails.
+4. Explanatory body exists before trailers (shape is necessary, not sufficient).
+5. Commit envelope lists real files; unearned “done/fixed” language without
+   named tests/gates is a gap, not a pass.
+
+Mechanical extractors:
+
+```bash
+python -m vibecrafted_core.trust inspect <sha>
+```
+
+Inspect never auto-notes and never implies pass. Only explicit `note` writes
+the journal and settlement.
+
+The settlement mapping is closed and canonical (do not reopen letters):
 
 | Trust verdict    | Settlement      | TUI |
 | ---------------- | --------------- | --- |
@@ -53,8 +77,8 @@ Trust is READ-only with respect to the repository. It may write only:
 - its report and transcript.
 
 Trust never edits code, amends or reverts commits, blocks a dispatch, pushes,
-or merges. Enforcement belongs to the separately planned `vc-guard`, which is
-PARKED until vc-trust Cuts 1–3 are proven. Do not implement guard behavior here.
+or merges. Enforcement belongs to `vc-guard` (gate inventory + refuse on trust
+`block`). Do not implement guard behavior here.
 
 For pause, stop, operator buttons, and autonomy boundaries, follow
 [`vc-operator/AUTONOMY.md`](../vc-operator/AUTONOMY.md); do not fork that

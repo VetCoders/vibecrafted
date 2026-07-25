@@ -155,6 +155,14 @@ WORKFLOW_DEFINITIONS: dict[str, WorkflowDefinition] = {
         lifecycle_order=75,
         tooling=("vc-init", "vc-loctree", "vc-aicx", "vc-trust"),
     ),
+    # Enforcement sibling of trust: inventories gates and refuses continuation
+    # on trust block. READ cadence (can_modify_code=false); never judges claims.
+    "guard": _direct(
+        "guard",
+        cadence="read",
+        lifecycle_order=76,
+        tooling=("vc-init", "vc-trust", "vc-guard"),
+    ),
     "workflow": _direct(
         "workflow",
         cadence="write",

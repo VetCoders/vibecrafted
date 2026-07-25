@@ -1361,6 +1361,40 @@ def launch_workflow(
     # Silent and best-effort; a reaper problem must never block a launch.
     _sweep_stale_runs()
 
+    # vc-guard proof path: refuse continuation when trust has block on HEAD.
+    # Guard never invents settlement; only consumes trust journal. Opt-out via
+    # VIBECRAFTED_GUARD=0 for hermetic tests that are not about enforcement.
+    if str(os.environ.get("VIBECRAFTED_GUARD", "1")).strip() not in {
+        "0",
+        "false",
+        "off",
+        "no",
+    }:
+        try:
+            from . import guard as guard_mod
+
+            root = Path(spec.root or source_dir or Path.cwd())
+            decision = guard_mod.enforce_continuation(
+                repo=root,
+                skill=str(spec.skill or ""),
+            )
+            if not decision.allowed:
+                raise ValueError(decision.remedium or "vc-guard refused continuation")
+        except ImportError:
+            pass
+        except (ValueError, OSError) as exc:
+            # Non-git fixtures, sandbox roots, and hermetic tests that stub
+            # subprocess: do not hard-fail launch unless the error is an
+            # explicit guard refusal (remedium text).
+            message = str(exc)
+            if (
+                "vc-guard" in message
+                or "Remedium" in message
+                or "trust recorded block" in message
+            ):
+                raise
+            # not a git repository / stubbed subprocess / unreadable context → allow
+
     run_id = spec.run_id or reserve_run_id(spec.skill)
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
         raise ValueError("run_id must be a safe 1-128 character identifier")

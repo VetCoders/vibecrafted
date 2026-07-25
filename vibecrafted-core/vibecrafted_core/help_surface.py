@@ -289,17 +289,38 @@ WORKFLOW_HELP: dict[str, WorkflowHelp] = {
         "READ-only post-hoc falsification of commit claims on the Living Tree.",
         (
             "bound the commit stream and recover intent",
-            "turn commit prose into falsifiable claims",
+            "turn commit prose into falsifiable claims (incl. agent fairness)",
             "attack each claim with direct evidence",
             "append pass, pass-with-gaps, or block and project f/x/n",
         ),
         (
             'vibecrafted trust codex --prompt "Judge the commits from this run"',
             "vc-trust claude --file /path/to/trust-brief.md",
+            "python -m vibecrafted_core.trust inspect <sha>",
         ),
         (
             "await mode is named await-primary; completion never implies pass",
-            "vc-guard remains a separate PARKED enforcement skill",
+            "agent fairness (Authored-By vs subject agent) is a first-class claim axis",
+            "vc-guard enforces at the gate; trust never blocks dispatch",
+        ),
+    ),
+    "guard": WorkflowHelp(
+        "In-flight enforcer: inventory gates and refuse continuation on trust block.",
+        (
+            "inventory existing commit/push/dispatch gates and coverage gaps",
+            "consume trust journal block on HEAD (never invent settlement letters)",
+            "refuse dispatch/continuation with mandatory remedium",
+            "keep fail-closed, non-interactive-safe doctrine",
+        ),
+        (
+            "python -m vibecrafted_core.guard inventory",
+            "python -m vibecrafted_core.guard check",
+            'vibecrafted guard claude --prompt "Audit gate inventory"',
+        ),
+        (
+            "trust judges after the fact; guard enforces at the gate",
+            "commit-msg enforces message shape, not truth",
+            "settlement f/x/n is written only by trust note",
         ),
     ),
     "workflow": WorkflowHelp(

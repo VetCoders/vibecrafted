@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import textwrap
 from pathlib import Path
 
-from vibecrafted_core import cli, trust
+from vibecrafted_core import cli, guard, trust, workflow
 from vibecrafted_core.settlement import board_fxn_counts
 from vibecrafted_core.workflows import registry
 
@@ -21,26 +22,75 @@ def _git(repo: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
-def _repo(tmp_path: Path) -> tuple[Path, str]:
+def _init_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init")
     _git(repo, "config", "user.name", "Trust Fixture")
-    _git(repo, "config", "user.email", "trust@example.test")
-    (repo / "proof.txt").write_text("proof\n", encoding="utf-8")
-    _git(repo, "add", "proof.txt")
-    _git(repo, "commit", "-m", "prove trust fixture")
-    return repo, _git(repo, "rev-parse", "HEAD")
+    _git(repo, "config", "user.email", "agents@vetcoders.io")
+    return repo
 
 
-def test_registry_exposes_trust_as_read_only() -> None:
+def _commit(repo: Path, message: str, files: dict[str, str]) -> str:
+    for rel, content in files.items():
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        _git(repo, "add", rel)
+    # GIT_EDITOR workaround for multi-line via -m multiple times
+    parts = message.strip().split("\n\n", 1)
+    subject = parts[0].strip()
+    body = parts[1].strip() if len(parts) > 1 else ""
+    cmd = ["commit", "-m", subject]
+    if body:
+        cmd.extend(["-m", body])
+    _git(repo, *cmd)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _fair_message(agent: str = "codex") -> str:
+    return textwrap.dedent(
+        f"""\
+        [{agent}/workflow] feat(trust): prove honest envelope
+
+        Implements the focused path with pytest coverage on the real helper.
+
+        Authored-By: {agent} <agents@vetcoders.io>
+        session_id: 019e93be-379d-7303-9ad4-ffae468db99f
+        time: 2026-07-25T12:00:00+02:00
+        runtime: terminal
+        """
+    )
+
+
+def _unfair_message() -> str:
+    return textwrap.dedent(
+        """\
+        [claude/workflow] feat(trust): all done production ready
+
+        Authored-By: codex <agents@vetcoders.io>
+        Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
+        session_id: 019e93be-379d-7303-9ad4-ffae468db99f
+        time: 2026-07-25T12:00:00+02:00
+        runtime: terminal
+        """
+    )
+
+
+def test_registry_exposes_trust_as_read_only_and_guard_as_enforcer() -> None:
     definition = registry.workflow_definition("trust")
 
     assert definition is not None
     assert definition.cadence == "read"
     assert definition.can_modify_code is False
     assert definition.tooling[-1] == "vc-trust"
-    assert registry.workflow_definition("guard") is None
+
+    guard_def = registry.workflow_definition("guard")
+    assert guard_def is not None
+    assert guard_def.cadence == "read"
+    assert guard_def.can_modify_code is False
+    assert "vc-guard" in guard_def.tooling
+
     assert {
         verdict: trust.tui_key_for(terminal)
         for verdict, terminal in trust.VERDICT_TO_SETTLEMENT.items()
@@ -51,17 +101,23 @@ def test_registry_exposes_trust_as_read_only() -> None:
     }
 
 
-def test_core_command_deck_exposes_trust_launcher(capsys) -> None:
+def test_core_command_deck_exposes_trust_and_guard_launchers(capsys) -> None:
     assert cli.main(["trust", "--help"]) == 0
-    output = capsys.readouterr().out
-    assert "vibecrafted trust <claude|codex|agy|junie|grok>" in output
-    assert "version 1.0.0 · READ" in output
+    trust_out = capsys.readouterr().out
+    assert "vibecrafted trust <claude|codex|agy|junie|grok>" in trust_out
+    assert "version 1.0.0 · READ" in trust_out
+
+    assert cli.main(["guard", "--help"]) == 0
+    guard_out = capsys.readouterr().out
+    assert "vibecrafted guard" in guard_out
+    assert "READ" in guard_out
 
 
 def test_note_appends_claim_evidence_and_projects_settlement(
     tmp_path: Path, monkeypatch
 ) -> None:
-    repo, sha = _repo(tmp_path)
+    repo = _init_repo(tmp_path)
+    sha = _commit(repo, _fair_message(), {"proof.txt": "proof\n"})
     crafted_home = tmp_path / "crafted"
     run_dir = crafted_home / "control_plane" / "runtime_runs" / "run-trust"
     run_dir.mkdir(parents=True)
@@ -125,7 +181,8 @@ def test_note_appends_claim_evidence_and_projects_settlement(
 def test_enumerate_skips_commits_already_in_append_only_journal(
     tmp_path: Path,
 ) -> None:
-    repo, sha = _repo(tmp_path)
+    repo = _init_repo(tmp_path)
+    sha = _commit(repo, _fair_message(), {"proof.txt": "proof\n"})
     journal = tmp_path / "journal.jsonl"
     trust.note_verdict(
         repo=repo,
@@ -171,3 +228,230 @@ def test_claim_grade_and_evidence_are_one_to_one() -> None:
         assert "each --claim" in str(exc)
     else:
         raise AssertionError("mismatched claim evidence must fail closed")
+
+
+def test_inspect_flags_agent_fairness_breach_and_never_auto_passes(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    fair_sha = _commit(repo, _fair_message("codex"), {"ok.txt": "ok\n"})
+    unfair_sha = _commit(repo, _unfair_message(), {"bad.txt": "bad\n"})
+
+    fair = trust.extract_fairness_and_completeness_claims(repo=repo, sha=fair_sha)
+    unfair = trust.extract_fairness_and_completeness_claims(repo=repo, sha=unfair_sha)
+
+    assert fair["subject_agent"] == "codex"
+    assert fair["authored_by_agent"] == "codex"
+    assert fair["recommended_verdict"] in {"pass-with-gaps", "pass"}
+    # Format alone must not become pass without runtime evidence.
+    assert fair["recommended_verdict"] == "pass-with-gaps"
+    assert fair["failures"] == []
+
+    assert unfair["recommended_verdict"] == "block"
+    assert any("fairness" in f for f in unfair["failures"])
+    assert any("vendor" in f for f in unfair["failures"])
+    assert any(
+        "fairness" in c["claim"] for c in unfair["claims"] if isinstance(c, dict)
+    )
+
+
+def test_inspect_cli_drives_real_entry_point(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    sha = _commit(repo, _unfair_message(), {"x.txt": "x\n"})
+    rc = trust.main(["--repo", str(repo), "inspect", sha])
+    assert rc == 0
+
+
+def test_await_primary_lists_candidates_and_does_not_auto_note(
+    tmp_path: Path, monkeypatch
+) -> None:
+    repo = _init_repo(tmp_path)
+    sha = _commit(repo, _fair_message(), {"a.txt": "a\n"})
+    journal = tmp_path / "journal.jsonl"
+    crafted_home = tmp_path / "crafted"
+    run_dir = crafted_home / "control_plane" / "runtime_runs" / "run-await"
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-await",
+                "state": "completed",
+                "exit_code": 0,
+                "started_at": "2026-07-25T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted_home))
+
+    def _fake_await(run_id: str, **_kwargs):
+        return {
+            "completed": True,
+            "reason": "completed",
+            "await_rc": 0,
+            "await_outcome": "completed",
+        }
+
+    monkeypatch.setattr(trust.control_plane, "await_run", _fake_await)
+
+    result = trust.await_primary(
+        run_id="run-await",
+        repo=repo,
+        journal=journal,
+        since=sha + "^",
+        interval=0.1,
+        timeout=2.0,
+    )
+
+    assert result["schema"] == "vibecrafted.trust-await-primary.v1"
+    assert result["await"]["completed"] is True
+    assert any(c["sha"] == sha for c in result["candidate_commits"])
+    # No auto-note: journal must still be empty
+    assert not journal.is_file() or journal.read_text().strip() == ""
+
+
+def test_guard_inventory_and_block_enforcement(tmp_path: Path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    sha = _commit(repo, _unfair_message(), {"z.txt": "z\n"})
+    journal = tmp_path / "journal.jsonl"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "crafted"))
+
+    inv = guard.inventory()
+    assert inv["schema"] == "vibecrafted.guard-inventory.v1"
+    assert any(g["id"] == "trust-block-dispatch" for g in inv["gates"])
+    assert inv["doctrine"]["settlement_authority"].startswith("vc-trust")
+
+    open_decision = guard.enforce_continuation(repo=repo, journal=journal)
+    assert open_decision.allowed is True
+
+    inspect = trust.extract_fairness_and_completeness_claims(repo=repo, sha=sha)
+    trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="block",
+        claims=inspect["claims"][:2]
+        or [
+            {
+                "claim": "agent fairness",
+                "grade": "strong",
+                "evidence": "subject != Authored-By",
+            }
+        ],
+    )
+
+    blocked = guard.enforce_continuation(repo=repo, journal=journal, sha=sha)
+    assert blocked.allowed is False
+    assert blocked.blocking_verdict == "block"
+    assert "Remedium" in blocked.remedium
+    assert blocked.blocking_sha.startswith(sha[:8]) or blocked.blocking_sha == sha
+
+    # pass after block: append newer verdict for same sha (latest wins)
+    trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="pass",
+        claims=[
+            {
+                "claim": "runtime proof",
+                "grade": "strong",
+                "evidence": "negative fixture then green",
+            }
+        ],
+    )
+    allowed = guard.enforce_continuation(repo=repo, journal=journal, sha=sha)
+    assert allowed.allowed is True
+
+    # CLI exit codes
+    assert guard.main(["inventory"]) == 0
+    # After pass, check allows
+    assert (
+        guard.main(
+            ["--repo", str(repo), "--journal", str(journal), "check", "--sha", sha]
+        )
+        == 0
+    )
+
+
+def test_launch_workflow_refuses_on_trust_block(tmp_path: Path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    sha = _commit(repo, _unfair_message(), {"w.txt": "w\n"})
+    journal = tmp_path / "journal.jsonl"
+    crafted = tmp_path / "crafted"
+    crafted.mkdir()
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(crafted))
+    monkeypatch.setenv("VIBECRAFTED_GUARD", "1")
+    monkeypatch.setattr(trust, "default_journal_path", lambda: journal)
+
+    trust.note_verdict(
+        repo=repo,
+        journal=journal,
+        sha=sha,
+        verdict="block",
+        claims=[
+            {
+                "claim": "agent fairness",
+                "grade": "strong",
+                "evidence": "subject != Authored-By",
+            }
+        ],
+    )
+
+    # Patch guard to use our journal when launch_workflow imports it
+    real_enforce = guard.enforce_continuation
+
+    def _enforce(**kwargs):
+        kwargs = {**kwargs, "journal": journal, "repo": repo}
+        return real_enforce(**kwargs)
+
+    monkeypatch.setattr(guard, "enforce_continuation", _enforce)
+
+    from vibecrafted_core.workflow import WorkflowLaunchSpec
+
+    spec = WorkflowLaunchSpec(
+        skill="implement",
+        agent="codex",
+        mode="prompt",
+        file="",
+        runtime="headless",
+        root=str(repo),
+        prompt="should be refused",
+    )
+    try:
+        workflow.launch_workflow(spec, source_dir=repo)
+    except ValueError as exc:
+        assert "vc-guard" in str(exc) or "Remedium" in str(exc) or "block" in str(exc)
+    else:
+        raise AssertionError("launch_workflow must refuse on trust block")
+
+
+def test_settlement_mapping_closed_pass_f_gaps_n_block_x(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    sha = _commit(repo, _fair_message(), {"m.txt": "m\n"})
+    journal = tmp_path / "j.jsonl"
+    for verdict, letter in (
+        ("pass", "f"),
+        ("pass-with-gaps", "n"),
+        ("block", "x"),
+    ):
+        entry = trust.note_verdict(
+            repo=repo,
+            journal=journal,
+            sha=sha,
+            verdict=verdict,
+            claims=[
+                {
+                    "claim": f"map {verdict}",
+                    "grade": "strong",
+                    "evidence": "unit",
+                }
+            ],
+        )
+        assert entry["settlement_tui"] == letter
+    triage = trust.triage_records(
+        [json.loads(line) for line in journal.read_text().splitlines()]
+    )
+    # latest wins for same sha — last was block → x only for that sha
+    assert triage["counts"]["x"] == 1
+    assert triage["commits"] == 1
