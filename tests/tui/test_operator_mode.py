@@ -791,7 +791,7 @@ def test_skill_bootstraps_operator_session_before_spawning(tmp_path: Path) -> No
     assert f"--session {_expected_operator_session()}" in payload
     assert "--new-session-with-layout" in payload
     assert "vc-spawn-cmd" in payload
-    assert re.search(r"\bfwup-\d{6}-\d+\b", payload)
+    assert re.search(r"\bfwup-\d{6}-\d{6}-\d{5}\b", payload)
 
 
 def test_skill_bootstraps_fresh_operator_session_when_existing_one_is_dead(

@@ -17,6 +17,8 @@ CLAUDE_SPAWN_SH = REPO_ROOT / "runtime" / "scripts" / "claude_spawn.sh"
 CODEX_SPAWN_SH = REPO_ROOT / "runtime" / "scripts" / "codex_spawn.sh"
 CODEX_STREAM_BRIDGE = REPO_ROOT / "runtime" / "scripts" / "codex_stream_bridge.py"
 CODEX_STREAM_FILTER = REPO_ROOT / "runtime" / "scripts" / "codex_stream_filter.jq"
+CORE_RUNTIME_HELPER = REPO_ROOT / "runtime" / "helpers" / "vetcoders-runtime-core.sh"
+CORE_PACKAGE_DIR = REPO_ROOT / "vibecrafted-core"
 
 
 # Strip ambient env vars that affect spawn-routing decisions before each
@@ -1948,7 +1950,7 @@ def test_spawn_prepare_paths_generates_real_run_context_when_missing(
     payload = dict(
         line.split("=", 1) for line in result.stdout.strip().splitlines() if "=" in line
     )
-    assert re.fullmatch(r"fwup-\d{6}-\d+", payload["RUN_ID"])
+    assert re.fullmatch(r"fwup-\d{6}-\d{6}-\d{5}", payload["RUN_ID"])
     assert payload["SKILL_CODE"] == "fwup"
     lock_path = Path(payload["RUN_LOCK"])
     expected_lock = (
@@ -3174,3 +3176,67 @@ def test_g7_receipt_operator_session_is_worker_host(tmp_path: Path) -> None:
         '''
     )
     assert "receipt=proj-bar" in result.stdout
+
+
+def _reserve_run_id(skill: str) -> str:
+    """Mint a canonical run id through the Python allocator (parity oracle)."""
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; sys.path.insert(0, sys.argv[1]);"
+                " from vibecrafted_core.workflow import reserve_run_id;"
+                " print(reserve_run_id(sys.argv[2]))"
+            ),
+            str(CORE_PACKAGE_DIR),
+            skill,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.strip()
+
+
+def test_shell_run_id_allocators_share_canonical_grammar() -> None:
+    """Both shell run-id allocators mint the same grammar as reserve_run_id.
+
+    Regression for the scaffold run_id split (P1): the shell fallback minted
+    ``prefix-HHMMSS-<pid><entropy>`` (no date, 10-digit tail) while the Python
+    dispatcher minted ``prefix-YYMMDD-HHMMSS-entropy``. The divergent shapes
+    could not be reconciled by observe/await/settlement, orphaning a phantom
+    control-plane record beside the live run. One grammar, one identity space.
+    """
+    result = _bash(
+        f'''
+        set -euo pipefail
+        source "{COMMON_SH}"
+        source "{CORE_RUNTIME_HELPER}"
+        printf 'spawn=%s\\n' "$(spawn_generate_run_id scaf)"
+        printf 'core=%s\\n' "$(_vetcoders_generate_run_id scaf)"
+        '''
+    )
+    lines = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+    spawn_id = lines["spawn"]
+    core_id = lines["core"]
+
+    canonical = re.compile(r"scaf-\d{6}-\d{6}-\d{5}")
+    assert canonical.fullmatch(spawn_id), f"spawn_generate_run_id shape: {spawn_id!r}"
+    assert canonical.fullmatch(core_id), (
+        f"_vetcoders_generate_run_id shape: {core_id!r}"
+    )
+
+    # Both shell allocators agree with the Python allocator that owns the durable
+    # dispatcher identity — three-way grammar parity, no HHMMSS-vs-YYMMDD split.
+    python_id = _reserve_run_id("scaffold")
+    assert canonical.fullmatch(python_id), f"reserve_run_id shape: {python_id!r}"
+
+    # Old shape leaked a concatenated <pid><entropy> tail (3 segments, ~10 digits);
+    # the canonical id is exactly 4 dash-segments with a 5-digit entropy tail.
+    for run_id in (spawn_id, core_id, python_id):
+        segments = run_id.split("-")
+        assert len(segments) == 4, run_id
+        assert len(segments[-1]) == 5 and segments[-1].isdigit(), run_id

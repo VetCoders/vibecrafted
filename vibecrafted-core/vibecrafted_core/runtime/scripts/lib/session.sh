@@ -84,10 +84,16 @@ print(f"{time.time_ns() % 100000:05d}")
 PY
 )"
   [[ -n "$entropy" ]] || entropy="$(printf '%05d' "${RANDOM:-0}")"
-  # PID+entropy defuses same-second collisions from both parallel processes and
-  # repeated launches inside the same shell.
-  # Keep identical shape to _vetcoders_generate_run_id so downstream regex/matchers agree.
-  printf '%s-%s-%s%s\n' "$prefix" "$(date +%H%M%S)" "$$" "$entropy"
+  # Canonical run-id grammar — identical to
+  # vibecrafted_core.workflow.reserve_run_id ({code}-{%y%m%d-%H%M%S}-{entropy}).
+  # ONE id shape across the Python dispatcher and every shell fallback keeps
+  # control-plane records, observe/await resolution, and report frontmatter on a
+  # single identity grammar; the old prefix-HHMMSS-<pid><entropy> shape produced
+  # ids the canonical resolvers could not reconcile, orphaning a phantom
+  # control-plane record beside the real run. Entropy (time_ns % 100000) defuses
+  # same-second collisions exactly as the Python allocator does; the date segment
+  # disambiguates across days. Kept identical to _vetcoders_generate_run_id.
+  printf '%s-%s-%s\n' "$prefix" "$(date +%y%m%d-%H%M%S)" "$entropy"
 }
 
 spawn_marbles_state_dir() {
