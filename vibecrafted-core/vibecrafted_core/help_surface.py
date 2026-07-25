@@ -353,6 +353,7 @@ Commands:
   resume <agent>       Continue a previous session
   status               Today's agent activity
   doctor               Installation health — pass/fail
+  receipt              Delivery/runtime receipt (source ↔ installed)
   update               Update to the latest release
   help [topic|--all]   This deck · full reference
 

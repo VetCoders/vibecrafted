@@ -1750,6 +1750,7 @@ cmd_help() {
   printf '  %bresume%b <agent>       Continue a previous session\n' "$_cyan" "$_reset"
   printf '  %bstatus%b               Today'"'"'s agent activity\n' "$_cyan" "$_reset"
   printf '  %bdoctor%b               Installation health — pass/fail\n' "$_cyan" "$_reset"
+  printf '  %breceipt%b              Delivery/runtime receipt (source ↔ installed)\n' "$_cyan" "$_reset"
   printf '  %bupdate%b               Update to the latest release\n' "$_cyan" "$_reset"
   printf '  %bhelp%b [topic|--all]   This deck · full reference\n' "$_cyan" "$_reset"
   printf '\n'
@@ -2219,6 +2220,32 @@ cmd_doctor() {
     return 1
   }
   python3 "$installer" doctor
+  # Delivery/runtime receipt rides doctor so operators see source↔installed
+  # drift without a separate habit. Failure to import is non-fatal here —
+  # the dedicated `vibecrafted receipt` command remains the sharp surface.
+  cmd_receipt 2>/dev/null || true
+}
+
+cmd_receipt() {
+  # Delegate to vibecrafted_core.runtime_receipt — never invent tool sources
+  # from cwd (see Delivery/Runtime Receipt doctrine).
+  local source_root="" core_path=""
+  source_root="$(_repo_source_root 2>/dev/null || true)"
+  if [[ -n "$source_root" && -d "$source_root/vibecrafted-core" ]]; then
+    core_path="$source_root/vibecrafted-core"
+  elif [[ -d "$crafted_tools/vibecrafted-core" ]]; then
+    core_path="$crafted_tools/vibecrafted-core"
+  fi
+  if [[ -n "$core_path" ]]; then
+    PYTHONPATH="$core_path${PYTHONPATH:+:$PYTHONPATH}" \
+      "${VIBECRAFTED_PYTHON:-python3}" -c \
+      'from vibecrafted_core.runtime_receipt import receipt_main; import sys; raise SystemExit(receipt_main(sys.argv[1:]))' \
+      "$@"
+    return
+  fi
+  "${VIBECRAFTED_PYTHON:-python3}" -c \
+    'from vibecrafted_core.runtime_receipt import receipt_main; import sys; raise SystemExit(receipt_main(sys.argv[1:]))' \
+    "$@"
 }
 
 _vc_frame_or_vc_frame_bin() {
@@ -2910,6 +2937,7 @@ main() {
     server) cmd_server "$@" ;;
     tui) cmd_tui "$@" ;;
     doctor|check) cmd_doctor ;;
+    receipt) cmd_receipt "$@" ;;
     scaffold-doctor) cmd_scaffold_doctor "$@" ;;
     dashboard|mc|mission-control|sessions) cmd_dashboard "$@" ;;
     loop) cmd_loop "$@" ;;

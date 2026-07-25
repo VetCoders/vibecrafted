@@ -126,6 +126,18 @@ def _build_parser() -> argparse.ArgumentParser:
             "only when SPAWN_RUN_ID is positively visible"
         ),
     )
+    receipt = sub.add_parser(
+        "receipt",
+        help=(
+            "delivery/runtime receipt for fleet tools "
+            "(source ↔ installed chain; never guesses from cwd)"
+        ),
+    )
+    receipt.add_argument(
+        "--json",
+        action="store_true",
+        help="machine-readable vibecrafted.delivery_receipt.v1",
+    )
     capabilities = sub.add_parser(
         "capabilities",
         help="describe workflow execution contracts (versioned, machine-readable)",
@@ -704,6 +716,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "paste",
         "procs",
         "reap",
+        "receipt",
         "settle",
         "stop",
     } | set(LAUNCHERS)
@@ -795,6 +808,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(plan.render(), end="")
         return 0
+    if args.command == "receipt":
+        from .runtime_receipt import receipt_main
+
+        return receipt_main(["--json"] if args.json else [])
     if args.command == "doctor":
         if getattr(args, "quarantine_legacy_runs", False):
             from .run_reaper import quarantine_legacy_runs
@@ -826,6 +843,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         findings = doctor_module.doctor_run()
         summary = doctor_module.doctor_summary(findings)
+        from .runtime_receipt import build_receipt, render_receipt_text
+
+        delivery_receipt = build_receipt()
+        summary["delivery_receipt"] = delivery_receipt
         if args.json:
             print(json.dumps(summary, ensure_ascii=False, indent=2))
         else:
@@ -837,6 +858,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"summary: {summary['ok']} ok, {summary['warnings']} warnings, "
                 f"{summary['failures']} failures"
             )
+            print()
+            print(render_receipt_text(delivery_receipt), end="")
         return 0 if summary["failures"] == 0 else 1
     if args.command == "reap":
         if getattr(args, "resettle", False):
