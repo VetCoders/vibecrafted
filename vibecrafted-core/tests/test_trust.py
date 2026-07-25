@@ -369,11 +369,47 @@ def test_inspect_cli_drives_real_entry_point(tmp_path: Path) -> None:
     assert rc == 0
 
 
+def test_git_log_range_never_feeds_failed_rev_to_since(tmp_path: Path) -> None:
+    """Unresolvable since (root^) must fail open — never become --since=<rev>."""
+    repo = _init_repo(tmp_path)
+    root = _commit(repo, _fair_message("codex"), {"root.txt": "r\n"})
+    child = _commit(repo, _fair_message("codex"), {"child.txt": "c\n"})
+
+    # Valid parent → exclusive range args.
+    assert trust._git_log_range(repo, root) == [f"{root}..HEAD"]
+
+    # Root has no parent: root^ fails rev-parse → no lower bound (not --since).
+    bad = trust._git_log_range(repo, root + "^")
+    assert bad == []
+    assert not any(a.startswith("--since=") for a in bad)
+
+    # ISO run-meta dates still use the date filter (await-primary boundary).
+    assert trust._git_log_range(repo, "2026-07-25T00:00:00+00:00") == [
+        "--since=2026-07-25T00:00:00+00:00"
+    ]
+
+    # Empty since → no bound; enumerate must still see both commits.
+    empty = trust.enumerate_commits(
+        repo=repo, journal=tmp_path / "empty.jsonl", since=""
+    )
+    shas = {c["sha"] for c in empty}
+    assert root in shas and child in shas
+
+    # Unresolvable rev fails open: still lists existing commits.
+    open_range = trust.enumerate_commits(
+        repo=repo, journal=tmp_path / "empty2.jsonl", since=root + "^"
+    )
+    open_shas = {c["sha"] for c in open_range}
+    assert root in open_shas and child in open_shas
+
+
 def test_await_primary_lists_candidates_and_does_not_auto_note(
     tmp_path: Path, monkeypatch
 ) -> None:
     repo = _init_repo(tmp_path)
-    sha = _commit(repo, _fair_message(), {"a.txt": "a\n"})
+    # Two commits so since can be a real parent baseline (deterministic).
+    parent = _commit(repo, _fair_message("codex"), {"parent.txt": "p\n"})
+    sha = _commit(repo, _fair_message("codex"), {"a.txt": "a\n"})
     journal = tmp_path / "journal.jsonl"
     crafted_home = tmp_path / "crafted"
     run_dir = crafted_home / "control_plane" / "runtime_runs" / "run-await"
@@ -401,20 +437,53 @@ def test_await_primary_lists_candidates_and_does_not_auto_note(
 
     monkeypatch.setattr(trust.control_plane, "await_run", _fake_await)
 
+    # Parent..HEAD range: child is a candidate; parent is the lower bound.
     result = trust.await_primary(
         run_id="run-await",
         repo=repo,
         journal=journal,
-        since=sha + "^",
+        since=parent,
         interval=0.1,
         timeout=2.0,
     )
 
     assert result["schema"] == "vibecrafted.trust-await-primary.v1"
     assert result["await"]["completed"] is True
-    assert any(c["sha"] == sha for c in result["candidate_commits"])
+    candidate_shas = [c["sha"] for c in result["candidate_commits"]]
+    assert sha in candidate_shas
+    assert parent not in candidate_shas
     # No auto-note: journal must still be empty
     assert not journal.is_file() or journal.read_text().strip() == ""
+
+    # Root-only fail-open path: unresolvable since=HEAD^ must still list HEAD.
+    solo_base = tmp_path / "solo"
+    solo_base.mkdir()
+    solo = _init_repo(solo_base)
+    solo_sha = _commit(solo, _fair_message("grok"), {"solo.txt": "s\n"})
+    solo_journal = tmp_path / "solo-journal.jsonl"
+    solo_run = crafted_home / "control_plane" / "runtime_runs" / "run-await-solo"
+    solo_run.mkdir(parents=True)
+    (solo_run / "meta.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-await-solo",
+                "state": "completed",
+                "exit_code": 0,
+                "started_at": "2026-07-25T00:00:00+00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    solo_result = trust.await_primary(
+        run_id="run-await-solo",
+        repo=solo,
+        journal=solo_journal,
+        since=solo_sha + "^",
+        interval=0.1,
+        timeout=2.0,
+    )
+    assert any(c["sha"] == solo_sha for c in solo_result["candidate_commits"])
+    assert not solo_journal.is_file() or solo_journal.read_text().strip() == ""
 
 
 def test_guard_inventory_and_block_enforcement(tmp_path: Path, monkeypatch) -> None:

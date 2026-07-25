@@ -624,19 +624,43 @@ def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
         os.close(descriptor)
 
 
+# ISO-ish timestamps from control-plane run meta (started_at / created_at).
+# Used only when since is not a resolvable commit; never treat failed rev tokens
+# (e.g. rootSHA^) as git --since date filters.
+_ISO_OR_GIT_DATE_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}"
+    r"(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?"
+    r"$"
+)
+
+
 def _git_log_range(repo: Path, since: str) -> list[str]:
-    if not since:
+    """Build git-log range args for *since*.
+
+    - empty → no lower bound
+    - resolvable commit → ``<since>..HEAD``
+    - ISO/date run-meta token → ``--since=<date>`` (await-primary boundary)
+    - unresolvable rev-ish (e.g. ``<root>^``) → no lower bound (fail open)
+
+    Never pass a failed commit token into ``git log --since=…``: git treats that
+    as a date filter and can yield zero candidates for commits that exist.
+    """
+    token = (since or "").strip()
+    if not token:
         return []
     probe = subprocess.run(
-        ["git", "rev-parse", "--verify", f"{since}^{{commit}}"],
+        ["git", "rev-parse", "--verify", f"{token}^{{commit}}"],
         cwd=str(repo),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
     if probe.returncode == 0:
-        return [f"{since}..HEAD"]
-    return [f"--since={since}"]
+        return [f"{token}..HEAD"]
+    if _ISO_OR_GIT_DATE_RE.match(token):
+        return [f"--since={token}"]
+    # Unresolvable rev (root parent, typo, foreign sha): omit lower bound.
+    return []
 
 
 def enumerate_commits(
