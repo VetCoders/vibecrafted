@@ -166,12 +166,26 @@ entries get a `Promoted:` line, not deletion.
 
 ---
 
-## Session-start surfacing
+## Surfacing — through the intentions sense, not another session-start banner
 
-This ledger is referenced from the [Delegation Matrix](DELEGATION_MATRIX.md)
-(always loaded with fleet skills) and surfaced at session start by the
-operator's AICX living-tree hook. Workers receive it whenever a brief cites a
-command listed here — cite the entry, not the whole file.
+This ledger is deliberately **not** injected as a session-start suggestion:
+session start is already dense (vc-init, loctree context card, AICX
+living-tree pack), and every additional automatic prompt dilutes the previous
+ones. Instead it rides the channel every agent already opens: the
+**intentions sense of `vc-init`** points here before any fleet dispatch,
+resume, or recovery, and `aicx search -p VetCoders/vibecrafted '<command>'`
+reaches the same doctrine as retrieval. Workers receive it whenever a brief
+cites a command listed here — cite the entry, not the whole file.
+
+## Capture mechanics — known gap
+
+Entries are currently written volitionally, at the moment of failure — exactly
+when an agent is most rushed, so volitional capture **will** leak the most
+valuable incidents. Target state: hook-level capture — a failed runtime
+command emits a skeleton entry (command, context, outcome) for the agent to
+complete, the way `loctree-fail.md` (this ledger's proven ancestor) is
+append-on-hak. Until that lands, treat writing the entry as part of the
+incident, not optional hygiene.
 
 ## Canonical references
 
