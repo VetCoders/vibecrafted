@@ -208,5 +208,6 @@ Pick the cell by intent: ship-stage delivery → `implement`. Daily rescue / pro
 - **External fleet modes:** [`vc-agents`](vc-agents/SKILL.md)
 - **Verification (walk-around):** [`VERIFICATION_RULE.md`](VERIFICATION_RULE.md)
 - **Living Tree:** [`LIVING_TREE_RULE.md`](LIVING_TREE_RULE.md)
+- **Runtime feedback ledger (per-command corrections):** [`RUNTIME_FEEDBACK.md`](RUNTIME_FEEDBACK.md)
 
 <!-- /fleet-imperative -->
