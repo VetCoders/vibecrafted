@@ -153,6 +153,30 @@ entries get a `Promoted:` line, not deletion.
   first.
 - **Evidence:** 2026-07-25 vc-intents audit of codescribe (two-subagent sweep).
 
+### Declaring a fix delivered (source ↔ installed artifact drift)
+
+- **❌ Observed:** A fix commits, gates go green, the report says delivered — and
+  the operator still sees the broken behavior, because the thing they run is an
+  **installed artifact**, not the checkout. Three independent instances in one
+  day: vc-frame status counters (fix `5c99f72d` in source, installed binary
+  built from `82ff8f27`); `scaffold-doctor` (validator committed, installed CLI
+  answers _"not in the command deck"_, and even the in-repo deck wrapper cannot
+  locate the freshly built binary); control-plane await semantics (fix
+  `068428bc` in the repo, workers executing
+  `~/.local/share/vibecrafted/tools/vibecrafted-3.6.0+g560310a9/`). A fourth
+  reading arrived independently from a codex audit: _every one of the four fleet
+  repos_ carries live-checkout vs installed-artifact drift.
+- **✅ Correct:** "Delivered" means reachable from the operator's PATH, not
+  merely committed. Before claiming delivery, compare what runs against what was
+  built — `<tool> --version` vs `git log -1`, `command -v <tool>` and where the
+  symlink actually points — and state in the report, explicitly, whether the
+  operator must reinstall to see the change. A cut that ends at the commit is
+  `[?]`, never `[x]`; only a run of the **installed** surface earns `[x]`.
+- **Evidence:** 2026-07-25 — vc-frame `0.46.0+g82ff8f27.dirty` vs HEAD
+  `5c99f72d`; `vibecrafted scaffold-doctor` absent from the installed deck while
+  `afecda98` sits in the tree; the same day's await returned rc=0 on a 223-byte
+  launcher template because the running distribution predates `068428bc`.
+
 ### `grep`/`rg` on working repos (zero-fallback)
 
 - **❌ Observed:** Reflexive grep on repos where loctree has a snapshot; when
