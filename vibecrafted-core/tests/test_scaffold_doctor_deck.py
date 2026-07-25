@@ -3,6 +3,12 @@
 Regression for: deck only searched ``${VIBECRAFTED_ROOT}/…`` so
 ``./scripts/vibecrafted scaffold-doctor`` failed with "binary not found"
 even when ``vibecrafted-server/target/debug/scaffold-doctor`` existed.
+
+Follow-up to ``afecda98`` (validator). Path resolution lives in both deck
+copies (``scripts/vibecrafted`` and ``vibecrafted_core/deck/vibecrafted``).
+Installed PATH (``uv tool`` / staged ``vibecrafted-current``) is a separate
+delivery surface — green source does not update the operator's shim until
+``make install-python-tools`` (or equivalent force-reinstall) is run.
 """
 
 from __future__ import annotations
