@@ -209,6 +209,23 @@ entries get a `Promoted:` line, not deletion.
 - **Evidence:** 2026-07-25 zero-fallback audit: 8/9 greps were agent reflex,
   2 real loctree defects → both fixed same day (`eed8b22b`, `cf9d7b62`).
 
+### Dispatch root follows the supervisor's cwd, not the spec
+
+- **❌ Observed:** A spec targeting `vetcoders/vc-frame` was dispatched while
+  the supervisor's shell still sat in `vetcoders/vibecrafted` (cwd persisted
+  from the previous command). The launch receipt bound `root:` — and with it
+  the worker's confinement and the report path — to the **wrong repo**; the
+  worker would have edited nothing or misplaced every artifact.
+- **✅ Correct:** `cd` to the target repo in the same command as
+  `vibecrafted workflow …`, then **read the `root:` line of the launch receipt
+  before walking away** — it is printed precisely so the supervisor can catch
+  this in second one. Wrong root caught early is cheap: `vibecrafted <agent>
+stop --run-id <id>` and redispatch beats any mid-flight rescue.
+- **Evidence:** 2026-07-25 — run `work-260725-235036-48000` (root
+  `vetcoders/vibecrafted`, spec `vc-frame-freshness-identity.md`) stopped at
+  ~15 s and redispatched as `work-260725-235130-39000` with root
+  `vetcoders/vc-frame`.
+
 ---
 
 ## Surfacing — through the intentions sense, not another session-start banner
