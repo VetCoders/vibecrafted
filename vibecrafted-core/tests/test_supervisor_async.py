@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from vibecrafted_core import control_plane, dispatcher
+from vibecrafted_core import supervisor_async as supervisor_async_module
 from vibecrafted_core.artifacts import validate_artifacts
 from vibecrafted_core.control_plane import read_event_tail
 from vibecrafted_core.lifecycle import RunState, transition_allowed
@@ -77,6 +78,54 @@ def test_async_supervisor_emits_lifecycle_and_validates_artifacts(
     assert "created" in states
     assert "process_spawned" in states
     assert "report_validated" in states
+
+
+def test_async_supervisor_heartbeats_while_worker_stdout_is_silent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A tool call can be quiet for minutes while its worker is healthy.
+
+    Heartbeats must be driven by the live process clock, not by stdout lines:
+    the latter disappear exactly while a long build/test/install is running.
+    """
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(supervisor_async_module, "_HEARTBEAT_INTERVAL_SECONDS", 0.05)
+    report = tmp_path / "quiet-report.md"
+    transcript = tmp_path / "quiet-transcript.log"
+    script = tmp_path / "quiet-worker.py"
+    script.write_text(
+        "import time\n"
+        "from pathlib import Path\n"
+        "time.sleep(0.18)\n"
+        f"Path({str(report)!r}).write_text('---\\nrun_id: asup-quiet\\nagent: python\\nskill: test\\nstatus: completed\\nclaim_status: completed\\n---\\nbody\\n')\n"
+        "print('quiet tool finished')\n",
+        encoding="utf-8",
+    )
+    run_id = "asup-quiet-1"
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id=run_id,
+            command=[sys.executable, str(script)],
+            root=tmp_path,
+            report_path=report,
+            transcript_path=transcript,
+            require_transcript_output=True,
+        )
+    )
+
+    heartbeats = [
+        event
+        for event in read_event_tail(limit=100)
+        if event.get("run_id") == run_id and event.get("message") == "worker heartbeat"
+    ]
+    assert len(heartbeats) >= 2
+    assert all(event.get("payload", {}).get("heartbeat_at") for event in heartbeats)
+    # No output arrived during these pulses, so the lifecycle did not fabricate
+    # FIRST_OUTPUT_SEEN or mutate the handle's state history.
+    assert heartbeats[0]["payload"]["state"] == "process_spawned"
+    assert handle.states.count(RunState.FIRST_OUTPUT_SEEN) == 1
+    assert handle.exit_code == 0
 
 
 def test_dispatcher_cli_runs_full_lifecycle(

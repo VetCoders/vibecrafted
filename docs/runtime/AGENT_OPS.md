@@ -262,7 +262,7 @@ background AND keep a manual sleep/ps/git monitor "because await can return
 early". Every hedge is a doctrine violation (ad-hoc watchers) caused by a real
 contract gap, not by agent paranoia.
 
-### Mechanism (four confirmed gaps, all fixed at the source)
+### Mechanism (five confirmed gaps, all fixed at the source)
 
 1. **A third private await loop**: `cli._agent_await`'s human path had its own
    inline loop treating `--timeout` as an ABSOLUTE wall clock — it abandoned
@@ -282,15 +282,28 @@ contract gap, not by agent paranoia.
    full window on the corpse and returned a misleading
    `timed_out: idle_stall` + `report_written: true`. Fixed: a non-empty
    report (`report_path` argument, else the run's `latest_report`) returns
-   `completed` with `reason: report_delivered` on the first poll.
+   `completed` with `reason: report_delivered` on the first poll. The
+   launcher-owned identity template is explicitly excluded: bytes written
+   before the worker starts are transport scaffolding, not delivery.
 4. **rc=0-on-live / inverse meta lag**: field evidence from 2026-07-10 showed
    both directions of signal skew. `await` could return rc=0 while the worker
    was still alive, and completed workers could leave run meta stuck
    `active`/`stalled` with `exit_code: null` after writing the report and
    exiting. Fixed: success requires worker-dead terminal evidence — terminal
    meta state or delivered report — and live-worker disagreement keeps await
-   armed. Known failure mode if it recurs: rc=0-on-live or meta-active-after-
-   completion is a Class 3 bug; use the 3-signal rule and re-arm await.
+   armed. A finalized report with a completed top-level `status` also closes a
+   stale projection when an unrecognized evidence adjective appears in
+   `claim_status`; recognized blocked/failed/partial claims still veto success.
+   Known failure mode if it recurs: rc=0-on-live or meta-active-after-completion
+   is a Class 3 bug; use the 3-signal rule and re-arm await.
+5. **stdout silence looked like worker death**: the supervisor heartbeat was
+   refreshed only after `readline()` produced another token. A ten-minute
+   build/test/install therefore emitted no pulse at exactly the moment the
+   operator needed liveness proof. Fixed: the pending stdout read is polled on
+   the heartbeat interval, and a still-live worker emits a lifecycle pulse
+   without fabricating `first_output_seen` or mutating state history. A
+   transient `stalled` projection remains non-terminal; canonical `await_run`
+   stays armed and accepts a later `active`/terminal transition.
 
 ### The rule
 

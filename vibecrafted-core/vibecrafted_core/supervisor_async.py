@@ -613,78 +613,104 @@ class AsyncSupervisor:
     ) -> None:
         assert handle.process.stdout is not None
         parser = AgentStreamParser(handle.agent, default_model=handle.agent_model)
-        while True:
-            chunk = await handle.process.stdout.readline()
-            if not chunk:
-                break
-            if handle.transcript_path is not None:
-                with handle.transcript_path.open("ab") as transcript:
-                    transcript.write(chunk)
-            display_text = parser.feed_line(chunk)
-            previous_agent_session_id = handle.agent_session_id
-            self._sync_stream_summary(handle, parser)
-            if (
-                handle.report_path is not None
-                and handle.agent_session_id
-                and handle.agent_session_id != previous_agent_session_id
-            ):
-                from .report_contract import stamp_launcher_report_identity
+        read_task = asyncio.create_task(handle.process.stdout.readline())
+        try:
+            while True:
+                completed, _pending = await asyncio.wait(
+                    {read_task}, timeout=_HEARTBEAT_INTERVAL_SECONDS
+                )
+                if not completed:
+                    # stdout silence is normal while an agent waits inside a
+                    # long build/test/install tool call. Drive liveness from
+                    # the process clock so the exact quiet phase still pulses.
+                    if handle.process.returncode is None:
+                        handle.heartbeat_monotonic = time.monotonic()
+                        await self._emit(
+                            handle.run_id,
+                            handle.state,
+                            "worker heartbeat",
+                            payload={
+                                "liveness": "pid_alive",
+                                "heartbeat_at": _utc_now().isoformat(),
+                            },
+                        )
+                    continue
 
-                stamp_launcher_report_identity(
-                    handle.report_path,
-                    run_id=handle.run_id,
-                    session_id=handle.agent_session_id,
-                    agent=handle.agent,
-                    skill=handle.skill,
-                    status="pending",
-                    model=handle.agent_model,
-                    claim_digest=handle.claim_digest,
-                )
-            if tee_output and display_text:
-                sys.stdout.buffer.write(display_text.encode("utf-8"))
-                sys.stdout.buffer.flush()
-            if not handle.first_output_seen:
-                handle.first_output_seen = True
-                handle.heartbeat_monotonic = time.monotonic()
-                await self._transition(
-                    handle,
-                    RunState.FIRST_OUTPUT_SEEN,
-                    "first output observed",
-                    payload={
-                        "heartbeat_at": _utc_now().isoformat(),
-                    },
-                )
-                await self._transition(
-                    handle,
-                    RunState.ACTIVE,
-                    "process active",
-                    payload={
-                        "liveness": "pid_alive",
-                        "heartbeat_at": _utc_now().isoformat(),
-                    },
-                )
-                continue
-            # The heartbeat used to be stamped once, at first output, and never
-            # again — so every run longer than the staleness threshold looked
-            # dead to the reconciler the instant its pid trail went cold. Keep
-            # it beating for as long as the worker speaks. `_emit` (not
-            # `_transition`) on purpose: this is a pulse, not a state change,
-            # and must not append to the handle's state history.
-            now_monotonic = time.monotonic()
-            if (
-                now_monotonic - handle.heartbeat_monotonic
-                >= _HEARTBEAT_INTERVAL_SECONDS
-            ):
-                handle.heartbeat_monotonic = now_monotonic
-                await self._emit(
-                    handle.run_id,
-                    RunState.ACTIVE,
-                    "worker heartbeat",
-                    payload={
-                        "liveness": "pid_alive",
-                        "heartbeat_at": _utc_now().isoformat(),
-                    },
-                )
+                chunk = read_task.result()
+                if not chunk:
+                    break
+                read_task = asyncio.create_task(handle.process.stdout.readline())
+                if handle.transcript_path is not None:
+                    with handle.transcript_path.open("ab") as transcript:
+                        transcript.write(chunk)
+                display_text = parser.feed_line(chunk)
+                previous_agent_session_id = handle.agent_session_id
+                self._sync_stream_summary(handle, parser)
+                if (
+                    handle.report_path is not None
+                    and handle.agent_session_id
+                    and handle.agent_session_id != previous_agent_session_id
+                ):
+                    from .report_contract import stamp_launcher_report_identity
+
+                    stamp_launcher_report_identity(
+                        handle.report_path,
+                        run_id=handle.run_id,
+                        session_id=handle.agent_session_id,
+                        agent=handle.agent,
+                        skill=handle.skill,
+                        status="pending",
+                        model=handle.agent_model,
+                        claim_digest=handle.claim_digest,
+                    )
+                if tee_output and display_text:
+                    sys.stdout.buffer.write(display_text.encode("utf-8"))
+                    sys.stdout.buffer.flush()
+                if not handle.first_output_seen:
+                    handle.first_output_seen = True
+                    handle.heartbeat_monotonic = time.monotonic()
+                    await self._transition(
+                        handle,
+                        RunState.FIRST_OUTPUT_SEEN,
+                        "first output observed",
+                        payload={
+                            "heartbeat_at": _utc_now().isoformat(),
+                        },
+                    )
+                    await self._transition(
+                        handle,
+                        RunState.ACTIVE,
+                        "process active",
+                        payload={
+                            "liveness": "pid_alive",
+                            "heartbeat_at": _utc_now().isoformat(),
+                        },
+                    )
+                    continue
+                # Output movement is also a heartbeat, but use `_emit` rather
+                # than `_transition`: a pulse must not mutate state history.
+                now_monotonic = time.monotonic()
+                if (
+                    now_monotonic - handle.heartbeat_monotonic
+                    >= _HEARTBEAT_INTERVAL_SECONDS
+                ):
+                    handle.heartbeat_monotonic = now_monotonic
+                    await self._emit(
+                        handle.run_id,
+                        RunState.ACTIVE,
+                        "worker heartbeat",
+                        payload={
+                            "liveness": "pid_alive",
+                            "heartbeat_at": _utc_now().isoformat(),
+                        },
+                    )
+        finally:
+            if not read_task.done():
+                read_task.cancel()
+                try:
+                    await read_task
+                except asyncio.CancelledError:
+                    pass
         await handle.process.wait()
         self._sync_stream_summary(handle, parser)
 

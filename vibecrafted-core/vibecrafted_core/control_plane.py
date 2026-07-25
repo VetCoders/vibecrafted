@@ -24,7 +24,13 @@ from .delivery.model import (
     ProofResult,
     ProofState,
 )
-from .report_contract import CLAIM_COMPLETED, validate_report_file
+from .report_contract import (
+    CLAIM_BLOCKED,
+    CLAIM_COMPLETED,
+    CLAIM_FAILED,
+    CLAIM_PARTIAL,
+    validate_report_file,
+)
 from .runtime_paths import vibecrafted_home
 from .settlement import (
     board_fxn_counts,
@@ -772,8 +778,15 @@ def _report_attests_completion(run: dict[str, Any]) -> bool:
         return False
     if not verdict.finalized or not verdict.claim:
         return False
-    status = verdict.claim_status
-    return not status or status in CLAIM_COMPLETED
+    claim_status = verdict.claim_status
+    if claim_status in CLAIM_COMPLETED:
+        return True
+    # A recognized negative/incomplete claim deliberately overrides the
+    # top-level lifecycle status. An unrecognized evidence adjective (the live
+    # report used ``verified``) must not erase an explicit ``status: completed``.
+    if claim_status in CLAIM_FAILED | CLAIM_BLOCKED | CLAIM_PARTIAL:
+        return False
+    return str(verdict.fields.get("status") or "").strip().lower() in CLAIM_COMPLETED
 
 
 def _has_success_evidence(run: dict[str, Any]) -> bool:

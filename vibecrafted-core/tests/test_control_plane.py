@@ -1413,6 +1413,65 @@ def test_await_run_idle_stall_fires_when_worker_is_dead(
     assert payload["worker_alive"] is False
 
 
+def test_await_run_rearms_when_stalled_projection_recovers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`stalled` is an observation, not a terminal verdict.
+
+    Await must stay armed when a false stall clears and only return after the
+    later terminal transition. This is the operator notification contract: a
+    transient watchdog flag cannot silently disarm supervision.
+    """
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    states = [
+        {
+            "run_id": "wflw-rearm-7",
+            "state": "stalled",
+            "health": "stalled",
+            "liveness": "pid_gone",
+            "updated_at": "2026-07-25T08:33:00+00:00",
+            "recovery_required": True,
+        },
+        {
+            "run_id": "wflw-rearm-7",
+            "state": "active",
+            "health": "active",
+            "liveness": "pid_gone",
+            "updated_at": "2026-07-25T08:34:00+00:00",
+        },
+        {
+            "run_id": "wflw-rearm-7",
+            "state": "completed",
+            "health": "final",
+            "liveness": "terminal",
+            "updated_at": "2026-07-25T08:35:00+00:00",
+            "completed_at": "2026-07-25T08:35:00+00:00",
+            "exit_code": 0,
+        },
+    ]
+    snapshots = iter(
+        {"active_runs": [], "recent_runs": [run], "stalled_runs": []} for run in states
+    )
+    monkeypatch.setattr(
+        control_plane, "sync_state", lambda *, only_run_id=None: next(snapshots)
+    )
+    observed: list[str] = []
+
+    payload = control_plane.await_run(
+        "wflw-rearm-7",
+        timeout_seconds=1,
+        interval_seconds=0.01,
+        hard_cap_seconds=5,
+        on_poll=lambda run: observed.append(str((run or {}).get("state") or "")),
+    )
+
+    assert observed == ["stalled", "active", "completed"]
+    assert payload["completed"] is True
+    assert payload["timed_out"] is False
+    assert payload["reason"] == "terminal"
+    assert payload["attempts"] == 3
+
+
 def test_await_run_returns_report_delivered_when_worker_is_gone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -2213,7 +2272,10 @@ def test_sync_state_closes_stalled_run_when_report_attests_completion(
         "agent: grok\n"
         "skill: workflow\n"
         "status: completed\n"
-        "claim_status: completed\n"
+        # Mirrors work-260725-111347-98000: the top-level lifecycle status is
+        # complete, but the agent used an unrecognized evidence adjective in
+        # claim_status. That must not erase the explicit completion status.
+        "claim_status: verified\n"
         "finalized: true\n"
         "claim: literal boost shipped and gates are green\n"
         "---\n\n"
