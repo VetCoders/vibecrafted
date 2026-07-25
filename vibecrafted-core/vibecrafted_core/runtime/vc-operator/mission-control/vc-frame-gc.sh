@@ -5,6 +5,7 @@ apply=0
 include_live=0
 quiet=0
 max_age_hours="${VIBECRAFTED_VC_FRAME_MAX_AGE_HOURS:-24}"
+bucket_tab_limit="${VIBECRAFTED_VC_FRAME_BUCKET_TAB_LIMIT:-0}"
 
 vc_frame_bin() {
   command -v vc-frame 2>/dev/null || return 1
@@ -13,16 +14,19 @@ vc_frame_bin() {
 usage() {
   cat <<'EOF'
 Usage:
-  vc-frame-gc.sh [--apply] [--include-live] [--max-age-hours <hours>] [--quiet]
+  vc-frame-gc.sh [--apply] [--include-live] [--max-age-hours <hours>]
+                 [--bucket-tab-limit <count>] [--quiet]
 
 Default behavior is a dry-run over vc-frame sessions:
   - always reports dead EXITED sessions
   - optionally targets detached live sessions older than the threshold
+  - reconciles terminal origin tabs and bounds durable bucket viewer tabs
 
 Flags:
   --apply                 Actually kill the selected sessions
   --include-live          Include detached live sessions older than the threshold
   --max-age-hours <n>     Age threshold for detached live sessions (default: 24)
+  --bucket-tab-limit <n>   Durable viewer tabs retained per bucket (default: 0)
   --quiet                 Suppress the summary when nothing actionable is found
   -h, --help              Show this help
 EOF
@@ -42,6 +46,13 @@ while (($#)); do
         exit 1
       }
       max_age_hours="${1:-}"
+      ;;
+    --bucket-tab-limit)
+      shift || {
+        echo "--bucket-tab-limit requires a value" >&2
+        exit 1
+      }
+      bucket_tab_limit="${1:-}"
       ;;
     --quiet)
       quiet=1
@@ -63,6 +74,28 @@ vc_frame_bin="$(vc_frame_bin)" || {
   echo "vc-frame is required." >&2
   exit 1
 }
+
+case "$bucket_tab_limit" in
+  ''|*[!0-9]*)
+    echo "--bucket-tab-limit must be a non-negative integer" >&2
+    exit 1
+    ;;
+esac
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+tab_gc="$script_dir/../../../vc_frame_tab_gc.py"
+control_plane="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}/control_plane"
+if [[ -f "$tab_gc" && "${VIBECRAFTED_TEST_MODE:-0}" != "1" ]]; then
+  tab_args=(
+    "$tab_gc"
+    --vc-frame-bin "$vc_frame_bin"
+    --control-plane "$control_plane"
+    --bucket-tab-limit "$bucket_tab_limit"
+  )
+  (( apply )) && tab_args+=(--apply)
+  (( quiet )) && tab_args+=(--quiet)
+  python3 "${tab_args[@]}" || true
+fi
 
 listing="$("$vc_frame_bin" list-sessions 2>/dev/null || true)"
 [[ -n "$listing" ]] || {
@@ -127,10 +160,11 @@ for raw in listing.splitlines():
     line = ansi.sub("", raw).strip()
     if not line:
         continue
-    parts = line.split()
-    if not parts:
+    if " [Created " not in line:
         continue
-    name = parts[0]
+    name = line.split(" [Created ", 1)[0].rstrip()
+    if not name:
+        continue
     dead = "(EXITED" in line
     attached = "(attached" in line or "(current" in line
     hours = created_hours(line)

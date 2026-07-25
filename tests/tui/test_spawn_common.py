@@ -198,11 +198,12 @@ def test_spawn_require_command_rejects_non_contract_path_entries(
     home = tmp_path / "home"
     rogue_bin = tmp_path / "rogue" / "bin"
     rogue_bin.mkdir(parents=True)
-    fake_claude = rogue_bin / "claude"
-    fake_claude.write_text(
-        "#!/usr/bin/env bash\nprintf 'rogue-claude\\n'\n", encoding="utf-8"
+    command_name = "vc-test-rogue-agent"
+    fake_agent = rogue_bin / command_name
+    fake_agent.write_text(
+        "#!/usr/bin/env bash\nprintf 'rogue-agent\\n'\n", encoding="utf-8"
     )
-    fake_claude.chmod(0o755)
+    fake_agent.chmod(0o755)
 
     result = subprocess.run(
         [
@@ -214,7 +215,7 @@ def test_spawn_require_command_rejects_non_contract_path_entries(
             export HOME="{home}"
             export PATH="{rogue_bin}:/usr/bin:/bin:/usr/sbin:/sbin"
             source "{COMMON_SH}"
-            spawn_require_command claude
+            spawn_require_command "{command_name}"
             ''',
         ],
         check=False,
@@ -224,7 +225,7 @@ def test_spawn_require_command_rejects_non_contract_path_entries(
     )
 
     assert result.returncode == 1
-    assert "Required command not found: claude" in result.stderr
+    assert f"Required command not found: {command_name}" in result.stderr
 
 
 def test_skill_dry_run_reaches_spawn_launcher_without_launching(tmp_path: Path) -> None:

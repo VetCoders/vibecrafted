@@ -168,8 +168,8 @@ require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runti
 require_file "$home_dir/.local/bin/vibecrafted"
 require_symlink "$home_dir/.local/bin/vc-help"
 require_symlink "$home_dir/.local/bin/vc-marbles"
-# Skill-symlink fan-out follows SYMLINK_TARGETS (agents, claude, codex, agy).
-# gemini is deprecated; no gemini_spawn.sh is shipped.
+# Explicit --tool selections keep their requested compatibility views.
+require_symlink "$home_dir/.agents/skills/vc-agents"
 require_symlink "$home_dir/.codex/skills/vc-agents"
 require_symlink "$home_dir/.claude/skills/vc-agents"
 require_file "$home_dir/.local/share/vibecrafted/tools/vibecrafted-current/runtime/scripts/codex_spawn.sh"

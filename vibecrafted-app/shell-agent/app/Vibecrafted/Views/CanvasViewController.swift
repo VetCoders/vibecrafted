@@ -21,6 +21,7 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
   private let logTextView = NSTextView()
 
   private var currentServerName: String?
+  private var currentRunID: String?
 
   override func loadView() {
     let container = NSView()
@@ -106,6 +107,10 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
       self, selector: #selector(handleMissionControlFocusSection),
       name: NSNotification.Name("MissionControlFocusSection"), object: nil
     )
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(handleMissionControlSelection),
+      name: NSNotification.Name("MissionControlSelection"), object: nil
+    )
 
     refreshRoutes()
   }
@@ -129,6 +134,15 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
 
   @objc private func handleSelectedServerChanged(_ notification: Notification) {
     currentServerName = notification.userInfo?["serverName"] as? String
+    currentRunID = nil
+    if segmentedControl.selectedSegment == 2 {
+      refreshLogs()
+    }
+  }
+
+  @objc private func handleMissionControlSelection(_ notification: Notification) {
+    currentRunID = notification.userInfo?["run_id"] as? String
+    currentServerName = nil
     if segmentedControl.selectedSegment == 2 {
       refreshLogs()
     }
@@ -153,8 +167,24 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
   }
 
   private func refreshLogs() {
+    if let runID = currentRunID {
+      Task {
+        do {
+          let detail = try loadRunDetail(runId: runID)
+          self.logTextView.string =
+            detail.transcriptTail.isEmpty
+            ? "Run \(runID) has no transcript output yet."
+            : detail.transcriptTail
+          self.logTextView.scrollToEndOfDocument(nil)
+        } catch {
+          self.logTextView.string = "Failed to load run \(runID): \(error)"
+        }
+      }
+      return
+    }
+
     guard let server = currentServerName else {
-      logTextView.string = "No server selected."
+      logTextView.string = "Select a run in Mission Control or a server in Routing Matrix."
       return
     }
     Task {
@@ -205,5 +235,16 @@ class CanvasViewController: NSViewController, NSTableViewDataSource, NSTableView
     }
 
     return cell
+  }
+
+  func tableViewSelectionDidChange(_ notification: Notification) {
+    guard notification.object as? NSTableView === matrixTableView else { return }
+    let row = matrixTableView.selectedRow
+    guard row >= 0, row < routes.count else { return }
+    NotificationCenter.default.post(
+      name: NSNotification.Name("SelectedServerChanged"),
+      object: self,
+      userInfo: ["serverName": routes[row].service]
+    )
   }
 }

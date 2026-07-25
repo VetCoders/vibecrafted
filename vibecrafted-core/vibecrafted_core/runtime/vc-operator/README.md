@@ -11,7 +11,9 @@ watches while a fleet runs.
 - `mission-control/recent-sessions.sh` — recent run/session watcher.
 - `mission-control/convergence-trend.sh` — marbles convergence monitor.
 - `mission-control/live-transcript.sh` — transcript tail pane.
-- `mission-control/vc-frame-gc.sh` — dead vc_frame session garbage collector
+- `mission-control/vc-frame-gc.sh` — dead-session and proof-gated run-tab
+  garbage collector. Durable captures remain under
+  `$VIBECRAFTED_HOME/control_plane/finished_runs`; terminal tabs are transient.
   (resolved via `_vetcoders_workflow_script "vc-operator"
 "mission-control/vc-frame-gc.sh"` in `runtime/shell/lib/vc-frame.sh`).
 - `mission-control/common.sh` — helpers shared between the panes above;

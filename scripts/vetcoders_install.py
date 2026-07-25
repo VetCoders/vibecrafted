@@ -576,9 +576,18 @@ def _is_writable(path: Path) -> bool:
 
 
 AGENT_RUNTIMES = ["codex", "claude", "agy", "junie", "grok"]
-SYMLINK_TARGETS = ["agents", "claude", "codex"]
+SYMLINK_TARGETS = ["agents"]
 # gemini kept in CHOICES only for legacy .gemini data dir compat (no active runtime)
-SYMLINK_TARGET_CHOICES = [*SYMLINK_TARGETS, "gemini", "agy", "junie", "grok"]
+SYMLINK_TARGET_CHOICES = [
+    *SYMLINK_TARGETS,
+    "claude",
+    "codex",
+    "gemini",
+    "agy",
+    "junie",
+    "grok",
+]
+SHADOWED_SKILL_VIEW_RUNTIMES = ("claude", "codex")
 
 # ---------------------------------------------------------------------------
 # Install state
@@ -3057,6 +3066,43 @@ def create_skill_view_symlink(target: Path, link: Path, dry_run: bool = False) -
     link.symlink_to(target)
 
 
+def prune_shadowed_skill_views(
+    store_path: Path,
+    skill_names: list[str],
+    active_runtimes: list[str],
+    dry_run: bool = False,
+) -> list[Path]:
+    """Remove managed runtime views shadowed by the canonical .agents view."""
+    removed: list[Path] = []
+    canonical_root = runtime_skills_dir("agents")
+    for skill_name in skill_names:
+        expected = store_path / skill_name
+        canonical = canonical_root / skill_name
+        if not canonical.is_symlink() or canonical.resolve(
+            strict=False
+        ) != expected.resolve(strict=False):
+            continue
+        for runtime in SHADOWED_SKILL_VIEW_RUNTIMES:
+            if runtime in active_runtimes:
+                continue
+            shadow = runtime_skills_dir(runtime) / skill_name
+            if not shadow.is_symlink():
+                continue
+            raw_target = os.readlink(shadow)
+            resolved = shadow.resolve(strict=False)
+            managed_target = (
+                resolved == expected.resolve(strict=False)
+                or "/vibecrafted/tools/" in raw_target
+                or "/.vibecrafted/skills/" in raw_target
+            )
+            if not managed_target:
+                continue
+            if not dry_run:
+                shadow.unlink()
+            removed.append(shadow)
+    return removed
+
+
 def _copy_managed_launcher(src: Path, dst: Path) -> bool:
     if dst.exists() or dst.is_symlink():
         if not _is_replaceable_framework_launcher(dst):
@@ -4918,6 +4964,10 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
             default = store_path / name
             link = rt_skills / name
             create_skill_view_symlink(default, link, dry_run=dry_run)
+    for shadow in prune_shadowed_skill_views(
+        store_path, selected_skills, all_runtimes, dry_run=dry_run
+    ):
+        print(f"  {dim('removed shadow')} {shadow}")
     print()
 
     # --- Execute: agent command surfaces ---
@@ -5399,6 +5449,10 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
                 default = store_path / name
                 link = rt_skills / name
                 create_skill_view_symlink(default, link, dry_run=dry_run)
+        for shadow in prune_shadowed_skill_views(
+            store_path, selected_skills, all_runtimes, dry_run=dry_run
+        ):
+            print(f"  removed shadow: {shadow}")
         print()
 
         print("Installing agent commands:")
