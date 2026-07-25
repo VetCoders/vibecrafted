@@ -234,7 +234,9 @@ def test_inspect_flags_agent_fairness_breach_and_never_auto_passes(
     tmp_path: Path,
 ) -> None:
     repo = _init_repo(tmp_path)
-    fair_sha = _commit(repo, _fair_message("codex"), {"ok.txt": "ok\n"})
+    # Root commit: must list real files (diff-tree --root) and must not invent
+    # an empty-envelope gap when the commit actually added paths.
+    fair_sha = _commit(repo, _fair_message("codex"), {"proof.txt": "proof\n"})
     unfair_sha = _commit(repo, _unfair_message(), {"bad.txt": "bad\n"})
 
     fair = trust.extract_fairness_and_completeness_claims(repo=repo, sha=fair_sha)
@@ -246,12 +248,117 @@ def test_inspect_flags_agent_fairness_breach_and_never_auto_passes(
     # Format alone must not become pass without runtime evidence.
     assert fair["recommended_verdict"] == "pass-with-gaps"
     assert fair["failures"] == []
+    assert fair["files"] == ["proof.txt"]
+    assert not any("empty envelope" in g for g in fair["gaps"])
+    assert not any(
+        "zero paths" in str(c.get("evidence", ""))
+        for c in fair["claims"]
+        if isinstance(c, dict)
+    )
 
     assert unfair["recommended_verdict"] == "block"
     assert any("fairness" in f for f in unfair["failures"])
     assert any("vendor" in f for f in unfair["failures"])
     assert any(
         "fairness" in c["claim"] for c in unfair["claims"] if isinstance(c, dict)
+    )
+    # Non-root unfair commit also lists its real file.
+    assert unfair["files"] == ["bad.txt"]
+
+
+def test_inspect_root_commit_lists_files_via_diff_tree_root(tmp_path: Path) -> None:
+    """Regression: root commits must not look like empty envelopes."""
+    repo = _init_repo(tmp_path)
+    sha = _commit(
+        repo,
+        _fair_message("grok"),
+        {"proof.txt": "root-proof\n", "nested/a.py": "print(1)\n"},
+    )
+    files = trust._commit_files(repo, sha)
+    assert "proof.txt" in files
+    assert "nested/a.py" in files
+
+    inspect = trust.extract_fairness_and_completeness_claims(repo=repo, sha=sha)
+    assert set(inspect["files"]) == {"proof.txt", "nested/a.py"}
+    assert not any("empty envelope" in g for g in inspect["gaps"])
+    assert inspect["recommended_verdict"] == "pass-with-gaps"
+    assert inspect["failures"] == []
+
+
+def test_inspect_flags_foreign_unclaimed_envelope_files(tmp_path: Path) -> None:
+    """Message claims a scoped path set while the envelope smuggles foreign files."""
+    repo = _init_repo(tmp_path)
+    # Baseline root so the unfair commit is a non-root multi-file envelope.
+    _commit(repo, _fair_message("codex"), {"README.md": "base\n"})
+
+    foreign_message = textwrap.dedent(
+        """\
+        [codex/workflow] feat(trust): touch only core/owned.py
+
+        Updates `core/owned.py` with the focused helper path and pytest coverage.
+
+        Authored-By: codex <agents@vetcoders.io>
+        session_id: 019e93be-379d-7303-9ad4-ffae468db99f
+        time: 2026-07-25T12:00:00+02:00
+        runtime: terminal
+        """
+    )
+    sha = _commit(
+        repo,
+        foreign_message,
+        {
+            "core/owned.py": "owned = True\n",
+            "secrets/other_agent.env": "FOREIGN=1\n",
+            "unrelated/smuggled.txt": "nope\n",
+        },
+    )
+
+    inspect = trust.extract_fairness_and_completeness_claims(repo=repo, sha=sha)
+
+    assert "core/owned.py" in inspect["files"]
+    assert "secrets/other_agent.env" in inspect["files"]
+    assert "unrelated/smuggled.txt" in inspect["files"]
+    assert inspect["recommended_verdict"] in {"pass-with-gaps", "block"}
+    assert any("foreign unclaimed" in g for g in inspect["gaps"])
+    assert any(
+        "foreign unclaimed" in c["claim"]
+        for c in inspect["claims"]
+        if isinstance(c, dict)
+    )
+    # Named evidence must list the smuggled paths.
+    foreign_claim = next(
+        c
+        for c in inspect["claims"]
+        if isinstance(c, dict) and "foreign unclaimed" in c["claim"]
+    )
+    assert "secrets/other_agent.env" in foreign_claim["evidence"]
+    assert "unrelated/smuggled.txt" in foreign_claim["evidence"]
+
+
+def test_inspect_flags_claimed_paths_absent_from_envelope(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    message = textwrap.dedent(
+        """\
+        [grok/workflow] fix(runtime): repair never_exists.py
+
+        Fixes `never_exists.py` and documents the gate in docs/missing.md.
+
+        Authored-By: grok <agents@vetcoders.io>
+        session_id: 019e93be-379d-7303-9ad4-ffae468db99f
+        time: 2026-07-25T12:00:00+02:00
+        runtime: terminal
+        """
+    )
+    sha = _commit(repo, message, {"actually_touched.txt": "x\n"})
+    inspect = trust.extract_fairness_and_completeness_claims(repo=repo, sha=sha)
+
+    assert inspect["files"] == ["actually_touched.txt"]
+    assert inspect["recommended_verdict"] == "block"
+    assert any("absent from the commit envelope" in f for f in inspect["failures"])
+    assert any(
+        "message-claimed paths are present" in c["claim"]
+        for c in inspect["claims"]
+        if isinstance(c, dict)
     )
 
 

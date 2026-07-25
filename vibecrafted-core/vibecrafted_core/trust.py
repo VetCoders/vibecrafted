@@ -64,6 +64,14 @@ _UNEARNED_DONE = re.compile(
     r"\b(done|fixed|complete|shipped|production.?ready|all green)\b",
     re.IGNORECASE,
 )
+# Path-like tokens claimed in the commit body (message-claimed envelope).
+# Matches repo-relative paths with a separator or a dotted filename, optional
+# backticks, and optional trailing punctuation from prose.
+_CLAIMED_PATH_RE = re.compile(
+    r"(?:`(?P<bt>[A-Za-z0-9_./-]{2,200})`"
+    r"|(?P<bare>(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+"
+    r"|[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,12}))"
+)
 
 
 def _now_iso() -> str:
@@ -150,9 +158,23 @@ def _commit_message(repo: Path, sha: str) -> str:
 
 
 def _commit_files(repo: Path, sha: str) -> list[str]:
+    """List paths changed by *sha*, including root commits.
+
+    ``git diff-tree`` without ``--root`` returns no paths for the repository's
+    first commit (no parent). Always pass ``--root`` so root commits that
+    added real files are not mis-read as empty envelopes.
+    """
     full_sha = _resolve_commit(repo, sha)
     proc = subprocess.run(
-        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", full_sha],
+        [
+            "git",
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            full_sha,
+        ],
         cwd=str(repo),
         text=True,
         capture_output=True,
@@ -161,6 +183,122 @@ def _commit_files(repo: Path, sha: str) -> list[str]:
     if proc.returncode != 0:
         raise ValueError(proc.stderr.strip() or f"cannot list files for {full_sha}")
     return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
+_NON_PATH_EXTS = frozenset(
+    {
+        "com",
+        "org",
+        "net",
+        "io",
+        "ai",
+        "dev",
+        "app",
+        "edu",
+        "gov",
+        "info",
+        "co",
+        "uk",
+        "de",
+        "pl",
+    }
+)
+
+
+def _normalize_claimed_path(raw: str, *, backtick: bool) -> str | None:
+    token = raw.strip().strip("`\"'").rstrip(".,;:)")
+    if not token or token in {".", ".."}:
+        return None
+    # Drop URL-like, emails, and pure version noise.
+    if "://" in token or token.startswith("http") or "@" in token:
+        return None
+    if re.fullmatch(r"v?\d+(\.\d+)+", token):
+        return None
+    # Ignore bare extensions and single-char noise.
+    if token.startswith(".") and "/" not in token:
+        return None
+    has_ext = bool(re.search(r"\.[A-Za-z0-9]{1,12}$", token))
+    slash_count = token.count("/")
+    if has_ext and slash_count == 0:
+        ext = token.rsplit(".", 1)[-1].lower()
+        # Bare "anthropic.com" from email footers is not a repo path.
+        if ext in _NON_PATH_EXTS and not backtick:
+            return None
+    # Reject agent/runtime subject fragments like "codex/workflow" unless the
+    # author explicitly backtick-quoted a real path (or it carries an extension
+    # / deeper tree path).
+    if not backtick and not has_ext and slash_count < 2:
+        return None
+    if not has_ext and slash_count == 0 and not backtick:
+        return None
+    # Require either a path separator or a file extension.
+    if "/" not in token and "." not in token:
+        return None
+    return token
+
+
+def extract_claimed_paths(message: str) -> list[str]:
+    """Mechanical paths the message claims to touch (body + path-ish subject).
+
+    The conventional subject prefix ``[<agent>/<runtime>]`` is stripped before
+    scanning so it is never mistaken for a repo path.
+    """
+    body = _message_body_without_trailers(message)
+    subject = message.splitlines()[0] if message.splitlines() else ""
+    # Drop [<agent>/<runtime>] so "codex/workflow" is not a claimed path.
+    subject = re.sub(r"^\[[^\]]+\]\s*", "", subject)
+    haystack = f"{subject}\n{body}"
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in _CLAIMED_PATH_RE.finditer(haystack):
+        bt = match.group("bt")
+        bare = match.group("bare")
+        raw = bt or bare or ""
+        path = _normalize_claimed_path(raw, backtick=bool(bt))
+        if path is None or path in seen:
+            continue
+        # Skip trailer-looking keys that can look path-ish.
+        if path.lower().startswith("authored-by"):
+            continue
+        seen.add(path)
+        found.append(path)
+    return found
+
+
+def _envelope_path_mismatch(
+    *,
+    claimed: Sequence[str],
+    files: Sequence[str],
+) -> tuple[list[str], list[str]]:
+    """Return (claimed_missing_from_diff, foreign_unclaimed_in_diff).
+
+    Matching is suffix/basename tolerant so a body may say ``trust.py`` while
+    the tree carries ``vibecrafted_core/trust.py``.
+    """
+    file_set = list(files)
+    claimed_list = list(claimed)
+
+    def _covers(claimed_path: str, actual: str) -> bool:
+        if claimed_path == actual:
+            return True
+        # Prefix-tolerant: body says trust.py, tree has vibecrafted_core/trust.py
+        if actual.endswith("/" + claimed_path) or claimed_path.endswith("/" + actual):
+            return True
+        return Path(claimed_path).name == Path(actual).name and (
+            "/" not in claimed_path or "/" not in actual
+        )
+
+    missing: list[str] = []
+    for path in claimed_list:
+        if not any(_covers(path, actual) for actual in file_set):
+            missing.append(path)
+
+    foreign: list[str] = []
+    if claimed_list:
+        for actual in file_set:
+            if not any(_covers(path, actual) for path in claimed_list):
+                foreign.append(actual)
+    return missing, foreign
 
 
 def _message_body_without_trailers(message: str) -> str:
@@ -329,7 +467,7 @@ def extract_fairness_and_completeness_claims(
             {
                 "claim": "commit envelope lists changed files",
                 "grade": "strong",
-                "evidence": "git diff-tree returned zero paths",
+                "evidence": "git diff-tree --root returned zero paths",
             }
         )
     else:
@@ -341,15 +479,75 @@ def extract_fairness_and_completeness_claims(
             }
         )
 
-    # Foreign-file heuristic: multi-agent pack claim without matching Authored-By
-    # is already covered; additionally flag if subject uses wrong agent name vs
-    # git author when author is clearly an agent email.
+    # --- Envelope honesty: message-claimed paths vs diff-tree files ---
+    # Foreign/unclaimed files are a first-class agent-fairness axis: a commit
+    # that smuggles paths the message does not claim (or claims paths the
+    # commit never touched) fails the envelope contract.
+    claimed_paths = extract_claimed_paths(message)
+    missing_claimed, foreign_files = _envelope_path_mismatch(
+        claimed=claimed_paths, files=files
+    )
+    if claimed_paths:
+        claims.append(
+            {
+                "claim": "message-claimed paths are present in the commit envelope",
+                "grade": "strong",
+                "evidence": (
+                    f"claimed={claimed_paths!r}; missing_from_diff={missing_claimed!r}"
+                    if missing_claimed
+                    else f"all claimed paths covered by envelope: {claimed_paths!r}"
+                ),
+            }
+        )
+        claims.append(
+            {
+                "claim": (
+                    "staged/commit envelope does not carry foreign unclaimed files"
+                ),
+                "grade": "strong",
+                "evidence": (
+                    f"foreign_unclaimed={foreign_files!r} vs claimed={claimed_paths!r}"
+                    if foreign_files
+                    else f"no foreign files beyond claimed set ({len(files)} path(s))"
+                ),
+            }
+        )
+        if missing_claimed:
+            failures.append(
+                "message claims paths absent from the commit envelope: "
+                + ", ".join(missing_claimed)
+            )
+        if foreign_files:
+            # Multi-file smuggling is a fairness/completeness gap (or block when
+            # combined with other fairness failures). Named evidence is required.
+            gaps.append(
+                "commit envelope carries foreign unclaimed files: "
+                + ", ".join(foreign_files)
+            )
+    elif files:
+        # No path tokens in the message: still emit the axis so inspect always
+        # surfaces the envelope contract (cannot prove foreign without claims).
+        claims.append(
+            {
+                "claim": (
+                    "staged/commit envelope does not carry foreign unclaimed files"
+                ),
+                "grade": "medium",
+                "evidence": (
+                    "message claims no concrete paths; envelope has "
+                    f"{len(files)} path(s) — scope honesty not path-checkable"
+                ),
+            }
+        )
+
+    # Align git author email with Authored-By when the author is a named agent
+    # mailbox (not the shared agents@ fleet identity).
     git_email = commit.get("author_email", "")
     if (
         authored_by
         and git_email.endswith("@vetcoders.io")
-        and authored_by not in git_email
         and "agents@" not in git_email
+        and authored_by not in git_email
     ):
         gaps.append(
             f"git author email {git_email!r} does not align with Authored-By {authored_by!r}"
