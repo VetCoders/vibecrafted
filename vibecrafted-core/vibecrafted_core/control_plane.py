@@ -7,6 +7,7 @@ import errno
 import fcntl
 import json
 import os
+import re
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -23,6 +24,7 @@ from .delivery.model import (
     ProofResult,
     ProofState,
 )
+from .report_contract import CLAIM_COMPLETED, validate_report_file
 from .runtime_paths import vibecrafted_home
 from .settlement import (
     board_fxn_counts,
@@ -533,6 +535,95 @@ def _heartbeat_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | Non
     return (now - heartbeat_at).total_seconds()
 
 
+def _transcript_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | None:
+    """Seconds since the transcript last grew, or None when there is none."""
+    transcript = str(run.get("latest_transcript") or "").strip()
+    if not transcript:
+        return None
+    try:
+        mtime = Path(transcript).stat().st_mtime
+    except OSError:
+        return None
+    stamped = dt.datetime.fromtimestamp(mtime, dt.timezone.utc)
+    return max((now - stamped).total_seconds(), 0.0)
+
+
+def _activity_age_seconds(run: dict[str, Any], now: dt.datetime) -> float | None:
+    """Age of the freshest proof of life, not merely of the heartbeat stamp.
+
+    Two reasons the heartbeat alone lies. It is stamped once, when the first
+    output arrives, and never refreshed for the rest of the run, so on its own
+    every run older than the threshold reads as stale. And a worker sitting
+    inside a ten-minute ``cargo build`` is silent in the token stream while
+    being entirely alive — silence during a tool call is not death.
+
+    The transcript keeps a file mtime that moves whenever the worker actually
+    speaks, so take whichever signal is fresher.
+    """
+    ages = [
+        age
+        for age in (
+            _heartbeat_age_seconds(run, now),
+            _transcript_age_seconds(run, now),
+        )
+        if age is not None
+    ]
+    return min(ages) if ages else None
+
+
+def _freshest_activity_stamp(*stamps: str, transcript: str = "") -> str:
+    """Newest of the run's liveness clocks, as an ISO stamp.
+
+    The health clock used ``heartbeat_at`` alone, and that stamp is written
+    once — at first output — so a run doing real work for longer than
+    ``RUN_STALL_SECONDS`` aged itself into ``stalled`` health while its worker
+    was still talking. The transcript mtime moves whenever the worker actually
+    speaks, so it is the honest floor under the frozen heartbeat.
+    """
+    candidates = list(stamps)
+    if transcript:
+        try:
+            mtime = Path(transcript).stat().st_mtime
+        except OSError:
+            pass
+        else:
+            candidates.append(
+                dt.datetime.fromtimestamp(mtime, dt.timezone.utc).isoformat()
+            )
+    best: dt.datetime | None = None
+    best_raw = ""
+    for raw in candidates:
+        parsed = _parse_iso(str(raw or ""))
+        if parsed is None:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        if best is None or parsed > best:
+            best = parsed
+            best_raw = str(raw)
+    return best_raw
+
+
+def _append_last_error(previous: str, explanation: str, *, limit: int = 4) -> str:
+    """Append a watchdog note without letting it rewrite itself forever.
+
+    The reconciler runs on every projection, so a parked run accumulated a
+    dozen near-identical copies of the same sentence, differing only in the
+    stale-seconds count. Collapse same-shape notes and keep the chain bounded.
+    """
+    explanation = str(explanation or "").strip()
+    if not explanation:
+        return str(previous or "").strip()
+    shape = re.sub(r"\d+", "#", explanation)
+    parts = [
+        part.strip()
+        for part in str(previous or "").split(";")
+        if part.strip() and re.sub(r"\d+", "#", part.strip()) != shape
+    ]
+    parts.append(explanation)
+    return "; ".join(parts[-limit:])
+
+
 def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
     result = dict(run)
     state = str(result.get("state") or "")
@@ -590,7 +681,7 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
             return result
 
     now = _now()
-    age_seconds = _heartbeat_age_seconds(result, now)
+    age_seconds = _activity_age_seconds(result, now)
     threshold = _configured_stale_heartbeat_seconds()
     if age_seconds is None or age_seconds < threshold:
         return result
@@ -646,22 +737,43 @@ def _reconcile_dead_launcher(run: dict[str, Any]) -> dict[str, Any]:
     )
     if past_gc_grace:
         explanation = (
-            f"garbage-collected: dead launcher, heartbeat stale >{gc_grace}s; "
-            f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
+            f"garbage-collected: dead launcher, no activity >{gc_grace}s; "
+            f"{pid_detail}; no worker activity for {int(age_seconds)}s "
             f"(threshold {threshold}s); no live launcher proof{lock_detail}; "
             f"settlement parks as needs_attention before archive"
         )
     else:
         explanation = (
-            f"{pid_detail}; heartbeat stale for {int(age_seconds)}s "
+            f"{pid_detail}; no worker activity for {int(age_seconds)}s "
             f"(threshold {threshold}s); no live launcher proof{lock_detail}"
             f"{artifact_detail}; recovery_required"
         )
-    previous_error = str(result.get("last_error") or "").strip()
-    result["last_error"] = (
-        f"{previous_error}; {explanation}" if previous_error else explanation
+    result["last_error"] = _append_last_error(
+        str(result.get("last_error") or ""), explanation
     )
     return result
+
+
+def _report_attests_completion(run: dict[str, Any]) -> bool:
+    """True when the delivered report carries the worker's own success attestation.
+
+    ``finalized: true`` plus a non-empty ``claim`` is the deliberate self-attest
+    the report contract defines — the very signal the operator reads off the
+    frontmatter. It had no edge into the control plane: a run could finalize its
+    report, land its commit and exit, while the record stayed ``stalled``
+    forever because exit_code and completed_at were never recorded. The
+    attestation IS the terminal proof; treat it as such.
+    """
+    report = str(run.get("latest_report") or "").strip()
+    if not report:
+        return False
+    verdict = validate_report_file(report, require_frontmatter=False)
+    if "report_missing" in verdict.errors:
+        return False
+    if not verdict.finalized or not verdict.claim:
+        return False
+    status = verdict.claim_status
+    return not status or status in CLAIM_COMPLETED
 
 
 def _has_success_evidence(run: dict[str, Any]) -> bool:
@@ -677,7 +789,9 @@ def _has_success_evidence(run: dict[str, Any]) -> bool:
         return True
     if str(run.get("completed_at") or "").strip():
         return True
-    return str(run.get("liveness") or "") == "terminal"
+    if str(run.get("liveness") or "") == "terminal":
+        return True
+    return _report_attests_completion(run)
 
 
 def _reconcile_successful_terminal(run: dict[str, Any]) -> dict[str, Any]:
@@ -1161,7 +1275,11 @@ def _merge_event_stream(
             )
         )
         declared_health = str(payload.get("health") or "")
-        activity_at = str(payload.get("heartbeat_at") or updated_at)
+        activity_at = _freshest_activity_stamp(
+            str(payload.get("heartbeat_at") or ""),
+            updated_at,
+            transcript=transcript,
+        ) or str(payload.get("heartbeat_at") or updated_at)
         if declared_health in {"stalled", "final", "unknown"}:
             health = declared_health
         else:
@@ -1804,10 +1922,17 @@ def _project_run_payload(
         payload["health"] = "active"
     else:
         # Synthetic state events legitimately refresh `updated_at`; they do not
-        # prove worker activity. Heartbeat is the canonical temporal evidence.
+        # prove worker activity. Heartbeat plus transcript growth is the
+        # canonical temporal evidence — the heartbeat stamp alone is written
+        # once, at first output, so it ages a working run into `stalled`.
+        # A growing transcript is worker activity, never a synthetic refresh.
         payload["health"] = _state_health(
             state,
-            str(payload.get("heartbeat_at") or payload.get("updated_at") or ""),
+            _freshest_activity_stamp(
+                str(payload.get("heartbeat_at") or ""),
+                transcript=str(payload.get("latest_transcript") or ""),
+            )
+            or str(payload.get("heartbeat_at") or payload.get("updated_at") or ""),
         )
     if not payload.get("liveness"):
         payload["liveness"] = "terminal" if _run_is_terminal(payload) else "heartbeat"
@@ -2278,10 +2403,27 @@ def _await_child_runs(snapshot: dict[str, Any], target: str) -> list[dict[str, A
 
 
 def _report_file_written(path: str) -> bool:
+    """True when the announced report carries worker evidence, not just bytes.
+
+    Size alone is a false seal. The launcher materializes an identity shell at
+    spawn time, so the announced path is non-empty from the run's first second;
+    await read that shell as ``report_delivered`` and returned rc=0 the moment
+    the worker died, reporting a green handoff for a run that never wrote a
+    word. The report contract already brands the untouched shell
+    ``report_missing`` — honour that verdict here instead of re-deciding it.
+
+    An honest blocked/partial/failed report is still a delivery: the worker
+    spoke. Only the never-touched launcher template is not.
+    """
     try:
-        return Path(str(path)).stat().st_size > 0
+        if Path(str(path)).stat().st_size <= 0:
+            return False
     except OSError:
         return False
+    return (
+        "report_missing"
+        not in validate_report_file(path, require_frontmatter=False).errors
+    )
 
 
 def _resolve_await_hard_cap(hard_cap_seconds: float | None) -> float | None:

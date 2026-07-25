@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -23,6 +24,10 @@ from .model_overrides import _model_override_receipt
 from .report_contract import CLAIM_DIGEST_ENV
 
 STDIO_LIMIT_BYTES = 16 * 1024 * 1024
+# Well under the reconciler's 120s staleness threshold, so an ordinary talking
+# worker is never mistaken for a dead one, while a long tool call still emits
+# at most a handful of pulse events.
+_HEARTBEAT_INTERVAL_SECONDS = 20.0
 
 
 def _utc_now() -> datetime:
@@ -279,6 +284,7 @@ class AsyncRunHandle:
     cost_usd: float | None = None
     cost_source: str | None = None
     resume_command: str = ""
+    heartbeat_monotonic: float = 0.0
 
     @property
     def state(self) -> RunState:
@@ -639,6 +645,7 @@ class AsyncSupervisor:
                 sys.stdout.buffer.flush()
             if not handle.first_output_seen:
                 handle.first_output_seen = True
+                handle.heartbeat_monotonic = time.monotonic()
                 await self._transition(
                     handle,
                     RunState.FIRST_OUTPUT_SEEN,
@@ -651,6 +658,28 @@ class AsyncSupervisor:
                     handle,
                     RunState.ACTIVE,
                     "process active",
+                    payload={
+                        "liveness": "pid_alive",
+                        "heartbeat_at": _utc_now().isoformat(),
+                    },
+                )
+                continue
+            # The heartbeat used to be stamped once, at first output, and never
+            # again — so every run longer than the staleness threshold looked
+            # dead to the reconciler the instant its pid trail went cold. Keep
+            # it beating for as long as the worker speaks. `_emit` (not
+            # `_transition`) on purpose: this is a pulse, not a state change,
+            # and must not append to the handle's state history.
+            now_monotonic = time.monotonic()
+            if (
+                now_monotonic - handle.heartbeat_monotonic
+                >= _HEARTBEAT_INTERVAL_SECONDS
+            ):
+                handle.heartbeat_monotonic = now_monotonic
+                await self._emit(
+                    handle.run_id,
+                    RunState.ACTIVE,
+                    "worker heartbeat",
                     payload={
                         "liveness": "pid_alive",
                         "heartbeat_at": _utc_now().isoformat(),

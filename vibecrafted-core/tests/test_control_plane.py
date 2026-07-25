@@ -532,9 +532,7 @@ def test_sync_state_gc_terminalizes_old_stalled_dead_launcher(
     assert run["health"] == "final"
     assert run["liveness"] == "pid_gone"
     assert run["completed_at"] == now.isoformat()
-    assert (
-        "garbage-collected: dead launcher, heartbeat stale >3600s" in run["last_error"]
-    )
+    assert "garbage-collected: dead launcher, no activity >3600s" in run["last_error"]
     assert all(item["run_id"] != "just-old-stalled" for item in snapshot["active_runs"])
 
     persisted = json.loads(
@@ -2113,3 +2111,210 @@ def test_await_status_with_run_id_is_lockless_during_board_sync(
     finally:
         fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
         holder.close()
+
+
+# --- stall-detector truth: silence is not death, finalization is terminal ----
+# Field evidence 2026-07-25 (work-260725-111347-98000, work-260725-103320-02000,
+# work-260725-052543-65000, impl-260725-032908-13000): every one of these runs
+# carried heartbeat_at == started_at, exit_code None and completed_at "", while
+# its report was already on disk. Three separate edges were missing.
+
+
+def test_await_run_refuses_untouched_launcher_template_as_delivery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A pre-seeded identity shell is transport scaffolding, never a handoff.
+
+    The launcher materializes the report path at spawn time, so `size > 0` was
+    true from the run's first second. Await read that as ``report_delivered``
+    and answered rc=0 the moment the worker died — a green verdict on a run
+    that never wrote a word. Delivery now requires worker evidence.
+    """
+    from vibecrafted_core.report_contract import materialize_launcher_report_template
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "100000")
+    report = tmp_path / "shell-report.md"
+    assert materialize_launcher_report_template(
+        report, run_id="wflw-template-7", agent="grok", skill="workflow"
+    )
+    assert report.stat().st_size > 0
+    _write_meta(
+        home,
+        {
+            "run_id": "wflw-template-7",
+            "status": "running",
+            "agent": "grok",
+            "mode": "workflow",
+            "skill_code": "wflw",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:00:00+00:00",
+            "worker_pid": 999999999,
+            "worker_pgid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    payload = control_plane.await_run(
+        "wflw-template-7",
+        timeout_seconds=0.2,
+        interval_seconds=0.05,
+        hard_cap_seconds=5,
+        report_path=str(report),
+    )
+
+    assert payload["reason"] != "report_delivered"
+    assert payload["completed"] is False
+    assert payload["await_rc"] != 0
+
+    # A worker that actually wrote into the shell IS a delivery, including an
+    # honest non-success claim — the contract only rejects the untouched shell.
+    report.write_text(
+        "---\n"
+        "run_id: wflw-template-7\n"
+        "agent: grok\n"
+        "skill: workflow\n"
+        "status: blocked\n"
+        "finalized: false\n"
+        "---\n\n"
+        "Blocked on a missing credential.\n",
+        encoding="utf-8",
+    )
+    delivered = control_plane.await_run(
+        "wflw-template-7",
+        timeout_seconds=5,
+        interval_seconds=0.05,
+        hard_cap_seconds=5,
+        report_path=str(report),
+    )
+    assert delivered["completed"] is True
+    assert delivered["reason"] == "report_delivered"
+
+
+def test_sync_state_closes_stalled_run_when_report_attests_completion(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Finalization is a terminal transition, even from `stalled`.
+
+    Live case work-260725-111347-98000: the report was finalized, the commit
+    landed, the worker exited — and the control plane held `state=stalled`
+    forever because exit_code and completed_at were never recorded. The
+    worker's own `finalized: true` + `claim` attestation is the terminal proof.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "1")
+    monkeypatch.setenv("VIBECRAFTED_RUN_GC_GRACE_SECONDS", "999999999")
+    report = tmp_path / "finalized-report.md"
+    report.write_text(
+        "---\n"
+        "run_id: wflw-finalized-9\n"
+        "agent: grok\n"
+        "skill: workflow\n"
+        "status: completed\n"
+        "claim_status: completed\n"
+        "finalized: true\n"
+        "claim: literal boost shipped and gates are green\n"
+        "---\n\n"
+        "## Report\n",
+        encoding="utf-8",
+    )
+    _write_meta(
+        home,
+        {
+            "run_id": "wflw-finalized-9",
+            "status": "running",
+            "agent": "grok",
+            "mode": "workflow",
+            "skill_code": "wflw",
+            "root": str(tmp_path),
+            "updated_at": "2026-05-19T00:02:00+00:00",
+            "heartbeat_at": "2026-05-19T00:00:00+00:00",
+            "report": str(report),
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] == "completed"
+    assert run["health"] == "final"
+    assert run["liveness"] == "terminal"
+    assert run["completed_at"]
+    assert not run.get("recovery_required")
+    assert all(item["run_id"] != "wflw-finalized-9" for item in snapshot["active_runs"])
+
+
+def test_sync_state_keeps_run_alive_while_transcript_is_still_growing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Silence in the token stream during a long tool call is not death.
+
+    Live case work-260725-103320-02000: the agent was mid `cargo build` (10+
+    min of no tokens) and the detector called it stalled. `heartbeat_at` is
+    stamped once, at first output, so it cannot carry a run's liveness alone —
+    a growing transcript is the proof that the worker is still speaking.
+    """
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    monkeypatch.setenv("VIBECRAFTED_LIVENESS_STALE_HEARTBEAT_SECONDS", "120")
+    transcript = tmp_path / "transcript.log"
+    transcript.write_text(
+        "release build finished. Let me check if install ran", "utf-8"
+    )
+    # Mirrors the live record exactly: projection kept updated_at fresh while
+    # heartbeat_at stayed frozen at the run's first output 43 minutes earlier.
+    now = dt.datetime.now(dt.timezone.utc)
+    _write_meta(
+        home,
+        {
+            "run_id": "wflw-building-3",
+            "status": "running",
+            "agent": "grok",
+            "mode": "workflow",
+            "skill_code": "wflw",
+            "root": str(tmp_path),
+            "updated_at": now.isoformat(),
+            # Ancient heartbeat: stamped once at first output, never refreshed.
+            "heartbeat_at": (now - dt.timedelta(minutes=43)).isoformat(),
+            "transcript": str(transcript),
+            "launcher_pid": 999999999,
+            "liveness": "pid_alive",
+        },
+    )
+
+    snapshot = control_plane.sync_state()
+    run = snapshot["recent_runs"][0]
+
+    assert run["state"] != "stalled"
+    assert run["health"] != "stalled"
+    assert run["liveness"] != "pid_gone"
+    assert not run.get("recovery_required")
+
+
+def test_append_last_error_collapses_repeated_watchdog_notes() -> None:
+    """The reconciler must not rewrite its own sentence on every projection.
+
+    Live records carried a dozen copies of the same note, differing only in the
+    stale-seconds count, which pushed the real first cause off the operator's
+    screen.
+    """
+    chain = ""
+    for age in (126, 9153, 9158, 9536, 9616):
+        chain = control_plane._append_last_error(
+            chain,
+            f"launcher_pid 63148 is not alive; no worker activity for {age}s "
+            f"(threshold 120s); no live launcher proof; recovery_required",
+        )
+
+    assert chain.count("launcher_pid 63148 is not alive") == 1
+    assert "9616s" in chain
+    assert "9153s" not in chain
+
+    # Distinct causes are still preserved, and the chain stays bounded.
+    chain = control_plane._append_last_error(chain, "artifact contract failed")
+    assert "artifact contract failed" in chain
+    assert "no worker activity for 9616s" in chain
