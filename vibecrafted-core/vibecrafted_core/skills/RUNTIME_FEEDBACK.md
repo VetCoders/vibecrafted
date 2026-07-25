@@ -184,6 +184,19 @@ entries get a `Promoted:` line, not deletion.
   `5c99f72d`; `vibecrafted scaffold-doctor` absent from the installed deck while
   `afecda98` sits in the tree; the same day's await returned rc=0 on a 223-byte
   launcher template because the running distribution predates `068428bc`.
+- **Promoted:** `7fa51c66` (vc-frame) — `zellij-utils/src/install_freshness.rs`
+  plus an `[INSTALL FRESHNESS]` line in `setup --check`, derived independently
+  by a worker from the same day's cost: _"a commit that lands in the source but
+  not in the installed binary looked exactly like a fix that does not work, and
+  cost a full triage pass today."_ Reads `.git` directly (loose ref, packed-refs,
+  detached, worktree pointer) so it cannot hang and needs no `git` on the box.
+  The pattern now has a mechanism; keep this entry as the reason it exists.
+- **Diagnostic caution (same day, learned the hard way):** stale-install is a
+  _seductive_ explanation — it was true three times and still was **not** the
+  root cause of the vc-frame counters. The real mechanism was an idle-exit
+  watchdog reaping the triage drawers the counters read from (`7fa51c66`).
+  Confirm the causal chain in logs before closing on "just reinstall": a fix
+  that is merely plausible ships the bug forward under a green report.
 
 ### `grep`/`rg` on working repos (zero-fallback)
 
