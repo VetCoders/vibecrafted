@@ -100,6 +100,14 @@ entries get a `Promoted:` line, not deletion.
   path.
 - **Evidence:** 2026-07-25 monitors `bgilttlr3`/`byb31gua4` (false) vs
   `b1dyhpsyk` (correct pattern).
+- **Recurrence #3, same day** (`bzouou4nf`): a watch baselined `git HEAD` to
+  detect a worker's commit, then the **supervisor itself committed** — its own
+  commit tripped the watch as the worker's. Anchor commit watches to an
+  identity the worker owns (`git log BASE..HEAD | grep '\[<agent>/'`), never to
+  "HEAD moved". Three recurrences reached: per the lifecycle above this is now
+  **due for promotion** — a shared, tested watch helper in the runtime rather
+  than a one-liner re-improvised per dispatch. Until that lands, copy the
+  corrected form from this entry rather than writing a fresh one.
 
 ### Dispatch root (`--file`/`--prompt` from the wrong directory)
 

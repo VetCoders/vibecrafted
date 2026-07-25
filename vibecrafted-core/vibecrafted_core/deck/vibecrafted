@@ -2051,13 +2051,95 @@ cmd_init() {
 }
 
 
+# Resolve monorepo root for scaffold-doctor without requiring VIBECRAFTED_ROOT.
+# Walks env → known helpers → git toplevel → ancestors of this script until
+# VERSION + vibecrafted-server/control-core/Cargo.toml both exist.
+_scaffold_doctor_source_roots() {
+  local candidate d seen=""
+  _scaffold_doctor_emit_root() {
+    local root="${1:-}"
+    [[ -n "$root" && -d "$root" ]] || return 0
+    case " $seen " in
+      *" $root "*) return 0 ;;
+    esac
+    seen="$seen $root"
+    printf '%s\n' "$root"
+  }
+
+  [[ -n "${VIBECRAFTED_ROOT:-}" ]] && _scaffold_doctor_emit_root "$VIBECRAFTED_ROOT"
+  if type -t _repo_source_root >/dev/null 2>&1; then
+    candidate="$(_repo_source_root 2>/dev/null || true)"
+    _scaffold_doctor_emit_root "$candidate"
+  fi
+  if type -t _script_repo_root >/dev/null 2>&1; then
+    candidate="$(_script_repo_root 2>/dev/null || true)"
+    _scaffold_doctor_emit_root "$candidate"
+  fi
+  candidate="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  _scaffold_doctor_emit_root "$candidate"
+
+  d="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  while [[ -n "$d" && "$d" != "/" ]]; do
+    if [[ -f "$d/VERSION" && -f "$d/vibecrafted-server/control-core/Cargo.toml" ]]; then
+      _scaffold_doctor_emit_root "$d"
+      break
+    fi
+    d="$(dirname "$d")"
+  done
+  unset -f _scaffold_doctor_emit_root
+}
+
+# Prefer release → debug under each root. Returns 0 and prints path when found.
+_scaffold_doctor_find_bin() {
+  local root candidate
+  while IFS= read -r root; do
+    [[ -n "$root" ]] || continue
+    for candidate in \
+      "$root/vibecrafted-server/target/release/scaffold-doctor" \
+      "$root/vibecrafted-server/target/debug/scaffold-doctor" \
+      "$root/vibecrafted-server/control-core/target/release/scaffold-doctor" \
+      "$root/vibecrafted-server/control-core/target/debug/scaffold-doctor" \
+      "$root/target/release/scaffold-doctor" \
+      "$root/target/debug/scaffold-doctor"
+    do
+      if [[ -n "$candidate" && -x "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+    done
+  done < <(_scaffold_doctor_source_roots)
+  if command -v scaffold-doctor >/dev/null 2>&1; then
+    command -v scaffold-doctor
+    return 0
+  fi
+  return 1
+}
+
+_scaffold_doctor_first_source_root() {
+  local root
+  while IFS= read -r root; do
+    if [[ -n "$root" && -f "$root/vibecrafted-server/control-core/Cargo.toml" ]]; then
+      printf '%s\n' "$root"
+      return 0
+    fi
+  done < <(_scaffold_doctor_source_roots)
+  return 1
+}
+
 cmd_scaffold_doctor() {
   # Deterministic plan-package gate (control-core). Not the install doctor.
-  local bin="" plan="" json=0
+  local bin="" plan="" json=0 source_root=""
   local args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --plan) plan="${2:-}"; shift 2 || true ;;
+      --plan)
+        if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == -* ]]; then
+          printf 'scaffold-doctor: --plan requires a path\n' >&2
+          return 2
+        fi
+        plan="$2"
+        shift 2
+        ;;
       --json) json=1; shift ;;
       -h|--help)
         printf 'Usage: vibecrafted scaffold-doctor --plan <plan_root> [--json]\n'
@@ -2069,34 +2151,34 @@ cmd_scaffold_doctor() {
     esac
   done
 
-  for candidate in \
-    "${VIBECRAFTED_ROOT:-}/vibecrafted-server/target/release/scaffold-doctor" \
-    "${VIBECRAFTED_ROOT:-}/vibecrafted-server/target/debug/scaffold-doctor" \
-    "${VIBECRAFTED_ROOT:-}/target/release/scaffold-doctor" \
-    "${VIBECRAFTED_ROOT:-}/target/debug/scaffold-doctor" \
-    "$(command -v scaffold-doctor 2>/dev/null || true)"
-  do
-    if [[ -n "$candidate" && -x "$candidate" ]]; then
-      bin="$candidate"
-      break
-    fi
-  done
+  bin="$(_scaffold_doctor_find_bin 2>/dev/null || true)"
 
-  if [[ -z "$bin" ]]; then
-    # Build once into the workspace if cargo is available.
-    if command -v cargo >/dev/null 2>&1 && [[ -n "${VIBECRAFTED_ROOT:-}" && -f "${VIBECRAFTED_ROOT}/vibecrafted-server/control-core/Cargo.toml" ]]; then
-      cargo build -q --manifest-path "${VIBECRAFTED_ROOT}/vibecrafted-server/control-core/Cargo.toml" --bin scaffold-doctor || {
-        printf '%b✗%b scaffold-doctor binary missing and cargo build failed\n' "$_red" "$_reset" >&2
+  if [[ -z "$bin" || ! -x "$bin" ]]; then
+    source_root="$(_scaffold_doctor_first_source_root 2>/dev/null || true)"
+    if command -v cargo >/dev/null 2>&1 && [[ -n "$source_root" ]]; then
+      cargo build -q \
+        --manifest-path "$source_root/vibecrafted-server/control-core/Cargo.toml" \
+        --bin scaffold-doctor || {
+        printf '%b✗%b scaffold-doctor: cargo build failed under %s\n' "$_red" "$_reset" "$source_root" >&2
         return 2
       }
-      bin="${VIBECRAFTED_ROOT}/vibecrafted-server/target/debug/scaffold-doctor"
-      [[ -x "$bin" ]] || bin="${VIBECRAFTED_ROOT}/target/debug/scaffold-doctor"
+      bin="$(_scaffold_doctor_find_bin 2>/dev/null || true)"
     fi
   fi
 
   if [[ -z "$bin" || ! -x "$bin" ]]; then
-    printf '%b✗%b scaffold-doctor binary not found. Build control-core first:\n' "$_red" "$_reset" >&2
-    printf '  cargo build --manifest-path vibecrafted-server/control-core/Cargo.toml --bin scaffold-doctor\n' >&2
+    source_root="$(_scaffold_doctor_first_source_root 2>/dev/null || true)"
+    printf '%b✗%b scaffold-doctor binary not found (looked release→debug under monorepo roots).\n' "$_red" "$_reset" >&2
+    if [[ -n "$source_root" ]]; then
+      printf '  Expected (after build):\n' >&2
+      printf '    %s/vibecrafted-server/target/debug/scaffold-doctor\n' "$source_root" >&2
+      printf '  Build:\n' >&2
+      printf '    cargo build --manifest-path %s/vibecrafted-server/control-core/Cargo.toml --bin scaffold-doctor\n' "$source_root" >&2
+    else
+      printf '  Could not locate monorepo root (VERSION + vibecrafted-server/control-core).\n' >&2
+      printf '  Run from a vibecrafted checkout, or export VIBECRAFTED_ROOT=/path/to/checkout.\n' >&2
+      printf '  Build: cargo build --manifest-path vibecrafted-server/control-core/Cargo.toml --bin scaffold-doctor\n' >&2
+    fi
     return 2
   fi
 
