@@ -44,6 +44,7 @@ LAUNCHERS = (
     "research",
     "review",
     "scaffold",
+    "trust",
     "workflow",
 )
 # No skill aliases: each LAUNCHERS name is its own skill id (ADR-0001: justdo

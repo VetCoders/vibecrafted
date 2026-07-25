@@ -149,6 +149,12 @@ WORKFLOW_DEFINITIONS: dict[str, WorkflowDefinition] = {
         lifecycle_order=10,
         tooling=("vc-init", "vc-loctree", "vc-research"),
     ),
+    "trust": _direct(
+        "trust",
+        cadence="read",
+        lifecycle_order=75,
+        tooling=("vc-init", "vc-loctree", "vc-aicx", "vc-trust"),
+    ),
     "workflow": _direct(
         "workflow",
         cadence="write",

@@ -285,6 +285,23 @@ WORKFLOW_HELP: dict[str, WorkflowHelp] = {
             "vc-scaffold claude --file /path/to/idea.md",
         ),
     ),
+    "trust": WorkflowHelp(
+        "READ-only post-hoc falsification of commit claims on the Living Tree.",
+        (
+            "bound the commit stream and recover intent",
+            "turn commit prose into falsifiable claims",
+            "attack each claim with direct evidence",
+            "append pass, pass-with-gaps, or block and project f/x/n",
+        ),
+        (
+            'vibecrafted trust codex --prompt "Judge the commits from this run"',
+            "vc-trust claude --file /path/to/trust-brief.md",
+        ),
+        (
+            "await mode is named await-primary; completion never implies pass",
+            "vc-guard remains a separate PARKED enforcement skill",
+        ),
+    ),
     "workflow": WorkflowHelp(
         "Examine → Research → Implement pipeline for repo-impacting work.",
         (

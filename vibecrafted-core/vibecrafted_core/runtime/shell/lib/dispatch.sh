@@ -327,6 +327,7 @@ vc-review() { command vibecrafted review "$@"; }
 vc-followup() { command vibecrafted followup "$@"; }
 # Thin alias — must not invent a second help/parser (split-brain 2026-07-22).
 vc-scaffold() { command vibecrafted scaffold "$@"; }
+vc-trust() { command vibecrafted trust "$@"; }
 vc-workflow() { command vibecrafted workflow "$@"; }
 
 vc-help() {
