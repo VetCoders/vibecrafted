@@ -955,7 +955,7 @@ cmd_server_help() {
   printf '\n'
   printf '%b⚒%b  %bserver%b\n' "$_copper" "$_reset" "$_bold" "$_reset"
   printf '%b─────────────────────────────────────────%b\n' "$_steel" "$_reset"
-  printf '  Manage the local control-plane viewer server.\n'
+  printf '  Manage the local control-plane viewer server and its process guardian.\n'
   printf '\n'
   printf '%bUsage:%b\n' "$_bold" "$_reset"
   printf '  vibecrafted server [start|stop|status|open|doctor] [options]\n'
@@ -1208,6 +1208,173 @@ cmd_gui() {
   python3 "$gui_script" --source "$repo_source" "$@"
 }
 
+_server_runtime_dir() {
+  printf '%s\n' "$HOME/.vibecrafted/server"
+}
+
+_pid_file_value() {
+  local pid_file="${1:-}"
+  local value=""
+  [[ -f "$pid_file" ]] || return 1
+  IFS= read -r value < "$pid_file" || true
+  printf '%s\n' "$value"
+}
+
+_managed_pid_state() {
+  local pid_file="${1:-}"
+  local marker="${2:-}"
+  local pid=""
+  local command_line=""
+
+  [[ -f "$pid_file" ]] || {
+    printf 'missing\n'
+    return 0
+  }
+  pid="$(_pid_file_value "$pid_file" 2>/dev/null || true)"
+  if [[ ! "$pid" =~ ^[0-9]+$ ]] || [[ "$pid" -le 1 ]]; then
+    printf 'invalid\n'
+    return 0
+  fi
+  if ! kill -0 "$pid" 2>/dev/null; then
+    printf 'stale\n'
+    return 0
+  fi
+  command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  if [[ -z "$command_line" || "$command_line" != *"$marker"* ]]; then
+    printf 'foreign\n'
+    return 0
+  fi
+  printf 'live\n'
+}
+
+_guardian_binary() {
+  local candidate="$HOME/.local/bin/vc-guardian"
+  if [[ -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  command -v vc-guardian 2>/dev/null || return 1
+}
+
+_stop_guardian() {
+  local runtime_dir guardian_pid_file guardian_url_file state pid elapsed
+  runtime_dir="$(_server_runtime_dir)"
+  guardian_pid_file="$runtime_dir/guardian.pid"
+  guardian_url_file="$runtime_dir/guardian.url"
+  state="$(_managed_pid_state "$guardian_pid_file" "vc-guardian")"
+  pid="$(_pid_file_value "$guardian_pid_file" 2>/dev/null || true)"
+
+  case "$state" in
+    missing)
+      rm -f "$guardian_url_file"
+      printf "Guardian is not running.\n"
+      return 0
+      ;;
+    invalid|stale)
+      printf "Guardian is not running (%s pidfile: %s).\n" "$state" "${pid:-empty}"
+      rm -f "$guardian_pid_file" "$guardian_url_file"
+      return 0
+      ;;
+    foreign)
+      printf "%b✗%b Guardian PID file points at a different live process (%s); refusing to signal it.\n" "$_red" "$_reset" "${pid:-unknown}" >&2
+      return 1
+      ;;
+  esac
+
+  printf "Stopping guardian (PID %s)...\n" "$pid"
+  kill -15 "$pid" 2>/dev/null || true
+  elapsed=0
+  while [[ $elapsed -lt 50 ]]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+    elapsed=$((elapsed + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    if [[ "$(_managed_pid_state "$guardian_pid_file" "vc-guardian")" != "live" ]]; then
+      printf "%b✗%b Guardian PID ownership changed while stopping; refusing SIGKILL.\n" "$_red" "$_reset" >&2
+      return 1
+    fi
+    printf "Guardian did not exit on SIGTERM, sending SIGKILL...\n"
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$guardian_pid_file" "$guardian_url_file"
+  printf "%b✓%b Guardian stopped.\n" "$_green" "$_reset"
+  return 0
+}
+
+_ensure_guardian() {
+  local host="${1:-127.0.0.1}"
+  local port="${2:-3024}"
+  local runtime_dir guardian_pid_file guardian_url_file guardian_log
+  local state pid guardian_bin target_url configured_url
+  local elapsed
+
+  runtime_dir="$(_server_runtime_dir)"
+  guardian_pid_file="$runtime_dir/guardian.pid"
+  guardian_url_file="$runtime_dir/guardian.url"
+  guardian_log="$runtime_dir/guardian.log"
+  target_url="http://$host:$port"
+  mkdir -p "$runtime_dir"
+  state="$(_managed_pid_state "$guardian_pid_file" "vc-guardian")"
+  pid="$(_pid_file_value "$guardian_pid_file" 2>/dev/null || true)"
+
+  if [[ "$state" == "live" ]]; then
+    configured_url="$(_pid_file_value "$guardian_url_file" 2>/dev/null || true)"
+    if [[ "$configured_url" == "$target_url" ]]; then
+      printf "Guardian is already running (PID %s) for %s\n" "$pid" "$target_url"
+      return 0
+    fi
+    printf "Guardian endpoint changed (%s -> %s). Restarting sidecar...\n" "${configured_url:-unknown}" "$target_url"
+    _stop_guardian || return 1
+    state="missing"
+    pid=""
+  fi
+
+  case "$state" in
+    foreign)
+      printf "%b✗%b Guardian PID file points at a different live process (%s); refusing to replace it.\n" "$_red" "$_reset" "${pid:-unknown}" >&2
+      return 1
+      ;;
+    invalid|stale)
+      printf "Stale guardian PID file found (%s: %s). Healing sidecar...\n" "$state" "${pid:-empty}"
+      rm -f "$guardian_pid_file" "$guardian_url_file"
+      ;;
+  esac
+
+  guardian_bin="$(_guardian_binary 2>/dev/null || true)"
+  if [[ -z "$guardian_bin" || ! -x "$guardian_bin" ]]; then
+    printf "%b✗%b vc-guardian entrypoint not found or not executable. Reinstall vibecrafted-core.\n" "$_red" "$_reset" >&2
+    return 1
+  fi
+
+  printf "Starting process guardian for %s...\n" "$target_url"
+  nohup "$guardian_bin" --server-url "$target_url" > "$guardian_log" 2>&1 < /dev/null &
+  pid=$!
+  printf '%s\n' "$pid" > "$guardian_pid_file.tmp.$$"
+  mv "$guardian_pid_file.tmp.$$" "$guardian_pid_file"
+  printf '%s\n' "$target_url" > "$guardian_url_file.tmp.$$"
+  mv "$guardian_url_file.tmp.$$" "$guardian_url_file"
+
+  elapsed=0
+  while [[ $elapsed -lt 10 ]]; do
+    if [[ "$(_managed_pid_state "$guardian_pid_file" "vc-guardian")" == "live" ]]; then
+      printf "%b✓%b Guardian is running (PID %s).\n" "$_green" "$_reset" "$pid"
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+    elapsed=$((elapsed + 1))
+  done
+
+  rm -f "$guardian_pid_file" "$guardian_url_file"
+  printf "%b✗%b Guardian failed to stay alive. Check %s\n" "$_red" "$_reset" "$guardian_log" >&2
+  return 1
+}
+
 cmd_server() {
   local verb="${1:-help}"
   shift || true
@@ -1238,12 +1405,15 @@ cmd_server() {
       done
 
       # 1. Check if already running
-      local pid_file="$HOME/.vibecrafted/server/server.pid"
-      local status_file="$HOME/.vibecrafted/server/status.json"
+      local runtime_dir
+      runtime_dir="$(_server_runtime_dir)"
+      local pid_file="$runtime_dir/server.pid"
+      local status_file="$runtime_dir/status.json"
       if [[ -f "$pid_file" ]]; then
-        local existing_pid
-        existing_pid=$(cat "$pid_file" 2>/dev/null || true)
-        if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+        local existing_pid existing_state
+        existing_pid="$(_pid_file_value "$pid_file" 2>/dev/null || true)"
+        existing_state="$(_managed_pid_state "$pid_file" "vc-server")"
+        if [[ "$existing_state" == "live" ]]; then
           # Check health
           local actual_host="127.0.0.1"
           local actual_port="3024"
@@ -1253,16 +1423,22 @@ cmd_server() {
           fi
           if python3 -c "import urllib.request; urllib.request.urlopen('http://$actual_host:$actual_port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
             printf "Server is already running (PID %s) at http://%s:%s\n" "$existing_pid" "$actual_host" "$actual_port"
-            return 0
+            _ensure_guardian "$actual_host" "$actual_port"
+            return $?
           else
             # Stale PID or unhealthy - stop/cleanup
             printf "Unhealthy or stale server process found at PID %s. Cleaning up...\n" "$existing_pid"
+            _stop_guardian || return 1
             kill "$existing_pid" 2>/dev/null || true
             sleep 0.5
             kill -9 "$existing_pid" 2>/dev/null || true
             rm -f "$pid_file"
           fi
+        elif [[ "$existing_state" == "foreign" ]]; then
+          printf "%b✗%b Server PID file points at a different live process (%s); refusing to signal or replace it.\n" "$_red" "$_reset" "${existing_pid:-unknown}" >&2
+          return 1
         else
+          printf "Removing %s server PID file (%s).\n" "$existing_state" "${existing_pid:-empty}"
           rm -f "$pid_file"
         fi
       fi
@@ -1275,7 +1451,7 @@ cmd_server() {
 
       # 3. Locate binary & site root
       local server_bin="$HOME/.local/bin/vc-server"
-      if [[ ! -f "$server_bin" ]]; then
+      if [[ ! -x "$server_bin" ]]; then
         printf "%b✗%b vc-server binary not found at %s. Please run 'make install-all' or 'make install-server' first.\n" "$_red" "$_reset" "$server_bin" >&2
         return 1
       fi
@@ -1287,13 +1463,13 @@ cmd_server() {
       fi
 
       # 4. Start process
-      mkdir -p "$HOME/.vibecrafted/server"
+      mkdir -p "$runtime_dir"
       printf "Starting local control-plane viewer at http://%s:%s...\n" "$host" "$port"
       
       nohup env VC_SERVER_ADDR="$host:$port" \
                 VC_SERVER_SITE_ROOT="$site_root" \
                 VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}" \
-                "$server_bin" > "$HOME/.vibecrafted/server/server.log" 2>&1 < /dev/null &
+                "$server_bin" > "$runtime_dir/server.log" 2>&1 < /dev/null &
       local server_pid=$!
       echo "$server_pid" > "$pid_file"
 
@@ -1314,7 +1490,7 @@ EOF
       local healthy=0
       while [[ $elapsed -lt 30 ]]; do
         if ! kill -0 "$server_pid" 2>/dev/null; then
-          printf "%b✗%b Server process died immediately. Check log at %s/server.log\n" "$_red" "$_reset" "$HOME/.vibecrafted/server" >&2
+          printf "%b✗%b Server process died immediately. Check log at %s/server.log\n" "$_red" "$_reset" "$runtime_dir" >&2
           python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='failed'; json.dump(d, open(p, 'w'))"
           return 1
         fi
@@ -1329,6 +1505,15 @@ EOF
       if [[ $healthy -eq 1 ]]; then
         printf "%b✓%b Server is up and healthy at http://%s:%s\n" "$_green" "$_reset" "$host" "$port"
         python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='running'; json.dump(d, open(p, 'w'))"
+        if ! _ensure_guardian "$host" "$port"; then
+          printf "%b✗%b Guardian startup failed; rolling back the newly started server.\n" "$_red" "$_reset" >&2
+          kill -15 "$server_pid" 2>/dev/null || true
+          sleep 0.2
+          kill -9 "$server_pid" 2>/dev/null || true
+          rm -f "$pid_file"
+          python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='failed'; d['pid']=None; json.dump(d, open(p, 'w'))"
+          return 1
+        fi
         return 0
       else
         printf "%b✗%b Server started but failed health check at http://%s:%s/api/control/state after %s seconds.\n" "$_red" "$_reset" "$host" "$port" "$timeout" >&2
@@ -1339,25 +1524,34 @@ EOF
       fi
       ;;
     stop)
-      local pid_file="$HOME/.vibecrafted/server/server.pid"
-      local status_file="$HOME/.vibecrafted/server/status.json"
+      local runtime_dir
+      runtime_dir="$(_server_runtime_dir)"
+      local pid_file="$runtime_dir/server.pid"
+      local status_file="$runtime_dir/status.json"
+      local stop_errors=0
+      _stop_guardian || stop_errors=1
       if [[ ! -f "$pid_file" ]]; then
         printf "Server is not running.\n"
         if [[ -f "$status_file" ]]; then
           python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; d['pid']=None; json.dump(d, open(p, 'w'))"
         fi
-        return 0
+        return "$stop_errors"
       fi
 
-      local pid
-      pid=$(cat "$pid_file" 2>/dev/null || true)
-      if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+      local pid server_state
+      pid="$(_pid_file_value "$pid_file" 2>/dev/null || true)"
+      server_state="$(_managed_pid_state "$pid_file" "vc-server")"
+      if [[ "$server_state" == "foreign" ]]; then
+        printf "%b✗%b Server PID file points at a different live process (%s); refusing to signal it.\n" "$_red" "$_reset" "${pid:-unknown}" >&2
+        return 1
+      fi
+      if [[ "$server_state" != "live" ]]; then
         printf "Server is not running.\n"
         rm -f "$pid_file"
         if [[ -f "$status_file" ]]; then
           python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; d['pid']=None; json.dump(d, open(p, 'w'))"
         fi
-        return 0
+        return "$stop_errors"
       fi
 
       printf "Stopping server (PID %s)...\n" "$pid"
@@ -1384,14 +1578,22 @@ EOF
         python3 -c "import json, os; p='$status_file'; d=json.load(open(p)) if os.path.exists(p) else {}; d['status']='stopped'; d['pid']=None; json.dump(d, open(p, 'w'))"
       fi
       printf "%b✓%b Server stopped.\n" "$_green" "$_reset"
-      return 0
+      return "$stop_errors"
       ;;
     status)
-      local pid_file="$HOME/.vibecrafted/server/server.pid"
-      local status_file="$HOME/.vibecrafted/server/status.json"
+      local runtime_dir
+      runtime_dir="$(_server_runtime_dir)"
+      local pid_file="$runtime_dir/server.pid"
+      local guardian_pid_file="$runtime_dir/guardian.pid"
+      local status_file="$runtime_dir/status.json"
       local pid=""
+      local guardian_pid=""
+      local guardian_url=""
       local host="127.0.0.1"
       local port="3024"
+      local server_state guardian_state
+      local server_healthy=0
+      local has_errors=0
 
       if [[ -f "$status_file" ]]; then
         host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
@@ -1399,26 +1601,62 @@ EOF
       fi
 
       if [[ -f "$pid_file" ]]; then
-        pid=$(cat "$pid_file" 2>/dev/null || true)
+        pid="$(_pid_file_value "$pid_file" 2>/dev/null || true)"
       fi
+      guardian_pid="$(_pid_file_value "$guardian_pid_file" 2>/dev/null || true)"
+      guardian_url="$(_pid_file_value "$runtime_dir/guardian.url" 2>/dev/null || true)"
+      server_state="$(_managed_pid_state "$pid_file" "vc-server")"
+      guardian_state="$(_managed_pid_state "$guardian_pid_file" "vc-guardian")"
 
-      if [[ -z "$pid" ]]; then
-        printf "Status: STOPPED\n"
-        return 0
-      fi
+      case "$server_state" in
+        missing)
+          printf "Server: STOPPED\n"
+          ;;
+        invalid|stale)
+          printf "Server: STALE-PID (%s: %s)\n" "$server_state" "${pid:-empty}"
+          has_errors=1
+          ;;
+        foreign)
+          printf "Server: PID-MISMATCH (%s belongs to another process)\n" "${pid:-unknown}"
+          has_errors=1
+          ;;
+        live)
+          if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+            server_healthy=1
+            printf "Server: RUNNING (PID %s, listening on http://%s:%s)\n" "$pid" "$host" "$port"
+          else
+            printf "Server: UNHEALTHY (PID %s, http://%s:%s/api/control/state is not responding)\n" "$pid" "$host" "$port"
+            has_errors=1
+          fi
+          ;;
+      esac
 
-      if ! kill -0 "$pid" 2>/dev/null; then
-        printf "Status: STALE-PID (Process %s is dead, but pidfile exists)\n" "$pid"
-        return 0
-      fi
-
-      if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
-        printf "Status: RUNNING (PID %s, listening on http://%s:%s)\n" "$pid" "$host" "$port"
-        return 0
-      else
-        printf "Status: UNHEALTHY (PID %s is active, but http://%s:%s/api/control/state is not responding)\n" "$pid" "$host" "$port"
-        return 0
-      fi
+      case "$guardian_state" in
+        missing)
+          printf "Guardian: STOPPED\n"
+          [[ $server_healthy -eq 0 ]] || has_errors=1
+          ;;
+        invalid|stale)
+          printf "Guardian: STALE-PID (%s: %s)\n" "$guardian_state" "${guardian_pid:-empty}"
+          has_errors=1
+          ;;
+        foreign)
+          printf "Guardian: PID-MISMATCH (%s belongs to another process)\n" "${guardian_pid:-unknown}"
+          has_errors=1
+          ;;
+        live)
+          if [[ $server_healthy -eq 1 && "$guardian_url" == "http://$host:$port" ]]; then
+            printf "Guardian: RUNNING (PID %s, server http://%s:%s)\n" "$guardian_pid" "$host" "$port"
+          elif [[ $server_healthy -eq 1 ]]; then
+            printf "Guardian: MISCONFIGURED (PID %s, %s != http://%s:%s)\n" "$guardian_pid" "${guardian_url:-unknown}" "$host" "$port"
+            has_errors=1
+          else
+            printf "Guardian: ORPHANED (PID %s is live without a healthy managed server)\n" "$guardian_pid"
+            has_errors=1
+          fi
+          ;;
+      esac
+      return "$has_errors"
       ;;
     open)
       local status_file="$HOME/.vibecrafted/server/status.json"
@@ -1446,7 +1684,7 @@ EOF
       ;;
     doctor)
       local has_errors=0
-      printf "Checking vibecrafted-server installation and runtime health...\n"
+      printf "Checking vibecrafted-server and process guardian installation/runtime health...\n"
 
       # 1. Binary check
       local server_bin="$HOME/.local/bin/vc-server"
@@ -1466,6 +1704,14 @@ EOF
         printf "  [%b✓%b] Compatibility binary present at %s\n" "$_green" "$_reset" "$compat_server_bin"
       else
         printf "  [%b!%b] Compatibility binary missing at %s\n" "$_yellow" "$_reset" "$compat_server_bin"
+      fi
+      local guardian_bin
+      guardian_bin="$(_guardian_binary 2>/dev/null || true)"
+      if [[ -n "$guardian_bin" && -x "$guardian_bin" ]]; then
+        printf "  [%b✓%b] Guardian entrypoint present and executable at %s\n" "$_green" "$_reset" "$guardian_bin"
+      else
+        printf "  [%b✗%b] Guardian entrypoint vc-guardian is missing or not executable\n" "$_red" "$_reset"
+        has_errors=1
       fi
 
       # 2. Site root & Fonts check
@@ -1499,11 +1745,18 @@ EOF
       fi
 
       # 4. Pid-vs-http coherence check
-      local pid_file="$HOME/.vibecrafted/server/server.pid"
-      local status_file="$HOME/.vibecrafted/server/status.json"
+      local runtime_dir
+      runtime_dir="$(_server_runtime_dir)"
+      local pid_file="$runtime_dir/server.pid"
+      local guardian_pid_file="$runtime_dir/guardian.pid"
+      local status_file="$runtime_dir/status.json"
       local pid=""
+      local guardian_pid=""
+      local guardian_url=""
       local host="127.0.0.1"
       local port="3024"
+      local server_state guardian_state
+      local server_healthy=0
 
       if [[ -f "$status_file" ]]; then
         host=$(python3 -c "import json; print(json.load(open('$status_file')).get('host', '127.0.0.1'))" 2>/dev/null || echo "127.0.0.1")
@@ -1511,20 +1764,20 @@ EOF
       fi
 
       if [[ -f "$pid_file" ]]; then
-        pid=$(cat "$pid_file" 2>/dev/null || true)
+        pid="$(_pid_file_value "$pid_file" 2>/dev/null || true)"
       fi
+      guardian_pid="$(_pid_file_value "$guardian_pid_file" 2>/dev/null || true)"
+      guardian_url="$(_pid_file_value "$runtime_dir/guardian.url" 2>/dev/null || true)"
+      server_state="$(_managed_pid_state "$pid_file" "vc-server")"
+      guardian_state="$(_managed_pid_state "$guardian_pid_file" "vc-guardian")"
 
-      if [[ -n "$pid" ]]; then
+      if [[ "$server_state" == "live" ]]; then
         local pid_alive=0
-        if kill -0 "$pid" 2>/dev/null; then
-          pid_alive=1
-          printf "  [%b✓%b] Server PID %s is active\n" "$_green" "$_reset" "$pid"
-        else
-          printf "  [%b✗%b] Stale PID file: process %s is dead\n" "$_red" "$_reset" "$pid"
-          has_errors=1
-        fi
+        pid_alive=1
+        printf "  [%b✓%b] Server PID %s is active and owned by vc-server\n" "$_green" "$_reset" "$pid"
         
         if python3 -c "import urllib.request; urllib.request.urlopen('http://$host:$port/api/control/state', timeout=1.0)" >/dev/null 2>&1; then
+          server_healthy=1
           printf "  [%b✓%b] HTTP server is healthy and responding at http://%s:%s\n" "$_green" "$_reset" "$host" "$port"
           if [[ $pid_alive -eq 0 ]]; then
             printf "  [%b✗%b] Split brain: HTTP responds but PID is dead/mismatched\n" "$_red" "$_reset"
@@ -1538,20 +1791,60 @@ EOF
             printf "  [i] Server is stopped (cleaned up)\n"
           fi
         fi
-      else
+      elif [[ "$server_state" == "missing" ]]; then
         printf "  [i] Server is stopped (no pid file)\n"
         if ! python3 -c "import socket; s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(('127.0.0.1', 3024)); s.close()" 2>/dev/null; then
           printf "  [%b!%b] Port 3024 is in use by another process (non-fatal, but 'vibecrafted server start' without custom port will fail)\n" "$_yellow" "$_reset"
         else
           printf "  [%b✓%b] Default port 3024 is free\n" "$_green" "$_reset"
         fi
+      elif [[ "$server_state" == "foreign" ]]; then
+        printf "  [%b✗%b] Server PID file points at a different live process: %s\n" "$_red" "$_reset" "${pid:-unknown}"
+        has_errors=1
+      else
+        printf "  [%b✗%b] Stale server PID file (%s: %s)\n" "$_red" "$_reset" "$server_state" "${pid:-empty}"
+        has_errors=1
+      fi
+
+      case "$guardian_state" in
+        missing)
+          if [[ $server_healthy -eq 1 ]]; then
+            printf "  [%b✗%b] Guardian is stopped while the server is healthy\n" "$_red" "$_reset"
+            has_errors=1
+          else
+            printf "  [i] Guardian is stopped (no pid file)\n"
+          fi
+          ;;
+        live)
+          if [[ $server_healthy -eq 1 && "$guardian_url" == "http://$host:$port" ]]; then
+            printf "  [%b✓%b] Guardian PID %s is active and attached to the healthy server lifecycle\n" "$_green" "$_reset" "$guardian_pid"
+          elif [[ $server_healthy -eq 1 ]]; then
+            printf "  [%b✗%b] Guardian PID %s targets %s instead of http://%s:%s\n" "$_red" "$_reset" "$guardian_pid" "${guardian_url:-unknown}" "$host" "$port"
+            has_errors=1
+          else
+            printf "  [%b✗%b] Guardian PID %s is orphaned without a healthy managed server\n" "$_red" "$_reset" "$guardian_pid"
+            has_errors=1
+          fi
+          ;;
+        foreign)
+          printf "  [%b✗%b] Guardian PID file points at a different live process: %s\n" "$_red" "$_reset" "${guardian_pid:-unknown}"
+          has_errors=1
+          ;;
+        *)
+          printf "  [%b✗%b] Stale guardian PID file (%s: %s)\n" "$_red" "$_reset" "$guardian_state" "${guardian_pid:-empty}"
+          has_errors=1
+          ;;
+      esac
+
+      if [[ "$server_state" == "missing" && "$guardian_state" == "missing" ]]; then
+        printf "  [%b✓%b] Server/guardian lifecycle is cleanly stopped\n" "$_green" "$_reset"
       fi
 
       if [[ $has_errors -eq 0 ]]; then
-        printf "\n%b✓%b Server doctor check passed.\n" "$_green" "$_reset"
+        printf "\n%b✓%b Server and guardian doctor check passed.\n" "$_green" "$_reset"
         return 0
       else
-        printf "\n%b✗%b Server doctor check failed.\n" "$_red" "$_reset" >&2
+        printf "\n%b✗%b Server and guardian doctor check failed.\n" "$_red" "$_reset" >&2
         return 1
       fi
       ;;
