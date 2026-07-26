@@ -413,11 +413,19 @@ spawn_finalize_artifacts() {
   local meta_path="$1"
   local report_path="${2:-}"
   local transcript_path="${3:-}"
+  local final_meta=""
 
   [[ -f "$meta_path" ]] || return 0
 
-  spawn_python_module vibecrafted_core.spawn finalize-artifacts "$meta_path" "$report_path" "$transcript_path"
+  final_meta="$(
+    spawn_python_module vibecrafted_core.spawn finalize-artifacts \
+      "$meta_path" \
+      "$report_path" \
+      "$transcript_path"
+  )" || return 1
+  [[ -n "$final_meta" && -f "$final_meta" && ! -L "$final_meta" ]] || return 1
   spawn_sync_control_plane
+  printf '%s\n' "$final_meta"
 }
 
 # Move a finished run's tab into its vc-frame status bucket. Runs LAST, after

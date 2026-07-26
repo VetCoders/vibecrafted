@@ -1483,7 +1483,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         finish_meta(args.meta, args.status, args.exit_code)
         return 0
     if args.command == "finalize-artifacts":
-        finalize_artifacts(args.meta, args.report, args.transcript)
+        final_meta = finalize_artifacts(args.meta, args.report, args.transcript)
+        if final_meta is None:
+            return 1
+        print(final_meta.resolve(strict=True))
         return 0
     if args.command == "prepare-report":
         materialize_launcher_report_template(

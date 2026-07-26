@@ -1441,6 +1441,40 @@ def _control_plane_root_for(
     return None
 
 
+def _meta_mutation_root_for(
+    meta: Path,
+    *,
+    control_plane: Path | None,
+    env: Mapping[str, str],
+) -> Path:
+    """Return the canonical owner root for the exact meta file being mutated.
+
+    Runtime-run metadata is owned by ``control_plane/`` and must share its lock
+    namespace with the supervisor and settlement writers. Legacy launcher
+    metadata is owned by ``VIBECRAFTED_HOME`` instead; using ``control_plane/``
+    for a sibling ``artifacts/`` file rejects every receipt as out-of-root.
+    Detached callers without either layout use the regular file's parent.
+    """
+
+    canonical_meta = Path(os.path.abspath(meta.expanduser())).resolve(strict=True)
+    candidates: list[Path] = []
+    if control_plane is not None:
+        candidates.append(control_plane)
+    home = str(env.get("VIBECRAFTED_HOME", "") or "").strip()
+    if home:
+        candidates.append(Path(home).expanduser())
+
+    for candidate in candidates:
+        try:
+            root = candidate.resolve(strict=True)
+            canonical_meta.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if root.is_dir():
+            return root
+    return canonical_meta.parent
+
+
 def _canonical_runtime_meta(
     control_plane: Path,
     run_id: str,
@@ -1471,7 +1505,17 @@ def triage_finished_run(
 
     run_id = str(payload.get("run_id") or "").strip()
     control_plane = _control_plane_root_for(meta, env)
-    mutation_root = control_plane or meta.parent.resolve(strict=False)
+    try:
+        mutation_root = _meta_mutation_root_for(
+            meta,
+            control_plane=control_plane,
+            env=env,
+        )
+    except OSError as exc:
+        return TriageOutcome(
+            OUTCOME_ERROR,
+            reason=f"meta_owner_unavailable: {exc}",
+        )
 
     plan = plan_triage(payload, env)
     if not plan.should_run:
@@ -1497,6 +1541,25 @@ def triage_finished_run(
             run_id=run_id,
         )
         return outcome
+    # Commit the desired intent before even probing vc-frame. The probe is a
+    # real external call too; if this write fails, no vc-frame process may run.
+    intent = TriageOutcome(
+        plan.verdict,
+        reason=plan.verdict_reason,
+        bucket=plan.bucket,
+        pending=True,
+        verdict=plan.verdict,
+        verdict_reason=plan.verdict_reason,
+    )
+    barrier_error = _persist_intent_barrier(
+        meta,
+        intent,
+        control_plane_root=mutation_root,
+        run_id=run_id,
+    )
+    if barrier_error is not None:
+        return barrier_error
+
     probe = _probe_triage_run(binary, runner)
     if not probe.supported:
         outcome = TriageOutcome(OUTCOME_SKIPPED, reason="unsupported_binary")
@@ -1524,7 +1587,7 @@ def triage_finished_run(
     # write the receipt. So record the intent first, marked pending, and correct
     # it only if we live long enough to learn better. A run that vanishes mid-
     # transfer then still says where it was headed instead of saying nothing.
-    intent = TriageOutcome(
+    actual_intent = TriageOutcome(
         destination,
         reason=plan.verdict_reason,
         bucket=bucket,
@@ -1533,12 +1596,15 @@ def triage_finished_run(
         verdict_reason=plan.verdict_reason,
         verdict_degraded=degraded,
     )
-    _record_receipt(
-        meta,
-        intent,
-        control_plane_root=mutation_root,
-        run_id=run_id,
-    )
+    if actual_intent != intent:
+        barrier_error = _persist_intent_barrier(
+            meta,
+            actual_intent,
+            control_plane_root=mutation_root,
+            run_id=run_id,
+        )
+        if barrier_error is not None:
+            return barrier_error
 
     outcome = _run_triage(plan, binary, probe, runner, destination, bucket, degraded)
     proof: DurableTransferProof | None = None
@@ -1567,16 +1633,14 @@ def triage_finished_run(
         proof=proof,
     )
     if proof is not None and control_plane is not None:
-        canonical_meta = _canonical_runtime_meta(
-            control_plane.resolve(strict=False),
-            proof.run_id,
-        )
-        if canonical_meta != meta.resolve(strict=False):
+        canonical_root = control_plane.resolve(strict=True)
+        canonical_meta = _canonical_runtime_meta(canonical_root, proof.run_id)
+        if canonical_meta != meta.resolve(strict=True):
             written = (
                 _record_receipt(
                     canonical_meta,
                     outcome,
-                    control_plane_root=mutation_root,
+                    control_plane_root=canonical_root,
                     run_id=proof.run_id,
                     proof=proof,
                 )
@@ -1685,6 +1749,39 @@ def _record_receipt(
         )
     except (OSError, RunMetaMutationError, TypeError, ValueError):
         return False
+
+
+def _persist_intent_barrier(
+    meta: Path,
+    intent: TriageOutcome,
+    *,
+    control_plane_root: Path,
+    run_id: str,
+) -> TriageOutcome | None:
+    """Commit pending intent or durably record why no external call was allowed."""
+
+    if _record_receipt(
+        meta,
+        intent,
+        control_plane_root=control_plane_root,
+        run_id=run_id,
+    ):
+        return None
+    failure = TriageOutcome(
+        OUTCOME_ERROR,
+        reason="intent_persist_failed",
+        bucket=intent.bucket,
+        verdict=intent.verdict,
+        verdict_reason=intent.verdict_reason,
+        verdict_degraded=intent.verdict_degraded,
+    )
+    _record_receipt(
+        meta,
+        failure,
+        control_plane_root=control_plane_root,
+        run_id=run_id,
+    )
+    return failure
 
 
 def record_triage_gc_result(

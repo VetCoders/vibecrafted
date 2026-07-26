@@ -1050,6 +1050,81 @@ def test_intent_is_recorded_before_the_transfer(tmp_path: Path) -> None:
     assert seen["triage_bucket"] == BUCKET_FINALIZED
 
 
+def test_artifact_meta_commits_pending_before_vc_frame_probe(
+    tmp_path: Path,
+) -> None:
+    """Artifact metadata uses its own owner root, not sibling control_plane/."""
+
+    home = tmp_path / ".vibecrafted"
+    control_plane = home / "control_plane"
+    control_plane.mkdir(parents=True)
+    artifact_dir = home / "artifacts" / "vetcoders" / "demo" / "reports"
+    artifact_dir.mkdir(parents=True)
+    meta = write_meta(
+        artifact_dir,
+        origin_session="demo workers",
+        origin_tab="run-0007",
+    )
+    seen_at_probe: dict[str, Any] = {}
+
+    class PeekingRunner(Runner):
+        def __call__(self, argv: Sequence[str]) -> Any:
+            if list(argv)[1:] == ["triage-run", "--help"]:
+                seen_at_probe.update(json.loads(meta.read_text(encoding="utf-8")))
+            return super().__call__(argv)
+
+    runner = PeekingRunner()
+    outcome = triage_finished_run(
+        meta,
+        live_env(tmp_path, VIBECRAFTED_HOME=str(home)),
+        runner,
+    )
+
+    assert seen_at_probe["triage_pending"] is True
+    assert seen_at_probe["triage"] == OUTCOME_FINALIZED
+    assert len(runner.transfer_calls) == 1
+    # The fake transfer has no durable vc-frame proof, so the post-call result
+    # fails closed. The important invariant is that the owner-root receipt and
+    # pre-probe barrier both existed before any external call.
+    assert outcome.outcome == OUTCOME_ERROR
+    assert outcome.reason.startswith("transfer_proof_invalid:")
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["triage"] == OUTCOME_ERROR
+    assert payload["triage_pending"] is False
+
+
+def test_pending_barrier_failure_records_error_without_any_vc_frame_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed pending replace leaves durable error truth and invokes nothing."""
+
+    meta = write_meta(tmp_path, exit_code=0)
+    runner = Runner()
+    real_replace = run_mutation_module.os.replace
+
+    def reject_pending(source: str, destination: str | Path) -> None:
+        try:
+            candidate = json.loads(Path(source).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            candidate = {}
+        if candidate.get("triage_pending") is True:
+            raise OSError("forced pending receipt failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(run_mutation_module.os, "replace", reject_pending)
+
+    outcome = triage_finished_run(meta, live_env(tmp_path), runner)
+
+    assert outcome.outcome == OUTCOME_ERROR
+    assert outcome.reason == "intent_persist_failed"
+    assert runner.calls == []
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["triage"] == OUTCOME_ERROR
+    assert payload["triage_reason"] == "intent_persist_failed"
+    assert payload["triage_pending"] is False
+
+
 def test_receipt_never_disturbs_terminal_state(tmp_path: Path) -> None:
     """The run's own truth is not ours to edit."""
     meta = write_meta(tmp_path, exit_code=7, status="failed", duration_s=12.5)
