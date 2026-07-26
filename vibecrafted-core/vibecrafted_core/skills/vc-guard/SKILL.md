@@ -38,6 +38,19 @@ python -m vibecrafted_core.guard check --sha <sha>
 
 `launch_workflow` calls `enforce_continuation` unless `VIBECRAFTED_GUARD=0`.
 
+## Canonical Orientation Gate
+
+Before inventorying or enforcing repo-specific gates, run or consume the
+`vc-init` procedure for the assigned repository. If fresh orientation evidence
+is absent, perform that pass before making claims about HEAD, hooks, journals,
+or dispatch choke points.
+
+`Loctree:loctree` is the default structural perception skill for this pass.
+Use it to produce or refresh the Code-Derived Application Map, including the
+gate entrypoints, their callers, the trust-journal reader, and the continuation
+path that can be refused. Use `slice` before edits, `impact` before structural
+changes, and literal find/body queries before broad text search.
+
 ## Doctrine (hard)
 
 1. **Fail-closed** — when a trust `block` is recorded for the target commit,

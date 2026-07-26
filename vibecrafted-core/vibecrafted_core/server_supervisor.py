@@ -171,11 +171,27 @@ def _ensure_owned_directory(path: Path, mode: int = 0o700) -> None:
     os.chmod(path, mode)
 
 
+def _file_owner_is_trusted(
+    file_uid: int,
+    file_mode: int,
+    *,
+    allow_root_owned: bool,
+) -> bool:
+    if file_uid == os.getuid():
+        return True
+    return (
+        allow_root_owned
+        and file_uid == 0
+        and file_mode & (stat.S_IWGRP | stat.S_IWOTH) == 0
+    )
+
+
 def _validate_owned_regular_file(
     path: Path,
     *,
     executable: bool = False,
     allow_symlink: bool = True,
+    allow_root_owned: bool = False,
 ) -> Path:
     if not allow_symlink and path.is_symlink():
         raise SupervisorError(f"path must not be a symlink: {path}", EX_CONFIG)
@@ -183,7 +199,11 @@ def _validate_owned_regular_file(
     info = canonical.lstat()
     if (
         not stat.S_ISREG(info.st_mode)
-        or info.st_uid != os.getuid()
+        or not _file_owner_is_trusted(
+            info.st_uid,
+            info.st_mode,
+            allow_root_owned=allow_root_owned,
+        )
         or info.st_nlink != 1
     ):
         raise SupervisorError(
@@ -195,7 +215,7 @@ def _validate_owned_regular_file(
     return canonical
 
 
-def _sha256_file(path: Path) -> str:
+def _sha256_file(path: Path, *, allow_root_owned: bool = False) -> str:
     digest = hashlib.sha256()
     descriptor = os.open(
         path,
@@ -206,7 +226,11 @@ def _sha256_file(path: Path) -> str:
         visible = path.lstat()
         if (
             not stat.S_ISREG(opened.st_mode)
-            or opened.st_uid != os.getuid()
+            or not _file_owner_is_trusted(
+                opened.st_uid,
+                opened.st_mode,
+                allow_root_owned=allow_root_owned,
+            )
             or opened.st_nlink != 1
             or (opened.st_dev, opened.st_ino) != (visible.st_dev, visible.st_ino)
         ):
@@ -231,12 +255,18 @@ def _supervisor_identity(
     expected_launcher_sha256: str | None = None,
 ) -> SupervisorIdentity:
     candidate = executable
+    allow_root_owned = False
     if candidate is None:
         candidate = Path(sys.argv[0])
         if not candidate.is_absolute() or not os.access(candidate, os.X_OK):
             candidate = Path(sys.executable)
-    canonical = _validate_owned_regular_file(candidate, executable=True)
-    digest = _sha256_file(canonical)
+            allow_root_owned = True
+    canonical = _validate_owned_regular_file(
+        candidate,
+        executable=True,
+        allow_root_owned=allow_root_owned,
+    )
+    digest = _sha256_file(canonical, allow_root_owned=allow_root_owned)
     runtime_digest = _sha256_file(Path(__file__).resolve())
     launcher_digest = _launcher_sha256(launcher)
     if expected_sha256 and digest != expected_sha256:

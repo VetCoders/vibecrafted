@@ -2362,13 +2362,11 @@ def test_dashboard_gc_defaults_to_dry_run(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    payload = capture_file.read_text(encoding="utf-8")
-    assert "list-sessions" in payload
-    assert "kill-session abandoned-evidence" not in payload
-    assert "vc_frame-gc: dry-run" in result.stdout
+    assert not capture_file.exists()
+    assert "vc_frame-tab-gc: dry-run; candidates=0 closed=0" in result.stdout
 
 
-def test_dashboard_gc_prunes_dead_sessions(tmp_path: Path) -> None:
+def test_dashboard_gc_apply_never_selects_untyped_session_text(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
     capture_file = tmp_path / "vc_frame-args.txt"
@@ -2410,14 +2408,11 @@ def test_dashboard_gc_prunes_dead_sessions(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    payload = capture_file.read_text(encoding="utf-8")
-    assert "list-sessions" in payload
-    assert "kill-session joyous-hill" in payload
-    assert "kill-session didactic-cactus" in payload
-    assert "kill-session vc-runtime" not in payload
+    assert not capture_file.exists()
+    assert "vc_frame-tab-gc: applied; candidates=0 closed=0" in result.stdout
 
 
-def test_dashboard_gc_include_live_prunes_only_stale_detached_sessions(
+def test_dashboard_gc_include_live_fails_closed_without_typed_session_identity(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
@@ -2469,11 +2464,9 @@ def test_dashboard_gc_include_live_prunes_only_stale_detached_sessions(
         text=True,
     )
 
-    assert result.returncode == 0, result.stderr
-    payload = capture_file.read_text(encoding="utf-8")
-    assert "kill-session stale-live" in payload
-    assert "kill-session fresh-live" not in payload
-    assert "kill-session active-one" not in payload
+    assert result.returncode == 2
+    assert "no typed incarnation selector" in result.stderr
+    assert not capture_file.exists()
 
 
 def test_run_helper_blocks_self_looping_path_resolution(tmp_path: Path) -> None:

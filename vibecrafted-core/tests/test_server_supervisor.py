@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import stat
 import subprocess
 import sys
 import threading
@@ -59,6 +60,39 @@ def _managed_probe(
         identity.build_version,
         identity.launcher_sha256,
     )
+
+
+def test_trusted_system_owner_is_read_only_and_explicit() -> None:
+    regular_executable = stat.S_IFREG | 0o755
+    group_writable_executable = stat.S_IFREG | 0o775
+    world_writable_executable = stat.S_IFREG | 0o757
+
+    assert supervisor._file_owner_is_trusted(
+        os.getuid(),
+        world_writable_executable,
+        allow_root_owned=False,
+    )
+    assert supervisor._file_owner_is_trusted(
+        0,
+        regular_executable,
+        allow_root_owned=True,
+    )
+    if os.getuid() != 0:
+        assert not supervisor._file_owner_is_trusted(
+            0,
+            regular_executable,
+            allow_root_owned=False,
+        )
+        assert not supervisor._file_owner_is_trusted(
+            0,
+            group_writable_executable,
+            allow_root_owned=True,
+        )
+        assert not supervisor._file_owner_is_trusted(
+            0,
+            world_writable_executable,
+            allow_root_owned=True,
+        )
 
 
 def _launchctl_job_snapshot(
