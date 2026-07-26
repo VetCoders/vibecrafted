@@ -1030,3 +1030,48 @@ def test_default_no_await_dispatcher_reconciles_finalized_and_refusals(
             assert summary["lifecycle_reconciled"] is True
             assert reloaded["stages"][0]["worker_exit"]["artifact_ok"] is False
             assert not (runtime_dir / "delivery-seal.json").exists()
+
+
+def test_origin_pane_is_stamped_only_from_the_runs_own_tab() -> None:
+    """2026-07-25: dispatched runs stamped the dispatcher's pane ("1") as
+    origin_pane_id; triage aimed dump-screen at it and captured nothing. The
+    pane env is the run's own only when the env also claims the run's tab."""
+    fields = supervisor_async_module._origin_fields_from_env(
+        {
+            "ZELLIJ_SESSION_NAME": "vc-workspace",
+            "ZELLIJ_PANE_ID": "1",
+            "VIBECRAFTED_RUN_ID": "work-260725-020101-07000",
+        }
+    )
+    assert fields["origin_session"] == "vc-workspace"
+    assert fields["origin_tab"] == "work-260725-020101-07000"
+    assert "origin_pane_id" not in fields
+
+
+def test_origin_pane_survives_when_env_sits_in_the_run_tab() -> None:
+    fields = supervisor_async_module._origin_fields_from_env(
+        {
+            "VC_FRAME_SESSION_NAME": "vc-workspace",
+            "VC_FRAME_TAB_NAME": "work-1",
+            "VC_FRAME_PANE_ID": "terminal_7",
+            "VIBECRAFTED_RUN_ID": "work-1",
+        }
+    )
+    assert fields["origin_tab"] == "work-1"
+    assert fields["origin_pane_id"] == "terminal_7"
+
+
+def test_operator_tab_env_never_reaches_the_stamp() -> None:
+    """A leaked operator VC_FRAME_TAB_NAME must not become the run's origin_tab
+    — a meta-stamped tab bypasses plan_triage's foreign-tab refusal, so triage
+    would capture and close the operator's own tab."""
+    fields = supervisor_async_module._origin_fields_from_env(
+        {
+            "VC_FRAME_SESSION_NAME": "vc-workspace",
+            "VC_FRAME_TAB_NAME": "operator-tab",
+            "VC_FRAME_PANE_ID": "terminal_1",
+            "VIBECRAFTED_RUN_ID": "work-2",
+        }
+    )
+    assert fields["origin_tab"] == "work-2"
+    assert "origin_pane_id" not in fields

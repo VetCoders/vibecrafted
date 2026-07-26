@@ -577,9 +577,14 @@ class TriagePlan:
             "triage-run",
             "--run",
             self.run_id,
-            "--exit-code",
-            str(self.exit_code),
         ]
+        if self.exit_code < 0:
+            # Clap treats a standalone negative value as another option unless
+            # the consumer opts into hyphen values. The equals form is
+            # unambiguous across old and current vc-frame binaries.
+            argv.append(f"--exit-code={self.exit_code}")
+        else:
+            argv += ["--exit-code", str(self.exit_code)]
         if with_bucket and self.verdict:
             argv += ["--bucket", _BUCKET_FLAG_FOR_VERDICT[self.verdict]]
         if self.origin_session:
@@ -682,9 +687,15 @@ def plan_triage(
         or _env("VC_FRAME_TAB_NAME")
         or run_id
     )
-    pane_id = _meta_str("origin_pane_id", "vc_frame_pane_id", "pane_id") or _env(
-        "VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID"
-    )
+    # The ambient pane is only the run's own pane when this process sits in the
+    # run's tab (the classic in-tab finish, where vc_frame.sh names the tab by
+    # run id). A dispatcher inherits the *operator's* pane env instead, and
+    # aiming dump-screen at that pane captures the wrong terminal — or nothing,
+    # once the id no longer resolves (2026-07-25: every dispatched run stamped
+    # pane "1", scrollback dump missing, tab never bucketed).
+    pane_id = _meta_str("origin_pane_id", "vc_frame_pane_id", "pane_id")
+    if not pane_id and _env("VC_FRAME_TAB_NAME") == tab_name:
+        pane_id = _env("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID")
 
     # Headless / CI / detached (setsid) runs have no pane env and no stamped
     # host session. Not an error — there is simply no terminal to triage.
@@ -706,6 +717,15 @@ def plan_triage(
     marbles_tab = _meta_str("marbles_tab_name") or _env("VIBECRAFTED_MARBLES_TAB_NAME")
     if marbles_tab and tab_name == marbles_tab and marbles_tab != run_id:
         return TriagePlan(should_run=False, skip_reason="shared_tab")
+
+    # The same caution for any other env-sourced tab: when the meta names no
+    # tab and the ambient VC_FRAME_TAB_NAME is not the run's own (dispatcher
+    # env leaking the operator's tab), transferring would capture and close a
+    # tab that was never ours. Refuse rather than guess.
+    if not _meta_str("origin_tab", "vc_frame_tab", "tab_name"):
+        env_tab = _env("VC_FRAME_TAB_NAME")
+        if env_tab and env_tab != run_id:
+            return TriagePlan(should_run=False, skip_reason="foreign_tab")
 
     exit_code_raw: Any = meta.get("exit_code")
     try:

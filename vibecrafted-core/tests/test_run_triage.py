@@ -29,6 +29,7 @@ from vibecrafted_core.run_triage import (
     VERDICT_FINALIZED,
     VERDICT_NEEDS_ATTENTION,
     KernelAxes,
+    TriagePlan,
     bucket_for_exit_code,
     classify_run,
     plan_triage,
@@ -501,6 +502,58 @@ def test_legacy_zellij_env_still_identifies_a_session() -> None:
     assert plan.origin_session == "sess"
 
 
+def test_dispatcher_inherited_pane_env_is_not_trusted() -> None:
+    """2026-07-25: dispatched runs stamped the operator's pane ("1"); the dump
+    aimed at it found nothing and the tab never reached its bucket. Without an
+    env claim of sitting in the run's own tab, the ambient pane id is dropped
+    — capture then falls back to the tab-name path on the vc-frame side."""
+    plan = plan_triage(
+        {"run_id": "r1", "exit_code": 0},
+        make_env(),  # VC_FRAME_PANE_ID present, but no VC_FRAME_TAB_NAME claim
+    )
+    assert plan.should_run is True
+    assert plan.pane_id == ""
+
+
+def test_in_tab_finish_keeps_its_own_pane() -> None:
+    """The classic path: the process sits in the run's tab, so its pane is real."""
+    plan = plan_triage(
+        {"run_id": "r1", "exit_code": 0},
+        make_env(VC_FRAME_TAB_NAME="r1"),
+    )
+    assert plan.should_run is True
+    assert plan.pane_id == "terminal_3"
+
+
+def test_meta_stamped_pane_still_wins_over_env() -> None:
+    plan = plan_triage(
+        {"run_id": "r1", "exit_code": 0, "origin_pane_id": "terminal_9"},
+        make_env(VC_FRAME_TAB_NAME="r1"),
+    )
+    assert plan.pane_id == "terminal_9"
+
+
+def test_foreign_env_tab_is_never_transferred() -> None:
+    """A dispatcher can leak the operator's VC_FRAME_TAB_NAME. With no tab in
+    the meta, transferring would capture and close the operator's tab."""
+    plan = plan_triage(
+        {"run_id": "r1", "exit_code": 0},
+        make_env(VC_FRAME_TAB_NAME="operator-tab"),
+    )
+    assert plan.should_run is False
+    assert plan.skip_reason == "foreign_tab"
+
+
+def test_meta_stamped_tab_survives_a_foreign_env_claim() -> None:
+    """The durable meta stamp outranks whatever tab the ambient env names."""
+    plan = plan_triage(
+        {"run_id": "r1", "exit_code": 0, "origin_tab": "r1"},
+        make_env(VC_FRAME_TAB_NAME="operator-tab"),
+    )
+    assert plan.should_run is True
+    assert plan.origin_tab == "r1"
+
+
 def test_marbles_shared_tab_is_never_closed() -> None:
     """Closing a shared tab would destroy the sibling marbles' scrollback."""
     plan = plan_triage(
@@ -567,6 +620,7 @@ def test_argv_carries_the_full_identity() -> None:
             "exit_code": 3,
             "root": "/repo",
             "launcher": "/tmp/l.sh",
+            "origin_pane_id": "terminal_3",
         },
         make_env(),
     )
@@ -581,6 +635,18 @@ def test_argv_carries_the_full_identity() -> None:
     assert argv[argv.index("--cwd") + 1] == "/repo"
     # The rerun pane gets the launcher — the run, reproducible.
     assert argv[-2:] == ["--", "/tmp/l.sh"]
+
+
+def test_argv_renders_negative_exit_code_without_clap_ambiguity() -> None:
+    plan = TriagePlan(should_run=True, run_id="run-unknown", exit_code=-1)
+
+    assert plan.argv("vc-frame") == [
+        "vc-frame",
+        "triage-run",
+        "--run",
+        "run-unknown",
+        "--exit-code=-1",
+    ]
 
 
 def test_argv_carries_the_verdict_as_a_bucket_flag(tmp_path: Path) -> None:

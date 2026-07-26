@@ -129,11 +129,19 @@ def _origin_fields_from_env(env: Mapping[str, str] | None = None) -> dict[str, s
     if session:
         fields["origin_session"] = session
         fields["operator_session"] = session
-    tab = _get("VC_FRAME_TAB_NAME", "VIBECRAFTED_RUN_ID", "SPAWN_RUN_ID")
+    # The run's tab is named by run id (spawn contract). A dispatcher's ambient
+    # VC_FRAME_TAB_NAME instead names the *operator's* tab — stamping it would
+    # hand triage a tab to capture and close that was never the run's. So the
+    # tab comes only from the run-id envs, and the ambient tab claim serves one
+    # purpose: proving this process sits in the run's own tab, which is the
+    # only case where the ambient pane id is the run's pane. (2026-07-25:
+    # dispatched runs stamped the operator's pane "1"; the scrollback dump
+    # aimed at it found nothing and the tabs never reached their buckets.)
+    tab = _get("VIBECRAFTED_RUN_ID", "SPAWN_RUN_ID")
     if tab:
         fields["origin_tab"] = tab
     pane = _get("VC_FRAME_PANE_ID", "ZELLIJ_PANE_ID")
-    if pane:
+    if pane and tab and _get("VC_FRAME_TAB_NAME") == tab:
         fields["origin_pane_id"] = pane
     return fields
 
