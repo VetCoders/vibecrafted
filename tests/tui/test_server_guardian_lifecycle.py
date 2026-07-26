@@ -512,7 +512,7 @@ def isolated_server_runtime(
     _write_executable(
         bin_dir / "vc-server",
         f"#!{sys.executable}\n"
-        """import http.server
+        """import socket
 import json
 import os
 import signal
@@ -534,33 +534,51 @@ def stop(_signum, _frame):
     record("server-stop")
     raise SystemExit(0)
 
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path in {"/api/health", "/api/control/state"}:
-            payload = json.dumps({"status": "ok"}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-            return
-        if self.path.startswith("/api/control/events"):
-            if os.environ.get("SSE_STATUS") == "404":
-                self.send_response(404)
-                self.end_headers()
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
-            self.end_headers()
-            self.wfile.write(b": ping\\n\\n")
-            self.wfile.flush()
-            return
-        self.send_response(404)
-        self.end_headers()
+def response(status, content_type, payload, extra_headers=()):
+    reason = "OK" if status == 200 else "Not Found"
+    headers = [
+        f"HTTP/1.1 {status} {reason}",
+        f"Content-Type: {content_type}",
+        f"Content-Length: {len(payload)}",
+        "Connection: close",
+        *extra_headers,
+        "",
+        "",
+    ]
+    return "\\r\\n".join(headers).encode("ascii") + payload
 
-    def log_message(self, _format, *_args):
+def serve_connection(connection):
+    connection.settimeout(0.25)
+    request = b""
+    try:
+        while b"\\r\\n\\r\\n" not in request and len(request) < 65536:
+            chunk = connection.recv(4096)
+            if not chunk:
+                return
+            request += chunk
+    except (OSError, TimeoutError):
         return
+    parts = request.split(b" ", 2)
+    path = parts[1].decode("ascii", "replace") if len(parts) >= 2 else ""
+    if path in {"/api/health", "/api/control/state"}:
+        payload = json.dumps({"status": "ok"}).encode()
+        reply = response(200, "application/json", payload)
+    elif path.startswith("/api/control/events"):
+        if os.environ.get("SSE_STATUS") == "404":
+            reply = response(404, "text/plain", b"")
+        else:
+            reply = response(
+                200,
+                "text/event-stream",
+                b": ping\\n\\n",
+                ("Cache-Control: no-cache",),
+            )
+    else:
+        reply = response(404, "text/plain", b"")
+    try:
+        connection.sendall(reply)
+    except OSError:
+        pass
 
 signal.signal(signal.SIGTERM, stop)
 signal.signal(signal.SIGINT, stop)
@@ -569,7 +587,14 @@ start_delay = float(os.environ.get("SERVER_START_DELAY", "0"))
 if start_delay > 0:
     record(f"server-delay {start_delay:g}")
     time.sleep(start_delay)
-http.server.HTTPServer((host, int(raw_port)), Handler).serve_forever()
+with socket.socket() as server:
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((host, int(raw_port)))
+    server.listen(128)
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            serve_connection(connection)
 """,
     )
     _write_executable(
