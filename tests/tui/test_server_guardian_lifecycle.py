@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -264,8 +265,8 @@ def isolated_server_runtime(
 
     _write_executable(
         bin_dir / "vc-server",
-        """#!/usr/bin/env python3
-import http.server
+        f"#!{sys.executable}\n"
+        """import http.server
 import json
 import os
 import signal
@@ -327,8 +328,8 @@ http.server.ThreadingHTTPServer((host, int(raw_port)), Handler).serve_forever()
     )
     _write_executable(
         bin_dir / "vc-guardian",
-        """#!/usr/bin/env python3
-import argparse
+        f"#!{sys.executable}\n"
+        """import argparse
 import json
 import os
 import signal
@@ -523,65 +524,8 @@ def test_macos_identity_reverification_does_not_reread_launch_nonce(
     isolated_server_runtime: tuple[dict[str, str], Path, Path],
 ) -> None:
     env, state_dir, _ = isolated_server_runtime
-    bin_dir = Path(env["HOME"]) / ".local" / "bin"
-    real_ps = shutil.which("ps", path="/usr/bin:/bin")
-    assert real_ps is not None
-    ps_state = state_dir / "fake-ps-state"
-    ps_state.mkdir(parents=True)
-    env["VIBECRAFTED_TEST_PS_STATE"] = str(ps_state)
-    _write_executable(
-        bin_dir / "ps",
-        f"""#!{sys.executable}
-import json
-import os
-import re
-import subprocess
-import sys
-from pathlib import Path
-
-result = subprocess.run(
-    [{real_ps!r}, *sys.argv[1:]],
-    check=False,
-    capture_output=True,
-    text=True,
-)
-output = result.stdout
-pattern = re.compile(
-    r"(^|\\s)(VIBECRAFTED_PROCESS_NONCE=([0-9a-f]{{64}}))(?=\\s|$)"
-)
-state = Path(os.environ["VIBECRAFTED_TEST_PS_STATE"])
-identity_root = Path(os.environ["VIBECRAFTED_HOME"]) / "server"
-
-def redact_published_nonce(match):
-    nonce = match.group(3)
-    marker = state / f"{{nonce}}.seen"
-    marker.touch(exist_ok=True)
-    for identity_path in identity_root.glob("*.identity.json"):
-        try:
-            identity = json.loads(identity_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        process = identity.get("process", {{}})
-        command = process.get("command", {{}})
-        recorded_command = (
-            command.get("value")
-            if command.get("kind") == "command_line"
-            else None
-        )
-        if (
-            process.get("process_nonce") == nonce
-            and isinstance(recorded_command, str)
-            and output.lstrip().startswith(recorded_command)
-        ):
-            return match.group(1)
-    return match.group(0)
-
-output = pattern.sub(redact_published_nonce, output)
-sys.stdout.write(output)
-sys.stderr.write(result.stderr)
-raise SystemExit(result.returncode)
-""",
-    )
+    audit_path = state_dir / "process-audit.jsonl"
+    env["VIBECRAFTED_TEST_PROCESS_AUDIT"] = str(audit_path)
     port = _free_port()
 
     started = _run_launcher(
@@ -594,7 +538,152 @@ raise SystemExit(result.returncode)
             (state_dir / f"{role}.identity.json").read_text(encoding="utf-8")
         )
         assert identity["process"]["process_nonce"] == identity["nonce"]
-    assert len(list(ps_state.glob("*.seen"))) == 2
+        assert Path(identity["process"]["executable"]).name not in {"env", "nohup"}
+        assert not (state_dir / f"{role}.launch-witness.json").exists()
+    ps_calls = [
+        json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+    ]
+    nonce_calls = [call for call in ps_calls if call["kind"] == "nonce"]
+    assert all(call["operation"] == "capture-identity" for call in nonce_calls)
+    nonce_pids = {int(call["pid"]) for call in nonce_calls}
+    role_pids = {
+        int((state_dir / f"{role}.pid").read_text(encoding="utf-8"))
+        for role in ("server", "guardian")
+    }
+    assert nonce_pids == role_pids
+    operation_counts = Counter(call["operation"] for call in ps_calls)
+    assert operation_counts["lock-owner-write"] == 3
+    assert operation_counts["launch-witness-write"] == 2
+    capture_counts = Counter(
+        int(call["pid"])
+        for call in ps_calls
+        if call["operation"] == "capture-identity"
+    )
+    verify_counts = Counter(
+        int(call["pid"])
+        for call in ps_calls
+        if call["operation"] == "verify-identity"
+    )
+    assert set(capture_counts) == role_pids
+    assert set(capture_counts.values()) <= {7, 14}
+    assert set(verify_counts) == role_pids
+    assert set(verify_counts.values()) <= {3, 6}
+    assert set(operation_counts) == {
+        "lock-owner-write",
+        "launch-witness-write",
+        "capture-identity",
+        "verify-identity",
+    }
+    assert len(ps_calls) <= 45, ps_calls
+
+
+def test_server_delayed_exec_mismatch_cleans_launch_owned_child(
+    isolated_server_runtime: tuple[dict[str, str], Path, Path],
+) -> None:
+    env, state_dir, lifecycle_log = isolated_server_runtime
+    server_bin = Path(env["HOME"]) / ".local" / "bin" / "vc-server"
+    real_server = server_bin.with_name("vc-server-real")
+    child_pid_path = state_dir / "delayed-exec-child.pid"
+    identity_path = state_dir / "server.identity.json"
+    server_bin.rename(real_server)
+    _write_executable(
+        server_bin,
+        f"""#!{sys.executable}
+import os
+import time
+from pathlib import Path
+
+identity_path = Path({str(identity_path)!r})
+pid_path = Path({str(child_pid_path)!r})
+pid_path.write_text(str(os.getpid()) + "\\n", encoding="utf-8")
+deadline = time.monotonic() + 8
+while not identity_path.is_file():
+    if time.monotonic() >= deadline:
+        raise SystemExit(70)
+    time.sleep(0.01)
+os.execve({str(real_server)!r}, [{str(real_server)!r}], os.environ.copy())
+""",
+    )
+    port = _free_port()
+
+    result = _run_launcher(
+        env, "server", "start", "--host", "127.0.0.1", "--port", str(port)
+    )
+
+    assert result.returncode != 0
+    assert "managed identity could not be verified" in result.stderr
+    child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+    _wait_until_dead(child_pid)
+    assert "server-stop" in lifecycle_log.read_text(encoding="utf-8")
+    assert not (state_dir / "server.pid").exists()
+    assert not (state_dir / "server.identity.json").exists()
+    assert not (state_dir / "server.launch-witness.json").exists()
+    status = json.loads((state_dir / "status.json").read_text(encoding="utf-8"))
+    assert status["status"] == "failed"
+    assert status["pid"] is None
+
+
+def test_launch_witness_nonce_mismatch_refuses_foreign_process_signal(
+    isolated_server_runtime: tuple[dict[str, str], Path, Path],
+) -> None:
+    env, state_dir, lifecycle_log = isolated_server_runtime
+    server_bin = Path(env["HOME"]) / ".local" / "bin" / "vc-server"
+    real_server = server_bin.with_name("vc-server-real")
+    child_pid_path = state_dir / "foreign-child.pid"
+    identity_path = state_dir / "server.identity.json"
+    witness_path = state_dir / "server.launch-witness.json"
+    server_bin.rename(real_server)
+    _write_executable(
+        server_bin,
+        f"""#!{sys.executable}
+import json
+import os
+import time
+from pathlib import Path
+
+identity_path = Path({str(identity_path)!r})
+witness_path = Path({str(witness_path)!r})
+pid_path = Path({str(child_pid_path)!r})
+pid_path.write_text(str(os.getpid()) + "\\n", encoding="utf-8")
+deadline = time.monotonic() + 8
+while not identity_path.is_file():
+    if time.monotonic() >= deadline:
+        raise SystemExit(70)
+    time.sleep(0.01)
+payload = json.loads(witness_path.read_text(encoding="utf-8"))
+payload["nonce"] = "0" * 64
+temporary = witness_path.with_name("." + witness_path.name + ".tampered")
+temporary.write_text(json.dumps(payload) + "\\n", encoding="utf-8")
+os.replace(temporary, witness_path)
+os.execve({str(real_server)!r}, [{str(real_server)!r}], os.environ.copy())
+""",
+    )
+    port = _free_port()
+    child_pid: int | None = None
+
+    try:
+        result = _run_launcher(
+            env, "server", "start", "--host", "127.0.0.1", "--port", str(port)
+        )
+
+        assert result.returncode != 0
+        assert "launch ownership cannot be reverified" in result.stderr
+        assert "refusing to signal" in result.stderr
+        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+        assert _process_alive(child_pid)
+        assert "server-start" in lifecycle_log.read_text(encoding="utf-8")
+        assert "server-stop" not in lifecycle_log.read_text(encoding="utf-8")
+        assert (state_dir / "server.pid").is_file()
+        assert (state_dir / "server.identity.json").is_file()
+        assert witness_path.is_file()
+        status = json.loads((state_dir / "status.json").read_text(encoding="utf-8"))
+        assert status["status"] == "failed"
+        assert status["pid"] == child_pid
+    finally:
+        if child_pid is not None and _process_alive(child_pid):
+            os.kill(child_pid, signal.SIGTERM)
+            _wait_until_dead(child_pid)
 
 
 def test_server_start_rolls_back_when_guardian_entrypoint_is_missing(

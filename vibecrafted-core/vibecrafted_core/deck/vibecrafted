@@ -1288,14 +1288,17 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import stat
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
 IDENTITY_SCHEMA = "vibecrafted.managed-process.v1"
+LAUNCH_WITNESS_SCHEMA = "vibecrafted.launch-witness.v1"
 LOCK_SCHEMA = "vibecrafted.server-lifecycle-lock.v1"
 READY_SCHEMA = "vibecrafted.guardian-ready.v1"
 
@@ -1377,11 +1380,100 @@ def process_alive(pid: int) -> bool:
     return True
 
 
+def process_launch_identity(pid: int) -> dict[str, object]:
+    if pid <= 1 or not process_alive(pid):
+        fail(f"process {pid} is not live", 3)
+    proc_stat = Path(f"/proc/{pid}/stat")
+    if proc_stat.is_file():
+        def proc_birth() -> tuple[str, int]:
+            raw = proc_stat.read_text(encoding="utf-8")
+            closing = raw.rfind(")")
+            if closing < 0:
+                fail(f"cannot parse process launch identity for {pid}", 4)
+            fields = raw[closing + 2 :].split()
+            if len(fields) <= 19 or not fields[1].isdigit():
+                fail(f"cannot parse process launch identity for {pid}", 4)
+            return f"proc:{fields[19]}", int(fields[1])
+
+        first_birth = proc_birth()
+        process_nonce = managed_process_nonce(pid)
+        second_birth = proc_birth()
+        if first_birth != second_birth:
+            fail(f"process {pid} changed while launch identity was captured", 4)
+        return {
+            "start_token": first_birth[0],
+            "parent_pid": first_birth[1],
+            "process_nonce": process_nonce,
+        }
+    audit_process_probe("launch", pid)
+    result = subprocess.run(
+        [
+            "ps",
+            "eww",
+            "-ww",
+            "-p",
+            str(pid),
+            "-o",
+            "lstart=",
+            "-o",
+            "ppid=",
+            "-o",
+            "command=",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    raw = result.stdout.rstrip("\n")
+    if result.returncode != 0 or len(raw) <= 24:
+        fail(f"cannot inspect process launch identity for {pid}", 4)
+    started = raw[:24].strip()
+    remainder = raw[24:].strip().split(maxsplit=1)
+    if len(remainder) != 2 or not started or not remainder[0].isdigit():
+        fail(f"cannot parse process launch identity for {pid}", 4)
+    match = re.search(
+        r"(?:^|\s)VIBECRAFTED_PROCESS_NONCE=([0-9a-f]{64})(?:\s|$)",
+        remainder[1],
+    )
+    return {
+        "start_token": f"ps:{started}",
+        "parent_pid": int(remainder[0]),
+        "process_nonce": match.group(1) if match else None,
+    }
+
+
+def audit_process_probe(kind: str, pid: int) -> None:
+    audit_raw = os.environ.get("VIBECRAFTED_TEST_PROCESS_AUDIT")
+    if not audit_raw:
+        return
+    audit_path = Path(audit_raw)
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        audit_path,
+        os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+        0o600,
+    )
+    with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {
+                    "operation": sys.argv[1] if len(sys.argv) > 1 else "",
+                    "kind": kind,
+                    "pid": pid,
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+
 def ps_value(pid: int, field: str, *, wide: bool = False) -> str:
     argv = ["ps"]
     if wide:
         argv.append("-ww")
     argv.extend(["-p", str(pid), "-o", f"{field}="])
+    audit_process_probe(field, pid)
     result = subprocess.run(
         argv,
         check=False,
@@ -1392,6 +1484,25 @@ def ps_value(pid: int, field: str, *, wide: bool = False) -> str:
     if result.returncode != 0:
         fail(f"cannot inspect process {pid} field {field}", 4)
     return result.stdout.strip()
+
+
+def ps_process_header(pid: int) -> tuple[str, str]:
+    audit_process_probe("header", pid)
+    result = subprocess.run(
+        ["ps", "-ww", "-p", str(pid), "-o", "lstart=", "-o", "comm="],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    raw = result.stdout.rstrip("\n")
+    if result.returncode != 0 or len(raw) <= 24:
+        fail(f"cannot inspect process header for {pid}", 4)
+    started = raw[:24].strip()
+    executable = raw[24:].strip()
+    if not started or not executable:
+        fail(f"cannot parse process header for {pid}", 4)
+    return f"ps:{started}", executable
 
 
 def process_start_token(pid: int) -> str:
@@ -1417,6 +1528,7 @@ def managed_process_nonce(pid: int) -> str | None:
             if item.startswith(prefix):
                 return item[len(prefix) :].decode("ascii", errors="strict")
         return None
+    audit_process_probe("nonce", pid)
     result = subprocess.run(
         ["ps", "eww", "-p", str(pid), "-o", "command="],
         check=False,
@@ -1433,16 +1545,35 @@ def managed_process_nonce(pid: int) -> str | None:
     return match.group(1) if match else None
 
 
+def is_launch_wrapper(executable: object) -> bool:
+    running = os.path.realpath(str(executable or ""))
+    for name in ("env", "nohup"):
+        candidates = {
+            shutil.which(name),
+            f"/bin/{name}",
+            f"/usr/bin/{name}",
+        }
+        if any(
+            candidate is not None
+            and Path(candidate).exists()
+            and running == os.path.realpath(candidate)
+            for candidate in candidates
+        ):
+            return True
+    return False
+
+
 def process_snapshot(
     pid: int,
     *,
     include_nonce: bool = True,
+    reject_launch_wrappers: bool = False,
 ) -> dict[str, object]:
     if pid <= 1 or not process_alive(pid):
         fail(f"process {pid} is not live", 3)
-    first_start = process_start_token(pid)
     proc_cmdline = Path(f"/proc/{pid}/cmdline")
     if proc_cmdline.is_file():
+        first_start = process_start_token(pid)
         command: dict[str, object] = {
             "kind": "argv",
             "value": [
@@ -1457,9 +1588,13 @@ def process_snapshot(
             executable_sha256 = sha256_file(executable_probe)
         except OSError as exc:
             fail(f"cannot fingerprint executable for process {pid}: {exc}", 4)
+        if reject_launch_wrappers and is_launch_wrapper(executable):
+            fail(f"process {pid} is still a launch wrapper", 4)
     else:
+        first_start, executable_raw = ps_process_header(pid)
+        if reject_launch_wrappers and is_launch_wrapper(executable_raw):
+            fail(f"process {pid} is still a launch wrapper", 4)
         command_line = ps_value(pid, "command", wide=True)
-        executable_raw = ps_value(pid, "comm")
         if not command_line or not executable_raw:
             fail(f"cannot capture command identity for process {pid}", 4)
         command = {"kind": "command_line", "value": command_line}
@@ -1475,7 +1610,13 @@ def process_snapshot(
             )
         except OSError as exc:
             fail(f"cannot fingerprint executable for process {pid}: {exc}", 4)
-    second_start = process_start_token(pid)
+    process_nonce = managed_process_nonce(pid) if include_nonce else None
+    if proc_cmdline.is_file():
+        second_start = process_start_token(pid)
+    else:
+        second_start, second_executable_raw = ps_process_header(pid)
+        if executable_raw != second_executable_raw:
+            fail(f"process {pid} executable changed while identity was captured", 4)
     if first_start != second_start:
         fail(f"process {pid} changed while identity was captured", 4)
     snapshot: dict[str, object] = {
@@ -1485,8 +1626,40 @@ def process_snapshot(
         "executable_sha256": executable_sha256,
     }
     if include_nonce:
-        snapshot["process_nonce"] = managed_process_nonce(pid)
+        snapshot["process_nonce"] = process_nonce
     return snapshot
+
+
+def lock_process_snapshot(pid: int) -> dict[str, object]:
+    snapshot = process_snapshot(pid, include_nonce=False)
+    snapshot["process_nonce"] = None
+    return snapshot
+
+
+def command_mentions_executable(
+    command: object,
+    candidates: tuple[str, ...],
+) -> bool:
+    if not isinstance(command, dict):
+        return False
+    if command.get("kind") == "argv":
+        argv = command.get("value")
+        return isinstance(argv, list) and any(
+            candidate in argv for candidate in candidates
+        )
+    if command.get("kind") != "command_line":
+        return False
+    command_line = command.get("value")
+    if not isinstance(command_line, str):
+        return False
+    for candidate in candidates:
+        escaped = re.escape(candidate)
+        if re.search(
+            rf"(?<!\S)(?:{escaped}|'{escaped}'|\"{escaped}\")(?=\s|$)",
+            command_line,
+        ):
+            return True
+    return False
 
 
 def verify_identity(path: Path, pid: int, role: str) -> dict[str, object]:
@@ -1676,6 +1849,8 @@ args = sys.argv[2:]
 
 if operation == "nonce":
     print(os.urandom(32).hex())
+elif operation == "caller-pid":
+    print(os.getppid())
 elif operation == "validate-endpoint":
     host, port = validate_endpoint(args[0], args[1])
     print(f"{host}\t{port}")
@@ -1710,6 +1885,83 @@ elif operation == "port-free":
         probe.bind((host, port))
 elif operation == "write-text":
     atomic_text(Path(args[0]), args[1] + "\n")
+elif operation == "launch-witness-write":
+    path = Path(args[0])
+    pid = int(args[1])
+    role = args[2]
+    parent_pid = int(args[3])
+    nonce = args[4]
+    launch_identity = process_launch_identity(pid)
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", nonce) is None
+        or launch_identity["parent_pid"] != parent_pid
+        or launch_identity["process_nonce"] != nonce
+    ):
+        fail(
+            f"process {pid} does not match its direct launch identity",
+            4,
+        )
+    atomic_json(
+        path,
+        {
+            "schema": LAUNCH_WITNESS_SCHEMA,
+            "pid": pid,
+            "role": role,
+            "parent_pid": parent_pid,
+            "start_token": launch_identity["start_token"],
+            "nonce": nonce,
+        },
+    )
+elif operation == "launch-witness-verify":
+    path = Path(args[0])
+    pid = int(args[1])
+    role = args[2]
+    parent_pid = int(args[3])
+    nonce = args[4]
+    payload = read_json(path)
+    if (
+        set(payload)
+        != {"schema", "pid", "role", "parent_pid", "start_token", "nonce"}
+        or payload.get("schema") != LAUNCH_WITNESS_SCHEMA
+        or payload.get("pid") != pid
+        or payload.get("role") != role
+        or payload.get("parent_pid") != parent_pid
+        or not isinstance(payload.get("start_token"), str)
+        or payload.get("nonce") != nonce
+        or re.fullmatch(r"[0-9a-f]{64}", nonce) is None
+    ):
+        fail(f"launch witness mismatch for {role} PID {pid}", 4)
+    launch_identity = process_launch_identity(pid)
+    if (
+        launch_identity["parent_pid"] != parent_pid
+        or launch_identity["start_token"] != payload["start_token"]
+        or launch_identity["process_nonce"] != nonce
+    ):
+        fail(f"launched child identity changed for {role} PID {pid}", 4)
+elif operation == "launch-witness-adopt":
+    path = Path(args[0])
+    pid = int(args[1])
+    role = args[2]
+    payload = read_json(path)
+    nonce = payload.get("nonce")
+    if (
+        set(payload)
+        != {"schema", "pid", "role", "parent_pid", "start_token", "nonce"}
+        or payload.get("schema") != LAUNCH_WITNESS_SCHEMA
+        or payload.get("pid") != pid
+        or payload.get("role") != role
+        or not isinstance(payload.get("start_token"), str)
+        or not isinstance(nonce, str)
+        or re.fullmatch(r"[0-9a-f]{64}", nonce) is None
+    ):
+        fail(f"launch witness mismatch for {role} PID {pid}", 4)
+    launch_identity = process_launch_identity(pid)
+    if (
+        launch_identity["start_token"] != payload["start_token"]
+        or launch_identity["process_nonce"] != nonce
+    ):
+        fail(f"launch witness cannot adopt {role} PID {pid}", 4)
+    print(nonce)
 elif operation == "write-status":
     path = Path(args[0])
     raw_pid = args[1]
@@ -1753,11 +2005,10 @@ elif operation == "capture-identity":
         declared_sha256 = sha256_file(declared)
     except OSError as exc:
         fail(f"cannot fingerprint declared executable {declared}: {exc}", 4)
-    snapshot = process_snapshot(pid)
-    command_identity = json.dumps(snapshot["command"], ensure_ascii=False)
-    if (
-        str(declared) not in command_identity
-        and str(declared_realpath) not in command_identity
+    snapshot = process_snapshot(pid, reject_launch_wrappers=True)
+    if not command_mentions_executable(
+        snapshot["command"],
+        (str(declared), str(declared_realpath)),
     ):
         fail(
             f"process {pid} has not exec'd declared executable {declared}",
@@ -1765,6 +2016,15 @@ elif operation == "capture-identity":
         )
     if snapshot.get("process_nonce") != nonce:
         fail(f"process {pid} does not carry its lifecycle nonce", 4)
+    time.sleep(0.05)
+    stable_snapshot = process_snapshot(pid, include_nonce=False)
+    stable_recorded = {
+        key: value
+        for key, value in snapshot.items()
+        if key != "process_nonce"
+    }
+    if stable_snapshot != stable_recorded:
+        fail(f"process {pid} changed before identity publication", 4)
     atomic_json(
         path,
         {
@@ -1826,7 +2086,7 @@ elif operation == "lock-owner-write":
             "pid": pid,
             "nonce": nonce,
             "acquired_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "process": process_snapshot(pid),
+            "process": lock_process_snapshot(pid),
         },
     )
 elif operation == "lock-state":
@@ -1838,7 +2098,7 @@ elif operation == "lock-state":
             print(f"stale:{pid}:{nonce}:{lock_owner_digest(payload)}")
         else:
             try:
-                current_process = process_snapshot(pid)
+                current_process = lock_process_snapshot(pid)
             except SystemExit:
                 if not process_alive(pid):
                     print(
@@ -1904,7 +2164,7 @@ elif operation == "lock-reclaim":
             raise SystemExit(0)
         if process_alive(pid):
             try:
-                current_process = process_snapshot(pid)
+                current_process = lock_process_snapshot(pid)
             except SystemExit:
                 fail(
                     "lifecycle lock owner is live but cannot be verified; "
@@ -1948,9 +2208,74 @@ else:
 PY
 }
 
+_current_shell_pid() {
+  local runtime_dir temp_file
+  runtime_dir="$(_server_runtime_dir)"
+  mkdir -p "$runtime_dir"
+  temp_file="$runtime_dir/.caller-pid.${RANDOM}.$$"
+  _CURRENT_SHELL_PID=""
+  if ! _server_python caller-pid > "$temp_file"; then
+    rm -f "$temp_file"
+    return 1
+  fi
+  IFS= read -r _CURRENT_SHELL_PID < "$temp_file" || true
+  rm -f "$temp_file"
+  [[ "$_CURRENT_SHELL_PID" =~ ^[0-9]+$ ]] && \
+    [[ "$_CURRENT_SHELL_PID" -gt 1 ]]
+}
+
 _server_identity_file() {
   local role="${1:-}"
   printf '%s/%s.identity.json\n' "$(_server_runtime_dir)" "$role"
+}
+
+_server_launch_witness_file() {
+  local role="${1:-}"
+  printf '%s/%s.launch-witness.json\n' "$(_server_runtime_dir)" "$role"
+}
+
+_capture_launch_witness() {
+  local role="${1:-}"
+  local pid="${2:-}"
+  local parent_pid="${3:-}"
+  local nonce="${4:-}"
+  local witness_file attempts=0
+  witness_file="$(_server_launch_witness_file "$role")"
+  while [[ "$attempts" -lt 3 ]]; do
+    if _server_python launch-witness-write \
+      "$witness_file" "$pid" "$role" "$parent_pid" "$nonce"; then
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      return 1
+    fi
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  return 1
+}
+
+_adopt_launch_witness() {
+  local role="${1:-}"
+  local pid="${2:-}"
+  local executable="${3:-}"
+  shift 3 || true
+  local witness_file nonce argument index
+  local expected_argv=("$@")
+  witness_file="$(_server_launch_witness_file "$role")"
+  nonce="$(_server_python launch-witness-adopt \
+    "$witness_file" "$pid" "$role" 2>/dev/null)" || return 1
+  for index in "${!expected_argv[@]}"; do
+    argument="${expected_argv[$index]}"
+    if [[ "$argument" == "__VIBECRAFTED_LAUNCH_NONCE__" ]]; then
+      expected_argv[index]="$nonce"
+    fi
+  done
+  _capture_managed_identity \
+    "$role" "$pid" "$nonce" "$executable" "${expected_argv[@]}" \
+    >/dev/null 2>&1 || return 1
+  [[ "$(_managed_pid_state "$(_server_runtime_dir)/$role.pid" "$role")" == "live" ]] \
+    || return 1
 }
 
 _managed_pid_state() {
@@ -2001,8 +2326,6 @@ _capture_managed_identity() {
   identity_file="$(_server_identity_file "$role")"
   _server_python capture-identity \
     "$identity_file" "$pid" "$role" "$nonce" "$executable" "$@" || return 1
-  sleep 0.05
-  _server_python verify-identity "$identity_file" "$pid" "$role"
 }
 
 _write_managed_pid() {
@@ -2045,11 +2368,12 @@ _wait_for_pid_exit() {
 _cleanup_managed_evidence() {
   local role="${1:-}"
   local pid="${2:-}"
-  local runtime_dir pid_file identity_file nonce=""
+  local runtime_dir pid_file identity_file witness_file nonce=""
   local ready_path="" guardian_url=""
   runtime_dir="$(_server_runtime_dir)"
   pid_file="$runtime_dir/$role.pid"
   identity_file="$(_server_identity_file "$role")"
+  witness_file="$(_server_launch_witness_file "$role")"
 
   if [[ -f "$identity_file" ]]; then
     nonce="$(_server_python identity-nonce "$identity_file" 2>/dev/null || true)"
@@ -2063,7 +2387,75 @@ _cleanup_managed_evidence() {
     fi
     rm -f "$runtime_dir/guardian.url" "$runtime_dir/guardian.ready-path"
   fi
-  rm -f "$pid_file" "$identity_file"
+  rm -f "$pid_file" "$identity_file" "$witness_file"
+}
+
+_shell_tracks_running_job() {
+  local expected_pid="${1:-}"
+  local job_pid=""
+  while IFS= read -r job_pid; do
+    if [[ "$job_pid" == "$expected_pid" ]]; then
+      return 0
+    fi
+  done < <(jobs -pr)
+  return 1
+}
+
+_stop_launch_owned_process() {
+  local role="${1:-}"
+  local label="${2:-$role}"
+  local pid="${3:-}"
+  local parent_pid="${4:-}"
+  local nonce="${5:-}"
+  local witness_file
+  witness_file="$(_server_launch_witness_file "$role")"
+
+  if ! _shell_tracks_running_job "$pid" || \
+    ! _server_python launch-witness-verify \
+      "$witness_file" "$pid" "$role" "$parent_pid" "$nonce" \
+      >/dev/null 2>&1 || \
+    ! _shell_tracks_running_job "$pid"; then
+    printf "%b✗%b %s launch ownership cannot be reverified; refusing to signal PID %s and retaining evidence.\n" \
+      "$_red" "$_reset" "$label" "${pid:-unknown}" >&2
+    return 1
+  fi
+
+  printf "Stopping launch-owned %s (PID %s)...\n" "$role" "$pid"
+  if ! kill -15 "$pid" 2>/dev/null && kill -0 "$pid" 2>/dev/null; then
+    printf "%b✗%b Failed to send SIGTERM to launch-owned %s PID %s; retaining evidence.\n" \
+      "$_red" "$_reset" "$role" "$pid" >&2
+    return 1
+  fi
+  if _wait_for_pid_exit "$pid" "${VIBECRAFTED_STOP_TERM_WAIT_TICKS:-50}"; then
+    wait "$pid" 2>/dev/null || true
+    _cleanup_managed_evidence "$role" "$pid"
+    printf "%b✓%b %s stopped.\n" "$_green" "$_reset" "$label"
+    return 0
+  fi
+
+  if ! _shell_tracks_running_job "$pid" || \
+    ! _server_python launch-witness-verify \
+      "$witness_file" "$pid" "$role" "$parent_pid" "$nonce" \
+      >/dev/null 2>&1 || \
+    ! _shell_tracks_running_job "$pid"; then
+    printf "%b✗%b %s launch ownership changed after SIGTERM wait; refusing SIGKILL and retaining evidence.\n" \
+      "$_red" "$_reset" "$label" >&2
+    return 1
+  fi
+  printf "%s did not exit on SIGTERM, sending SIGKILL...\n" "$label"
+  if ! kill -9 "$pid" 2>/dev/null && kill -0 "$pid" 2>/dev/null; then
+    printf "%b✗%b Failed to send SIGKILL to launch-owned %s PID %s; retaining evidence.\n" \
+      "$_red" "$_reset" "$role" "$pid" >&2
+    return 1
+  fi
+  if ! _wait_for_pid_exit "$pid" "${VIBECRAFTED_STOP_KILL_WAIT_TICKS:-20}"; then
+    printf "%b✗%b Launch-owned %s PID %s survived SIGKILL; retaining evidence.\n" \
+      "$_red" "$_reset" "$label" "$pid" >&2
+    return 1
+  fi
+  wait "$pid" 2>/dev/null || true
+  _cleanup_managed_evidence "$role" "$pid"
+  printf "%b✓%b %s stopped.\n" "$_green" "$_reset" "$label"
 }
 
 _stop_managed_process() {
@@ -2147,7 +2539,8 @@ _acquire_server_lifecycle_lock() {
   owner_file="$lock_dir/owner.json"
   mkdir -p "$runtime_dir"
   _SERVER_LIFECYCLE_LOCK_NONCE="$(_server_python nonce)"
-  _SERVER_LIFECYCLE_LOCK_PID="${BASHPID:-$$}"
+  _current_shell_pid || return 1
+  _SERVER_LIFECYCLE_LOCK_PID="$_CURRENT_SHELL_PID"
   _SERVER_LIFECYCLE_LOCK_DIR="$lock_dir"
 
   while [[ "$attempts" -lt "${VIBECRAFTED_LIFECYCLE_LOCK_TICKS:-100}" ]]; do
@@ -2289,7 +2682,7 @@ _ensure_guardian() {
   local runtime_dir guardian_pid_file guardian_url_file guardian_ready_path_file
   local guardian_log identity_file state pid guardian_bin target_url configured_url
   local nonce ready_path elapsed captured
-  local identity_error
+  local identity_error launcher_pid witness_file
 
   runtime_dir="$(_server_runtime_dir)"
   guardian_pid_file="$runtime_dir/guardian.pid"
@@ -2297,16 +2690,30 @@ _ensure_guardian() {
   guardian_ready_path_file="$runtime_dir/guardian.ready-path"
   guardian_log="$runtime_dir/guardian.log"
   identity_file="$(_server_identity_file guardian)"
+  witness_file="$(_server_launch_witness_file guardian)"
   identity_error="$runtime_dir/guardian.identity-error.log"
   target_url="$(_server_origin "$host" "$port")" || return 1
   mkdir -p "$runtime_dir"
   state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
   pid="$(_pid_file_value "$guardian_pid_file" 2>/dev/null || true)"
+  if [[ "$state" == "foreign" ]]; then
+    guardian_bin="$(_guardian_binary 2>/dev/null || true)"
+    ready_path="$(_pid_file_value "$guardian_ready_path_file" 2>/dev/null || true)"
+    if [[ -n "$guardian_bin" && -x "$guardian_bin" && -n "$ready_path" ]] && \
+      _adopt_launch_witness guardian "$pid" "$guardian_bin" \
+        "$guardian_bin" \
+        --server-url "$target_url" \
+        --ready-file "$ready_path" \
+        --ready-nonce "__VIBECRAFTED_LAUNCH_NONCE__"; then
+      state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
+    fi
+  fi
 
   if [[ "$state" == "live" ]]; then
     configured_url="$(_pid_file_value "$guardian_url_file" 2>/dev/null || true)"
     if [[ "$configured_url" == "$target_url" && \
       "$(_guardian_ready_receipt_state "$pid" "$target_url")" == "ready" ]]; then
+      rm -f "$witness_file"
       printf "Guardian is already running (PID %s) for %s\n" "$pid" "$target_url"
       return 0
     fi
@@ -2342,16 +2749,29 @@ _ensure_guardian() {
   printf "Starting process guardian for %s...\n" "$target_url"
   nonce="$(_server_python nonce)"
   ready_path="$runtime_dir/guardian.ready.$nonce.json"
-  nohup env VIBECRAFTED_PROCESS_NONCE="$nonce" "$guardian_bin" \
+  _current_shell_pid || return 1
+  launcher_pid="$_CURRENT_SHELL_PID"
+  VIBECRAFTED_PROCESS_NONCE="$nonce" nohup "$guardian_bin" \
     --server-url "$target_url" \
     --ready-file "$ready_path" \
     --ready-nonce "$nonce" \
     > "$guardian_log" 2>&1 < /dev/null &
   pid=$!
   _write_managed_pid "$guardian_pid_file" "$pid"
+  if ! _capture_launch_witness guardian "$pid" "$launcher_pid" "$nonce"; then
+    if kill -0 "$pid" 2>/dev/null; then
+      printf "%b✗%b Guardian launch ownership could not be captured; retaining PID evidence and refusing to signal it.\n" \
+        "$_red" "$_reset" >&2
+    else
+      _cleanup_managed_evidence guardian "$pid"
+    fi
+    return 1
+  fi
   _server_python write-text "$guardian_url_file" "$target_url"
   _server_python write-text "$guardian_ready_path_file" "$ready_path"
 
+  # `$!` initially belongs to nohup; capture only after its exec handoff.
+  sleep 0.1
   captured=0
   elapsed=0
   while [[ "$elapsed" -lt 20 ]]; do
@@ -2373,8 +2793,10 @@ _ensure_guardian() {
   done
   if [[ "$captured" -ne 1 ]]; then
     if kill -0 "$pid" 2>/dev/null; then
-      printf "%b✗%b Guardian identity could not be captured; retaining PID evidence and refusing to signal it.\n" \
+      printf "%b✗%b Guardian identity could not be captured; cleaning up the launch-owned child.\n" \
         "$_red" "$_reset" >&2
+      _stop_launch_owned_process \
+        guardian Guardian "$pid" "$launcher_pid" "$nonce" || return 1
     else
       _server_python ready-remove "$ready_path" "$nonce" "$pid" "$target_url" \
         >/dev/null 2>&1 || true
@@ -2388,13 +2810,26 @@ _ensure_guardian() {
 
   elapsed=0
   while [[ "$elapsed" -lt "${VIBECRAFTED_GUARDIAN_READY_TICKS:-50}" ]]; do
-    state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
-    if [[ "$state" == "live" && \
-      "$(_guardian_ready_receipt_state "$pid" "$target_url")" == "ready" ]]; then
-      printf "%b✓%b Guardian is running (PID %s).\n" "$_green" "$_reset" "$pid"
-      return 0
+    if [[ "$(_guardian_ready_receipt_state "$pid" "$target_url")" == "ready" ]]; then
+      state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
+      if [[ "$state" == "foreign" ]] && \
+        _capture_managed_identity guardian "$pid" "$nonce" "$guardian_bin" \
+          "$guardian_bin" \
+          --server-url "$target_url" \
+          --ready-file "$ready_path" \
+          --ready-nonce "$nonce" \
+          > /dev/null 2> "$identity_error"; then
+        rm -f "$identity_error"
+        state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
+      fi
+      if [[ "$state" == "live" ]]; then
+        rm -f "$witness_file"
+        printf "%b✓%b Guardian is running (PID %s).\n" "$_green" "$_reset" "$pid"
+        return 0
+      fi
+      break
     fi
-    if [[ "$state" != "live" ]]; then
+    if ! kill -0 "$pid" 2>/dev/null; then
       break
     fi
     sleep 0.1
@@ -2404,6 +2839,9 @@ _ensure_guardian() {
   state="$(_managed_pid_state "$guardian_pid_file" "guardian")"
   if [[ "$state" == "live" ]]; then
     _stop_guardian || true
+  elif [[ "$state" == "foreign" && -f "$witness_file" ]]; then
+    _stop_launch_owned_process \
+      guardian Guardian "$pid" "$launcher_pid" "$nonce" || true
   elif [[ "$state" == "stale" || "$state" == "invalid" ]]; then
     _stop_guardian >/dev/null || true
   fi
@@ -2481,6 +2919,13 @@ cmd_server() {
         local existing_pid existing_state
         existing_pid="$(_pid_file_value "$pid_file" 2>/dev/null || true)"
         existing_state="$(_managed_pid_state "$pid_file" "server")"
+        if [[ "$existing_state" == "foreign" ]] && \
+          [[ -x "$HOME/.local/bin/vc-server" ]] && \
+          _adopt_launch_witness \
+            server "$existing_pid" "$HOME/.local/bin/vc-server" \
+            "$HOME/.local/bin/vc-server"; then
+          existing_state="$(_managed_pid_state "$pid_file" "server")"
+        fi
         if [[ "$existing_state" == "live" ]]; then
           # Check health
           local actual_host="127.0.0.1"
@@ -2492,6 +2937,7 @@ cmd_server() {
           fi
           IFS=$'\t' read -r actual_host actual_port <<< "$endpoint"
           if _server_healthcheck "$actual_host" "$actual_port" >/dev/null 2>&1; then
+            rm -f "$(_server_launch_witness_file server)"
             printf "Server is already running (PID %s) at %s\n" \
               "$existing_pid" "$(_server_origin "$actual_host" "$actual_port")"
             _ensure_guardian "$actual_host" "$actual_port"
@@ -2500,7 +2946,16 @@ cmd_server() {
             # Stale PID or unhealthy - stop/cleanup
             printf "Unhealthy or stale server process found at PID %s. Cleaning up...\n" "$existing_pid"
             _stop_guardian || return 1
-            _stop_managed_process server Server || return 1
+            if ! _stop_managed_process server Server; then
+              if [[ -f "$(_server_launch_witness_file server)" ]] && \
+                _adopt_launch_witness \
+                  server "$existing_pid" "$HOME/.local/bin/vc-server" \
+                  "$HOME/.local/bin/vc-server"; then
+                _stop_managed_process server Server || return 1
+              else
+                return 1
+              fi
+            fi
           fi
         elif [[ "$existing_state" == "foreign" ]]; then
           printf "%b✗%b Server PID file points at an unverified live process (%s); refusing to signal or replace it.\n" \
@@ -2549,16 +3004,39 @@ cmd_server() {
 
       local server_nonce
       local identity_error
+      local server_launcher_pid
+      local server_witness_file
       identity_error="$runtime_dir/server.identity-error.log"
+      server_witness_file="$(_server_launch_witness_file server)"
       server_nonce="$(_server_python nonce)"
-      nohup env VC_SERVER_ADDR="$host:$port" \
-                VC_SERVER_SITE_ROOT="$site_root" \
-                VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}" \
-                VIBECRAFTED_PROCESS_NONCE="$server_nonce" \
-                "$server_bin" > "$runtime_dir/server.log" 2>&1 < /dev/null &
+      _current_shell_pid || return 1
+      server_launcher_pid="$_CURRENT_SHELL_PID"
+      VC_SERVER_ADDR="$host:$port" \
+      VC_SERVER_SITE_ROOT="$site_root" \
+      VIBECRAFTED_HOME="${VIBECRAFTED_HOME:-$HOME/.vibecrafted}" \
+      VIBECRAFTED_PROCESS_NONCE="$server_nonce" \
+        nohup "$server_bin" > "$runtime_dir/server.log" 2>&1 < /dev/null &
       local server_pid=$!
       local captured=0
       _write_managed_pid "$pid_file" "$server_pid"
+      if ! _capture_launch_witness \
+        server "$server_pid" "$server_launcher_pid" "$server_nonce"; then
+        if kill -0 "$server_pid" 2>/dev/null; then
+          printf "%b✗%b Server launch ownership could not be captured; retaining PID evidence and refusing to signal it.\n" \
+            "$_red" "$_reset" >&2
+          _server_python write-status \
+            "$status_file" "$server_pid" "$host" "$port" "failed"
+        else
+          _cleanup_managed_evidence server "$server_pid"
+          _server_python write-status \
+            "$status_file" "none" "$host" "$port" "failed"
+        fi
+        return 1
+      fi
+      _server_python write-status \
+        "$status_file" "$server_pid" "$host" "$port" "starting"
+      # `$!` initially belongs to nohup; capture only after its exec handoff.
+      sleep 0.1
       local capture_elapsed=0
       while [[ "$capture_elapsed" -lt 20 ]]; do
         if _capture_managed_identity server "$server_pid" "$server_nonce" \
@@ -2575,8 +3053,14 @@ cmd_server() {
       done
       if [[ "$captured" -ne 1 ]]; then
         if kill -0 "$server_pid" 2>/dev/null; then
-          printf "%b✗%b Server identity could not be captured; retaining PID evidence and refusing to signal it.\n" \
+          printf "%b✗%b Server identity could not be captured; cleaning up the launch-owned child.\n" \
             "$_red" "$_reset" >&2
+          if _stop_launch_owned_process \
+            server Server "$server_pid" "$server_launcher_pid" "$server_nonce"; then
+            _server_python update-status "$status_file" "failed" "none"
+          else
+            _server_python update-status "$status_file" "failed" "$server_pid"
+          fi
         else
           _cleanup_managed_evidence server "$server_pid"
           printf "%b✗%b Server exited before identity capture. Check %s/server.log\n" \
@@ -2585,17 +3069,14 @@ cmd_server() {
         return 1
       fi
 
-      _server_python write-status \
-        "$status_file" "$server_pid" "$host" "$port" "starting"
-
       # 5. Wait for health
       local timeout=15
       local elapsed=0
       local healthy=0
       while [[ $elapsed -lt 30 ]]; do
         local current_state
-        current_state="$(_managed_pid_state "$pid_file" "server")"
-        if [[ "$current_state" != "live" ]]; then
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+          current_state="$(_managed_pid_state "$pid_file" "server")"
           printf "%b✗%b Server process died immediately. Check log at %s/server.log\n" "$_red" "$_reset" "$runtime_dir" >&2
           if [[ "$current_state" == "stale" || "$current_state" == "invalid" ]]; then
             _stop_managed_process server Server >/dev/null || true
@@ -2604,6 +3085,26 @@ cmd_server() {
           return 1
         fi
         if _server_healthcheck "$host" "$port" >/dev/null 2>&1; then
+          current_state="$(_managed_pid_state "$pid_file" "server")"
+          if [[ "$current_state" == "foreign" ]] && \
+            _capture_managed_identity server "$server_pid" "$server_nonce" \
+              "$server_bin" "$server_bin" \
+              > /dev/null 2> "$identity_error"; then
+            rm -f "$identity_error"
+            current_state="$(_managed_pid_state "$pid_file" "server")"
+          fi
+          if [[ "$current_state" != "live" ]]; then
+            printf "%b✗%b Server became healthy but its managed identity could not be verified.\n" \
+              "$_red" "$_reset" >&2
+            if _stop_launch_owned_process \
+              server Server "$server_pid" "$server_launcher_pid" "$server_nonce"; then
+              _server_python update-status "$status_file" "failed" "none"
+            else
+              _server_python update-status "$status_file" "failed" "$server_pid"
+            fi
+            return 1
+          fi
+          rm -f "$server_witness_file"
           healthy=1
           break
         fi
@@ -2629,6 +3130,10 @@ cmd_server() {
         printf "%b✗%b Server started but failed health check at %s/api/health after %s seconds.\n" \
           "$_red" "$_reset" "$(_server_origin "$host" "$port")" "$timeout" >&2
         if _stop_managed_process server Server; then
+          _server_python update-status "$status_file" "failed" "none"
+        elif [[ -f "$server_witness_file" ]] && \
+          _stop_launch_owned_process \
+            server Server "$server_pid" "$server_launcher_pid" "$server_nonce"; then
           _server_python update-status "$status_file" "failed" "none"
         else
           _server_python update-status "$status_file" "failed" "$server_pid"
