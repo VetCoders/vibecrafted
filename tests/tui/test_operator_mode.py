@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -95,6 +96,27 @@ def _write_stateful_vc_frame(
     vc_frame.chmod(0o755)
 
 
+def _write_implicit_gc_probe_vc_frame(bin_dir: Path) -> None:
+    script = bin_dir / "vc-frame"
+    script.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+capture = Path(os.environ["CAPTURE_FILE"])
+with capture.open("a", encoding="utf-8") as fh:
+    fh.write("VC_FRAME " + " ".join(args) + "\\n")
+if args[:1] == ["list-sessions"]:
+    print("abandoned-evidence [Created 72h ago] (EXITED - attach to resurrect)")
+sys.exit(0)
+""",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+
+
 def _write_fake_osascript(
     bin_dir: Path, capture_file: Path, session_state_file: Path
 ) -> None:
@@ -185,6 +207,173 @@ def test_operator_console_first_screen_is_actionable() -> None:
 
     for fragment in expected_fragments:
         assert fragment in payload
+
+
+def test_vc_start_does_not_run_implicit_session_gc(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "CAPTURE_FILE": str(capture_file),
+            "VIBECRAFTED_TEST_ALLOW_NON_TTY_VC_FRAME": "1",
+        }
+    )
+    for name in (
+        "VC_FRAME",
+        "VC_FRAME_PANE_ID",
+        "VC_FRAME_SESSION_NAME",
+        "VIBECRAFTED_OPERATOR_SESSION",
+        "VIBECRAFTED_OPERATOR_MODE",
+    ):
+        env.pop(name, None)
+
+    result = subprocess.run(
+        ["bash", "-lc", f'source "{HELPER_SCRIPT}"; vc-start'],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8")
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session abandoned-evidence" not in payload
+
+
+def test_prepare_operator_runtime_does_not_run_gc_for_headless(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "CAPTURE_FILE": str(capture_file),
+        }
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-lc",
+            f'source "{HELPER_SCRIPT}"; _vetcoders_prepare_operator_runtime headless',
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session abandoned-evidence" not in payload
+
+
+def test_generic_skill_does_not_run_implicit_session_gc(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "VIBECRAFTED_ROOT": str(REPO_ROOT),
+            "CAPTURE_FILE": str(capture_file),
+        }
+    )
+    command = (
+        f'source "{HELPER_SCRIPT}"; '
+        "_vetcoders_dispatch_skill_prompt() { :; }; "
+        "_vetcoders_print_launch_receipt() { :; }; "
+        "_vetcoders_maybe_spawn_await_pane() { :; }; "
+        'codex-followup --runtime headless --prompt "Check runtime"'
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", command],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session abandoned-evidence" not in payload
+
+
+def test_operator_console_does_not_run_implicit_session_gc(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    mission_control = tmp_path / "mission-control"
+    capture_file = tmp_path / "capture.log"
+    fake_shell = tmp_path / "fake-shell"
+    home.mkdir()
+    fake_bin.mkdir()
+    mission_control.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+    fake_shell.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_shell.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "CAPTURE_FILE": str(capture_file),
+            "SHELL": str(fake_shell),
+        }
+    )
+    source_mission_control = REPO_ROOT / "runtime" / "vc-operator" / "mission-control"
+    operator_console = mission_control / "operator-console.sh"
+    gc_script = mission_control / "vc-frame-gc.sh"
+    shutil.copy2(source_mission_control / operator_console.name, operator_console)
+    shutil.copy2(source_mission_control / gc_script.name, gc_script)
+    operator_console.chmod(0o755)
+    gc_script.chmod(0o755)
+
+    result = subprocess.run(
+        [str(operator_console)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session abandoned-evidence" not in payload
 
 
 def test_helper_exports_vc_skill_wrappers() -> None:

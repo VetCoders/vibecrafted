@@ -236,14 +236,6 @@ _vetcoders_vc_frame_gc_script() {
   _vetcoders_workflow_script "vc-operator" "mission-control/vc-frame-gc.sh"
 }
 
-_vetcoders_auto_gc_dead_vc_frame_sessions() {
-  local gc_script
-  gc_script="$(_vetcoders_vc_frame_gc_script 2>/dev/null || true)"
-  [[ -n "$gc_script" && -f "$gc_script" ]] || return 0
-  bash "$gc_script" --apply --quiet >/dev/null 2>&1 || true
-}
-
-
 _vetcoders_wait_for_vc_frame_session() {
   local session_name="$1"
   local attempts="${2:-40}"
@@ -373,7 +365,6 @@ _vetcoders_prepare_operator_runtime() {
   local runtime="${1:-$(_vetcoders_default_runtime)}"
   local session_name layout_file
   _vetcoders_normalize_ambient_context
-  _vetcoders_auto_gc_dead_vc_frame_sessions
 
   case "$runtime" in
     terminal|visible) ;;

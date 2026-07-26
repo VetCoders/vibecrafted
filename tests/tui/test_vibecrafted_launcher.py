@@ -2337,6 +2337,37 @@ def test_dashboard_switch_outside_vc_frame_uses_attach(tmp_path: Path) -> None:
     assert "target-session" in payload
 
 
+def test_dashboard_gc_defaults_to_dry_run(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "vc_frame-args.txt"
+
+    home.mkdir()
+    fake_bin.mkdir()
+    listing = "abandoned-evidence [Created 72h ago] (EXITED - attach to resurrect)\n"
+    _write_gc_vc_frame(fake_bin, capture_file, listing)
+
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+    env["CAPTURE_FILE"] = str(capture_file)
+    env["FAKE_VC_FRAME_LISTING"] = listing
+
+    result = subprocess.run(
+        ["bash", str(LAUNCHER), "dashboard", "gc"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8")
+    assert "list-sessions" in payload
+    assert "kill-session abandoned-evidence" not in payload
+    assert "vc_frame-gc: dry-run" in result.stdout
+
+
 def test_dashboard_gc_prunes_dead_sessions(tmp_path: Path) -> None:
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
