@@ -596,6 +596,13 @@ async def _run_child(
     )
 
 
+def _meta_sibling_path(meta_path: Path, suffix: str) -> Path:
+    marker = ".meta.json"
+    if meta_path.name.endswith(marker):
+        return meta_path.with_name(f"{meta_path.name[: -len(marker)]}{suffix}")
+    return meta_path.with_suffix(suffix)
+
+
 def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
     try:
         payload = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -603,9 +610,12 @@ def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
         return None
     if not isinstance(payload, dict):
         return None
-    report = Path(str(payload.get("report") or meta_path.with_suffix(".md")))
+    report = Path(str(payload.get("report") or _meta_sibling_path(meta_path, ".md")))
     transcript = Path(
-        str(payload.get("transcript") or meta_path.with_suffix(".transcript.log"))
+        str(
+            payload.get("transcript")
+            or _meta_sibling_path(meta_path, ".transcript.log")
+        )
     )
     exit_code_raw = payload.get("exit_code")
     exit_code: int | None
@@ -663,6 +673,86 @@ def _lane_meta_path(agent: str) -> Path:
     )[2]
 
 
+def _lane_progress_fingerprint(
+    meta_path: Path, result: ChildResult | None
+) -> tuple[tuple[str, int, int], ...]:
+    paths = (
+        meta_path,
+        result.report if result is not None else _meta_sibling_path(meta_path, ".md"),
+        (
+            result.transcript
+            if result is not None
+            else _meta_sibling_path(meta_path, ".transcript.log")
+        ),
+    )
+    fingerprint: list[tuple[str, int, int]] = []
+    for path in paths:
+        try:
+            stat = path.stat()
+        except OSError:
+            fingerprint.append((str(path), -1, -1))
+        else:
+            fingerprint.append((str(path), stat.st_size, stat.st_mtime_ns))
+    return tuple(fingerprint)
+
+
+def _timed_out_lane_result(
+    agent: str, observed: ChildResult | None, reason: str
+) -> ChildResult:
+    meta_path = _lane_meta_path(agent)
+    errors = tuple(
+        dict.fromkeys(
+            (
+                *(observed.artifact_errors if observed is not None else ()),
+                "worker_timeout",
+                reason,
+            )
+        )
+    )
+    return ChildResult(
+        label=f"research-{agent}",
+        agent=(observed.agent if observed is not None else "") or agent,
+        run_id=(observed.run_id if observed is not None else "")
+        or f"{_parent_run_id()}-research-{_safe_label(agent)}",
+        agent_session_id=(observed.agent_session_id if observed is not None else ""),
+        agent_model=observed.agent_model if observed is not None else "",
+        model_requested=observed.model_requested if observed is not None else "",
+        model_override_supported=(
+            observed.model_override_supported if observed is not None else False
+        ),
+        model_override_skipped=(
+            observed.model_override_skipped if observed is not None else False
+        ),
+        model_override_skip_reason=(
+            observed.model_override_skip_reason if observed is not None else ""
+        ),
+        report=(
+            observed.report
+            if observed is not None
+            else _meta_sibling_path(meta_path, ".md")
+        ),
+        transcript=(
+            observed.transcript
+            if observed is not None
+            else _meta_sibling_path(meta_path, ".transcript.log")
+        ),
+        exit_code=124,
+        artifact_ok=False,
+        artifact_errors=errors,
+        tokens_input=observed.tokens_input if observed is not None else 0,
+        tokens_cached_input=(
+            observed.tokens_cached_input if observed is not None else 0
+        ),
+        tokens_cache_write=(
+            observed.tokens_cache_write if observed is not None else None
+        ),
+        tokens_output=observed.tokens_output if observed is not None else 0,
+        cost_usd=observed.cost_usd if observed is not None else None,
+        resume_command=observed.resume_command if observed is not None else "",
+        completed_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 def _research_quorum(total: int) -> int:
     """Survivors needed for a research swarm to still count as a success.
 
@@ -715,47 +805,113 @@ def _research_run_status(
 async def _wait_for_research_lanes(
     agents: Sequence[str],
     *,
-    timeout_seconds: float = 86400,
+    timeout_seconds: float = 3600,
+    quorum_idle_seconds: float = 120,
     interval_seconds: float = 5,
 ) -> list[ChildResult]:
     quorum = _research_quorum(len(agents))
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    loop = asyncio.get_running_loop()
+    hard_deadline = loop.time() + max(timeout_seconds, 0.0)
+    quorum_idle_deadline: float | None = None
+    last_pending_progress: (
+        tuple[tuple[str, tuple[tuple[str, int, int], ...]], ...] | None
+    ) = None
+    last_announced_pending: tuple[str, ...] | None = None
     while True:
-        results: list[ChildResult] = []
-        pending: list[str] = []
-        failed = 0
+        results: dict[str, ChildResult] = {}
+        pending: dict[str, ChildResult | None] = {}
         for agent in agents:
             result = _child_result_from_meta(
                 f"research-{agent}", _lane_meta_path(agent)
             )
             if result is None or result.exit_code is None:
-                pending.append(agent)
-            elif result.agent:
-                results.append(result)
-                if result.exit_code != 0 or not result.artifact_ok:
-                    failed += 1
-        # Stop waiting only when the majority can no longer be reached, even if
-        # every still-pending lane were to succeed. A single dead lane no longer
-        # short-circuits the survivors — we keep waiting so synthesis can run on
-        # the quorum (the orchestration-robustness fix).
-        if failed > len(agents) - quorum:
-            return results
+                pending[agent] = result
+            else:
+                results[agent] = result
         if not pending:
-            return results
-        if asyncio.get_running_loop().time() >= deadline:
-            if len(results) - failed >= quorum:
+            return [results[agent] for agent in agents if agent in results]
+
+        pending_agents = tuple(pending)
+        survivors = len(_research_survivors(tuple(results.values())))
+        now = loop.time()
+        pending_progress = tuple(
+            (
+                agent,
+                _lane_progress_fingerprint(_lane_meta_path(agent), pending[agent]),
+            )
+            for agent in pending_agents
+        )
+
+        if survivors + len(pending) < quorum:
+            print(
+                "research quorum is impossible; failing pending lanes: "
+                f"{', '.join(pending_agents)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return [
+                results.get(agent)
+                or _timed_out_lane_result(
+                    agent, pending.get(agent), "lane_quorum_impossible"
+                )
+                for agent in agents
+            ]
+
+        if now >= hard_deadline:
+            print(
+                "research lane hard timeout; failing pending lanes: "
+                f"{', '.join(pending_agents)}",
+                file=sys.stderr,
+                flush=True,
+            )
+            return [
+                results.get(agent)
+                or _timed_out_lane_result(
+                    agent, pending.get(agent), "lane_hard_timeout"
+                )
+                for agent in agents
+            ]
+
+        if survivors >= quorum:
+            if (
+                quorum_idle_deadline is None
+                or pending_progress != last_pending_progress
+            ):
+                quorum_idle_deadline = min(
+                    hard_deadline, now + max(quorum_idle_seconds, 0.0)
+                )
+            if now >= quorum_idle_deadline:
                 print(
-                    "research lanes timed out; proceeding with quorum "
-                    f"{len(results) - failed}/{len(agents)} (pending: "
-                    f"{', '.join(pending)})",
+                    "research quorum reached; failing idle pending lanes and "
+                    f"proceeding with {survivors}/{len(agents)} survivors: "
+                    f"{', '.join(pending_agents)}",
                     file=sys.stderr,
                     flush=True,
                 )
-                return results
-            missing = ", ".join(pending)
-            raise TimeoutError(f"timed out waiting for research lanes: {missing}")
-        print(f"waiting for research lanes: {', '.join(pending)}", flush=True)
-        await asyncio.sleep(interval_seconds)
+                return [
+                    results.get(agent)
+                    or _timed_out_lane_result(
+                        agent, pending.get(agent), "lane_quorum_idle_timeout"
+                    )
+                    for agent in agents
+                ]
+        else:
+            quorum_idle_deadline = None
+
+        if pending_agents != last_announced_pending:
+            print(
+                f"waiting for research lanes: {', '.join(pending_agents)}", flush=True
+            )
+            last_announced_pending = pending_agents
+        last_pending_progress = pending_progress
+        next_deadline = hard_deadline
+        if quorum_idle_deadline is not None:
+            next_deadline = min(next_deadline, quorum_idle_deadline)
+        sleep_seconds = min(
+            max(interval_seconds, 0.0),
+            max(next_deadline - loop.time(), 0.0),
+        )
+        await asyncio.sleep(sleep_seconds)
 
 
 def _failed_synthesis_result(last: ChildResult, reason: str) -> ChildResult:
@@ -1121,21 +1277,17 @@ async def run_research_synthesis(
     if not selection.agents:
         print("vc-research: no supported research agents configured.", file=sys.stderr)
         return 1
-    timeout = float(os.environ.get("VIBECRAFTED_RESEARCH_SYNTHESIS_TIMEOUT", "86400"))
-    try:
-        results = await _wait_for_research_lanes(
-            selection.agents, timeout_seconds=timeout
-        )
-    except TimeoutError as exc:
-        print(str(exc), file=sys.stderr)
-        _write_parent_report(
-            "research",
-            root,
-            prompt,
-            [],
-            research_selection=selection,
-        )
-        return 1
+    hard_timeout = float(
+        os.environ.get("VIBECRAFTED_RESEARCH_SYNTHESIS_TIMEOUT", "3600")
+    )
+    quorum_idle_timeout = float(
+        os.environ.get("VIBECRAFTED_RESEARCH_QUORUM_IDLE_TIMEOUT", "120")
+    )
+    results = await _wait_for_research_lanes(
+        selection.agents,
+        timeout_seconds=hard_timeout,
+        quorum_idle_seconds=quorum_idle_timeout,
+    )
     synthesis = await _run_research_synthesis(
         root, prompt, results, selection, model_requested
     )

@@ -40,6 +40,8 @@ def _runtime_env(monkeypatch, tmp_path: Path, run_id: str) -> Path:
         "VIBECRAFTED_ARTIFACT_TS",
         "VIBECRAFTED_CANONICAL_REPORT_DIR",
         "VIBECRAFTED_RESEARCH_AGENTS",
+        "VIBECRAFTED_RESEARCH_QUORUM_IDLE_TIMEOUT",
+        "VIBECRAFTED_RESEARCH_SYNTHESIS_TIMEOUT",
         "VIBECRAFTED_TEE_OUTPUT",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -51,6 +53,32 @@ def _runtime_env(monkeypatch, tmp_path: Path, run_id: str) -> Path:
     monkeypatch.setenv("VIBECRAFTED_TRANSCRIPT_PATH", str(home / "parent.log"))
     monkeypatch.setenv("VIBECRAFTED_META_PATH", str(home / "parent.meta.json"))
     return home
+
+
+def _write_finished_lane_meta(
+    child_dir: Path, run_id: str, agent: str, completed_at: str
+) -> None:
+    report = child_dir / f"research-{agent}.md"
+    transcript = child_dir / f"research-{agent}.transcript.log"
+    report.write_text("---\nstatus: completed\n---\n", encoding="utf-8")
+    transcript.write_text("done\n", encoding="utf-8")
+    (child_dir / f"research-{agent}.meta.json").write_text(
+        json.dumps(
+            {
+                "run_id": f"{run_id}-research-{agent}",
+                "agent": agent,
+                "agent_session_id": f"{agent}-session",
+                "agent_model": f"{agent}-model",
+                "report": str(report),
+                "transcript": str(transcript),
+                "exit_code": 0,
+                "artifact_errors": [],
+                "resume_command": f"{agent} resume {agent}-session",
+                "completed_at": completed_at,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 @pytest.mark.parametrize(
@@ -136,6 +164,26 @@ def test_child_meta_never_promotes_legacy_session_id_to_native_identity(
 
     assert result is not None
     assert result.agent_session_id == ""
+
+
+def test_child_result_uses_canonical_meta_siblings(tmp_path: Path) -> None:
+    report = tmp_path / "2026-07-26_agy_topic_report.md"
+    transcript = tmp_path / "2026-07-26_agy_topic_report.transcript.log"
+    meta = tmp_path / "2026-07-26_agy_topic_report.meta.json"
+    report.write_text("---\nstatus: completed\n---\nbody\n", encoding="utf-8")
+    transcript.write_text("done\n", encoding="utf-8")
+    meta.write_text(
+        json.dumps({"run_id": "research-agy", "agent": "agy"}),
+        encoding="utf-8",
+    )
+
+    result = workflow_runtime._child_result_from_meta("research-agy", meta)
+
+    assert result is not None
+    assert result.report == report
+    assert result.transcript == transcript
+    assert result.exit_code == 0
+    assert result.artifact_ok is True
 
 
 def test_research_runtime_supervises_three_tracks(monkeypatch, tmp_path: Path) -> None:
@@ -395,10 +443,10 @@ def test_research_synthesis_waits_for_lane_meta_and_resumes_last_finisher(
     )
 
     assert rc == 0
-    report = (home / "parent.md").read_text(encoding="utf-8")
-    assert "agents: grok, codex" in report
-    assert "research-synthesis (codex)" in report
-    assert "agent_session_id: codex-session" in report
+    parent_report = (home / "parent.md").read_text(encoding="utf-8")
+    assert "agents: grok, codex" in parent_report
+    assert "research-synthesis (codex)" in parent_report
+    assert "agent_session_id: codex-session" in parent_report
     assert (child_dir / "research-synthesis.md").is_file()
 
 
@@ -479,7 +527,6 @@ def test_research_synthesis_closes_when_lane_failed(
         ),
         encoding="utf-8",
     )
-
     rc = workflow_runtime.main(
         ["research-synthesis", "--root", str(tmp_path), "--prompt", "map it"]
     )
@@ -489,6 +536,52 @@ def test_research_synthesis_closes_when_lane_failed(
     assert "status: failed" in report
     assert "research-grok" in report
     assert "artifact_errors: worker_failed" in report
+
+
+def test_research_synthesis_marks_pending_when_quorum_is_impossible(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-quorum-impossible")
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["grok", "codex", "agy"]\n',
+        encoding="utf-8",
+    )
+    child_dir = home / "rsch-quorum-impossible-children"
+    child_dir.mkdir(parents=True)
+    for agent in ("grok", "codex"):
+        report = child_dir / f"research-{agent}.md"
+        report.write_text("---\nstatus: failed\n---\n", encoding="utf-8")
+        (child_dir / f"research-{agent}.meta.json").write_text(
+            json.dumps(
+                {
+                    "run_id": f"rsch-quorum-impossible-research-{agent}",
+                    "agent": agent,
+                    "report": str(report),
+                    "exit_code": 1,
+                    "artifact_errors": ["worker_failed"],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    rc = workflow_runtime.main(
+        ["research-synthesis", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 1
+    parent = json.loads((home / "parent.meta.json").read_text(encoding="utf-8"))
+    assert parent["status"] == "failed"
+    assert len(parent["children"]) == 3
+    by_agent = {child["agent"]: child for child in parent["children"]}
+    assert by_agent["grok"]["artifact_errors"] == ["worker_failed"]
+    assert by_agent["codex"]["artifact_errors"] == ["worker_failed"]
+    assert by_agent["agy"]["exit_code"] == 124
+    assert by_agent["agy"]["artifact_errors"] == [
+        "worker_timeout",
+        "lane_quorum_impossible",
+    ]
 
 
 def test_research_synthesis_degrades_to_partial_success_on_quorum(
@@ -555,14 +648,99 @@ def test_research_synthesis_degrades_to_partial_success_on_quorum(
     )
 
     assert rc == 0
-    report = (home / "parent.md").read_text(encoding="utf-8")
-    assert "status: partial_success" in report
-    assert "lanes_failed: agy" in report
+    parent_report = (home / "parent.md").read_text(encoding="utf-8")
+    assert "status: partial_success" in parent_report
+    assert "lanes_failed: agy" in parent_report
     # synteza odpaliła z ostatniego ocalałego (codex), agy odnotowany jako fail
-    assert "research-synthesis (codex)" in report
-    assert "research-agy" in report
-    assert "artifact_errors: worker_failed" in report
+    assert "research-synthesis (codex)" in parent_report
+    assert "research-agy" in parent_report
+    assert "artifact_errors: worker_failed" in parent_report
     assert (child_dir / "research-synthesis.md").is_file()
+
+
+def test_research_synthesis_times_out_missing_lane_after_quorum(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-quorum-timeout")
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["grok", "codex", "agy"]\n',
+        encoding="utf-8",
+    )
+    child_dir = home / "rsch-quorum-timeout-children"
+    child_dir.mkdir(parents=True)
+    _write_finished_lane_meta(
+        child_dir, "rsch-quorum-timeout", "grok", "2026-07-26T05:00:00+00:00"
+    )
+    _write_finished_lane_meta(
+        child_dir, "rsch-quorum-timeout", "codex", "2026-07-26T05:01:00+00:00"
+    )
+    (child_dir / "research-agy.meta.json").write_text(
+        json.dumps({"run_id": "rsch-quorum-timeout-research-agy", "agent": "agy"}),
+        encoding="utf-8",
+    )
+    (child_dir / "research-agy.transcript.log").write_text(
+        "Error: timeout waiting for response\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIBECRAFTED_RESEARCH_SYNTHESIS_TIMEOUT", "30")
+    monkeypatch.setenv("VIBECRAFTED_RESEARCH_QUORUM_IDLE_TIMEOUT", "0")
+
+    rc = workflow_runtime.main(
+        ["research-synthesis", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 0
+    parent = json.loads((home / "parent.meta.json").read_text(encoding="utf-8"))
+    assert parent["status"] == "partial_success"
+    assert parent["status"] != "completed"
+    assert parent["lanes_failed"] == ["agy"]
+    assert len(parent["children"]) == 3
+    agy = next(child for child in parent["children"] if child["agent"] == "agy")
+    assert agy["exit_code"] == 124
+    assert agy["artifact_ok"] is False
+    assert agy["artifact_errors"] == [
+        "worker_timeout",
+        "lane_quorum_idle_timeout",
+    ]
+
+
+def test_research_synthesis_hard_timeout_preserves_survivor_evidence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-hard-timeout")
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["grok", "codex", "agy"]\n',
+        encoding="utf-8",
+    )
+    child_dir = home / "rsch-hard-timeout-children"
+    child_dir.mkdir(parents=True)
+    _write_finished_lane_meta(
+        child_dir, "rsch-hard-timeout", "grok", "2026-07-26T05:00:00+00:00"
+    )
+    monkeypatch.setenv("VIBECRAFTED_RESEARCH_SYNTHESIS_TIMEOUT", "0")
+    monkeypatch.setenv("VIBECRAFTED_RESEARCH_QUORUM_IDLE_TIMEOUT", "0")
+
+    rc = workflow_runtime.main(
+        ["research-synthesis", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 1
+    parent = json.loads((home / "parent.meta.json").read_text(encoding="utf-8"))
+    assert parent["status"] == "failed"
+    assert len(parent["children"]) == 3
+    by_agent = {child["agent"]: child for child in parent["children"]}
+    assert by_agent["grok"]["exit_code"] == 0
+    assert by_agent["grok"]["artifact_ok"] is True
+    for agent in ("codex", "agy"):
+        assert by_agent[agent]["exit_code"] == 124
+        assert by_agent[agent]["artifact_errors"] == [
+            "worker_timeout",
+            "lane_hard_timeout",
+        ]
 
 
 def test_research_runtime_tees_child_output(
