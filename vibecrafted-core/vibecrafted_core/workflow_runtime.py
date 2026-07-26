@@ -493,9 +493,9 @@ def native_resume_argv(agent: str, agent_session_id: str) -> list[str]:
         return [
             "codex",
             "exec",
+            "resume",
             "--json",
             "--dangerously-bypass-approvals-and-sandbox",
-            "resume",
             native_id,
             "-",
         ]

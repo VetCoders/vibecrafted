@@ -102,9 +102,9 @@ def _write_finished_lane_meta(
             [
                 "codex",
                 "exec",
+                "resume",
                 "--json",
                 "--dangerously-bypass-approvals-and-sandbox",
-                "resume",
                 "native-123",
                 "-",
             ],
@@ -448,6 +448,76 @@ def test_research_synthesis_waits_for_lane_meta_and_resumes_last_finisher(
     assert "research-synthesis (codex)" in parent_report
     assert "agent_session_id: codex-session" in parent_report
     assert (child_dir / "research-synthesis.md").is_file()
+
+
+def test_research_synthesis_codex_exec_resume_preserves_prompt_and_report_contract(
+    monkeypatch, tmp_path: Path
+) -> None:
+    home = _runtime_env(monkeypatch, tmp_path, "rsch-codex-resume-contract")
+    strict_codex = tmp_path / "bin" / "codex"
+    strict_codex.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'expected="exec resume --json '
+        '--dangerously-bypass-approvals-and-sandbox codex-session -"\n'
+        'if [[ "$*" != "$expected" ]]; then\n'
+        '  printf "unexpected argv: %s\\n" "$*" >&2\n'
+        "  exit 64\n"
+        "fi\n"
+        'printf "%s\\n" "$@" > "$VIBECRAFTED_HOME/codex-resume.argv"\n'
+        "prompt=$(cat)\n"
+        'printf "%s\\n" "$prompt" > "$VIBECRAFTED_HOME/codex-resume.prompt"\n'
+        'if [[ "$prompt" != *"Original operator prompt:"* '
+        '|| "$prompt" != *"map it"* '
+        '|| "$prompt" != *"research-codex.md"* ]]; then\n'
+        '  printf "synthesis prompt contract missing\\n" >&2\n'
+        "  exit 65\n"
+        "fi\n"
+        "printf '[12:00:00] model: codex-model\\n'\n"
+        "printf '[12:00:00] session: codex-synthesis-session\\n'\n"
+        "printf '[12:00:01] tokens: 10 in (3 cached) / 5 out\\n'\n"
+        'printf "%s\\n" "---" "status: completed" "---" '
+        '"strict codex synthesis ok" > "$VIBECRAFTED_REPORT_PATH"\n',
+        encoding="utf-8",
+    )
+    strict_codex.chmod(0o755)
+    config_dir = tmp_path / "xdg" / "vibecrafted"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(
+        '[runtime.picking.research]\ndefault_agents = ["codex"]\n',
+        encoding="utf-8",
+    )
+    child_dir = home / "rsch-codex-resume-contract-children"
+    child_dir.mkdir(parents=True)
+    _write_finished_lane_meta(
+        child_dir,
+        "rsch-codex-resume-contract",
+        "codex",
+        "2026-07-26T05:01:00+00:00",
+    )
+
+    rc = workflow_runtime.main(
+        ["research-synthesis", "--root", str(tmp_path), "--prompt", "map it"]
+    )
+
+    assert rc == 0
+    assert (home / "codex-resume.argv").read_text(encoding="utf-8").splitlines() == [
+        "exec",
+        "resume",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "codex-session",
+        "-",
+    ]
+    synthesis_prompt = (home / "codex-resume.prompt").read_text(encoding="utf-8")
+    assert "Original operator prompt:\nmap it" in synthesis_prompt
+    assert str(child_dir / "research-codex.md") in synthesis_prompt
+    synthesis_report = child_dir / "research-synthesis.md"
+    assert "strict codex synthesis ok" in synthesis_report.read_text(encoding="utf-8")
+    parent = json.loads((home / "parent.meta.json").read_text(encoding="utf-8"))
+    assert parent["status"] == "completed"
+    assert parent["synthesis"]["artifact_ok"] is True
+    assert parent["synthesis"]["exit_code"] == 0
 
 
 def test_research_synthesis_recovers_legacy_lane_meta_without_exit_code(
