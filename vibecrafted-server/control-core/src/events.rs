@@ -7,11 +7,18 @@
 //! rotation; a missing generation yields an explicit gap and never silently
 //! replays the current file.
 
+use std::collections::{HashMap, HashSet};
+use std::ffi::CString;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use crate::model::Event;
 
@@ -167,6 +174,13 @@ pub struct StreamBatch {
     pub scanned_bytes: usize,
 }
 
+/// Atomic connection baseline captured from one active file descriptor.
+#[derive(Debug, Clone)]
+pub struct ConnectionWindow {
+    pub cursor: StreamCursor,
+    pub high_watermark: StreamCursor,
+}
+
 /// Compatibility batch for the old active-file-only byte-offset API.
 #[derive(Debug, Clone)]
 pub struct EventBatch {
@@ -181,12 +195,69 @@ pub struct EventStream {
 
 #[derive(Debug, Clone)]
 struct Segment {
-    path: PathBuf,
+    archive_name: Option<PathBuf>,
     epoch: String,
     generation: u64,
     data_start: u64,
     len: u64,
     active: bool,
+    modified: SystemTime,
+    device: u64,
+    inode: u64,
+    owner_uid: u32,
+}
+
+#[derive(Debug, Clone)]
+struct ArchiveCache {
+    modified: Option<SystemTime>,
+    segments: Vec<Segment>,
+}
+
+static ARCHIVE_CACHES: OnceLock<Mutex<HashMap<PathBuf, ArchiveCache>>> = OnceLock::new();
+
+fn validate_opened_archive_file(
+    file: &File,
+    expected: &fs::Metadata,
+    owner_uid: u32,
+) -> io::Result<()> {
+    let opened = file.metadata()?;
+    if !opened.file_type().is_file()
+        || opened.uid() != owner_uid
+        || opened.dev() != expected.dev()
+        || opened.ino() != expected.ino()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "event archive entry changed ownership or inode before open",
+        ));
+    }
+    Ok(())
+}
+
+fn open_archive_child_no_follow(directory: &File, name: &Path) -> io::Result<File> {
+    let encoded = CString::new(name.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "event archive name contains NUL",
+        )
+    })?;
+    // SAFETY: `directory` is an open, canonical archive directory. `name` was
+    // validated as one normal component. `openat` returns a fresh owned fd or
+    // a negative errno; O_NOFOLLOW rejects a last-component symlink.
+    let raw = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            encoded.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if raw < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: a successful `openat` returned one fresh descriptor, transferred
+    // exactly once into `OwnedFd` and then `File`.
+    let owned = unsafe { OwnedFd::from_raw_fd(raw) };
+    Ok(File::from(owned))
 }
 
 #[derive(Debug, Clone)]
@@ -248,38 +319,158 @@ impl EventStream {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
-        let segment = read_v1_segment_from_file(&mut file, self.path.clone(), true)?;
+        let segment = read_v1_segment_from_file(&mut file, true)?;
         Ok(Some((file, segment)))
+    }
+
+    fn open_owned_segment(&self, segment: &Segment) -> io::Result<File> {
+        if segment.active {
+            let Some((file, observed)) = self.open_active()? else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "active event segment disappeared",
+                ));
+            };
+            let opened = file.metadata()?;
+            let identity_matches = match observed {
+                Some(observed) => {
+                    observed.epoch == segment.epoch
+                        && observed.generation == segment.generation
+                        && observed.device == segment.device
+                        && observed.inode == segment.inode
+                }
+                None => {
+                    segment.epoch.is_empty()
+                        && opened.dev() == segment.device
+                        && opened.ino() == segment.inode
+                }
+            };
+            if !identity_matches {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "active event segment changed before read",
+                ));
+            }
+            return Ok(file);
+        }
+
+        let archive = self
+            .path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("events_archive");
+        let canonical_archive = fs::canonicalize(&archive)?;
+        let expected_archive = fs::metadata(&canonical_archive)?;
+        let archive_owner = expected_archive.uid();
+        let name = segment.archive_name.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "retained event segment has no archive name",
+            )
+        })?;
+        let mut components = name.components();
+        if !matches!(components.next(), Some(Component::Normal(_)))
+            || components.next().is_some()
+            || !name
+                .to_str()
+                .is_some_and(|name| name.starts_with("events-") && name.ends_with(".jsonl"))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "invalid retained event segment name",
+            ));
+        }
+        let archive_directory = File::open(&canonical_archive)?;
+        let archive_metadata = archive_directory.metadata()?;
+        if !archive_metadata.file_type().is_dir()
+            || archive_metadata.uid() != archive_owner
+            || archive_metadata.dev() != expected_archive.dev()
+            || archive_metadata.ino() != expected_archive.ino()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "invalid event archive owner",
+            ));
+        }
+        let mut file = open_archive_child_no_follow(&archive_directory, name)?;
+        let opened = file.metadata()?;
+        if !opened.file_type().is_file()
+            || opened.uid() != archive_owner
+            || opened.uid() != segment.owner_uid
+            || opened.dev() != segment.device
+            || opened.ino() != segment.inode
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "retained event segment identity changed",
+            ));
+        }
+        let observed = read_v1_segment_from_file(&mut file, false)?;
+        if observed.as_ref().is_some_and(|observed| {
+            observed.epoch == segment.epoch
+                && observed.generation == segment.generation
+                && observed.device == segment.device
+                && observed.inode == segment.inode
+        }) {
+            return Ok(file);
+        }
+        Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "retained event segment changed before read",
+        ))
     }
 
     /// Cursor at the first event of the active segment.
     pub fn start_cursor(&self) -> io::Result<StreamCursor> {
-        if let Some((_, Some(segment))) = self.open_active()? {
-            return Ok(StreamCursor::V2 {
-                epoch: segment.epoch,
-                generation: segment.generation,
-                offset: segment.data_start,
-            });
-        }
-        Ok(StreamCursor::Legacy(0))
+        self.connection_window(None).map(|window| window.cursor)
     }
 
     /// Last complete record boundary in the active segment.
     pub fn high_watermark(&self) -> io::Result<StreamCursor> {
+        self.connection_window(None)
+            .map(|window| window.high_watermark)
+    }
+
+    /// Capture the connection start and high-watermark from one open inode.
+    ///
+    /// A segmented stream upgrades only the unambiguous legacy origin
+    /// (`Legacy(0)`) to its v2 data start. Non-zero legacy offsets cannot name
+    /// a generation and remain intact so `read_stream` can emit an explicit
+    /// resnapshot gap. Headerless streams preserve legacy byte cursors.
+    pub fn connection_window(
+        &self,
+        requested: Option<&StreamCursor>,
+    ) -> io::Result<ConnectionWindow> {
         let Some((mut file, segment)) = self.open_active()? else {
-            return Ok(StreamCursor::Legacy(0));
+            return Ok(ConnectionWindow {
+                cursor: requested.cloned().unwrap_or(StreamCursor::Legacy(0)),
+                high_watermark: StreamCursor::Legacy(0),
+            });
         };
         if let Some(segment) = segment {
             let offset = last_complete_offset_in_file(&mut file, segment.data_start)?;
-            return Ok(StreamCursor::V2 {
-                epoch: segment.epoch,
+            let start = StreamCursor::V2 {
+                epoch: segment.epoch.clone(),
                 generation: segment.generation,
-                offset,
+                offset: segment.data_start,
+            };
+            let cursor = match requested {
+                None | Some(StreamCursor::Legacy(0)) => start,
+                Some(cursor) => cursor.clone(),
+            };
+            return Ok(ConnectionWindow {
+                cursor,
+                high_watermark: StreamCursor::V2 {
+                    epoch: segment.epoch,
+                    generation: segment.generation,
+                    offset,
+                },
             });
         }
-        Ok(StreamCursor::Legacy(last_complete_offset_in_file(
-            &mut file, 0,
-        )?))
+        Ok(ConnectionWindow {
+            cursor: requested.cloned().unwrap_or(StreamCursor::Legacy(0)),
+            high_watermark: StreamCursor::Legacy(last_complete_offset_in_file(&mut file, 0)?),
+        })
     }
 
     /// Bounded generation-aware drain used by the SSE server.
@@ -303,16 +494,38 @@ impl EventStream {
                 scanned_bytes: 0,
             });
         };
+        if let Some(segment) = segment {
+            if offset != 0 {
+                return self.gap_batch(cursor_string(offset), "legacy_cursor_generation_unknown");
+            }
+            let start = StreamCursor::V2 {
+                epoch: segment.epoch.clone(),
+                generation: segment.generation,
+                offset: segment.data_start,
+            };
+            let mut batch = self.read_v2_stream(
+                &segment.epoch,
+                segment.generation,
+                segment.data_start,
+                kinds,
+            )?;
+            batch.items.insert(
+                0,
+                StreamItem::Boundary(StreamBoundary {
+                    from: StreamCursor::Legacy(0),
+                    to: start,
+                }),
+            );
+            return Ok(batch);
+        }
         let file_len = file.metadata()?.len();
-        let data_start = segment.map_or(0, |segment| segment.data_start);
-        let start = if offset == 0 { data_start } else { offset };
-        if start > file_len {
+        if offset > file_len {
             return self.gap_batch(cursor_string(offset), "legacy_cursor_beyond_eof");
         }
         let style = CursorStyle::Legacy;
         let drain = drain_file(
             file,
-            start,
+            offset,
             true,
             &style,
             None,
@@ -368,7 +581,7 @@ impl EventStream {
                 generation: current.generation,
             };
             let drain = drain_file(
-                File::open(&current.path)?,
+                self.open_owned_segment(&current)?,
                 cursor.offset(),
                 current.active,
                 &style,
@@ -443,34 +656,122 @@ impl EventStream {
     }
 
     fn v1_segments(&self) -> io::Result<Vec<Segment>> {
-        let mut segments = Vec::new();
         let archive = self
             .path
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join("events_archive");
-        match fs::read_dir(archive) {
-            Ok(entries) => {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let mut file = File::open(&path)?;
-                    if let Some(segment) = read_v1_segment_from_file(&mut file, path, false)? {
-                        segments.push(segment);
+        let archive_modified = match fs::metadata(&archive) {
+            Ok(metadata) => metadata.modified().ok(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let caches = ARCHIVE_CACHES.get_or_init(|| Mutex::new(HashMap::new()));
+        let cached = {
+            let guard = caches
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard
+                .get(&archive)
+                .filter(|cache| cache.modified == archive_modified)
+                .map(|cache| cache.segments.clone())
+        };
+        let mut segments = if let Some(cached) = cached {
+            cached
+        } else {
+            let mut discovered = Vec::new();
+            match fs::read_dir(&archive) {
+                Ok(entries) => {
+                    let canonical_archive = fs::canonicalize(&archive)?;
+                    let archive_owner = fs::metadata(&canonical_archive)?.uid();
+                    for entry in entries.flatten() {
+                        let name = entry.file_name();
+                        let Some(name) = name.to_str() else {
+                            continue;
+                        };
+                        if !name.starts_with("events-") || !name.ends_with(".jsonl") {
+                            continue;
+                        }
+                        let canonical = match fs::canonicalize(entry.path()) {
+                            Ok(path) => path,
+                            Err(_) => continue,
+                        };
+                        if canonical.parent() != Some(canonical_archive.as_path()) {
+                            continue;
+                        }
+                        let expected = fs::metadata(&canonical)?;
+                        if !expected.file_type().is_file() || expected.uid() != archive_owner {
+                            continue;
+                        }
+                        let mut file = File::open(&canonical)?;
+                        validate_opened_archive_file(&file, &expected, archive_owner)?;
+                        if let Some(mut segment) = read_v1_segment_from_file(&mut file, false)? {
+                            segment.archive_name = Some(PathBuf::from(name));
+                            discovered.push(segment);
+                        }
                     }
                 }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
+            let mut guard = caches
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            guard.insert(
+                archive.clone(),
+                ArchiveCache {
+                    modified: archive_modified,
+                    segments: discovered.clone(),
+                },
+            );
+            discovered
+        };
         if let Some((_, Some(active))) = self.open_active()? {
             segments.push(active);
         }
         segments.sort_by(|left, right| {
-            left.epoch
-                .cmp(&right.epoch)
+            left.active
+                .cmp(&right.active)
+                .then(left.modified.cmp(&right.modified))
+                .then(left.epoch.cmp(&right.epoch))
                 .then(left.generation.cmp(&right.generation))
         });
         Ok(segments)
+    }
+
+    fn ordered_unique_segments(&self) -> io::Result<Vec<Segment>> {
+        let segments = self.v1_segments()?;
+        let mut seen = HashSet::new();
+        let mut unique_newest_first = Vec::new();
+        for segment in segments.into_iter().rev() {
+            if seen.insert((segment.epoch.clone(), segment.generation)) {
+                unique_newest_first.push(segment);
+            }
+        }
+        unique_newest_first.reverse();
+        Ok(unique_newest_first)
+    }
+
+    fn headerless_active(&self) -> io::Result<Option<Segment>> {
+        let Some((file, segment)) = self.open_active()? else {
+            return Ok(None);
+        };
+        if segment.is_some() {
+            return Ok(None);
+        }
+        let metadata = file.metadata()?;
+        Ok(Some(Segment {
+            archive_name: None,
+            epoch: String::new(),
+            generation: 0,
+            data_start: 0,
+            len: metadata.len(),
+            active: true,
+            modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            owner_uid: metadata.uid(),
+        }))
     }
 
     /// Legacy active-file-only reader retained for Rust API compatibility.
@@ -525,41 +826,181 @@ impl EventStream {
         Ok(EventBatch { events, cursor })
     }
 
+    /// Read all retained v1 generations in chronological order.
+    ///
+    /// Segment identity is deduplicated before reading, so an interrupted
+    /// rotation cannot replay a generation twice. Headerless streams retain
+    /// the legacy active-file-only behavior.
     pub fn read_all(&self) -> io::Result<EventBatch> {
-        self.read_since(0, &[])
+        let segments = self.ordered_unique_segments()?;
+        if segments.is_empty() {
+            return self.read_since(0, &[]);
+        }
+        let mut events = Vec::new();
+        let mut cursor = 0;
+        for segment in segments {
+            let (mut segment_events, end) =
+                read_complete_segment_events(self.open_owned_segment(&segment)?, &segment)?;
+            events.append(&mut segment_events);
+            if segment.active {
+                cursor = end;
+            }
+        }
+        Ok(EventBatch { events, cursor })
     }
 
+    /// Read a bounded newest-first tail across retained generations.
     pub fn tail(&self, limit: usize) -> io::Result<Vec<Event>> {
-        let mut batch = self.read_all()?;
-        if batch.events.len() > limit {
-            let start = batch.events.len() - limit;
-            batch.events.drain(..start);
+        if limit == 0 {
+            return Ok(Vec::new());
         }
-        batch.events.reverse();
-        Ok(batch.events)
+        let mut segments = self.ordered_unique_segments()?;
+        if segments.is_empty() {
+            if let Some(active) = self.headerless_active()? {
+                segments.push(active);
+            }
+        }
+        let mut events = Vec::new();
+        for segment in segments.iter().rev() {
+            let remaining = limit.saturating_sub(events.len());
+            if remaining == 0 {
+                break;
+            }
+            events.extend(read_segment_tail(
+                self.open_owned_segment(segment)?,
+                segment,
+                remaining,
+            )?);
+        }
+        Ok(events)
     }
 }
+
+fn read_complete_segment_events(
+    mut file: File,
+    segment: &Segment,
+) -> io::Result<(Vec<Event>, u64)> {
+    if !segment.epoch.is_empty() {
+        let observed = read_segment_header_from_file(&mut file)?;
+        if observed
+            .as_ref()
+            .map(|(epoch, generation, _)| (epoch.as_str(), *generation))
+            != Some((segment.epoch.as_str(), segment.generation))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "event segment changed before full read",
+            ));
+        }
+    }
+    file.seek(SeekFrom::Start(segment.data_start))?;
+    let mut reader = BufReader::new(file);
+    let mut cursor = segment.data_start;
+    let mut events = Vec::new();
+    loop {
+        let line = read_bounded_line(&mut reader)?;
+        if line.bytes == 0 || !line.complete {
+            break;
+        }
+        cursor = cursor.saturating_add(u64::try_from(line.bytes).unwrap_or(u64::MAX));
+        if line.too_long {
+            continue;
+        }
+        let Ok(mut event) = serde_json::from_slice::<Event>(&line.data) else {
+            continue;
+        };
+        if event.kind == "stream.segment" {
+            continue;
+        }
+        event.cursor = cursor;
+        events.push(event);
+    }
+    Ok((events, cursor))
+}
+
+fn read_segment_tail(mut file: File, segment: &Segment, limit: usize) -> io::Result<Vec<Event>> {
+    if limit == 0 || segment.len <= segment.data_start {
+        return Ok(Vec::new());
+    }
+    let max_bytes = limit
+        .saturating_add(1)
+        .saturating_mul(STREAM_LINE_MAX_BYTES.saturating_add(1));
+    let max_bytes_u64 = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    let start = segment
+        .len
+        .saturating_sub(max_bytes_u64)
+        .max(segment.data_start);
+    let to_read = usize::try_from(segment.len.saturating_sub(start)).unwrap_or(max_bytes);
+    file.seek(SeekFrom::Start(start))?;
+    let mut raw = vec![0_u8; to_read.min(max_bytes)];
+    file.read_exact(&mut raw)?;
+
+    let mut base = start;
+    if start > segment.data_start {
+        let Some(first_newline) = raw.iter().position(|byte| *byte == b'\n') else {
+            return Ok(Vec::new());
+        };
+        let consumed = first_newline + 1;
+        raw.drain(..consumed);
+        base = base.saturating_add(u64::try_from(consumed).unwrap_or(u64::MAX));
+    }
+    if raw.last().copied() != Some(b'\n') {
+        if let Some(last_newline) = raw.iter().rposition(|byte| *byte == b'\n') {
+            raw.truncate(last_newline + 1);
+        } else {
+            return Ok(Vec::new());
+        }
+    }
+
+    let total_len = raw.len();
+    raw.pop();
+    let mut line_end = base.saturating_add(u64::try_from(total_len).unwrap_or(u64::MAX));
+    let mut events = Vec::new();
+    for line in raw.split(|byte| *byte == b'\n').rev() {
+        let bytes = line.len().saturating_add(1);
+        if line.len() <= STREAM_LINE_MAX_BYTES {
+            if let Ok(mut event) = serde_json::from_slice::<Event>(line) {
+                if event.kind != "stream.segment" {
+                    event.cursor = line_end;
+                    events.push(event);
+                    if events.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+        line_end = line_end.saturating_sub(u64::try_from(bytes).unwrap_or(u64::MAX));
+    }
+    Ok(events)
+}
+
+/*
+ * The compatibility reader used to live below `v1_segments`; keeping the
+ * generation-aware helpers together above makes it much harder to accidentally
+ * regress `read_all` or `tail` back to active-file-only behavior.
+ */
 
 fn cursor_string(offset: u64) -> String {
     StreamCursor::Legacy(offset).to_string()
 }
 
-fn read_v1_segment_from_file(
-    file: &mut File,
-    path: PathBuf,
-    active: bool,
-) -> io::Result<Option<Segment>> {
-    let len = file.metadata()?.len();
+fn read_v1_segment_from_file(file: &mut File, active: bool) -> io::Result<Option<Segment>> {
+    let metadata = file.metadata()?;
+    let len = metadata.len();
     let Some((epoch, generation, data_start)) = read_segment_header_from_file(file)? else {
         return Ok(None);
     };
     Ok(Some(Segment {
-        path,
+        archive_name: None,
         epoch,
         generation,
         data_start,
         len,
         active,
+        modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        owner_uid: metadata.uid(),
     }))
 }
 
@@ -869,6 +1310,118 @@ mod tests {
     }
 
     #[test]
+    fn connection_window_start_and_highwater_share_generation() {
+        let dir = temp_dir("connection-window");
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("events.jsonl");
+        write_segment(
+            &path,
+            "epoch-window",
+            7,
+            &[event_line("window", "baseline")],
+        );
+        let stream = EventStream::new(&path);
+
+        let window = stream
+            .connection_window(Some(&StreamCursor::Legacy(0)))
+            .expect("connection window");
+
+        assert!(matches!(
+            (&window.cursor, &window.high_watermark),
+            (
+                StreamCursor::V2 {
+                    epoch: start_epoch,
+                    generation: 7,
+                    ..
+                },
+                StreamCursor::V2 {
+                    epoch: high_epoch,
+                    generation: 7,
+                    ..
+                }
+            ) if start_epoch == high_epoch && window.high_watermark.reaches(&window.cursor)
+        ));
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn legacy_zero_migrates_to_v2_with_explicit_boundary() {
+        let dir = temp_dir("legacy-zero");
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("events.jsonl");
+        write_segment(
+            &path,
+            "epoch-legacy-zero",
+            0,
+            &[event_line("legacy-zero", "baseline")],
+        );
+        let stream = EventStream::new(&path);
+
+        let batch = stream
+            .read_stream(&StreamCursor::Legacy(0), &[])
+            .expect("legacy zero migration");
+
+        assert!(matches!(
+            batch.items.first(),
+            Some(StreamItem::Boundary(boundary))
+                if boundary.from == StreamCursor::Legacy(0) && boundary.to.is_v2()
+        ));
+        assert!(batch.cursor.is_v2());
+        assert_eq!(event_records(&batch).len(), 1);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn legacy_nonzero_segmented_emits_generation_unknown_gap() {
+        let dir = temp_dir("legacy-nonzero");
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("events.jsonl");
+        write_segment(
+            &path,
+            "epoch-legacy-nonzero",
+            3,
+            &[event_line("legacy-nonzero", "must not replay")],
+        );
+        let stream = EventStream::new(&path);
+
+        let batch = stream
+            .read_stream(&StreamCursor::Legacy(42), &[])
+            .expect("legacy nonzero gap");
+
+        assert!(matches!(
+            batch.items.as_slice(),
+            [StreamItem::Gap(gap)]
+                if gap.reason == "legacy_cursor_generation_unknown"
+                    && gap.requested == "42"
+                    && gap.resumed_at.is_v2()
+        ));
+        assert!(event_records(&batch).is_empty());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn headerless_legacy_stream_keeps_numeric_cursor() {
+        let dir = temp_dir("headerless-legacy");
+        fs::create_dir_all(&dir).expect("mkdir");
+        let path = dir.join("events.jsonl");
+        fs::write(&path, format!("{}\n", event_line("legacy", "one"))).expect("write legacy");
+        let stream = EventStream::new(&path);
+
+        let window = stream
+            .connection_window(Some(&StreamCursor::Legacy(0)))
+            .expect("legacy window");
+        let batch = stream
+            .read_stream(&window.cursor, &[])
+            .expect("legacy drain");
+
+        assert_eq!(window.cursor, StreamCursor::Legacy(0));
+        assert!(matches!(window.high_watermark, StreamCursor::Legacy(_)));
+        assert!(matches!(batch.cursor, StreamCursor::Legacy(_)));
+        assert_eq!(event_records(&batch).len(), 1);
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn archived_generation_bridges_to_larger_new_generation() {
         let dir = temp_dir("archive-bridge");
         let archive = dir.join("events_archive");
@@ -923,6 +1476,67 @@ mod tests {
             batch.cursor,
             stream.high_watermark().expect("high watermark")
         );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn read_all_bridges_archives_in_order_without_duplicates() {
+        let dir = temp_dir("read-all-archives");
+        let archive = dir.join("events_archive");
+        fs::create_dir_all(&archive).expect("mkdir archive");
+        let path = dir.join("events.jsonl");
+        write_segment(
+            &archive.join("events-epoch-all-g00000000000000000000.jsonl"),
+            "epoch-all",
+            0,
+            &[
+                event_line("run-all", "archive-one"),
+                event_line("run-all", "archive-two"),
+            ],
+        );
+        write_segment(
+            &path,
+            "epoch-all",
+            1,
+            &[event_line("run-all", "active-three")],
+        );
+
+        let batch = EventStream::new(&path).read_all().expect("read retained");
+        let messages: Vec<_> = batch
+            .events
+            .iter()
+            .map(|event| event.message.as_str())
+            .collect();
+
+        assert_eq!(
+            messages,
+            ["archive-one", "archive-two", "active-three"],
+            "each retained generation must contribute once in order"
+        );
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn tail_bridges_header_only_active_generation() {
+        let dir = temp_dir("tail-header-only");
+        let archive = dir.join("events_archive");
+        fs::create_dir_all(&archive).expect("mkdir archive");
+        let path = dir.join("events.jsonl");
+        write_segment(
+            &archive.join("events-epoch-tail-g00000000000000000000.jsonl"),
+            "epoch-tail",
+            0,
+            &[
+                event_line("run-tail", "older"),
+                event_line("run-tail", "newest-retained"),
+            ],
+        );
+        write_segment(&path, "epoch-tail", 1, &[]);
+
+        let tail = EventStream::new(&path).tail(2).expect("retained tail");
+        let messages: Vec<_> = tail.iter().map(|event| event.message.as_str()).collect();
+
+        assert_eq!(messages, ["newest-retained", "older"]);
         fs::remove_dir_all(dir).ok();
     }
 

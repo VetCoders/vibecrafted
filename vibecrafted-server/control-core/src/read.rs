@@ -645,7 +645,21 @@ impl ControlPlane {
         // process state, but they must never be used to invent a settlement.
         let retained_snapshots = self.load_snapshots();
         let settlement_counts = SettlementBoard::from_snapshots(&retained_snapshots);
-        let mut merged: Vec<RunStatus> = Vec::new();
+        // Snapshots are also the durable run baseline. Event rotation is
+        // allowed only after Python has projected the generation into these
+        // files, so starting from an empty vector would make an event-only run
+        // disappear as soon as its generation aged out. Fresher raw evidence
+        // below is folded with the normal timestamp-aware merge.
+        let mut merged = retained_snapshots.clone();
+        for snapshot in &mut merged {
+            snapshot.health = if snapshot.is_terminal() {
+                "final".to_string()
+            } else {
+                state_health(&snapshot.state, &snapshot.updated_at, now)
+                    .as_str()
+                    .to_string()
+            };
+        }
 
         for path in self.iter_meta_files() {
             if let Some(payload) = read_json::<serde_json::Value>(&path) {
@@ -703,13 +717,17 @@ impl ControlPlane {
             absorb_status(&mut merged, status);
         }
         for run in &mut merged {
-            if live_worker_runs.contains(&run.run_id) && !run.is_terminal() {
+            let terminal = run.is_terminal();
+            if terminal {
+                run.health = "final".to_string();
+            } else if live_worker_runs.contains(&run.run_id) {
                 run.worker_alive = Some(true);
                 run.health = "active".to_string();
-            } else if run.worker_pid.is_some() || run.worker_pgid.is_some() {
-                run.worker_alive = Some(false);
+            } else {
+                if run.worker_pid.is_some() || run.worker_pgid.is_some() {
+                    run.worker_alive = Some(false);
+                }
             }
-            let terminal = run.is_terminal();
             let await_run = !terminal
                 && run
                     .controls
@@ -748,22 +766,6 @@ impl ControlPlane {
                     run.health = "unknown".to_string();
                 }
                 merged.push(run);
-            }
-        }
-
-        // Persisted terminal snapshots are the completion authority over the
-        // runtime_runs/ read-follows-write fallback. Runtime directories
-        // intentionally outlive workers, so their mere existence cannot
-        // resurrect a finished run. Other richer sources keep their existing
-        // merge semantics.
-        for snapshot in retained_snapshots
-            .iter()
-            .filter(|snapshot| snapshot.is_terminal())
-        {
-            if let Some(idx) = merged.iter().position(|run| {
-                run.run_id == snapshot.run_id && run.source.as_str() == "runtime_runs"
-            }) {
-                merged[idx] = snapshot.clone();
             }
         }
 
@@ -1645,9 +1647,79 @@ impl MarblesState {
 #[cfg(test)]
 mod tests {
     use super::ControlPlane;
+    use crate::events::STREAM_SEGMENT_SCHEMA;
     use chrono::{Duration, Utc};
     use serde_json::json;
     use std::fs;
+
+    #[test]
+    fn event_only_run_survives_rotation_via_snapshot() {
+        let unique = format!(
+            "control-core-snapshot-after-rotation-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        let home = std::env::temp_dir().join(unique);
+        let control_plane = home.join("control_plane");
+        let snapshots = control_plane.join("runs");
+        fs::create_dir_all(&snapshots).expect("snapshots");
+        let now = Utc::now();
+        fs::write(
+            snapshots.join("event-only.json"),
+            serde_json::to_vec(&json!({
+                "run_id": "event-only",
+                "state": "active",
+                "agent": "codex",
+                "skill": "implement",
+                "mode": "implement",
+                "root": "/Volumes/vc-workspace/vetcoders/vibecrafted",
+                "operator_session": "vibecrafted-event-only",
+                "latest_report": "",
+                "latest_transcript": "",
+                "last_error": "",
+                "updated_at": now.to_rfc3339(),
+                "started_at": now.to_rfc3339(),
+                "health": "active",
+                "source": "event-stream",
+                "lock_present": false
+            }))
+            .expect("snapshot json"),
+        )
+        .expect("snapshot");
+        fs::write(
+            control_plane.join("events.jsonl"),
+            format!(
+                "{}\n",
+                json!({
+                    "ts": now.to_rfc3339(),
+                    "run_id": "",
+                    "kind": "stream.segment",
+                    "message": "rotated generation",
+                    "payload": {
+                        "schema": STREAM_SEGMENT_SCHEMA,
+                        "epoch": "epoch-snapshot",
+                        "generation": 1
+                    }
+                })
+            ),
+        )
+        .expect("header-only active generation");
+
+        let view = ControlPlane::new(&home).compute_view(now);
+
+        assert!(
+            view.recent_runs
+                .iter()
+                .any(|run| run.run_id == "event-only"),
+            "durable snapshot must outlive its rotated event generation"
+        );
+        assert!(
+            view.active_runs
+                .iter()
+                .any(|run| run.run_id == "event-only")
+        );
+        fs::remove_dir_all(home).ok();
+    }
 
     #[test]
     fn active_truth_separates_stalls_and_quarantines_pytest_events() {

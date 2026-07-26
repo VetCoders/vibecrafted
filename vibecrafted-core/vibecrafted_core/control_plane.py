@@ -116,6 +116,10 @@ RUN_SNAPSHOT_RETENTION_COUNT_ENV = "VIBECRAFTED_RUN_SNAPSHOT_RETENTION_COUNT"
 EVENT_TAIL_LIMIT = 16
 EVENTS_ROTATE_BYTES = 32 * 1024 * 1024
 EVENTS_ROTATE_BYTES_ENV = "VIBECRAFTED_EVENTS_ROTATE_BYTES"
+EVENTS_ARCHIVE_MAX_FILES = 64
+EVENTS_ARCHIVE_MAX_FILES_ENV = "VIBECRAFTED_EVENTS_ARCHIVE_MAX_FILES"
+EVENTS_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024
+EVENTS_ARCHIVE_MAX_BYTES_ENV = "VIBECRAFTED_EVENTS_ARCHIVE_MAX_BYTES"
 EVENT_SEGMENT_SCHEMA = "vibecrafted.event-stream-segment.v1"
 EVENT_MAX_LINE_BYTES = 256 * 1024
 RECENT_RUN_LIMIT = 12
@@ -156,7 +160,21 @@ class Event:
     kind: str
     message: str
     payload: dict[str, Any]
-    cursor: int
+    cursor: str
+
+
+@dataclass(frozen=True)
+class _EventSegment:
+    path: Path
+    epoch: str
+    generation: int
+    data_start: int
+    size: int
+    active: bool
+    modified_ns: int
+
+    def cursor(self, offset: int) -> str:
+        return f"v2:{self.epoch}:{self.generation}:{max(offset, 0)}"
 
 
 @dataclass(frozen=True)
@@ -492,6 +510,18 @@ def _configured_snapshot_retention_count() -> int:
 
 def _configured_events_rotate_bytes() -> int:
     return _configured_nonnegative_int(EVENTS_ROTATE_BYTES_ENV, EVENTS_ROTATE_BYTES)
+
+
+def _configured_events_archive_max_files() -> int:
+    return _configured_nonnegative_int(
+        EVENTS_ARCHIVE_MAX_FILES_ENV, EVENTS_ARCHIVE_MAX_FILES
+    )
+
+
+def _configured_events_archive_max_bytes() -> int:
+    return _configured_nonnegative_int(
+        EVENTS_ARCHIVE_MAX_BYTES_ENV, EVENTS_ARCHIVE_MAX_BYTES
+    )
 
 
 def _configured_nonnegative_int(env_name: str, default: int) -> int:
@@ -1100,12 +1130,7 @@ def _segment_header(epoch: str, generation: int) -> dict[str, Any]:
     }
 
 
-def _read_segment_header(path: Path) -> tuple[str, int] | None:
-    try:
-        with path.open("rb") as handle:
-            raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
-    except OSError:
-        return None
+def _parse_segment_header(raw: bytes) -> tuple[str, int] | None:
     if not raw.endswith(b"\n") or len(raw) > EVENT_MAX_LINE_BYTES:
         return None
     try:
@@ -1124,6 +1149,113 @@ def _read_segment_header(path: Path) -> tuple[str, int] | None:
     if not epoch or ":" in epoch or type(generation) is not int or generation < 0:
         return None
     return epoch, generation
+
+
+def _read_segment_header(path: Path) -> tuple[str, int] | None:
+    try:
+        with path.open("rb") as handle:
+            raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+    except OSError:
+        return None
+    return _parse_segment_header(raw)
+
+
+def _read_event_segment(path: Path, *, active: bool) -> _EventSegment | None:
+    """Capture one segment header and metadata from the same open inode."""
+
+    try:
+        with path.open("rb") as handle:
+            raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+            metadata = os.fstat(handle.fileno())
+    except OSError:
+        return None
+    header = _parse_segment_header(raw)
+    if header is None:
+        return None
+    return _EventSegment(
+        path=path,
+        epoch=header[0],
+        generation=header[1],
+        data_start=len(raw),
+        size=metadata.st_size,
+        active=active,
+        modified_ns=metadata.st_mtime_ns,
+    )
+
+
+def _parse_event_cursor(
+    raw: str | int | None,
+) -> tuple[str | None, int | None, int] | None:
+    value = "0" if raw is None else str(raw).strip()
+    if value.isdigit():
+        return None, None, int(value)
+    parts = value.split(":")
+    if len(parts) != 4 or parts[0] != "v2":
+        return None
+    epoch = parts[1]
+    if not epoch or re.fullmatch(r"[A-Za-z0-9_.-]+", epoch) is None:
+        return None
+    try:
+        generation = int(parts[2])
+        offset = int(parts[3])
+    except ValueError:
+        return None
+    if generation < 0 or offset < 0:
+        return None
+    return epoch, generation, offset
+
+
+def _last_complete_event_offset(path: Path, minimum: int) -> int:
+    try:
+        with path.open("rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            if size <= minimum:
+                return min(size, minimum)
+            handle.seek(size - 1)
+            if handle.read(1) == b"\n":
+                return size
+            end = size
+            while end > minimum:
+                start = max(end - 8192, minimum)
+                handle.seek(start)
+                chunk = handle.read(end - start)
+                position = chunk.rfind(b"\n")
+                if position >= 0:
+                    return start + position + 1
+                end = start
+    except OSError:
+        return minimum
+    return minimum
+
+
+def _event_segments() -> list[_EventSegment]:
+    segments: list[_EventSegment] = []
+    archive_dir = _events_archive_dir()
+    if archive_dir.is_dir():
+        for path in archive_dir.glob("events-*.jsonl"):
+            segment = _read_event_segment(path, active=False)
+            if segment is not None:
+                segments.append(segment)
+    active = _read_event_segment(event_stream_path(), active=True)
+    if active is not None:
+        segments.append(active)
+    segments.sort(
+        key=lambda segment: (
+            segment.active,
+            segment.modified_ns,
+            segment.epoch,
+            segment.generation,
+        )
+    )
+    return segments
+
+
+def _active_event_resume_cursor() -> str:
+    stream = event_stream_path()
+    segment = _read_event_segment(stream, active=True)
+    if segment is not None:
+        return segment.cursor(_last_complete_event_offset(stream, segment.data_start))
+    return str(_last_complete_event_offset(stream, 0))
 
 
 def _fsync_directory(path: Path) -> None:
@@ -1230,6 +1362,7 @@ def _ensure_event_segment() -> None:
             else:
                 epoch, generation = previous[0], previous[1] + 1
         _write_new_event_segment_locked(stream_path, epoch, generation)
+        _prune_event_archives_locked()
 
 
 def _append_event(event: dict[str, Any]) -> None:
@@ -1683,6 +1816,38 @@ def _events_archive_dir() -> Path:
     return control_plane_home() / "events_archive"
 
 
+def _prune_event_archives_locked() -> list[Path]:
+    """Enforce retained generation count/byte caps while event EX is held."""
+
+    archive_dir = _events_archive_dir()
+    if not archive_dir.is_dir():
+        return []
+    entries: list[tuple[int, str, Path, int]] = []
+    for path in archive_dir.glob("events-*.jsonl"):
+        try:
+            metadata = path.stat()
+        except OSError:
+            continue
+        entries.append((metadata.st_mtime_ns, path.name, path, metadata.st_size))
+    entries.sort()
+    max_files = _configured_events_archive_max_files()
+    max_bytes = _configured_events_archive_max_bytes()
+    total_bytes = sum(entry[3] for entry in entries)
+    removed: list[Path] = []
+    while entries and (len(entries) > max_files or total_bytes > max_bytes):
+        _, _, path, size = entries.pop(0)
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        total_bytes = max(total_bytes - size, 0)
+        removed.append(path)
+    if removed:
+        with contextlib.suppress(OSError):
+            _fsync_directory(archive_dir)
+    return removed
+
+
 def _read_tail_lines(path: Path, limit: int, *, window_bytes: int = 65536) -> list[str]:
     """Last ``limit`` complete lines of a large file without reading it whole."""
     try:
@@ -1751,6 +1916,7 @@ def _rotate_event_stream_locked() -> Path | None:
         _fsync_directory(archive_dir)
         _fsync_directory(stream_path.parent)
         _write_new_event_segment_locked(stream_path, epoch, generation)
+        _prune_event_archives_locked()
     except OSError:
         # Best-effort rollback preserves the only copy when publishing the new
         # header fails (for example ENOSPC). The archive is never overwritten.
@@ -2155,48 +2321,372 @@ def read_event_tail(limit: int = EVENT_TAIL_LIMIT) -> list[dict[str, Any]]:
     return events
 
 
-def subscribe_events(
-    since_cursor: int | None = None,
-    kinds: set[str] | list[str] | tuple[str, ...] | None = None,
-    callback=None,
-) -> Iterator[Event]:
-    """Yield control-plane events from events.jsonl, polling when needed."""
-    stream = event_stream_path()
-    cursor = max(int(since_cursor or 0), 0)
-    kinds_filter = set(kinds or [])
+def _stream_control_event(
+    kind: str,
+    *,
+    cursor: str,
+    requested: str = "",
+    from_cursor: str = "",
+    reason: str,
+) -> Event:
+    payload: dict[str, Any] = {"reason": reason}
+    if kind == "stream.boundary":
+        payload.update({"from": from_cursor, "to": cursor})
+        message = "event stream generation boundary"
+    else:
+        payload.update(
+            {
+                "requested": requested,
+                "resumed_at": cursor,
+                "action": "resnapshot",
+            }
+        )
+        message = "event stream cursor gap; resnapshot required"
+    return Event(
+        ts=_now().isoformat(),
+        run_id="",
+        kind=kind,
+        message=message,
+        payload=payload,
+        cursor=cursor,
+    )
 
-    while True:
-        emitted = False
-        if stream.exists():
-            with stream.open("r", encoding="utf-8") as handle:
-                handle.seek(cursor)
-                while True:
-                    line = handle.readline()
-                    if not line:
+
+def _drain_event_segment(
+    segment: _EventSegment,
+    offset: int,
+    kinds_filter: set[str],
+) -> tuple[list[Event], int, str | None]:
+    events: list[Event] = []
+    try:
+        with segment.path.open("rb") as handle:
+            observed = _parse_segment_header(handle.readline(EVENT_MAX_LINE_BYTES + 1))
+            if observed != (segment.epoch, segment.generation):
+                return events, offset, "generation_changed_before_read"
+            size = os.fstat(handle.fileno()).st_size
+            if offset < segment.data_start or offset > size:
+                return events, offset, "cursor_outside_segment"
+            handle.seek(offset)
+            cursor = offset
+            while True:
+                line_start = cursor
+                raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+                if not raw:
+                    break
+                if len(raw) > EVENT_MAX_LINE_BYTES:
+                    complete = raw.endswith(b"\n")
+                    if not complete:
+                        while True:
+                            suffix = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+                            if not suffix or suffix.endswith(b"\n"):
+                                complete = suffix.endswith(b"\n")
+                                break
+                    cursor = handle.tell()
+                    events.append(
+                        _stream_control_event(
+                            "stream.gap",
+                            cursor=segment.cursor(cursor),
+                            requested=segment.cursor(line_start),
+                            reason="line_too_large",
+                        )
+                    )
+                    if not complete and segment.active:
+                        break
+                    continue
+                if not raw.endswith(b"\n"):
+                    if segment.active:
                         break
                     cursor = handle.tell()
-                    try:
-                        payload = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    kind = str(payload.get("kind") or "")
-                    if kind == "stream.segment":
-                        continue
-                    if kinds_filter and kind not in kinds_filter:
-                        continue
-                    event = Event(
+                    events.append(
+                        _stream_control_event(
+                            "stream.gap",
+                            cursor=segment.cursor(cursor),
+                            requested=segment.cursor(line_start),
+                            reason="partial_archived_line",
+                        )
+                    )
+                    break
+                cursor = handle.tell()
+                try:
+                    payload = json.loads(raw)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    events.append(
+                        _stream_control_event(
+                            "stream.gap",
+                            cursor=segment.cursor(cursor),
+                            requested=segment.cursor(line_start),
+                            reason="malformed_event",
+                        )
+                    )
+                    continue
+                kind = str(payload.get("kind") or "")
+                if kind == "stream.segment":
+                    continue
+                if kinds_filter and kind not in kinds_filter:
+                    continue
+                events.append(
+                    Event(
                         ts=str(payload.get("ts") or ""),
                         run_id=str(payload.get("run_id") or ""),
                         kind=kind,
                         message=str(payload.get("message") or ""),
                         payload=dict(payload.get("payload") or {}),
-                        cursor=cursor,
+                        cursor=segment.cursor(cursor),
                     )
-                    if callback is not None:
-                        callback(event)
-                    emitted = True
-                    yield event
-        if callback is None and not emitted:
+                )
+            return events, cursor, None
+    except OSError:
+        return events, offset, "generation_expired_or_unknown"
+
+
+def _drain_legacy_events(
+    offset: int, kinds_filter: set[str]
+) -> tuple[list[Event], int, str | None]:
+    stream = event_stream_path()
+    events: list[Event] = []
+    try:
+        with stream.open("rb") as handle:
+            size = os.fstat(handle.fileno()).st_size
+            if offset > size:
+                return events, offset, "legacy_cursor_beyond_eof"
+            handle.seek(offset)
+            cursor = offset
+            while True:
+                line_start = cursor
+                raw = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+                if not raw:
+                    break
+                if len(raw) > EVENT_MAX_LINE_BYTES:
+                    complete = raw.endswith(b"\n")
+                    if not complete:
+                        while True:
+                            suffix = handle.readline(EVENT_MAX_LINE_BYTES + 1)
+                            if not suffix or suffix.endswith(b"\n"):
+                                complete = suffix.endswith(b"\n")
+                                break
+                    cursor = handle.tell()
+                    events.append(
+                        _stream_control_event(
+                            "stream.gap",
+                            cursor=str(cursor),
+                            requested=str(line_start),
+                            reason="line_too_large",
+                        )
+                    )
+                    if not complete:
+                        break
+                    continue
+                if not raw.endswith(b"\n"):
+                    break
+                cursor = handle.tell()
+                try:
+                    payload = json.loads(raw)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                kind = str(payload.get("kind") or "")
+                if kinds_filter and kind not in kinds_filter:
+                    continue
+                events.append(
+                    Event(
+                        ts=str(payload.get("ts") or ""),
+                        run_id=str(payload.get("run_id") or ""),
+                        kind=kind,
+                        message=str(payload.get("message") or ""),
+                        payload=dict(payload.get("payload") or {}),
+                        cursor=str(cursor),
+                    )
+                )
+            return events, cursor, None
+    except OSError:
+        return events, offset, None
+
+
+def _read_event_delta(
+    requested: str | int | None, kinds_filter: set[str]
+) -> tuple[list[Event], str]:
+    raw_requested = "0" if requested is None else str(requested).strip()
+    parsed = _parse_event_cursor(requested)
+    if parsed is None:
+        resumed_at = _active_event_resume_cursor()
+        return [
+            _stream_control_event(
+                "stream.gap",
+                cursor=resumed_at,
+                requested=raw_requested,
+                reason="invalid_cursor",
+            )
+        ], resumed_at
+
+    epoch, generation, offset = parsed
+    segments = _event_segments()
+    active = next((segment for segment in reversed(segments) if segment.active), None)
+    if epoch is None:
+        if active is not None:
+            if offset != 0:
+                resumed_at = _active_event_resume_cursor()
+                return [
+                    _stream_control_event(
+                        "stream.gap",
+                        cursor=resumed_at,
+                        requested=raw_requested,
+                        reason="legacy_cursor_generation_unknown",
+                    )
+                ], resumed_at
+            start_cursor = active.cursor(active.data_start)
+            legacy_items = [
+                _stream_control_event(
+                    "stream.boundary",
+                    cursor=start_cursor,
+                    from_cursor="0",
+                    reason="legacy_zero_migrated",
+                )
+            ]
+            drained, end, failure = _drain_event_segment(
+                active, active.data_start, kinds_filter
+            )
+            if failure is not None:
+                resumed_at = _active_event_resume_cursor()
+                legacy_items.append(
+                    _stream_control_event(
+                        "stream.gap",
+                        cursor=resumed_at,
+                        requested=start_cursor,
+                        reason=failure,
+                    )
+                )
+                return legacy_items, resumed_at
+            legacy_items.extend(drained)
+            return legacy_items, active.cursor(end)
+        drained, end, failure = _drain_legacy_events(offset, kinds_filter)
+        if failure is None:
+            return drained, str(end)
+        resumed_at = _active_event_resume_cursor()
+        return [
+            _stream_control_event(
+                "stream.gap",
+                cursor=resumed_at,
+                requested=raw_requested,
+                reason=failure,
+            )
+        ], resumed_at
+
+    matches = [
+        segment
+        for segment in segments
+        if segment.epoch == epoch and segment.generation == generation
+    ]
+    if len(matches) != 1:
+        resumed_at = _active_event_resume_cursor()
+        reason = (
+            "generation_expired_or_unknown" if not matches else "ambiguous_generation"
+        )
+        return [
+            _stream_control_event(
+                "stream.gap",
+                cursor=resumed_at,
+                requested=raw_requested,
+                reason=reason,
+            )
+        ], resumed_at
+
+    current = matches[0]
+    current_offset = offset
+    stream_items: list[Event] = []
+    while True:
+        drained, current_offset, failure = _drain_event_segment(
+            current, current_offset, kinds_filter
+        )
+        stream_items.extend(drained)
+        if failure is not None:
+            resumed_at = _active_event_resume_cursor()
+            stream_items.append(
+                _stream_control_event(
+                    "stream.gap",
+                    cursor=resumed_at,
+                    requested=current.cursor(current_offset),
+                    reason=failure,
+                )
+            )
+            return stream_items, resumed_at
+
+        next_segments = [
+            segment
+            for segment in segments
+            if segment.epoch == current.epoch
+            and segment.generation == current.generation + 1
+        ]
+        if len(next_segments) > 1:
+            resumed_at = _active_event_resume_cursor()
+            stream_items.append(
+                _stream_control_event(
+                    "stream.gap",
+                    cursor=resumed_at,
+                    requested=current.cursor(current_offset),
+                    reason="ambiguous_generation",
+                )
+            )
+            return stream_items, resumed_at
+        if not next_segments:
+            if (
+                not current.active
+                and active is not None
+                and (
+                    active.epoch != current.epoch
+                    or active.generation > current.generation + 1
+                )
+            ):
+                resumed_at = _active_event_resume_cursor()
+                stream_items.append(
+                    _stream_control_event(
+                        "stream.gap",
+                        cursor=resumed_at,
+                        requested=current.cursor(current_offset),
+                        reason="generation_gap",
+                    )
+                )
+                return stream_items, resumed_at
+            return stream_items, current.cursor(current_offset)
+        next_segment = next_segments[0]
+        next_cursor = next_segment.cursor(next_segment.data_start)
+        stream_items.append(
+            _stream_control_event(
+                "stream.boundary",
+                cursor=next_cursor,
+                from_cursor=current.cursor(current_offset),
+                reason="generation_advanced",
+            )
+        )
+        current = next_segment
+        current_offset = current.data_start
+
+
+def subscribe_events(
+    since_cursor: str | int | None = None,
+    kinds: set[str] | list[str] | tuple[str, ...] | None = None,
+    callback: Callable[[Event], Any] | None = None,
+) -> Iterator[Event]:
+    """Yield events with an opaque generation-aware cursor.
+
+    Numeric cursors remain an explicit migration input: ``0`` upgrades to the
+    active v2 start, while a non-zero numeric cursor on a segmented stream emits
+    ``stream.gap`` because it cannot identify a generation.
+    """
+
+    cursor = "0" if since_cursor is None else str(since_cursor)
+    kinds_filter = set(kinds or [])
+    while True:
+        events, cursor = _read_event_delta(cursor, kinds_filter)
+        for event in events:
+            if (
+                kinds_filter
+                and event.kind.startswith("stream.")
+                and event.kind not in kinds_filter
+            ):
+                continue
+            if callback is not None:
+                callback(event)
+            yield event
+        if callback is None:
             return
         time.sleep(1.0)
 

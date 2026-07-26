@@ -13,8 +13,8 @@ use axum::extract::Query;
 use axum::http::HeaderMap;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use control_core::{
-    ControlPlane, Event as ControlEvent, StreamBoundary, StreamCursor, StreamGap, StreamItem,
-    StreamRecord,
+    ConnectionWindow, ControlPlane, Event as ControlEvent, StreamBoundary, StreamCursor, StreamGap,
+    StreamItem, StreamRecord,
 };
 use futures_util::stream::{self, Stream};
 use serde::Deserialize;
@@ -135,20 +135,29 @@ fn outbound_frame(outbound: Outbound) -> SseEvent {
 
 fn initial_state(query: &EventsQuery, headers: &HeaderMap) -> StreamState {
     let stream = ControlPlane::from_env().events();
-    let high_watermark = stream.high_watermark().unwrap_or(StreamCursor::Legacy(0));
     let raw = resolve_cursor_raw(query, headers);
-    let (cursor, invalid) = match raw {
+    let (requested, invalid) = match raw {
         Some(raw) => match raw.parse::<StreamCursor>() {
-            Ok(cursor) => (cursor, None),
-            Err(_) => (high_watermark.clone(), Some(raw)),
+            Ok(cursor) => (Some(cursor), None),
+            Err(_) => (None, Some(raw)),
         },
-        None => (
-            stream
-                .start_cursor()
-                .unwrap_or_else(|_| high_watermark.clone()),
-            None,
-        ),
+        None => (None, None),
     };
+    let fallback = requested.clone().unwrap_or(StreamCursor::Legacy(0));
+    let window = stream
+        .connection_window(requested.as_ref())
+        .unwrap_or(ConnectionWindow {
+            cursor: fallback.clone(),
+            high_watermark: fallback,
+        });
+    let boundary_from = requested.clone().unwrap_or_else(|| window.cursor.clone());
+    let cursor = if invalid.is_some() {
+        window.high_watermark.clone()
+    } else {
+        window.cursor
+    };
+    let high_watermark = window.high_watermark;
+    let invalid_cursor = invalid.is_some();
     let mut pending = VecDeque::new();
     if let Some(requested) = invalid {
         pending.push_back(Outbound::Gap(StreamGap {
@@ -159,7 +168,11 @@ fn initial_state(query: &EventsQuery, headers: &HeaderMap) -> StreamState {
     }
     pending.push_back(Outbound::Boundary {
         boundary: StreamBoundary {
-            from: cursor.clone(),
+            from: if invalid_cursor {
+                cursor.clone()
+            } else {
+                boundary_from
+            },
             to: cursor.clone(),
         },
         reason: "connection_start",

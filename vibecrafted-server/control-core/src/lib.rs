@@ -45,7 +45,7 @@ pub mod read;
 pub mod scaffold;
 
 pub use events::{
-    EventBatch, EventStream, STREAM_BATCH_MAX_BYTES, STREAM_BATCH_MAX_EVENTS,
+    ConnectionWindow, EventBatch, EventStream, STREAM_BATCH_MAX_BYTES, STREAM_BATCH_MAX_EVENTS,
     STREAM_LINE_MAX_BYTES, STREAM_SEGMENT_SCHEMA, StreamBatch, StreamBoundary, StreamCursor,
     StreamGap, StreamItem, StreamRecord,
 };

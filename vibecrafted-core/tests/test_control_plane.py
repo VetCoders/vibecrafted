@@ -2221,8 +2221,96 @@ def test_legacy_subscriber_hides_segment_header(
     events = list(control_plane.subscribe_events())
 
     assert [(event.kind, event.run_id) for event in events] == [
-        ("unit", "legacy-subscriber")
+        ("stream.boundary", ""),
+        ("unit", "legacy-subscriber"),
     ]
+    assert events[0].payload["from"] == "0"
+    assert events[0].payload["to"].startswith("v2:")
+    assert events[1].cursor.startswith("v2:")
+
+
+def test_python_subscriber_rotation_larger_and_smaller_emits_gap_or_continues(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "1")
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ARCHIVE_MAX_FILES", "8")
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ARCHIVE_MAX_BYTES", str(8 * 1024 * 1024))
+
+    def _append(message: str) -> None:
+        control_plane._append_event(
+            {
+                "ts": "2026-07-26T06:30:00+00:00",
+                "run_id": "subscriber-rotation",
+                "kind": "unit",
+                "message": message,
+                "payload": {},
+            }
+        )
+
+    _append("old")
+    initial = list(control_plane.subscribe_events())
+    saved = next(event.cursor for event in initial if event.message == "old")
+    with control_plane._event_lock(exclusive=True):
+        assert control_plane._rotate_event_stream_locked() is not None
+    _append("larger-" + ("x" * 2000))
+
+    larger = list(control_plane.subscribe_events(saved))
+    assert any(event.kind == "stream.boundary" for event in larger)
+    larger_event = next(event for event in larger if event.kind == "unit")
+    assert larger_event.message.startswith("larger-")
+
+    with control_plane._event_lock(exclusive=True):
+        assert control_plane._rotate_event_stream_locked() is not None
+    _append("small")
+    smaller = list(control_plane.subscribe_events(larger_event.cursor))
+
+    assert any(event.kind == "stream.boundary" for event in smaller)
+    assert [event.message for event in smaller if event.kind == "unit"] == ["small"]
+    assert all(event.kind != "stream.gap" for event in larger + smaller)
+
+
+def test_retention_prunes_and_expired_cursor_emits_gap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ROTATE_BYTES", "1")
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ARCHIVE_MAX_FILES", "1")
+    monkeypatch.setenv("VIBECRAFTED_EVENTS_ARCHIVE_MAX_BYTES", str(8 * 1024 * 1024))
+
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:30:00+00:00",
+            "run_id": "retention",
+            "kind": "unit",
+            "message": "generation-zero",
+            "payload": {},
+        }
+    )
+    initial = list(control_plane.subscribe_events())
+    expired = next(event.cursor for event in initial if event.kind == "unit")
+    with control_plane._event_lock(exclusive=True):
+        assert control_plane._rotate_event_stream_locked() is not None
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T06:31:00+00:00",
+            "run_id": "retention",
+            "kind": "unit",
+            "message": "generation-one",
+            "payload": {},
+        }
+    )
+    with control_plane._event_lock(exclusive=True):
+        assert control_plane._rotate_event_stream_locked() is not None
+
+    archives = list(control_plane._events_archive_dir().glob("events-*.jsonl"))
+    assert len(archives) == 1
+    recovered = list(control_plane.subscribe_events(expired))
+    gaps = [event for event in recovered if event.kind == "stream.gap"]
+    assert len(gaps) == 1
+    assert gaps[0].payload["reason"] == "generation_expired_or_unknown"
+    assert gaps[0].payload["action"] == "resnapshot"
+    assert gaps[0].cursor.startswith("v2:")
 
 
 def test_lock_busy_message_names_install_doctor_sync(

@@ -539,6 +539,146 @@ async fn sse_last_event_id_header_resumes_without_query() {
 }
 
 #[tokio::test]
+async fn legacy_zero_migrates_to_v2_and_catches_up_once() {
+    let home = TempHome::new("legacy-zero-migration");
+    home.write_generation(0, &[event_line("legacy-zero", "progress", "baseline")]);
+
+    let response = test_app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/control/events?since=0")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot legacy zero");
+    let body = collect_sse_until(
+        response.into_body(),
+        |stream| stream.contains("event: stream.caught-up"),
+        Duration::from_secs(3),
+    )
+    .await;
+
+    assert_eq!(sse_data_payloads(&body).len(), 1, "baseline lost\n{body}");
+    let boundaries = named_sse_payloads(&body, "stream.boundary");
+    assert_eq!(
+        boundaries.len(),
+        1,
+        "one migration boundary expected\n{body}"
+    );
+    let boundary: serde_json::Value = serde_json::from_str(&boundaries[0]).expect("boundary JSON");
+    assert_eq!(boundary["from"], "0");
+    assert!(
+        boundary["to"]
+            .as_str()
+            .is_some_and(|cursor| cursor.starts_with("v2:"))
+    );
+    assert_eq!(
+        named_sse_payloads(&body, "stream.caught-up").len(),
+        1,
+        "caught-up must be one receipt\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn legacy_nonzero_segmented_emits_gap_not_infinite_baseline() {
+    let home = TempHome::new("legacy-nonzero-gap");
+    home.write_generation(
+        0,
+        &[event_line(
+            "must-not-replay",
+            "settlement.changed",
+            "effect",
+        )],
+    );
+
+    let response = test_app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/control/events?since=42")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot legacy nonzero");
+    let body = collect_sse_until(
+        response.into_body(),
+        |stream| stream.contains("event: stream.caught-up"),
+        Duration::from_secs(3),
+    )
+    .await;
+
+    assert!(
+        sse_data_payloads(&body).is_empty(),
+        "ambiguous legacy history must not replay effects\n{body}"
+    );
+    let gaps = named_sse_payloads(&body, "stream.gap");
+    assert_eq!(gaps.len(), 1, "one resnapshot gap expected\n{body}");
+    let gap: serde_json::Value = serde_json::from_str(&gaps[0]).expect("gap JSON");
+    assert_eq!(gap["requested"], "42");
+    assert_eq!(gap["reason"], "legacy_cursor_generation_unknown");
+    assert_eq!(gap["action"], "resnapshot");
+    assert_eq!(
+        named_sse_payloads(&body, "stream.caught-up").len(),
+        1,
+        "gap recovery must converge instead of polling forever\n{body}"
+    );
+}
+
+#[tokio::test]
+async fn rotation_after_window_drains_archived_baseline_before_caught_up() {
+    let home = TempHome::new("rotate-after-window");
+    let baseline = vec![
+        event_line("window-run", "progress", "base-0"),
+        event_line("window-run", "progress", "base-1"),
+        event_line("window-run", "progress", "base-2"),
+    ];
+    home.write_generation(0, &baseline);
+
+    // `oneshot` constructs the SSE response and captures the connection
+    // window; the body has not been polled yet.
+    let response = test_app()
+        .oneshot(
+            Request::builder()
+                .uri("/api/control/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("oneshot connection window");
+    home.rotate_to_generation(1, &[]);
+
+    let body = collect_sse_until(
+        response.into_body(),
+        |stream| stream.contains("event: stream.caught-up"),
+        Duration::from_secs(3),
+    )
+    .await;
+
+    let messages: Vec<_> = sse_data_payloads(&body)
+        .into_iter()
+        .filter_map(|data| {
+            serde_json::from_str::<serde_json::Value>(&data)
+                .ok()
+                .and_then(|value| value["message"].as_str().map(str::to_string))
+        })
+        .collect();
+    assert_eq!(messages, vec!["base-0", "base-1", "base-2"]);
+    assert!(
+        !named_sse_payloads(&body, "stream.boundary").is_empty(),
+        "rotation crossing must be explicit\n{body}"
+    );
+    let baseline_position = body.rfind("\"message\":\"base-2\"").expect("last baseline");
+    let caught_position = body
+        .find("event: stream.caught-up")
+        .expect("caught-up frame");
+    assert!(
+        baseline_position < caught_position,
+        "caught-up preceded archived baseline\n{body}"
+    );
+}
+
+#[tokio::test]
 async fn sse_caught_up_targets_connection_high_watermark_under_continuous_traffic() {
     let home = TempHome::new("caught-up");
     let baseline: Vec<_> = (0..200)
