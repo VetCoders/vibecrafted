@@ -250,7 +250,7 @@ install-tools-held:
 	if [ "$$service_was_loaded" -eq 1 ]; then \
 		current_launcher="$$(command -v vibecrafted 2>/dev/null || true)"; \
 		echo "[install-tools] reactivating the verified persistent service..."; \
-		"$$current_launcher" server service install; \
+		(cd / && "$$current_launcher" server service install); \
 	fi; \
 	$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v.complete_current_tools_handoff(Path.home())'; \
 	trap - EXIT
@@ -779,7 +779,7 @@ install-server-service:
 		exit 1; \
 	fi; \
 	echo "[server-service] installing or reconciling persistent supervision..."; \
-	"$$launcher" server service install
+	(cd / && "$$launcher" server service install)
 
 server-smoke: install-server
 	@echo "[server-smoke] Run 1/3" && bash tests/server_smoke.sh
