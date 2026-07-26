@@ -517,6 +517,16 @@ def load_vc_frame_transfer_proof(
             raise TransferProofError("runtime transcript source path is not canonical")
         if not isinstance(runtime_transcript, str) or not runtime_transcript:
             raise TransferProofError("runtime transcript request path is missing")
+        requested_source = Path(runtime_transcript)
+        if (
+            not requested_source.is_absolute()
+            or ".." in requested_source.parts
+            or requested_source.resolve(strict=False) != requested_source
+            or requested_source != source_path
+        ):
+            raise TransferProofError(
+                "runtime transcript source does not match the requested path"
+            )
 
     token = receipt.get("viewer_token")
     if not _is_hex(token, 32):
@@ -613,12 +623,16 @@ def load_durable_transfer_proof(
     proof = load_vc_frame_transfer_proof(root, payload)
     triage = payload.get("triage")
     triage_verdict = payload.get("triage_verdict")
+    expected_bucket = (
+        _BUCKET_FOR_VERDICT.get(triage) if isinstance(triage, str) else None
+    )
     if (
         not isinstance(triage, str)
-        or triage not in _BUCKET_FOR_VERDICT
+        or expected_bucket is None
         or triage_verdict != triage
         or payload.get("triage_pending") is not False
-        or payload.get("triage_bucket") != proof.bucket_session
+        or payload.get("triage_bucket") != expected_bucket
+        or proof.bucket_session != expected_bucket
     ):
         raise TransferProofError("runtime triage is not one exact terminal verdict")
 

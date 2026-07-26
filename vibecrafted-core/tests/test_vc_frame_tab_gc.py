@@ -256,6 +256,57 @@ def test_runtime_transcript_capture_is_valid_durable_source(tmp_path: Path) -> N
     assert durable.origin_identity is None
 
 
+def test_runtime_transcript_source_must_match_requested_path(tmp_path: Path) -> None:
+    cp = tmp_path / "control_plane"
+    runtime_payload, _runtime_meta = durable_run(cp)
+    finished = cp / "finished_runs" / "impl-good"
+    receipt = json.loads((finished / "transfer.json").read_text(encoding="utf-8"))
+    capture = dict(receipt["capture"])
+    capture.update(
+        {
+            "capture_source": "runtime_transcript",
+            "source_identity": "/repo/other.transcript.log",
+            "origin_tab_identity": None,
+        }
+    )
+    receipt["runtime_transcript"] = "/repo/requested.transcript.log"
+    receipt["capture"] = capture
+    _write_json(finished / "transfer.json", receipt)
+    manifest = json.loads(
+        (finished / "capture.manifest.json").read_text(encoding="utf-8")
+    )
+    manifest["runtime_transcript"] = receipt["runtime_transcript"]
+    manifest["evidence"] = capture
+    _write_json(finished / "capture.manifest.json", manifest)
+    finished_meta = json.loads((finished / "meta.json").read_text(encoding="utf-8"))
+    finished_meta["capture_source"] = "runtime_transcript"
+    finished_meta["capture_source_identity"] = capture["source_identity"]
+    _write_json(finished / "meta.json", finished_meta)
+
+    with pytest.raises(
+        TransferProofError,
+        match="source does not match the requested path",
+    ):
+        load_vc_frame_transfer_proof(cp, runtime_payload)
+
+
+def test_transfer_proof_rejects_bucket_verdict_disagreement(tmp_path: Path) -> None:
+    cp = tmp_path / "control_plane"
+    runtime_payload, runtime_meta = durable_run(cp)
+    runtime_payload.update(
+        {
+            "triage": "finalized",
+            "triage_verdict": "finalized",
+            "settlement_verdict": "finalized",
+            "settlement_tui": "f",
+        }
+    )
+    _write_json(runtime_meta, runtime_payload)
+
+    with pytest.raises(TransferProofError, match="exact terminal verdict"):
+        load_durable_transfer_proof(cp, runtime_meta)
+
+
 def test_empty_objects_are_never_capture_proof(tmp_path: Path) -> None:
     cp = tmp_path / "control_plane"
     _payload, _runtime_meta = durable_run(cp)
