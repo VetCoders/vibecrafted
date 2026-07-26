@@ -5,6 +5,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Self
 
 import pytest
 from vibecrafted_core import workflow
@@ -134,12 +135,36 @@ prompt = "canonical dispatch report prompt"
     captured: dict[str, object] = {}
 
     class FakeProc:
-        pid = 4242
+        def __init__(self, command: Any) -> None:
+            self.args = command
+            self.pid = 4242
+            self.returncode = 0
+            self.stdout = "/repo"
+            self.stderr = ""
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def communicate(self, *args: object, **kwargs: object) -> tuple[str, str]:
+            return ("/repo", "")
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
 
     def fake_popen(command: list[str], **kwargs: object) -> FakeProc:
         captured["command"] = command
-        captured["env"] = kwargs["env"]
-        return FakeProc()
+        if "env" in kwargs:
+            captured["env"] = kwargs["env"]
+        return FakeProc(command)
 
     monkeypatch.setattr(workflow.subprocess, "Popen", fake_popen)
     # Hermetic: an ambient vc-frame on the host would turn the launcher's

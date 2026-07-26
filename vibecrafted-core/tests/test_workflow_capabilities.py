@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Self
 
 import pytest
 from vibecrafted_core import cli, workflow
@@ -198,9 +198,35 @@ def test_positional_fail_closed_matches_declared_policy(isolated_config: Path) -
 
 
 def _fake_popen(monkeypatch: pytest.MonkeyPatch, calls: list[Any]) -> None:
-    def popen(command: Any, **kwargs: Any) -> SimpleNamespace:
+    class DummyProc:
+        def __init__(self, command: Any) -> None:
+            self.args = command
+            self.pid = 4242
+            self.returncode = 0
+            self.stdout = "/repo"
+            self.stderr = ""
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def communicate(self, *args: Any, **kwargs: Any) -> tuple[str, str]:
+            return ("/repo", "")
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    def popen(command: Any, **kwargs: Any) -> DummyProc:
         calls.append(command)
-        return SimpleNamespace(pid=4242)
+        return DummyProc(command)
 
     monkeypatch.setattr(workflow.subprocess, "Popen", popen)
 
