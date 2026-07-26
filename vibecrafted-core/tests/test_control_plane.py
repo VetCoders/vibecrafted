@@ -2203,6 +2203,99 @@ def test_append_during_rotation_lands_once_in_new_generation(
     assert active[1]["run_id"] == "append-during-rotation"
 
 
+def test_short_event_append_rolls_back_before_later_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T07:00:00+00:00",
+            "run_id": "before-short-write",
+            "kind": "unit",
+            "message": "complete before",
+            "payload": {},
+        }
+    )
+    real_write = control_plane.os.write
+
+    def short_write(fd: int, data: bytes) -> int:
+        prefix = data[: max(1, len(data) // 2)]
+        return real_write(fd, prefix)
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(control_plane.os, "write", short_write)
+        with pytest.raises(OSError, match="short atomic event append"):
+            control_plane._append_event(
+                {
+                    "ts": "2026-07-26T07:00:01+00:00",
+                    "run_id": "short-write",
+                    "kind": "unit",
+                    "message": "must roll back",
+                    "payload": {},
+                }
+            )
+
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T07:00:02+00:00",
+            "run_id": "after-short-write",
+            "kind": "unit",
+            "message": "complete after",
+            "payload": {},
+        }
+    )
+    records = [
+        json.loads(line)
+        for line in control_plane.event_stream_path()
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [record.get("run_id") for record in records[1:]] == [
+        "before-short-write",
+        "after-short-write",
+    ]
+
+
+def test_next_event_repairs_incomplete_tail_left_by_dead_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / ".vibecrafted"))
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T07:01:00+00:00",
+            "run_id": "before-dead-writer",
+            "kind": "unit",
+            "message": "complete before",
+            "payload": {},
+        }
+    )
+    stream = control_plane.event_stream_path()
+    with control_plane._event_lock(exclusive=True):
+        fd = control_plane.os.open(stream, control_plane.os.O_WRONLY | os.O_APPEND)
+        try:
+            control_plane.os.write(fd, b'{"run_id":"dead-writer"')
+            control_plane.os.fsync(fd)
+        finally:
+            control_plane.os.close(fd)
+
+    control_plane._append_event(
+        {
+            "ts": "2026-07-26T07:01:01+00:00",
+            "run_id": "after-dead-writer",
+            "kind": "unit",
+            "message": "complete after",
+            "payload": {},
+        }
+    )
+    records = [
+        json.loads(line) for line in stream.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record.get("run_id") for record in records[1:]] == [
+        "before-dead-writer",
+        "after-dead-writer",
+    ]
+
+
 def test_legacy_subscriber_hides_segment_header(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

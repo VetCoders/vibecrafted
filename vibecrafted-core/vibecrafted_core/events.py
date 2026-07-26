@@ -36,8 +36,8 @@ def append_event(
         "message": str(message or ""),
         "payload": payload or {},
     }
-    # No global lock: _append_event is a single atomic O_APPEND write, so the
-    # hot emit path never serializes on the shared control-plane mutex.
+    # No global sync lock: _append_event uses only the dedicated event boundary,
+    # so the emit path cannot sit behind the fleet-wide board-rebuild lock.
     control_plane._append_event(event)
     return event
 

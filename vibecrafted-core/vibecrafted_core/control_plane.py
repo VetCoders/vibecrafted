@@ -244,9 +244,10 @@ def _event_lock(*, exclusive: bool) -> Iterator[None]:
     """Coordinate event appends with generation rotation.
 
     Lock order is ``_sync_lock`` then ``_event_lock`` whenever both are held.
-    Appenders take a shared lock and still run concurrently; their single
-    ``O_APPEND`` write remains the hot path. Rotation takes the exclusive lock,
-    so no writer can open the old inode after it has been archived.
+    Appenders take the exclusive lock only around tail repair, one bounded
+    ``O_APPEND`` write, and fsync. Rotation takes the same exclusive lock, so no
+    writer can open the old inode after it has been archived. Readers may take
+    the shared lock without ever touching the global sync lock.
 
     The lock file is deliberately stable across rotations. ``O_NOFOLLOW`` plus
     owner/mode checks prevent a replaced symlink or another user's writable
@@ -1365,13 +1366,31 @@ def _ensure_event_segment() -> None:
         _prune_event_archives_locked()
 
 
+def _repair_incomplete_event_tail_locked(fd: int) -> int:
+    """Drop only an unterminated final record while the event lock is exclusive."""
+
+    end = os.lseek(fd, 0, os.SEEK_END)
+    if end == 0 or os.pread(fd, 1, end - 1) == b"\n":
+        return end
+
+    scan_size = min(end, EVENT_MAX_LINE_BYTES + 1)
+    tail = os.pread(fd, scan_size, end - scan_size)
+    newline = tail.rfind(b"\n")
+    if newline < 0:
+        raise OSError(errno.EIO, "event segment has no complete record boundary")
+    repaired_end = end - scan_size + newline + 1
+    os.ftruncate(fd, repaired_end)
+    os.fsync(fd)
+    return repaired_end
+
+
 def _append_event(event: dict[str, Any]) -> None:
-    """Append one durable event line without serialising on the sync lock.
+    """Append one durable event line without taking the global sync lock.
 
     Appending to events.jsonl is the hottest control-plane path (every spawn /
-    emit / stop of every run). It never acquires the global sync lock. A shared
-    event lock excludes only rotation; concurrent appenders issue one bounded
-    ``O_APPEND`` write each. ``fsync`` is the receipt: once this call returns,
+    emit / stop of every run). It never acquires the global sync lock. The
+    dedicated event lock makes the write/rollback boundary exclusive to
+    appenders and rotation. ``fsync`` is the receipt: once this call returns,
     the complete newline-delimited effect is on the durable segment.
     """
     _ensure_event_segment()
@@ -1381,14 +1400,17 @@ def _append_event(event: dict[str, Any]) -> None:
         raise ValueError(
             f"event line exceeds {EVENT_MAX_LINE_BYTES} byte stream contract"
         )
-    with _event_lock(exclusive=False):
-        flags = os.O_WRONLY | os.O_APPEND
+    with _event_lock(exclusive=True):
+        flags = os.O_RDWR | os.O_APPEND
         flags |= getattr(os, "O_CLOEXEC", 0)
         flags |= getattr(os, "O_NOFOLLOW", 0)
         fd = os.open(stream_path, flags)
         try:
+            start = _repair_incomplete_event_tail_locked(fd)
             written = os.write(fd, line)
             if written != len(line):
+                os.ftruncate(fd, start)
+                os.fsync(fd)
                 raise OSError(errno.EIO, "short atomic event append")
             os.fsync(fd)
         finally:
@@ -2258,8 +2280,8 @@ def record_stop_transition(
         ),
         "payload": payload,
     }
-    # Lockless atomic append (see _append_event) — the stop path never blocks
-    # on the shared mutex.
+    # Dedicated event append boundary (see _append_event) — the stop path never
+    # blocks behind the global board-rebuild lock.
     _append_event(event)
     return event
 
