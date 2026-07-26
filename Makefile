@@ -18,7 +18,7 @@ UV_PROJECT_ENVIRONMENT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/venvs/installer-$(
 # in-tree cache is never read or written by install lanes.
 export PYTHONPYCACHEPREFIX ?= $(INSTALLER_CACHE_HOME)/vibecrafted/pycache-$(INSTALLER_HOST_TAG)
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server install-server-service server-smoke
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-tools install-tools-held install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server install-server-service server-smoke
 
 help:
 	@printf "\n"
@@ -160,8 +160,22 @@ install-python-tools: install-tools
 # before this target runs; we resolve that home via runtime_paths (single source
 # of truth, honours VIBECRAFTED_TOOLS_HOME / VIBECRAFTED_RUNTIME_HOME / XDG_DATA_HOME)
 # and refuse to fall back to the checkout if staging is missing.
+ifneq (,$(findstring n,$(firstword $(filter-out --%,$(MAKEFLAGS)))))
 install-tools:
+	@printf '%s\n' '[install-tools] dry-run: acquire lease and run install-tools-held'
+else
+install-tools:
+	@$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; raise SystemExit(v.run_with_tools_install_lease(Path.home(), sys.argv[1:]))' "$(MAKE)" --no-print-directory install-tools-held
+endif
+
+# Internal continuation. The outer target waits for this submake while retaining
+# one fcntl lease across publish -> uv replacement -> service reconciliation.
+install-tools-held:
 	@set -eu; \
+	if [ -z "$${VIBECRAFTED_INSTALL_LEASE_FD:-}" ]; then \
+		echo "[install-tools] FATAL: internal install target requires the cross-process installer lease" >&2; \
+		exit 1; \
+	fi; \
 	rollback_tools_handoff() { \
 		status=$$?; \
 		trap - EXIT; \
@@ -178,10 +192,8 @@ install-tools:
 	fi; \
 	export PATH="$$HOME/.local/bin:$$PATH"; \
 	stable_root="$$($(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/vibecrafted-core"); from vibecrafted_core.runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")')"; \
-	if [ ! -d "$$stable_root/vibecrafted-core" ]; then \
-		echo "[install-tools] staging runtime into stable home ($$stable_root missing)..."; \
-		$(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from pathlib import Path; import vetcoders_install as v; v.refresh_current_tools(Path("$(SOURCE)").resolve(), Path.home(), mirror=True)'; \
-	fi; \
+	echo "[install-tools] staging runtime under the cross-process installer lease..."; \
+	$(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from pathlib import Path; import vetcoders_install as v; v.refresh_current_tools(Path("$(SOURCE)").resolve(), Path.home(), mirror=True)'; \
 	if [ ! -d "$$stable_root/vibecrafted-core" ]; then \
 		echo "[install-tools] FATAL: stable runtime home not staged at $$stable_root; refusing to source the uv-tool from the dev checkout" >&2; \
 		exit 1; \

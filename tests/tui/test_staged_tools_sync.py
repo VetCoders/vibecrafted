@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import io
+import multiprocessing
 import os
 import subprocess
+import time
 from argparse import Namespace
 from pathlib import Path
 
@@ -33,6 +35,29 @@ def _write_valid_runtime_generation(root: Path) -> None:
         root / "scripts" / "vibecrafted",
         "#!/usr/bin/env bash\nprintf 'old launcher\\n'\n",
     )
+
+
+def _tools_lease_worker(
+    current_link: str,
+    label: str,
+    hold_seconds: float,
+    timeout_seconds: float,
+    ready,
+    events,
+) -> None:
+    try:
+        with installer._tools_install_lease(
+            Path(current_link),
+            timeout_seconds=timeout_seconds,
+            operation=label,
+        ):
+            events.put((label, "acquired", time.monotonic()))
+            ready.set()
+            time.sleep(hold_seconds)
+            events.put((label, "leaving", time.monotonic()))
+    except (OSError, ValueError) as exc:  # pragma: no cover - asserted by parent
+        events.put((label, "error", repr(exc)))
+        ready.set()
 
 
 class _TtyBuffer:
@@ -172,6 +197,125 @@ def _runtime_pointer_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     return source, old_target, current
 
 
+def test_tools_install_lease_serializes_processes_and_times_out_clearly(
+    tmp_path: Path,
+) -> None:
+    current = tmp_path / "tools" / "vibecrafted-current"
+    current.parent.mkdir(parents=True)
+    context = multiprocessing.get_context("fork")
+    events = context.Queue()
+    first_ready = context.Event()
+    second_ready = context.Event()
+    first = context.Process(
+        target=_tools_lease_worker,
+        args=(str(current), "first", 0.8, 5.0, first_ready, events),
+    )
+    second = context.Process(
+        target=_tools_lease_worker,
+        args=(str(current), "second", 0.0, 5.0, second_ready, events),
+    )
+
+    first.start()
+    try:
+        assert first_ready.wait(10)
+        first_event = events.get(timeout=10)
+        assert first_event[:2] == ("first", "acquired")
+
+        with (
+            pytest.raises(TimeoutError, match="operation=first"),
+            installer._tools_install_lease(
+                current,
+                timeout_seconds=0.05,
+                operation="timeout-probe",
+            ),
+        ):
+            raise AssertionError("contending process must not acquire the lease")
+
+        second.start()
+        assert not second_ready.wait(0.15)
+        first.join(timeout=10)
+        second.join(timeout=10)
+        assert first.exitcode == 0
+        assert second.exitcode == 0
+
+        remaining = [events.get(timeout=10) for _ in range(3)]
+        assert not [event for event in remaining if event[1] == "error"]
+        first_leaving = next(
+            event[2] for event in remaining if event[:2] == ("first", "leaving")
+        )
+        second_acquired = next(
+            event[2] for event in remaining if event[:2] == ("second", "acquired")
+        )
+        assert second_acquired >= first_leaving
+        assert (
+            installer._tools_install_lease_path(current).read_text(encoding="utf-8")
+            == ""
+        )
+    finally:
+        for process in (first, second):
+            if process.pid is None:
+                continue
+            if process.is_alive():
+                process.terminate()
+            process.join(timeout=5)
+        events.close()
+        events.join_thread()
+
+
+def test_generation_gc_preserves_live_recovery_and_interrupted_receipt_targets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    tools = tmp_path / "tools"
+    current = tools / "vibecrafted-current"
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools))
+    generation_names = (
+        "vibecrafted-generation-recent-a",
+        "vibecrafted-generation-recent-b",
+        "vibecrafted-generation-stale-a",
+        "vibecrafted-generation-stale-b",
+        "vibecrafted-generation-current",
+        "vibecrafted-generation-rollback",
+        "vibecrafted-generation-prepared",
+    )
+    generations: dict[str, Path] = {}
+    now = time.time_ns()
+    for age, name in enumerate(generation_names):
+        generation = tools / name
+        _write_valid_runtime_generation(generation)
+        os.utime(generation, ns=(now - age * 1_000_000, now - age * 1_000_000))
+        generations[name] = generation
+    current.symlink_to(generations["vibecrafted-generation-current"].name)
+    installer._atomic_json_file(
+        installer._tools_handoff_path(current),
+        {
+            "schema": installer._TOOLS_HANDOFF_SCHEMA,
+            "state": "prepared",
+            "old_target": str(generations["vibecrafted-generation-rollback"].resolve()),
+            "new_target": str(generations["vibecrafted-generation-prepared"].resolve()),
+        },
+    )
+    invalid = tools / "vibecrafted-generation-unmanaged"
+    invalid.mkdir()
+    (invalid / "do-not-delete.txt").write_text("not ours\n", encoding="utf-8")
+
+    removed = installer.prune_tools_generations(home, keep=2)
+
+    protected = {
+        generations["vibecrafted-generation-current"],
+        generations["vibecrafted-generation-rollback"],
+        generations["vibecrafted-generation-prepared"],
+        generations["vibecrafted-generation-recent-a"],
+        generations["vibecrafted-generation-recent-b"],
+    }
+    assert all(path.is_dir() for path in protected)
+    assert set(removed) == {
+        generations["vibecrafted-generation-stale-a"].resolve(),
+        generations["vibecrafted-generation-stale-b"].resolve(),
+    }
+    assert invalid.is_dir()
+
+
 @pytest.mark.parametrize("failure_point", ["stage", "stamp", "rename", "publish"])
 def test_runtime_generation_failure_keeps_old_pointer_live(
     tmp_path: Path, monkeypatch, failure_point: str
@@ -252,6 +396,40 @@ def test_runtime_generation_pointer_swap_never_removes_current(
     assert current.resolve() == generation.resolve()
     assert current.resolve() != old_target.resolve()
     assert (current / "scripts" / "vibecrafted").is_file()
+
+
+def test_chained_prepared_publish_keeps_last_verified_rollback_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    source, old_target, current = _runtime_pointer_fixture(tmp_path)
+    home = tmp_path / "home"
+    tools = home / ".local" / "share" / "vibecrafted" / "tools"
+    tools.parent.mkdir(parents=True)
+    current.parent.rename(tools)
+    current = tools / "vibecrafted-current"
+    old_target = tools / old_target.name
+    monkeypatch.setenv("HOME", str(home))
+
+    installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gfirst",
+    )
+    unverified = current.resolve()
+    installer.sync_control_plane_tree(
+        source,
+        current,
+        mirror=True,
+        install_version="9.9.9+gsecond",
+    )
+    assert current.resolve() != unverified
+    receipt = installer._read_tools_handoff(home)
+    assert receipt is not None
+    assert Path(receipt["old_target"]).resolve() == old_target.resolve()
+
+    assert installer.rollback_current_tools(home) is True
+    assert current.resolve() == old_target.resolve()
 
 
 def test_runtime_generation_handoff_rolls_back_and_completes(
@@ -455,6 +633,9 @@ def test_make_install_tools_failure_rolls_runtime_pointer_back(
     assert "persistent service remains stopped and recoverable" in result.stderr
     assert current.resolve() == old_target.resolve()
     assert (current / "proof.txt").read_text(encoding="utf-8") == "old runtime\n"
+    assert (
+        installer._tools_install_lease_path(current).read_text(encoding="utf-8") == ""
+    )
 
 
 def test_compact_install_refreshes_current_tools_from_local_checkout(

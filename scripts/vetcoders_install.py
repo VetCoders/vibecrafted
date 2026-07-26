@@ -19,14 +19,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import importlib
 import json
+import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
-from collections.abc import Sequence
+import time
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -2611,14 +2615,206 @@ def _remove_path(path: Path) -> None:
 
 
 _TOOLS_HANDOFF_SCHEMA = "vibecrafted.tools-handoff.v1"
+_TOOLS_INSTALL_LEASE_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
+_TOOLS_INSTALL_LEASE_TIMEOUT_ENV = "VIBECRAFTED_INSTALL_LOCK_TIMEOUT"
+_TOOLS_INSTALL_LEASE_DEFAULT_SECONDS = 180.0
+_TOOLS_GENERATIONS_TO_KEEP = 3
 
 
 def _tools_handoff_path(current_link: Path) -> Path:
     return current_link.parent / ".vibecrafted-current-handoff.json"
 
 
+def _tools_install_lease_path(current_link: Path) -> Path:
+    return current_link.parent / ".vibecrafted-install.lock"
+
+
 def _tools_handoff_file(shared_home: Path) -> Path:
     return _tools_handoff_path(_current_tools_link(shared_home))
+
+
+def _tools_install_timeout(timeout_seconds: float | None) -> float:
+    if timeout_seconds is None:
+        raw = os.environ.get(
+            _TOOLS_INSTALL_LEASE_TIMEOUT_ENV,
+            str(_TOOLS_INSTALL_LEASE_DEFAULT_SECONDS),
+        )
+        try:
+            timeout_seconds = float(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"{_TOOLS_INSTALL_LEASE_TIMEOUT_ENV} must be a finite "
+                f"non-negative number, got {raw!r}"
+            ) from exc
+    if not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+        raise ValueError(
+            "tools install lease timeout must be a finite non-negative number"
+        )
+    return timeout_seconds
+
+
+def _validate_tools_lease_descriptor(descriptor: int, lock_path: Path) -> None:
+    try:
+        opened = os.fstat(descriptor)
+        named = os.stat(lock_path, follow_symlinks=False)
+    except OSError as exc:
+        raise OSError(
+            f"inherited tools install lease is unavailable at {lock_path}"
+        ) from exc
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_uid != os.geteuid()
+        or opened.st_nlink != 1
+        or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+    ):
+        raise OSError(
+            f"inherited tools install lease does not own the regular file {lock_path}"
+        )
+
+
+def _tools_lease_owner(descriptor: int) -> str:
+    try:
+        raw = os.pread(descriptor, 4096, 0).decode("utf-8", errors="replace").strip()
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return "owner metadata unavailable"
+    if not isinstance(payload, dict):
+        return "owner metadata unavailable"
+    pid = payload.get("pid", "unknown")
+    operation = payload.get("operation", "unknown")
+    started_at = payload.get("started_at", "unknown")
+    return f"pid={pid}, operation={operation}, started_at={started_at}"
+
+
+def _write_tools_lease_owner(descriptor: int, operation: str) -> None:
+    encoded = (
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "operation": operation,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    os.ftruncate(descriptor, 0)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    view = memoryview(encoded)
+    while view:
+        written = os.write(descriptor, view)
+        if written <= 0:
+            raise OSError("could not persist tools install lease owner")
+        view = view[written:]
+    os.fsync(descriptor)
+
+
+@contextmanager
+def _tools_install_lease(
+    current_link: Path,
+    *,
+    timeout_seconds: float | None = None,
+    operation: str = "runtime-publish",
+) -> Iterator[int]:
+    """Serialize runtime publication and Python-tool/service reconciliation."""
+    lock_path = _tools_install_lease_path(current_link)
+    inherited_raw = os.environ.get(_TOOLS_INSTALL_LEASE_ENV)
+    if inherited_raw:
+        try:
+            inherited = int(inherited_raw)
+        except ValueError as exc:
+            raise OSError(
+                f"invalid inherited tools install lease descriptor: {inherited_raw!r}"
+            ) from exc
+        _validate_tools_lease_descriptor(inherited, lock_path)
+        try:
+            fcntl.flock(inherited, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise OSError(
+                "inherited tools install lease descriptor does not own the lock"
+            ) from exc
+        yield inherited
+        return
+
+    timeout = _tools_install_timeout(timeout_seconds)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        lock_path,
+        os.O_RDWR
+        | os.O_CREAT
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    acquired = False
+    try:
+        _validate_tools_lease_descriptor(descriptor, lock_path)
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except BlockingIOError:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    owner = _tools_lease_owner(descriptor)
+                    raise TimeoutError(
+                        "another Vibecrafted installer still owns "
+                        f"{lock_path} ({owner}); waited {timeout:.2f}s"
+                    )
+                time.sleep(min(0.1, remaining))
+        _write_tools_lease_owner(descriptor, operation)
+        yield descriptor
+    finally:
+        if acquired:
+            try:
+                os.ftruncate(descriptor, 0)
+                os.fsync(descriptor)
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def run_with_tools_install_lease(
+    shared_home: Path,
+    argv: Sequence[str],
+) -> int:
+    """Run ``argv`` while retaining the install lease across all child work."""
+    if not argv:
+        raise ValueError("tools install lease requires a command")
+    current_link = _current_tools_link(shared_home)
+    try:
+        with _tools_install_lease(
+            current_link,
+            operation="publish-uv-service-reconcile",
+        ) as descriptor:
+            os.set_inheritable(descriptor, True)
+            environment = os.environ.copy()
+            environment[_TOOLS_INSTALL_LEASE_ENV] = str(descriptor)
+            result = subprocess.run(
+                list(argv),
+                check=False,
+                close_fds=False,
+                env=environment,
+            )
+            return result.returncode
+    except TimeoutError as exc:
+        print(f"[install-tools] FATAL: {exc}", file=sys.stderr)
+        return 75
+    except ValueError as exc:
+        print(
+            f"[install-tools] FATAL: invalid installer lease policy: {exc}",
+            file=sys.stderr,
+        )
+        return 64
+    except OSError as exc:
+        print(
+            f"[install-tools] FATAL: could not hold installer lease: {exc}",
+            file=sys.stderr,
+        )
+        return 126
 
 
 def _symlink_target(path: Path) -> Path | None:
@@ -2676,8 +2872,7 @@ def _atomic_json_file(path: Path, payload: dict[str, Any]) -> None:
             temporary.unlink()
 
 
-def _read_tools_handoff(shared_home: Path) -> dict[str, Any] | None:
-    path = _tools_handoff_file(shared_home)
+def _read_tools_handoff_path(path: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -2691,6 +2886,10 @@ def _read_tools_handoff(shared_home: Path) -> dict[str, Any] | None:
     ):
         return None
     return payload
+
+
+def _read_tools_handoff(shared_home: Path) -> dict[str, Any] | None:
+    return _read_tools_handoff_path(_tools_handoff_file(shared_home))
 
 
 def sync_control_plane_tree(
@@ -2709,6 +2908,22 @@ def sync_control_plane_tree(
     """
     if dry_run:
         return dst
+    with _tools_install_lease(dst, operation=f"runtime-publish:{src}"):
+        return _sync_control_plane_tree_locked(
+            src,
+            dst,
+            mirror=mirror,
+            install_version=install_version,
+        )
+
+
+def _sync_control_plane_tree_locked(
+    src: Path,
+    dst: Path,
+    *,
+    mirror: bool,
+    install_version: str | None,
+) -> Path:
     _ = mirror  # staged runtime is always an exact distribution payload
     if dst.exists() and not dst.is_symlink():
         raise OSError(
@@ -2728,11 +2943,24 @@ def sync_control_plane_tree(
     staging = dst.parent / f".{dst.name}.staging-{token}"
     generation = dst.parent / f"vibecrafted-generation-{version_slug}-{token}"
     old_candidate = _symlink_target(dst)
-    old_target = (
-        old_candidate
-        if old_candidate is not None and _is_framework_source_root(old_candidate)
-        else None
-    )
+    pending = _read_tools_handoff_path(_tools_handoff_path(dst))
+    if (
+        pending is not None
+        and pending["state"] == "prepared"
+        and old_candidate == Path(pending["new_target"]).resolve(strict=False)
+    ):
+        pending_old = pending["old_target"]
+        old_target = (
+            Path(pending_old).resolve(strict=False)
+            if pending_old and _is_framework_source_root(Path(pending_old))
+            else None
+        )
+    else:
+        old_target = (
+            old_candidate
+            if old_candidate is not None and _is_framework_source_root(old_candidate)
+            else None
+        )
     pointer_swapped = False
     try:
         stage_distribution_payload(src, staging, mirror=True)
@@ -2760,8 +2988,71 @@ def sync_control_plane_tree(
         raise
 
 
-def rollback_current_tools(shared_home: Path) -> bool:
-    """Restore the runtime pointer recorded by the latest pending handoff."""
+def _prune_tools_generations_locked(
+    shared_home: Path,
+    *,
+    keep: int = _TOOLS_GENERATIONS_TO_KEEP,
+) -> list[Path]:
+    if keep < 1:
+        raise ValueError("tools generation retention must keep at least one generation")
+    current_link = _current_tools_link(shared_home)
+    tools_dir = current_link.parent.resolve(strict=False)
+    current_target = _symlink_target(current_link)
+    payload = _read_tools_handoff_path(_tools_handoff_path(current_link))
+    protected: set[Path] = set()
+    if current_target is not None:
+        protected.add(current_target.resolve(strict=False))
+    if payload is not None:
+        old_raw = payload["old_target"]
+        if old_raw:
+            protected.add(Path(old_raw).resolve(strict=False))
+        if payload["state"] == "prepared":
+            protected.add(Path(payload["new_target"]).resolve(strict=False))
+
+    generations: list[tuple[int, str, Path]] = []
+    for candidate in tools_dir.glob("vibecrafted-generation-*"):
+        if candidate.is_symlink() or not candidate.is_dir():
+            continue
+        resolved = candidate.resolve(strict=False)
+        if resolved.parent != tools_dir or not _is_framework_source_root(resolved):
+            continue
+        try:
+            modified = candidate.stat(follow_symlinks=False).st_mtime_ns
+        except OSError:
+            continue
+        generations.append((modified, candidate.name, resolved))
+    generations.sort(reverse=True)
+    protected.update(item[2] for item in generations[:keep])
+
+    removed: list[Path] = []
+    for _, _, candidate in generations:
+        if candidate in protected:
+            continue
+        try:
+            _remove_path(candidate)
+        except OSError as exc:
+            print(
+                f"[install-tools] warning: could not prune old generation "
+                f"{candidate}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        removed.append(candidate)
+    return removed
+
+
+def prune_tools_generations(
+    shared_home: Path,
+    *,
+    keep: int = _TOOLS_GENERATIONS_TO_KEEP,
+) -> list[Path]:
+    """Bound immutable runtime history without touching live recovery targets."""
+    current_link = _current_tools_link(shared_home)
+    with _tools_install_lease(current_link, operation="runtime-generation-gc"):
+        return _prune_tools_generations_locked(shared_home, keep=keep)
+
+
+def _rollback_current_tools_locked(shared_home: Path) -> bool:
     payload = _read_tools_handoff(shared_home)
     if payload is None or payload["state"] != "prepared":
         return False
@@ -2786,8 +3077,14 @@ def rollback_current_tools(shared_home: Path) -> bool:
     return True
 
 
-def complete_current_tools_handoff(shared_home: Path) -> bool:
-    """Seal the latest runtime handoff after uv tools and service are verified."""
+def rollback_current_tools(shared_home: Path) -> bool:
+    """Restore the runtime pointer recorded by the latest pending handoff."""
+    current_link = _current_tools_link(shared_home)
+    with _tools_install_lease(current_link, operation="runtime-rollback"):
+        return _rollback_current_tools_locked(shared_home)
+
+
+def _complete_current_tools_handoff_locked(shared_home: Path) -> bool:
     payload = _read_tools_handoff(shared_home)
     if payload is None or payload["state"] != "prepared":
         return False
@@ -2801,7 +3098,15 @@ def complete_current_tools_handoff(shared_home: Path) -> bool:
     payload["state"] = "complete"
     payload["completed_at"] = datetime.now(timezone.utc).isoformat()
     _atomic_json_file(_tools_handoff_file(shared_home), payload)
+    _prune_tools_generations_locked(shared_home)
     return True
+
+
+def complete_current_tools_handoff(shared_home: Path) -> bool:
+    """Seal the latest runtime handoff after uv tools and service are verified."""
+    current_link = _current_tools_link(shared_home)
+    with _tools_install_lease(current_link, operation="runtime-handoff-complete"):
+        return _complete_current_tools_handoff_locked(shared_home)
 
 
 def _staged_sync_failure_detail(exc: Exception) -> str:
@@ -2870,19 +3175,27 @@ def refresh_current_tools(
     current_link = _current_tools_link(shared_home)
     if current_link.exists() or current_link.is_symlink():
         try:
-            if current_link.resolve(strict=False) == repo_root:
-                # Dev/portable: tools link points at the checkout. Do NOT write
-                # +gSHA into the live git tree (would dirty VERSION files).
-                # Display still uses get_install_version() at banner time.
-                # A receipt from an older immutable-generation handoff must not
-                # survive this no-op path: a later failed install would
-                # otherwise mistake it for the transaction it should roll back.
-                handoff = _tools_handoff_path(current_link)
-                if not dry_run and (handoff.exists() or handoff.is_symlink()):
-                    _remove_path(handoff)
-                return current_link
+            current_target = current_link.resolve(strict=False)
         except OSError:
-            pass
+            current_target = None
+        if current_target == repo_root:
+            # Dev/portable: tools link points at the checkout. Do NOT write
+            # +gSHA into the live git tree (would dirty VERSION files).
+            # Display still uses get_install_version() at banner time.
+            # A receipt from an older immutable-generation handoff must not
+            # survive this no-op path: a later failed install would
+            # otherwise mistake it for the transaction it should roll back.
+            if dry_run:
+                return current_link
+            with _tools_install_lease(
+                current_link,
+                operation="portable-runtime-reconcile",
+            ):
+                if current_link.resolve(strict=False) == repo_root:
+                    handoff = _tools_handoff_path(current_link)
+                    if handoff.exists() or handoff.is_symlink():
+                        _remove_path(handoff)
+                    return current_link
 
     if dry_run:
         return current_link

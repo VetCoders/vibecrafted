@@ -672,6 +672,12 @@ def test_make_install_verifies_server_supervisor_entrypoint() -> None:
     assert "uv tool uninstall" not in install_tools_block
     assert "rollback_current_tools" in install_tools_block
     assert "complete_current_tools_handoff" in install_tools_block
+    assert "run_with_tools_install_lease" in install_tools_block
+    assert "install-tools-held" in install_tools_block
+    assert "VIBECRAFTED_INSTALL_LEASE_FD" in install_tools_block
+    assert "staging runtime under the cross-process installer lease" in (
+        install_tools_block
+    )
     assert "trap rollback_tools_handoff EXIT" in install_tools_block
     assert "server service stop" in install_tools_block
     assert "server service install" in install_tools_block
