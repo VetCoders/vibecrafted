@@ -1756,6 +1756,14 @@ def test_sync_state_projects_event_stream_lifecycle(
                             "prompt": "go",
                             "report": str(tmp_path / "report.md"),
                             "transcript": str(tmp_path / "run.log"),
+                            "agent_session_id": "claude-native-parent",
+                            "runtime_session_id": "runtime-child",
+                            "parent_runtime_session_id": "runtime-parent",
+                            "resume_of": "wflw-parent",
+                            "resume_root": "wflw-root",
+                            "attempt": 2,
+                            "native_resume": True,
+                            "resume_idempotency_key": ("settlement:wflw-parent:7"),
                         },
                     }
                 ),
@@ -1782,6 +1790,14 @@ def test_sync_state_projects_event_stream_lifecycle(
     assert run["operator_state"] == "blocked"
     assert run["artifact_gate"] == "failed"
     assert "report_missing" in run["artifact_errors"]
+    assert run["agent_session_id"] == "claude-native-parent"
+    assert run["runtime_session_id"] == "runtime-child"
+    assert run["parent_runtime_session_id"] == "runtime-parent"
+    assert run["resume_of"] == "wflw-parent"
+    assert run["resume_root"] == "wflw-root"
+    assert run["attempt"] == 2
+    assert run["native_resume"] is True
+    assert run["resume_idempotency_key"] == "settlement:wflw-parent:7"
 
 
 def test_sync_state_surfaces_failure_card_on_contract_failure(

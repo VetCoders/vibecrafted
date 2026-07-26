@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -1330,6 +1333,542 @@ def test_retry_run_relaunches_terminal_run(
     assert payload["accepted"] is True
     assert payload["retry_run_id"] == "wflw-020202-0002"
     assert captured["retry_of"] == "wflw-010101-0001"
+
+
+def _native_resume_parent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    agent: str = "codex",
+    run_fields: dict[str, Any] | None = None,
+    meta_fields: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    home = tmp_path / "home"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "impl-parent"
+    run = {
+        "run_id": run_id,
+        "state": "failed",
+        "agent": agent,
+        "skill": "implement",
+        "root": str(tmp_path),
+        "exit_code": 9,
+    }
+    run.update(run_fields or {})
+    meta = {
+        "run_id": run_id,
+        "agent": agent,
+        "agent_session_id": f"{agent}-native-id",
+        "runtime_session_id": "runtime-parent-id",
+        "attempt": 1,
+    }
+    meta.update(meta_fields or {})
+    run_dir = home / "control_plane" / "runtime_runs" / run_id
+    run_dir.mkdir(parents=True)
+    (run_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    monkeypatch.setattr(workflow, "lookup_run", lambda _run_id: dict(run))
+    return run_id, run
+
+
+def test_native_resume_creates_new_tracked_monotonic_attempts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(monkeypatch, tmp_path)
+    child_ids = iter(("rsme-child-1", "rsme-child-2"))
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: next(child_ids))
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[dict[str, Any]] = []
+
+    def fake_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        source_dir: str | Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append({"spec": spec, "source_dir": source_dir, **kwargs})
+        return {"accepted": True, "run_id": spec.run_id}
+
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(workflow, "launch_workflow", fake_launch)
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    first = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        prompt="continue safely",
+        expected_agent="codex",
+    )
+    second = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent="codex",
+    )
+
+    assert first["accepted"] is True
+    assert first["resume_run_id"] == "rsme-child-1"
+    assert first["attempt"] == 2
+    assert second["resume_run_id"] == "rsme-child-2"
+    assert second["attempt"] == 3
+    assert first["runtime_session_id"] != "runtime-parent-id"
+    assert first["runtime_session_id"] != second["runtime_session_id"]
+    assert launches[0]["worker_command_override"] == [
+        "/verified/bin/codex",
+        "exec",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "resume",
+        "codex-native-id",
+        "-",
+    ]
+    assert launches[0]["env"]["VIBECRAFTED_AGENT_SESSION_ID"] == "codex-native-id"
+    assert launches[0]["launch_meta"]["resume_of"] == run_id
+    assert launches[0]["launch_meta"]["parent_runtime_session_id"] == (
+        "runtime-parent-id"
+    )
+    assert launches[0]["launch_meta"]["attempt"] == 2
+    assert launches[0]["spec"].runtime == "headless"
+    assert launches[0]["spec"].prompt == "continue safely"
+    assert events[-1]["kind"] == "audit:native_resume"
+    assert events[-1]["payload"]["new_run_id"] == "rsme-child-2"
+
+
+def test_native_resume_never_uses_legacy_session_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        meta_fields={"agent_session_id": "", "session_id": "legacy-session-id"},
+    )
+    run["session_id"] = "legacy-control-plane-id"
+    monkeypatch.setattr(workflow, "lookup_run", lambda _run_id: dict(run))
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "missing_agent_session_id"
+    assert events[-1]["payload"]["reason"] == "missing_agent_session_id"
+
+
+def test_native_resume_requires_explicit_runtime_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        meta_fields={
+            "runtime_session_id": "",
+            "session_id": "legacy-ambiguous-id",
+        },
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "missing_runtime_session_id"
+
+
+def test_native_resume_preserves_projected_lineage_when_meta_lacks_resume_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        run_fields={"resume_root": "impl-original", "attempt": 4},
+        meta_fields={"attempt": 4},
+    )
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-child")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda *_args, **_kwargs: {"accepted": True, "run_id": "rsme-child"},
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is True
+    assert result["resume_root"] == "impl-original"
+    assert result["attempt"] == 5
+
+
+def test_native_resume_idempotency_replay_returns_same_child_without_relaunch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(monkeypatch, tmp_path)
+    reserved: list[str] = []
+
+    def reserve(_skill: str) -> str:
+        reserved.append("rsme-idempotent")
+        return "rsme-idempotent"
+
+    monkeypatch.setattr(workflow, "reserve_run_id", reserve)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[dict[str, Any]] = []
+
+    def fake_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append({"spec": spec, **kwargs})
+        return {
+            "accepted": True,
+            "run_id": spec.run_id,
+            "pid": 4242,
+            "status": "launching",
+        }
+
+    monkeypatch.setattr(workflow, "launch_workflow", fake_launch)
+    key = f"settlement:{run_id}:7"
+
+    first = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+    replay = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+    monkeypatch.setattr(workflow, "lookup_run", lambda _target: None)
+    archived_parent_replay = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert first["accepted"] is True
+    assert first["deduplicated"] is False
+    assert replay["accepted"] is True
+    assert replay["deduplicated"] is True
+    assert replay["reason"] == "idempotent_replay"
+    assert replay["resume_run_id"] == first["resume_run_id"] == "rsme-idempotent"
+    assert replay["attempt"] == first["attempt"] == 2
+    assert archived_parent_replay["accepted"] is True
+    assert archived_parent_replay["resume_run_id"] == "rsme-idempotent"
+    assert len(reserved) == 1
+    assert len(launches) == 1
+    assert launches[0]["launch_meta"]["resume_idempotency_key"] == key
+    receipts = list(
+        (tmp_path / "home" / "control_plane" / "native_resume_idempotency").glob(
+            "*.json"
+        )
+    )
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text(encoding="utf-8"))
+    assert receipt["idempotency_key"] == key
+    assert receipt["child_run_id"] == "rsme-idempotent"
+    assert receipt["state"] == "dispatched"
+
+
+def test_native_resume_idempotency_conflicts_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, run = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-owned")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[str] = []
+    monkeypatch.setattr(
+        workflow,
+        "launch_workflow",
+        lambda spec, *_args, **_kwargs: (
+            launches.append(spec.run_id) or {"accepted": True, "run_id": spec.run_id}
+        ),
+    )
+    key = f"settlement:{run_id}:8"
+    first = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    wrong_agent = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        expected_agent="claude",
+        idempotency_key=key,
+    )
+    other_run = {**run, "run_id": "impl-other"}
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda target: dict(other_run) if target == "impl-other" else dict(run),
+    )
+    wrong_parent = workflow.native_resume_run(
+        "impl-other",
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert first["accepted"] is True
+    assert wrong_agent["accepted"] is False
+    assert wrong_agent["reason"] == "idempotency_conflict"
+    assert wrong_parent["accepted"] is False
+    assert wrong_parent["reason"] == "idempotency_conflict"
+    assert launches == ["rsme-owned"]
+
+
+def test_native_resume_idempotency_recovers_kill_window_without_second_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, parent = _native_resume_parent(monkeypatch, tmp_path)
+    children: dict[str, dict[str, Any]] = {}
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda target: dict(parent) if target == run_id else children.get(target),
+    )
+    monkeypatch.setattr(workflow, "reserve_run_id", lambda _skill: "rsme-kill-window")
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launches: list[str] = []
+
+    def crash_after_dispatch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append(spec.run_id)
+        children[spec.run_id] = {
+            "run_id": spec.run_id,
+            "state": "process_spawned",
+            "launcher_pid": 4444,
+        }
+        raise KeyboardInterrupt("simulated kill after spawn before receipt")
+
+    monkeypatch.setattr(workflow, "launch_workflow", crash_after_dispatch)
+    key = f"settlement:{run_id}:9"
+
+    with pytest.raises(KeyboardInterrupt):
+        workflow.native_resume_run(
+            run_id,
+            source_dir=tmp_path,
+            idempotency_key=key,
+        )
+    replay = workflow.native_resume_run(
+        run_id,
+        source_dir=tmp_path,
+        idempotency_key=key,
+    )
+
+    assert replay["accepted"] is True
+    assert replay["deduplicated"] is True
+    assert replay["reason"] == "idempotent_replay"
+    assert replay["resume_run_id"] == "rsme-kill-window"
+    assert replay["idempotency_state"] == "reserved"
+    assert launches == ["rsme-kill-window"]
+
+
+def test_native_resume_idempotency_serializes_concurrent_duplicate_calls(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, parent = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "lookup_run",
+        lambda target: dict(parent) if target == run_id else None,
+    )
+    reserved: list[str] = []
+
+    def reserve(_skill: str) -> str:
+        reserved.append("rsme-concurrent")
+        return "rsme-concurrent"
+
+    monkeypatch.setattr(workflow, "reserve_run_id", reserve)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="confirmed",
+            executable="/verified/bin/codex",
+            version="codex 1.0",
+            detail="confirmed",
+        ),
+    )
+    launch_started = threading.Event()
+    release_launch = threading.Event()
+    launches: list[str] = []
+
+    def slow_launch(
+        spec: workflow.WorkflowLaunchSpec,
+        _source_dir: str | Path,
+        **_kwargs: Any,
+    ) -> dict[str, Any]:
+        launches.append(spec.run_id)
+        launch_started.set()
+        assert release_launch.wait(timeout=5)
+        return {"accepted": True, "run_id": spec.run_id}
+
+    monkeypatch.setattr(workflow, "launch_workflow", slow_launch)
+    key = f"settlement:{run_id}:10"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(
+            workflow.native_resume_run,
+            run_id,
+            tmp_path,
+            idempotency_key=key,
+        )
+        assert launch_started.wait(timeout=5)
+        duplicate_future = executor.submit(
+            workflow.native_resume_run,
+            run_id,
+            tmp_path,
+            idempotency_key=key,
+        )
+        duplicate = duplicate_future.result(timeout=5)
+        release_launch.set()
+        first = first_future.result(timeout=5)
+
+    assert first["accepted"] is True
+    assert duplicate["accepted"] is False
+    assert duplicate["reason"] == "idempotency_in_progress"
+    assert duplicate["deduplicated"] is True
+    assert duplicate["resume_run_id"] == first["resume_run_id"] == "rsme-concurrent"
+    assert reserved == ["rsme-concurrent"]
+    assert launches == ["rsme-concurrent"]
+
+
+@pytest.mark.parametrize(
+    ("run_fields", "reason"),
+    [
+        ({"state": "stopped", "stop_reason": "operator stop request"}, "manual_stop"),
+        ({"state": "cancelled"}, "manual_stop"),
+        ({"state": "blocked"}, "blocked"),
+        ({"settlement_tui": "x", "settlement_source": "trust"}, "trust_x"),
+    ],
+)
+def test_native_resume_refuses_operator_and_trust_terminals(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_fields: dict[str, Any],
+    reason: str,
+) -> None:
+    run_id, _run = _native_resume_parent(
+        monkeypatch,
+        tmp_path,
+        run_fields=run_fields,
+    )
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert events[-1]["payload"]["reason"] == reason
+
+
+@pytest.mark.parametrize(
+    ("agent", "reason"),
+    [
+        ("gemini", "native_resume_unsupported"),
+        ("agy", "native_resume_unverified"),
+        ("junie", "native_resume_unverified"),
+    ],
+)
+def test_native_resume_refuses_unsupported_or_unverified_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    agent: str,
+    reason: str,
+) -> None:
+    run_id, _run = _native_resume_parent(monkeypatch, tmp_path, agent=agent)
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == reason
+    assert events[-1]["payload"]["reason"] == reason
+
+
+def test_native_resume_requires_confirmed_runtime_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id, _run = _native_resume_parent(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        workflow,
+        "probe_provider",
+        lambda agent: SimpleNamespace(
+            agent=agent,
+            state="probe_failed",
+            executable=None,
+            version=None,
+            detail="codex not found",
+        ),
+    )
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workflow, "append_event", lambda **kwargs: events.append(kwargs)
+    )
+
+    result = workflow.native_resume_run(run_id, source_dir=tmp_path)
+
+    assert result["accepted"] is False
+    assert result["reason"] == "native_resume_probe_failed"
+    assert result["detail"] == "codex not found"
 
 
 def test_build_launch_command_uses_core_stdin_agent_command_not_legacy_deck(

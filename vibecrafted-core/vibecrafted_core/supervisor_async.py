@@ -340,6 +340,9 @@ class AsyncSupervisor:
         if prompt_file is not None:
             merged_env["VIBECRAFTED_PROMPT_PATH"] = str(prompt_file)
         agent = str(merged_env.get("VIBECRAFTED_AGENT") or _infer_agent(command))
+        initial_agent_session_id = str(
+            merged_env.get("VIBECRAFTED_AGENT_SESSION_ID") or ""
+        ).strip()
         skill = str(
             merged_env.get("VIBECRAFTED_SKILL_NAME")
             or merged_env.get("VIBECRAFTED_SKILL_CODE")
@@ -378,6 +381,14 @@ class AsyncSupervisor:
                 "session_id": session_id,
                 "identity_required": True,
                 "agent": agent,
+                **(
+                    {
+                        "agent_session_id": initial_agent_session_id,
+                        "runtime_session_id": session_id,
+                    }
+                    if initial_agent_session_id
+                    else {}
+                ),
                 "skill": skill,
                 "agent_model": agent_model,
                 **({"claim_digest": claim_digest} if claim_digest else {}),
@@ -414,6 +425,7 @@ class AsyncSupervisor:
             session_id=session_id,
             agent=agent,
             skill=skill,
+            agent_session_id=initial_agent_session_id,
             agent_model=agent_model,
             claim_digest=claim_digest,
             model_requested=str(model_receipt.get("model_requested") or ""),
@@ -459,6 +471,9 @@ class AsyncSupervisor:
                 seed.setdefault("root", str(cwd))
                 seed.setdefault("agent", agent)
                 seed.setdefault("skill", skill)
+                if initial_agent_session_id:
+                    seed.setdefault("agent_session_id", initial_agent_session_id)
+                    seed.setdefault("runtime_session_id", session_id)
                 if claim_digest:
                     seed["claim_digest"] = claim_digest
                 handle.meta_path.parent.mkdir(parents=True, exist_ok=True)
@@ -791,7 +806,8 @@ class AsyncSupervisor:
     def _sync_stream_summary(
         self, handle: AsyncRunHandle, parser: AgentStreamParser
     ) -> None:
-        handle.agent_session_id = parser.session_id
+        if parser.session_id:
+            handle.agent_session_id = parser.session_id
         handle.agent_model = parser.model_id
         handle.tokens_input = parser.tokens_input
         handle.tokens_cached_input = parser.tokens_cached_input

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
 import re
@@ -10,18 +12,29 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from .artifacts import validate_artifacts
+from .continuity.capabilities import (
+    PROBE_CONFIRMED,
+    SUPPORTED,
+    UNVERIFIED,
+    capability_for,
+    probe_provider,
+)
 from .control_plane import (
+    RunNotResolved,
     await_run,
     control_plane_home,
     ensure_session_id,
     lookup_run,
     normalize_run_root,
     record_stop_transition,
+    resolve_run,
     run_snapshot_dir,
     sync_state,
 )
@@ -33,7 +46,7 @@ from .package_resources import deck_path as package_deck_path
 from .report_contract import CLAIM_DIGEST_ENV
 from .research_config import ResearchAgentSelection, resolve_research_runtime_config
 from .spawn import _stdin_command
-from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE
+from .workflow_runtime import WORKER_SIGNAL_DISCIPLINE, native_resume_argv
 from .workflows import registry as workflow_registry
 
 SUPPORTED_WORKFLOWS = workflow_registry.SUPPORTED_WORKFLOWS
@@ -1359,12 +1372,37 @@ def _sweep_stale_runs() -> None:
         _ = _sweep_exc  # best-effort reaper sweep
 
 
+def _launch_tracking_payload(
+    launch_meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return the lineage/identity fields safe to project into launch events."""
+
+    if not launch_meta:
+        return {}
+    return {
+        key: launch_meta[key]
+        for key in (
+            "agent_session_id",
+            "runtime_session_id",
+            "parent_runtime_session_id",
+            "resume_of",
+            "resume_root",
+            "attempt",
+            "native_resume",
+            "resume_idempotency_key",
+        )
+        if launch_meta.get(key) not in (None, "")
+    }
+
+
 def launch_workflow(
     spec: WorkflowLaunchSpec,
     source_dir: str | Path,
     *,
     env: dict[str, str] | None = None,
     retry_of: str = "",
+    worker_command_override: list[str] | None = None,
+    launch_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     # Opportunistic pre-flight: before adding a run to the machine, take the dead
     # ones' survivors off it. Every spawn is the natural sweep point — it needs no
@@ -1443,16 +1481,22 @@ def launch_workflow(
     )
     prompt_path = _write_prompt_file(artifacts["prompt"], prompt_body)
     claim_digest = str(spec.claim_digest or "").strip()
+    initial_meta: dict[str, Any] = dict(launch_meta or {})
+    initial_meta["run_id"] = run_id
     if claim_digest:
+        initial_meta["claim_digest"] = claim_digest
+    if len(initial_meta) > 1:
         atomic_write_json(
             artifacts["meta"],
-            {
-                "run_id": run_id,
-                "claim_digest": claim_digest,
-            },
+            initial_meta,
         )
     safe_spec = {**spec.to_payload(), "prompt": "", "file": str(prompt_path)}
-    worker_command = build_launch_command(spec, source_dir, prompt_file=prompt_path)
+    worker_command = (
+        list(worker_command_override)
+        if worker_command_override is not None
+        else build_launch_command(spec, source_dir, prompt_file=prompt_path)
+    )
+    launch_tracking = _launch_tracking_payload(launch_meta)
     model_receipt = _model_override_receipt(spec.agent, spec.model)
     if spec.model and runtime_kind == "supervised_research":
         model_receipt = {"model_requested": spec.model}
@@ -1586,6 +1630,7 @@ def launch_workflow(
             "command": command,
             "transport": transport,
             "command_script": str(command_script or ""),
+            **launch_tracking,
             "retry_of": retry_of,
         },
     )
@@ -1603,6 +1648,7 @@ def launch_workflow(
                     "command": command,
                     "transport": transport,
                     "command_script": str(command_script or ""),
+                    **launch_tracking,
                     "retry_of": retry_of,
                     "session_id": session_id,
                     "operator_session": operator_session,
@@ -1649,6 +1695,7 @@ def launch_workflow(
                             "session_id": session_id,
                             "error": host.error,
                             "last_error": host.error,
+                            **launch_tracking,
                             "retry_of": retry_of,
                             **model_receipt,
                         },
@@ -1667,6 +1714,7 @@ def launch_workflow(
                         "last_error": host.error,
                         "run_id": run_id,
                         "operator_session": operator_session,
+                        **launch_tracking,
                         "retry_of": retry_of,
                         **model_receipt,
                         "control_plane": sync_state(),
@@ -1724,6 +1772,7 @@ def launch_workflow(
                     "session_id": session_id,
                     "error": f"{type(exc).__name__}: {exc}",
                     "last_error": f"{type(exc).__name__}: {exc}",
+                    **launch_tracking,
                     "retry_of": retry_of,
                     **model_receipt,
                 },
@@ -1740,6 +1789,7 @@ def launch_workflow(
                 "spec": safe_spec,
                 "error": f"{type(exc).__name__}: {exc}",
                 "run_id": run_id,
+                **launch_tracking,
                 "retry_of": retry_of,
                 **model_receipt,
                 "control_plane": sync_state(),
@@ -1773,6 +1823,7 @@ def launch_workflow(
                 "command": command,
                 "transport": transport,
                 "command_script": str(command_script or ""),
+                **launch_tracking,
                 "retry_of": retry_of,
             },
         )
@@ -1809,6 +1860,7 @@ def launch_workflow(
         },
         "workflow": _workflow_metadata(spec.skill),
         **model_receipt,
+        **launch_tracking,
         "retry_of": retry_of,
         "launch_log": str(launch_log),
         "spec": safe_spec,
@@ -2019,6 +2071,823 @@ def retry_run(
         "run_id": target,
         "retry_run_id": str(launched.get("run_id") or ""),
         "launch": launched,
+    }
+
+
+DEFAULT_NATIVE_RESUME_PROMPT = (
+    "Resume this interrupted Vibecrafted run in its existing provider session. "
+    "Inspect the live repository and prior session context, continue only the "
+    "unfinished scoped work, run the relevant verification gates, and write "
+    "the required handoff report."
+)
+NATIVE_RESUME_IDEMPOTENCY_SCHEMA = "vibecrafted.native-resume-idempotency.v1"
+NATIVE_RESUME_IDEMPOTENCY_MAX_LENGTH = 512
+
+
+def _native_resume_rejection(
+    run_id: str,
+    reason: str,
+    *,
+    run: dict[str, Any] | None = None,
+    detail: str = "",
+    idempotency_key: str = "",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {"accepted": False, "reason": reason}
+    if detail:
+        payload["detail"] = detail
+    if idempotency_key:
+        payload["idempotency_key"] = idempotency_key
+    append_event(
+        kind="audit:native_resume",
+        run_id=run_id,
+        message=f"native resume rejected: {reason}",
+        payload=payload,
+    )
+    result: dict[str, Any] = {"accepted": False, "run_id": run_id, **payload}
+    if run is not None:
+        result["run"] = run
+    return result
+
+
+def _native_resume_meta(run_id: str, run: dict[str, Any]) -> dict[str, Any]:
+    candidates: list[Path] = []
+    try:
+        resolved = resolve_run(run_id)
+    except (RunNotResolved, ValueError):
+        resolved = None
+    if resolved is not None and resolved.meta is not None:
+        candidates.append(resolved.meta)
+    announced = str(run.get("meta") or "").strip()
+    if announced:
+        announced_path = Path(announced).expanduser()
+        if announced_path not in candidates:
+            candidates.append(announced_path)
+
+    payload: dict[str, Any] = {}
+    for path in candidates:
+        loaded = _read_json_object(path)
+        for key, value in loaded.items():
+            if key not in payload or payload[key] in (None, ""):
+                payload[key] = value
+    return payload
+
+
+def _manual_stop_or_cancel(run: dict[str, Any]) -> bool:
+    state = str(run.get("state") or "").strip().lower()
+    if state in {"stopped", "cancelled", "canceled"}:
+        return True
+    stop_reason = str(run.get("stop_reason") or "").strip().lower()
+    return bool(
+        stop_reason
+        and any(token in stop_reason for token in ("operator", "manual", "cancel"))
+    )
+
+
+def _trust_rejected(run: dict[str, Any]) -> bool:
+    settlement = run.get("settlement")
+    nested = settlement if isinstance(settlement, dict) else {}
+    tui = (
+        str(
+            run.get("settlement_tui")
+            or nested.get("tui")
+            or nested.get("settlement_tui")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    verdict = (
+        str(
+            run.get("settlement_verdict")
+            or nested.get("verdict")
+            or nested.get("settlement_verdict")
+            or ""
+        )
+        .strip()
+        .lower()
+    )
+    return tui == "x" or verdict in {"failed", "invalid"}
+
+
+def _reserve_native_resume_attempt(
+    *,
+    parent_run_id: str,
+    child_run_id: str,
+    parent_meta: dict[str, Any],
+    parent_run: dict[str, Any],
+    idempotency_key: str = "",
+) -> tuple[str, int]:
+    """Reserve a lineage attempt with O_EXCL so concurrent guardians cannot race."""
+
+    resume_root = str(
+        parent_meta.get("resume_root") or parent_run.get("resume_root") or parent_run_id
+    ).strip()
+    floor = max(
+        _coerce_positive_int(parent_meta.get("attempt"), 1) or 1,
+        _coerce_positive_int(parent_run.get("attempt"), 1) or 1,
+    )
+    runtime_root = control_plane_home() / "runtime_runs"
+    if runtime_root.is_dir():
+        for meta_path in runtime_root.glob("*/meta.json"):
+            payload = _read_json_object(meta_path)
+            if str(payload.get("resume_root") or "").strip() != resume_root:
+                continue
+            floor = max(floor, _coerce_positive_int(payload.get("attempt"), 1) or 1)
+
+    lineage_key = hashlib.sha256(resume_root.encode("utf-8")).hexdigest()[:24]
+    reservation_dir = control_plane_home() / "resume_attempts" / lineage_key
+    reservation_dir.mkdir(parents=True, exist_ok=True)
+    for marker in reservation_dir.glob("*.json"):
+        floor = max(floor, _coerce_positive_int(marker.stem, 1) or 1)
+
+    attempt = floor + 1
+    while True:
+        marker = reservation_dir / f"{attempt}.json"
+        reservation = {
+            "schema": "vibecrafted.native-resume-attempt.v1",
+            "resume_root": resume_root,
+            "resume_of": parent_run_id,
+            "run_id": child_run_id,
+            "attempt": attempt,
+            "reserved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **({"resume_idempotency_key": idempotency_key} if idempotency_key else {}),
+        }
+        encoded = (
+            json.dumps(reservation, ensure_ascii=False, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        try:
+            fd = os.open(
+                marker,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o644,
+            )
+        except FileExistsError:
+            attempt += 1
+            continue
+        try:
+            os.write(fd, encoded)
+        finally:
+            os.close(fd)
+        return resume_root, attempt
+
+
+def _normalize_native_resume_idempotency_key(value: str) -> str:
+    key = str(value or "").strip()
+    if not key:
+        return ""
+    if len(key) > NATIVE_RESUME_IDEMPOTENCY_MAX_LENGTH:
+        raise ValueError(
+            f"idempotency_key exceeds {NATIVE_RESUME_IDEMPOTENCY_MAX_LENGTH} characters"
+        )
+    if any(ord(char) < 32 or ord(char) == 127 for char in key):
+        raise ValueError("idempotency_key contains control characters")
+    return key
+
+
+@contextmanager
+def _locked_native_resume_idempotency() -> Iterator[Path]:
+    registry = control_plane_home() / "native_resume_idempotency"
+    registry.mkdir(parents=True, exist_ok=True)
+    with (registry / ".lock").open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield registry
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _native_resume_idempotency_path(registry: Path, key: str) -> Path:
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return registry / f"{digest}.json"
+
+
+def _read_native_resume_idempotency_record(
+    path: Path,
+    key: str,
+) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    payload = _read_json_object(path)
+    if not payload:
+        raise ValueError(f"unreadable idempotency record: {path}")
+    if payload.get("schema") != NATIVE_RESUME_IDEMPOTENCY_SCHEMA:
+        raise ValueError(f"invalid idempotency record schema: {path}")
+    if str(payload.get("idempotency_key") or "") != key:
+        raise ValueError(f"idempotency hash collision or key mismatch: {path}")
+    required = (
+        "parent_run_id",
+        "agent",
+        "child_run_id",
+        "runtime_session_id",
+        "resume_root",
+        "attempt",
+        "state",
+    )
+    missing = [name for name in required if payload.get(name) in (None, "")]
+    if missing:
+        raise ValueError(
+            f"idempotency record missing fields {','.join(missing)}: {path}"
+        )
+    return payload
+
+
+def _lookup_native_resume_idempotency(key: str) -> dict[str, Any] | None:
+    with _locked_native_resume_idempotency() as registry:
+        path = _native_resume_idempotency_path(registry, key)
+        return _read_native_resume_idempotency_record(path, key)
+
+
+def _claim_native_resume_idempotency(
+    *,
+    key: str,
+    parent_run_id: str,
+    agent: str,
+    agent_session_id: str,
+    parent_runtime_session_id: str,
+    parent_meta: dict[str, Any],
+    parent_run: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """Atomically return an existing resume claim or create exactly one."""
+
+    with _locked_native_resume_idempotency() as registry:
+        path = _native_resume_idempotency_path(registry, key)
+        existing = _read_native_resume_idempotency_record(path, key)
+        if existing is not None:
+            return existing, False
+
+        child_run_id = reserve_run_id("rsme")
+        resume_root, attempt = _reserve_native_resume_attempt(
+            parent_run_id=parent_run_id,
+            child_run_id=child_run_id,
+            parent_meta=parent_meta,
+            parent_run=parent_run,
+            idempotency_key=key,
+        )
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        record: dict[str, Any] = {
+            "schema": NATIVE_RESUME_IDEMPOTENCY_SCHEMA,
+            "idempotency_key": key,
+            "parent_run_id": parent_run_id,
+            "agent": agent,
+            "agent_session_id": agent_session_id,
+            "parent_runtime_session_id": parent_runtime_session_id,
+            "child_run_id": child_run_id,
+            "runtime_session_id": ensure_session_id(),
+            "resume_root": resume_root,
+            "attempt": attempt,
+            "state": "reserved",
+            "launch_accepted": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        atomic_write_json(path, record)
+        return record, True
+
+
+def _update_native_resume_idempotency(
+    *,
+    key: str,
+    child_run_id: str,
+    state: str,
+    launch_accepted: bool,
+    launch: dict[str, Any] | None = None,
+    error: str = "",
+) -> dict[str, Any]:
+    with _locked_native_resume_idempotency() as registry:
+        path = _native_resume_idempotency_path(registry, key)
+        record = _read_native_resume_idempotency_record(path, key)
+        if record is None:
+            raise ValueError("idempotency record disappeared before launch receipt")
+        if str(record.get("child_run_id") or "") != child_run_id:
+            raise ValueError("idempotency record child_run_id changed")
+        record["state"] = state
+        record["launch_accepted"] = bool(launch_accepted)
+        record["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        if launch:
+            record["launch_pid"] = launch.get("pid")
+            record["launch_status"] = str(launch.get("status") or "")
+            record["launch_error"] = str(
+                launch.get("error") or launch.get("last_error") or ""
+            )
+        if error:
+            record["launch_error"] = error
+        atomic_write_json(path, record)
+        return record
+
+
+def _native_resume_child_was_dispatched(child: dict[str, Any] | None) -> bool:
+    if not child:
+        return False
+    state = str(child.get("state") or "").strip().lower()
+    if state in {
+        "process_spawned",
+        "first_output_seen",
+        "active",
+        "running",
+        "completed",
+        "report_validated",
+        "report_missing",
+        "report_invalid",
+        "contract_failed",
+        "closed",
+        "timed_out",
+        "ghost",
+    }:
+        return True
+    return any(
+        _coerce_positive_int(child.get(field), 0)
+        for field in ("launcher_pid", "worker_pid", "worker_pgid")
+    )
+
+
+def _native_resume_idempotency_result(
+    *,
+    target: str,
+    agent: str,
+    requested_agent: str,
+    key: str,
+    record: dict[str, Any],
+    run: dict[str, Any],
+) -> dict[str, Any]:
+    recorded_parent = str(record.get("parent_run_id") or "")
+    recorded_agent = str(record.get("agent") or "").lower()
+    if (
+        recorded_parent != target
+        or recorded_agent != agent
+        or (requested_agent and requested_agent != recorded_agent)
+    ):
+        return _native_resume_rejection(
+            target,
+            "idempotency_conflict",
+            run=run,
+            idempotency_key=key,
+            detail=(
+                f"recorded_parent={recorded_parent or 'unknown'} "
+                f"recorded_agent={recorded_agent or 'unknown'} "
+                f"requested_parent={target} "
+                f"requested_agent={requested_agent or agent or 'unknown'}"
+            ),
+        )
+
+    child_run_id = str(record.get("child_run_id") or "")
+    state = str(record.get("state") or "reserved")
+    accepted = state == "dispatched" and bool(record.get("launch_accepted"))
+    child: dict[str, Any] | None = None
+    if state == "reserved":
+        candidate = lookup_run(child_run_id)
+        if (
+            candidate is not None
+            and str(candidate.get("run_id") or child_run_id) == child_run_id
+        ):
+            child = candidate
+            accepted = _native_resume_child_was_dispatched(child)
+
+    if accepted:
+        reason = "idempotent_replay"
+    elif state == "launch_failed":
+        reason = "launch_failed"
+    else:
+        reason = "idempotency_in_progress"
+    payload = {
+        "accepted": accepted,
+        "reason": reason,
+        "deduplicated": True,
+        "idempotency_key": key,
+        "new_run_id": child_run_id,
+        "agent": recorded_agent,
+        "agent_session_id": str(record.get("agent_session_id") or ""),
+        "runtime_session_id": str(record.get("runtime_session_id") or ""),
+        "parent_runtime_session_id": str(record.get("parent_runtime_session_id") or ""),
+        "resume_of": recorded_parent,
+        "resume_root": str(record.get("resume_root") or ""),
+        "attempt": _coerce_positive_int(record.get("attempt"), 0),
+        "idempotency_state": state,
+    }
+    append_event(
+        kind="audit:native_resume",
+        run_id=target,
+        message=f"native resume idempotency replay: {reason}",
+        payload=payload,
+    )
+    return {
+        "accepted": accepted,
+        "run_id": target,
+        "resume_run_id": child_run_id,
+        "reason": reason,
+        "deduplicated": True,
+        "idempotency_key": key,
+        "attempt": payload["attempt"],
+        "resume_of": recorded_parent,
+        "resume_root": payload["resume_root"],
+        "agent": recorded_agent,
+        "agent_session_id": payload["agent_session_id"],
+        "runtime_session_id": payload["runtime_session_id"],
+        "parent_runtime_session_id": payload["parent_runtime_session_id"],
+        "idempotency_state": state,
+        "launch": {
+            "accepted": accepted,
+            "run_id": child_run_id,
+            "status": str(record.get("launch_status") or state),
+            "error": str(record.get("launch_error") or ""),
+            "deduplicated": True,
+        },
+        **({"child": child} if child is not None else {}),
+    }
+
+
+def native_resume_run(
+    run_id: str,
+    source_dir: str | Path = ".",
+    *,
+    prompt: str = "",
+    expected_agent: str = "",
+    env: dict[str, str] | None = None,
+    idempotency_key: str = "",
+) -> dict[str, Any]:
+    """Resume one terminal run through a verified provider-native adapter.
+
+    This is the mutation boundary intended for vc-guard/vc-trust guardians. It
+    creates a fresh tracked run and runtime identity; it never reuses the
+    parent's run id and never treats legacy ``session_id`` as provider identity.
+    """
+
+    target = str(run_id or "").strip()
+    if not target:
+        raise ValueError("run_id is required")
+    requested_agent = str(expected_agent or "").strip().lower()
+    try:
+        resume_idempotency_key = _normalize_native_resume_idempotency_key(
+            idempotency_key
+        )
+    except ValueError as exc:
+        return _native_resume_rejection(
+            target,
+            "invalid_idempotency_key",
+            detail=str(exc),
+        )
+
+    existing_idempotency: dict[str, Any] | None = None
+    if resume_idempotency_key:
+        try:
+            existing_idempotency = _lookup_native_resume_idempotency(
+                resume_idempotency_key
+            )
+        except (OSError, ValueError) as exc:
+            return _native_resume_rejection(
+                target,
+                "idempotency_record_invalid",
+                detail=f"{type(exc).__name__}: {exc}",
+                idempotency_key=resume_idempotency_key,
+            )
+        if (
+            existing_idempotency is not None
+            and str(existing_idempotency.get("parent_run_id") or "") != target
+        ):
+            return _native_resume_rejection(
+                target,
+                "idempotency_conflict",
+                detail=(
+                    "recorded_parent="
+                    f"{existing_idempotency.get('parent_run_id') or 'unknown'} "
+                    f"requested_parent={target}"
+                ),
+                idempotency_key=resume_idempotency_key,
+            )
+
+    run = lookup_run(target)
+    if run is None:
+        if existing_idempotency is not None:
+            return _native_resume_idempotency_result(
+                target=target,
+                agent=str(existing_idempotency.get("agent") or "").lower(),
+                requested_agent=requested_agent,
+                key=resume_idempotency_key,
+                record=existing_idempotency,
+                run={"run_id": target},
+            )
+        return _native_resume_rejection(
+            target,
+            "run_not_found",
+            idempotency_key=resume_idempotency_key,
+        )
+
+    parent_meta = _native_resume_meta(target, run)
+    agent = str(parent_meta.get("agent") or run.get("agent") or "").strip().lower()
+    if existing_idempotency is not None:
+        return _native_resume_idempotency_result(
+            target=target,
+            agent=agent,
+            requested_agent=requested_agent,
+            key=resume_idempotency_key,
+            record=existing_idempotency,
+            run=run,
+        )
+
+    state = str(run.get("state") or "").strip().lower()
+    if _manual_stop_or_cancel(run):
+        return _native_resume_rejection(
+            target,
+            "manual_stop",
+            run=run,
+            idempotency_key=resume_idempotency_key,
+        )
+    if _trust_rejected(run):
+        return _native_resume_rejection(
+            target,
+            "trust_x",
+            run=run,
+            idempotency_key=resume_idempotency_key,
+        )
+    if state == "blocked" or str(run.get("operator_state") or "").lower() == "blocked":
+        return _native_resume_rejection(
+            target,
+            "blocked",
+            run=run,
+            idempotency_key=resume_idempotency_key,
+        )
+    if not _run_is_terminal(run):
+        return _native_resume_rejection(
+            target,
+            "run_not_terminal",
+            run=run,
+            idempotency_key=resume_idempotency_key,
+        )
+
+    if requested_agent and requested_agent != agent:
+        return _native_resume_rejection(
+            target,
+            "agent_mismatch",
+            run=run,
+            detail=f"recorded={agent or 'unknown'} requested={requested_agent}",
+            idempotency_key=resume_idempotency_key,
+        )
+    agent_session_id = str(
+        parent_meta.get("agent_session_id") or run.get("agent_session_id") or ""
+    ).strip()
+    if not agent_session_id:
+        return _native_resume_rejection(
+            target,
+            "missing_agent_session_id",
+            run=run,
+            idempotency_key=resume_idempotency_key,
+        )
+    parent_runtime_session_id = str(
+        parent_meta.get("runtime_session_id") or run.get("runtime_session_id") or ""
+    ).strip()
+    if not parent_runtime_session_id:
+        return _native_resume_rejection(
+            target,
+            "missing_runtime_session_id",
+            run=run,
+            idempotency_key=resume_idempotency_key,
+        )
+
+    try:
+        capability = capability_for(agent)
+    except ValueError as exc:
+        return _native_resume_rejection(
+            target,
+            "native_resume_unsupported",
+            run=run,
+            detail=str(exc),
+            idempotency_key=resume_idempotency_key,
+        )
+    if capability.noninteractive_resume != SUPPORTED:
+        reason = (
+            "native_resume_unverified"
+            if capability.noninteractive_resume == UNVERIFIED
+            else "native_resume_unsupported"
+        )
+        return _native_resume_rejection(
+            target,
+            reason,
+            run=run,
+            detail=capability.notes,
+            idempotency_key=resume_idempotency_key,
+        )
+
+    provider_probe = probe_provider(agent)
+    if provider_probe.state != PROBE_CONFIRMED or not provider_probe.executable:
+        probe_reason = (
+            "native_resume_probe_failed"
+            if provider_probe.state == "probe_failed"
+            else f"native_resume_probe_{provider_probe.state}"
+        )
+        return _native_resume_rejection(
+            target,
+            probe_reason,
+            run=run,
+            detail=provider_probe.detail,
+            idempotency_key=resume_idempotency_key,
+        )
+    try:
+        command = native_resume_argv(agent, agent_session_id)
+    except ValueError as exc:
+        return _native_resume_rejection(
+            target,
+            "native_resume_unsupported",
+            run=run,
+            detail=str(exc),
+            idempotency_key=resume_idempotency_key,
+        )
+    command[0] = provider_probe.executable
+    if any(flag in command for flag in capability.forbidden_flags):
+        return _native_resume_rejection(
+            target,
+            "native_resume_forbidden_flag",
+            run=run,
+            idempotency_key=resume_idempotency_key,
+        )
+
+    if resume_idempotency_key:
+        try:
+            idempotency_record, created = _claim_native_resume_idempotency(
+                key=resume_idempotency_key,
+                parent_run_id=target,
+                agent=agent,
+                agent_session_id=agent_session_id,
+                parent_runtime_session_id=parent_runtime_session_id,
+                parent_meta=parent_meta,
+                parent_run=run,
+            )
+        except (OSError, ValueError) as exc:
+            return _native_resume_rejection(
+                target,
+                "idempotency_claim_failed",
+                run=run,
+                detail=f"{type(exc).__name__}: {exc}",
+                idempotency_key=resume_idempotency_key,
+            )
+        if not created:
+            return _native_resume_idempotency_result(
+                target=target,
+                agent=agent,
+                requested_agent=requested_agent,
+                key=resume_idempotency_key,
+                record=idempotency_record,
+                run=run,
+            )
+        child_run_id = str(idempotency_record["child_run_id"])
+        resume_root = str(idempotency_record["resume_root"])
+        attempt = int(idempotency_record["attempt"])
+        child_runtime_session_id = str(idempotency_record["runtime_session_id"])
+    else:
+        child_run_id = reserve_run_id("rsme")
+        try:
+            resume_root, attempt = _reserve_native_resume_attempt(
+                parent_run_id=target,
+                child_run_id=child_run_id,
+                parent_meta=parent_meta,
+                parent_run=run,
+            )
+        except OSError as exc:
+            return _native_resume_rejection(
+                target,
+                "attempt_reservation_failed",
+                run=run,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+        child_runtime_session_id = ensure_session_id()
+
+    child_env = dict(env or {})
+    child_env["VIBECRAFTED_SESSION_ID"] = child_runtime_session_id
+    child_env["VIBECRAFTED_AGENT_SESSION_ID"] = agent_session_id
+    launch_meta = {
+        "run_id": child_run_id,
+        "agent": agent,
+        "agent_session_id": agent_session_id,
+        "runtime_session_id": child_runtime_session_id,
+        "parent_runtime_session_id": parent_runtime_session_id,
+        "resume_of": target,
+        "resume_root": resume_root,
+        "attempt": attempt,
+        "native_resume": True,
+        **(
+            {"resume_idempotency_key": resume_idempotency_key}
+            if resume_idempotency_key
+            else {}
+        ),
+    }
+    claim_digest = str(
+        parent_meta.get("claim_digest") or run.get("claim_digest") or ""
+    ).strip()
+    spec = WorkflowLaunchSpec(
+        agent=agent,
+        mode="native_resume",
+        skill=str(run.get("skill") or parent_meta.get("skill") or "workflow"),
+        prompt=str(prompt or "").strip() or DEFAULT_NATIVE_RESUME_PROMPT,
+        file="",
+        runtime="headless",
+        root=str(
+            run.get("root") or parent_meta.get("root") or Path(source_dir).resolve()
+        ),
+        model=str(
+            run.get("model_requested") or parent_meta.get("model_requested") or ""
+        ),
+        claim_digest=claim_digest,
+        run_id=child_run_id,
+    )
+    try:
+        launched = launch_workflow(
+            spec,
+            source_dir,
+            env=child_env,
+            worker_command_override=command,
+            launch_meta=launch_meta,
+        )
+    except (OSError, ValueError) as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        if resume_idempotency_key:
+            try:
+                _update_native_resume_idempotency(
+                    key=resume_idempotency_key,
+                    child_run_id=child_run_id,
+                    state="launch_failed",
+                    launch_accepted=False,
+                    error=detail,
+                )
+            except (OSError, ValueError) as receipt_exc:
+                detail += (
+                    "; idempotency receipt update failed: "
+                    f"{type(receipt_exc).__name__}: {receipt_exc}"
+                )
+        return _native_resume_rejection(
+            target,
+            "launch_rejected",
+            run=run,
+            detail=detail,
+            idempotency_key=resume_idempotency_key,
+        )
+
+    accepted = bool(launched.get("accepted"))
+    idempotency_receipt_error = ""
+    if resume_idempotency_key:
+        try:
+            _update_native_resume_idempotency(
+                key=resume_idempotency_key,
+                child_run_id=child_run_id,
+                state="dispatched" if accepted else "launch_failed",
+                launch_accepted=accepted,
+                launch=launched,
+            )
+        except (OSError, ValueError) as exc:
+            idempotency_receipt_error = f"{type(exc).__name__}: {exc}"
+    append_event(
+        kind="audit:native_resume",
+        run_id=target,
+        message="native resume dispatched"
+        if accepted
+        else "native resume launch failed",
+        payload={
+            "accepted": accepted,
+            "reason": "dispatched" if accepted else "launch_failed",
+            "new_run_id": child_run_id,
+            "agent": agent,
+            "agent_session_id": agent_session_id,
+            "runtime_session_id": child_runtime_session_id,
+            "parent_runtime_session_id": parent_runtime_session_id,
+            "resume_of": target,
+            "resume_root": resume_root,
+            "attempt": attempt,
+            "probe_state": provider_probe.state,
+            "probe_version": provider_probe.version or "",
+            "deduplicated": False,
+            **(
+                {"idempotency_key": resume_idempotency_key}
+                if resume_idempotency_key
+                else {}
+            ),
+            **(
+                {"idempotency_receipt_error": idempotency_receipt_error}
+                if idempotency_receipt_error
+                else {}
+            ),
+        },
+    )
+    return {
+        "accepted": accepted,
+        "run_id": target,
+        "resume_run_id": child_run_id,
+        "reason": "dispatched" if accepted else "launch_failed",
+        "attempt": attempt,
+        "resume_of": target,
+        "resume_root": resume_root,
+        "agent": agent,
+        "agent_session_id": agent_session_id,
+        "runtime_session_id": child_runtime_session_id,
+        "parent_runtime_session_id": parent_runtime_session_id,
+        "launch": launched,
+        "deduplicated": False,
+        **(
+            {"idempotency_key": resume_idempotency_key}
+            if resume_idempotency_key
+            else {}
+        ),
+        **(
+            {"idempotency_receipt_error": idempotency_receipt_error}
+            if idempotency_receipt_error
+            else {}
+        ),
     }
 
 

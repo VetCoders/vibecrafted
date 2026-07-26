@@ -279,6 +279,48 @@ def test_async_supervisor_preseeds_and_stamps_launcher_owned_identity(
     assert meta_payload["claim_digest"] == digest
 
 
+def test_async_supervisor_preserves_explicit_resume_identity_without_new_event(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(tmp_path / "home"))
+    report = tmp_path / "resume-report.md"
+    transcript = tmp_path / "resume.log"
+    meta = tmp_path / "resume.meta.json"
+    worker = tmp_path / "codex"
+    worker.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['VIBECRAFTED_REPORT_PATH']).write_text("
+        "'# resumed handoff\\n', encoding='utf-8')\n"
+        "print('resumed without identity banner')\n",
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+
+    handle = asyncio.run(
+        AsyncSupervisor().run(
+            run_id="resume-child",
+            command=[str(worker)],
+            root=tmp_path,
+            env={
+                "VIBECRAFTED_AGENT": "codex",
+                "VIBECRAFTED_AGENT_SESSION_ID": "codex-native-parent",
+                "VIBECRAFTED_SESSION_ID": "runtime-child",
+            },
+            meta_path=meta,
+            report_path=report,
+            transcript_path=transcript,
+        )
+    )
+
+    assert handle.agent_session_id == "codex-native-parent"
+    assert handle.session_id == "runtime-child"
+    meta_payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert meta_payload["agent_session_id"] == "codex-native-parent"
+    assert meta_payload["runtime_session_id"] == "runtime-child"
+
+
 def test_async_supervisor_preserves_blocked_claim_while_filling_identity(
     tmp_path: Path, monkeypatch
 ) -> None:

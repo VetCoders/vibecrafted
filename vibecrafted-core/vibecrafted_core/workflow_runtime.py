@@ -5,7 +5,6 @@ import asyncio
 import json
 import os
 import re
-import shlex
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -464,64 +463,47 @@ Research reports:
 """
 
 
-def _resume_stdin_command(agent: str, session_id: str) -> list[str]:
-    if agent == "claude":
+NATIVE_RESUME_AGENTS = frozenset({"claude", "codex", "grok"})
+
+
+def native_resume_argv(agent: str, agent_session_id: str) -> list[str]:
+    """Build a provider-native resume argv without shell interpretation.
+
+    Only adapters verified by the runtime contract live here.  In particular,
+    a generic ``session_id`` is never accepted as provider identity and
+    unsupported agents never fall back to a fresh-session command.
+    """
+
+    normalized_agent = str(agent or "").strip().lower()
+    native_id = str(agent_session_id or "").strip()
+    if not native_id:
+        raise ValueError("missing_agent_session_id")
+    if normalized_agent == "claude":
         return [
             "claude",
             "--resume",
-            session_id,
+            native_id,
             "-p",
             "--output-format",
             "stream-json",
             "--verbose",
             "--dangerously-skip-permissions",
         ]
-    if agent == "codex":
+    if normalized_agent == "codex":
         return [
             "codex",
-            "resume",
-            session_id,
+            "exec",
             "--json",
             "--dangerously-bypass-approvals-and-sandbox",
+            "resume",
+            native_id,
             "-",
         ]
-    if agent == "gemini":
-        raise ValueError(
-            "gemini CLI is deprecated. Google Antigravity CLI (agy) is the replacement. "
-            "Use 'vibecrafted workflow agy --prompt ...' (or agy in other launchers). "
-            "No execution path may launch the gemini binary."
-        )
-    if agent == "agy":
-        # agy >= 1.1: --print takes a value and reads no stdin; a shell shim
-        # folds the stdin prompt into the flag (see spawn._stdin_command).
-        return [
-            "bash",
-            "-c",
-            (
-                "agy --dangerously-skip-permissions --conversation "
-                f"{shlex.quote(session_id)} --add-dir . "
-                '--print-timeout 30m --print "$(cat)"'
-            ),
-        ]
-    if agent == "junie":
-        return [
-            "junie",
-            "--resume",
-            "--session-id",
-            session_id,
-            "--project",
-            ".",
-            "--skip-update-check",
-            "--input-format",
-            "text",
-            "--output-format",
-            "json-stream",
-        ]
-    if agent == "grok":
+    if normalized_agent == "grok":
         return [
             "grok",
             "--resume",
-            session_id,
+            native_id,
             "--cwd",
             ".",
             "--permission-mode",
@@ -532,7 +514,17 @@ def _resume_stdin_command(agent: str, session_id: str) -> list[str]:
             "--prompt-file",
             "/dev/stdin",
         ]
-    return _stdin_command(agent)
+    raise ValueError(f"native_resume_unsupported:{normalized_agent or 'unknown'}")
+
+
+def _resume_stdin_command(agent: str, agent_session_id: str) -> list[str]:
+    """Compatibility shim for the strict provider-native resume builder.
+
+    Callers must supply an already verified native identity.  The shim performs
+    no metadata lookup and therefore cannot promote a legacy ``session_id``.
+    """
+
+    return native_resume_argv(agent, agent_session_id)
 
 
 async def _run_child(
@@ -633,9 +625,7 @@ def _child_result_from_meta(label: str, meta_path: Path) -> ChildResult | None:
         label=label,
         agent=str(payload.get("agent") or ""),
         run_id=str(payload.get("run_id") or ""),
-        agent_session_id=str(
-            payload.get("agent_session_id") or payload.get("session_id") or ""
-        ),
+        agent_session_id=str(payload.get("agent_session_id") or ""),
         agent_model=str(payload.get("agent_model") or payload.get("model") or ""),
         model_requested=str(payload.get("model_requested") or ""),
         model_override_supported=bool(payload.get("model_override_supported")),
@@ -826,13 +816,21 @@ async def _run_research_synthesis(
     last = max(survivors, key=lambda item: item.completed_at or "")
     if not last.agent_session_id:
         return _failed_synthesis_result(last, "missing_agent_session_id_for_resume")
+    try:
+        synthesis_command = native_resume_argv(last.agent, last.agent_session_id)
+    except ValueError:
+        # The tracked guardian resume boundary is intentionally stricter than
+        # research synthesis.  For an unverified provider, synthesize in a fresh
+        # turn from the durable survivor reports instead of pretending a native
+        # resume occurred.
+        synthesis_command = _stdin_command(last.agent)
     return await _run_child(
         kind="research",
         label="research-synthesis",
         agent=last.agent,
         root=root,
         prompt=prompt,
-        command=_resume_stdin_command(last.agent, last.agent_session_id),
+        command=synthesis_command,
         prompt_body=_research_synthesis_prompt(root, prompt, survivors),
     )
 

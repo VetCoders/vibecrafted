@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+import pytest
 from vibecrafted_core import workflow_runtime
 
 
@@ -50,6 +51,91 @@ def _runtime_env(monkeypatch, tmp_path: Path, run_id: str) -> Path:
     monkeypatch.setenv("VIBECRAFTED_TRANSCRIPT_PATH", str(home / "parent.log"))
     monkeypatch.setenv("VIBECRAFTED_META_PATH", str(home / "parent.meta.json"))
     return home
+
+
+@pytest.mark.parametrize(
+    ("agent", "expected"),
+    [
+        (
+            "claude",
+            [
+                "claude",
+                "--resume",
+                "native-123",
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--dangerously-skip-permissions",
+            ],
+        ),
+        (
+            "codex",
+            [
+                "codex",
+                "exec",
+                "--json",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "resume",
+                "native-123",
+                "-",
+            ],
+        ),
+        (
+            "grok",
+            [
+                "grok",
+                "--resume",
+                "native-123",
+                "--cwd",
+                ".",
+                "--permission-mode",
+                "bypassPermissions",
+                "--no-alt-screen",
+                "--output-format",
+                "streaming-json",
+                "--prompt-file",
+                "/dev/stdin",
+            ],
+        ),
+    ],
+)
+def test_native_resume_argv_is_provider_specific_and_shell_free(
+    agent: str, expected: list[str]
+) -> None:
+    command = workflow_runtime.native_resume_argv(agent, "native-123")
+
+    assert command == expected
+    assert command[0] != "bash"
+    assert "-c" not in command
+
+
+@pytest.mark.parametrize("agent", ["gemini", "agy", "junie", "swarm"])
+def test_native_resume_argv_fails_closed_for_unverified_agents(agent: str) -> None:
+    with pytest.raises(ValueError, match="native_resume_unsupported"):
+        workflow_runtime.native_resume_argv(agent, "native-123")
+
+
+def test_child_meta_never_promotes_legacy_session_id_to_native_identity(
+    tmp_path: Path,
+) -> None:
+    meta = tmp_path / "legacy.meta.json"
+    meta.write_text(
+        json.dumps(
+            {
+                "run_id": "legacy-run",
+                "agent": "codex",
+                "session_id": "runtime-or-legacy-id",
+                "exit_code": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = workflow_runtime._child_result_from_meta("legacy", meta)
+
+    assert result is not None
+    assert result.agent_session_id == ""
 
 
 def test_research_runtime_supervises_three_tracks(monkeypatch, tmp_path: Path) -> None:
