@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -88,6 +89,89 @@ def _launcher_shim_findings(
             "launcher",
             f"vibecrafted on PATH ({path}) is neither the uv-tool shim nor the "
             f"known deck — verify the install channel",
+        )
+    ]
+
+
+def _server_supervision_findings(
+    *,
+    platform: str | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    config_factory: Callable[..., Any] | None = None,
+    status_reader: Callable[[Any], Any] | None = None,
+) -> list[_Finding]:
+    """Fail closed when the macOS control-plane service is not truly supervised."""
+    resolved_platform = sys.platform if platform is None else platform
+    if resolved_platform != "darwin":
+        return [
+            _Finding(
+                "ok",
+                "server-supervisor",
+                f"LaunchAgent supervision not applicable on {resolved_platform}",
+            )
+        ]
+
+    resolved_launcher = which("vibecrafted")
+    if not resolved_launcher:
+        return [
+            _Finding(
+                "fail",
+                "server-supervisor",
+                "cannot verify supervised control plane because `vibecrafted` is "
+                "not on PATH — reinstall Vibecrafted",
+            )
+        ]
+
+    if config_factory is None or status_reader is None:
+        from .server_supervisor import default_config, service_status
+
+        config_factory = config_factory or default_config
+        status_reader = status_reader or service_status
+
+    try:
+        config = config_factory(launcher=Path(resolved_launcher))
+        status = status_reader(config)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        return [
+            _Finding(
+                "fail",
+                "server-supervisor",
+                "cannot prove the installed control-plane supervisor healthy: "
+                f"{exc}. Run `vibecrafted server service install`",
+            )
+        ]
+
+    supervisor_pid = getattr(status, "supervisor_pid", None)
+    required = {
+        "installed": bool(getattr(status, "installed", False)),
+        "loaded": bool(getattr(status, "loaded", False)),
+        "supervisor_live": bool(getattr(status, "supervisor_live", False)),
+        "supervisor_verified": bool(getattr(status, "supervisor_verified", False)),
+        "supervisor_service_managed": bool(
+            getattr(status, "supervisor_service_managed", False)
+        ),
+        "build_current": bool(getattr(status, "build_current", False)),
+        "pair_healthy": bool(getattr(status, "pair_healthy", False)),
+        "supervisor_pid": supervisor_pid is not None,
+    }
+    failed = [name for name, healthy in required.items() if not healthy]
+    if failed:
+        return [
+            _Finding(
+                "fail",
+                "server-supervisor",
+                "control plane is not durably supervised "
+                f"(failed: {', '.join(failed)}). Run "
+                "`vibecrafted server service install` and re-run doctor",
+            )
+        ]
+
+    return [
+        _Finding(
+            "ok",
+            "server-supervisor",
+            "verified LaunchAgent-managed supervisor and healthy server/guardian "
+            f"pair (pid={supervisor_pid}, current build)",
         )
     ]
 
@@ -362,6 +446,7 @@ def doctor_run(
         findings = list(installer.run_doctor(resolved_store, resolved_state))
         findings.extend(_packaged_asset_findings())
     findings.extend(_launcher_shim_findings())
+    findings.extend(_server_supervision_findings())
     findings.extend(_vc_frame_delivery_findings())
     return findings
 

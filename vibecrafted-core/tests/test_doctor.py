@@ -72,6 +72,103 @@ def test_launcher_shim_finding_warns_when_absent() -> None:
     assert findings[0].component == "launcher"
 
 
+def test_server_supervision_finding_proves_current_managed_pair() -> None:
+    status = SimpleNamespace(
+        installed=True,
+        loaded=True,
+        supervisor_live=True,
+        supervisor_verified=True,
+        supervisor_service_managed=True,
+        build_current=True,
+        pair_healthy=True,
+        supervisor_pid=4242,
+    )
+
+    findings = doctor._server_supervision_findings(
+        platform="darwin",
+        which=lambda _name: "/usr/local/bin/vibecrafted",
+        config_factory=lambda **kwargs: kwargs,
+        status_reader=lambda _config: status,
+    )
+
+    assert findings == [
+        doctor._Finding(
+            "ok",
+            "server-supervisor",
+            "verified LaunchAgent-managed supervisor and healthy server/guardian "
+            "pair (pid=4242, current build)",
+        )
+    ]
+
+
+def test_server_supervision_finding_fails_closed_for_stale_pair() -> None:
+    status = SimpleNamespace(
+        installed=True,
+        loaded=False,
+        supervisor_live=False,
+        supervisor_verified=False,
+        supervisor_service_managed=False,
+        build_current=False,
+        pair_healthy=False,
+        supervisor_pid=None,
+    )
+
+    findings = doctor._server_supervision_findings(
+        platform="darwin",
+        which=lambda _name: "/usr/local/bin/vibecrafted",
+        config_factory=lambda **kwargs: kwargs,
+        status_reader=lambda _config: status,
+    )
+
+    assert findings[0].level == "fail"
+    assert findings[0].component == "server-supervisor"
+    assert "loaded" in findings[0].message
+    assert "supervisor_pid" in findings[0].message
+    assert "pair_healthy" in findings[0].message
+
+
+def test_server_supervision_finding_fails_when_probe_raises() -> None:
+    def broken_status(_config) -> None:
+        raise RuntimeError("stale pidfile")
+
+    findings = doctor._server_supervision_findings(
+        platform="darwin",
+        which=lambda _name: "/usr/local/bin/vibecrafted",
+        config_factory=lambda **kwargs: kwargs,
+        status_reader=broken_status,
+    )
+
+    assert findings[0].level == "fail"
+    assert findings[0].component == "server-supervisor"
+    assert "stale pidfile" in findings[0].message
+
+
+def test_server_supervision_finding_is_not_applicable_off_macos() -> None:
+    findings = doctor._server_supervision_findings(
+        platform="linux",
+        which=lambda _name: None,
+    )
+
+    assert findings[0].level == "ok"
+    assert findings[0].component == "server-supervisor"
+    assert "not applicable" in findings[0].message
+
+
+def test_doctor_run_includes_server_supervision_finding(monkeypatch) -> None:
+    expected = doctor._Finding("fail", "server-supervisor", "not supervised")
+
+    def missing_installer() -> None:
+        raise ModuleNotFoundError
+
+    monkeypatch.setattr(doctor, "_installer_module", missing_installer)
+    monkeypatch.setattr(doctor, "_packaged_asset_findings", list)
+    monkeypatch.setattr(doctor, "_launcher_shim_findings", list)
+    monkeypatch.setattr(doctor, "_server_supervision_findings", lambda: [expected])
+    monkeypatch.setattr(doctor, "_vc_frame_delivery_findings", list)
+
+    assert doctor.doctor_run() == [expected]
+
+
 def test_doctor_summary_counts_findings() -> None:
     payload = doctor.doctor_summary(
         [
