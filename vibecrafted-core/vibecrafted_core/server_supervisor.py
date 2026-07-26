@@ -1507,6 +1507,12 @@ def install_and_reconcile_service(
     if loaded and (changed or not current):
         restart_service(config, previous_pid=previous.pid)
         restarted = True
+    elif not loaded:
+        # `service install` is the canonical install/reconcile entrypoint used by
+        # make install and doctor remediation.  A fresh definition is not a
+        # running service, so always finish the contract by bootstrapping and
+        # verifying the installed identity.
+        start_service(config)
     return changed, restarted
 
 
@@ -1605,6 +1611,28 @@ def manual_stop(config: SupervisorConfig) -> None:
                 "manual server pair stop failed while holding the coordination "
                 f"lease (exit {result.returncode})",
                 result.returncode,
+            )
+        if _launchd_owns_pair(config.paths):
+            # The common lease prevents the reactivated launchd worker from
+            # acquiring supervision ownership while we repair the race.
+            repair = _launchctl(["bootout", _launch_target()])
+            if repair.returncode != 0 and _launchctl_loaded():
+                raise SupervisorError(
+                    "launchd reactivated during manual-stop cleanup and could not "
+                    f"be unloaded again: {repair.stderr.strip()}",
+                    repair.returncode or EX_TEMPFAIL,
+                )
+            if _launchctl_loaded():
+                raise SupervisorError(
+                    "launchd reactivated during manual-stop cleanup and remains "
+                    "loaded after repair",
+                    EX_TEMPFAIL,
+                )
+            raise SupervisorError(
+                "launchd reactivated during manual-stop cleanup; it was unloaded "
+                "again and the managed pair remains stopped. Retry the intended "
+                "service action explicitly.",
+                EX_TEMPFAIL,
             )
 
 
@@ -1873,6 +1901,7 @@ def _service_command(args: argparse.Namespace) -> int:
             f"LaunchAgent {'installed' if changed else 'already current'} at "
             f"{config.paths.launch_agent_file}"
             f"{'; reloaded current supervisor build' if restarted else ''}"
+            "; verified service is active"
         )
         return 0
     if args.action == "restart":

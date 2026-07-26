@@ -633,6 +633,42 @@ def test_install_reconciles_loaded_service_to_new_binary_provenance(
     assert new_identity.build_version == supervisor.PACKAGE_VERSION
 
 
+def test_install_bootstraps_fresh_service_with_installed_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    started: list[supervisor.SupervisorIdentity] = []
+
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: False)
+    monkeypatch.setattr(
+        supervisor,
+        "probe_supervisor",
+        lambda _paths: supervisor.SupervisorProbe(False, False, None, None),
+    )
+
+    def fake_start(target: supervisor.SupervisorConfig) -> None:
+        identity = supervisor._installed_service_identity(target.paths)
+        assert identity is not None
+        started.append(identity)
+
+    monkeypatch.setattr(supervisor, "start_service", fake_start)
+
+    changed, restarted = supervisor.install_and_reconcile_service(
+        config,
+        supervisor_binary=supervisor_binary,
+    )
+
+    assert changed
+    assert not restarted
+    assert len(started) == 1
+    assert started[0].executable == supervisor_binary
+    assert started[0].launcher_sha256 == supervisor._sha256_file(launcher)
+
+
 def test_hermetic_service_upgrade_restarts_into_new_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -862,6 +898,49 @@ printf stopped > {str(marker)!r}
     worker.join(timeout=5)
     assert result == ["stopped"]
     assert marker.read_text(encoding="utf-8") == "stopped"
+    assert not supervisor.probe_supervisor(config.paths).live
+
+
+def test_manual_stop_repairs_launchd_reactivation_during_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    loaded = False
+    launchctl_calls: list[list[str]] = []
+
+    def fake_launchctl(args: list[str]) -> subprocess.CompletedProcess[str]:
+        nonlocal loaded
+        launchctl_calls.append(list(args))
+        if args[0] == "bootout":
+            loaded = False
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    def fake_run(
+        argv: list[str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        nonlocal loaded
+        loaded = True
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
+    monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+    monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
+
+    with pytest.raises(
+        supervisor.SupervisorError,
+        match="reactivated during manual-stop cleanup",
+    ) as failure:
+        supervisor.manual_stop(config)
+
+    assert failure.value.exit_code == supervisor.EX_TEMPFAIL
+    assert launchctl_calls == [["bootout", supervisor._launch_target()]]
+    assert not loaded
     assert not supervisor.probe_supervisor(config.paths).live
 
 
