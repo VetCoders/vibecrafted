@@ -162,6 +162,39 @@ def test_run_doctor_smokes_helper_and_launcher_runtime(
     assert "Dashboard is optional" in guide_text
 
 
+def test_run_doctor_flags_dark_standard_decks(tmp_path: Path, monkeypatch) -> None:
+    """3.6.0 regression: the manifest recorded only 'agents', the installer
+    pruned the claude/codex views, and doctor kept reporting ok. Doctor must
+    surface dark standard decks even when the manifest never recorded them."""
+    home = tmp_path / "home"
+    crafted_home = home / ".vibecrafted"
+    store_path = crafted_home / "skills"
+    skill = store_path / "vc-init"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# vc-init\n", encoding="utf-8")
+
+    agents_view = home / ".agents" / "skills"
+    agents_view.mkdir(parents=True)
+    (agents_view / "vc-init").symlink_to(skill)
+
+    state = installer.InstallState(
+        framework_version="3.6.0",
+        skills=["vc-init"],
+        runtimes=["agents"],
+    )
+    state.save(store_path)
+
+    _pin_canonical_runtime_roots(monkeypatch, home, crafted_home)
+    monkeypatch.setattr(installer, "FOUNDATIONS", [])
+
+    findings = installer.run_doctor(store_path, state)
+    indexed = {finding.component: finding for finding in findings}
+
+    assert indexed["runtime:claude"].level == "warn"
+    assert indexed["runtime:codex"].level == "warn"
+    assert indexed["symlink:agents/vc-init"].level == "ok"
+
+
 def test_print_doctor_default_is_summary_first_and_bounded(
     capsys, tmp_path: Path
 ) -> None:

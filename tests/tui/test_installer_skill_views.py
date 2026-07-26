@@ -7,6 +7,12 @@ def test_default_skill_view_has_one_cross_agent_owner() -> None:
     assert installer.SYMLINK_TARGETS == ["agents"]
 
 
+def test_standard_views_cover_runtimes_that_read_their_own_dirs() -> None:
+    # Claude Code and Codex CLIs never look at ~/.agents/skills; dropping their
+    # views from the default install blanks the /vc-* deck (regression: 3.6.0).
+    assert installer.STANDARD_VIEW_RUNTIMES == ["agents", "claude", "codex"]
+
+
 def test_prune_shadowed_skill_views_removes_managed_runtime_links(
     tmp_path: Path, monkeypatch
 ) -> None:

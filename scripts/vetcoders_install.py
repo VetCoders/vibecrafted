@@ -588,6 +588,10 @@ SYMLINK_TARGET_CHOICES = [
     "grok",
 ]
 SHADOWED_SKILL_VIEW_RUNTIMES = ("claude", "codex")
+# Claude Code and Codex CLIs read only their own ~/.claude/skills and
+# ~/.codex/skills — the canonical .agents view is invisible to them, so the
+# standard install must keep their views or the /vc-* deck goes dark.
+STANDARD_VIEW_RUNTIMES = [*SYMLINK_TARGETS, *SHADOWED_SKILL_VIEW_RUNTIMES]
 
 # ---------------------------------------------------------------------------
 # Install state
@@ -3822,13 +3826,22 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
             )
         )
 
-    # 4. Symlink views
-    for runtime in state.runtimes:
+    # 4. Symlink views — check what the manifest recorded PLUS the standard
+    # product surface. Claude Code and Codex read only their own skill dirs;
+    # a manifest that recorded just "agents" leaves their /vc-* decks dark,
+    # and doctor must surface that instead of trusting the manifest.
+    recorded_runtimes = list(state.runtimes)
+    view_runtimes = recorded_runtimes + [
+        rt for rt in STANDARD_VIEW_RUNTIMES if rt not in recorded_runtimes
+    ]
+    for runtime in view_runtimes:
+        strict = runtime in recorded_runtimes
+        severity = "fail" if strict else "warn"
         rt_skills = Path.home() / f".{runtime}" / "skills"
         if not rt_skills.exists():
             findings.append(
                 DoctorFinding(
-                    "fail", f"runtime:{runtime}", f"{rt_skills} does not exist"
+                    severity, f"runtime:{runtime}", f"{rt_skills} does not exist"
                 )
             )
             continue
@@ -3861,7 +3874,13 @@ def run_doctor(store_path: Path, state: InstallState) -> list[DoctorFinding]:
                 )
             else:
                 findings.append(
-                    DoctorFinding("fail", f"symlink:{runtime}/{skill_name}", "missing")
+                    DoctorFinding(
+                        severity,
+                        f"symlink:{runtime}/{skill_name}",
+                        "missing"
+                        if strict
+                        else "missing — deck dark for this CLI; rerun 'vibecrafted update'",
+                    )
                 )
 
     # 4b. Agent slash-command views. These are separate from skills and used by
@@ -4632,7 +4651,7 @@ def _cmd_install_verbose(args: argparse.Namespace, repo_root: Path) -> int:
     # --- Interactive Wizard ---
     step = 0
     selected_skills = list(skill_names)
-    all_runtimes = list(SYMLINK_TARGETS)
+    all_runtimes = list(STANDARD_VIEW_RUNTIMES)
     install_shell = cli_with_shell
     write_shell_rc = getattr(args, "write_shell_rc", False)
     installed_foundations: dict[str, dict] = {}
@@ -5288,7 +5307,7 @@ def _cmd_install_compact(args: argparse.Namespace, repo_root: Path) -> int:
 
     skill_names = [s.name for s in skills]
     selected_skills = list(skill_names)
-    all_runtimes = list(SYMLINK_TARGETS)
+    all_runtimes = list(STANDARD_VIEW_RUNTIMES)
     install_shell = cli_with_shell
     write_shell_rc = getattr(args, "write_shell_rc", False)
     installed_foundations: dict[str, dict] = {}
