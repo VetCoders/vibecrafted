@@ -8,17 +8,17 @@ herded: new dispatchers hung forever on an empty pane, and — the heartbeat
 write being behind the same lock — a live-but-lock-starved worker could not
 record liveness and was falsely declared stalled/pid_gone after 120s.
 
-The cure: the per-run path is scoped and lockless; the append path never takes
-the global sync lock and uses only the dedicated event lock around one bounded
-``O_APPEND`` write, rollback, and fsync; only the rare full-board rebuild in
-``sync_state`` still takes the (now bounded) global lock.
+The cure: the per-run path is free of the global lock and uses only its own
+run-id mutation key; the append path uses only the dedicated event lock around
+one bounded ``O_APPEND`` write, rollback, and fsync; only the rare full-board
+rebuild in ``sync_state`` still takes the (now bounded) global lock.
 
 This guard exists because the WRONG fix is the one "the rest of the world" and
 training-data habit both suggest: wrap the append/hot path back in a global
 mutex "for safety". That reintroduces the migraine. If you are here because this
-test failed, do not delete it — the design is deliberate. Append-only JSONL with
-O_APPEND is atomic per line; per-run snapshots are single-writer atomic via
-os.replace. Neither needs the shared lock. See the fix commits and the Kronika.
+test failed, do not delete it — the design is deliberate. Append-only JSONL uses
+its event lock; conflicting snapshots use an independent per-run CAS. Neither
+needs the shared lock. See the fix commits and the Kronika.
 """
 
 from __future__ import annotations

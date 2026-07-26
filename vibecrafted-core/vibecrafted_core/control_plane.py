@@ -32,6 +32,7 @@ from .report_contract import (
     CLAIM_PARTIAL,
     validate_report_file,
 )
+from .run_mutation import run_mutation_locks
 from .runtime_paths import vibecrafted_home
 from .settlement import (
     SETTLEMENT_EVENT_KIND,
@@ -42,6 +43,7 @@ from .settlement import (
     persist_await_verdict,
     persist_settlement_to_meta,
     prepare_settlement_event,
+    settlement_from_payload,
     settle_payload,
 )
 
@@ -84,6 +86,22 @@ BLOCKED_STATES = {
     "contract_failed",
     "recovery_required",
 }
+SETTLEMENT_PROJECTION_FIELDS = (
+    "settlement_verdict",
+    "settlement_reason",
+    "settlement_at",
+    "settlement_source",
+    "settlement_tui",
+    "settlement_waived",
+    "settlement_claim_digest",
+    "settlement_revision",
+    "settlement",
+    "await_rc",
+    "await_outcome",
+    "await_reason",
+    "await_worker_alive",
+    "await_settled_at",
+)
 SKILL_CODE_MAP = {
     "agnt": "agents",
     "deco": "decorate",
@@ -288,14 +306,13 @@ def _sync_lock(
     to ``timeout`` seconds, then raises :class:`ControlPlaneLockBusy`.
 
     DOCTRINE (enforced by ``tests/test_control_plane_lock_doctrine.py`` — do not
-    weaken): this lock guards ONLY the full (unscoped) board rebuild in
+    weaken): this GLOBAL lock guards ONLY the full (unscoped) board rebuild in
     ``sync_state``. It must NEVER wrap a per-run path or the append/emit path.
-    Per-run snapshots are single-writer atomic (``_write_json`` = tmp +
-    ``os.replace``) and event appends are atomic ``O_APPEND`` writes; neither
-    needs this mutex. Re-serializing them "for safety" is the exact regression
-    that caused the 2026-07-12 flock migraine (empty dispatchers, false
-    stalled/pid_gone). If a change wants the lock on a hot path, the change is
-    wrong.
+    Run snapshots use the independent ``run_mutation_locks`` key for their own
+    run id; event appends use the dedicated event lock around one atomic
+    ``O_APPEND`` write. Re-serializing either hot path on this shared mutex is
+    the exact regression that caused the 2026-07-12 flock migraine (empty
+    dispatchers, false stalled/pid_gone).
     """
     control_plane_home().mkdir(parents=True, exist_ok=True)
     lock_path = _sync_lock_path()
@@ -385,17 +402,55 @@ def _write_run_snapshot(
     path: Path,
     previous: dict[str, Any] | None,
     payload: dict[str, Any],
-) -> None:
-    """Atomically persist a run snapshot, then publish its settlement revision."""
+) -> dict[str, Any]:
+    """CAS one run projection, its runtime meta, and its settlement event.
 
-    event = prepare_settlement_event(
-        str(payload.get("run_id") or path.stem),
-        previous,
-        payload,
-    )
-    _write_json(path, payload)
-    if event is not None:
-        emit_settlement_event(event)
+    Projection work intentionally happens outside this critical section so
+    different runs never herd behind one global mutex. The exact snapshot used
+    to derive the candidate is compared again after the per-run lock is held.
+    A stale writer loses without rebasing stale evidence into a newer verdict.
+    """
+
+    run_id = str(payload.get("run_id") or path.stem).strip()
+    if not run_id:
+        return {}
+    root = control_plane_home()
+    with run_mutation_locks(root, run_id=run_id):
+        current_payload = _read_json(path)
+        current = (
+            current_payload
+            if str(current_payload.get("run_id") or "") == run_id
+            else None
+        )
+        expected = previous if previous else None
+        if current != expected:
+            return dict(current or {})
+
+        event = prepare_settlement_event(run_id, current, payload)
+        revision = _coerce_int(payload.get("settlement_revision"))
+        nested = payload.get("settlement")
+        if revision is not None and isinstance(nested, dict):
+            nested["revision"] = revision
+
+        settlement = settlement_from_payload(payload)
+        runtime_meta = _runtime_run_dir(run_id) / "meta.json"
+        if settlement is not None and runtime_meta.is_file():
+            if revision is None or revision <= 0:
+                return dict(current or {})
+            if not persist_settlement_to_meta(
+                runtime_meta,
+                settlement,
+                control_plane_root=root,
+                run_id=run_id,
+                revision=revision,
+            ):
+                return dict(current or {})
+
+        _write_json(path, payload)
+        _record_transition(current, payload)
+        if event is not None:
+            emit_settlement_event(event)
+        return payload
 
 
 def _read_lines(path: Path) -> list[str]:
@@ -2716,7 +2771,7 @@ def subscribe_events(
 def _project_run_payload(
     run_id: str, status: RunStatus, previous: dict[str, Any] | None
 ) -> dict[str, Any]:
-    """Project one run's status to its snapshot payload (single-run, lockless)."""
+    """Project one run's status to a candidate snapshot payload."""
     incoming = _status_to_payload(status)
     # A settled gc park is sticky: the launcher meta that fed this status stays
     # "running" forever, so without this guard every full sync re-parked the
@@ -2734,6 +2789,14 @@ def _project_run_payload(
     payload = _artifact_projection(incoming, previous)
     payload = _reconcile_dead_launcher(payload)
     run_dir = _runtime_run_dir(run_id)
+    runtime_meta = _read_json(run_dir / "meta.json") if run_dir.is_dir() else {}
+    # Runtime meta is the durable half of the settlement transaction. If a
+    # process died after meta replace but before snapshot replace, the next
+    # projection must carry the higher revision forward rather than reviving
+    # stale snapshot truth.
+    for key in SETTLEMENT_PROJECTION_FIELDS:
+        if key in runtime_meta:
+            payload[key] = runtime_meta[key]
     axes = _delivery_axes_from_run_dir(
         run_dir if run_dir.is_dir() else None,
         legacy_state=str(payload.get("state") or ""),
@@ -2843,14 +2906,6 @@ def _project_run_payload(
             "waived": settlement.waived,
             "tui": settlement.tui_key,
         }
-        meta = run_dir / "meta.json" if run_dir.is_dir() else None
-        if meta is not None and meta.is_file():
-            persist_settlement_to_meta(
-                meta,
-                settlement,
-                control_plane_root=control_plane_home(),
-                run_id=run_id,
-            )
     return payload
 
 
@@ -2859,11 +2914,11 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
 
     ``only_run_id`` scopes the whole pass to one run and its child rounds. The
     scoped path is the hot path (``lookup_run`` / ``await_run`` poll it every few
-    seconds): it takes NO global lock, skips the ``artifacts/`` meta rglob, and
-    writes only the target run's snapshot atomically. That removes the O(runs²)
-    lock herd where every per-run poll used to rebuild the whole board under one
-    exclusive ``flock``. The full board rebuild (``only_run_id is None``) stays
-    behind the bounded ``_sync_lock`` and is used by dashboards/status-all.
+    seconds): it takes NO global lock and commits each target behind only that
+    run's mutation key. That removes the O(runs²) herd while serializing writers
+    that can actually conflict. The full board rebuild
+    (``only_run_id is None``) stays behind the bounded ``_sync_lock`` and is
+    used by dashboards/status-all.
     """
     scope = str(only_run_id or "").strip()
     scoped = bool(scope)
@@ -2881,9 +2936,9 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
         # The migraine was the exclusive GLOBAL LOCK, not the file walk: every
         # per-run poll serialised on one flock while rebuilding the whole board.
         # Scoped mode keeps the same on-disk reads (so a run seeded only via its
-        # meta/lock is still resolved) but folds ONLY the target + child rounds,
-        # holds no lock, and writes only their snapshots — so concurrent per-run
-        # polls run in parallel instead of queueing.
+        # meta/lock is still resolved) but folds ONLY the target + child rounds
+        # and writes only their snapshots. Different runs stay parallel; only
+        # writers for the same run meet at the final mutation CAS.
         for path in _iter_meta_files():
             status = _normalize_agent_meta(path)
             if status is None or not _in_scope(status.run_id):
@@ -2922,9 +2977,13 @@ def sync_state(only_run_id: str | None = None) -> dict[str, Any]:
                 continue
             previous = previous_snapshots.get(run_id)
             payload = _project_run_payload(run_id, status, previous)
-            _record_transition(previous, payload)
-            _write_run_snapshot(_snapshot_path(run_id), previous, payload)
-            payload_runs.append(payload)
+            committed = _write_run_snapshot(
+                _snapshot_path(run_id),
+                previous,
+                payload,
+            )
+            if committed:
+                payload_runs.append(committed)
         if not scoped:
             # Retained snapshots whose source evidence went quiet (e.g. their
             # event lines were rotated away) stay on the board until archived;
@@ -3377,15 +3436,13 @@ def _finalize_await_result(
                         "await_rc": exit_code,
                         "await_outcome": outcome,
                     }
-                    if meta_path is not None:
-                        persist_settlement_to_meta(
-                            meta_path,
-                            settlement,
-                            control_plane_root=control_plane_home(),
-                            run_id=run_id,
-                        )
-                _write_run_snapshot(snapshot_path, previous_snapshot, snapshot)
-                last_run = snapshot
+                committed = _write_run_snapshot(
+                    snapshot_path,
+                    previous_snapshot,
+                    snapshot,
+                )
+                if committed:
+                    last_run = committed
         except OSError:
             pass
 

@@ -674,19 +674,28 @@ def prepare_settlement_event(
         _coerce_int((previous_payload or {}).get("settlement_revision")) or 0,
         0,
     )
+    current_revision = max(
+        _coerce_int(current_payload.get("settlement_revision")) or 0,
+        0,
+    )
     if current is None:
-        if previous_revision:
-            current_payload["settlement_revision"] = previous_revision
+        if max(previous_revision, current_revision):
+            current_payload["settlement_revision"] = max(
+                previous_revision,
+                current_revision,
+            )
         return None
 
     if previous is not None and _settlement_fingerprint(previous) == (
         _settlement_fingerprint(current)
     ):
-        current_payload["settlement_revision"] = previous_revision or 1
+        current_payload["settlement_revision"] = (
+            max(previous_revision, current_revision) or 1
+        )
         return None
 
     base_revision = previous_revision or (1 if previous is not None else 0)
-    revision = base_revision + 1
+    revision = max(base_revision + 1, current_revision)
     current_payload["settlement_revision"] = revision
     return SettlementEventV1(
         run_id=str(run_id or current_payload.get("run_id") or ""),
@@ -1095,23 +1104,59 @@ def persist_settlement_to_meta(
     *,
     control_plane_root: Path,
     run_id: str,
+    revision: int | None = None,
 ) -> bool:
-    """Merge settlement fields through the shared per-run transaction."""
+    """Merge one monotonic settlement revision into canonical runtime meta.
 
-    nested = {
-        "verdict": settlement.verdict.value,
-        "reason": settlement.reason,
-        "settled_at": settlement.settled_at,
-        "source": settlement.source,
-        "claim_digest": settlement.claim_digest,
-        "waived": settlement.waived,
-        "tui": settlement.tui_key,
-        "await_rc": settlement.await_rc,
-        "await_outcome": settlement.await_outcome,
-    }
+    An explicit ``revision`` binds the meta write to the snapshot transaction.
+    A lower revision, or a conflicting settlement at the same revision, is
+    refused after the per-run lock is held. Legacy callers without a revision
+    are assigned the next monotonic revision under that same lock.
+    """
 
-    def _merge(payload: dict[str, Any]) -> dict[str, Any]:
+    requested_revision = _coerce_int(revision)
+    if revision is not None and (requested_revision is None or requested_revision <= 0):
+        return False
+
+    def _merge(payload: dict[str, Any]) -> dict[str, Any] | None:
+        current = settlement_from_payload(payload)
+        current_revision = max(
+            _coerce_int(payload.get("settlement_revision")) or 0,
+            0,
+        )
+        if requested_revision is None:
+            if current is not None and _settlement_fingerprint(current) == (
+                _settlement_fingerprint(settlement)
+            ):
+                target_revision = current_revision or 1
+            else:
+                target_revision = current_revision + 1
+        else:
+            target_revision = requested_revision
+            if current_revision > target_revision:
+                return None
+            if (
+                current_revision == target_revision
+                and current is not None
+                and _settlement_fingerprint(current)
+                != _settlement_fingerprint(settlement)
+            ):
+                return None
+
+        nested = {
+            "verdict": settlement.verdict.value,
+            "reason": settlement.reason,
+            "settled_at": settlement.settled_at,
+            "source": settlement.source,
+            "claim_digest": settlement.claim_digest,
+            "waived": settlement.waived,
+            "tui": settlement.tui_key,
+            "await_rc": settlement.await_rc,
+            "await_outcome": settlement.await_outcome,
+            "revision": target_revision,
+        }
         payload.update(settlement.to_payload())
+        payload["settlement_revision"] = target_revision
         payload["settlement"] = nested
         return payload
 

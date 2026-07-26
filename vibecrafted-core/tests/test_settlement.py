@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import multiprocessing
+import os
+from multiprocessing.connection import Connection
 from pathlib import Path
+from typing import Any
 
 import pytest
 from vibecrafted_core import control_plane
@@ -12,6 +16,7 @@ from vibecrafted_core.settlement import (
     SETTLEMENT_EVENT_KIND,
     SETTLEMENT_EVENT_SCHEMA,
     BareMarkdownError,
+    Settlement,
     SettlementVerdict,
     board_fxn_counts,
     can_archive,
@@ -20,6 +25,7 @@ from vibecrafted_core.settlement import (
     orphan_markdown_paths,
     orphan_settlement_payloads,
     persist_await_verdict,
+    persist_settlement_to_meta,
     require_bound_markdown,
     settle_payload,
     tui_key_for,
@@ -45,6 +51,37 @@ def _settlement_events(home: Path) -> list[dict[str, object]]:
         )
         if event.get("kind") == SETTLEMENT_EVENT_KIND
     ]
+
+
+def _sync_stale_projection_after_release(
+    home: str,
+    run_id: str,
+    ready: Any,
+    release: Any,
+    sender: Connection,
+) -> None:
+    os.environ["VIBECRAFTED_HOME"] = home
+    original_write = control_plane._write_run_snapshot
+    paused = False
+
+    def _barrier_write(
+        path: Path,
+        previous: dict[str, Any] | None,
+        candidate: dict[str, Any],
+    ) -> dict[str, Any]:
+        nonlocal paused
+        if not paused and candidate.get("run_id") == run_id:
+            paused = True
+            ready.set()
+            if not release.wait(10):
+                raise RuntimeError("stale settlement writer was never released")
+        return original_write(path, previous, candidate)
+
+    control_plane._write_run_snapshot = _barrier_write
+    board = control_plane.sync_state(only_run_id=run_id)
+    projected = next(run for run in board["recent_runs"] if run.get("run_id") == run_id)
+    sender.send(projected)
+    sender.close()
 
 
 def test_tui_key_mapping() -> None:
@@ -438,6 +475,20 @@ def test_sync_state_writes_settlement_on_terminal(
             "liveness": "terminal",
         },
     )
+    runtime_meta = (
+        home / "control_plane" / "runtime_runs" / "work-settle-1" / "meta.json"
+    )
+    runtime_meta.parent.mkdir(parents=True)
+    runtime_meta.write_text(
+        json.dumps(
+            {
+                "run_id": "work-settle-1",
+                "await_outcome": "completed",
+                "await_rc": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
 
     emitted_after_snapshot: list[int] = []
     original_emit = control_plane.emit_settlement_event
@@ -469,6 +520,11 @@ def test_sync_state_writes_settlement_on_terminal(
     assert snapshot["settlement_counts"]["f"] == 0
     assert emitted_after_snapshot == [1]
     assert run["settlement_revision"] == 1
+    persisted_meta = json.loads(runtime_meta.read_text(encoding="utf-8"))
+    assert persisted_meta["settlement_revision"] == 1
+    assert persisted_meta["settlement_verdict"] == "needs_attention"
+    assert persisted_meta["settlement_tui"] == "n"
+    assert persisted_meta["settlement"]["revision"] == 1
 
     events = _settlement_events(home)
     assert len(events) == 1
@@ -490,6 +546,137 @@ def test_sync_state_writes_settlement_on_terminal(
     control_plane.sync_state()
     assert emitted_after_snapshot == [1]
     assert len(_settlement_events(home)) == 1
+
+
+def test_stale_scoped_writer_cannot_overwrite_newer_settlement_revision(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """rev1/n pauses, rev2/x lands, then the stale scoped sync loses its CAS."""
+
+    home = tmp_path / ".vibecrafted"
+    monkeypatch.setenv("VIBECRAFTED_HOME", str(home))
+    run_id = "race-settlement-revision"
+    runtime_meta = home / "control_plane" / "runtime_runs" / run_id / "meta.json"
+    runtime_meta.parent.mkdir(parents=True)
+    runtime_meta.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "await_outcome": "completed",
+                "await_rc": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    artifact_meta = _write_meta(
+        home,
+        {
+            "run_id": run_id,
+            "status": "completed",
+            "agent": "codex",
+            "mode": "workflow",
+            "root": str(tmp_path),
+            "updated_at": "2026-07-26T10:00:00+00:00",
+            "skill_code": "wflw",
+            "exit_code": 0,
+            "liveness": "terminal",
+        },
+    )
+    seeded = control_plane.sync_state(only_run_id=run_id)
+    rev1 = next(run for run in seeded["recent_runs"] if run["run_id"] == run_id)
+    assert rev1["settlement_verdict"] == "needs_attention"
+    assert rev1["settlement_tui"] == "n"
+    assert rev1["settlement_revision"] == 1
+
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    receiver, sender = context.Pipe(duplex=False)
+    stale_writer = context.Process(
+        target=_sync_stale_projection_after_release,
+        args=(
+            str(home),
+            run_id,
+            ready,
+            release,
+            sender,
+        ),
+    )
+    try:
+        stale_writer.start()
+        sender.close()
+        assert ready.wait(5), "rev1/n writer did not reach the commit barrier"
+
+        artifact_meta.write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "status": "failed",
+                    "agent": "codex",
+                    "mode": "workflow",
+                    "root": str(tmp_path),
+                    "updated_at": "2026-07-26T10:00:02+00:00",
+                    "skill_code": "wflw",
+                    "exit_code": 9,
+                    "liveness": "terminal",
+                }
+            ),
+            encoding="utf-8",
+        )
+        board = control_plane.sync_state(only_run_id=run_id)
+        committed = next(
+            run for run in board["recent_runs"] if run.get("run_id") == run_id
+        )
+        assert committed["settlement_verdict"] == "failed"
+        assert committed["settlement_tui"] == "x"
+        assert committed["settlement_revision"] == 2
+
+        stale_settlement = Settlement(
+            verdict=SettlementVerdict.NEEDS_ATTENTION,
+            reason=rev1["settlement_reason"],
+            settled_at=rev1["settlement_at"],
+            source=rev1["settlement_source"],
+            claim_digest=rev1["settlement_claim_digest"],
+        )
+        assert not persist_settlement_to_meta(
+            runtime_meta,
+            stale_settlement,
+            control_plane_root=home / "control_plane",
+            run_id=run_id,
+            revision=1,
+        )
+        assert not persist_settlement_to_meta(
+            runtime_meta,
+            stale_settlement,
+            control_plane_root=home / "control_plane",
+            run_id=run_id,
+            revision=2,
+        )
+
+        release.set()
+        assert receiver.poll(10), "stale rev1/n writer did not finish"
+        stale_result = receiver.recv()
+        stale_writer.join(timeout=10)
+        assert stale_writer.exitcode == 0
+    finally:
+        release.set()
+        if stale_writer.is_alive():
+            stale_writer.terminate()
+            stale_writer.join(timeout=5)
+        receiver.close()
+
+    snapshot_path = home / "control_plane" / "runs" / f"{run_id}.json"
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    meta = json.loads(runtime_meta.read_text(encoding="utf-8"))
+    for persisted in (stale_result, snapshot, meta):
+        assert persisted["settlement_verdict"] == "failed"
+        assert persisted["settlement_tui"] == "x"
+        assert persisted["settlement_revision"] == 2
+        assert persisted["settlement"]["revision"] == 2
+
+    events = _settlement_events(home)
+    assert [event["payload"]["revision"] for event in events] == [1, 2]
 
 
 def test_sync_state_gc_parks_with_settlement(
