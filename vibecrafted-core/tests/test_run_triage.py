@@ -42,6 +42,7 @@ from vibecrafted_core.run_triage import (
     read_run_signals,
     triage_finished_run,
 )
+from vibecrafted_core.runtime_transcript import write_runtime_transcript_manifest
 from vibecrafted_core.settlement import (
     Settlement,
     SettlementVerdict,
@@ -774,6 +775,54 @@ def test_argv_carries_the_full_identity() -> None:
     assert argv[argv.index("--cwd") + 1] == "/repo"
     # The rerun pane gets the launcher — the run, reproducible.
     assert argv[-2:] == ["--", "/tmp/l.sh"]
+
+
+def test_argv_carries_only_validated_runtime_transcript_before_command(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "run-0007.transcript.log"
+    transcript.write_text("durable runtime transcript\n", encoding="utf-8")
+    manifest = write_runtime_transcript_manifest(transcript, run_id="run-0007")
+    assert manifest is not None
+
+    plan = plan_triage(
+        {
+            "run_id": "run-0007",
+            "exit_code": 0,
+            "root": str(tmp_path),
+            "launcher": "/tmp/l.sh",
+            "origin_pane_id": "terminal_3",
+            "transcript": str(transcript),
+        },
+        make_env(),
+    )
+    argv = plan.argv("/usr/bin/vc-frame")
+
+    assert plan.runtime_transcript == str(transcript.resolve())
+    flag_index = argv.index("--runtime-transcript")
+    assert argv[flag_index + 1] == str(transcript.resolve())
+    assert flag_index < argv.index("--")
+
+
+def test_argv_omits_runtime_transcript_without_valid_manifest(tmp_path: Path) -> None:
+    transcript = tmp_path / "run-0007.transcript.log"
+    transcript.write_text("unbound runtime transcript\n", encoding="utf-8")
+
+    plan = plan_triage(
+        {
+            "run_id": "run-0007",
+            "exit_code": 0,
+            "root": str(tmp_path),
+            "launcher": "/tmp/l.sh",
+            "origin_pane_id": "terminal_3",
+            "transcript": str(transcript),
+        },
+        make_env(),
+    )
+
+    assert plan.should_run is True
+    assert plan.runtime_transcript == ""
+    assert "--runtime-transcript" not in plan.argv("/usr/bin/vc-frame")
 
 
 def test_argv_renders_negative_exit_code_without_clap_ambiguity() -> None:

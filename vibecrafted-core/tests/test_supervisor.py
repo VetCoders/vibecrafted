@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import stat
 import sys
 from pathlib import Path
 
@@ -212,6 +214,18 @@ def test_finalize_artifacts_python_owns_launcher_artifact_contract(
     assert final_report.name.endswith("-report.md")
     assert final_report.is_file()
     assert final_transcript.is_file()
+    transcript_manifest = Path(f"{final_transcript}.manifest.json")
+    manifest_payload = json.loads(transcript_manifest.read_text(encoding="utf-8"))
+    transcript_bytes = final_transcript.read_bytes()
+    assert manifest_payload == {
+        "version": 1,
+        "run_id": "finalize-test-001",
+        "transcript": str(final_transcript.resolve()),
+        "root": str(final_transcript.parent.resolve()),
+        "bytes": len(transcript_bytes),
+        "sha256": hashlib.sha256(transcript_bytes).hexdigest(),
+    }
+    assert stat.S_IMODE(transcript_manifest.stat().st_mode) == 0o600
     report_text = final_report.read_text(encoding="utf-8")
     assert "run_id: finalize-test-001" in report_text
     assert "session_id: codex-finalize-001" in report_text

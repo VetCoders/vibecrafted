@@ -51,6 +51,7 @@ from .run_mutation import (
     mutate_run_meta,
     read_run_meta,
 )
+from .runtime_transcript import validate_runtime_transcript
 
 __all__ = [
     "BUCKET_FAILED",
@@ -1076,7 +1077,7 @@ def outcome_for_exit_code(exit_code: Any) -> str:
 
 @dataclass(frozen=True)
 class TriagePlan:
-    """The decision, taken without side effects so it can be tested directly."""
+    """The validated transfer decision, rendered without further filesystem reads."""
 
     should_run: bool
     skip_reason: str = ""
@@ -1089,6 +1090,7 @@ class TriagePlan:
     origin_tab: str = ""
     pane_id: str = ""
     cwd: str = ""
+    runtime_transcript: str = ""
     command: tuple[str, ...] = ()
 
     def argv(self, binary: str, with_bucket: bool = True) -> list[str]:
@@ -1120,6 +1122,8 @@ class TriagePlan:
             argv += ["--pane-id", self.pane_id]
         if self.cwd:
             argv += ["--cwd", self.cwd]
+        if self.runtime_transcript:
+            argv += ["--runtime-transcript", self.runtime_transcript]
         if self.command:
             # `command` is clap `last(true)`: everything after `--` is the
             # original command line, preserved for the rerun pane.
@@ -1166,7 +1170,7 @@ def plan_triage(
 ) -> TriagePlan:
     """Decide whether this finished run may be transferred, and with what arguments.
 
-    Pure: reads the meta payload and the environment, touches nothing.
+    Reads declared artifact evidence but never mutates runtime or terminal state.
     """
     env = os.environ if env is None else env
 
@@ -1271,6 +1275,10 @@ def plan_triage(
         command = ()
 
     classification = read_run_signals(meta).classify()
+    runtime_transcript = validate_runtime_transcript(
+        meta.get("transcript"),
+        run_id=run_id,
+    )
 
     return TriagePlan(
         should_run=True,
@@ -1283,6 +1291,7 @@ def plan_triage(
         origin_tab=tab_name,
         pane_id=pane_id,
         cwd=str(meta.get("root", "") or "") or _env("SPAWN_ROOT"),
+        runtime_transcript=str(runtime_transcript) if runtime_transcript else "",
         command=command,
     )
 
