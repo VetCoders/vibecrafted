@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from xml.parsers.expat import ExpatError
 
 from .package_resources import deck_path, runtime_path, skills_path
 from .vc_frame_delivery import (
@@ -131,7 +132,13 @@ def _server_supervision_findings(
     try:
         config = config_factory(launcher=Path(resolved_launcher))
         status = status_reader(config)
-    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        subprocess.SubprocessError,
+        ExpatError,
+    ) as exc:
         return [
             _Finding(
                 "fail",

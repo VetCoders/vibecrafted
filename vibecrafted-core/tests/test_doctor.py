@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from xml.parsers.expat import ExpatError
 
 from vibecrafted_core import doctor
 
@@ -141,6 +142,22 @@ def test_server_supervision_finding_fails_when_probe_raises() -> None:
     assert findings[0].level == "fail"
     assert findings[0].component == "server-supervisor"
     assert "stale pidfile" in findings[0].message
+
+
+def test_server_supervision_finding_fails_when_plist_is_truncated() -> None:
+    def truncated_plist(_config) -> None:
+        raise ExpatError("unclosed token")
+
+    findings = doctor._server_supervision_findings(
+        platform="darwin",
+        which=lambda _name: "/usr/local/bin/vibecrafted",
+        config_factory=lambda **kwargs: kwargs,
+        status_reader=truncated_plist,
+    )
+
+    assert findings[0].level == "fail"
+    assert findings[0].component == "server-supervisor"
+    assert "unclosed token" in findings[0].message
 
 
 def test_server_supervision_finding_is_not_applicable_off_macos() -> None:
