@@ -18,7 +18,7 @@ UV_PROJECT_ENVIRONMENT ?= $(INSTALLER_CACHE_HOME)/vibecrafted/venvs/installer-$(
 # in-tree cache is never read or written by install lanes.
 export PYTHONPYCACHEPREFIX ?= $(INSTALLER_CACHE_HOME)/vibecrafted/pycache-$(INSTALLER_HOST_TAG)
 
-.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-tools install-tools-held install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build server-check server-test install-server install-server-service server-smoke
+.PHONY: help help-dev vibecrafted gui-install wizard wizard-dev check test test-core test-skills test-install test-parity test-vc-frame test-iterm2-migrate test-memex test-aicx-sync test-hammerspoon dispatch-test install install-auto install-all install-python-tools install-bundle-tools install-tools install-tools-held install-vendored-binaries install-app-binaries install-hammerspoon skills helpers setup-dev dry-run doctor list update uninstall restore migrate migrate-dry init-hooks seed-commit-msg-hooks bundle bundle-check foundations foundations-check semgrep version version-show version-bump bump-patch bump-minor bump-major iterm-plugin iterm-plugin-refresh iterm-plugin-show iterm-plugin-uninstall iterm-plugin-migrate demo demo-full commit-safe test-race-protection skill-new server server-build build-server-release server-check server-test install-server install-server-payload install-server-service server-smoke
 
 help:
 	@printf "\n"
@@ -140,16 +140,35 @@ install:
 	@printf "Installing Vibecrafted\n"
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "foundations" -- bash -e -c 'make --no-print-directory init-hooks; bash scripts/install-foundations.sh'
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "frontier config" -- bash -c 'bash "$$1/vibecrafted-core/vibecrafted_core/runtime/scripts/install-frontier-config.sh" --source "$$1" || printf "[warn] Frontier config skipped (non-fatal)\n"' _ "$(SOURCE)"
-	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "skills and launchers" -- bash -e -c '$(PYTHON) $(INSTALLER) install --source "$$1" --compact --non-interactive --mirror; make --no-print-directory install-python-tools' _ "$(SOURCE)"
-	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "vc-frame config" -- bash -e -c 'stable_root="$$($(PYTHON) -c '\''import sys; sys.path.insert(0, "$(SOURCE)/vibecrafted-core"); from vibecrafted_core.runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")'\'')"; PYTHONPATH="$$stable_root/vibecrafted-core" $(PYTHON) -c "from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config, ensure_zshrc; print(stage_vc_frame_config().render(), end=\"\"); print(ensure_zshrc())"'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "vc-frame config" -- bash -e -c 'PYTHONPATH="$(SOURCE)/vibecrafted-core" $(PYTHON) -c "from vibecrafted_core.vc_frame_delivery import stage_vc_frame_config, ensure_zshrc; print(stage_vc_frame_config().render(), end=\"\"); print(ensure_zshrc())"'
 	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "runtime tools" -- bash scripts/install-runtime.sh --runtime "$(RUNTIME)" --yes
-	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app and server" -- bash -e -c 'make --no-print-directory install-vendored-binaries; make --no-print-directory install-app-binaries; make --no-print-directory install-server; make --no-print-directory install-server-service'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "app binaries" -- bash -e -c 'make --no-print-directory install-vendored-binaries; make --no-print-directory install-app-binaries'
+	@VIBECRAFTED_INSTALL_LOG="$(INSTALL_LOG)" VERBOSE="$(VERBOSE)" $(INSTALL_STEP) "skills and launchers" -- $(MAKE) --no-print-directory install-bundle-tools
 	@printf "\nVibecrafted is ready.\n\nStart here:\n  vc-start\n\nHealth:\n  vibecrafted doctor\n\nLog:\n  ~/.vibecrafted/install.log\n"
 
 # `make install` calls `install-python-tools`; it was an empty .PHONY name
 # (no recipe) so the uv-tool install never ran during `make install`. Alias it
 # to the real recipe.
 install-python-tools: install-tools
+
+# Full install keeps the installer, runtime publication, Python-tool replacement,
+# and service reconciliation under one lease.  The old launcher drains its own
+# verified service before the installer can publish vibecrafted-current.
+ifneq (,$(findstring n,$(firstword $(filter-out --%,$(MAKEFLAGS)))))
+install-bundle-tools:
+	@printf '%s\n' '[install-tools] dry-run: build payload and run bundled install under one lease'
+else
+install-bundle-tools:
+	@set -eu; \
+	payload=0; \
+	if command -v cargo >/dev/null 2>&1; then \
+		$(MAKE) --no-print-directory build-server-release; \
+		payload=1; \
+	else \
+		echo "[server] cargo not found — preserving the installed server payload" >&2; \
+	fi; \
+	VIBECRAFTED_INSTALL_SERVER_PAYLOAD="$$payload" VIBECRAFTED_INSTALL_SERVER_BIN_DIR="$(BIN_DIR)" VIBECRAFTED_INSTALL_SERVER_SITE_ROOT="$(SERVER_INSTALL_SITE_ROOT)" $(PYTHON) -c 'import os, sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; bin_dir = Path(os.environ["VIBECRAFTED_INSTALL_SERVER_BIN_DIR"]); payload = (bin_dir / "$(SERVER_BIN)", bin_dir / "$(SERVER_COMPAT_BIN)", Path(os.environ["VIBECRAFTED_INSTALL_SERVER_SITE_ROOT"])) if os.environ.get("VIBECRAFTED_INSTALL_SERVER_PAYLOAD") == "1" else (); raise SystemExit(v.run_with_tools_install_lease(v.vibecrafted_home(), sys.argv[1:], ensure_service=True, runtime_payload_paths=payload))' "$(MAKE)" --no-print-directory install-tools-held INSTALL_BUNDLE=1 INSTALL_SERVER_PAYLOAD="$$payload"
+endif
 
 # De-fragile contract: the uv-tool editable source is the STABLE runtime home
 # (~/.local/share/vibecrafted/tools/vibecrafted-current), NEVER the dev-workspace
@@ -165,54 +184,35 @@ install-tools:
 	@printf '%s\n' '[install-tools] dry-run: acquire lease and run install-tools-held'
 else
 install-tools:
-	@$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; raise SystemExit(v.run_with_tools_install_lease(Path.home(), sys.argv[1:]))' "$(MAKE)" --no-print-directory install-tools-held
+	@$(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; raise SystemExit(v.run_with_tools_install_lease(v.vibecrafted_home(), sys.argv[1:]))' "$(MAKE)" --no-print-directory install-tools-held
 endif
 
 # Internal continuation. The outer target waits for this submake while retaining
-# one fcntl lease across publish -> uv replacement -> service reconciliation.
+# both the tools-install lease and, on macOS, the post-drain supervisor fence
+# across publish -> uv replacement. Service reconciliation and handoff sealing
+# remain in the outer Python owner so a shell failure cannot strand ownership.
 install-tools-held:
 	@set -eu; \
 	if [ -z "$${VIBECRAFTED_INSTALL_LEASE_FD:-}" ]; then \
 		echo "[install-tools] FATAL: internal install target requires the cross-process installer lease" >&2; \
 		exit 1; \
 	fi; \
-	rollback_tools_handoff() { \
-		status=$$?; \
-		trap - EXIT; \
-		if [ "$$status" -ne 0 ]; then \
-			$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; restored = v.rollback_current_tools(Path.home()); print("[install-tools] restored previous runtime generation" if restored else "[install-tools] runtime pointer did not require rollback")' || true; \
-			echo "[install-tools] FAILED: persistent service remains stopped and recoverable; rerun make install" >&2; \
-		fi; \
-		exit "$$status"; \
-	}; \
-	trap rollback_tools_handoff EXIT; \
+	$(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v._require_inherited_tools_install_lease(v.vibecrafted_home())'; \
 	if ! command -v uv >/dev/null 2>&1; then \
 		echo "bootstrapping uv..."; \
 		curl -LsSf https://astral.sh/uv/install.sh | sh; \
 	fi; \
 	export PATH="$$HOME/.local/bin:$$PATH"; \
 	stable_root="$$($(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/vibecrafted-core"); from vibecrafted_core.runtime_paths import vibecrafted_tools_home; print(vibecrafted_tools_home() / "vibecrafted-current")')"; \
-	echo "[install-tools] staging runtime under the cross-process installer lease..."; \
-	$(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from pathlib import Path; import vetcoders_install as v; v.refresh_current_tools(Path("$(SOURCE)").resolve(), Path.home(), mirror=True)'; \
+	if [ "$(INSTALL_BUNDLE)" = "1" ]; then \
+		$(PYTHON) $(INSTALLER) install --source "$(SOURCE)" --compact --non-interactive --mirror; \
+	else \
+		echo "[install-tools] staging runtime under the cross-process installer lease..."; \
+		$(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); from pathlib import Path; import vetcoders_install as v; v.refresh_current_tools(Path("$(SOURCE)").resolve(), v.vibecrafted_home(), mirror=True)'; \
+	fi; \
 	if [ ! -d "$$stable_root/vibecrafted-core" ]; then \
 		echo "[install-tools] FATAL: stable runtime home not staged at $$stable_root; refusing to source the uv-tool from the dev checkout" >&2; \
 		exit 1; \
-	fi; \
-	service_was_loaded=0; \
-	if [ "$$(uname -s)" = "Darwin" ] && \
-	   /bin/launchctl print "gui/$$(id -u)/io.vetcoders.vibecrafted.server" >/dev/null 2>&1; then \
-		if [ ! -f "$$HOME/Library/LaunchAgents/io.vetcoders.vibecrafted.server.plist" ]; then \
-			echo "[install-tools] FATAL: launchd service is loaded without its owned LaunchAgent plist; refusing to replace active tool executables" >&2; \
-			exit 1; \
-		fi; \
-		prior_launcher="$$(command -v vibecrafted 2>/dev/null || true)"; \
-		if [ -z "$$prior_launcher" ] || [ ! -x "$$prior_launcher" ]; then \
-			echo "[install-tools] FATAL: cannot stop the active service without its current launcher" >&2; \
-			exit 1; \
-		fi; \
-		echo "[install-tools] stopping active service before replacing tool executables..."; \
-		"$$prior_launcher" server service stop; \
-		service_was_loaded=1; \
 	fi; \
 	uv tool install --force --reinstall --editable "$$stable_root/vibecrafted-core"; \
 	uv tool install --force --reinstall --editable "$$stable_root/plugins/iterm2"; \
@@ -247,13 +247,10 @@ install-tools-held:
 		echo "[install-tools] FATAL: uv tool imports vibecrafted_core from $$actual_core, expected stable runtime $$expected_core" >&2; \
 		exit 1; \
 	fi; \
-	if [ "$$service_was_loaded" -eq 1 ]; then \
-		current_launcher="$$(command -v vibecrafted 2>/dev/null || true)"; \
-		echo "[install-tools] reactivating the verified persistent service..."; \
-		(cd / && "$$current_launcher" server service install); \
+	if [ "$(INSTALL_SERVER_PAYLOAD)" = "1" ]; then \
+		$(MAKE) --no-print-directory install-server-payload; \
 	fi; \
-	$(PYTHON) -c 'import sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v.complete_current_tools_handoff(Path.home())'; \
-	trap - EXIT
+	echo "[install-tools] staged runtime and uv tools; outer lease owner will reconcile service ownership"
 
 # install-all owns every binary the product ships into BIN (~/.local/bin).
 # The vibecrafted-app members ship `voc` and `vc-admin`; vibecrafted-server
@@ -742,15 +739,31 @@ server-check:
 server-test:
 	@cd $(SERVER_DIR) && cargo test -p control-core
 
-install-server:
+build-server-release:
 	@if ! command -v cargo >/dev/null 2>&1; then \
-		echo "[server] cargo not found — skipping $(SERVER_PACKAGE) build (install rustup or use vendored/release binaries)" >&2; \
+		echo "[server] cargo not found — skipping $(SERVER_PACKAGE) release build" >&2; \
 		exit 0; \
 	fi; \
 	set -e; \
-	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(SERVER_INSTALL_SITE_ROOT)"; \
 	echo "[server] building release package ($(SERVER_PACKAGE))"; \
-	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo build --release -p $(SERVER_PACKAGE) --no-default-features --features ssr $(INSTALL_QUIET) ); \
+	ulimit -f unlimited; ( cd $(SERVER_DIR) && cargo build --release -p $(SERVER_PACKAGE) --no-default-features --features ssr $(INSTALL_QUIET) )
+
+install-server-payload:
+	@set -eu; \
+	if [ -z "$${VIBECRAFTED_INSTALL_LEASE_FD:-}" ]; then \
+		echo "[server] FATAL: internal payload target requires the cross-process installer lease" >&2; \
+		exit 1; \
+	fi; \
+	$(PYTHON) -c 'import sys; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; v._require_inherited_tools_install_lease(v.vibecrafted_home())'; \
+	if ! command -v cargo >/dev/null 2>&1; then \
+		echo "[server] cargo not found — preserving the installed server payload" >&2; \
+		exit 0; \
+	fi; \
+	if [ ! -x "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" ]; then \
+		echo "[server] FATAL: release payload is missing; run make build-server-release" >&2; \
+		exit 1; \
+	fi; \
+	mkdir -p "$(HOME)/.vibecrafted" "$(BIN_DIR)" "$(SERVER_INSTALL_SITE_ROOT)"; \
 	rm -f "$(BIN_DIR)/$(SERVER_BIN)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
 	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_BIN)"; \
 	install -m 0755 "$(SERVER_DIR)/target/release/$(SERVER_PACKAGE)" "$(BIN_DIR)/$(SERVER_COMPAT_BIN)"; \
@@ -760,6 +773,17 @@ install-server:
 	echo "[server] installed: $(SERVER_BIN) -> $(BIN_DIR) (real file)"; \
 	echo "[server] compat: $(SERVER_COMPAT_BIN) -> $(BIN_DIR) (real file)"; \
 	echo "[server] assets -> $(SERVER_INSTALL_SITE_ROOT)"
+
+ifneq (,$(findstring n,$(firstword $(filter-out --%,$(MAKEFLAGS)))))
+install-server: build-server-release
+	@printf '%s\n' '[server] dry-run: install payload under runtime transaction'
+else
+install-server: build-server-release
+	@set -eu; \
+	payload=0; \
+	if command -v cargo >/dev/null 2>&1; then payload=1; fi; \
+	VIBECRAFTED_INSTALL_SERVER_PAYLOAD="$$payload" VIBECRAFTED_INSTALL_SERVER_BIN_DIR="$(BIN_DIR)" VIBECRAFTED_INSTALL_SERVER_SITE_ROOT="$(SERVER_INSTALL_SITE_ROOT)" $(PYTHON) -c 'import os, sys; from pathlib import Path; sys.path.insert(0, "$(SOURCE)/scripts"); import vetcoders_install as v; bin_dir = Path(os.environ["VIBECRAFTED_INSTALL_SERVER_BIN_DIR"]); payload = (bin_dir / "$(SERVER_BIN)", bin_dir / "$(SERVER_COMPAT_BIN)", Path(os.environ["VIBECRAFTED_INSTALL_SERVER_SITE_ROOT"])) if os.environ.get("VIBECRAFTED_INSTALL_SERVER_PAYLOAD") == "1" else (); raise SystemExit(v.run_with_tools_install_lease(v.vibecrafted_home(), sys.argv[1:], runtime_payload_paths=payload, require_tools_handoff=False))' "$(MAKE)" --no-print-directory install-server-payload
+endif
 
 install-server-service:
 	@if [ "$$(uname -s)" != "Darwin" ]; then \
@@ -779,7 +803,9 @@ install-server-service:
 		exit 1; \
 	fi; \
 	echo "[server-service] installing or reconciling persistent supervision..."; \
-	(cd / && "$$launcher" server service install)
+	(cd / && "$$launcher" server service install); \
+	echo "[server-service] restarting after server binary and asset replacement..."; \
+	(cd / && "$$launcher" server service restart)
 
 server-smoke: install-server
 	@echo "[server-smoke] Run 1/3" && bash tests/server_smoke.sh

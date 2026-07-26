@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 𝚅𝚒𝚋𝚎𝚌𝚛𝚊𝚏𝚝𝚎𝚍. command deck
 set -euo pipefail
+readonly VIBECRAFTED_SERVICE_LIFECYCLE_LOCK_CONTRACT=1
 
 _vc_source_launcher_ulimits() {
   local script_dir candidate
@@ -3245,10 +3246,25 @@ _ensure_guardian() {
 cmd_server() {
   local verb="${1:-help}"
   shift || true
+  local lifecycle_mutation=0
 
   if [[ "$verb" == "-h" || "$verb" == "--help" || "$verb" == "help" ]]; then
     cmd_server_help
     return 0
+  fi
+  case "$verb:${1:-}" in
+    start:*|stop:*)
+      if [[ "${VIBECRAFTED_SERVER_SUPERVISOR_CHILD:-0}" != "1" ]]; then
+        lifecycle_mutation=1
+      fi
+      ;;
+    service:install|service:reconcile|service:restart|service:start|service:stop|service:uninstall)
+      lifecycle_mutation=1
+      ;;
+  esac
+  if [[ "$lifecycle_mutation" -eq 1 ]] && ! _server_lifecycle_lock_is_owned; then
+    _with_server_lifecycle_lock "$verb" "$@"
+    return $?
   fi
   if [[ "$verb" == "stop" && \
     "${VIBECRAFTED_SERVER_SUPERVISOR_CHILD:-0}" != "1" ]]; then
@@ -3259,11 +3275,6 @@ cmd_server() {
     "${VIBECRAFTED_SERVER_SUPERVISOR_CHILD:-0}" == "1" && \
     -n "${VIBECRAFTED_TEST_SERVER_STOP_DELAY:-}" ]]; then
     sleep "$VIBECRAFTED_TEST_SERVER_STOP_DELAY"
-  fi
-  if [[ ( "$verb" == "start" || "$verb" == "stop" ) ]] && \
-    ! _server_lifecycle_lock_is_owned; then
-    _with_server_lifecycle_lock "$verb" "$@"
-    return $?
   fi
 
   case "$verb" in

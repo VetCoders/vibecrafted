@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import plistlib
@@ -162,6 +163,7 @@ def test_plistlib_renderer_preserves_metacharacters_without_xml_injection(
     assert arguments[
         arguments.index("--expected-runtime-sha256") + 1
     ] == supervisor._sha256_file(Path(supervisor.__file__).resolve())
+    assert "--interval" not in arguments
     assert payload["RunAtLoad"] is True
     assert payload["KeepAlive"] is True
     assert set(payload["EnvironmentVariables"]) == {
@@ -828,6 +830,11 @@ def test_hermetic_service_upgrade_restarts_into_new_provenance(
 
     monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
     monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl_job_owns_paths",
+        lambda _paths: True,
+    )
     try:
         supervisor.start_service(config)
         first = supervisor.probe_supervisor(config.paths)
@@ -939,6 +946,7 @@ def test_child_environment_is_a_minimal_nonsecret_allowlist(
     assert environment["VIBECRAFTED_STOP_TERM_WAIT_TICKS"] == "9"
     assert environment["VIBECRAFTED_HOME"] == str(config.paths.home)
     assert environment["VIBECRAFTED_RUNTIME_HOME"] == str(config.paths.runtime_home)
+    assert environment["VIBECRAFTED_SERVER_SUPERVISOR_CHILD"] == "1"
 
 
 def test_manual_stop_guard_refuses_loaded_service(
@@ -1161,12 +1169,53 @@ def test_service_stop_holds_common_lease_during_pair_cleanup(
 
     monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
     monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl_job_owns_paths",
+        lambda _paths: True,
+    )
     monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
 
     supervisor.stop_service(config)
 
     assert cleanup_roles == ["manual-stop"]
     assert not supervisor.probe_supervisor(config.paths).live
+
+
+def test_service_stop_refuses_foreign_launchd_job_without_bootout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    supervisor_binary = _executable(tmp_path / "bin" / "vc-server-supervisor")
+    config = _config(tmp_path, launcher)
+    supervisor.install_service(config, supervisor_binary=supervisor_binary)
+    monkeypatch.setattr(supervisor.sys, "platform", "darwin")
+    launchctl_calls: list[list[str]] = []
+
+    monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: True)
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl_job_owns_paths",
+        lambda _paths: False,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl",
+        lambda args: (
+            launchctl_calls.append(list(args))
+            or subprocess.CompletedProcess(args, 0, "", "")
+        ),
+    )
+
+    with pytest.raises(
+        supervisor.SupervisorError,
+        match="foreign runtime paths",
+    ) as failure:
+        supervisor.stop_service(config)
+
+    assert failure.value.exit_code == supervisor.EX_TEMPFAIL
+    assert launchctl_calls == []
 
 
 def test_service_stop_rejects_launchd_reactivation_during_cleanup(
@@ -1196,11 +1245,69 @@ def test_service_stop_rejects_launchd_reactivation_during_cleanup(
 
     monkeypatch.setattr(supervisor, "_launchctl_loaded", lambda: loaded)
     monkeypatch.setattr(supervisor, "_launchctl", fake_launchctl)
+    monkeypatch.setattr(
+        supervisor,
+        "_launchctl_job_owns_paths",
+        lambda _paths: True,
+    )
     monkeypatch.setattr(supervisor.subprocess, "run", fake_run)
 
     with pytest.raises(supervisor.SupervisorError, match="became active during"):
         supervisor.stop_service(config)
     assert not supervisor.probe_supervisor(config.paths).live
+
+
+def test_service_mutation_lease_refuses_concurrent_runtime_install(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    config = _config(tmp_path, launcher)
+    tools_home = tmp_path / "tools"
+    tools_home.mkdir()
+    lock_path = tools_home / supervisor._TOOLS_INSTALL_LOCK_NAME
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.delenv(supervisor._TOOLS_INSTALL_LEASE_ENV, raising=False)
+
+    try:
+        with (
+            pytest.raises(
+                supervisor.SupervisorError,
+                match="runtime install is active",
+            ) as failure,
+            supervisor._ToolsInstallMutationLease(config.paths),
+        ):
+            pass
+        assert failure.value.exit_code == supervisor.EX_TEMPFAIL
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def test_service_mutation_lease_accepts_verified_inherited_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launcher = _executable(tmp_path / "bin" / "vibecrafted")
+    config = _config(tmp_path, launcher)
+    tools_home = tmp_path / "tools"
+    tools_home.mkdir()
+    lock_path = tools_home / supervisor._TOOLS_INSTALL_LOCK_NAME
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    monkeypatch.setenv("VIBECRAFTED_TOOLS_HOME", str(tools_home))
+    monkeypatch.setenv(supervisor._TOOLS_INSTALL_LEASE_ENV, str(descriptor))
+
+    try:
+        with supervisor._ToolsInstallMutationLease(config.paths) as lease:
+            assert lease.inherited
+            assert lease.descriptor == descriptor
+        os.fstat(descriptor)
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 def test_stopping_receipt_failure_does_not_skip_pair_cleanup(

@@ -27,6 +27,8 @@ SUPERVISOR_LOCK_SCHEMA = "vibecrafted.server-supervisor-lock.v1"
 LAUNCH_AGENT_LABEL = "io.vetcoders.vibecrafted.server"
 EX_TEMPFAIL = 75
 EX_CONFIG = 78
+_TOOLS_INSTALL_LEASE_ENV = "VIBECRAFTED_INSTALL_LEASE_FD"
+_TOOLS_INSTALL_LOCK_NAME = ".vibecrafted-install.lock"
 _HOST_PATTERN = re.compile(r"[A-Za-z0-9._:-]+")
 _PASSTHROUGH_ENVIRONMENT = (
     "LANG",
@@ -502,6 +504,7 @@ def _child_environment(paths: SupervisorPaths) -> dict[str, str]:
             ),
             "VIBECRAFTED_HOME": str(paths.home),
             "VIBECRAFTED_RUNTIME_HOME": str(paths.runtime_home),
+            "VIBECRAFTED_SERVER_SUPERVISOR_CHILD": "1",
         }
     )
     return environment
@@ -697,6 +700,110 @@ class _SupervisorLease:
 
     def __exit__(self, *_exc: object) -> None:
         if self.descriptor < 0:
+            return
+        fcntl.flock(self.descriptor, fcntl.LOCK_UN)
+        os.close(self.descriptor)
+        self.descriptor = -1
+
+
+def _tools_install_lock_path(paths: SupervisorPaths) -> Path:
+    configured = os.environ.get("VIBECRAFTED_TOOLS_HOME")
+    tools_home = (
+        _absolute_path(Path(configured)) if configured else paths.runtime_home / "tools"
+    )
+    return tools_home / _TOOLS_INSTALL_LOCK_NAME
+
+
+def _validate_tools_install_descriptor(descriptor: int, lock_path: Path) -> None:
+    try:
+        opened = os.fstat(descriptor)
+        named = os.stat(lock_path, follow_symlinks=False)
+    except OSError as exc:
+        raise SupervisorError(
+            f"installer coordination lease is unavailable at {lock_path}",
+            EX_TEMPFAIL,
+        ) from exc
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_uid != os.geteuid()
+        or opened.st_nlink != 1
+        or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+    ):
+        raise SupervisorError(
+            f"installer coordination lease does not own {lock_path}",
+            EX_TEMPFAIL,
+        )
+
+
+class _ToolsInstallMutationLease:
+    """Serialize service mutations with runtime publication and uv replacement."""
+
+    def __init__(self, paths: SupervisorPaths) -> None:
+        self.paths = paths
+        self.descriptor = -1
+        self.inherited = False
+
+    def __enter__(self) -> Self:
+        lock_path = _tools_install_lock_path(self.paths)
+        inherited_raw = os.environ.get(_TOOLS_INSTALL_LEASE_ENV)
+        if inherited_raw:
+            try:
+                descriptor = int(inherited_raw)
+            except ValueError as exc:
+                raise SupervisorError(
+                    "invalid inherited installer coordination descriptor",
+                    EX_TEMPFAIL,
+                ) from exc
+            _validate_tools_install_descriptor(descriptor, lock_path)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise SupervisorError(
+                    "inherited installer coordination lease is not held",
+                    EX_TEMPFAIL,
+                ) from exc
+            self.descriptor = descriptor
+            self.inherited = True
+            return self
+
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        directory = lock_path.parent.lstat()
+        if (
+            not stat.S_ISDIR(directory.st_mode)
+            or directory.st_uid != os.geteuid()
+            or lock_path.parent.is_symlink()
+        ):
+            raise SupervisorError(
+                f"tools directory is not an owned regular directory: {lock_path.parent}",
+                EX_CONFIG,
+            )
+        descriptor = os.open(
+            lock_path,
+            os.O_RDWR
+            | os.O_CREAT
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            _validate_tools_install_descriptor(descriptor, lock_path)
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            os.close(descriptor)
+            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+                raise SupervisorError(
+                    "runtime install is active; refusing concurrent service mutation",
+                    EX_TEMPFAIL,
+                ) from exc
+            raise
+        except BaseException:
+            os.close(descriptor)
+            raise
+        self.descriptor = descriptor
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        if self.descriptor < 0 or self.inherited:
             return
         fcntl.flock(self.descriptor, fcntl.LOCK_UN)
         os.close(self.descriptor)
@@ -1500,6 +1607,12 @@ def stop_service(config: SupervisorConfig) -> None:
             EX_TEMPFAIL,
         )
     if loaded:
+        if not _launchctl_job_owns_paths(config.paths):
+            raise SupervisorError(
+                "launchd label is loaded for foreign runtime paths; refusing "
+                "bootout with zero service mutation",
+                EX_TEMPFAIL,
+            )
         result = _launchctl(["bootout", _launch_target()])
         if result.returncode != 0 and _launchctl_loaded():
             raise SupervisorError(
@@ -1987,49 +2100,50 @@ def _runtime_status(paths: SupervisorPaths) -> int:
 def _service_command(args: argparse.Namespace) -> int:
     _require_macos_service()
     config = _config_from_args(args)
-    if args.action in {"install", "reconcile"}:
-        changed, restarted = install_and_reconcile_service(
-            config,
-            supervisor_binary=_install_requires_supervisor_binary(args),
+    if args.action == "status":
+        status = service_status(config)
+        _print_service_status(status, as_json=args.json)
+        return (
+            0
+            if (
+                status.installed
+                and status.loaded
+                and status.supervisor_live
+                and status.supervisor_verified
+                and status.supervisor_service_managed
+                and status.build_current
+                and status.pair_healthy
+            )
+            else 1
         )
-        print(
-            f"LaunchAgent {'installed' if changed else 'already current'} at "
-            f"{config.paths.launch_agent_file}"
-            f"{'; reloaded current supervisor build' if restarted else ''}"
-            "; verified service is active"
-        )
-        return 0
-    if args.action == "restart":
-        probe = restart_service(config)
-        print(f"LaunchAgent reloaded; current supervisor PID {probe.pid}.")
-        return 0
-    if args.action == "start":
-        start_service(config)
-        print("LaunchAgent loaded; verified supervisor is live.")
-        return 0
-    if args.action == "stop":
-        stop_service(config)
-        print("LaunchAgent unloaded; server and guardian are stopped.")
-        return 0
-    if args.action == "uninstall":
+    with _ToolsInstallMutationLease(config.paths):
+        if args.action in {"install", "reconcile"}:
+            changed, restarted = install_and_reconcile_service(
+                config,
+                supervisor_binary=_install_requires_supervisor_binary(args),
+            )
+            print(
+                f"LaunchAgent {'installed' if changed else 'already current'} at "
+                f"{config.paths.launch_agent_file}"
+                f"{'; reloaded current supervisor build' if restarted else ''}"
+                "; verified service is active"
+            )
+            return 0
+        if args.action == "restart":
+            probe = restart_service(config)
+            print(f"LaunchAgent reloaded; current supervisor PID {probe.pid}.")
+            return 0
+        if args.action == "start":
+            start_service(config)
+            print("LaunchAgent loaded; verified supervisor is live.")
+            return 0
+        if args.action == "stop":
+            stop_service(config)
+            print("LaunchAgent unloaded; server and guardian are stopped.")
+            return 0
         changed = uninstall_service(config)
         print("LaunchAgent removed." if changed else "LaunchAgent is not installed.")
         return 0
-    status = service_status(config)
-    _print_service_status(status, as_json=args.json)
-    return (
-        0
-        if (
-            status.installed
-            and status.loaded
-            and status.supervisor_live
-            and status.supervisor_verified
-            and status.supervisor_service_managed
-            and status.build_current
-            and status.pair_healthy
-        )
-        else 1
-    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -2076,7 +2190,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             manual_stop_guard(paths)
             return 0
         if args.command == "manual-stop":
-            manual_stop(_config_from_args(args))
+            config = _config_from_args(args)
+            with _ToolsInstallMutationLease(config.paths):
+                manual_stop(config)
             return 0
         probe = probe_supervisor(paths)
         payload = {

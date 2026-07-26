@@ -76,13 +76,10 @@ cmd = [
     '''
 bash scripts/install-foundations.sh
 bash "$PWD/vibecrafted-core/vibecrafted_core/runtime/scripts/install-frontier-config.sh" --source "$PWD" || printf '[warn] Frontier config skipped (non-fatal)\n'
-python3 scripts/vetcoders_install.py install --source "." --compact --non-interactive --mirror
 bash scripts/install-runtime.sh --runtime "${VIBECRAFTED_RUNTIME:-none}" --yes
-make --no-print-directory install-python-tools
 make --no-print-directory install-vendored-binaries
 make --no-print-directory install-app-binaries
-make --no-print-directory install-server
-make --no-print-directory install-server-service
+make --no-print-directory install-bundle-tools
 ''',
 ]
 
