@@ -222,17 +222,18 @@ def test_install_manifest_post_install_uses_mirror_sync() -> None:
     assert "bash runtime/scripts/install-frontier-config.sh" not in text
 
 
-def test_make_install_stages_vc_frame_before_runtime_publication() -> None:
+def test_make_install_stages_vc_frame_from_published_runtime() -> None:
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     install_block = makefile.split("\ninstall:\n", 1)[1].split("\n# `make install`", 1)[
         0
     ]
 
-    assert 'PYTHONPATH="$(SOURCE)/vibecrafted-core"' in install_block
+    assert 'PYTHONPATH="$$stable_root/vibecrafted-core"' in install_block
+    assert 'PYTHONPATH="$(SOURCE)/vibecrafted-core"' not in install_block
     assert "from vibecrafted_core.vc_frame_delivery import" in install_block
     assert "vc-frame config delivery skipped" not in install_block
-    assert install_block.index("vc-frame config") < install_block.index(
-        "skills and launchers"
+    assert install_block.index("skills and launchers") < install_block.index(
+        "vc-frame config"
     )
 
 
