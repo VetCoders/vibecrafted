@@ -1461,6 +1461,7 @@ def audit_process_probe(kind: str, pid: int) -> None:
                     "operation": sys.argv[1] if len(sys.argv) > 1 else "",
                     "kind": kind,
                     "pid": pid,
+                    "probe_owner_pid": os.getpid(),
                 },
                 sort_keys=True,
             )
@@ -1486,23 +1487,54 @@ def ps_value(pid: int, field: str, *, wide: bool = False) -> str:
     return result.stdout.strip()
 
 
-def ps_process_header(pid: int) -> tuple[str, str]:
-    audit_process_probe("header", pid)
+def ps_process_record(pid: int) -> tuple[str, str, str]:
+    start_header = "S" * 24
+    executable_header = "E" * 1024
+    command_header = "VIBECRAFTED_ARGV"
+    audit_process_probe("record", pid)
     result = subprocess.run(
-        ["ps", "-ww", "-p", str(pid), "-o", "lstart=", "-o", "comm="],
+        [
+            "ps",
+            "-ww",
+            "-p",
+            str(pid),
+            "-o",
+            f"lstart={start_header}",
+            "-o",
+            f"comm={executable_header}",
+            "-o",
+            f"command={command_header}",
+        ],
         check=False,
         capture_output=True,
-        text=True,
         timeout=2,
     )
-    raw = result.stdout.rstrip("\n")
-    if result.returncode != 0 or len(raw) <= 24:
-        fail(f"cannot inspect process header for {pid}", 4)
-    started = raw[:24].strip()
-    executable = raw[24:].strip()
-    if not started or not executable:
-        fail(f"cannot parse process header for {pid}", 4)
-    return f"ps:{started}", executable
+    lines = result.stdout.rstrip(b"\n").splitlines()
+    if result.returncode != 0 or len(lines) != 2:
+        fail(f"cannot inspect process record for {pid}", 4)
+    header, record = lines
+    start_header_bytes = start_header.encode("ascii")
+    executable_header_bytes = executable_header.encode("ascii")
+    command_header_bytes = command_header.encode("ascii")
+    positions = [
+        header.find(start_header_bytes),
+        header.find(executable_header_bytes),
+        header.find(command_header_bytes),
+    ]
+    if positions != sorted(positions) or any(position < 0 for position in positions):
+        fail(f"cannot parse process record columns for {pid}", 4)
+    started_raw = record[positions[0] : positions[1]].strip()
+    executable_raw = record[positions[1] : positions[2]].strip()
+    command_raw = record[positions[2] :].strip()
+    if len(started_raw) != 24 or not executable_raw or not command_raw:
+        fail(f"cannot parse process record for {pid}", 4)
+    try:
+        started = started_raw.decode("ascii")
+    except UnicodeDecodeError:
+        fail(f"cannot decode process start token for {pid}", 4)
+    executable = os.fsdecode(executable_raw)
+    command_line = os.fsdecode(command_raw)
+    return f"ps:{started}", executable, command_line
 
 
 def process_start_token(pid: int) -> str:
@@ -1591,10 +1623,9 @@ def process_snapshot(
         if reject_launch_wrappers and is_launch_wrapper(executable):
             fail(f"process {pid} is still a launch wrapper", 4)
     else:
-        first_start, executable_raw = ps_process_header(pid)
+        first_start, executable_raw, command_line = ps_process_record(pid)
         if reject_launch_wrappers and is_launch_wrapper(executable_raw):
             fail(f"process {pid} is still a launch wrapper", 4)
-        command_line = ps_value(pid, "command", wide=True)
         if not command_line or not executable_raw:
             fail(f"cannot capture command identity for process {pid}", 4)
         command = {"kind": "command_line", "value": command_line}
@@ -1613,10 +1644,17 @@ def process_snapshot(
     process_nonce = managed_process_nonce(pid) if include_nonce else None
     if proc_cmdline.is_file():
         second_start = process_start_token(pid)
+    elif include_nonce:
+        second_start, second_executable_raw, second_command_line = ps_process_record(
+            pid
+        )
+        if (
+            executable_raw != second_executable_raw
+            or command_line != second_command_line
+        ):
+            fail(f"process {pid} command changed while identity was captured", 4)
     else:
-        second_start, second_executable_raw = ps_process_header(pid)
-        if executable_raw != second_executable_raw:
-            fail(f"process {pid} executable changed while identity was captured", 4)
+        second_start = first_start
     if first_start != second_start:
         fail(f"process {pid} changed while identity was captured", 4)
     snapshot: dict[str, object] = {
@@ -2241,12 +2279,13 @@ _capture_launch_witness() {
   local nonce="${4:-}"
   local witness_file attempts=0
   witness_file="$(_server_launch_witness_file "$role")"
-  while [[ "$attempts" -lt 3 ]]; do
+  while [[ "$attempts" -lt 20 ]]; do
     if _server_python launch-witness-write \
-      "$witness_file" "$pid" "$role" "$parent_pid" "$nonce"; then
+      "$witness_file" "$pid" "$role" "$parent_pid" "$nonce" \
+      >/dev/null 2>&1; then
       return 0
     fi
-    if ! kill -0 "$pid" 2>/dev/null; then
+    if ! _shell_tracks_running_job "$pid"; then
       return 1
     fi
     sleep 0.05
@@ -2392,10 +2431,13 @@ _cleanup_managed_evidence() {
 
 _shell_tracks_running_job() {
   local expected_pid="${1:-}"
-  local job_pid=""
+  local job_pid="" process_state=""
   while IFS= read -r job_pid; do
     if [[ "$job_pid" == "$expected_pid" ]]; then
-      return 0
+      process_state="$(ps -p "$expected_pid" -o stat= 2>/dev/null || true)"
+      process_state="${process_state#"${process_state%%[![:space:]]*}"}"
+      [[ -n "$process_state" && "${process_state:0:1}" != "Z" ]]
+      return $?
     fi
   done < <(jobs -pr)
   return 1
@@ -2759,11 +2801,15 @@ _ensure_guardian() {
   pid=$!
   _write_managed_pid "$guardian_pid_file" "$pid"
   if ! _capture_launch_witness guardian "$pid" "$launcher_pid" "$nonce"; then
-    if kill -0 "$pid" 2>/dev/null; then
+    sleep 0.05
+    if _shell_tracks_running_job "$pid"; then
       printf "%b✗%b Guardian launch ownership could not be captured; retaining PID evidence and refusing to signal it.\n" \
         "$_red" "$_reset" >&2
     else
+      wait "$pid" 2>/dev/null || true
       _cleanup_managed_evidence guardian "$pid"
+      printf "%b✗%b Guardian failed SSE readiness: exited before launch identity capture. Check %s\n" \
+        "$_red" "$_reset" "$guardian_log" >&2
     fi
     return 1
   fi
@@ -3021,12 +3067,14 @@ cmd_server() {
       _write_managed_pid "$pid_file" "$server_pid"
       if ! _capture_launch_witness \
         server "$server_pid" "$server_launcher_pid" "$server_nonce"; then
-        if kill -0 "$server_pid" 2>/dev/null; then
+        sleep 0.05
+        if _shell_tracks_running_job "$server_pid"; then
           printf "%b✗%b Server launch ownership could not be captured; retaining PID evidence and refusing to signal it.\n" \
             "$_red" "$_reset" >&2
           _server_python write-status \
             "$status_file" "$server_pid" "$host" "$port" "failed"
         else
+          wait "$server_pid" 2>/dev/null || true
           _cleanup_managed_evidence server "$server_pid"
           _server_python write-status \
             "$status_file" "none" "$host" "$port" "failed"

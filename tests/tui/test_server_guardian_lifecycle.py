@@ -524,6 +524,17 @@ def test_macos_identity_reverification_does_not_reread_launch_nonce(
     isolated_server_runtime: tuple[dict[str, str], Path, Path],
 ) -> None:
     env, state_dir, _ = isolated_server_runtime
+    bin_dir = Path(env["HOME"]) / ".local" / "bin"
+    unicode_python = bin_dir / "python-żółty"
+    unicode_python.symlink_to(Path(sys.executable).resolve())
+    for entrypoint_name in ("vc-server", "vc-guardian"):
+        entrypoint = bin_dir / entrypoint_name
+        _, separator, body = entrypoint.read_text(encoding="utf-8").partition("\n")
+        assert separator
+        entrypoint.write_text(
+            f"#!{unicode_python}\n{body}",
+            encoding="utf-8",
+        )
     audit_path = state_dir / "process-audit.jsonl"
     env["VIBECRAFTED_TEST_PROCESS_AUDIT"] = str(audit_path)
     port = _free_port()
@@ -553,29 +564,55 @@ def test_macos_identity_reverification_does_not_reread_launch_nonce(
     }
     assert nonce_pids == role_pids
     operation_counts = Counter(call["operation"] for call in ps_calls)
-    assert operation_counts["lock-owner-write"] == 3
-    assert operation_counts["launch-witness-write"] == 2
-    capture_counts = Counter(
-        int(call["pid"])
-        for call in ps_calls
-        if call["operation"] == "capture-identity"
-    )
-    verify_counts = Counter(
-        int(call["pid"])
-        for call in ps_calls
-        if call["operation"] == "verify-identity"
-    )
-    assert set(capture_counts) == role_pids
-    assert set(capture_counts.values()) <= {7, 14}
-    assert set(verify_counts) == role_pids
-    assert set(verify_counts.values()) <= {3, 6}
     assert set(operation_counts) == {
         "lock-owner-write",
         "launch-witness-write",
         "capture-identity",
         "verify-identity",
     }
-    assert len(ps_calls) <= 45, ps_calls
+    probe_groups: dict[tuple[str, int, int], list[str]] = {}
+    for call in ps_calls:
+        owner_pid = int(call["probe_owner_pid"])
+        target_pid = int(call["pid"])
+        assert owner_pid > 1
+        probe_groups.setdefault(
+            (call["operation"], owner_pid, target_pid),
+            [],
+        ).append(call["kind"])
+
+    lock_groups = [
+        kinds for (operation, _, _), kinds in probe_groups.items()
+        if operation == "lock-owner-write"
+    ]
+    witness_groups = [
+        kinds for (operation, _, _), kinds in probe_groups.items()
+        if operation == "launch-witness-write"
+    ]
+    assert lock_groups == [["record"]]
+    assert len(witness_groups) == 2
+    assert all(kinds == ["launch"] for kinds in witness_groups)
+
+    for role_pid in role_pids:
+        capture_groups = [
+            kinds
+            for (operation, _, target_pid), kinds in probe_groups.items()
+            if operation == "capture-identity" and target_pid == role_pid
+        ]
+        verify_groups = [
+            kinds
+            for (operation, _, target_pid), kinds in probe_groups.items()
+            if operation == "verify-identity" and target_pid == role_pid
+        ]
+        assert 1 <= len(capture_groups) <= 21
+        assert 1 <= len(verify_groups) <= 2
+        for kinds in capture_groups:
+            kind_counts = Counter(kinds)
+            assert set(kind_counts) <= {"record", "nonce"}
+            assert 1 <= kind_counts["record"] <= 3
+            assert kind_counts["nonce"] <= 1
+            assert len(kinds) <= 4
+        assert all(kinds == ["record"] for kinds in verify_groups)
+    assert len(ps_calls) <= 175, ps_calls
 
 
 def test_server_delayed_exec_mismatch_cleans_launch_owned_child(
@@ -1111,6 +1148,7 @@ raise SystemExit(0)
     )
 
     assert result.returncode != 0
+    assert "Guardian failed SSE readiness" in result.stderr
     assert "Guardian startup failed" in result.stderr
     assert not (state_dir / "server.pid").exists()
     status = json.loads((state_dir / "status.json").read_text(encoding="utf-8"))
