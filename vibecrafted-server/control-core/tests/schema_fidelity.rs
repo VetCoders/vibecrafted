@@ -20,7 +20,7 @@ use control_core::model::{
     AgentMeta, DeliveryAxes, DeliverySealRef, DeliveryState, ExecutionState, Health, ProofState,
     SettlementTui, SettlementVerdict, coerce_int_value, delivery_axes_for_receipt,
 };
-use control_core::{EventStream, LifecycleRun, RunStatus, parse_iso, state_health};
+use control_core::{EventStream, LifecycleRun, RunStatus, merge_status, parse_iso, state_health};
 
 // ---------------------------------------------------------------------------
 // Delivery-proof kernel axes — fixtures produced by the Python kernel
@@ -324,6 +324,159 @@ fn settlement_fields_deserialise_typed_without_breaking_legacy_snapshots() {
         settled,
         "typed settlement fields must preserve the Python snapshot wire shape"
     );
+}
+
+#[test]
+fn recovery_schema_keeps_explicit_identity_process_and_settlement_evidence() {
+    let mut payload: serde_json::Value =
+        serde_json::from_str(GOLDEN_RUN_FINAL).expect("golden JSON");
+    let object = payload.as_object_mut().expect("run object");
+    object.insert("worker_pid".to_string(), serde_json::json!(41001));
+    object.insert("worker_pgid".to_string(), serde_json::json!(41000));
+    object.insert("worker_alive".to_string(), serde_json::json!(false));
+    object.insert("recovery_required".to_string(), serde_json::json!(true));
+    object.insert(
+        "stop_reason".to_string(),
+        serde_json::json!("worker_signal_exit"),
+    );
+    object.insert(
+        "agent_session_id".to_string(),
+        serde_json::json!("019f-native-agent"),
+    );
+    object.insert(
+        "runtime_session_id".to_string(),
+        serde_json::json!("runtime-019f"),
+    );
+    object.insert("resume_of".to_string(), serde_json::json!("marb-parent"));
+    object.insert("attempt".to_string(), serde_json::json!(3));
+    object.insert(
+        "settlement_verdict".to_string(),
+        serde_json::json!("needs_attention"),
+    );
+    object.insert("settlement_tui".to_string(), serde_json::json!("n"));
+    object.insert(
+        "settlement_reason".to_string(),
+        serde_json::json!("trust_pass_with_gaps:abc123"),
+    );
+    object.insert("settlement_source".to_string(), serde_json::json!("trust"));
+    object.insert(
+        "settlement_at".to_string(),
+        serde_json::json!("2026-07-26T05:01:02+00:00"),
+    );
+    object.insert(
+        "settlement_claim_digest".to_string(),
+        serde_json::json!("deadbeefcafebabe"),
+    );
+    object.insert("settlement_waived".to_string(), serde_json::json!(false));
+    object.insert("settlement_revision".to_string(), serde_json::json!(7));
+    object.insert(
+        "controls".to_string(),
+        serde_json::json!({
+            "await": false,
+            "stop": false,
+            "retry": true,
+            "native_resume_candidate": {
+                "agent": "codex",
+                "agent_session_id": "019f-native-agent"
+            }
+        }),
+    );
+
+    let run: RunStatus = serde_json::from_value(payload.clone()).expect("recovery snapshot");
+    assert_eq!(run.worker_pid, Some(41001));
+    assert_eq!(run.worker_pgid, Some(41000));
+    assert_eq!(run.worker_alive, Some(false));
+    assert!(run.recovery_required);
+    assert_eq!(run.stop_reason, "worker_signal_exit");
+    assert_eq!(run.agent_session_id, "019f-native-agent");
+    assert_eq!(run.runtime_session_id, "runtime-019f");
+    assert_eq!(run.resume_of, "marb-parent");
+    assert_eq!(run.attempt, Some(3));
+    assert_eq!(run.settlement_reason, "trust_pass_with_gaps:abc123");
+    assert_eq!(run.settlement_source, "trust");
+    assert_eq!(run.settlement_at, "2026-07-26T05:01:02+00:00");
+    assert_eq!(run.settlement_claim_digest, "deadbeefcafebabe");
+    assert_eq!(run.settlement_waived, Some(false));
+    assert_eq!(run.settlement_revision, Some(7));
+    assert_eq!(
+        run.controls
+            .as_ref()
+            .and_then(|controls| controls.native_resume_candidate.as_ref())
+            .map(|candidate| candidate.agent_session_id.as_str()),
+        Some("019f-native-agent")
+    );
+    assert_eq!(
+        serde_json::to_value(run).expect("recovery snapshot serialises"),
+        payload
+    );
+}
+
+#[test]
+fn legacy_session_id_is_never_native_resume_evidence() {
+    let mut payload: serde_json::Value =
+        serde_json::from_str(GOLDEN_RUN_FINAL).expect("golden JSON");
+    let object = payload.as_object_mut().expect("run object");
+    object.insert(
+        "session_id".to_string(),
+        serde_json::json!("looks-like-a-native-session"),
+    );
+    object.insert("recovery_required".to_string(), serde_json::json!(true));
+
+    let run: RunStatus = serde_json::from_value(payload).expect("legacy recovery snapshot");
+    assert_eq!(run.session_id, "looks-like-a-native-session");
+    assert!(run.agent_session_id.is_empty());
+    assert_eq!(run.native_resume_candidate(), None);
+}
+
+#[test]
+fn merge_keeps_settlement_fingerprint_bound_to_highest_revision() {
+    let run_with_settlement =
+        |revision: u64, verdict: &str, tui: &str, reason: &str, updated_at: &str| {
+            let mut payload: serde_json::Value =
+                serde_json::from_str(GOLDEN_RUN_FINAL).expect("golden JSON");
+            let object = payload.as_object_mut().expect("run object");
+            object.insert("updated_at".to_string(), serde_json::json!(updated_at));
+            object.insert(
+                "settlement_revision".to_string(),
+                serde_json::json!(revision),
+            );
+            object.insert("settlement_verdict".to_string(), serde_json::json!(verdict));
+            object.insert("settlement_tui".to_string(), serde_json::json!(tui));
+            object.insert("settlement_reason".to_string(), serde_json::json!(reason));
+            object.insert("settlement_source".to_string(), serde_json::json!("trust"));
+            object.insert(
+                "settlement_at".to_string(),
+                serde_json::json!(format!("2026-07-26T05:01:0{revision}+00:00")),
+            );
+            object.insert(
+                "settlement_claim_digest".to_string(),
+                serde_json::json!(format!("digest-{revision}")),
+            );
+            object.insert("settlement_waived".to_string(), serde_json::json!(false));
+            serde_json::from_value::<RunStatus>(payload).expect("settled run")
+        };
+
+    let high_revision = run_with_settlement(
+        9,
+        "failed",
+        "x",
+        "trust_block:head9",
+        "2026-07-26T05:01:01+00:00",
+    );
+    let newer_process_record = run_with_settlement(
+        8,
+        "finalized",
+        "f",
+        "trust_pass:head8",
+        "2026-07-26T05:02:01+00:00",
+    );
+
+    let merged = merge_status(Some(high_revision), newer_process_record);
+    assert_eq!(merged.settlement_revision, Some(9));
+    assert_eq!(merged.settlement_verdict, Some(SettlementVerdict::Failed));
+    assert_eq!(merged.settlement_tui, Some(SettlementTui::X));
+    assert_eq!(merged.settlement_reason, "trust_block:head9");
+    assert_eq!(merged.settlement_claim_digest, "digest-9");
 }
 
 #[test]

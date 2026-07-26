@@ -428,9 +428,42 @@ fn nonempty_or(value: &str, fallback: &str) -> String {
     }
 }
 
-/// A control-plane run projection. Field-for-field mirror of the
-/// `control_plane.RunStatus` dataclass; this is exactly what each
-/// `runs/<id>.json` snapshot serialises to.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// Explicit native-agent identity that may be usable for an in-place resume.
+///
+/// This is evidence, not permission. The guardian still owns policy checks
+/// such as manual-stop provenance, settlement, quiescence, runtime capability,
+/// and retry budget before acting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NativeResumeCandidate {
+    pub agent: String,
+    pub agent_session_id: String,
+}
+
+/// Action capabilities projected for a run.
+///
+/// `retry` is a cold redispatch from the retained launch specification.
+/// `native_resume_candidate` is deliberately separate and is sourced only from
+/// an explicit native agent session id. The legacy `RunStatus::session_id`
+/// field is never promoted into this candidate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunControls {
+    #[serde(rename = "await")]
+    pub await_run: bool,
+    pub stop: bool,
+    pub retry: bool,
+    #[serde(default)]
+    pub native_resume_candidate: Option<NativeResumeCandidate>,
+}
+
+/// A control-plane run projection.
+///
+/// The durable fields mirror `control_plane.RunStatus` plus retained snapshot
+/// metadata. [`crate::read::ControlPlane`] then adds read-only process evidence
+/// and typed controls without mutating the Python-owned files.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunStatus {
     pub run_id: String,
@@ -462,6 +495,31 @@ pub struct RunStatus {
     pub current_loop: Option<i64>,
     #[serde(default)]
     pub total_loops: Option<i64>,
+    /// Durable worker process identity from supervisor metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_pid: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_pgid: Option<i64>,
+    /// Observed worker liveness. Single-run reads refresh it from process
+    /// identity; bulk reads retain the writer observation (or `None`) to avoid
+    /// an N-process probe storm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_alive: Option<bool>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub recovery_required: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub stop_reason: String,
+    /// Native agent session identity emitted explicitly by the runtime.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub agent_session_id: String,
+    /// Vibecrafted supervisor/runtime session identity. This is not an agent
+    /// resume identity.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub runtime_session_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub resume_of: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<u64>,
     /// Persisted Python settlement verdict. Absent on legacy and live snapshots.
     /// Unknown future values are treated as absent, matching
     /// `settlement_from_payload()` rather than rejecting the whole snapshot.
@@ -479,6 +537,23 @@ pub struct RunStatus {
         deserialize_with = "de_optional_settlement_tui"
     )]
     pub settlement_tui: Option<SettlementTui>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub settlement_reason: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub settlement_source: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub settlement_at: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub settlement_claim_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement_waived: Option<bool>,
+    /// Monotonic revision of the complete settlement fingerprint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settlement_revision: Option<u64>,
+    /// Read-model action projection. Old snapshots may omit it on disk; every
+    /// ControlPlane read path materialises it before returning a run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controls: Option<RunControls>,
     /// Process axis from the delivery-proof kernel. Absent on pre-kernel
     /// snapshots — never invented from `state`/`completed` at read time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -523,6 +598,38 @@ impl RunStatus {
             }
             _ => None,
         }
+    }
+
+    /// Build native-resume evidence from explicit runtime identity only.
+    ///
+    /// `session_id` is intentionally absent from this function: historically
+    /// that field has represented both runtime and agent identities.
+    #[must_use]
+    pub fn native_resume_candidate(&self) -> Option<NativeResumeCandidate> {
+        let agent = self.agent.trim();
+        let agent_session_id = self.agent_session_id.trim();
+        let missing_agent_session = matches!(
+            agent_session_id.to_ascii_lowercase().as_str(),
+            "" | "pending" | "none" | "null" | "unknown"
+        );
+        if agent.is_empty() || agent.eq_ignore_ascii_case("unknown") || missing_agent_session {
+            return None;
+        }
+        Some(NativeResumeCandidate {
+            agent: agent.to_string(),
+            agent_session_id: agent_session_id.to_string(),
+        })
+    }
+
+    /// Materialise the action projection while keeping retry and native resume
+    /// as separate mechanisms.
+    pub fn set_controls(&mut self, await_run: bool, stop: bool, retry: bool) {
+        self.controls = Some(RunControls {
+            await_run,
+            stop,
+            retry,
+            native_resume_candidate: self.native_resume_candidate(),
+        });
     }
 }
 
@@ -843,7 +950,8 @@ impl LifecycleRun {
             self.delivery_state,
         );
 
-        RunStatus {
+        let terminal = final_health == Health::Final;
+        let mut status = RunStatus {
             run_id: summary.run_id,
             state,
             agent: summary.agent,
@@ -870,13 +978,31 @@ impl LifecycleRun {
             session_id: String::new(),
             current_loop: None,
             total_loops: None,
+            worker_pid: None,
+            worker_pgid: None,
+            worker_alive: None,
+            recovery_required: false,
+            stop_reason: String::new(),
+            agent_session_id: String::new(),
+            runtime_session_id: String::new(),
+            resume_of: String::new(),
+            attempt: None,
             settlement_verdict: None,
             settlement_tui: None,
+            settlement_reason: String::new(),
+            settlement_source: String::new(),
+            settlement_at: String::new(),
+            settlement_claim_digest: String::new(),
+            settlement_waived: None,
+            settlement_revision: None,
+            controls: None,
             execution_state: Some(axes.execution_state),
             proof_state: Some(axes.proof_state),
             delivery_state: Some(axes.delivery_state),
             seal: None,
-        }
+        };
+        status.set_controls(!terminal, false, false);
+        status
     }
 
     fn current_stage(&self) -> String {
@@ -1098,6 +1224,44 @@ pub struct AgentMeta {
     pub completed_at: String,
     #[serde(default)]
     pub session_id: String,
+    #[serde(default, deserialize_with = "de_coerced_int")]
+    pub worker_pid: Option<i64>,
+    #[serde(default, deserialize_with = "de_coerced_int")]
+    pub worker_pgid: Option<i64>,
+    #[serde(default)]
+    pub worker_alive: Option<bool>,
+    #[serde(default)]
+    pub recovery_required: bool,
+    #[serde(default)]
+    pub stop_reason: String,
+    #[serde(default)]
+    pub agent_session_id: String,
+    #[serde(default)]
+    pub runtime_session_id: String,
+    #[serde(default)]
+    pub resume_of: String,
+    #[serde(default, deserialize_with = "de_optional_u64")]
+    pub attempt: Option<u64>,
+    #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
+    pub file: String,
+    #[serde(default, deserialize_with = "de_optional_settlement_verdict")]
+    pub settlement_verdict: Option<SettlementVerdict>,
+    #[serde(default, deserialize_with = "de_optional_settlement_tui")]
+    pub settlement_tui: Option<SettlementTui>,
+    #[serde(default)]
+    pub settlement_reason: String,
+    #[serde(default)]
+    pub settlement_source: String,
+    #[serde(default)]
+    pub settlement_at: String,
+    #[serde(default)]
+    pub settlement_claim_digest: String,
+    #[serde(default)]
+    pub settlement_waived: Option<bool>,
+    #[serde(default, deserialize_with = "de_optional_u64")]
+    pub settlement_revision: Option<u64>,
 }
 
 fn de_coerced_int<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -1114,6 +1278,18 @@ where
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(coerce_int_value(&value).filter(|value| *value >= 0))
+}
+
+fn de_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::Number(number) => number.as_u64(),
+        serde_json::Value::String(raw) => raw.trim().parse::<u64>().ok(),
+        _ => None,
+    })
 }
 
 fn de_optional_lifecycle_dou_index<'de, D>(
@@ -1158,7 +1334,12 @@ impl AgentMeta {
         } else {
             self.started_at.clone()
         };
-        Some(RunStatus {
+        let terminal = exit_code.is_some() || liveness == "terminal" || is_final_state(&state);
+        let retry = terminal
+            && (skill_from_code(&self.skill_code) == "marbles"
+                || !self.prompt.trim().is_empty()
+                || !self.file.trim().is_empty());
+        let mut status = RunStatus {
             run_id: run_id.to_string(),
             state,
             agent: nonempty_or(&self.agent, "unknown"),
@@ -1181,15 +1362,37 @@ impl AgentMeta {
             session_id: self.session_id.clone(),
             current_loop: None,
             total_loops: None,
-            settlement_verdict: None,
-            settlement_tui: None,
+            worker_pid: self.worker_pid,
+            worker_pgid: self.worker_pgid,
+            worker_alive: self.worker_alive,
+            recovery_required: self.recovery_required,
+            stop_reason: self.stop_reason.clone(),
+            agent_session_id: self.agent_session_id.clone(),
+            runtime_session_id: self.runtime_session_id.clone(),
+            resume_of: self.resume_of.clone(),
+            attempt: self.attempt,
+            settlement_verdict: self.settlement_verdict,
+            settlement_tui: self.settlement_tui,
+            settlement_reason: self.settlement_reason.clone(),
+            settlement_source: self.settlement_source.clone(),
+            settlement_at: self.settlement_at.clone(),
+            settlement_claim_digest: self.settlement_claim_digest.clone(),
+            settlement_waived: self.settlement_waived,
+            settlement_revision: self.settlement_revision,
+            controls: None,
             // Meta is not a delivery receipt; axes stay absent until a
             // snapshot or seal file provides them (never inferred here).
             execution_state: None,
             proof_state: None,
             delivery_state: None,
             seal: None,
-        })
+        };
+        status.set_controls(
+            !terminal,
+            !terminal && self.worker_alive == Some(true),
+            retry,
+        );
+        Some(status)
     }
 }
 
@@ -1217,7 +1420,19 @@ pub fn merge_status(existing: Option<RunStatus>, incoming: RunStatus) -> RunStat
         (&incoming, &existing)
     };
 
-    RunStatus {
+    let preferred_controls = preferred.controls.as_ref();
+    let other_controls = other.controls.as_ref();
+    let retry = preferred_controls.is_some_and(|controls| controls.retry)
+        || other_controls.is_some_and(|controls| controls.retry);
+    let settlement_owner = match (preferred.settlement_revision, other.settlement_revision) {
+        (Some(preferred_revision), Some(other_revision)) if other_revision > preferred_revision => {
+            other
+        }
+        (None, Some(_)) => other,
+        (None, None) if preferred.settlement_verdict.is_none() => other,
+        _ => preferred,
+    };
+    let mut merged = RunStatus {
         run_id: preferred.run_id.clone(),
         state: preferred.state.clone(),
         agent: nonempty_or(&preferred.agent, &other.agent),
@@ -1240,12 +1455,39 @@ pub fn merge_status(existing: Option<RunStatus>, incoming: RunStatus) -> RunStat
         session_id: nonempty_or(&preferred.session_id, &other.session_id),
         current_loop: preferred.current_loop.or(other.current_loop),
         total_loops: preferred.total_loops.or(other.total_loops),
-        settlement_verdict: preferred.settlement_verdict.or(other.settlement_verdict),
-        settlement_tui: preferred.settlement_tui.or(other.settlement_tui),
+        worker_pid: preferred.worker_pid.or(other.worker_pid),
+        worker_pgid: preferred.worker_pgid.or(other.worker_pgid),
+        worker_alive: preferred.worker_alive.or(other.worker_alive),
+        recovery_required: preferred.recovery_required || other.recovery_required,
+        stop_reason: nonempty_or(&preferred.stop_reason, &other.stop_reason),
+        agent_session_id: nonempty_or(&preferred.agent_session_id, &other.agent_session_id),
+        runtime_session_id: nonempty_or(&preferred.runtime_session_id, &other.runtime_session_id),
+        resume_of: nonempty_or(&preferred.resume_of, &other.resume_of),
+        attempt: preferred.attempt.or(other.attempt),
+        settlement_verdict: settlement_owner.settlement_verdict,
+        settlement_tui: settlement_owner.settlement_tui,
+        settlement_reason: settlement_owner.settlement_reason.clone(),
+        settlement_source: settlement_owner.settlement_source.clone(),
+        settlement_at: settlement_owner.settlement_at.clone(),
+        settlement_claim_digest: settlement_owner.settlement_claim_digest.clone(),
+        settlement_waived: settlement_owner.settlement_waived,
+        settlement_revision: settlement_owner.settlement_revision,
+        controls: None,
         // Prefer explicit axes; never synthesise from the other side's state.
         execution_state: preferred.execution_state.or(other.execution_state),
         proof_state: preferred.proof_state.or(other.proof_state),
         delivery_state: preferred.delivery_state.or(other.delivery_state),
         seal: preferred.seal.clone().or_else(|| other.seal.clone()),
-    }
+    };
+    let terminal = merged.is_terminal();
+    let await_run = !terminal
+        && preferred_controls
+            .map(|controls| controls.await_run)
+            .unwrap_or(true);
+    let stop = !terminal
+        && preferred_controls
+            .map(|controls| controls.stop)
+            .unwrap_or(merged.worker_alive == Some(true));
+    merged.set_controls(await_run, stop, retry);
+    merged
 }

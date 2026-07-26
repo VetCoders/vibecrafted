@@ -4,6 +4,8 @@
 //! contract, many eyes) instead of a silent miss, mirroring
 //! `control_plane.resolve_run` on the Python side.
 
+#![recursion_limit = "256"]
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -202,6 +204,175 @@ fn compute_view_reads_settlement_board_only_from_retained_snapshots() {
     );
 
     fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn lookup_run_projects_recovery_controls_without_promoting_legacy_session_id() {
+    let home = temp_home("recovery-read-projection");
+    let runs_dir = home.join("control_plane").join("runs");
+    fs::create_dir_all(&runs_dir).expect("runs dir");
+
+    let base = json!({
+        "run_id": "recover-explicit",
+        "state": "recovery_required",
+        "agent": "grok",
+        "skill": "implement",
+        "mode": "implement",
+        "root": "/tmp/repo",
+        "operator_session": "repo-recover-explicit",
+        "latest_report": "/tmp/report.md",
+        "latest_transcript": "/tmp/transcript.log",
+        "last_error": "worker exited",
+        "updated_at": "2026-07-26T05:01:02+00:00",
+        "started_at": "2026-07-26T05:00:00+00:00",
+        "health": "final",
+        "source": "agent-meta",
+        "lock_present": false,
+        "exit_code": -9,
+        "liveness": "terminal",
+        "launcher_pid": Value::Null,
+        "completed_at": "2026-07-26T05:01:02+00:00",
+        "session_id": "ambiguous-legacy-value",
+        "current_loop": Value::Null,
+        "total_loops": Value::Null,
+        "recovery_required": true,
+        "stop_reason": "signal_exit",
+        "settlement_verdict": "needs_attention",
+        "settlement_tui": "n",
+        "settlement_reason": "trust_pass_with_gaps:abc123",
+        "settlement_source": "trust",
+        "settlement_at": "2026-07-26T05:01:03+00:00",
+        "settlement_claim_digest": "0123456789abcdef",
+        "settlement_waived": false,
+        "settlement_revision": 4,
+        "lifecycle": {
+            "await": false,
+            "inspect": true,
+            "stop": false,
+            "cancel": false,
+            "resume": true,
+            "recovery_required": true
+        }
+    });
+    fs::write(
+        runs_dir.join("recover-explicit.json"),
+        serde_json::to_vec_pretty(&base).expect("snapshot JSON"),
+    )
+    .expect("write explicit snapshot");
+    let runtime_dir = home
+        .join("control_plane")
+        .join("runtime_runs")
+        .join("recover-explicit");
+    fs::create_dir_all(&runtime_dir).expect("runtime dir");
+    fs::write(
+        runtime_dir.join("meta.json"),
+        serde_json::to_vec_pretty(&json!({
+            "run_id": "recover-explicit",
+            "worker_pid": 99999991,
+            "worker_pgid": 99999990,
+            "worker_alive": false,
+            "agent_session_id": "019f-explicit-native",
+            "runtime_session_id": "runtime-explicit",
+            "resume_of": "recover-parent",
+            "attempt": 2
+        }))
+        .expect("runtime meta JSON"),
+    )
+    .expect("write runtime meta");
+
+    let plane = ControlPlane::new(&home);
+    let explicit = plane.lookup_run("recover-explicit").expect("explicit run");
+    assert_eq!(explicit.worker_pid, Some(99999991));
+    assert_eq!(explicit.worker_pgid, Some(99999990));
+    assert_eq!(explicit.worker_alive, Some(false));
+    assert_eq!(explicit.agent_session_id, "019f-explicit-native");
+    assert_eq!(explicit.runtime_session_id, "runtime-explicit");
+    assert_eq!(explicit.settlement_revision, Some(4));
+    let controls = explicit.controls.as_ref().expect("typed controls");
+    assert!(!controls.await_run);
+    assert!(!controls.stop);
+    assert!(
+        controls.retry,
+        "resume in legacy lifecycle means cold retry"
+    );
+    let native = controls
+        .native_resume_candidate
+        .as_ref()
+        .expect("explicit native candidate");
+    assert_eq!(native.agent, "grok");
+    assert_eq!(native.agent_session_id, "019f-explicit-native");
+
+    let mut legacy = base;
+    let object = legacy.as_object_mut().expect("snapshot object");
+    object.insert("run_id".to_string(), json!("recover-legacy"));
+    object.insert("operator_session".to_string(), json!("repo-recover-legacy"));
+    fs::write(
+        runs_dir.join("recover-legacy.json"),
+        serde_json::to_vec_pretty(&legacy).expect("legacy snapshot JSON"),
+    )
+    .expect("write legacy snapshot");
+
+    let legacy = plane.lookup_run("recover-legacy").expect("legacy run");
+    assert_eq!(legacy.session_id, "ambiguous-legacy-value");
+    assert!(
+        legacy
+            .controls
+            .as_ref()
+            .expect("typed controls")
+            .native_resume_candidate
+            .is_none(),
+        "legacy session_id must never become native resume evidence"
+    );
+    assert!(
+        legacy.controls.as_ref().expect("typed controls").retry,
+        "cold retry remains independent from native resume evidence"
+    );
+    assert!(
+        serde_json::to_value(&legacy).expect("legacy run serialises")["controls"]
+            ["native_resume_candidate"]
+            .is_null(),
+        "the API makes the missing native candidate explicit"
+    );
+
+    fs::remove_dir_all(home).ok();
+}
+
+#[test]
+fn settlement_notification_never_resurrects_process_state() {
+    let home = temp_home("settlement-not-liveness");
+    let control_plane = home.join("control_plane");
+    fs::create_dir_all(&control_plane).expect("control plane");
+    let event = json!({
+        "ts": "2026-07-26T05:01:03+00:00",
+        "run_id": "settled-history",
+        "kind": "settlement.changed",
+        "message": "settlement changed to needs_attention",
+        "payload": {
+            "verdict": "needs_attention",
+            "tui": "n",
+            "reason": "trust_pass_with_gaps:abc123",
+            "source": "trust",
+            "settled_at": "2026-07-26T05:01:03+00:00",
+            "claim_digest": "0123456789abcdef",
+            "waived": false,
+            "revision": 4
+        }
+    });
+    fs::write(control_plane.join("events.jsonl"), format!("{event}\n")).expect("event stream");
+
+    let view = ControlPlane::new(&home).compute_view(Utc::now());
+    assert!(
+        view.active_runs.is_empty() && view.stalled_runs.is_empty() && view.recent_runs.is_empty(),
+        "settlement outbox event is not process state"
+    );
+    assert_eq!(
+        view.events.len(),
+        1,
+        "notification remains visible to SSE/readers"
+    );
+    assert_eq!(view.events[0].kind, "settlement.changed");
+
+    fs::remove_dir_all(home).ok();
 }
 
 #[test]
