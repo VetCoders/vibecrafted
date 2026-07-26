@@ -36,13 +36,16 @@ classifier cannot read.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import stat
 import subprocess
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 __all__ = [
     "BUCKET_FAILED",
@@ -50,16 +53,22 @@ __all__ = [
     "BUCKET_NEEDS_ATTENTION",
     "MINIMAL_REPORT_BYTES",
     "MINIMAL_TRANSCRIPT_BYTES",
+    "TRANSFER_PROOF_SCHEMA",
     "VERDICT_FAILED",
     "VERDICT_FINALIZED",
     "VERDICT_NEEDS_ATTENTION",
+    "DurableTransferProof",
     "KernelAxes",
     "RunClassification",
     "RunSignals",
+    "TransferProofError",
+    "TransferTabIdentity",
     "TriageOutcome",
     "TriagePlan",
     "bucket_for_exit_code",
     "classify_run",
+    "load_durable_transfer_proof",
+    "load_vc_frame_transfer_proof",
     "main",
     "outcome_for_exit_code",
     "plan_triage",
@@ -142,6 +151,503 @@ _BUCKET_FLAG_FOR_VERDICT = {
     VERDICT_FAILED: "failed",
     VERDICT_NEEDS_ATTENTION: "needs-attention",
 }
+
+TRANSFER_PROOF_SCHEMA = "vibecrafted.vc-frame-transfer-proof.v1"
+_TRANSFER_RECEIPT_VERSION = 4
+_CAPTURE_MANIFEST_VERSION = 1
+_CAPTURE_SOURCES = {"terminal_scrollback", "runtime_transcript"}
+_BUCKET_SESSION = {
+    "Finalized": BUCKET_FINALIZED,
+    "Failed": BUCKET_FAILED,
+    "NeedsAttention": BUCKET_NEEDS_ATTENTION,
+}
+_SETTLEMENT_TUI = {
+    VERDICT_FINALIZED: "f",
+    VERDICT_FAILED: "x",
+    "invalid": "x",
+    VERDICT_NEEDS_ATTENTION: "n",
+}
+_TERMINAL_AWAIT_OUTCOMES = {"completed", "timed_out"}
+_HEX = frozenset("0123456789abcdefABCDEF")
+
+
+class TransferProofError(ValueError):
+    """The vc-frame v4 transfer evidence is absent, ambiguous, or inconsistent."""
+
+
+@dataclass(frozen=True)
+class TransferTabIdentity:
+    """One tab incarnation, stable across numeric-ID reuse."""
+
+    session: str
+    name: str
+    tab_id: int
+    session_incarnation: str
+    tab_instance_id: str
+
+    def projection(self) -> dict[str, Any]:
+        return {
+            "session": self.session,
+            "name": self.name,
+            "id": self.tab_id,
+            "session_incarnation": self.session_incarnation,
+            "tab_instance_id": self.tab_instance_id,
+        }
+
+
+@dataclass(frozen=True)
+class DurableTransferProof:
+    """Validated vc-frame v4 transfer plus its exact runtime settlement revision."""
+
+    run_id: str
+    receipt_path: Path
+    receipt_sha256: str
+    scrollback_path: Path
+    finished_meta_path: Path
+    capture_manifest_path: Path
+    bucket: str
+    bucket_session: str
+    exit_code: int
+    origin_session: str
+    origin_tab: str
+    capture_source: str
+    capture_source_identity: str
+    capture_bytes: int
+    capture_sha256: str
+    origin_identity: TransferTabIdentity | None
+    viewer_identity: TransferTabIdentity
+    viewer_token: str
+    origin_tab_state: str
+    updated_at: int
+    settlement_revision: int = 0
+
+    def projection(self) -> dict[str, Any]:
+        """JSON projection linked from runtime meta after a proven transfer."""
+        return {
+            "schema": TRANSFER_PROOF_SCHEMA,
+            "receipt": str(self.receipt_path),
+            "receipt_sha256": self.receipt_sha256,
+            "version": _TRANSFER_RECEIPT_VERSION,
+            "run": self.run_id,
+            "bucket": self.bucket,
+            "bucket_session": self.bucket_session,
+            "exit_code": self.exit_code,
+            "origin": {
+                "session": self.origin_session,
+                "tab": self.origin_tab,
+                "identity": (
+                    self.origin_identity.projection()
+                    if self.origin_identity is not None
+                    else None
+                ),
+                "state": self.origin_tab_state,
+            },
+            "capture": {
+                "source": self.capture_source,
+                "source_identity": self.capture_source_identity,
+                "bytes": self.capture_bytes,
+                "sha256": self.capture_sha256,
+                "path": str(self.scrollback_path),
+                "manifest": str(self.capture_manifest_path),
+            },
+            "finished_meta": str(self.finished_meta_path),
+            "viewer": {
+                "token": self.viewer_token,
+                "identity": self.viewer_identity.projection(),
+            },
+            "updated_at": self.updated_at,
+        }
+
+
+def _is_hex(value: Any, length: int) -> TypeGuard[str]:
+    return (
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in _HEX for character in value)
+    )
+
+
+def _safe_run_id(value: Any) -> str:
+    if not isinstance(value, str):
+        raise TransferProofError(f"invalid run id type: {type(value).__name__}")
+    run_id = value.strip()
+    if (
+        not run_id
+        or run_id in {".", ".."}
+        or "/" in run_id
+        or "\\" in run_id
+        or Path(run_id).name != run_id
+    ):
+        raise TransferProofError(f"invalid run id: {run_id!r}")
+    return run_id
+
+
+def _canonical_root(control_plane: Path) -> Path:
+    try:
+        root = control_plane.resolve(strict=True)
+    except OSError as error:
+        raise TransferProofError(
+            f"control plane is unavailable: {control_plane}"
+        ) from error
+    if not root.is_dir():
+        raise TransferProofError(f"control plane is not a directory: {root}")
+    return root
+
+
+def _read_bound_file(path: Path, root: Path, label: str) -> bytes:
+    """Read one exact regular file without accepting a symlink/path escape."""
+    descriptor: int | None = None
+    try:
+        if path.is_symlink():
+            raise TransferProofError(f"{label} is a symlink: {path}")
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(root)
+        current = path.stat(follow_symlinks=False)
+        if (
+            resolved != path
+            or not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != current.st_dev
+            or opened.st_ino != current.st_ino
+        ):
+            raise TransferProofError(f"{label} is not its canonical file: {path}")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            return handle.read()
+    except TransferProofError:
+        raise
+    except (OSError, ValueError) as error:
+        raise TransferProofError(f"cannot read {label}: {path}") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _json_object(data: bytes, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(data)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise TransferProofError(f"{label} is not valid JSON") from error
+    if not isinstance(payload, dict) or not payload:
+        raise TransferProofError(f"{label} is not a non-empty object")
+    return payload
+
+
+def _tab_identity(
+    raw: Any,
+    *,
+    label: str,
+    expected_session: str,
+    expected_name: str,
+) -> TransferTabIdentity:
+    if not isinstance(raw, Mapping):
+        raise TransferProofError(f"{label} identity is missing")
+    tab_id = raw.get("id")
+    session = raw.get("session")
+    name = raw.get("name")
+    incarnation = raw.get("session_incarnation")
+    instance = raw.get("tab_instance_id")
+    if (
+        type(tab_id) is not int
+        or tab_id < 0
+        or session != expected_session
+        or name != expected_name
+        or not isinstance(incarnation, str)
+        or not incarnation
+        or not _is_hex(instance, 32)
+    ):
+        raise TransferProofError(f"{label} identity is not exact and typed")
+    return TransferTabIdentity(
+        session=session,
+        name=name,
+        tab_id=tab_id,
+        session_incarnation=incarnation,
+        tab_instance_id=instance,
+    )
+
+
+def _runtime_origin(payload: Mapping[str, Any]) -> tuple[str, str]:
+    raw_session = payload.get("origin_session")
+    raw_tab = payload.get("origin_tab")
+    if not isinstance(raw_session, str) or not isinstance(raw_tab, str):
+        raise TransferProofError("runtime meta origin fields are not strings")
+    session = raw_session.strip()
+    tab = raw_tab.strip()
+    if not session or not tab:
+        raise TransferProofError("runtime meta lacks exact origin_session/origin_tab")
+    return session, tab
+
+
+def load_vc_frame_transfer_proof(
+    control_plane: Path,
+    runtime_payload: Mapping[str, Any],
+) -> DurableTransferProof:
+    """Validate vc-frame's exact v4 transfer files without trusting projections."""
+    root = _canonical_root(control_plane)
+    run_id = _safe_run_id(runtime_payload.get("run_id"))
+    origin_session, origin_tab = _runtime_origin(runtime_payload)
+    run_dir = root / "finished_runs" / run_id
+    try:
+        if (
+            run_dir.is_symlink()
+            or run_dir.resolve(strict=True) != run_dir
+            or not run_dir.is_dir()
+        ):
+            raise TransferProofError(
+                f"finished run directory is not canonical: {run_dir}"
+            )
+    except OSError as error:
+        raise TransferProofError(
+            f"finished run directory is missing: {run_dir}"
+        ) from error
+
+    receipt_path = run_dir / "transfer.json"
+    scrollback_path = run_dir / "scrollback.txt"
+    finished_meta_path = run_dir / "meta.json"
+    capture_manifest_path = run_dir / "capture.manifest.json"
+    receipt_bytes = _read_bound_file(receipt_path, root, "transfer receipt")
+    receipt = _json_object(receipt_bytes, "transfer receipt")
+
+    if receipt.get("version") != _TRANSFER_RECEIPT_VERSION:
+        raise TransferProofError("transfer receipt is not schema version 4")
+    if receipt.get("run") != run_id:
+        raise TransferProofError("transfer receipt run does not match runtime meta")
+    if (
+        receipt.get("origin_session") != origin_session
+        or receipt.get("origin_tab") != origin_tab
+    ):
+        raise TransferProofError("transfer receipt origin does not match runtime meta")
+    exit_code = receipt.get("exit_code")
+    runtime_exit_code = runtime_payload.get("exit_code")
+    if (
+        type(exit_code) is not int
+        or type(runtime_exit_code) is not int
+        or exit_code != runtime_exit_code
+    ):
+        raise TransferProofError(
+            "transfer receipt exit code does not match runtime meta"
+        )
+    command = receipt.get("command")
+    cwd = receipt.get("cwd")
+    pane_id = receipt.get("pane_id")
+    runtime_transcript = receipt.get("runtime_transcript")
+    if (
+        not isinstance(command, list)
+        or any(not isinstance(part, str) for part in command)
+        or (cwd is not None and not isinstance(cwd, str))
+        or (pane_id is not None and not isinstance(pane_id, str))
+        or (runtime_transcript is not None and not isinstance(runtime_transcript, str))
+    ):
+        raise TransferProofError("transfer receipt request fields are not typed")
+    bucket = receipt.get("bucket")
+    if not isinstance(bucket, str) or bucket not in _BUCKET_SESSION:
+        raise TransferProofError(f"transfer receipt has unknown bucket: {bucket!r}")
+    if receipt.get("capture_committed") is not True:
+        raise TransferProofError("capture is not committed")
+    if receipt.get("metadata_committed") is not True:
+        raise TransferProofError("finished metadata is not committed")
+    if receipt.get("viewer_confirmed") is not True:
+        raise TransferProofError("viewer is not confirmed")
+    if receipt.get("viewer_creation_pending") is not False:
+        raise TransferProofError("viewer creation remains pending")
+    if receipt.get("origin_tab_state") != "closed":
+        raise TransferProofError("origin tab is not proven closed")
+    if receipt.get("fault") is not None:
+        raise TransferProofError("transfer receipt still carries a fault")
+    updated_at = receipt.get("updated_at")
+    if type(updated_at) is not int or updated_at <= 0:
+        raise TransferProofError("transfer receipt has no durable timestamp")
+
+    capture = receipt.get("capture")
+    if not isinstance(capture, dict):
+        raise TransferProofError("transfer receipt has no capture evidence")
+    capture_source = capture.get("capture_source")
+    source_identity = capture.get("source_identity")
+    capture_bytes = capture.get("bytes")
+    capture_sha256 = capture.get("sha256")
+    if not isinstance(capture_source, str) or capture_source not in _CAPTURE_SOURCES:
+        raise TransferProofError(f"unknown capture source: {capture_source!r}")
+    if not isinstance(source_identity, str) or not source_identity:
+        raise TransferProofError("capture source identity is empty")
+    if type(capture_bytes) is not int or capture_bytes <= 0:
+        raise TransferProofError("capture byte count is not positive")
+    if not _is_hex(capture_sha256, 64):
+        raise TransferProofError("capture sha256 is not a 64-character digest")
+
+    scrollback = _read_bound_file(scrollback_path, root, "captured scrollback")
+    if len(scrollback) != capture_bytes:
+        raise TransferProofError("captured scrollback size does not match receipt")
+    if hashlib.sha256(scrollback).hexdigest() != capture_sha256.lower():
+        raise TransferProofError("captured scrollback hash does not match receipt")
+
+    origin_identity: TransferTabIdentity | None = None
+    raw_origin_identity = capture.get("origin_tab_identity")
+    if raw_origin_identity is not None:
+        origin_identity = _tab_identity(
+            raw_origin_identity,
+            label="origin",
+            expected_session=origin_session,
+            expected_name=origin_tab,
+        )
+    if capture_source == "terminal_scrollback":
+        if origin_identity is None:
+            raise TransferProofError("terminal capture lacks typed origin identity")
+        source_parts = source_identity.split(";")
+        expected_parts = [
+            f"session={origin_session}",
+            f"tab_id={origin_identity.tab_id}",
+            f"tab_instance_id={origin_identity.tab_instance_id}",
+        ]
+        if (
+            source_parts[:3] != expected_parts
+            or len(source_parts) != 4
+            or not source_parts[3].startswith("pane_id=terminal_")
+            or not source_parts[3].removeprefix("pane_id=terminal_").isdigit()
+        ):
+            raise TransferProofError("terminal capture source identity is inconsistent")
+    else:
+        source_path = Path(source_identity)
+        if (
+            not source_path.is_absolute()
+            or ".." in source_path.parts
+            or source_path.resolve(strict=False) != source_path
+        ):
+            raise TransferProofError("runtime transcript source path is not canonical")
+        if not isinstance(runtime_transcript, str) or not runtime_transcript:
+            raise TransferProofError("runtime transcript request path is missing")
+
+    token = receipt.get("viewer_token")
+    if not _is_hex(token, 32):
+        raise TransferProofError("viewer ownership token is invalid")
+    bucket_session = _BUCKET_SESSION[bucket]
+    viewer_identity = _tab_identity(
+        receipt.get("viewer_tab_identity"),
+        label="viewer",
+        expected_session=bucket_session,
+        expected_name=f"{run_id} [vc:{token}]",
+    )
+
+    capture_manifest = _json_object(
+        _read_bound_file(capture_manifest_path, root, "capture manifest"),
+        "capture manifest",
+    )
+    expected_manifest = {
+        "version": _CAPTURE_MANIFEST_VERSION,
+        "run_id": run_id,
+        "session": origin_session,
+        "origin_tab": origin_tab,
+        "pane_id": pane_id,
+        "runtime_transcript": runtime_transcript,
+        "staging_file": capture_manifest.get("staging_file"),
+        "evidence": capture,
+    }
+    staging_file = capture_manifest.get("staging_file")
+    if (
+        not isinstance(staging_file, str)
+        or not staging_file
+        or Path(staging_file).name != staging_file
+        or capture_manifest != expected_manifest
+    ):
+        raise TransferProofError("capture manifest does not equal transfer evidence")
+
+    finished_meta = _json_object(
+        _read_bound_file(finished_meta_path, root, "finished metadata"),
+        "finished metadata",
+    )
+    expected_finished_meta = {
+        "run": run_id,
+        "exit_code": exit_code,
+        "bucket": bucket,
+        "origin_session": origin_session,
+        "origin_tab": origin_tab,
+        "command": command,
+        "cwd": cwd,
+        "captured_at": updated_at,
+        "capture_source": capture_source,
+        "capture_source_identity": source_identity,
+        "capture_bytes": capture_bytes,
+        "capture_sha256": capture_sha256,
+    }
+    if finished_meta != expected_finished_meta:
+        raise TransferProofError("finished metadata does not equal transfer receipt")
+
+    return DurableTransferProof(
+        run_id=run_id,
+        receipt_path=receipt_path,
+        receipt_sha256=hashlib.sha256(receipt_bytes).hexdigest(),
+        scrollback_path=scrollback_path,
+        finished_meta_path=finished_meta_path,
+        capture_manifest_path=capture_manifest_path,
+        bucket=bucket,
+        bucket_session=bucket_session,
+        exit_code=exit_code,
+        origin_session=origin_session,
+        origin_tab=origin_tab,
+        capture_source=capture_source,
+        capture_source_identity=source_identity,
+        capture_bytes=capture_bytes,
+        capture_sha256=capture_sha256.lower(),
+        origin_identity=origin_identity,
+        viewer_identity=viewer_identity,
+        viewer_token=token.lower(),
+        origin_tab_state="closed",
+        updated_at=updated_at,
+    )
+
+
+def load_durable_transfer_proof(
+    control_plane: Path,
+    runtime_meta: Path,
+) -> DurableTransferProof:
+    """Validate vc-frame files, exact runtime projection, and terminal settlement."""
+    root = _canonical_root(control_plane)
+    runtime_bytes = _read_bound_file(runtime_meta, root, "runtime meta")
+    payload = _json_object(runtime_bytes, "runtime meta")
+    run_id = _safe_run_id(payload.get("run_id"))
+    expected_runtime_meta = root / "runtime_runs" / run_id / "meta.json"
+    if runtime_meta != expected_runtime_meta:
+        raise TransferProofError("runtime meta path does not match its run id")
+
+    proof = load_vc_frame_transfer_proof(root, payload)
+    triage = payload.get("triage")
+    triage_verdict = payload.get("triage_verdict")
+    if (
+        not isinstance(triage, str)
+        or triage not in _BUCKET_FOR_VERDICT
+        or triage_verdict != triage
+        or payload.get("triage_pending") is not False
+        or payload.get("triage_bucket") != proof.bucket_session
+    ):
+        raise TransferProofError("runtime triage is not one exact terminal verdict")
+
+    revision = payload.get("settlement_revision")
+    settlement_verdict = payload.get("settlement_verdict")
+    settlement_tui = payload.get("settlement_tui")
+    await_outcome = payload.get("await_outcome")
+    if type(revision) is not int or revision <= 0:
+        raise TransferProofError("runtime settlement revision is missing")
+    if (
+        not isinstance(settlement_verdict, str)
+        or settlement_verdict not in _SETTLEMENT_TUI
+        or settlement_tui != _SETTLEMENT_TUI[settlement_verdict]
+        or await_outcome not in _TERMINAL_AWAIT_OUTCOMES
+    ):
+        raise TransferProofError("runtime settlement is not terminal and typed")
+    normalized_settlement = (
+        VERDICT_FAILED if settlement_verdict == "invalid" else settlement_verdict
+    )
+    if normalized_settlement != triage_verdict:
+        raise TransferProofError("settlement and triage verdicts disagree")
+
+    projection = proof.projection()
+    if (
+        payload.get("triage_transfer_receipt") != str(proof.receipt_path)
+        or payload.get("triage_transfer") != projection
+    ):
+        raise TransferProofError("runtime transfer projection is absent or stale")
+    return replace(proof, settlement_revision=revision)
 
 
 @dataclass(frozen=True)
@@ -811,6 +1317,55 @@ def _default_runner(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _control_plane_root_for(
+    meta: Path,
+    env: Mapping[str, str],
+) -> Path | None:
+    """Resolve the authoritative vc-frame control plane when one is knowable.
+
+    Explicit configuration and a canonical ``runtime_runs/<run>/meta.json``
+    location are authority even before the receipt exists, so a missing proof
+    fails closed.  The conventional HOME location is only adopted when present;
+    this keeps detached/unit-test callers without a control plane on the legacy
+    fail-open path.
+    """
+    explicit = str(env.get("VIBECRAFTED_CONTROL_PLANE", "") or "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve(strict=False)
+
+    vibecrafted_home = str(env.get("VIBECRAFTED_HOME", "") or "").strip()
+    if vibecrafted_home:
+        return (
+            Path(vibecrafted_home).expanduser().resolve(strict=False) / "control_plane"
+        )
+
+    absolute_meta = meta.expanduser().resolve(strict=False)
+    if (
+        absolute_meta.name == "meta.json"
+        and len(absolute_meta.parents) >= 3
+        and absolute_meta.parents[1].name == "runtime_runs"
+    ):
+        return absolute_meta.parents[2]
+
+    home = str(env.get("HOME", "") or "").strip()
+    if home:
+        conventional = (
+            Path(home).expanduser().resolve(strict=False)
+            / ".vibecrafted"
+            / "control_plane"
+        )
+        if conventional.is_dir():
+            return conventional
+    return None
+
+
+def _canonical_runtime_meta(
+    control_plane: Path,
+    run_id: str,
+) -> Path:
+    return control_plane / "runtime_runs" / run_id / "meta.json"
+
+
 def triage_finished_run(
     meta_path: str | os.PathLike[str],
     env: Mapping[str, str] | None = None,
@@ -818,8 +1373,9 @@ def triage_finished_run(
 ) -> TriageOutcome:
     """Transfer a finished run's tab into its bucket, and record what happened.
 
-    Never raises. Every failure path returns a :class:`TriageOutcome` and leaves
-    the origin tab exactly where it was.
+    Never raises. Invocation failures preserve the origin. A transfer that
+    succeeds but cannot prove or link its durable v4 receipt is recorded as an
+    error so no later GC treats the move as authoritative.
     """
     env = os.environ if env is None else env
     runner = _default_runner if runner is None else runner
@@ -836,7 +1392,7 @@ def triage_finished_run(
     plan = plan_triage(payload, env)
     if not plan.should_run:
         outcome = TriageOutcome(OUTCOME_SKIPPED, reason=plan.skip_reason)
-        _record_receipt(meta, payload, outcome)
+        _record_receipt(meta, outcome)
         return outcome
 
     # Resolve the binary before writing anything: a stale or absent vc-frame
@@ -845,12 +1401,12 @@ def triage_finished_run(
     binary = _resolve_binary(env)
     if not binary:
         outcome = TriageOutcome(OUTCOME_SKIPPED, reason="no_binary")
-        _record_receipt(meta, payload, outcome)
+        _record_receipt(meta, outcome)
         return outcome
     probe = _probe_triage_run(binary, runner)
     if not probe.supported:
         outcome = TriageOutcome(OUTCOME_SKIPPED, reason="unsupported_binary")
-        _record_receipt(meta, payload, outcome)
+        _record_receipt(meta, outcome)
         return outcome
 
     # Where the run will actually land. With `--bucket` that is the classifier's
@@ -878,10 +1434,46 @@ def triage_finished_run(
         verdict_reason=plan.verdict_reason,
         verdict_degraded=degraded,
     )
-    _record_receipt(meta, payload, intent)
+    _record_receipt(meta, intent)
 
     outcome = _run_triage(plan, binary, probe, runner, destination, bucket, degraded)
-    _record_receipt(meta, payload, outcome)
+    proof: DurableTransferProof | None = None
+    control_plane = _control_plane_root_for(meta, env)
+    if outcome.outcome != OUTCOME_ERROR and control_plane is not None:
+        try:
+            proof = load_vc_frame_transfer_proof(control_plane, payload)
+            if proof.bucket_session != bucket:
+                raise TransferProofError(
+                    "transfer receipt bucket does not match the triage verdict"
+                )
+        except TransferProofError as error:
+            outcome = TriageOutcome(
+                OUTCOME_ERROR,
+                reason=f"transfer_proof_invalid: {error}",
+                bucket=bucket,
+                verdict=plan.verdict,
+                verdict_reason=plan.verdict_reason,
+                verdict_degraded=degraded,
+            )
+
+    written = _record_receipt(meta, outcome, proof=proof)
+    if proof is not None and control_plane is not None:
+        canonical_meta = _canonical_runtime_meta(
+            control_plane.resolve(strict=False),
+            proof.run_id,
+        )
+        if canonical_meta != meta.resolve(strict=False):
+            written = _record_receipt(canonical_meta, outcome, proof=proof) and written
+    if proof is not None and not written:
+        outcome = TriageOutcome(
+            OUTCOME_ERROR,
+            reason="transfer_projection_persist_failed",
+            bucket=bucket,
+            verdict=plan.verdict,
+            verdict_reason=plan.verdict_reason,
+            verdict_degraded=degraded,
+        )
+        _record_receipt(meta, outcome)
     return outcome
 
 
@@ -928,29 +1520,91 @@ def _run_triage(
 
 def _record_receipt(
     meta: Path,
-    payload: dict[str, Any],
     outcome: TriageOutcome,
-) -> None:
-    """Append the triage receipt to meta.json.
+    *,
+    proof: DurableTransferProof | None = None,
+) -> bool:
+    """Atomically merge the triage receipt into the latest meta.json.
 
     Re-read first: this runs after the terminal write, and the control-plane sync
     or a concurrent writer may have touched the file since. Losing the receipt is
-    acceptable; clobbering a run's terminal state to save it is not.
+    acceptable; clobbering a run's terminal state to save it is not.  A bounded
+    compare/retry closes the common race between that read and ``os.replace``.
     """
-    try:
-        current = json.loads(meta.read_text(encoding="utf-8"))
-        if not isinstance(current, dict):
-            current = payload
-    except Exception:  # noqa: BLE001
-        current = payload
+    updates = outcome.receipt()
+    if proof is not None:
+        updates["triage_transfer_receipt"] = str(proof.receipt_path)
+        updates["triage_transfer"] = proof.projection()
 
-    current.update(outcome.receipt())
-    try:
-        meta.write_text(
-            json.dumps(current, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-        )
-    except OSError:
-        pass
+    transfer_keys = {"triage_transfer_receipt", "triage_transfer"}
+    for _attempt in range(4):
+        try:
+            if meta.is_symlink():
+                return False
+            before = meta.read_bytes()
+            current = json.loads(before)
+            if not isinstance(current, dict):
+                return False
+            if proof is not None and (
+                current.get("run_id") != proof.run_id
+                or type(current.get("exit_code")) is not int
+                or current.get("exit_code") != proof.exit_code
+                or current.get("origin_session") != proof.origin_session
+                or current.get("origin_tab") != proof.origin_tab
+            ):
+                return False
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+            return False
+
+        merged = dict(current)
+        merged.update(updates)
+        if proof is None and (
+            outcome.pending
+            or outcome.outcome == OUTCOME_ERROR
+            or outcome.outcome in _BUCKET_FOR_VERDICT
+        ):
+            for key in transfer_keys:
+                merged.pop(key, None)
+        serialized = (json.dumps(merged, indent=2, ensure_ascii=False) + "\n").encode()
+
+        temporary_path: str | None = None
+        try:
+            descriptor, temporary_path = tempfile.mkstemp(
+                prefix=f".{meta.name}.",
+                suffix=".tmp",
+                dir=meta.parent,
+            )
+            os.fchmod(descriptor, meta.stat(follow_symlinks=False).st_mode & 0o777)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(serialized)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+            # Preserve a writer that landed while this receipt was serialized.
+            if meta.read_bytes() != before:
+                os.unlink(temporary_path)
+                temporary_path = None
+                continue
+            os.replace(temporary_path, meta)
+            temporary_path = None
+            try:
+                directory_fd = os.open(meta.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                pass
+            return True
+        except OSError:
+            return False
+        finally:
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
+    return False
 
 
 def main(argv: Sequence[str] | None = None) -> int:

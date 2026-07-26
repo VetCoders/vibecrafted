@@ -252,6 +252,54 @@ def test_vc_start_does_not_run_implicit_session_gc(tmp_path: Path) -> None:
     assert "VC_FRAME kill-session abandoned-evidence" not in payload
 
 
+def test_explicit_gc_apply_never_selects_untyped_sessions(tmp_path: Path) -> None:
+    """EXITED/stale session text is not authority for an untyped kill-session."""
+    home = tmp_path / "home"
+    fake_bin = tmp_path / "bin"
+    capture_file = tmp_path / "capture.log"
+    home.mkdir()
+    fake_bin.mkdir()
+    _write_implicit_gc_probe_vc_frame(fake_bin)
+    script = (
+        REPO_ROOT / "runtime" / "vc-operator" / "mission-control" / "vc-frame-gc.sh"
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "PATH": f"{fake_bin}:{env.get('PATH', '')}",
+            "CAPTURE_FILE": str(capture_file),
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(script), "--apply", "--max-age-hours", "1"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME list-sessions" not in payload
+    assert "VC_FRAME kill-session" not in payload
+
+    refused = subprocess.run(
+        ["bash", str(script), "--apply", "--include-live"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert refused.returncode == 2
+    assert "no typed incarnation selector" in refused.stderr
+    payload = capture_file.read_text(encoding="utf-8") if capture_file.exists() else ""
+    assert "VC_FRAME kill-session" not in payload
+
+
 def test_prepare_operator_runtime_does_not_run_gc_for_headless(
     tmp_path: Path,
 ) -> None:

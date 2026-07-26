@@ -1,7 +1,8 @@
 """Bounded, proof-gated cleanup for vc-frame run tabs.
 
-Run artifacts are durable state.  A terminal tab is only a transient viewer and
-must not become an unbounded second history store.
+Run artifacts are durable state. A terminal tab is only a transient viewer, but
+GC may remove it only when vc-frame's v4 receipt, capture digest, finished meta,
+runtime settlement, and the tab's exact incarnation all still agree.
 """
 
 from __future__ import annotations
@@ -13,21 +14,56 @@ import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
+
+from .run_triage import (
+    DurableTransferProof,
+    TransferProofError,
+    TransferTabIdentity,
+    load_durable_transfer_proof,
+)
 
 BUCKET_SESSIONS = ("Finalized runs", "Failed runs", "Needs attention")
-TERMINAL_TRIAGE = {"finalized", "failed", "needs_attention"}
 PROTECTED_TAB_NAMES = {"Start here", "Shell"}
+_HEX = frozenset("0123456789abcdefABCDEF")
 
 
 @dataclass(frozen=True)
-class TabRef:
+class LiveTab:
+    """One typed tab returned by an unambiguous vc-frame inventory."""
+
     session: str
     tab_id: int
     name: str
     position: int
     active: bool
     focused_elsewhere: bool
+    session_incarnation: str
+    tab_instance_id: str
+
+    def matches(self, identity: TransferTabIdentity) -> bool:
+        return (
+            self.session == identity.session
+            and self.tab_id == identity.tab_id
+            and self.name == identity.name
+            and self.session_incarnation == identity.session_incarnation
+            and self.tab_instance_id == identity.tab_instance_id
+        )
+
+
+@dataclass(frozen=True)
+class TabRef:
+    """A cleanup candidate bound to one proof and one tab incarnation."""
+
+    run_id: str
+    settlement_revision: int
+    receipt_sha256: str
+    session: str
+    tab_id: int
+    name: str
+    position: int
+    session_incarnation: str
+    tab_instance_id: str
     reason: str
 
 
@@ -64,13 +100,58 @@ def _run(
     return runner(list(argv), env=env)
 
 
+def _is_hex(value: Any, length: int) -> TypeGuard[str]:
+    return (
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in _HEX for character in value)
+    )
+
+
+def _parse_live_tab(session: str, raw: Any) -> LiveTab | None:
+    if not isinstance(raw, Mapping):
+        return None
+    tab_id = raw.get("tab_id")
+    name = raw.get("name")
+    position = raw.get("position")
+    active = raw.get("active")
+    focused = raw.get("other_focused_clients")
+    incarnation = raw.get("session_incarnation")
+    instance = raw.get("tab_instance_id")
+    if (
+        type(tab_id) is not int
+        or tab_id < 0
+        or not isinstance(name, str)
+        or not name
+        or type(position) is not int
+        or position < 0
+        or type(active) is not bool
+        or not isinstance(focused, list)
+        or not isinstance(incarnation, str)
+        or not incarnation
+        or not _is_hex(instance, 32)
+    ):
+        return None
+    return LiveTab(
+        session=session,
+        tab_id=tab_id,
+        name=name,
+        position=position,
+        active=active,
+        focused_elsewhere=bool(focused),
+        session_incarnation=incarnation,
+        tab_instance_id=instance,
+    )
+
+
 def list_tabs(
     binary: str,
     session: str,
     *,
     env: Mapping[str, str],
     runner: Runner = _default_runner,
-) -> list[dict[str, Any]]:
+) -> list[LiveTab] | None:
+    """Return one fully typed inventory; ``None`` means fail-closed ambiguity."""
     session_env = dict(env)
     session_env["VC_FRAME_SESSION_NAME"] = session
     proc = _run(
@@ -79,128 +160,192 @@ def list_tabs(
         env=session_env,
     )
     if proc.returncode != 0:
-        return []
+        return None
     try:
         payload = json.loads(proc.stdout)
     except (TypeError, json.JSONDecodeError):
-        return []
-    return (
-        [tab for tab in payload if isinstance(tab, dict)]
-        if isinstance(payload, list)
-        else []
-    )
+        return None
+    if not isinstance(payload, list):
+        return None
+
+    parsed: list[LiveTab] = []
+    for raw in payload:
+        tab = _parse_live_tab(session, raw)
+        if tab is None:
+            return None
+        parsed.append(tab)
+
+    tab_ids = [tab.tab_id for tab in parsed]
+    instances = [tab.tab_instance_id for tab in parsed]
+    incarnations = {tab.session_incarnation for tab in parsed}
+    if (
+        len(tab_ids) != len(set(tab_ids))
+        or len(instances) != len(set(instances))
+        or len(incarnations) > 1
+    ):
+        return None
+    return parsed
+
+
+def durable_transfer_proofs(
+    control_plane: Path,
+) -> dict[str, DurableTransferProof]:
+    """Load only exact v4 transfer + terminal settlement proofs.
+
+    Any duplicate durable tab identity invalidates every colliding proof. There
+    is no safe winner when two runtime records claim the same incarnation.
+    """
+    try:
+        root = control_plane.resolve(strict=True)
+    except OSError:
+        return {}
+    runtime_runs = root / "runtime_runs"
+    if not runtime_runs.is_dir() or runtime_runs.is_symlink():
+        return {}
+
+    proofs: dict[str, DurableTransferProof] = {}
+    try:
+        run_dirs = sorted(runtime_runs.iterdir(), key=lambda path: path.name)
+    except OSError:
+        return {}
+    for run_dir in run_dirs:
+        if run_dir.is_symlink() or not run_dir.is_dir():
+            continue
+        runtime_meta = run_dir / "meta.json"
+        try:
+            proof = load_durable_transfer_proof(root, runtime_meta)
+        except TransferProofError:
+            continue
+        proofs[proof.run_id] = proof
+
+    owners: dict[tuple[str, str], set[str]] = {}
+    for proof in proofs.values():
+        identities = [proof.viewer_identity]
+        if proof.origin_identity is not None:
+            identities.append(proof.origin_identity)
+        for identity in identities:
+            owners.setdefault(
+                (identity.session, identity.tab_instance_id),
+                set(),
+            ).add(proof.run_id)
+    collisions = {
+        run_id for run_ids in owners.values() if len(run_ids) > 1 for run_id in run_ids
+    }
+    return {
+        run_id: proof for run_id, proof in proofs.items() if run_id not in collisions
+    }
 
 
 def durable_run_ids(control_plane: Path) -> set[str]:
-    """Return runs with both committed triage metadata and non-empty scrollback."""
-    finished = control_plane / "finished_runs"
-    durable: set[str] = set()
-    if not finished.is_dir():
-        return durable
-    for run_dir in finished.iterdir():
-        if not run_dir.is_dir():
-            continue
-        meta = run_dir / "meta.json"
-        scrollback = run_dir / "scrollback.txt"
-        try:
-            if meta.stat().st_size > 0 and scrollback.stat().st_size > 0:
-                durable.add(run_dir.name)
-        except OSError:
-            continue
-    return durable
+    """Compatibility projection: run IDs backed by full durable proof."""
+    return set(durable_transfer_proofs(control_plane))
 
 
-def terminal_origins(control_plane: Path, durable: set[str]) -> set[tuple[str, str]]:
-    """Read exact source tabs whose successful triage receipt is durable."""
-    runtime_runs = control_plane / "runtime_runs"
-    origins: set[tuple[str, str]] = set()
-    if not runtime_runs.is_dir():
-        return origins
-    for meta in runtime_runs.glob("*/meta.json"):
-        try:
-            payload = json.loads(meta.read_text(encoding="utf-8"))
-        except (OSError, TypeError, json.JSONDecodeError):
-            continue
-        if not isinstance(payload, dict):
-            continue
-        run_id = str(payload.get("run_id", "") or "").strip()
-        session = str(payload.get("origin_session", "") or "").strip()
-        tab = str(payload.get("origin_tab", "") or "").strip()
-        triage = str(payload.get("triage", "") or "").strip()
-        pending = bool(payload.get("triage_pending", False))
-        if (
-            run_id in durable
-            and triage in TERMINAL_TRIAGE
-            and not pending
-            and session
-            and tab == run_id
-        ):
-            origins.add((session, tab))
-    return origins
+def terminal_origins(
+    control_plane: Path,
+    durable: set[str] | None = None,
+) -> set[tuple[str, str]]:
+    """Compatibility projection of exact proof-backed source names."""
+    proofs = durable_transfer_proofs(control_plane)
+    allowed = set(proofs) if durable is None else durable
+    return {
+        (proof.origin_session, proof.origin_tab)
+        for run_id, proof in proofs.items()
+        if run_id in allowed and proof.origin_identity is not None
+    }
 
 
-def _tab_ref(session: str, tab: Mapping[str, Any], reason: str) -> TabRef | None:
-    try:
-        tab_id = int(tab["tab_id"])
-        position = int(tab.get("position", 0))
-    except (KeyError, TypeError, ValueError):
-        return None
-    name = str(tab.get("name", "") or "")
+def _candidate(
+    proof: DurableTransferProof,
+    tab: LiveTab,
+    *,
+    reason: str,
+) -> TabRef:
     return TabRef(
-        session=session,
-        tab_id=tab_id,
-        name=name,
-        position=position,
-        active=bool(tab.get("active", False)),
-        focused_elsewhere=bool(tab.get("other_focused_clients", [])),
+        run_id=proof.run_id,
+        settlement_revision=proof.settlement_revision,
+        receipt_sha256=proof.receipt_sha256,
+        session=tab.session,
+        tab_id=tab.tab_id,
+        name=tab.name,
+        position=tab.position,
+        session_incarnation=tab.session_incarnation,
+        tab_instance_id=tab.tab_instance_id,
         reason=reason,
     )
 
 
 def plan_tab_cleanup(
-    tabs_by_session: Mapping[str, Sequence[Mapping[str, Any]]],
+    tabs_by_session: Mapping[str, Sequence[LiveTab]],
     *,
-    durable: set[str],
-    origins: set[tuple[str, str]],
+    proofs: Mapping[str, DurableTransferProof],
     bucket_tab_limit: int | None,
 ) -> list[TabRef]:
-    """Choose proof-backed duplicates and explicitly bounded bucket views."""
-    candidates: dict[tuple[str, int], TabRef] = {}
+    """Choose exact proof-backed origins and explicitly bounded viewers."""
+    candidates: dict[tuple[str, str], TabRef] = {}
 
-    for session, tab_name in origins:
-        for tab in tabs_by_session.get(session, ()):
-            if str(tab.get("name", "") or "") != tab_name:
-                continue
-            ref = _tab_ref(session, tab, "redundant-origin")
-            if ref and not ref.active and not ref.focused_elsewhere:
-                candidates[(session, ref.tab_id)] = ref
+    for proof in proofs.values():
+        origin = proof.origin_identity
+        if origin is None:
+            continue
+        matches = [
+            tab
+            for tab in tabs_by_session.get(origin.session, ())
+            if tab.matches(origin)
+        ]
+        if len(matches) != 1:
+            continue
+        tab = matches[0]
+        if not tab.active and not tab.focused_elsewhere:
+            candidates[(tab.session, tab.tab_instance_id)] = _candidate(
+                proof,
+                tab,
+                reason="redundant-origin",
+            )
 
     if bucket_tab_limit is None:
         return sorted(
-            candidates.values(), key=lambda item: (item.session, item.position)
+            candidates.values(),
+            key=lambda item: (item.session, item.position, item.run_id),
         )
 
     limit = max(0, bucket_tab_limit)
     for session in BUCKET_SESSIONS:
-        eligible: list[TabRef] = []
-        for tab in tabs_by_session.get(session, ()):
-            name = str(tab.get("name", "") or "")
-            if name in PROTECTED_TAB_NAMES or name not in durable:
+        eligible: list[tuple[DurableTransferProof, LiveTab]] = []
+        for proof in proofs.values():
+            viewer = proof.viewer_identity
+            if viewer.session != session or viewer.name in PROTECTED_TAB_NAMES:
                 continue
-            ref = _tab_ref(session, tab, "durable-bucket-view")
-            if ref:
-                eligible.append(ref)
-        eligible.sort(key=lambda item: item.position, reverse=True)
-        keep_ids = {item.tab_id for item in eligible[:limit]}
-        for ref in eligible:
+            matches = [
+                tab for tab in tabs_by_session.get(session, ()) if tab.matches(viewer)
+            ]
+            if len(matches) == 1:
+                eligible.append((proof, matches[0]))
+        eligible.sort(
+            key=lambda item: (
+                item[0].updated_at,
+                item[1].position,
+                item[0].run_id,
+            ),
+            reverse=True,
+        )
+        keep_instances = {tab.tab_instance_id for _proof, tab in eligible[:limit]}
+        for proof, tab in eligible:
             if (
-                ref.tab_id not in keep_ids
-                and not ref.active
-                and not ref.focused_elsewhere
+                tab.tab_instance_id not in keep_instances
+                and not tab.active
+                and not tab.focused_elsewhere
             ):
-                candidates[(session, ref.tab_id)] = ref
+                candidates[(tab.session, tab.tab_instance_id)] = _candidate(
+                    proof,
+                    tab,
+                    reason="durable-bucket-view",
+                )
 
-    return sorted(candidates.values(), key=lambda item: (item.session, item.position))
+    return sorted(
+        candidates.values(),
+        key=lambda item: (item.session, item.position, item.run_id),
+    )
 
 
 def collect_cleanup(
@@ -211,49 +356,136 @@ def collect_cleanup(
     env: Mapping[str, str],
     runner: Runner = _default_runner,
 ) -> list[TabRef]:
-    durable = durable_run_ids(control_plane)
-    origins = terminal_origins(control_plane, durable)
+    proofs = durable_transfer_proofs(control_plane)
+    if not proofs:
+        return []
     sessions = set(BUCKET_SESSIONS)
-    # Reconcile only the ambient operator session. Historical receipts can name
-    # dead sessions, and asking vc-frame for tabs in a dead session may block
-    # while it attempts a resurrection. Every live operator seat runs this GC
-    # itself, so its own duplicates are still repaired deterministically.
+
+    # Query an origin session only when this process is already inside it.
+    # Asking a dead historical session for tabs can resurrect it.
     ambient_sessions = {
         str(env.get(name, "") or "").strip()
         for name in ("VC_FRAME_SESSION_NAME", "ZELLIJ_SESSION_NAME")
     }
     ambient_sessions.discard("")
-    sessions.update(session for session, _ in origins if session in ambient_sessions)
-    tabs = {
-        session: list_tabs(binary, session, env=env, runner=runner)
-        for session in sessions
-    }
+    sessions.update(
+        proof.origin_session
+        for proof in proofs.values()
+        if proof.origin_session in ambient_sessions
+    )
+
+    tabs: dict[str, Sequence[LiveTab]] = {}
+    for session in sorted(sessions):
+        inventory = list_tabs(binary, session, env=env, runner=runner)
+        if inventory is not None:
+            tabs[session] = inventory
     return plan_tab_cleanup(
         tabs,
-        durable=durable,
-        origins=origins,
+        proofs=proofs,
         bucket_tab_limit=bucket_tab_limit,
     )
 
 
+def _bound_identity(
+    proof: DurableTransferProof,
+    tab: TabRef,
+) -> TransferTabIdentity | None:
+    if tab.reason == "redundant-origin":
+        identity = proof.origin_identity
+    elif tab.reason == "durable-bucket-view":
+        identity = proof.viewer_identity
+    else:
+        return None
+    if identity is None:
+        return None
+    if (
+        proof.settlement_revision != tab.settlement_revision
+        or proof.receipt_sha256 != tab.receipt_sha256
+        or identity.session != tab.session
+        or identity.name != tab.name
+        or identity.tab_id != tab.tab_id
+        or identity.session_incarnation != tab.session_incarnation
+        or identity.tab_instance_id != tab.tab_instance_id
+    ):
+        return None
+    return identity
+
+
+def _reload_bound_proof(
+    control_plane: Path,
+    tab: TabRef,
+) -> DurableTransferProof | None:
+    try:
+        root = control_plane.resolve(strict=True)
+        proof = load_durable_transfer_proof(
+            root,
+            root / "runtime_runs" / tab.run_id / "meta.json",
+        )
+    except (OSError, TransferProofError):
+        return None
+    return proof if _bound_identity(proof, tab) is not None else None
+
+
 def close_tab(
     binary: str,
+    control_plane: Path,
     tab: TabRef,
     *,
     env: Mapping[str, str],
     runner: Runner = _default_runner,
 ) -> bool:
+    """Close one tab only after proof and live incarnation agree twice."""
+    proof = _reload_bound_proof(control_plane, tab)
+    if proof is None:
+        return False
+
+    current = list_tabs(binary, tab.session, env=env, runner=runner)
+    if current is None:
+        return False
+    matches = [
+        candidate
+        for candidate in current
+        if candidate.tab_instance_id == tab.tab_instance_id
+    ]
+    identity = _bound_identity(proof, tab)
+    if (
+        identity is None
+        or len(matches) != 1
+        or not matches[0].matches(identity)
+        or matches[0].active
+        or matches[0].focused_elsewhere
+    ):
+        return False
+
+    # Re-read after the live query: a changed receipt/revision cancels apply.
+    if _reload_bound_proof(control_plane, tab) is None:
+        return False
+
     session_env = dict(env)
     session_env["VC_FRAME_SESSION_NAME"] = tab.session
     proc = _run(
         runner,
-        [binary, "action", "close-tab-by-id", str(tab.tab_id)],
+        [
+            binary,
+            "action",
+            "close-tab",
+            "--tab-id",
+            str(tab.tab_id),
+            "--expected-name",
+            tab.name,
+            "--expected-session-incarnation",
+            tab.session_incarnation,
+            "--expected-tab-instance-id",
+            tab.tab_instance_id,
+        ],
         env=session_env,
     )
     if proc.returncode != 0:
         return False
     remaining = list_tabs(binary, tab.session, env=env, runner=runner)
-    return all(item.get("tab_id") != tab.tab_id for item in remaining)
+    if remaining is None:
+        return False
+    return all(item.tab_instance_id != tab.tab_instance_id for item in remaining)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -265,6 +497,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
 
+    if args.bucket_tab_limit is not None and args.bucket_tab_limit < 0:
+        parser.error("--bucket-tab-limit must be non-negative")
+
     env = dict(os.environ)
     candidates = collect_cleanup(
         args.vc_frame_bin,
@@ -275,10 +510,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     closed: list[TabRef] = []
     if args.apply:
         closed = [
-            tab for tab in candidates if close_tab(args.vc_frame_bin, tab, env=env)
+            tab
+            for tab in candidates
+            if close_tab(
+                args.vc_frame_bin,
+                args.control_plane,
+                tab,
+                env=env,
+            )
         ]
 
-    if not args.quiet or (args.apply and len(closed) != len(candidates)):
+    failed = args.apply and len(closed) != len(candidates)
+    if not args.quiet or failed:
         mode = "applied" if args.apply else "dry-run"
         print(
             f"vc_frame-tab-gc: {mode}; "
@@ -286,8 +529,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for tab in candidates:
             state = "closed" if tab in closed else "candidate"
-            print(f"  {state}: {tab.session}/{tab.name} id={tab.tab_id} ({tab.reason})")
-    return 0
+            print(
+                f"  {state}: {tab.session}/{tab.name} "
+                f"id={tab.tab_id} instance={tab.tab_instance_id} "
+                f"run={tab.run_id} ({tab.reason})"
+            )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":  # pragma: no cover

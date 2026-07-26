@@ -8,6 +8,7 @@ in this path can damage a run that has already finished.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Sequence
 from pathlib import Path
@@ -32,6 +33,7 @@ from vibecrafted_core.run_triage import (
     TriagePlan,
     bucket_for_exit_code,
     classify_run,
+    load_vc_frame_transfer_proof,
     plan_triage,
     read_kernel_axes,
     read_run_signals,
@@ -146,6 +148,135 @@ def write_meta(tmp_path: Path, **overrides: Any) -> Path:
     meta = tmp_path / "agent.meta.json"
     meta.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     return meta
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _control_plane_meta(control_plane: Path) -> Path:
+    report = control_plane / "artifacts" / "run-proof.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(
+        render_minimal_frontmatter(
+            run_id="run-proof",
+            agent="codex",
+            skill="implement",
+            status="completed",
+        )
+        + "# proof\n",
+        encoding="utf-8",
+    )
+    transcript = control_plane / "artifacts" / "run-proof.log"
+    transcript.write_text("x" * (MINIMAL_TRANSCRIPT_BYTES * 4), encoding="utf-8")
+    meta = control_plane / "runtime_runs" / "run-proof" / "meta.json"
+    _write_json(
+        meta,
+        {
+            "status": "completed",
+            "run_id": "run-proof",
+            "exit_code": 0,
+            "origin_session": "vibecrafted",
+            "origin_tab": "run-proof",
+            "origin_pane_id": "terminal_3",
+            "root": "/repo",
+            "command": ["codex", "exec", "ship"],
+            "report": str(report),
+            "transcript": str(transcript),
+        },
+    )
+    return meta
+
+
+def _materialize_v4_transfer(control_plane: Path, payload: dict[str, Any]) -> None:
+    run_id = payload["run_id"]
+    origin_instance = "1" * 32
+    viewer_instance = "2" * 32
+    viewer_token = "a" * 32
+    scrollback = b"durable terminal capture\n"
+    digest = hashlib.sha256(scrollback).hexdigest()
+    capture = {
+        "capture_source": "terminal_scrollback",
+        "source_identity": (
+            "session=vibecrafted;tab_id=7;"
+            f"tab_instance_id={origin_instance};pane_id=terminal_3"
+        ),
+        "bytes": len(scrollback),
+        "sha256": digest,
+        "origin_tab_identity": {
+            "session": "vibecrafted",
+            "name": run_id,
+            "id": 7,
+            "session_incarnation": "origin-incarnation",
+            "tab_instance_id": origin_instance,
+        },
+    }
+    receipt = {
+        "version": 4,
+        "run": run_id,
+        "bucket": "Finalized",
+        "exit_code": 0,
+        "origin_session": "vibecrafted",
+        "origin_tab": run_id,
+        "command": ["codex", "exec", "ship"],
+        "cwd": "/repo",
+        "pane_id": "terminal_3",
+        "runtime_transcript": None,
+        "capture": capture,
+        "capture_committed": True,
+        "metadata_committed": True,
+        "viewer_confirmed": True,
+        "viewer_tab_identity": {
+            "session": "Finalized runs",
+            "name": f"{run_id} [vc:{viewer_token}]",
+            "id": 4,
+            "session_incarnation": "viewer-incarnation",
+            "tab_instance_id": viewer_instance,
+        },
+        "viewer_creation_pending": False,
+        "viewer_token": viewer_token,
+        "origin_tab_state": "closed",
+        "fault": None,
+        "updated_at": 1_700_000_000,
+    }
+    finished = control_plane / "finished_runs" / run_id
+    finished.mkdir(parents=True, exist_ok=True)
+    (finished / "scrollback.txt").write_bytes(scrollback)
+    _write_json(finished / "transfer.json", receipt)
+    _write_json(
+        finished / "capture.manifest.json",
+        {
+            "version": 1,
+            "run_id": run_id,
+            "session": "vibecrafted",
+            "origin_tab": run_id,
+            "pane_id": "terminal_3",
+            "runtime_transcript": None,
+            "staging_file": ".terminal-scrollback.staging",
+            "evidence": capture,
+        },
+    )
+    _write_json(
+        finished / "meta.json",
+        {
+            "run": run_id,
+            "exit_code": 0,
+            "bucket": "Finalized",
+            "origin_session": "vibecrafted",
+            "origin_tab": run_id,
+            "command": ["codex", "exec", "ship"],
+            "cwd": "/repo",
+            "captured_at": 1_700_000_000,
+            "capture_source": "terminal_scrollback",
+            "capture_source_identity": capture["source_identity"],
+            "capture_bytes": len(scrollback),
+            "capture_sha256": digest,
+        },
+    )
 
 
 # --------------------------------------------------------------------------
@@ -893,6 +1024,81 @@ def test_concurrent_writer_is_not_clobbered(tmp_path: Path) -> None:
     payload = json.loads(meta.read_text(encoding="utf-8"))
     assert payload["session_id"] == "written-by-someone-else"
     assert payload["triage"] == OUTCOME_FINALIZED
+
+
+def test_success_links_exact_v4_transfer_proof_atomically(tmp_path: Path) -> None:
+    cp = tmp_path / "control_plane"
+    meta = _control_plane_meta(cp)
+
+    class ProofRunner(Runner):
+        def __call__(self, argv: Sequence[str]) -> Any:
+            if list(argv)[1:2] == ["triage-run"] and "--help" not in argv:
+                current = json.loads(meta.read_text(encoding="utf-8"))
+                current["session_id"] = "concurrent-terminal-writer"
+                _write_json(meta, current)
+                _materialize_v4_transfer(cp, current)
+            return super().__call__(argv)
+
+    outcome = triage_finished_run(
+        meta,
+        live_env(tmp_path, VIBECRAFTED_CONTROL_PLANE=str(cp)),
+        ProofRunner(),
+    )
+
+    assert outcome.outcome == OUTCOME_FINALIZED
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    proof = load_vc_frame_transfer_proof(cp, payload)
+    assert payload["session_id"] == "concurrent-terminal-writer"
+    assert payload["triage_transfer_receipt"] == str(proof.receipt_path)
+    assert payload["triage_transfer"] == proof.projection()
+    assert payload["triage_pending"] is False
+
+
+def test_explicit_control_plane_requires_real_transfer_proof(tmp_path: Path) -> None:
+    cp = tmp_path / "control_plane"
+    meta = _control_plane_meta(cp)
+
+    outcome = triage_finished_run(
+        meta,
+        live_env(tmp_path, VIBECRAFTED_CONTROL_PLANE=str(cp)),
+        Runner(),
+    )
+
+    assert outcome.outcome == OUTCOME_ERROR
+    assert outcome.reason.startswith("transfer_proof_invalid:")
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["triage"] == OUTCOME_ERROR
+    assert payload["triage_pending"] is False
+    assert "triage_transfer" not in payload
+    assert "triage_transfer_receipt" not in payload
+
+
+def test_proof_link_never_clobbers_changed_terminal_identity(tmp_path: Path) -> None:
+    cp = tmp_path / "control_plane"
+    meta = _control_plane_meta(cp)
+
+    class ChangedTerminalRunner(Runner):
+        def __call__(self, argv: Sequence[str]) -> Any:
+            if list(argv)[1:2] == ["triage-run"] and "--help" not in argv:
+                current = json.loads(meta.read_text(encoding="utf-8"))
+                _materialize_v4_transfer(cp, current)
+                current["exit_code"] = 9
+                current["terminal_revision"] = "newer-writer"
+                _write_json(meta, current)
+            return super().__call__(argv)
+
+    outcome = triage_finished_run(
+        meta,
+        live_env(tmp_path, VIBECRAFTED_CONTROL_PLANE=str(cp)),
+        ChangedTerminalRunner(),
+    )
+
+    assert outcome.outcome == OUTCOME_ERROR
+    assert outcome.reason == "transfer_projection_persist_failed"
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    assert payload["exit_code"] == 9
+    assert payload["terminal_revision"] == "newer-writer"
+    assert "triage_transfer" not in payload
 
 
 # --------------------------------------------------------------------------
